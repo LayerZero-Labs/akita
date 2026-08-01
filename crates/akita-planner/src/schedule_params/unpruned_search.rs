@@ -351,7 +351,7 @@ pub(super) fn find_schedule(
 
     let mut scored = complete
         .into_iter()
-        .filter(|candidate| candidate.setup_field_elements <= policy.max_num_setup_field_elements)
+        .filter(|candidate| policy.admits_setup_field_elements(candidate.setup_field_elements))
         .map(|candidate| {
             let descriptor = candidate_schedule_descriptor_bytes(&candidate)?;
             Ok((

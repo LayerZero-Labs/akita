@@ -314,7 +314,7 @@ fn witness_partition(num_chunks: usize) -> WitnessPartition {
 pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     policy.challenge_field_bits()?;
     let expected_selection_policy = if policy.recursive_setup_planning {
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
     } else if policy.ring_dimension_candidates.len() > 1 {
         crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
     } else {
@@ -323,7 +323,7 @@ pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> 
             | crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
                 policy.selection_policy
             }
-            crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => {
+            crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
                 crate::SelectionPolicyId::MinEstimatedProofPayload
             }
         }
@@ -333,9 +333,9 @@ pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> 
             "planner selection policy disagrees with recursive setup capability".to_string(),
         ));
     }
-    if policy.max_num_setup_field_elements == 0 {
+    if policy.setup_field_budget == Some(0) {
         return Err(AkitaError::InvalidSetup(
-            "maximum setup field capacity must be positive".to_string(),
+            "explicit setup field budget must be positive".to_string(),
         ));
     }
     for (label, dimension) in [

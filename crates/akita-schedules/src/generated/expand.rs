@@ -891,9 +891,8 @@ mod tests {
         }];
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
-            selection_policy:
-                SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
-            max_num_setup_field_elements: 1 << 26,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
+            setup_field_budget: None,
             min_offloaded_witness_contraction: 3,
             uniform_ring_dimension: 64,
             setup_prefix_inner_ring_dimension: 128,

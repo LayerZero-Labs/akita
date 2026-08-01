@@ -41,7 +41,7 @@ fn insert_supported(
     frontier: &mut Vec<ScheduleCandidate>,
     candidate: ScheduleCandidate,
 ) {
-    if candidate.setup_field_elements <= policy.max_num_setup_field_elements {
+    if policy.admits_setup_field_elements(candidate.setup_field_elements) {
         insert_frontier(frontier, candidate);
     }
 }
@@ -376,7 +376,7 @@ pub(super) fn find_schedule(
                         folds,
                         terminal: suffix.terminal,
                     };
-                    if candidate.setup_field_elements <= policy.max_num_setup_field_elements {
+                    if policy.admits_setup_field_elements(candidate.setup_field_elements) {
                         complete.push(candidate);
                     }
                 }

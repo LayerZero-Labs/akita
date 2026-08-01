@@ -42,8 +42,8 @@ pub enum SelectionPolicyId {
     MinEstimatedProofPayload,
     /// Pick the minimum physical setup-matrix field footprint, then payload.
     MinSetupMatrixFieldElementsThenProofPayload,
-    /// Pick the first direct setup footprint, then payload, within setup support.
-    MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
+    /// Pick the first direct setup footprint, then payload.
+    MinFirstDirectSetupThenPayload,
 }
 
 impl SelectionPolicyId {
@@ -54,7 +54,7 @@ impl SelectionPolicyId {
         ring_dimension_candidates: &[CommitmentRingDims],
     ) -> Self {
         if recursive_setup_planning {
-            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+            Self::MinFirstDirectSetupThenPayload
         } else if ring_dimension_candidates != [CommitmentRingDims::uniform(uniform_ring_dimension)]
         {
             Self::MinSetupMatrixFieldElementsThenProofPayload
@@ -67,7 +67,7 @@ impl SelectionPolicyId {
     pub const fn tag(self) -> u32 {
         match self {
             Self::MinEstimatedProofPayload => 1,
-            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => 2,
+            Self::MinFirstDirectSetupThenPayload => 2,
             Self::MinSetupMatrixFieldElementsThenProofPayload => 3,
         }
     }
@@ -79,9 +79,7 @@ impl SelectionPolicyId {
             Self::MinSetupMatrixFieldElementsThenProofPayload => {
                 "MinSetupMatrixFieldElementsThenProofPayload"
             }
-            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => {
-                "MinFirstDirectSetupThenPayloadWithinSupportedEnvelope"
-            }
+            Self::MinFirstDirectSetupThenPayload => "MinFirstDirectSetupThenPayload",
         }
     }
 }
@@ -95,7 +93,9 @@ impl SelectionPolicyId {
 pub struct PlannerPolicy {
     pub cost_model: PlannerCostModelId,
     pub selection_policy: SelectionPolicyId,
-    pub max_num_setup_field_elements: usize,
+    /// Optional host admission budget for materialized setup field elements.
+    /// `None` leaves the deterministic public stream uncapped by protocol policy.
+    pub setup_field_budget: Option<usize>,
     pub min_offloaded_witness_contraction: usize,
     /// Ring dimension used when the planner is restricted to a uniform domain.
     pub uniform_ring_dimension: usize,
@@ -122,6 +122,12 @@ pub struct PlannerPolicy {
 pub type RuntimeSchedulePolicy = PlannerPolicy;
 
 impl PlannerPolicy {
+    /// Whether a candidate fits the optional host setup budget.
+    pub fn admits_setup_field_elements(&self, num_field_elements: usize) -> bool {
+        self.setup_field_budget
+            .is_none_or(|budget| num_field_elements <= budget)
+    }
+
     /// Validate extension-field geometry and return the challenge-field width.
     ///
     /// The checked conversion and multiplication keep malformed custom policy
@@ -223,9 +229,9 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
             "schedule selection policy disagrees with recursive setup capability".to_string(),
         ));
     }
-    if policy.max_num_setup_field_elements == 0 {
+    if policy.setup_field_budget == Some(0) {
         return Err(AkitaError::InvalidSetup(
-            "maximum setup field capacity must be positive".to_string(),
+            "explicit setup field budget must be positive".to_string(),
         ));
     }
     for (label, dimension) in [

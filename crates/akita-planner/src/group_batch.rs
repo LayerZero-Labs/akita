@@ -524,12 +524,6 @@ pub fn find_group_batch_schedule(
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_challenge_shape_at_level = &fold_challenge_shape_at_level;
     if policy.recursive_setup_planning && !key.precommitteds.is_empty() {
-        let setup_field_budget = policy.max_num_setup_field_elements;
-        if setup_field_budget == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "supported setup field capacity is empty".to_string(),
-            ));
-        }
         return find_group_batch_schedule_inner(
             key,
             final_honest_fold_policy,
@@ -537,7 +531,7 @@ pub fn find_group_batch_schedule(
             policy,
             ring_challenge_config,
             fold_challenge_shape_at_level,
-            Some(setup_field_budget),
+            policy.setup_field_budget,
         );
     }
     find_group_batch_schedule_inner(
@@ -617,7 +611,7 @@ fn find_group_batch_schedule_inner(
                 "mixed ring-dimension selection is not supported for multi-group roots".to_string(),
             ));
         }
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => suffix
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => suffix
             .best_by_first_direct_setup_per_lb
             .values()
             .min_by_key(|candidate| {

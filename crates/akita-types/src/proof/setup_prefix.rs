@@ -6,7 +6,7 @@
 //! semantics.
 
 use crate::descriptor_bytes::sis_modulus_profile_tag;
-use crate::proof::{setup::MAX_SETUP_MATRIX_FIELD_ELEMENTS, AkitaCommitmentHint, RingVec};
+use crate::proof::{AkitaCommitmentHint, RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS};
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
     CommittedGroupParams, CommittedGroupProfile, InnerCommitMatrixParams, OpeningClaimsLayout,
@@ -595,10 +595,10 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixPublicCommitment<F> {
             })?;
             row.check()?;
         }
-        if total_coeffs > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
+        if total_coeffs > MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS {
             return Err(SerializationError::LengthLimitExceeded {
                 len: u64::try_from(total_coeffs).unwrap_or(u64::MAX),
-                max: MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+                max: MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS,
             });
         }
         Ok(())
@@ -647,7 +647,7 @@ where
             &mut reader,
             compress,
             validate,
-            MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+            MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS,
         )?;
         let mut rows = Vec::new();
         super::reserve_shape_len(&mut rows, row_count)?;
@@ -657,7 +657,7 @@ where
                 &mut reader,
                 compress,
                 validate,
-                MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+                MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS,
             )?;
             if coeff_count == 0 {
                 return Err(SerializationError::InvalidData(
@@ -669,10 +669,10 @@ where
                     "setup prefix commitment coefficient count overflow".to_string(),
                 )
             })?;
-            if total_coeffs > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
+            if total_coeffs > MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS {
                 return Err(SerializationError::LengthLimitExceeded {
                     len: u64::try_from(total_coeffs).unwrap_or(u64::MAX),
-                    max: MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+                    max: MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS,
                 });
             }
             rows.push(RingVec::deserialize_with_mode(

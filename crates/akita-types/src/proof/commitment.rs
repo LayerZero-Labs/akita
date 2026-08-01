@@ -1,6 +1,6 @@
 //! Protocol commitment/opening wrapper types.
 
-use crate::proof::{RingVec, MAX_SETUP_MATRIX_FIELD_ELEMENTS};
+use crate::proof::{RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS};
 use crate::sis::{
     InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisModulusProfileId,
     SisSecurityPolicyId, SisTableDigest,
@@ -452,10 +452,10 @@ where
                     "committed-group coefficient count overflow".to_string(),
                 )
             })?;
-        if num_coeffs > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
+        if num_coeffs > MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS {
             return Err(SerializationError::InvalidData(format!(
                 "committed-group coefficient count {num_coeffs} exceeds allocation cap \
-                 {MAX_SETUP_MATRIX_FIELD_ELEMENTS}"
+                 {MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS}"
             )));
         }
         let commitment =

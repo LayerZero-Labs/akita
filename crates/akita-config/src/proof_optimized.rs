@@ -389,7 +389,7 @@ macro_rules! impl_proof_optimized_preset {
     (@selection_policy default) => {
         fn selection_policy() -> akita_schedules::SelectionPolicyId {
             if Self::recursive_setup_planning() {
-                akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+                akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayload
             } else {
                 akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
             }

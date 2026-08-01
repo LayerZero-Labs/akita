@@ -28,6 +28,13 @@ mod tail_segments;
 #[cfg(test)]
 mod tests;
 mod wire;
+
+/// Maximum coefficients accepted from a self-describing commitment artifact.
+///
+/// This guards generic untrusted allocation. It is not a bound on the public
+/// setup stream or on a caller-validated setup package.
+pub const MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS: usize = 1 << 26;
+
 pub use crate::opening_claims::{
     sample_public_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
     PolynomialGroupClaims, PolynomialGroupLayout,
@@ -68,7 +75,7 @@ pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{
     derive_public_matrix_prefix, sample_public_matrix_id, validate_public_matrix_matches_seed,
     AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixDerivation, PublicMatrixId,
-    SetupMatrixCapacity, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    SetupMatrixCapacity, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
 pub use setup_envelope::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,

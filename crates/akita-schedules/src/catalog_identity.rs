@@ -62,7 +62,7 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(u64::from(policy.recursive_setup_planning));
     h.write_u64(u64::from(policy.cost_model.tag()));
     h.write_u64(u64::from(policy.selection_policy.tag()));
-    h.write_u64(policy.max_num_setup_field_elements as u64);
+    write_optional_usize(&mut h, policy.setup_field_budget);
     h.write_u64(policy.min_offloaded_witness_contraction as u64);
     let digest = h.finish();
     out[..8].copy_from_slice(&digest.to_le_bytes());
@@ -91,7 +91,7 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(u64::from(identity.recursive_setup_planning));
     h.write_u64(u64::from(identity.cost_model.tag()));
     h.write_u64(u64::from(identity.selection_policy.tag()));
-    h.write_u64(identity.max_num_setup_field_elements as u64);
+    write_optional_usize(&mut h, identity.setup_field_budget);
     h.write_u64(identity.min_offloaded_witness_contraction as u64);
 
     match identity.root_fold_shape {
@@ -134,7 +134,7 @@ struct CatalogIdentityExpectation {
     protocol_epoch: u32,
     cost_model: crate::PlannerCostModelId,
     selection_policy: crate::SelectionPolicyId,
-    max_num_setup_field_elements: usize,
+    setup_field_budget: Option<usize>,
     min_offloaded_witness_contraction: usize,
     sis_modulus_profile: akita_types::SisModulusProfileId,
     sis_security_policy: akita_types::SisSecurityPolicyId,
@@ -165,7 +165,7 @@ impl CatalogIdentityExpectation {
             protocol_epoch: identity.protocol_epoch,
             cost_model: identity.cost_model,
             selection_policy: identity.selection_policy,
-            max_num_setup_field_elements: identity.max_num_setup_field_elements,
+            setup_field_budget: identity.setup_field_budget,
             min_offloaded_witness_contraction: identity.min_offloaded_witness_contraction,
             sis_modulus_profile: identity.sis_modulus_profile,
             sis_security_policy: identity.sis_security_policy,
@@ -219,7 +219,7 @@ fn catalog_identity_expectation(
         protocol_epoch: AKITA_INSTANCE_DESCRIPTOR_VERSION,
         cost_model: policy.cost_model,
         selection_policy: policy.selection_policy,
-        max_num_setup_field_elements: policy.max_num_setup_field_elements,
+        setup_field_budget: policy.setup_field_budget,
         min_offloaded_witness_contraction: policy.min_offloaded_witness_contraction,
         sis_modulus_profile: policy.sis_modulus_profile,
         sis_security_policy: policy.sis_security_policy,
@@ -264,7 +264,7 @@ pub fn expected_catalog_identity(
         protocol_epoch: expected.protocol_epoch,
         cost_model: expected.cost_model,
         selection_policy: expected.selection_policy,
-        max_num_setup_field_elements: expected.max_num_setup_field_elements,
+        setup_field_budget: expected.setup_field_budget,
         min_offloaded_witness_contraction: expected.min_offloaded_witness_contraction,
         sis_modulus_profile: expected.sis_modulus_profile,
         sis_security_policy: expected.sis_security_policy,
@@ -640,6 +640,16 @@ fn write_decomposition(h: &mut Fnv64, d: akita_types::DecompositionParams) {
         Some(v) => {
             h.write_u64(1);
             h.write_u64(u64::from(v));
+        }
+        None => h.write_u64(0),
+    }
+}
+
+fn write_optional_usize(h: &mut Fnv64, value: Option<usize>) {
+    match value {
+        Some(value) => {
+            h.write_u64(1);
+            h.write_u64(value as u64);
         }
         None => h.write_u64(0),
     }

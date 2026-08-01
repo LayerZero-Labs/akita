@@ -322,7 +322,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let expected = PlannerPolicy {
         cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
         selection_policy: Cfg::selection_policy(),
-        max_num_setup_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+        setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
         uniform_ring_dimension: Cfg::D,
         setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),

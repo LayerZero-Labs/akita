@@ -1418,24 +1418,24 @@ Catalog families explicitly bind one of the current policies:
 ```rust
 pub enum SelectionPolicyId {
     MinEstimatedProofPayload,
-    MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
+    MinFirstDirectSetupThenPayload,
 }
 ```
 
 `MinEstimatedProofPayload` is the ordinary direct-only proof-byte policy.
-`MinFirstDirectSetupThenPayloadWithinSupportedEnvelope` rejects recursive
-candidates beyond `PlannerPolicy::max_setup_envelope_field_elements`, then
-compares:
+`MinFirstDirectSetupThenPayload` applies an explicit
+`PlannerPolicy::setup_field_budget` when one is configured, then compares:
 
 1. first later direct setup scan;
 2. exact estimated proof payload, including Stage 3; and
 3. the existing deterministic candidate ordering for ties.
 
 `PlannerPolicy::min_offloaded_witness_contraction` and
-`PlannerPolicy::max_setup_envelope_field_elements` are explicit generated-table
-identity inputs. The shipped policy sets them to three and
-`MAX_SETUP_MATRIX_FIELD_ELEMENTS`, respectively. Changing either value requires
-catalog regeneration and produces an identity mismatch against an older table.
+`PlannerPolicy::setup_field_budget` are explicit generated-table identity
+inputs. The shipped policy sets them to three and `None`, respectively. The
+public stream has no protocol length ceiling. Changing either policy value
+requires catalog regeneration and produces an identity mismatch against an
+older table.
 
 This is deliberately not the final Pareto planner. In particular, it does not
 claim that an offloaded schedule preserves the independently optimized direct

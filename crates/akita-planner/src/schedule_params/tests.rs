@@ -450,7 +450,7 @@ fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
         .expect("rank-one-capped comparison domain");
     let mut comparison_policy =
         policy_for_domain(policy_of::<D256OneHot>(), &rank_one_capped_domain);
-    comparison_policy.max_num_setup_field_elements = usize::MAX;
+    comparison_policy.setup_field_budget = None;
     let rank_one_capped = find_schedule(
         PolynomialGroupLayout::singleton(36),
         &comparison_policy,
@@ -591,7 +591,7 @@ fn mixed_search_validates_key_and_policy_at_entry() {
         .contains("opening group layouts must be nonempty"));
 
     let mut invalid_policy = policy;
-    invalid_policy.max_num_setup_field_elements = 0;
+    invalid_policy.setup_field_budget = Some(0);
     let error = find_schedule(
         PolynomialGroupLayout::singleton(16),
         &invalid_policy,
@@ -603,7 +603,7 @@ fn mixed_search_validates_key_and_policy_at_entry() {
     .unwrap_err();
     assert!(error
         .to_string()
-        .contains("maximum setup field capacity must be positive"));
+        .contains("explicit setup field budget must be positive"));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -646,7 +646,7 @@ fn mixed_search_applies_setup_budget_in_physical_fields() {
     .unwrap();
     let exact_fields =
         akita_types::setup_matrix_field_elements_for_schedule(&selected.schedule).unwrap();
-    policy.max_num_setup_field_elements = exact_fields - 1;
+    policy.setup_field_budget = Some(exact_fields - 1);
 
     let error = find_schedule(
         PolynomialGroupLayout::singleton(16),

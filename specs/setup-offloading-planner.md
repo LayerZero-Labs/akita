@@ -241,26 +241,27 @@ where `exact_estimated_proof_bytes` includes every Stage 3 payload. The future
 Pareto planner may replace this policy, but generated catalogs must bind whichever
 selection policy produced them.
 
-The recursive search also rejects candidates whose exact setup-matrix field
-footprint exceeds `PlannerPolicy::max_num_setup_field_elements`. The shipped
-policy sets this field to `MAX_SETUP_MATRIX_FIELD_ELEMENTS`. The contraction threshold
-is likewise explicit as `PlannerPolicy::min_offloaded_witness_contraction`, with
-a shipped value of three. Both values are candidate-feasibility inputs, so the
-generated catalog identity binds them alongside the selection policy. They are
-not hidden constants whose changes can silently reinterpret an existing table.
+The recursive search applies `PlannerPolicy::setup_field_budget` when a host
+sets it to `Some(limit)`. The shipped policy uses `None` because the
+deterministic public stream has no protocol length ceiling. An explicit host
+budget remains a candidate-feasibility input, so the generated catalog identity
+binds `None` or the exact `Some(limit)` value alongside the selection policy.
+The contraction threshold is likewise explicit as
+`PlannerPolicy::min_offloaded_witness_contraction`, with a shipped value of
+three.
 
-The field-capacity limit is a supported-runtime ceiling, not a claim that
-offloading has no storage cost relative to the independently optimized direct
-schedule. Comparing the direct and offloaded capacity–proof frontiers is explicitly
-deferred to the multi-objective planner.
+A host setup budget is an admission and resource policy. It is not a setup
+decoder allocation guard and it is not proof-system semantics. Comparing the
+direct and offloaded capacity and proof frontiers remains deferred to the
+multi-objective planner.
 
 The generated catalog binds:
 
 ```text
 cost model      = ExactPayloadAndSetupEnvelope
 direct policy   = MinEstimatedProofPayload
-recursive policy = MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-maximum setup field elements = policy.max_num_setup_field_elements
+recursive policy = MinFirstDirectSetupThenPayload
+optional setup field budget = policy.setup_field_budget
 minimum offload contraction = policy.min_offloaded_witness_contraction
 ```
 

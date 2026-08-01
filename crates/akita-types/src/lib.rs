@@ -115,7 +115,8 @@ pub use proof::{
     SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentGroupLayout,
     TailSegmentLayout, TerminalLevelProof, TerminalLevelProofShape, TerminalResponse,
     TerminalResponseGroupParts, TerminalResponseShape, TerminalWitnessTranscriptParts,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_SUMCHECK_DEGREE,
+    MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS,
+    SETUP_SUMCHECK_DEGREE,
 };
 pub use proof::{
     append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,

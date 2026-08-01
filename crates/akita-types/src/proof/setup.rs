@@ -60,10 +60,11 @@ impl From<[u8; 32]> for PublicMatrixId {
 /// Maximum setup matrix field elements accepted by self-describing setup
 /// deserialization.
 ///
-/// Config-backed cache paths should enforce tighter exact shape bounds before
-/// decoding the matrix body. This cap protects generic verifier-facing setup
-/// decoding from allocating directly from attacker-controlled seed metadata.
-pub const MAX_SETUP_MATRIX_FIELD_ELEMENTS: usize = 1 << 26;
+/// This cap protects generic verifier-facing setup decoding from allocating
+/// directly from attacker-controlled seed metadata. It is not a protocol limit
+/// on the deterministic public stream. Context-backed decoders should instead
+/// enforce an expected shape and caller-supplied resource budget.
+pub const MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS: usize = 1 << 26;
 
 const PUBLIC_MATRIX_DOMAIN: &[u8] = b"akita/commitment/public-field-stream";
 const PUBLIC_MATRIX_DERIVATION_TAG: &[u8] = b"shake256-paged-v1";
@@ -134,7 +135,12 @@ impl<F: FieldCore> PartialEq for AkitaVerifierSetup<F> {
 impl<F: FieldCore> Eq for AkitaVerifierSetup<F> {}
 
 impl<F: FieldCore> AkitaVerifierSetup<F> {
-    /// Construct verifier setup state from validated expanded setup and prefix metadata.
+    /// Construct verifier setup state from expanded setup and structurally checked prefix metadata.
+    ///
+    /// This constructor binds the registry to the public matrix identity. It
+    /// does not prove that each stored prefix commitment was derived from that
+    /// matrix. Callers loading external registries must establish that
+    /// provenance at their setup-installation boundary.
     pub fn from_parts(
         expanded: Arc<AkitaExpandedSetup<F>>,
         prefix_slots: SetupPrefixVerifierRegistry<F>,
@@ -597,7 +603,7 @@ impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaDeserialize<C
             compress,
             validate,
             seed.num_field_elements,
-            MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+            MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
         )?;
         if matches!(validate, Validate::Yes) {
             Self::from_verified_parts(seed, shared_matrix)
@@ -854,12 +860,12 @@ mod tests {
         let setup_seed = AkitaSetupSeed {
             max_num_vars: 32,
             max_num_batched_polys: 1,
-            num_field_elements: MAX_SETUP_MATRIX_FIELD_ELEMENTS + 1,
+            num_field_elements: MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS + 1,
             public_matrix_id: [7u8; 32].into(),
         };
 
         setup_seed.check().unwrap();
-        assert!(setup_seed.num_field_elements > MAX_SETUP_MATRIX_FIELD_ELEMENTS);
+        assert!(setup_seed.num_field_elements > MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS);
     }
 
     #[test]
@@ -867,7 +873,7 @@ mod tests {
         let setup_seed = AkitaSetupSeed {
             max_num_vars: 32,
             max_num_batched_polys: 1,
-            num_field_elements: MAX_SETUP_MATRIX_FIELD_ELEMENTS + 1,
+            num_field_elements: MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS + 1,
             public_matrix_id: [7u8; 32].into(),
         };
         let mut bytes = Vec::new();
@@ -878,7 +884,7 @@ mod tests {
         assert!(matches!(
             err,
             SerializationError::LengthLimitExceeded { max, .. }
-                if max == MAX_SETUP_MATRIX_FIELD_ELEMENTS
+                if max == MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS
         ));
     }
 

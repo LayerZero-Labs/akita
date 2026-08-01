@@ -18,7 +18,7 @@ use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
     AkitaVerifierSetup, CommittedGroup, FlatMatrix, GroupBatchStatement, OpeningClaims,
     OpeningScheduleSelection, PolynomialGroupClaims, SetupPrefixVerifierRegistry,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
 
@@ -306,10 +306,10 @@ where
         let seed =
             AkitaSetupSeed::deserialize_with_mode(&mut *rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
         let matrix_fields = seed.num_field_elements;
-        if matrix_fields > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
+        if matrix_fields > MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS {
             return Err(SerializationError::LengthLimitExceeded {
                 len: u64::try_from(matrix_fields).unwrap_or(u64::MAX),
-                max: MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+                max: MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
             });
         }
         Self::check_setup_matrix_bytes_available(rest, matrix_fields)?;
@@ -318,7 +318,7 @@ where
             BLOB_COMPRESS,
             BLOB_VALIDATE,
             seed.num_field_elements,
-            MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+            MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
         )?;
         Ok((seed, shared_matrix))
     }

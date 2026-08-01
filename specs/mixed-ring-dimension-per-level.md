@@ -260,7 +260,7 @@ The shipped selection policies are:
 | Policy | Current comparison |
 |---|---|
 | `MinEstimatedProofPayload` | Direct schedules: exact proof payload only |
-| `MinFirstDirectSetupThenPayloadWithinSupportedEnvelope` | Recursive setup schedules: first later direct setup scan, then exact proof payload, subject to an envelope cap |
+| `MinFirstDirectSetupThenPayload` | Recursive setup schedules: first later direct setup scan, then exact proof payload, subject to an optional host budget |
 
 The ordinary direct policy computes a setup envelope but does not use it for
 selection. The fp128 `best_dense_schedule` and `best_onehot_schedule` helpers
@@ -416,9 +416,10 @@ generated-row replay, and flat matrix allocation all consume the same physical
 field-element quantity. The old ring-element conversion is retained only in
 the historical snapshot below.
 
-The policy's setup ceiling uses the same field-element unit through
-`max_num_setup_field_elements`; the historical
-`max_setup_envelope_field_elements` name is removed.
+An optional host setup budget uses the same field-element unit through
+`setup_field_budget`. The shipped policy is uncapped. The historical
+`max_setup_envelope_field_elements` and `max_num_setup_field_elements` names
+are removed.
 
 ### Per-level candidate derivation
 

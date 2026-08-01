@@ -22,7 +22,6 @@ use akita_types::{
     detect_field_modulus, digest_effective_schedule, public_matrix_id_digest,
     sample_public_matrix_id, AkitaScheduleLookupKey, AkitaSetupSeed, FlatMatrix,
     PolynomialGroupLayout, PublicMatrixId, SetupPrefixProverRegistry,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 #[cfg(test)]
 use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
@@ -45,7 +44,7 @@ static CACHE_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 static PUBLIC_MATRIX_CACHE_WRITE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[cfg(feature = "disk-persistence")]
-fn validate_loaded_prefix_registry<F, Cfg>(
+fn validate_loaded_prefix_registry_coverage<F, Cfg>(
     setup: &AkitaProverSetup<F>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -92,7 +91,7 @@ where
     {
         match load_prover_setup::<F, Cfg>(max_num_vars, max_num_batched_polys) {
             Ok(setup) => {
-                validate_loaded_prefix_registry::<F, Cfg>(
+                validate_loaded_prefix_registry_coverage::<F, Cfg>(
                     &setup,
                     max_num_vars,
                     max_num_batched_polys,
@@ -334,7 +333,8 @@ pub(crate) fn save_prover_setup<
 ) -> Result<(), AkitaError> {
     // `setup` was just derived inside this crate. Re-deriving and comparing
     // every field element here would repeat the full setup-generation pass;
-    // untrusted cache bytes are validated on load instead.
+    // public-matrix cache bytes are deterministically validated on load.
+    // Prefix-registry provenance is a separate setup-validation boundary.
     let public_matrix_path =
         get_public_matrix_storage_path::<F>(&setup.expanded.seed().public_matrix_id)?;
     let Some(prefix_registry_path) =
@@ -507,8 +507,12 @@ pub(crate) fn load_prover_setup<
         expanded: Arc::new(expanded),
         prefix_slots,
     };
-    if validate_loaded_prefix_registry::<F, Cfg>(&setup, max_num_vars, max_num_batched_polys)
-        .is_err()
+    if validate_loaded_prefix_registry_coverage::<F, Cfg>(
+        &setup,
+        max_num_vars,
+        max_num_batched_polys,
+    )
+    .is_err()
     {
         setup.prefix_slots =
             SetupPrefixProverRegistry::new(setup.expanded.seed().public_matrix_id.clone());
@@ -545,12 +549,6 @@ fn deserialize_cached_public_matrix<F: FieldCore + Valid + AkitaDeserialize<Cont
         return Err(SerializationError::InvalidData(
             "cached public matrix prefix does not cover the requested field capacity".to_string(),
         ));
-    }
-    if num_field_elements > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
-        return Err(SerializationError::LengthLimitExceeded {
-            len: u64::try_from(num_field_elements).unwrap_or(u64::MAX),
-            max: MAX_SETUP_MATRIX_FIELD_ELEMENTS,
-        });
     }
     let shared_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
         &mut *reader,
@@ -698,6 +696,30 @@ mod tests {
             let matrix = public_matrix_cache_file_name::<TestF>(&sample_public_matrix_id())
                 .expect("matrix cache name");
             assert!(matrix.contains("flat_v3_"), "cache name: {matrix}");
+        }
+
+        #[test]
+        fn config_backed_cache_does_not_apply_generic_setup_decode_limit() {
+            let public_matrix_id = sample_public_matrix_id();
+            let claimed_fields = akita_types::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS + 1;
+            let mut bytes = Vec::new();
+            public_matrix_id.serialize_compressed(&mut bytes).unwrap();
+            claimed_fields.serialize_compressed(&mut bytes).unwrap();
+
+            let error = deserialize_cached_public_matrix::<TestF>(
+                &mut bytes.as_slice(),
+                claimed_fields,
+                &public_matrix_id,
+            )
+            .unwrap_err();
+            assert!(
+                !matches!(
+                    error,
+                    SerializationError::LengthLimitExceeded { max, .. }
+                        if max == akita_types::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS
+                ),
+                "config-backed cache decoder reused the generic setup limit"
+            );
         }
 
         #[test]

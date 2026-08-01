@@ -4,7 +4,7 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-31 |
-| Status        | implemented |
+| Status        | implemented; compact provenance certificates and large-artifact I/O are explicit follow-ups |
 | PR            | #341, stacked on #338 |
 | Supersedes    | The setup-generation-dimension and full-envelope NTT-cache contracts in `runtime-ring-cutover.md`, `mixed-ring-dimension-per-level.md`, and `setup-layout-repack.md`; the packed overlapping-prefix matrix layout itself remains authoritative |
 | Superseded-by | |
@@ -166,6 +166,127 @@ shape of the base public matrix.
 
 Backend-prepared NTT data is not part of `AkitaProverSetup`,
 `AkitaVerifierSetup`, equality, serialization, or transcript identity.
+
+### Setup provenance and validation
+
+Akita has transparent public parameters. There is no secret ceremony output to
+trust. This does not mean that arbitrary serialized setup artifacts are safe to
+accept. A verifier must distinguish three separate claims:
+
+1. `PublicMatrixId` names the intended deterministic stream under the intended
+   field and derivation version.
+2. A setup-prefix commitment is the exact commitment to the stated natural
+   prefix of that stream, with the stated zero padding and commitment
+   parameters.
+3. The bytes loaded by this process are the same bytes that previously passed
+   the required validation.
+
+The first claim follows from protocol identity. The second is a derivation
+claim and needs computation or a proof. The third is an artifact authentication
+claim. A checksum only detects accidental corruption. A pinned digest or
+signature authenticates bytes, but it inherits the trust placed in whoever
+validated and authenticated those bytes. Package authentication is therefore
+an allowed deployment mechanism, not the final transparent provenance model.
+
+Direct validation derives the public stream and recomputes the commitment. It
+can use bounded working memory, but its time is linear in the natural prefix.
+Random spot checks do not prove equality of a commitment to the complete
+prefix. Random linear checks also do not avoid reading the complete SHAKE
+stream unless an additional authenticated algebraic structure is introduced.
+Independent recomputations improve operational assurance, but they do not
+change the statement that the verifier itself has checked.
+
+The target compact validation mechanism is a certificate chain. For every
+setup-prefix slot `i`, a certificate proves this statement:
+
+```text
+C_i = Commit(
+    S_F,id[0 .. natural_len_i] || zero padding,
+    slot_id_i.commitment_params
+)
+```
+
+The certified transcript MUST bind at least:
+
+- the field and complete `PublicMatrixId`;
+- the certificate protocol version and domain separator;
+- the exact bytes or a cryptographic canonical digest of `C_i`;
+- the complete slot ID, natural length, padded length, and commitment
+  parameters;
+- the predecessor and successor certificate identities when this is a chained
+  level.
+
+A certificate MAY use a smaller setup-prefix commitment `C_(i+1)` as the
+preprocessed setup for checking the proof about `C_i`. The proof at level `i`
+must establish the complete derivation statement above, while the next level
+establishes the corresponding statement for `C_(i+1)`. Every step MUST
+strictly reduce the natural prefix that remains to be checked. The final
+certificate MUST end at a small prefix that the validator derives directly
+from `PublicMatrixId`. This terminal direct check is the cryptographic trust
+anchor. A release signature, protected local key, or pinned package digest may
+authenticate an already validated package for fast restart, but none of them
+replaces this derivation chain in the transparent model.
+
+The lifecycle has three distinct phases:
+
+1. A setup builder materializes large prefixes, computes commitments, and
+   produces any validation certificates.
+2. Setup installation or first use validates the direct prefix or certificate
+   chain and constructs `ValidatedVerifierSetup` state.
+3. Per-proof verification accepts only validated state. It MUST NOT rescan a
+   large public prefix, parse an unvalidated registry, or validate the full
+   certificate chain on the proof hot path.
+
+Persisting a marker that says "validated" is sufficient only when the host can
+protect that marker and bind it to the exact package bytes. If an attacker can
+replace both the package and marker, startup must revalidate, verify an
+authenticated package digest, or verify the certificate chain.
+
+This PR does not choose the concrete certificate proof system. Akita recursion,
+a specialized algebraic proof, and another succinct proof system are all
+possible. The choice requires a measured comparison of certificate size,
+builder time, installation time, terminal direct-prefix size, implementation
+complexity, and recursion assumptions. This PR fixes the statement, bindings,
+trust anchor, and lifecycle so that this later choice cannot weaken
+provenance or move setup work into per-proof verification.
+
+#### Current implementation boundary
+
+The public-matrix disk cache checks its identity, shape, field encoding, and
+every coefficient against the deterministic stream when it is loaded. The
+setup-prefix registry checks encoding, identity, geometry, and required-slot
+completeness. It does not currently recompute each stored commitment or verify
+a derivation certificate. The current registry is therefore structurally
+validated, not fully provenance validated.
+
+The compact `ValidatedVerifierSetup` boundary and certificate chain are
+explicitly deferred. Until they exist, a deployment that loads a persisted
+setup-prefix registry must either recompute its commitments from the public
+stream or state the operational trust root that authenticated the package. The
+implementation and documentation MUST NOT describe structural registry checks
+alone as semantic validation.
+
+### Large materializations and resource policy
+
+The public stream has no protocol length ceiling. The current paged derivation
+encodes the page index as `u64`, and serialized lengths use checked `u64`
+encoding. Ten billion field elements do not approach that index space. The
+Rust materialization APIs currently use `usize`, so multi-gigabyte prefixes
+require a 64-bit host.
+
+An infinite stream does not authorize an untrusted input to choose an
+allocation. The config-backed public-matrix cache has an expected lineage and
+requested minimum shape, so it is not governed by the generic self-describing
+decode constant. Generic verifier-facing setup and commitment decoders retain
+separately named allocation guards in this PR. Their long-term replacement is
+a decode context that supplies expected identity, expected shape, and a host
+byte budget before allocation.
+
+Supporting ordinary 10 GB to 20 GB setup artifacts also requires paged,
+streamed, or mapped storage. A larger covering cache should be able to serve a
+smaller request without materializing its unused suffix. These storage and
+context-aware decode changes are explicitly deferred. They are resource and
+availability work, not changes to public-stream or proof semantics.
 
 ### Public-matrix derivation
 
@@ -776,9 +897,14 @@ replace it only when the candidate is a strict prefix extension. The resident
 base prefix therefore forms a monotone max-join and cannot shrink under racing
 small and large requests.
 
-Loading MUST validate all lengths before allocation and verify that serialized
-coefficients equal the deterministic flat stream. Validation SHOULD stream by
-page or bounded chunk rather than allocate a second full expected matrix.
+Before untrusted context-backed cache loading becomes a supported large-artifact
+path, loading MUST validate all lengths against an expected shape or host
+resource budget before allocation and verify that serialized coefficients
+equal the deterministic flat stream. Validation SHOULD stream by page or
+bounded chunk rather than allocate a second full expected matrix. The current
+config-backed loader removes the stale generic 67,108,864-field ceiling, but
+context-aware allocation and partial loading of larger covering artifacts
+remain deferred as described above.
 Writing SHOULD use an atomic temporary-file replacement. The cache namespace
 MUST be bumped; old generation-D cache files are rejected and regenerated.
 
@@ -805,6 +931,8 @@ admitted schedule universe.
 
 - Public coefficients are determined only by `(field, PublicMatrixId, flat
   index)`.
+- The public stream has no protocol length ceiling. Resource limits belong to
+  a host policy or a decode boundary.
 - A larger materialization is a strict prefix extension of a smaller one.
 - Matrix capacity, planner setup cost, and runtime coverage use base-field
   elements as their canonical unit.
@@ -813,6 +941,8 @@ admitted schedule universe.
 - A/B/D role matrices overlap at flat index zero across roles, groups, levels,
   chunks, and dimensions.
 - Setup-prefix zero padding is protocol data, not public randomness.
+- Per-proof verification consumes validated setup state and never performs a
+  large setup provenance check on its hot path.
 - The effective schedule is the sole owner of protocol ring dimensions.
 - Materialization capacity and backend cache state do not change proof or
   transcript bytes.

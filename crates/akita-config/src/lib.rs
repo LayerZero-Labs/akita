@@ -128,7 +128,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     PlannerPolicy {
         cost_model: akita_schedules::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
         selection_policy: Cfg::selection_policy(),
-        max_num_setup_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+        setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
         uniform_ring_dimension: Cfg::D,
         setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),
@@ -323,7 +323,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// from a ring dimension.
     fn selection_policy() -> akita_schedules::SelectionPolicyId {
         if Self::recursive_setup_planning() {
-            akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+            akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayload
         } else {
             akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
         }

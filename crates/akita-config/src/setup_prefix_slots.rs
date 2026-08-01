@@ -259,13 +259,6 @@ mod tests {
     fn recursive_requirements_match_successor_slot_identity() {
         let key = profiling_recursive_key();
         let schedule = SetupCfg::runtime_schedule(key.clone()).expect("recursive schedule");
-        let capacity =
-            akita_types::setup_matrix_capacity_for_schedule(&schedule).expect("setup capacity");
-        let capacity_field_elements = capacity.num_field_elements;
-        assert!(
-            capacity_field_elements <= akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
-            "selected recursive schedule exceeds the supported setup capacity"
-        );
         let ids = extract_setup_prefix_slot_ids_from_schedule(
             &schedule,
             &key.opening_layout().expect("layout"),
