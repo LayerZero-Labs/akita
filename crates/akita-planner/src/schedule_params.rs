@@ -223,12 +223,20 @@ fn witness_partition(num_chunks: usize) -> WitnessPartition {
 /// Returns [`AkitaError::InvalidSetup`] for an invalid [`akita_types::ChunkedWitnessCfg`], or
 /// `num_activated_levels` beyond the planner recursion cap. Verifier-reachable: never panics.
 pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    let expected_selection_policy = if policy.recursive_setup_planning {
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-    } else {
-        crate::SelectionPolicyId::MinEstimatedProofPayload
-    };
-    if policy.selection_policy != expected_selection_policy {
+    let selection_policy_matches_mode = matches!(
+        (policy.recursive_setup_planning, policy.selection_policy),
+        (
+            true,
+            crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope { .. },
+        ) | (false, crate::SelectionPolicyId::MinEstimatedProofPayload)
+            | (
+                false,
+                crate::SelectionPolicyId::MinRootRankThenPayloadWithinSlack {
+                    slack_permille: 1..,
+                },
+            )
+    );
+    if !selection_policy_matches_mode {
         return Err(AkitaError::InvalidSetup(
             "planner selection policy disagrees with recursive setup capability".to_string(),
         ));
@@ -524,7 +532,7 @@ fn find_schedule_inner(
         .ok_or_else(|| AkitaError::InvalidSetup("witness too large".into()))?;
 
     let field_bits = policy.decomposition.field_bits();
-    let mut best: Option<CandidateScheduleChoice> = None;
+    let mut candidates = Vec::new();
     let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: 0,
@@ -635,28 +643,57 @@ fn find_schedule_inner(
                     &mut root_envelope,
                 )?;
                 let setup_envelope = root_envelope.max(suffix_fold.setup_envelope_ring_elements);
-                if best.as_ref().is_none_or(|best| total < best.total_bytes) {
-                    let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
-                    folds.push(CandidateFoldStep {
-                        params: candidate_params.clone(),
-                        input_witness_len: witness_len,
-                        output_witness_len,
-                        estimated_direct_payload_bytes: root_proof_size,
-                        estimated_stage3_payload_bytes: 0,
-                    });
-                    folds.extend(suffix_fold.folds.iter().cloned());
-                    best = Some(CandidateScheduleChoice {
-                        first_direct_setup_field_len: None,
-                        total_bytes: total,
-                        setup_envelope_ring_elements: setup_envelope,
-                        folds,
-                        terminal: suffix_fold.terminal.clone(),
-                    });
-                }
+                let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
+                folds.push(CandidateFoldStep {
+                    params: candidate_params.clone(),
+                    input_witness_len: witness_len,
+                    output_witness_len,
+                    estimated_direct_payload_bytes: root_proof_size,
+                    estimated_stage3_payload_bytes: 0,
+                });
+                folds.extend(suffix_fold.folds.iter().cloned());
+                candidates.push(CandidateScheduleChoice {
+                    first_direct_setup_field_len: None,
+                    total_bytes: total,
+                    setup_envelope_ring_elements: setup_envelope,
+                    folds,
+                    terminal: suffix_fold.terminal.clone(),
+                });
             }
         }
     }
 
+    let best = match policy.selection_policy {
+        crate::SelectionPolicyId::MinEstimatedProofPayload => candidates
+            .into_iter()
+            .min_by_key(|candidate| candidate.total_bytes),
+        crate::SelectionPolicyId::MinRootRankThenPayloadWithinSlack { slack_permille } => {
+            let min_payload = candidates
+                .iter()
+                .map(|candidate| candidate.total_bytes)
+                .min();
+            min_payload.and_then(|min_payload| {
+                let max_payload = (min_payload as u128)
+                    .saturating_mul(1_000 + u128::from(slack_permille))
+                    .div_ceil(1_000)
+                    .min(usize::MAX as u128) as usize;
+                candidates
+                    .into_iter()
+                    .filter(|candidate| candidate.total_bytes <= max_payload)
+                    .min_by_key(|candidate| {
+                        (
+                            candidate.folds.first().map_or(usize::MAX, |fold| {
+                                fold.params.inner_commit_matrix.output_rank()
+                            }),
+                            candidate.total_bytes,
+                        )
+                    })
+            })
+        }
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
+            ..
+        } => None,
+    };
     let Some(best) = best else {
         return Err(AkitaError::UnsupportedSchedule(format!(
             "no schedule with at least two folds for num_vars={}, num_polynomials={}",
