@@ -4,6 +4,7 @@
 //! point reductions, per-level parameter shapes, commitment API contracts, and
 //! generated schedule/SIS data shared by prover, verifier, and planner code.
 
+pub mod compression;
 pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod dispatch;
@@ -34,6 +35,11 @@ pub mod transcript;
 pub mod witness;
 
 pub use akita_challenges::TensorChallengeShape;
+pub use compression::{
+    CompressionChainPlan, CompressionChainWitness, CompressionMapPlan, CompressionPolicyId,
+    CompressionTerminalPayload, PackedNegativeBinary, COMPRESSION_MAP_COUNT, COMPRESSION_POLICY,
+    COMPRESSION_TARGET_BYTES, MAX_COMPRESSION_INPUT_BYTES,
+};
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
     check_extension_opening_reduction_output, checked_table_len,

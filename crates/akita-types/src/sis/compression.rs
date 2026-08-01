@@ -1,15 +1,15 @@
-//! Narrow SIS coverage for diagnostic compressed commitments.
+//! Narrow SIS coverage for production compressed commitments.
 //!
 //! This coverage is deliberately separate from the production A/B/D matrix
-//! roles and schedule identity. It prices only the nine rank-one F/H cells
-//! exercised by the 1--16 KiB shadow compression path.
+//! roles and schedule identity. It prices only the six rank-one F/H cells used
+//! by the fixed two-map protocol.
 
 use super::{SisModulusProfileId, SisSecurityPolicyId};
 
 /// Coefficient infinity norm of a negative-binary compression matrix.
 pub const COMPRESSION_SIS_COEFF_LINF_BOUND: u128 = 1;
 
-/// One exact cell in the diagnostic compressed-commitment SIS surface.
+/// One exact cell in the compressed-commitment SIS surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompressionSisCell {
     /// Exact SIS modulus profile.
@@ -20,20 +20,17 @@ pub struct CompressionSisCell {
     pub sis_max_width: u64,
 }
 
-/// Nine rank-one cells: `(profile, ring_dimension, sis_max_width)`.
+/// Six rank-one cells: `(profile, ring_dimension, sis_max_width)`.
 const COMPRESSION_SIS_CELLS: &[(SisModulusProfileId, u32, u64)] = &[
     (SisModulusProfileId::Q128OffsetA7F7, 8, 508),
     (SisModulusProfileId::Q128OffsetA7F7, 16, 7_077),
-    (SisModulusProfileId::Q128OffsetA7F7, 32, 4_096),
     (SisModulusProfileId::Q64Offset59, 16, 254),
     (SisModulusProfileId::Q64Offset59, 32, 3_538),
-    (SisModulusProfileId::Q64Offset59, 64, 2_048),
     (SisModulusProfileId::Q32Offset99, 32, 127),
     (SisModulusProfileId::Q32Offset99, 64, 1_769),
-    (SisModulusProfileId::Q32Offset99, 128, 1_024),
 ];
 
-/// Return the exact diagnostic compression cell, if it is in scope.
+/// Return the exact production compression cell, if it is in scope.
 #[must_use]
 pub fn compression_sis_cell(
     modulus_profile: SisModulusProfileId,
@@ -58,7 +55,7 @@ pub fn compression_sis_cell(
 
 /// Minimum ADPS16-quantum-secure module rank for one compression matrix.
 ///
-/// The diagnostic ladder is structurally rank one, so this returns `Some(1)`
+/// The compression protocol is structurally rank one, so this returns `Some(1)`
 /// iff `width` is nonzero and at most the cell's SIS-certified max width.
 #[must_use]
 pub fn min_compression_secure_rank(
@@ -82,15 +79,18 @@ mod tests {
     use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
     #[test]
-    fn coverage_is_exactly_the_nine_rank_one_compression_cells() {
-        assert_eq!(COMPRESSION_SIS_CELLS.len(), 9);
+    fn coverage_is_exactly_the_six_rank_one_compression_cells() {
+        assert_eq!(COMPRESSION_SIS_CELLS.len(), 6);
         for &(profile, d, _) in COMPRESSION_SIS_CELLS {
             assert!(compression_sis_cell(profile, d, 1).is_some());
         }
 
         assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 64, 1).is_none());
+        assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 32, 1).is_none());
         assert!(compression_sis_cell(SisModulusProfileId::Q64Offset59, 8, 1).is_none());
+        assert!(compression_sis_cell(SisModulusProfileId::Q64Offset59, 64, 1).is_none());
         assert!(compression_sis_cell(SisModulusProfileId::Q32Offset99, 16, 1).is_none());
+        assert!(compression_sis_cell(SisModulusProfileId::Q32Offset99, 128, 1).is_none());
         assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 8, 2).is_none());
         assert_eq!(
             compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 16, 1)
@@ -135,12 +135,9 @@ mod tests {
         use crate::{prepare_compression_ntt_cache, FlatMatrix};
         use akita_algebra::CyclotomicRing;
 
-        // Dims that sit in both the protocol NTT band and the compression ladder.
-        assert!(!ntt_cache_requires_i16_tail::<Prime128OffsetA7F7, 32>(4_096, 1).unwrap());
+        // First-map dimensions sit in both the protocol NTT band and the compression ladder.
         assert!(!ntt_cache_requires_i16_tail::<Prime128OffsetA7F7, 16>(4_096, 1).unwrap());
-        assert!(!ntt_cache_requires_i16_tail::<Prime64Offset59, 64>(2_048, 1).unwrap());
         assert!(!ntt_cache_requires_i16_tail::<Prime64Offset59, 32>(2_048, 1).unwrap());
-        assert!(!ntt_cache_requires_i16_tail::<Prime32Offset99, 128>(1_024, 1).unwrap());
         assert!(!ntt_cache_requires_i16_tail::<Prime32Offset99, 64>(1_024, 1).unwrap());
 
         // Compression-only dims must use the purpose-aware prep path.
