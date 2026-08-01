@@ -365,29 +365,10 @@ pub(super) fn find_schedule(
         }
     }
 
-    let mut scored = complete
-        .into_iter()
-        .filter(|candidate| policy.admits_setup_field_elements(candidate.setup_field_elements))
-        .map(|candidate| {
-            let descriptor = candidate_schedule_descriptor_bytes(&candidate)?;
-            Ok((
-                candidate.setup_field_elements,
-                candidate.total_bytes,
-                descriptor,
-                candidate,
-            ))
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-    scored.sort_by(|left, right| match policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayload => {
-            (&left.1, &left.0, &left.2).cmp(&(&right.1, &right.0, &right.2))
-        }
-        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-        | crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
-            (&left.0, &left.1, &left.2).cmp(&(&right.0, &right.1, &right.2))
-        }
-    });
-    let Some((_, _, _, selected)) = scored.into_iter().next() else {
+    let supported = complete
+        .iter()
+        .filter(|candidate| policy.admits_setup_field_elements(candidate.setup_field_elements));
+    let Some(selected) = select_complete_candidate(policy, supported)?.cloned() else {
         return Err(AkitaError::UnsupportedSchedule(
             "unpruned traversal found no complete schedule".into(),
         ));

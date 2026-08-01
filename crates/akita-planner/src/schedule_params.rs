@@ -33,6 +33,7 @@ use crate::PlannerPolicy;
 
 mod candidate;
 mod mixed_search;
+mod objective;
 mod setup_score;
 mod suffix_dp;
 #[cfg(feature = "test-support")]
@@ -45,6 +46,7 @@ pub(crate) use candidate::{
     derive_candidate_level_params, derive_candidate_level_params_all_splits,
     planned_next_witness_len, scalar_root_fold_level_params_candidate,
 };
+pub(crate) use objective::{complete_schedule_score, select_complete_candidate};
 pub(crate) use setup_score::{
     level_setup_field_elements, terminal_setup_field_elements, MixedScore,
 };
@@ -147,6 +149,18 @@ impl ScheduleCandidate {
 
     pub(crate) fn first_direct_setup_field_len_or_max(&self) -> usize {
         self.first_direct_setup_field_len.unwrap_or(usize::MAX)
+    }
+
+    pub(crate) fn direct_frontier_score(&self) -> (usize, usize) {
+        (self.total_bytes, self.setup_field_elements)
+    }
+
+    pub(crate) fn recursive_setup_frontier_score(&self) -> (usize, usize, usize) {
+        (
+            self.first_direct_setup_field_len_or_max(),
+            self.total_bytes,
+            self.setup_field_elements,
+        )
     }
 }
 
@@ -281,7 +295,9 @@ pub(crate) fn materialize_candidate_schedule(
     Ok(PlannedFoldSchedule { schedule, estimate })
 }
 
-fn candidate_schedule_descriptor_bytes(choice: &ScheduleCandidate) -> Result<Vec<u8>, AkitaError> {
+pub(crate) fn candidate_schedule_descriptor_bytes(
+    choice: &ScheduleCandidate,
+) -> Result<Vec<u8>, AkitaError> {
     Ok(materialize_candidate_schedule(
         choice.total_bytes,
         choice.setup_field_elements,
@@ -655,7 +671,7 @@ pub fn plan_optimal_suffix(
     let best = result
         .best_by_payload_per_lb
         .values()
-        .min_by_key(|suffix| suffix.total_bytes)
+        .min_by_key(|suffix| suffix.direct_frontier_score())
         .ok_or_else(|| {
             AkitaError::UnsupportedSchedule(format!(
                 "no terminating suffix for witness_len={start_witness_len} at level {start_level}"
@@ -849,12 +865,10 @@ fn find_schedule_inner(
                     folds,
                     terminal: suffix_fold.terminal.clone(),
                 };
+                let candidate_score = complete_schedule_score(policy, &candidate)?;
                 let replace = match &best {
                     None => true,
-                    Some(current) => {
-                        (candidate.total_bytes, candidate.setup_field_elements)
-                            < (current.total_bytes, current.setup_field_elements)
-                    }
+                    Some(current) => candidate_score < complete_schedule_score(policy, current)?,
                 };
                 if replace {
                     best = Some(candidate);

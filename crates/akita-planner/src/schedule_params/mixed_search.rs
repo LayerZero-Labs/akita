@@ -408,22 +408,7 @@ pub(super) fn find_schedule(
         }
     }
 
-    let mut scored = complete
-        .into_iter()
-        .map(|candidate| {
-            let descriptor = candidate_schedule_descriptor_bytes(&candidate)?;
-            Ok((
-                MixedScore {
-                    setup_field_elements: candidate.setup_field_elements,
-                    proof_bytes: candidate.total_bytes,
-                },
-                descriptor,
-                candidate,
-            ))
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-    scored.sort_by(|left, right| (&left.0, &left.1).cmp(&(&right.0, &right.1)));
-    let Some((_, _, selected)) = scored.into_iter().next() else {
+    let Some(selected) = select_complete_candidate(policy, complete.iter())?.cloned() else {
         return Err(AkitaError::UnsupportedSchedule(format!(
             "no mixed-D schedule with at least two folds for num_vars={}, num_polynomials={}",
             key.num_vars(),

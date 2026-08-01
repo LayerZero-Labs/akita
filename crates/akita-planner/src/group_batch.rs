@@ -16,8 +16,8 @@ use akita_types::{
 
 use crate::schedule_params::{
     derive_optimal_suffix_schedule, find_schedule, materialize_candidate_schedule,
-    optimize_fold_challenge_shape, validate_policy, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
-    SuffixState,
+    optimize_fold_challenge_shape, select_complete_candidate, validate_policy,
+    RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -610,24 +610,17 @@ fn find_group_batch_schedule_inner(
         0,
     )?;
     let best = match policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayload => suffix
-            .best_by_payload_per_lb
-            .values()
-            .min_by_key(|candidate| candidate.total_bytes),
+        crate::SelectionPolicyId::MinEstimatedProofPayload => {
+            select_complete_candidate(policy, suffix.best_by_payload_per_lb.values())?
+        }
         crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
             return Err(AkitaError::UnsupportedSchedule(
                 "mixed ring-dimension selection is not supported for multi-group roots".to_string(),
             ));
         }
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => suffix
-            .best_by_first_direct_setup_per_lb
-            .values()
-            .min_by_key(|candidate| {
-                (
-                    candidate.first_direct_setup_field_len_or_max(),
-                    candidate.total_bytes,
-                )
-            }),
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
+            select_complete_candidate(policy, suffix.best_by_first_direct_setup_per_lb.values())?
+        }
     };
 
     let Some(best) = best.cloned() else {

@@ -231,15 +231,12 @@ fn update_candidate_frontiers(
     let outer_payload_bytes = first_outer_payload_bytes(policy, &candidate)?;
     let improves_setup = objectives.first_direct_setup_then_payload
         && best_by_setup.get(&outer_payload_bytes).is_none_or(|best| {
-            (
-                candidate.first_direct_setup_field_len_or_max(),
-                candidate.total_bytes,
-            ) < (best.first_direct_setup_field_len_or_max(), best.total_bytes)
+            candidate.recursive_setup_frontier_score() < best.recursive_setup_frontier_score()
         });
     let improves_payload = objectives.payload
         && best_by_payload
             .get(&outer_payload_bytes)
-            .is_none_or(|best| candidate.total_bytes < best.total_bytes);
+            .is_none_or(|best| candidate.direct_frontier_score() < best.direct_frontier_score());
     if improves_setup {
         best_by_setup.insert(outer_payload_bytes, candidate.clone());
     }

@@ -472,9 +472,25 @@ payload. Successor witness length comes only from `WitnessLayout`. Setup
 capacity includes compression prefixes only for compressed levels.
 
 The planner uses the exact monotone cutover search with proof bytes as its
-primary objective. Equal-byte complete schedules are ranked by the smaller
-physical setup envelope before the canonical descriptor tie-break. This avoids
-paying setup, prover, verifier, or memory cost that buys no proof reduction.
+primary objective. Direct complete schedules use the strict lexicographic
+order
+
+```text
+(exact proof bytes, physical setup field elements, canonical descriptor)
+```
+
+The direct suffix frontier retains the same first two coordinates. Grouped,
+standalone, exhaustive, and generated catalog paths use the same complete
+selector, so equivalent searches cannot disagree because of traversal order.
+This avoids paying setup, prover, verifier, or memory cost that buys no proof
+reduction.
+
+This policy does not use a proof byte tolerance and does not rank fold count.
+A bounded proof byte window, fold count preference, or unified multiobjective
+frontier is a separate planner policy change. It requires a new policy
+identifier, regenerated schedules, and its own proof-size and performance
+census.
+
 The measured optimum retained four compressed folds for fp128 dense and five
 for fp128 onehot. Performance work must preserve the selected proof bytes and
 schedule-bound monotone compressed-prefix/raw-suffix contract. A future change
