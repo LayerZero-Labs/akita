@@ -240,6 +240,11 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
 }
 
 fn validate_ring_dimension_candidates(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    if policy.ring_dimension == 0 || !policy.ring_dimension.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "setup generation dimension must be a nonzero power of two".to_string(),
+        ));
+    }
     let candidates = policy.ring_dimension_candidates;
     if candidates.is_empty() {
         return Err(AkitaError::InvalidSetup(

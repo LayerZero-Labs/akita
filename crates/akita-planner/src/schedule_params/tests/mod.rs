@@ -68,6 +68,20 @@ fn planner_policy_rejects_noncanonical_or_invalid_dimension_candidates() {
         opening: 64,
     }]));
     assert!(reject(vec![CommitmentRingDims::uniform(512)]));
+
+    for setup_generation_dimension in [0, 192] {
+        let mut policy = policy_of::<D256OneHot>();
+        policy.ring_dimension = setup_generation_dimension;
+        policy.selection_policy = crate::SelectionPolicyId::for_policy(
+            false,
+            policy.ring_dimension,
+            policy.ring_dimension_candidates,
+        );
+        assert!(validate_policy(&policy)
+            .unwrap_err()
+            .to_string()
+            .contains("setup generation dimension must be a nonzero power of two"));
+    }
 }
 
 #[cfg(feature = "catalog-gen")]
