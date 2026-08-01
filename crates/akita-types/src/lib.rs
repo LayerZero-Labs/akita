@@ -90,8 +90,8 @@ pub use ntt_cache::{
 pub use proof::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
     active_setup_field_len, append_batched_commitments_to_transcript,
-    append_claim_values_to_transcript, assemble_relation_rhs, build_terminal_response,
-    build_terminal_response_from_groups, decode_terminal_z_golomb_payload,
+    append_claim_values_to_transcript, assemble_compressed_relation_rhs, assemble_relation_rhs,
+    build_terminal_response, build_terminal_response_from_groups, decode_terminal_z_golomb_payload,
     derive_public_matrix_prefix, emit_witness_e_planes, emit_witness_r_planes,
     emit_witness_t_planes, emit_witness_z_planes, folded_root_supports_opening_shape,
     generate_relation_rhs, padded_scalar_batch_num_vars, padded_setup_prefix_len,

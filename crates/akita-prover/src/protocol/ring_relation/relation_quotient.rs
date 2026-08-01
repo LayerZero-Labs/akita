@@ -449,6 +449,28 @@ where
             actual: y.coeff_len(),
         });
     }
+    let ordinary_rhs_len = row_families
+        .iter()
+        .take_while(|row| {
+            !matches!(
+                row,
+                akita_types::RelationRowFamily::CompressionF { .. }
+                    | akita_types::RelationRowFamily::CompressionH { .. }
+            )
+        })
+        .try_fold(0usize, |length, row| {
+            length
+                .checked_add(row.ring_dim())
+                .ok_or(AkitaError::InvalidProof)
+        })?;
+    if y.coeffs()
+        .get(..ordinary_rhs_len)
+        .ok_or(AkitaError::InvalidProof)?
+        .iter()
+        .any(|coefficient| !coefficient.is_zero())
+    {
+        return Err(AkitaError::InvalidProof);
+    }
     let mut result: Vec<Option<RelationQuotientRow<F>>> = vec![None; num_rows];
     let order = opening_batch.root_group_order()?;
     if order.len() != rhs_layout.groups.len() {
@@ -605,6 +627,15 @@ where
         if b_range.len() != n_b {
             return Err(AkitaError::InvalidProof);
         }
+        let recomposed_b = RingVec::from_coeffs(
+            compression
+                .source(CompressionSourceId::Outer { group_index })?
+                .witness
+                .stages()
+                .first()
+                .ok_or(AkitaError::InvalidProof)?
+                .recompose::<F>()?,
+        );
         akita_types::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Outer),
             F,
@@ -641,7 +672,7 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 for (commit_idx, row_idx) in b_range.clone().enumerate() {
-                    let reduced = ring_from_flat_y::<F, D_B>(y, y_offset + commit_idx * D_B)?;
+                    let reduced = ring_from_flat_y::<F, D_B>(&recomposed_b, commit_idx * D_B)?;
                     result[row_idx] = Some(RelationQuotientOutput::row_from_ring(
                         quotient_from_cyclic_and_reduced(
                             b_rows
@@ -664,6 +695,15 @@ where
     }
 
     if n_d_active != 0 {
+        let recomposed_d = RingVec::from_coeffs(
+            compression
+                .source(CompressionSourceId::Opening)?
+                .witness
+                .stages()
+                .first()
+                .ok_or(AkitaError::InvalidProof)?
+                .recompose::<F>()?,
+        );
         akita_types::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
@@ -697,7 +737,7 @@ where
                 }
                 for (d_idx, cyclic) in d_rows.d_cyclic.iter().enumerate() {
                     let row_idx = d_start.checked_add(d_idx).ok_or(AkitaError::InvalidProof)?;
-                    let reduced = ring_from_flat_y::<F, D_D>(y, y_offset + d_idx * D_D)?;
+                    let reduced = ring_from_flat_y::<F, D_D>(&recomposed_d, d_idx * D_D)?;
                     result[row_idx] = Some(RelationQuotientOutput::row_from_ring(
                         quotient_from_cyclic_and_reduced(cyclic, &reduced),
                     ));
@@ -712,13 +752,6 @@ where
                     .ok_or(AkitaError::InvalidProof)?,
             )
             .ok_or(AkitaError::InvalidProof)?;
-    }
-    let compression_rhs = y.coeffs().get(y_offset..).ok_or(AkitaError::InvalidProof)?;
-    if compression_rhs
-        .iter()
-        .any(|coefficient| !coefficient.is_zero())
-    {
-        return Err(AkitaError::InvalidProof);
     }
     for (row_index, family) in row_families.iter().enumerate() {
         let (source, map_index, ring_dim) = match *family {
@@ -752,6 +785,25 @@ where
             ring_dim,
             coeffs: quotient.coeffs().to_vec(),
         });
+        let rhs_end = y_offset
+            .checked_add(ring_dim)
+            .ok_or(AkitaError::InvalidProof)?;
+        let rhs_row = y
+            .coeffs()
+            .get(y_offset..rhs_end)
+            .ok_or(AkitaError::InvalidProof)?;
+        let source_witness = compression.source(source)?;
+        if map_index + 1 == akita_types::COMPRESSION_MAP_COUNT {
+            if rhs_row != source_witness.terminal.coefficients() {
+                return Err(AkitaError::InvalidProof);
+            }
+        } else if rhs_row.iter().any(|coefficient| !coefficient.is_zero()) {
+            return Err(AkitaError::InvalidProof);
+        }
+        y_offset = rhs_end;
+    }
+    if y_offset != y.coeff_len() {
+        return Err(AkitaError::InvalidProof);
     }
     RelationQuotientOutput::from_slots(result)
 }

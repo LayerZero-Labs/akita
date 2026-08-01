@@ -1,9 +1,9 @@
 use super::*;
 use crate::proof::relation::{
-    assemble_relation_rhs, relation_rhs_coeff_len, relation_rhs_layout_for, relation_rhs_row_count,
-    RelationRowFamily,
+    assemble_compressed_relation_rhs, relation_rhs_coeff_len, relation_rhs_layout_for,
+    relation_rhs_row_count, RelationRowFamily,
 };
-use crate::{RingVec, WitnessLayout};
+use crate::WitnessLayout;
 use akita_field::Prime128OffsetA7F7;
 
 #[test]
@@ -127,21 +127,37 @@ fn relation_rhs_row_count_matches_level_params() {
             < relation_geometry.relation_coefficient_block_len()
     );
 
-    let v = RingVec::from_coeffs(vec![
-        Prime128OffsetA7F7::zero();
-        rhs_layout.n_d * rhs_layout.opening_ring_dim
-    ]);
-    let commitment_coefficients = rhs_layout
-        .groups
-        .iter()
-        .map(|group| group.commit_rows * group.role_dims.d_b())
-        .sum();
-    let commitments =
-        RingVec::from_coeffs(vec![Prime128OffsetA7F7::zero(); commitment_coefficients]);
-    let rhs = assemble_relation_rhs(&rhs_layout, &v, &commitments).expect("compressed rhs");
+    let group_terminal = vec![
+        Prime128OffsetA7F7::one();
+        rhs_layout
+            .group_compression_plan(0)
+            .expect("F plan")
+            .1
+            .terminal_coefficients()
+    ];
+    let opening_terminal = vec![
+        Prime128OffsetA7F7::one();
+        rhs_layout
+            .opening_compression_plan()
+            .expect("H plan")
+            .terminal_coefficients()
+    ];
+    let rhs = assemble_compressed_relation_rhs(
+        &rhs_layout,
+        &[group_terminal.as_slice()],
+        &opening_terminal,
+    )
+    .expect("compressed rhs");
     assert_eq!(
         rhs.coeff_len(),
         relation_rhs_coeff_len(&rhs_layout).expect("rhs coefficient length")
+    );
+    assert_eq!(
+        rhs.coeffs()
+            .iter()
+            .filter(|coefficient| !coefficient.is_zero())
+            .count(),
+        group_terminal.len() + opening_terminal.len()
     );
 
     let (grouped_lp, grouped_batch) = sample_multi_group_root_params();

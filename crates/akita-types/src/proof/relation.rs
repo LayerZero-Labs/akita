@@ -607,6 +607,95 @@ pub fn assemble_relation_rhs<F: FieldCore>(
     Ok(RingVec::from_coeffs(coeffs))
 }
 
+/// Assemble the mandatory compressed relation RHS.
+///
+/// B, D, and first-map rows are zero. Only each chain's terminal map row
+/// carries its 128-byte public payload.
+pub fn assemble_compressed_relation_rhs<F: FieldCore>(
+    layout: &RelationRhsLayout,
+    group_terminal_payloads: &[&[F]],
+    opening_terminal_payload: &[F],
+) -> Result<RingVec<F>, AkitaError> {
+    layout.validate()?;
+    let compression = layout.compression.as_ref().ok_or_else(|| {
+        AkitaError::InvalidSetup("relation layout has no compression geometry".into())
+    })?;
+    if group_terminal_payloads.len() != layout.groups.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: layout.groups.len(),
+            actual: group_terminal_payloads.len(),
+        });
+    }
+    for (payload, plan) in group_terminal_payloads.iter().zip(&compression.group_plans) {
+        if payload.len() != plan.terminal_coefficients() {
+            return Err(AkitaError::InvalidSize {
+                expected: plan.terminal_coefficients(),
+                actual: payload.len(),
+            });
+        }
+    }
+    if opening_terminal_payload.len() != compression.opening_plan.terminal_coefficients() {
+        return Err(AkitaError::InvalidSize {
+            expected: compression.opening_plan.terminal_coefficients(),
+            actual: opening_terminal_payload.len(),
+        });
+    }
+
+    let mut coefficients = Vec::with_capacity(relation_rhs_coeff_len(layout)?);
+    for group in &layout.groups {
+        let b_rows = group
+            .commit_rows
+            .checked_add(group.b_inner_rows)
+            .ok_or_else(|| AkitaError::InvalidSetup("relation RHS row count overflow".into()))?;
+        let ordinary_coefficients = group
+            .role_dims
+            .d_a()
+            .checked_mul(group.n_a.checked_add(1).ok_or_else(|| {
+                AkitaError::InvalidSetup("relation RHS row count overflow".into())
+            })?)
+            .and_then(|len| {
+                group
+                    .role_dims
+                    .d_b()
+                    .checked_mul(b_rows)
+                    .and_then(|b| len.checked_add(b))
+            })
+            .ok_or_else(|| AkitaError::InvalidSetup("relation RHS width overflow".into()))?;
+        coefficients.extend(repeat_n(F::zero(), ordinary_coefficients));
+    }
+    coefficients.extend(repeat_n(
+        F::zero(),
+        layout
+            .n_d
+            .checked_mul(layout.opening_ring_dim)
+            .ok_or_else(|| AkitaError::InvalidSetup("relation D width overflow".into()))?,
+    ));
+    for map_index in 0..crate::COMPRESSION_MAP_COUNT {
+        for (payload, plan) in group_terminal_payloads.iter().zip(&compression.group_plans) {
+            let map = plan.maps()[map_index];
+            if map_index + 1 == crate::COMPRESSION_MAP_COUNT {
+                coefficients.extend_from_slice(payload);
+            } else {
+                coefficients.extend(repeat_n(F::zero(), map.output_coefficients()));
+            }
+        }
+        let opening_map = compression.opening_plan.maps()[map_index];
+        if map_index + 1 == crate::COMPRESSION_MAP_COUNT {
+            coefficients.extend_from_slice(opening_terminal_payload);
+        } else {
+            coefficients.extend(repeat_n(F::zero(), opening_map.output_coefficients()));
+        }
+    }
+    let expected = relation_rhs_coeff_len(layout)?;
+    if coefficients.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: coefficients.len(),
+        });
+    }
+    Ok(RingVec::from_coeffs(coefficients))
+}
+
 fn accumulate_extension_rows<F, E, const D: usize>(
     eq_tau1: &[E],
     alpha: E,

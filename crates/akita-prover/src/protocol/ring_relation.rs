@@ -18,7 +18,7 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::ABSORB_PROVER_V;
 use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
-use akita_types::{assemble_relation_rhs, relation_rhs_layout_for, RingVec, RingView};
+use akita_types::{assemble_compressed_relation_rhs, relation_rhs_layout_for, RingVec, RingView};
 use akita_types::{gadget_row_scalars, DigitBlocks};
 use akita_types::{CommittedGroupParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -698,9 +698,26 @@ impl RingRelationProver {
         // Terminal levels drop the D-block from M entirely, so `n_d` is zero
         // and `v` stays empty.
         let instance_span = tracing::info_span!("ring_relation_build_instance").entered();
-        let relation_rhs =
-            assemble_relation_rhs::<F>(&relation_rhs_layout, &v, &commitment_rows)
-                .map_err(|err| AkitaError::InvalidInput(format!("relation rhs failed: {err:?}")))?;
+        let group_terminal_payloads = (0..relation_rhs_layout.groups.len())
+            .map(|relation_group_index| {
+                let (group_index, _) =
+                    relation_rhs_layout.group_compression_plan(relation_group_index)?;
+                Ok(compression
+                    .source(CompressionSourceId::Outer { group_index })?
+                    .terminal
+                    .coefficients())
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let opening_terminal_payload = compression
+            .source(CompressionSourceId::Opening)?
+            .terminal
+            .coefficients();
+        let relation_rhs = assemble_compressed_relation_rhs::<F>(
+            &relation_rhs_layout,
+            &group_terminal_payloads,
+            opening_terminal_payload,
+        )
+        .map_err(|err| AkitaError::InvalidInput(format!("relation rhs failed: {err:?}")))?;
 
         let instance = RingRelationInstance::new(
             group_challenges,
