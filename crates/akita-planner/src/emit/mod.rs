@@ -615,13 +615,13 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     writeln!(out, "#[allow(unused_imports)]").map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedBlockGeometry, \
+        "use super::{{\n    ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, GeneratedBlockGeometry, \
          GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedInnerCommitMatrix, \
          GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix, GeneratedRecursiveFold, \
          GeneratedRootFinalChallenge, GeneratedRootFinalGroup, GeneratedRootFold, \
          GeneratedRootPrecommittedGroup, GeneratedRootSource, GeneratedScheduleCatalogIdentity, \
          GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
-         CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, PrecommittedGroupDescriptor, \
+         PlannerCostModelId, PolynomialGroupLayout, PrecommittedGroupDescriptor, \
          SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \
          TensorChallengeShape,\n}};"
     )
