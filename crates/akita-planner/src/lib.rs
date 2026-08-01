@@ -38,7 +38,7 @@ pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, Emi
 pub use planner::find_schedule;
 pub use schedule_params::{
     plan_optimal_suffix, suffix_opening_layout, PlannedSuffix, PlannedSuffixFold,
-    PlannedSuffixTerminal, RingDimensionSearchDomain,
+    PlannedSuffixTerminal,
 };
 
 /// Helpers available only to synthetic schedule fixtures and profile experiments.

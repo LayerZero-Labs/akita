@@ -56,7 +56,6 @@ fn insert_supported(
 #[allow(clippy::too_many_arguments)]
 fn suffix_frontier(
     policy: &PlannerPolicy,
-    dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_shape: &dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     key: PolynomialGroupLayout,
@@ -92,7 +91,7 @@ fn suffix_frontier(
     let mut frontier = Vec::new();
 
     for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
-        for candidate_dimensions in dimensions.candidates() {
+        for candidate_dimensions in policy.ring_dimension_candidates {
             let suffix_dimensions = CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
             if level >= MIXED_SEARCH_FOLD_LEVELS {
                 if *candidate_dimensions != suffix_dimensions {
@@ -195,7 +194,6 @@ fn suffix_frontier(
                 };
                 for child in suffix_frontier(
                     policy,
-                    dimensions,
                     ring_challenge_config,
                     fold_shape,
                     key,
@@ -265,14 +263,14 @@ fn suffix_frontier(
 pub(crate) fn find_schedule_mixed_ring(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
-    dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
     validate_policy(policy)?;
-    dimensions.validate_for_policy(policy)?;
-    if dimensions.is_uniform_policy_domain(policy) {
+    if policy.selection_policy
+        != crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+    {
         return Err(AkitaError::InvalidSetup(
             "mixed-D schedule search requires a non-uniform ring-dimension domain".to_string(),
         ));
@@ -288,13 +286,16 @@ pub(crate) fn find_schedule_mixed_ring(
         ));
     }
     let suffix_dimensions = CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
-    if !dimensions.candidates().contains(&suffix_dimensions) {
+    if !policy
+        .ring_dimension_candidates
+        .contains(&suffix_dimensions)
+    {
         return Err(AkitaError::InvalidSetup(format!(
             "mixed-D search requires the D{MIXED_SEARCH_SUFFIX_RING_DIMENSION} uniform candidate \
              used from fold level {MIXED_SEARCH_FOLD_LEVELS} onward"
         )));
     }
-    if dimensions.candidates().iter().any(|dims| {
+    if policy.ring_dimension_candidates.iter().any(|dims| {
         dims.d_a() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
             || dims.d_b() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
             || dims.d_d() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
@@ -320,7 +321,7 @@ pub(crate) fn find_schedule_mixed_ring(
     let mut complete = Vec::new();
 
     for log_basis in min_log_basis..=max_log_basis {
-        for root_dimensions in dimensions.candidates() {
+        for root_dimensions in policy.ring_dimension_candidates {
             let alpha = root_dimensions.d_a().trailing_zeros() as usize;
             let reduced_vars = key.num_vars().saturating_sub(alpha);
             if reduced_vars == 0 {
@@ -377,7 +378,6 @@ pub(crate) fn find_schedule_mixed_ring(
                 };
                 for suffix in suffix_frontier(
                     policy,
-                    dimensions,
                     &ring_challenge_config,
                     &fold_shape,
                     key,

@@ -44,7 +44,7 @@ mod unpruned_search;
 pub(crate) use akita_schedules::planner_support::{
     checked_power_of_two_vars, grouped_segment_rings, materialize_candidate_schedule,
     optimize_fold_challenge_shape, planned_next_witness_len, stage3_payload_bytes_for_successor,
-    CandidateFoldStep, CandidateTerminalResponse,
+    validate_policy, CandidateFoldStep, CandidateTerminalResponse,
 };
 pub use akita_schedules::suffix_opening_layout;
 pub(crate) use candidate::{
@@ -59,103 +59,6 @@ pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixC
 
 const MIXED_SEARCH_FOLD_LEVELS: usize = 2;
 const MIXED_SEARCH_SUFFIX_RING_DIMENSION: usize = 64;
-
-/// Explicit A/B/D dimensions admitted by mixed-D planner search.
-///
-/// `PlannerPolicy::ring_dimension` remains the setup generation dimension and
-/// the implicit singleton domain used by scalar schedule search. This separate
-/// offline-only value makes mixed-D search opt-in without changing runtime
-/// policy or existing catalog identity.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RingDimensionSearchDomain {
-    setup_generation_dimension: usize,
-    candidates: Vec<CommitmentRingDims>,
-}
-
-impl RingDimensionSearchDomain {
-    /// Construct and canonicalize a non-empty dimension domain.
-    ///
-    /// Every tuple must satisfy the A-carrier invariant, and every role
-    /// dimension must divide `setup_generation_dimension`.
-    pub fn new(
-        setup_generation_dimension: usize,
-        candidates: impl IntoIterator<Item = CommitmentRingDims>,
-    ) -> Result<Self, AkitaError> {
-        if setup_generation_dimension == 0 || !setup_generation_dimension.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(
-                "setup generation dimension must be a nonzero power of two".into(),
-            ));
-        }
-        let mut candidates = candidates.into_iter().collect::<Vec<_>>();
-        candidates.sort_by_key(|dims| (dims.d_a(), dims.d_b(), dims.d_d()));
-        candidates.dedup();
-        if candidates.is_empty() {
-            return Err(AkitaError::InvalidSetup(
-                "ring-dimension search domain must be nonempty".into(),
-            ));
-        }
-        for dims in &candidates {
-            dims.validate_a_carrier()?;
-            for d in [dims.d_a(), dims.d_b(), dims.d_d()] {
-                if !setup_generation_dimension.is_multiple_of(d) {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "candidate dimension D{d} does not divide setup generation dimension \
-                         D{setup_generation_dimension}"
-                    )));
-                }
-            }
-        }
-        Ok(Self {
-            setup_generation_dimension,
-            candidates,
-        })
-    }
-
-    /// Construct the explicit singleton domain used by a uniform policy.
-    pub fn uniform(setup_generation_dimension: usize) -> Result<Self, AkitaError> {
-        Self::new(
-            setup_generation_dimension,
-            [CommitmentRingDims::uniform(setup_generation_dimension)],
-        )
-    }
-
-    pub(crate) fn for_policy(policy: &PlannerPolicy) -> Result<Self, AkitaError> {
-        Self::new(
-            policy.ring_dimension,
-            policy.ring_dimension_candidates.iter().copied(),
-        )
-    }
-
-    /// Canonically ordered admitted A/B/D tuples.
-    pub fn candidates(&self) -> &[CommitmentRingDims] {
-        &self.candidates
-    }
-
-    /// Setup generation dimension against which this domain was validated.
-    pub fn setup_generation_dimension(&self) -> usize {
-        self.setup_generation_dimension
-    }
-
-    fn validate_for_policy(&self, policy: &PlannerPolicy) -> Result<(), AkitaError> {
-        if self.setup_generation_dimension != policy.ring_dimension {
-            return Err(AkitaError::InvalidSetup(format!(
-                "ring-dimension domain uses setup generation D{}, but policy uses D{}",
-                self.setup_generation_dimension, policy.ring_dimension
-            )));
-        }
-        if self.candidates.as_slice() != policy.ring_dimension_candidates {
-            return Err(AkitaError::InvalidSetup(
-                "ring-dimension search domain disagrees with the catalog-bound policy domain"
-                    .to_string(),
-            ));
-        }
-        Ok(())
-    }
-
-    pub(crate) fn is_uniform_policy_domain(&self, policy: &PlannerPolicy) -> bool {
-        self.candidates.as_slice() == [CommitmentRingDims::uniform(policy.ring_dimension)]
-    }
-}
 
 #[derive(Clone, Debug)]
 pub(crate) struct ScheduleCandidate {
@@ -174,49 +77,6 @@ impl ScheduleCandidate {
     pub(crate) fn first_direct_setup_field_len_or_max(&self) -> usize {
         self.first_direct_setup_field_len.unwrap_or(usize::MAX)
     }
-}
-
-/// Validate the complete planner policy at a verifier-reachable entry point.
-///
-/// Layout-only rules live on [`akita_types::ChunkedWitnessCfg::validate`]; the recursion-depth
-/// bound (which needs the planner-private [`MAX_RECURSION_DEPTH`]) is enforced
-/// here so `akita-types` stays free of planner internals.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidSetup`] for an invalid [`akita_types::ChunkedWitnessCfg`], or
-/// `num_activated_levels` beyond the planner recursion cap. Verifier-reachable: never panics.
-pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    policy.challenge_field_bits()?;
-    let expected_selection_policy = crate::SelectionPolicyId::for_policy(
-        policy.recursive_setup_planning,
-        policy.ring_dimension,
-        policy.ring_dimension_candidates,
-    );
-    if policy.selection_policy != expected_selection_policy {
-        return Err(AkitaError::InvalidSetup(
-            "planner selection policy disagrees with recursive setup capability".to_string(),
-        ));
-    }
-    if policy.max_setup_envelope_field_elements == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "maximum setup envelope must be positive".to_string(),
-        ));
-    }
-    if policy.min_offloaded_witness_contraction == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "minimum offloaded witness contraction must be positive".to_string(),
-        ));
-    }
-    let mc = policy.witness_chunk;
-    mc.validate()?;
-    if mc.num_activated_levels > MAX_RECURSION_DEPTH {
-        return Err(AkitaError::InvalidSetup(format!(
-            "num_activated_levels={} exceeds the planner recursion cap {MAX_RECURSION_DEPTH}",
-            mc.num_activated_levels
-        )));
-    }
-    Ok(())
 }
 
 /// Stage-1 sparse-challenge closure shared by the planner entry points.

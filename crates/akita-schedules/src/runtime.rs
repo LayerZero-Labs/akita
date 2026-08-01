@@ -206,7 +206,7 @@ impl PlannerPolicy {
 pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 
 /// Validate runtime policy values used by schedule expansion and validation.
-pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     policy.challenge_field_bits()?;
     validate_ring_dimension_candidates(policy)?;
     let expected_selection_policy = SelectionPolicyId::for_policy(

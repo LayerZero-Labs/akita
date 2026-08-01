@@ -30,6 +30,7 @@ pub mod planner_support {
     pub use crate::runtime::{
         checked_power_of_two_vars, grouped_segment_rings, materialize_candidate_schedule,
         optimize_fold_challenge_shape, planned_next_witness_len,
-        stage3_payload_bytes_for_successor, CandidateFoldStep, CandidateTerminalResponse,
+        stage3_payload_bytes_for_successor, validate_policy, CandidateFoldStep,
+        CandidateTerminalResponse,
     };
 }
