@@ -498,10 +498,10 @@ mod tests {
     use akita_field::Prime128Offset275;
     use akita_types::{
         derive_public_matrix_prefix, sample_public_matrix_id, setup_prefix_slot_id,
-        CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
-        PolynomialGroupLayout, PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment,
-        SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
-        DEFAULT_SIS_SECURITY_POLICY,
+        CommittedGroupProfile, CompressionChainPlan, InnerCommitMatrixParams,
+        OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, RingVec,
+        SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId,
+        SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
     };
 
     type TestF = Prime128Offset275;
@@ -628,7 +628,13 @@ mod tests {
         };
         let shared_matrix = derive_public_matrix_prefix::<TestF>(2 * TEST_D, &public_matrix_id);
         let commitment_params = prefix_commitment_params();
-        let commitment_rows = commitment_params.layout.outer_commit_matrix.output_rank();
+        let matrix = &commitment_params.layout.outer_commit_matrix;
+        let payload_coefficients = CompressionChainPlan::for_complete_source(
+            matrix.sis_modulus_profile(),
+            matrix.output_rank() * matrix.ring_dimension(),
+        )
+        .expect("setup-prefix compression plan")
+        .terminal_coefficients();
         let id = setup_prefix_slot_id(1, commitment_params);
         let mut prefix_slots = SetupPrefixVerifierRegistry::new(public_matrix_id.clone());
         prefix_slots
@@ -637,10 +643,10 @@ mod tests {
                 natural_len: 1,
                 padded_len: PREFIX_D,
                 commitment: SetupPrefixPublicCommitment {
-                    rows: vec![
-                        RingVec::from_coeffs(vec![TestF::zero(); PREFIX_D]);
-                        commitment_rows
-                    ],
+                    rows: vec![RingVec::from_coeffs(vec![
+                        TestF::zero();
+                        payload_coefficients
+                    ])],
                 },
             })
             .expect("insert prefix slot");

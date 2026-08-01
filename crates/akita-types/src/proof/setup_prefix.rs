@@ -125,9 +125,9 @@ fn n_prefix_from_commitment_params(
         })
 }
 
-fn setup_prefix_payload_coefficients(
+fn setup_prefix_compression_plan(
     params: &PrecommittedLevelParams,
-) -> Result<usize, SerializationError> {
+) -> Result<CompressionChainPlan, SerializationError> {
     let matrix = &params.layout.outer_commit_matrix;
     let source_coefficients = matrix
         .output_rank()
@@ -141,7 +141,6 @@ fn setup_prefix_payload_coefficients(
         matrix.sis_table_key().modulus_profile,
         source_coefficients,
     )
-    .map(|plan| plan.terminal_coefficients())
     .map_err(|error| SerializationError::InvalidData(error.to_string()))
 }
 
@@ -781,7 +780,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierSlot<F> {
         }
         self.commitment.check()?;
         let expected_payload_coefficients =
-            setup_prefix_payload_coefficients(&self.id.commitment_params)?;
+            setup_prefix_compression_plan(&self.id.commitment_params)?.terminal_coefficients();
         if self.commitment.rows.len() != 1 {
             return Err(SerializationError::InvalidData(
                 "setup prefix commitment must contain one compressed payload".into(),
@@ -892,8 +891,8 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
             ));
         }
         self.commitment.check()?;
-        let expected_payload_coefficients =
-            setup_prefix_payload_coefficients(&self.id.commitment_params)?;
+        let compression_plan = setup_prefix_compression_plan(&self.id.commitment_params)?;
+        let expected_payload_coefficients = compression_plan.terminal_coefficients();
         if self.commitment.rows.len() != 1 {
             return Err(SerializationError::InvalidData(
                 "setup prefix commitment must contain one compressed payload".into(),
@@ -908,7 +907,11 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
                 )));
             }
         }
-        self.hint.check()
+        self.hint.check()?;
+        self.hint
+            .outer_compression_witness(&compression_plan)
+            .map(|_| ())
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))
     }
 }
 
@@ -973,6 +976,12 @@ where
 }
 
 impl<F: FieldCore> SetupPrefixSlot<F> {
+    fn validate_compression_hint(&self) -> Result<(), AkitaError> {
+        let plan = setup_prefix_compression_plan(&self.id.commitment_params)
+            .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+        self.hint.outer_compression_witness(&plan).map(|_| ())
+    }
+
     /// Strip prover-only hint material for verifier metadata.
     #[must_use]
     pub fn verifier_slot(&self) -> SetupPrefixVerifierSlot<F> {
@@ -1023,6 +1032,7 @@ impl<F: FieldCore> SetupPrefixProverRegistry<F> {
     }
 
     pub fn insert(&mut self, slot: SetupPrefixSlot<F>) -> Result<(), AkitaError> {
+        slot.validate_compression_hint()?;
         if self.slots.contains_key(&slot.id) {
             return Err(AkitaError::InvalidSetup(
                 "duplicate setup prefix slot id".to_string(),

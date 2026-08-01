@@ -36,9 +36,9 @@ pub mod witness;
 
 pub use akita_challenges::TensorChallengeShape;
 pub use compression::{
-    CompressionChainPlan, CompressionChainWitness, CompressionMapPlan, CompressionPolicyId,
-    CompressionTerminalPayload, PackedNegativeBinary, COMPRESSION_MAP_COUNT, COMPRESSION_POLICY,
-    COMPRESSION_TARGET_BYTES, MAX_COMPRESSION_INPUT_BYTES,
+    compression_ring_dimensions, CompressionChainPlan, CompressionChainWitness, CompressionMapPlan,
+    CompressionPolicyId, CompressionTerminalPayload, PackedNegativeBinary, COMPRESSION_MAP_COUNT,
+    COMPRESSION_POLICY, COMPRESSION_TARGET_BYTES, MAX_COMPRESSION_INPUT_BYTES,
 };
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
@@ -80,7 +80,7 @@ pub use layout::{
     validate_role_dims, validate_schedule_ring_dims, witness_commitment_domain_len, BasisMode,
     CommitmentRingDims, CommittedGroupParams, FlatMatrix, LevelParamsLike, PrecommittedLevelParams,
     RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
-    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
+    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
 };
 pub use ntt_cache::{
     max_safe_crt_accumulation_width, ntt_cache_requires_i16_tail, prepare_compression_ntt_cache,

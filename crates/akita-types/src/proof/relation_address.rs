@@ -283,9 +283,9 @@ mod tests {
     #[test]
     fn outgoing_repacking_preserves_mixed_relation_geometry() {
         let dims = CommitmentRingDims {
-            inner: 64,
-            outer: 32,
-            opening: 32,
+            inner: 128,
+            outer: 64,
+            opening: 64,
         };
         let live_coeff_len = 1024;
         let geometries = [16, 32, 64].map(|outgoing_dim| {
@@ -294,9 +294,9 @@ mod tests {
         for geometry in geometries {
             assert_eq!(geometry.digit_witness_domain().live_len(), live_coeff_len);
             assert_eq!(geometry.digit_witness_domain().domain_len(), live_coeff_len);
-            assert_eq!(geometry.relation_coefficient_block_len(), 32);
-            assert_eq!(geometry.live_relation_lane_count(), 32);
-            assert_eq!(geometry.relation_lane_capacity(), 32);
+            assert_eq!(geometry.relation_coefficient_block_len(), 64);
+            assert_eq!(geometry.live_relation_lane_count(), 16);
+            assert_eq!(geometry.relation_lane_capacity(), 16);
             assert_eq!(geometry.relation_point_variable_count(), 10);
         }
     }
@@ -304,24 +304,24 @@ mod tests {
     #[test]
     fn supports_mixed_groups_without_max_a_padding() {
         let final_dims = CommitmentRingDims {
-            inner: 64,
-            outer: 32,
-            opening: 32,
-        };
-        let precommitted_dims = CommitmentRingDims {
             inner: 128,
             outer: 64,
-            opening: 32,
+            opening: 64,
+        };
+        let precommitted_dims = CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 64,
         };
         let geometry =
-            RelationAddressGeometry::new_for_groups(final_dims, &[precommitted_dims], 64, 288)
+            RelationAddressGeometry::new_for_groups(final_dims, &[precommitted_dims], 64, 320)
                 .unwrap();
-        assert_eq!(geometry.live_witness_coeff_len(), 288);
+        assert_eq!(geometry.live_witness_coeff_len(), 320);
         assert_eq!(geometry.committed_witness_coeff_len(), 512);
         assert_eq!(geometry.successor_live_ring_len(), 5);
-        assert_eq!(geometry.relation_coefficient_block_len(), 32);
-        assert_eq!(geometry.live_relation_lane_count(), 9);
-        assert_eq!(geometry.relation_lane_capacity(), 16);
+        assert_eq!(geometry.relation_coefficient_block_len(), 64);
+        assert_eq!(geometry.live_relation_lane_count(), 5);
+        assert_eq!(geometry.relation_lane_capacity(), 8);
     }
 
     #[test]
@@ -329,13 +329,13 @@ mod tests {
         let dims = CommitmentRingDims {
             inner: 128,
             outer: 64,
-            opening: 32,
+            opening: 64,
         };
         let relation = RelationAddressGeometry::new(dims, 64, 1024).expect("relation geometry");
         let compression = CompressionRelationAddressGeometry::new(&[16, 8], 64, 1024)
             .expect("compression geometry");
-        assert_eq!(relation.relation_coefficient_block_len(), 32);
-        assert_eq!(relation.live_relation_lane_count(), 32);
+        assert_eq!(relation.relation_coefficient_block_len(), 64);
+        assert_eq!(relation.live_relation_lane_count(), 16);
         assert_eq!(compression.coefficient_block_len(), 8);
         assert_eq!(compression.live_lane_count(), 128);
     }

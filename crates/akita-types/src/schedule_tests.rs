@@ -30,7 +30,6 @@ use crate::{
     TerminalLevelProof, TerminalResponse, TerminalResponseShape,
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
-use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore, Prime128OffsetA7F7};
 use akita_serialization::{AkitaSerialize, Compress};
@@ -124,7 +123,7 @@ fn recursive_schedule(
     let predecessor = committed_params(predecessor_ring_dimension);
     let mut successor = committed_params(successor_ring_dimension);
     let incoming_setup_prefix = offload.then(|| {
-        let natural_len = 64;
+        let natural_len = successor_ring_dimension;
         let commitment_params = crate::setup_prefix_precommitted_params(&successor, natural_len)
             .expect("setup-prefix commitment params");
         crate::setup_prefix_slot_id(natural_len, commitment_params)
@@ -268,8 +267,8 @@ fn schedule_accepts_mixed_producer_projecting_to_prefix_dimension() {
 
 #[test]
 fn schedule_accepts_prefix_commitment_roles_independent_of_consumer_roles() {
-    let mut schedule = recursive_schedule(64, 64, true);
-    retarget_outer_dimension(&mut schedule.recursive_folds[0].params.witness, 32)
+    let mut schedule = recursive_schedule(64, 128, true);
+    retarget_outer_dimension(&mut schedule.recursive_folds[0].params.witness, 64)
         .expect("retarget consumer B role");
 
     schedule
@@ -549,16 +548,26 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
     next_lp: &CommittedGroupParams,
     output_witness_len: usize,
 ) -> Result<usize, AkitaError> {
-    let current_coeffs = lp
+    let current_source_coeffs = lp
         .open_commit_matrix
         .output_rank()
-        .checked_mul(lp.d_a())
+        .checked_mul(lp.role_dims().d_d())
         .ok_or_else(|| AkitaError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
-    let next_commit_coeffs = next_lp
+    let current_coeffs = crate::CompressionChainPlan::for_complete_source(
+        lp.open_commit_matrix.sis_modulus_profile(),
+        current_source_coeffs,
+    )?
+    .terminal_coefficients();
+    let next_commit_source_coeffs = next_lp
         .outer_commit_matrix
         .output_rank()
-        .checked_mul(next_lp.d_a())
+        .checked_mul(next_lp.role_dims().d_b())
         .ok_or_else(|| AkitaError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
+    let next_commit_coeffs = crate::CompressionChainPlan::for_complete_source(
+        next_lp.outer_commit_matrix.sis_modulus_profile(),
+        next_commit_source_coeffs,
+    )?
+    .terminal_coefficients();
     let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
     let b = 1usize << lp.log_basis_open;
 
@@ -705,21 +714,34 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
         .unwrap();
         let rounds = sumcheck_rounds(D, output_witness_len);
         let b = 1usize << log_basis;
-        let next_commitment =
-            RingVec::from_ring_elems(&vec![
-                CyclotomicRing::<F, D>::zero();
-                next_lp.outer_commit_matrix.output_rank()
-            ])
-            .into_compact();
-        let level_proof = FoldLevelProof::new::<D>(
-            vec![CyclotomicRing::<F, D>::zero(); lp.open_commit_matrix.output_rank()],
-            dummy_stage1_proof(rounds, b),
-            AkitaStage2Proof {
+        let level_proof = FoldLevelProof {
+            extension_opening_reduction: None,
+            opening_payload: RingVec::from_coeffs(vec![
+                F::zero();
+                crate::CompressionChainPlan::for_complete_source(
+                    lp.open_commit_matrix.sis_modulus_profile(),
+                    lp.open_commit_matrix.output_rank() * lp.role_dims().d_d(),
+                )
+                .unwrap()
+                .terminal_coefficients()
+            ]),
+            fold_grind_nonce: 0,
+            stage1: dummy_stage1_proof(rounds, b),
+            stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
-                next_witness_binding: NextWitnessBinding::OuterPayload(next_commitment),
+                next_witness_binding: NextWitnessBinding::OuterPayload(RingVec::from_coeffs(vec![
+                    F::zero();
+                    crate::CompressionChainPlan::for_complete_source(
+                        next_lp.outer_commit_matrix.sis_modulus_profile(),
+                        next_lp.outer_commit_matrix.output_rank() * next_lp.role_dims().d_b(),
+                    )
+                    .unwrap()
+                    .terminal_coefficients()
+                ])),
                 next_w_eval: F::zero(),
             },
-        );
+            stage3_sumcheck_proof: None,
+        };
         assert_eq!(
                 level_proof_bytes(
                     128,

@@ -743,13 +743,19 @@ mod tests {
             SetupPrefixVerifierRegistry::new(setup_seed.public_matrix_id.clone());
         let d_setup = 64;
         let commitment_params = prefix_commitment_params(d_setup, d_setup);
-        let commitment_rows = commitment_params.layout.outer_commit_matrix.output_rank();
+        let matrix = &commitment_params.layout.outer_commit_matrix;
+        let payload_coefficients = crate::CompressionChainPlan::for_complete_source(
+            matrix.sis_modulus_profile(),
+            matrix.output_rank() * matrix.ring_dimension(),
+        )
+        .expect("setup-prefix compression plan")
+        .terminal_coefficients();
         let slot = SetupPrefixVerifierSlot {
             id: crate::setup_prefix_slot_id(d_setup - 1, commitment_params),
             natural_len: d_setup - 1,
             padded_len: d_setup,
             commitment: SetupPrefixPublicCommitment {
-                rows: vec![RingVec::from_coeffs(vec![F::zero(); d_setup]); commitment_rows],
+                rows: vec![RingVec::from_coeffs(vec![F::zero(); payload_coefficients])],
             },
         };
         prefix_slots.insert(slot).expect("insert prefix slot");

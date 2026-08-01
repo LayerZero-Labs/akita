@@ -53,12 +53,22 @@ impl CompressionPolicyId {
 /// The only compression policy supported by this protocol epoch.
 pub const COMPRESSION_POLICY: CompressionPolicyId = CompressionPolicyId::NegativeBinaryTwoMap8KiBV1;
 
-fn profile_geometry(profile: SisModulusProfileId) -> (usize, usize) {
+/// The two compression-only ring dimensions for one modulus profile.
+///
+/// These dimensions are not A/B/D commitment-matrix dimensions. In
+/// particular, the q128 ladder deliberately uses D=16 and D=8 while every
+/// commitment matrix is admitted only at D>=64.
+#[must_use]
+pub const fn compression_ring_dimensions(profile: SisModulusProfileId) -> [usize; 2] {
     match profile {
-        SisModulusProfileId::Q128OffsetA7F7 => (128, 16),
-        SisModulusProfileId::Q64Offset59 => (64, 32),
-        SisModulusProfileId::Q32Offset99 => (32, 64),
+        SisModulusProfileId::Q128OffsetA7F7 => [16, 8],
+        SisModulusProfileId::Q64Offset59 => [32, 16],
+        SisModulusProfileId::Q32Offset99 => [64, 32],
     }
+}
+
+fn profile_field_bits(profile: SisModulusProfileId) -> usize {
+    profile.field_bits() as usize
 }
 
 fn checked_div_ceil(value: usize, divisor: usize, context: &str) -> Result<usize, AkitaError> {
@@ -105,7 +115,13 @@ impl CompressionMapPlan {
                 "compression map must be rank one, got rank {output_rank}"
             )));
         }
-        let (field_bits, _) = profile_geometry(modulus_profile);
+        if !compression_ring_dimensions(modulus_profile).contains(&ring_dimension) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "compression ring dimension {ring_dimension} is not in the {:?} ladder for {modulus_profile:?}",
+                compression_ring_dimensions(modulus_profile)
+            )));
+        }
+        let field_bits = profile_field_bits(modulus_profile);
         let real_digit_count = input_coefficients
             .checked_mul(field_bits)
             .ok_or_else(|| AkitaError::InvalidSetup("compression digit length overflow".into()))?;
@@ -222,7 +238,7 @@ impl CompressionChainPlan {
         source_coefficients: usize,
         maps: Vec<CompressionMapPlan>,
     ) -> Result<Self, AkitaError> {
-        let (field_bits, _) = profile_geometry(modulus_profile);
+        let field_bits = profile_field_bits(modulus_profile);
         let field_bytes = field_bits.div_ceil(8);
         let source_bytes = source_coefficients
             .checked_mul(field_bytes)
@@ -291,7 +307,7 @@ impl CompressionChainPlan {
         source_coefficients: usize,
     ) -> Result<Self, AkitaError> {
         Self::try_for_complete_source(modulus_profile, source_coefficients)?.ok_or_else(|| {
-            let (field_bits, _) = profile_geometry(modulus_profile);
+            let field_bits = profile_field_bits(modulus_profile);
             let source_bytes = source_coefficients.saturating_mul(field_bits.div_ceil(8));
             AkitaError::InvalidInput(format!(
                 "compression source is {source_bytes} bytes, exceeding the {MAX_COMPRESSION_INPUT_BYTES}-byte maximum"
@@ -305,7 +321,7 @@ impl CompressionChainPlan {
         modulus_profile: SisModulusProfileId,
         source_coefficients: usize,
     ) -> Result<Option<Self>, AkitaError> {
-        let (field_bits, first_ring_dimension) = profile_geometry(modulus_profile);
+        let field_bits = profile_field_bits(modulus_profile);
         let field_bytes = field_bits.div_ceil(8);
         let source_bytes = source_coefficients
             .checked_mul(field_bytes)
@@ -320,15 +336,7 @@ impl CompressionChainPlan {
         }
         let mut maps = Vec::with_capacity(COMPRESSION_MAP_COUNT);
         let mut input_coefficients = source_coefficients;
-        for map_index in 0..COMPRESSION_MAP_COUNT {
-            let shift = u32::try_from(map_index)
-                .map_err(|_| AkitaError::InvalidSetup("compression map index overflow".into()))?;
-            let ring_dimension = first_ring_dimension
-                .checked_shr(shift)
-                .filter(|dimension| *dimension > 0)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("compression ring dimension underflow".into())
-                })?;
+        for ring_dimension in compression_ring_dimensions(modulus_profile) {
             let map =
                 CompressionMapPlan::new(modulus_profile, input_coefficients, ring_dimension, 1)?;
             input_coefficients = map.output_coefficients();
@@ -757,6 +765,7 @@ mod tests {
         assert!(CompressionMapPlan::new(profile, 0, 16, 1).is_err());
         assert!(CompressionMapPlan::new(profile, 64, 16, 2).is_err());
         assert!(CompressionMapPlan::new(profile, 10_000, 8, 1).is_err());
+        assert!(CompressionMapPlan::new(profile, 64, 32, 1).is_err());
 
         let plan = CompressionChainPlan::for_complete_source(profile, 64).unwrap();
         assert!(CompressionChainPlan::new(profile, 64, vec![plan.maps()[0]]).is_err());

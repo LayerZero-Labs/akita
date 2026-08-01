@@ -86,6 +86,14 @@ The dimensions are fixed by the field profile:
 | q64 | 32 | 256 bytes | 16 | 128 bytes |
 | q32 | 64 | 256 bytes | 32 | 128 bytes |
 
+These are compression-only dimensions. They are admitted through the exact
+two-entry ladder for the selected modulus profile and do not enter
+`CommitmentRingDims`, role projection, or ordinary A/B/D matrix admission.
+Every A, B, and D matrix dimension is at least 64. The shared NTT layer still
+supports the first compression dimension where it overlaps its checked
+profile band; the smaller terminal dimension enters only through the
+compression-aware NTT path.
+
 All maps have output rank one. For a source with `s` field coefficients and
 field bit width `k`, the first map width is
 

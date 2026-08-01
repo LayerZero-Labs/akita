@@ -1273,17 +1273,17 @@ mod tests {
     fn group_local_a_b_dims_share_d_in_rhs_and_claim() {
         type G = Prime128OffsetA7F7;
         let final_dims = CommitmentRingDims {
-            inner: 128,
-            outer: 64,
-            opening: 32,
+            inner: 256,
+            outer: 128,
+            opening: 64,
         };
         let precommitted_dims = CommitmentRingDims {
-            inner: 64,
-            outer: 32,
-            opening: 32,
+            inner: 128,
+            outer: 64,
+            opening: 64,
         };
         let layout = RelationRhsLayout {
-            opening_ring_dim: 32,
+            opening_ring_dim: 64,
             n_d: 1,
             groups: vec![
                 RelationGroupRows {
@@ -1303,19 +1303,19 @@ mod tests {
         };
         assert_eq!(
             relation_rhs_coeff_len(&layout).expect("mixed group rhs length"),
-            128 + 128 + 64 + 64 + 2 * 64 + 2 * 32 + 32
+            256 + 256 + 128 + 128 + 2 * 128 + 2 * 64 + 64
         );
         assert_eq!(
             layout.row_ring_dims().expect("mixed quotient row dims"),
-            vec![128, 128, 64, 64, 64, 64, 32, 32, 32]
+            vec![256, 256, 128, 128, 128, 128, 64, 64, 64]
         );
 
-        let mut commitment_coeffs = vec![G::zero(); 64 + 2 * 32];
+        let mut commitment_coeffs = vec![G::zero(); 128 + 2 * 64];
         commitment_coeffs[0] = G::from_u64(2);
-        commitment_coeffs[64] = G::from_u64(3);
-        commitment_coeffs[64 + 32] = G::from_u64(4);
+        commitment_coeffs[128] = G::from_u64(3);
+        commitment_coeffs[128 + 64] = G::from_u64(4);
         let commitment_rows = RingVec::from_coeffs(commitment_coeffs);
-        let mut v_coeffs = vec![G::zero(); 32];
+        let mut v_coeffs = vec![G::zero(); 64];
         v_coeffs[0] = G::from_u64(5);
         let v = RingVec::from_coeffs(v_coeffs);
 

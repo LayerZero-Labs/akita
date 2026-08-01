@@ -82,9 +82,9 @@ fn group_role_dims_use_group_a_b_and_level_shared_d() {
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
         outer.output_rank(),
-        outer.input_width() * 2,
+        outer.input_width(),
         outer.coeff_linf_bound(),
-        32,
+        64,
     );
     let dims = lp
         .group_role_dims(&batch, 0)
@@ -93,7 +93,7 @@ fn group_role_dims_use_group_a_b_and_level_shared_d() {
         dims,
         CommitmentRingDims {
             inner: 64,
-            outer: 32,
+            outer: 64,
             opening: 64,
         }
     );
@@ -253,10 +253,10 @@ fn address_oracle_precommit(
 fn address_oracle_fixture(group_count: usize) -> (CommittedGroupParams, OpeningClaimsLayout) {
     let (final_dims, precommitted) = match group_count {
         1 => ((64, 64, 64, 8, 2), Vec::new()),
-        2 => ((64, 64, 32, 8, 2), vec![(128, 64, 32, 16, 1)]),
+        2 => ((64, 64, 64, 8, 2), vec![(128, 64, 64, 16, 1)]),
         3 => (
-            (64, 32, 64, 8, 2),
-            vec![(128, 32, 64, 16, 1), (64, 64, 64, 8, 3)],
+            (64, 64, 64, 8, 2),
+            vec![(128, 64, 64, 16, 1), (64, 64, 64, 8, 3)],
         ),
         _ => panic!("address-oracle fixture supports one to three groups"),
     };

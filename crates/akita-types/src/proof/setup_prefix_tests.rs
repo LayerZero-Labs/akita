@@ -419,14 +419,33 @@ fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
     let slot = || {
         let inner_rows =
             RingVec::from_coeffs_with_ring_dim(vec![F::zero(); 64], 64).expect("inner rows");
-        let hint = AkitaCommitmentHint::<F>::singleton(inner_rows).expect("hint");
+        let matrix = &id.commitment_params.layout.outer_commit_matrix;
+        let plan = crate::CompressionChainPlan::for_complete_source(
+            matrix.sis_modulus_profile(),
+            matrix.output_rank() * matrix.ring_dimension(),
+        )
+        .expect("compression plan");
+        let stages = plan
+            .maps()
+            .iter()
+            .map(|map| {
+                crate::PackedNegativeBinary::from_bytes(*map, vec![0; map.packed_digit_bytes()])
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .expect("packed stages");
+        let witness =
+            crate::CompressionChainWitness::new(plan.clone(), stages).expect("compression witness");
+        let hint = AkitaCommitmentHint::<F>::singleton_with_outer_compression(inner_rows, &witness)
+            .expect("hint");
         SetupPrefixSlot {
             id: id.clone(),
             natural_len: id.natural_len,
             padded_len: id.n_prefix().expect("padded len"),
-            // One commitment row of d_setup = 32 coefficients.
             commitment: SetupPrefixPublicCommitment {
-                rows: vec![RingVec::from_coeffs(vec![F::zero(); 64])],
+                rows: vec![RingVec::from_coeffs(vec![
+                    F::zero();
+                    plan.terminal_coefficients()
+                ])],
             },
             hint,
         }
@@ -439,6 +458,16 @@ fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
         .expect_err("duplicate insert must fail");
 
     assert_eq!(registry.len(), 1);
+
+    let mut missing_stages = slot();
+    missing_stages.hint = AkitaCommitmentHint::singleton(
+        RingVec::from_coeffs_with_ring_dim(vec![F::zero(); 64], 64).expect("inner rows"),
+    )
+    .expect("uncompressed hint");
+    let mut missing_registry = SetupPrefixProverRegistry::<F>::new([0; 32].into());
+    missing_registry
+        .insert(missing_stages)
+        .expect_err("setup-prefix hints must retain both compression stages");
 }
 
 #[test]

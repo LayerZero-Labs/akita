@@ -28,6 +28,11 @@ the wire carries only the 128-byte terminal payload `p_F` or `p_H`. The source
 image is capped at 8 KiB. The binding argument reduces to Module-SIS for the
 base relation and for each compression map.
 
+The compression ladder is profile-owned (`q128: 16/8`, `q64: 32/16`, `q32:
+64/32`) and is separate from A/B/D matrix dimensions. All A/B/D dimensions are
+at least 64; the smaller compression rows stay in the shared witness tail and
+cannot change ordinary relation alignment.
+
 **Sources to fold in**
 
 - `crates/akita-prover/src/api/commitment.rs:529-721` (`commit`, `batched_commit`).
