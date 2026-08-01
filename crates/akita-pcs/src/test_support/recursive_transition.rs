@@ -150,18 +150,22 @@ where
             let natural_prefix_len = active_setup_field_len(root_commitment, &opening_layout)?;
             let n_prefix = padded_setup_prefix_len(natural_prefix_len);
             let ring_challenge = Mid::ring_challenge_config(setup_prefix_d)?;
-            let prefix_params = akita_planner::test_support::plan_setup_prefix_commitment(
-                akita_planner::test_support::SetupPrefixPlanRequest {
-                    policy: &mid_policy,
-                    ring_challenge: &ring_challenge,
-                    fold_shape: l1_step.params.witness.fold_challenge_shape,
-                    log_basis_outer: l1_step.params.witness.log_basis_outer,
-                    log_basis_open: l1_step.params.witness.log_basis_open,
-                    prefix_field_elements: n_prefix,
-                    num_chunks: l1_step.params.witness.witness_chunk.num_chunks,
-                    outer_ring_dimension: middle_bd_ring_dim,
-                },
-            )?;
+            let prefix_params = akita_planner::test_support::derive_setup_prefix_group(
+                &mid_policy,
+                &ring_challenge,
+                l1_step.params.witness.fold_challenge_shape,
+                l1_step.params.witness.log_basis_outer,
+                l1_step.params.witness.log_basis_open,
+                n_prefix,
+                l1_step.params.witness.witness_chunk.num_chunks,
+                middle_bd_ring_dim,
+            )?
+            .ok_or_else(|| {
+                AkitaError::UnsupportedSchedule(format!(
+                    "no setup-prefix commitment at A{}/B{middle_bd_ring_dim} for n_prefix={n_prefix}",
+                    mid_policy.ring_dimension,
+                ))
+            })?;
             let setup_prefix =
                 setup_prefix_slot_id(setup_prefix_d, natural_prefix_len, prefix_params);
             let prefix_d_width = setup_prefix

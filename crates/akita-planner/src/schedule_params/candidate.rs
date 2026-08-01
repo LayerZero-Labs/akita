@@ -12,9 +12,8 @@ pub(crate) use recursive::{
     derive_candidate_level_params, derive_candidate_level_params_all_splits,
 };
 pub(crate) use root::scalar_root_fold_level_params_candidate;
-pub(super) use setup_prefix::derive_setup_prefix_group;
-pub(crate) use setup_prefix::planned_next_witness_len;
-pub use setup_prefix::suffix_opening_layout;
+#[cfg_attr(not(feature = "test-support"), allow(unreachable_pub))]
+pub use setup_prefix::derive_setup_prefix_group;
 
 #[cfg(test)]
 use recursive::{

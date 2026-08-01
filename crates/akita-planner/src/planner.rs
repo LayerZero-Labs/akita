@@ -545,9 +545,9 @@ pub fn find_schedule(
     let fold_challenge_shape_at_level = &fold_challenge_shape_at_level;
     key.validate()?;
     let scalar_policy = policy.direct_only();
-    let scalar_dimensions =
-        crate::schedule_params::RingDimensionSearchDomain::for_policy(&scalar_policy)?;
-    if !scalar_dimensions.is_uniform_policy_domain(&scalar_policy) {
+    if scalar_policy.selection_policy
+        == crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+    {
         if !key.precommitteds.is_empty() {
             return Err(AkitaError::UnsupportedSchedule(
                 "mixed ring-dimension selection is not supported for multi-group roots".to_string(),
@@ -556,7 +556,6 @@ pub fn find_schedule(
         return find_schedule_mixed_ring(
             key.final_group,
             &scalar_policy,
-            &scalar_dimensions,
             ring_challenge_config,
             fold_challenge_shape_at_level,
         );

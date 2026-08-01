@@ -11,6 +11,13 @@ fn score(candidate: &ScheduleCandidate) -> MixedScore {
     }
 }
 
+fn complete_schedule_order_key(
+    score: MixedScore,
+    schedule: &FoldSchedule,
+) -> (MixedScore, Vec<u8>) {
+    (score, schedule.canonical_descriptor_bytes())
+}
+
 fn dominates_score(left: MixedScore, right: MixedScore) -> bool {
     left.setup_field_elements <= right.setup_field_elements
         // A setup-only improvement is not safe to prune: a parent can mask
@@ -49,7 +56,6 @@ fn insert_supported(
 #[allow(clippy::too_many_arguments)]
 fn suffix_frontier(
     policy: &PlannerPolicy,
-    dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_shape: &dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     key: PolynomialGroupLayout,
@@ -85,7 +91,7 @@ fn suffix_frontier(
     let mut frontier = Vec::new();
 
     for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
-        for candidate_dimensions in dimensions.candidates() {
+        for candidate_dimensions in policy.ring_dimension_candidates {
             let suffix_dimensions = CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
             if level >= MIXED_SEARCH_FOLD_LEVELS {
                 if *candidate_dimensions != suffix_dimensions {
@@ -188,7 +194,6 @@ fn suffix_frontier(
                 };
                 for child in suffix_frontier(
                     policy,
-                    dimensions,
                     ring_challenge_config,
                     fold_shape,
                     key,
@@ -258,14 +263,14 @@ fn suffix_frontier(
 pub(crate) fn find_schedule_mixed_ring(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
-    dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
     validate_policy(policy)?;
-    dimensions.validate_for_policy(policy)?;
-    if dimensions.is_uniform_policy_domain(policy) {
+    if policy.selection_policy
+        != crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+    {
         return Err(AkitaError::InvalidSetup(
             "mixed-D schedule search requires a non-uniform ring-dimension domain".to_string(),
         ));
@@ -281,13 +286,16 @@ pub(crate) fn find_schedule_mixed_ring(
         ));
     }
     let suffix_dimensions = CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
-    if !dimensions.candidates().contains(&suffix_dimensions) {
+    if !policy
+        .ring_dimension_candidates
+        .contains(&suffix_dimensions)
+    {
         return Err(AkitaError::InvalidSetup(format!(
             "mixed-D search requires the D{MIXED_SEARCH_SUFFIX_RING_DIMENSION} uniform candidate \
              used from fold level {MIXED_SEARCH_FOLD_LEVELS} onward"
         )));
     }
-    if dimensions.candidates().iter().any(|dims| {
+    if policy.ring_dimension_candidates.iter().any(|dims| {
         dims.d_a() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
             || dims.d_b() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
             || dims.d_d() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
@@ -313,7 +321,7 @@ pub(crate) fn find_schedule_mixed_ring(
     let mut complete = Vec::new();
 
     for log_basis in min_log_basis..=max_log_basis {
-        for root_dimensions in dimensions.candidates() {
+        for root_dimensions in policy.ring_dimension_candidates {
             let alpha = root_dimensions.d_a().trailing_zeros() as usize;
             let reduced_vars = key.num_vars().saturating_sub(alpha);
             if reduced_vars == 0 {
@@ -368,7 +376,6 @@ pub(crate) fn find_schedule_mixed_ring(
                 };
                 for suffix in suffix_frontier(
                     policy,
-                    dimensions,
                     &ring_challenge_config,
                     &fold_shape,
                     key,
@@ -425,7 +432,7 @@ pub(crate) fn find_schedule_mixed_ring(
     let mut scored = complete
         .into_iter()
         .map(|candidate| {
-            let descriptor = materialize_candidate_schedule(
+            let schedule = materialize_candidate_schedule(
                 candidate.total_bytes,
                 candidate.setup_field_elements,
                 policy.ring_dimension,
@@ -433,20 +440,21 @@ pub(crate) fn find_schedule_mixed_ring(
                 candidate.folds.clone(),
                 candidate.terminal.clone(),
             )?
-            .schedule
-            .canonical_descriptor_bytes();
+            .schedule;
             Ok((
-                MixedScore {
-                    setup_field_elements: candidate.setup_field_elements,
-                    proof_bytes: candidate.total_bytes,
-                },
-                descriptor,
+                complete_schedule_order_key(
+                    MixedScore {
+                        setup_field_elements: candidate.setup_field_elements,
+                        proof_bytes: candidate.total_bytes,
+                    },
+                    &schedule,
+                ),
                 candidate,
             ))
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
-    scored.sort_by(|left, right| (&left.0, &left.1).cmp(&(&right.0, &right.1)));
-    let Some((_, _, selected)) = scored.into_iter().next() else {
+    scored.sort_by(|left, right| left.0.cmp(&right.0));
+    let Some((_, selected)) = scored.into_iter().next() else {
         return Err(AkitaError::UnsupportedSchedule(format!(
             "no mixed-D schedule with at least two folds for num_vars={}, num_polynomials={}",
             key.num_vars(),
@@ -465,7 +473,7 @@ pub(crate) fn find_schedule_mixed_ring(
 
 #[cfg(test)]
 mod tests {
-    use super::{dominates_score, MixedScore};
+    use super::{complete_schedule_order_key, dominates_score, MixedScore};
 
     #[test]
     fn frontier_keeps_lower_payload_child_until_parent_masks_setup() {
@@ -511,5 +519,52 @@ mod tests {
             parent_setup.max(lower_setup.setup_field_elements),
             parent_setup.max(higher_setup.setup_field_elements)
         );
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn complete_schedule_tie_breaks_by_full_descriptor() {
+        use akita_config::{
+            policy_of,
+            proof_optimized::fp128::{D128OneHot, D64OneHot},
+            CommitmentConfig,
+        };
+
+        let key = akita_types::AkitaScheduleLookupKey::single(
+            akita_types::PolynomialGroupLayout::singleton(16),
+        );
+        let d64 = crate::find_schedule(
+            &key,
+            &policy_of::<D64OneHot>(),
+            D64OneHot::ring_challenge_config,
+            D64OneHot::fold_challenge_shape_at_level,
+        )
+        .unwrap()
+        .schedule;
+        let d128 = crate::find_schedule(
+            &key,
+            &policy_of::<D128OneHot>(),
+            D128OneHot::ring_challenge_config,
+            D128OneHot::fold_challenge_shape_at_level,
+        )
+        .unwrap()
+        .schedule;
+        d64.validate_structure().unwrap();
+        d128.validate_structure().unwrap();
+
+        let d64_descriptor = d64.canonical_descriptor_bytes();
+        let d128_descriptor = d128.canonical_descriptor_bytes();
+        assert_ne!(d64_descriptor, d128_descriptor);
+        let exact_tie = MixedScore {
+            setup_field_elements: 1_024,
+            proof_bytes: 4_096,
+        };
+        let mut keys = [
+            complete_schedule_order_key(exact_tie, &d128),
+            complete_schedule_order_key(exact_tie, &d64),
+        ];
+        keys.sort();
+
+        assert_eq!(keys[0].1, d64_descriptor.min(d128_descriptor));
     }
 }

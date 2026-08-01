@@ -731,10 +731,10 @@ catalog/policy digest, and effective schedule digest.
 
 The planner must be independent of hash-map iteration and thread scheduling:
 
-- canonicalize candidate domains by sorting and deduplicating explicit
-  `(d_a, d_b, d_d)` tuples (`RingDimensionSearchDomain::new`); equivalent
-  reordered or duplicated input shares one value identity;
-- reject empty domains and tuples that fail A-to-role divisibility validation or that are
+- require `PlannerPolicy::ring_dimension_candidates` to be strictly sorted,
+  duplicate-free, and non-empty so the catalog-bound slice has one value
+  identity;
+- reject tuples that fail native role-projection validation or whose role dimensions are
   not divisors of the setup-generation dimension;
 - enumerate bases, dimensions, and splits in a documented order;
 - store frontiers in ordered collections or sort before selection/emission;
@@ -808,12 +808,13 @@ byte-identical.
 The current branch implements the first offline direct scalar cut while
 preserving all generated catalogs:
 
-- `RingDimensionSearchDomain` admits canonical explicit
-  `(d_a, d_b, d_d)` tuples and binds the setup-generation dimension used to
-  validate them;
-- the one canonical `find_schedule` entry point requires an explicit domain;
-  a uniform caller passes a singleton domain, while a mixed caller selects by
-  physical setup field elements and then exact modeled proof bytes;
+- `PlannerPolicy::ring_dimension_candidates` is the one catalog-bound source
+  of admitted `(d_a, d_b, d_d)` tuples, validated against the policy's setup
+  generation dimension;
+- the one canonical `find_schedule` entry point dispatches from that policy
+  slice: an exact setup-generation singleton preserves the uniform objective,
+  while any other admitted domain selects by physical setup field elements and
+  then exact modeled proof bytes;
 - root and recursive candidates derive role-local widths, SIS keys, and
   matrices directly;
 - L0 and L1 exhaustively enumerate splits over admissible, component-wise
@@ -1764,8 +1765,8 @@ back.
 
 | Concern | Canonical location |
 |---|---|
-| Planner public entry points and root search | `crates/akita-planner/src/schedule_params.rs` |
-| Planner candidate construction | `crates/akita-planner/src/schedule_params/candidate.rs` |
+| Planner public entry point and multi-group root search | `crates/akita-planner/src/planner.rs` |
+| Scalar and mixed candidate construction | `crates/akita-planner/src/schedule_params/candidate/` |
 | Planner suffix dynamic programming | `crates/akita-planner/src/schedule_params/suffix_dp.rs` |
 | Multi-group root planning | `crates/akita-planner/src/planner.rs` |
 | Generated catalog emission | `crates/akita-planner/src/emit/mod.rs` |
@@ -1773,7 +1774,7 @@ back.
 | Generated-row expansion and replay | `crates/akita-schedules/src/generated/` |
 | Catalog identity | `crates/akita-schedules/src/catalog_identity.rs` |
 | Config-to-policy projection | `crates/akita-config/src/lib.rs` |
-| Proof-byte and setup-envelope accounting | `crates/akita-types/src/proof/` |
+| Proof-byte and setup-envelope accounting | `crates/akita-types/src/proof_size.rs`, `crates/akita-types/src/proof/setup_envelope.rs` |
 | Mixed schedule builders and adapters | `crates/akita-pcs/src/test_support.rs` |
 | Profile selection and environment variables | `crates/akita-pcs/examples/profile/modes.rs` |
 | A/B/D dimension validation | `crates/akita-types/src/layout/ring_dims.rs` |

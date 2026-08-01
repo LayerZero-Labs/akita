@@ -180,7 +180,8 @@ that larger D is automatically faster.
 
 ### Preserve existing behavior
 
-Mixed-D planning must be opt-in. When no dimension domain is supplied:
+Mixed-D planning must be opt-in. When the policy domain is exactly the uniform
+setup-generation tuple:
 
 - `PlannerPolicy::ring_dimension` remains the only candidate;
 - existing scalar-D comparison policies remain unchanged;
@@ -276,26 +277,26 @@ schedule after a later transition.
 
 ## Planner implementation status on `feat/planner-per-matrix-d`
 
-The first planner-native cut is an opt-in offline scalar search. It does not
-change the meaning of the current policy. The canonical `find_schedule` entry
-point now requires an explicit dimension domain.
+The first planner-native cut is an opt-in offline scalar search. The canonical
+`find_schedule` entry point reads the catalog-bound dimension domain directly
+from `PlannerPolicy`.
 
 Implemented:
 
-- `RingDimensionSearchDomain` accepts explicit `(d_a, d_b, d_d)` tuples,
-  canonicalizes their order, removes duplicates, validates each native role projection, and
-  requires every role dimension to divide the setup-generation dimension.
-- `find_schedule` searches the supplied domain with
-  `PlannerPolicy::ring_dimension` interpreted as the setup-generation
-  dimension. Uniform callers supply an explicit singleton domain and retain
-  the historical proof-payload objective.
+- `PlannerPolicy::ring_dimension_candidates` carries strictly sorted, unique
+  `(d_a, d_b, d_d)` tuples. Policy validation checks native role-projection
+  geometry and requires
+  every role dimension to divide `PlannerPolicy::ring_dimension`, the setup
+  generation dimension.
+- `find_schedule` searches that policy-bound domain. An exact uniform
+  setup-generation singleton retains the historical proof-payload objective.
 - Root and recursive candidates derive A/B/D SIS keys at their selected role
   dimensions. B and D physical widths include `d_a / d_role` projection
   subcolumns; candidates are built directly rather than retargeted afterward.
 - The mixed search enumerates every admitted tuple and valid block split only
   at L0 and L1. Tuples are component-wise non-increasing, L2 through the
-  terminal are uniform D64, and dimensions above the first comparable
-  rank-one matrix are pruned.
+  terminal are uniform D64. Rank-one dimension pruning remains disabled until
+  an equivalence key is proved against the unpruned traversal.
 - Mixed-boundary suffix states retain the required `(setup, proof)`
   alternatives per exact first `CommittedGroupParams`, because the parent
   proof formula sees that first step. Once dimensions freeze at L2, candidate

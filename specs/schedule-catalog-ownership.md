@@ -187,7 +187,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 ### Invariants
 
 - **DP is the source of truth.** Any shipped catalog row MUST match
-  `find_schedule(key, policy, domain, …)` for the same policy, domain, and hooks. Drift guards enforce
+  `find_schedule(key, policy, …)` for the same catalog-bound policy and hooks. Drift guards enforce
   this per catalog (today: `generated_schedule_tables_match_find_schedule`; becomes
   per-family tests in `akita-schedules` and downstream catalogs).
 - **Catalog identity is checked before lookup.** A catalog is not just an entry slice.

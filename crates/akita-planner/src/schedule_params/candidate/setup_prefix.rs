@@ -1,92 +1,11 @@
 use super::*;
 
-fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<usize, AkitaError> {
-    if field_len == 0 {
-        return Err(AkitaError::InvalidSetup(format!(
-            "{context} must be nonzero"
-        )));
-    }
-    let padded = field_len.checked_next_power_of_two().ok_or_else(|| {
-        AkitaError::InvalidSetup(format!("{context} power-of-two padding overflow"))
-    })?;
-    Ok(padded.trailing_zeros() as usize)
-}
-
-pub fn suffix_opening_layout(
-    current_witness_len: usize,
-    incoming_setup_prefix: Option<usize>,
-) -> Result<OpeningClaimsLayout, AkitaError> {
-    let witness_vars = checked_power_of_two_vars(current_witness_len, "suffix witness length")?;
-    let witness_group = PolynomialGroupLayout::singleton(witness_vars);
-    match incoming_setup_prefix {
-        Some(natural_len) => {
-            let n_prefix = padded_setup_prefix_len(natural_len);
-            if n_prefix == 0 || !n_prefix.is_power_of_two() {
-                return Err(AkitaError::InvalidSetup(
-                    "incoming setup prefix length must be a nonzero power of two".to_string(),
-                ));
-            }
-            let prefix_vars = checked_power_of_two_vars(n_prefix, "incoming setup prefix length")?;
-            OpeningClaimsLayout::from_groups(vec![
-                PolynomialGroupLayout::singleton(prefix_vars),
-                witness_group,
-            ])
-        }
-        None => OpeningClaimsLayout::from_groups(vec![witness_group]),
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
-fn grouped_segment_rings(
-    num_polys: usize,
-    num_live_blocks: usize,
-    num_chunks: usize,
-    num_positions_per_block: usize,
-    n_a: usize,
-    num_digits_inner: usize,
-    num_digits_outer: usize,
-    num_digits_open: usize,
-    num_digits_fold: usize,
-) -> Result<usize, AkitaError> {
-    let e_hat = num_polys
-        .checked_mul(num_live_blocks)
-        .and_then(|count| count.checked_mul(num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("group E witness overflow".into()))?;
-    let t_hat = num_polys
-        .checked_mul(num_live_blocks)
-        .and_then(|count| count.checked_mul(n_a))
-        .and_then(|count| count.checked_mul(num_digits_outer))
-        .ok_or_else(|| AkitaError::InvalidSetup("group T witness overflow".into()))?;
-    let z_hat = num_positions_per_block
-        .checked_mul(num_digits_inner)
-        .and_then(|count| count.checked_mul(num_digits_fold))
-        .and_then(|count| count.checked_mul(num_chunks))
-        .ok_or_else(|| AkitaError::InvalidSetup("group Z witness overflow".into()))?;
-    e_hat
-        .checked_add(t_hat)
-        .and_then(|count| count.checked_add(z_hat))
-        .ok_or_else(|| AkitaError::InvalidSetup("group witness overflow".into()))
-}
-
-pub(crate) fn planned_next_witness_len(
-    field_bits: u32,
-    params: &CommittedGroupParams,
-    final_num_polys: usize,
-    num_chunks: usize,
-) -> Result<usize, AkitaError> {
-    let opening_batch =
-        params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
-    let layout = WitnessLayout::new(
-        params,
-        &opening_batch,
-        num_chunks,
-        akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open),
-    )?;
-    Ok(layout.live_coeff_len())
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(in crate::schedule_params) fn derive_setup_prefix_group(
+#[cfg_attr(not(feature = "test-support"), allow(unreachable_pub))]
+/// Derive one secure setup-prefix commitment candidate.
+///
+/// Returns `None` when the requested geometry has no audited feasible candidate.
+pub fn derive_setup_prefix_group(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,
     requested_fold_shape: TensorChallengeShape,
@@ -96,6 +15,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
     num_chunks: usize,
     outer_ring_dimension: usize,
 ) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
+    validate_policy(policy)?;
     if outer_ring_dimension == 0
         || !outer_ring_dimension.is_power_of_two()
         || !policy.ring_dimension.is_multiple_of(outer_ring_dimension)
