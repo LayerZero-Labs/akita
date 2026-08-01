@@ -268,7 +268,7 @@ fn validate_ring_dimension_candidates(policy: &PlannerPolicy) -> Result<(), Akit
 }
 
 /// Resolve the tensor low length independently from the block split.
-pub(crate) fn optimize_fold_challenge_shape(
+pub fn optimize_fold_challenge_shape(
     requested: TensorChallengeShape,
     num_live_blocks: usize,
 ) -> Result<TensorChallengeShape, AkitaError> {
@@ -308,26 +308,28 @@ pub(crate) fn optimize_fold_challenge_shape(
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CandidateFoldStep {
-    pub(crate) params: CommittedGroupParams,
-    pub(crate) input_witness_len: usize,
-    pub(crate) output_witness_len: usize,
-    pub(crate) estimated_direct_payload_bytes: usize,
-    pub(crate) estimated_stage3_payload_bytes: usize,
+/// One fully priced non-terminal fold awaiting schedule materialization.
+pub struct CandidateFoldStep {
+    pub params: CommittedGroupParams,
+    pub input_witness_len: usize,
+    pub output_witness_len: usize,
+    pub estimated_direct_payload_bytes: usize,
+    pub estimated_stage3_payload_bytes: usize,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CandidateTerminalResponse {
-    pub(crate) params: akita_types::TerminalCommittedGroupParams,
-    pub(crate) sparse_challenge_config: akita_challenges::SparseChallengeConfig,
-    pub(crate) input_witness_len: usize,
-    pub(crate) estimated_direct_payload_bytes: usize,
-    pub(crate) response_shape: TerminalResponseShape,
-    pub(crate) estimated_payload_bytes: usize,
+/// Fully priced terminal response awaiting schedule materialization.
+pub struct CandidateTerminalResponse {
+    pub params: akita_types::TerminalCommittedGroupParams,
+    pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
+    pub input_witness_len: usize,
+    pub estimated_direct_payload_bytes: usize,
+    pub response_shape: TerminalResponseShape,
+    pub estimated_payload_bytes: usize,
 }
 
 /// Exact Stage-3 payload induced when `successor` consumes a setup prefix.
-pub(crate) fn stage3_payload_bytes_for_successor(
+pub fn stage3_payload_bytes_for_successor(
     policy: &PlannerPolicy,
     successor: Option<&CommittedGroupParams>,
 ) -> Result<usize, AkitaError> {
@@ -348,9 +350,13 @@ pub(crate) fn stage3_payload_bytes_for_successor(
     ))
 }
 
-pub(crate) fn materialize_candidate_schedule(
+/// Materialize and validate the schedule shared by offline search and generated replay.
+///
+/// `cached_setup_field_elements` is the exact physical field count. Conversion to
+/// setup-generation ring elements happens exactly once while constructing the estimate.
+pub fn materialize_candidate_schedule(
     cached_total: usize,
-    cached_setup_envelope: usize,
+    cached_setup_field_elements: usize,
     setup_generation_dimension: usize,
     first_direct_setup_field_len: Option<usize>,
     mut folds: Vec<CandidateFoldStep>,
@@ -359,6 +365,11 @@ pub(crate) fn materialize_candidate_schedule(
     if folds.is_empty() {
         return Err(AkitaError::UnsupportedSchedule(
             "a fold schedule requires root and terminal folds".to_string(),
+        ));
+    }
+    if setup_generation_dimension == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "setup generation dimension must be nonzero".into(),
         ));
     }
     let root = folds.remove(0);
@@ -378,7 +389,8 @@ pub(crate) fn materialize_candidate_schedule(
             .checked_add(terminal_response.estimated_payload_bytes)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal estimate overflow".to_string()))?,
         estimated_terminal_response_payload_bytes: terminal_response.estimated_payload_bytes,
-        estimated_setup_envelope_ring_elements: cached_setup_envelope,
+        estimated_setup_envelope_ring_elements: cached_setup_field_elements
+            .div_ceil(setup_generation_dimension),
         first_direct_setup_field_len,
         selected_offload_edges: 0,
     };
@@ -442,12 +454,12 @@ pub(crate) fn materialize_candidate_schedule(
         },
     };
     schedule.validate_structure()?;
-    let recomputed_envelope =
-        akita_types::setup_matrix_envelope_for_schedule(&schedule, setup_generation_dimension)?
-            .max_setup_len;
-    if recomputed_envelope != cached_setup_envelope {
+    let recomputed_setup_field_elements =
+        akita_types::setup_matrix_field_elements_for_schedule(&schedule)?;
+    if recomputed_setup_field_elements != cached_setup_field_elements {
         return Err(AkitaError::InvalidSetup(format!(
-            "cached setup envelope {cached_setup_envelope} disagrees with materialized envelope {recomputed_envelope}"
+            "cached setup field count {cached_setup_field_elements} disagrees with materialized \
+             count {recomputed_setup_field_elements}"
         )));
     }
     estimate.selected_offload_edges = schedule
@@ -466,7 +478,11 @@ fn witness_partition(num_chunks: usize) -> WitnessPartition {
     }
 }
 
-fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<usize, AkitaError> {
+/// Return the Boolean variable count after checked power-of-two padding.
+pub fn checked_power_of_two_vars(
+    field_len: usize,
+    context: &'static str,
+) -> Result<usize, AkitaError> {
     if field_len == 0 {
         return Err(AkitaError::InvalidSetup(format!(
             "{context} must be nonzero"
@@ -503,7 +519,8 @@ pub fn suffix_opening_layout(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn grouped_segment_rings(
+/// Count ring elements in one grouped witness segment with checked arithmetic.
+pub fn grouped_segment_rings(
     num_polys: usize,
     num_live_blocks: usize,
     num_chunks: usize,
@@ -535,7 +552,8 @@ fn grouped_segment_rings(
         .ok_or_else(|| AkitaError::InvalidSetup("group witness overflow".to_string()))
 }
 
-pub(crate) fn planned_next_witness_len(
+/// Derive the canonical next-witness field length for a scalar planner level.
+pub fn planned_next_witness_len(
     field_bits: u32,
     params: &CommittedGroupParams,
     final_num_polys: usize,

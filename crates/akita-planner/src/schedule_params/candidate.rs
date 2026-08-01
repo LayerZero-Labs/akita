@@ -13,8 +13,6 @@ pub(crate) use recursive::{
 };
 pub(crate) use root::scalar_root_fold_level_params_candidate;
 pub(super) use setup_prefix::derive_setup_prefix_group;
-pub(crate) use setup_prefix::planned_next_witness_len;
-pub use setup_prefix::suffix_opening_layout;
 
 #[cfg(test)]
 use recursive::{
