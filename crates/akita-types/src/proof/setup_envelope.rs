@@ -2,9 +2,10 @@
 
 use akita_field::AkitaError;
 
+use super::setup_prefix::{active_setup_field_len, suffix_opening_layout};
 use crate::{
-    CommittedGroupParams, FoldSchedule, SetupMatrixCapacity, SetupPrefixSlotId,
-    TerminalCommittedGroupParams,
+    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity,
+    SetupPrefixSlotId, TerminalCommittedGroupParams,
 };
 
 /// Compute the exact maximum reusable setup-matrix field prefix required by
@@ -37,6 +38,53 @@ pub fn setup_matrix_field_elements_for_schedule(
         &mut max_field_elements,
     )?;
     Ok(max_field_elements)
+}
+
+/// Compute the exact public-matrix prefix required by a verifier for one
+/// resolved schedule.
+///
+/// A producer whose successor carries an incoming setup-prefix commitment does
+/// not require a direct public-matrix scan. The first producer after the
+/// offloaded chain does. Terminal commitment verification always requires its
+/// exact inner matrix. The returned capacity is the maximum of those direct
+/// uses.
+pub fn verifier_setup_matrix_capacity_for_schedule(
+    schedule: &FoldSchedule,
+    root_layout: &OpeningClaimsLayout,
+) -> Result<SetupMatrixCapacity, AkitaError> {
+    schedule.validate_structure()?;
+
+    let mut num_field_elements = 1usize;
+    accumulate_terminal_matrix_field_elements(
+        &schedule.terminal.params.witness,
+        &mut num_field_elements,
+    )?;
+
+    for producer_index in 0..=schedule.recursive_folds.len() {
+        let producer_is_offloaded = schedule
+            .recursive_folds
+            .get(producer_index)
+            .is_some_and(|successor| successor.params.incoming_setup_prefix.is_some());
+        if producer_is_offloaded {
+            continue;
+        }
+
+        let direct_fields = if producer_index == 0 {
+            active_setup_field_len(&schedule.root.params.final_group.commitment, root_layout)?
+        } else {
+            let producer = &schedule.recursive_folds[producer_index - 1];
+            let incoming_prefix_len = producer
+                .params
+                .incoming_setup_prefix
+                .as_ref()
+                .map(|slot| slot.natural_len);
+            let layout = suffix_opening_layout(producer.input_witness_len, incoming_prefix_len)?;
+            active_setup_field_len(&producer.params.witness, &layout)?
+        };
+        num_field_elements = num_field_elements.max(direct_fields);
+    }
+
+    Ok(SetupMatrixCapacity { num_field_elements })
 }
 
 /// Extend a physical setup footprint with one non-terminal level.

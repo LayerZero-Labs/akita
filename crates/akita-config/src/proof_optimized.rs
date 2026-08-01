@@ -8,8 +8,9 @@ use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
     setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
-    AkitaExpandedSetup, AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule,
-    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixCapacity,
+    verifier_setup_matrix_capacity_for_schedule, AkitaExpandedSetup, AkitaScheduleLookupKey,
+    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
+    SetupMatrixCapacity,
 };
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -279,7 +280,7 @@ pub fn setup_level_params_from_schedule(schedule: &FoldSchedule) -> Vec<Committe
 ///
 /// Returns [`AkitaError::InvalidSetup`] when sizing overflows or the setup's
 /// materialized shared matrix is too short for `schedule` and `layout`.
-pub fn ensure_schedule_fits_setup<Cfg>(
+pub fn ensure_prover_schedule_fits_setup<Cfg>(
     setup: &AkitaExpandedSetup<Cfg::Field>,
     schedule: &FoldSchedule,
     layout: &OpeningClaimsLayout,
@@ -302,6 +303,22 @@ where
         available_setup_field_elements,
     )?;
     Ok(())
+}
+
+/// Reject a concrete schedule whose direct verifier matrix uses exceed setup.
+///
+/// Offloaded producer edges are covered by verifier-visible setup-prefix
+/// commitments and do not require their natural source prefixes here.
+pub fn ensure_verifier_schedule_fits_setup(
+    setup: &AkitaExpandedSetup<impl akita_field::FieldCore>,
+    schedule: &FoldSchedule,
+    layout: &OpeningClaimsLayout,
+) -> Result<(), AkitaError> {
+    let required = verifier_setup_matrix_capacity_for_schedule(schedule, layout)?;
+    ensure_required_setup_field_elements(
+        required.num_field_elements,
+        setup.shared_matrix.as_field_slice().len(),
+    )
 }
 
 fn ensure_required_setup_field_elements(

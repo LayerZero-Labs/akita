@@ -102,6 +102,22 @@ coefficients are never used as padding. The prefix commitment's A and B matrix
 dimensions are ordinary planner-owned commitment parameters, independent of
 the dimensions used by the producing or consuming fold.
 
+After a concrete schedule is selected, callers may use
+`setup_verifier_for_schedule` to keep only the public-matrix prefix that proof
+verification can read. A producer followed by an incoming setup-prefix
+commitment is offloaded, so the verifier does not scan that producer's natural
+source prefix. The retained matrix is the maximum of the terminal A matrix and
+the active setup fields of every producer that remains direct. This is a
+schedule-derived capacity, not necessarily the length of any stored setup
+prefix. The complete setup-prefix commitment registry remains in the verifier
+artifact.
+
+This narrowing concerns the per-proof hot path. Loading an externally supplied
+setup-prefix registry still needs a provenance policy. A deployment must
+recompute the commitments, validate a future derivation-certificate chain, or
+authenticate a package that was validated earlier. Structural decoding alone
+does not prove that a stored commitment came from the named public stream.
+
 NTT caches are reproducible backend state, not setup data. Preparation starts
 with an empty cache. A matrix-consuming kernel derives an exact
 `NttPrefixRequirement` from the same row count and active width it passes to

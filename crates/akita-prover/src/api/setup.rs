@@ -4,7 +4,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
     derive_public_matrix_prefix, sample_public_matrix_id, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, SetupMatrixCapacity, SetupPrefixProverRegistry,
+    AkitaVerifierSetup, FlatMatrix, SetupMatrixCapacity, SetupPrefixProverRegistry,
     SetupPrefixVerifierRegistry,
 };
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use std::sync::Arc;
 /// prepares a compute backend from the expanded setup when it wants to prove.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaProverSetup<F: FieldCore> {
-    /// Expanded matrix stage used by both prover and verifier.
+    /// Expanded matrix stage used by the prover.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Preprocessed setup-prefix commitment slots for setup-claim offloading.
     ///
@@ -68,21 +68,54 @@ impl<F: FieldCore> AkitaProverSetup<F> {
         })
     }
 
-    /// Derive a verifier setup from this prover setup.
+    /// Derive a verifier setup with an explicit public-matrix capacity.
     ///
-    /// This copies protocol-independent setup state. Verifier setup initializes
-    /// a non-serialized lazy terminal NTT-prefix cache; direct terminal checks
-    /// prepare exact or covering prefixes on demand.
+    /// The verifier keeps only the public stream prefix needed by its direct
+    /// setup scans and terminal matrix. The setup-prefix registry remains
+    /// complete because offloaded claims can refer to entries beyond that
+    /// materialized matrix prefix. Verifier setup also initializes a
+    /// non-serialized lazy terminal NTT-prefix cache.
     ///
     /// # Errors
     ///
-    /// Returns an error if prover prefix-slot metadata cannot be converted into
+    /// Returns an error if `matrix_capacity` is empty or exceeds the prover
+    /// matrix, or if prover prefix-slot metadata cannot be converted into
     /// verifier-visible prefix slots.
-    pub fn verifier_setup(&self) -> Result<AkitaVerifierSetup<F>, AkitaError> {
+    pub fn to_verifier_setup(
+        &self,
+        matrix_capacity: SetupMatrixCapacity,
+    ) -> Result<AkitaVerifierSetup<F>, AkitaError> {
+        if matrix_capacity.num_field_elements == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "verifier setup matrix capacity must be non-zero".to_string(),
+            ));
+        }
+        let prover_matrix = self.expanded.shared_matrix().as_field_slice();
+        let verifier_matrix = prover_matrix
+            .get(..matrix_capacity.num_field_elements)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "verifier setup requires {} field elements but prover setup has {}",
+                    matrix_capacity.num_field_elements,
+                    prover_matrix.len()
+                ))
+            })?;
+        let expanded = if verifier_matrix.len() == prover_matrix.len() {
+            self.expanded.clone()
+        } else {
+            let mut seed = self.expanded.seed().clone();
+            seed.num_field_elements = verifier_matrix.len();
+            Arc::new(
+                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    seed,
+                    FlatMatrix::from_flat_data(verifier_matrix.to_vec()),
+                ),
+            )
+        };
         let mut prefix_slots =
             SetupPrefixVerifierRegistry::new(self.expanded.seed().public_matrix_id.clone());
         prefix_slots.replace_from_prover_registry(&self.prefix_slots)?;
-        AkitaVerifierSetup::from_parts(self.expanded.clone(), prefix_slots)
+        AkitaVerifierSetup::from_parts(expanded, prefix_slots)
     }
 
     /// Wrap an already-validated [`AkitaExpandedSetup`] in a prover setup.
@@ -169,6 +202,38 @@ mod tests {
         )
         .expect_err("zero setup length must not produce an undecodable setup");
         assert!(zero_len.to_string().contains("num_field_elements"));
+    }
+
+    #[test]
+    fn verifier_setup_conversion_enforces_the_requested_prefix() {
+        let setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
+            8,
+            1,
+            SetupMatrixCapacity {
+                num_field_elements: 8,
+            },
+        )
+        .expect("generate setup");
+
+        let verifier = setup
+            .to_verifier_setup(SetupMatrixCapacity {
+                num_field_elements: 3,
+            })
+            .expect("narrow verifier setup");
+        assert_eq!(verifier.expanded.seed().num_field_elements, 3);
+        assert_eq!(verifier.expanded.shared_matrix().num_field_elements(), 3);
+        assert_eq!(
+            verifier.expanded.shared_matrix().as_field_slice(),
+            &setup.expanded.shared_matrix().as_field_slice()[..3]
+        );
+        assert!(
+            setup
+                .to_verifier_setup(SetupMatrixCapacity {
+                    num_field_elements: 9,
+                })
+                .is_err(),
+            "conversion must not extend beyond the prover matrix"
+        );
     }
 
     #[test]

@@ -1117,6 +1117,10 @@ the candidate score that decides whether and how long to offload.
 - duplicate slot IDs deduplicate;
 - natural lengths are never truncated;
 - rounded prefix capacity is included in the setup envelope.
+- schedule-scoped verifier capacity skips every offloaded producer, retains
+  the first remaining direct producer and terminal matrix, and rejects a
+  prefix shorter than either requirement;
+- all verifier setup-prefix registry entries survive matrix-prefix narrowing.
 
 Prover/verifier end to end:
 

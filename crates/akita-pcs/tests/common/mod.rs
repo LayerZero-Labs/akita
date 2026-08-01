@@ -443,6 +443,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             precommitteds: vec![pre_frozen, pre_frozen],
         };
+        let opening_layout = schedule_key.opening_layout().expect("opening layout");
         let schedule = RecursiveCommitmentConfig::<BaseCfg>::runtime_schedule(schedule_key)
             .expect("recursive profile schedule resolves");
         assert!(
@@ -576,7 +577,9 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         )
         .expect("deserialize generated-profile proof");
 
-        let verifier_setup = setup.verifier_setup().expect("verifier setup");
+        let verifier_setup =
+            Recursive::<BaseCfg>::setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
+                .expect("verifier setup");
         let verify_claims = |final_openings: Vec<F>| {
             let mut verifier_groups = Vec::new();
             for (group_idx, openings) in pre_openings.iter().enumerate() {

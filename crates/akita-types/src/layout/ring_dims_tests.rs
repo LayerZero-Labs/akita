@@ -64,21 +64,10 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
     }
 }
 
-fn seed(num_field_elements: usize) -> AkitaSetupSeed {
-    AkitaSetupSeed {
-        max_num_vars: 0,
-        max_num_batched_polys: 0,
-        num_field_elements,
-        public_matrix_id: [0; 32].into(),
-    }
-}
-
 #[test]
 fn accepts_typed_root_and_terminal_ring_dimensions() {
     let schedule = schedule(committed(128), committed(64));
-    let required = crate::setup_matrix_field_elements_for_schedule(&schedule).unwrap();
-    validate_schedule_ring_dims(&schedule, &seed(required))
-        .expect("exact field capacity covers mixed dimensions");
+    validate_schedule_ring_dims(&schedule).expect("mixed dimensions are valid");
 }
 
 #[test]
@@ -137,20 +126,9 @@ fn rejects_recursive_shared_d_matrix_mismatch() {
             input_witness_len: terminal_params.d_a(),
         },
     };
-    let required = crate::setup_matrix_field_elements_for_schedule(&schedule).unwrap();
-    let err = validate_schedule_ring_dims(&schedule, &seed(required))
+    let err = validate_schedule_ring_dims(&schedule)
         .expect_err("recursive shared D mismatch must reject");
     assert!(err.to_string().contains("shared D matrix disagrees"));
-}
-
-#[test]
-fn rejects_undersized_field_capacity() {
-    let schedule = schedule(committed(128), committed(64));
-    let required = crate::setup_matrix_field_elements_for_schedule(&schedule).unwrap();
-    assert!(matches!(
-        validate_schedule_ring_dims(&schedule, &seed(required - 1)),
-        Err(AkitaError::InvalidSetup(_))
-    ));
 }
 
 #[test]

@@ -989,7 +989,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 
     let t_verifier_setup = Instant::now();
     let verifier_setup = pools.in_verify(|| {
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup")
+        AkitaCommitmentScheme::<Cfg>::setup_verifier_for_schedule(&setup, &schedule, &opening_batch)
+            .expect("verifier setup")
     });
     report_timing(
         label,
@@ -1175,6 +1176,9 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         final_group: PolynomialGroupLayout::new(final_num_vars, final_num_polys),
         precommitteds: vec![pre_descriptor; PRE_GROUPS],
     };
+    let opening_layout = multi_group_key
+        .opening_layout()
+        .expect("multi-group layout");
     let schedule =
         ProofCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
     let pre_points = (0..PRE_GROUPS)
@@ -1420,7 +1424,12 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
 
     let t_verifier_setup = Instant::now();
     let verifier_setup = pools.in_verify(|| {
-        AkitaCommitmentScheme::<ProofCfg>::setup_verifier(&setup).expect("verifier setup")
+        AkitaCommitmentScheme::<ProofCfg>::setup_verifier_for_schedule(
+            &setup,
+            &schedule,
+            &opening_layout,
+        )
+        .expect("verifier setup")
     });
     report_timing(
         label,

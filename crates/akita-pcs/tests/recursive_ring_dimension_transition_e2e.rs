@@ -403,7 +403,9 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         )
         .expect("deserialize mixed recursive proof");
 
-        let verifier_setup = setup.verifier_setup().expect("verifier setup");
+        let verifier_setup =
+            Scheme::<ProofCfg>::setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
+                .expect("verifier setup");
         let verify_claims = |final_openings: Vec<F>| {
             let mut verifier_groups = Vec::new();
             for (group_idx, openings) in pre_openings.iter().enumerate() {

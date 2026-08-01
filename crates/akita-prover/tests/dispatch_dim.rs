@@ -6,8 +6,7 @@
 use akita_config::proof_optimized::{fp128, fp64};
 use akita_config::CommitmentConfig;
 use akita_types::{
-    validate_schedule_ring_dims, AkitaScheduleLookupKey, AkitaSetupSeed, FoldSchedule,
-    PolynomialGroupLayout,
+    validate_schedule_ring_dims, AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout,
 };
 
 fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
@@ -15,16 +14,6 @@ fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
         PolynomialGroupLayout::singleton(num_vars),
     ))
     .expect("runtime schedule")
-}
-
-fn seed(schedule: &FoldSchedule) -> AkitaSetupSeed {
-    AkitaSetupSeed {
-        max_num_vars: 20,
-        max_num_batched_polys: 1,
-        num_field_elements: akita_types::setup_matrix_field_elements_for_schedule(schedule)
-            .expect("schedule setup field capacity"),
-        public_matrix_id: [0; 32].into(),
-    }
 }
 
 fn assert_schedule_geometry(schedule: &FoldSchedule, expected_d: usize) {
@@ -47,13 +36,13 @@ fn assert_schedule_geometry(schedule: &FoldSchedule, expected_d: usize) {
 #[test]
 fn accepts_real_fp64_d128_schedule() {
     let schedule = schedule::<fp64::D128Dense>(20);
-    validate_schedule_ring_dims(&schedule, &seed(&schedule)).expect("D128 schedule");
+    validate_schedule_ring_dims(&schedule).expect("D128 schedule");
     assert_schedule_geometry(&schedule, 128);
 }
 
 #[test]
 fn accepts_real_fp128_d128_schedule() {
     let schedule = schedule::<fp128::D128Dense>(18);
-    validate_schedule_ring_dims(&schedule, &seed(&schedule)).expect("D128 schedule");
+    validate_schedule_ring_dims(&schedule).expect("D128 schedule");
     assert_schedule_geometry(&schedule, 128);
 }

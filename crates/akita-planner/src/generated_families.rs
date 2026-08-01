@@ -442,7 +442,7 @@ fn planner_committed_group_params<Cfg: CommitmentConfig>(
 /// not a dense `1..=max_nv` grid. Setup envelope inflation and exact prefix-slot
 /// materialization both walk this set; other recursive shapes remain planner-
 /// constructible but are admitted only when their slots already fit the
-/// materialized artifact (`ensure_schedule_fits_setup` / missing-slot reject).
+/// materialized artifact (`ensure_prover_schedule_fits_setup` / missing-slot reject).
 ///
 /// Does not run the planner; callers resolve each selected key.
 pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(

@@ -22,9 +22,9 @@ use akita_types::sis::{
 use akita_types::{
     level_proof_bytes, padded_setup_prefix_len, try_extension_opening_reduction_level_bytes,
     AkitaScheduleInputs, CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile,
-    DecompositionParams, FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout,
-    PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams, RecursiveFoldParams,
-    RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
+    DecompositionParams, FoldSchedule, FoldScheduleEstimate, PlannedFoldSchedule,
+    PolynomialGroupLayout, PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep,
+    RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
     RootPrecommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
     WitnessLayout, WitnessPartition,
 };
@@ -40,7 +40,7 @@ pub(crate) mod test_support;
 #[cfg(all(test, feature = "catalog-gen"))]
 mod unpruned_search;
 
-pub use candidate::suffix_opening_layout;
+pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
     derive_candidate_level_params, derive_candidate_level_params_all_splits,
     planned_next_witness_len, scalar_root_fold_level_params_candidate,

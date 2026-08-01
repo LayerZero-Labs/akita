@@ -254,9 +254,8 @@ fn mixed_d_schedule_shape_and_ring_dim_validation() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
         let schedule = mixed_schedule();
-        validate_schedule_ring_dims(&schedule, setup.expanded.seed()).expect("ring dims valid");
+        validate_schedule_ring_dims(&schedule).expect("ring dims valid");
         assert_mixed_d_fixture_schedule(&schedule);
         let mut unique = std::collections::BTreeSet::new();
         let root_dims = schedule.root.params.final_group.commitment.role_dims();
@@ -542,7 +541,7 @@ fn mixed_d_schedule_with_non_dividing_level_dim_is_rejected() {
 
         let malformed_schedule =
             MixedDBadLevelDim::get_params_for_prove(&opening_batch).expect("malformed schedule");
-        validate_schedule_ring_dims(&malformed_schedule, setup.expanded.seed())
+        validate_schedule_ring_dims(&malformed_schedule)
             .expect_err("unsupported level dimension 96 must reject");
 
         // An invalid schedule cannot be materialized as an audited resolved

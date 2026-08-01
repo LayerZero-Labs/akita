@@ -12,30 +12,6 @@ fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<
     Ok(padded.trailing_zeros() as usize)
 }
 
-pub fn suffix_opening_layout(
-    current_witness_len: usize,
-    incoming_setup_prefix: Option<usize>,
-) -> Result<OpeningClaimsLayout, AkitaError> {
-    let witness_vars = checked_power_of_two_vars(current_witness_len, "suffix witness length")?;
-    let witness_group = PolynomialGroupLayout::singleton(witness_vars);
-    match incoming_setup_prefix {
-        Some(natural_len) => {
-            let n_prefix = padded_setup_prefix_len(natural_len);
-            if n_prefix == 0 || !n_prefix.is_power_of_two() {
-                return Err(AkitaError::InvalidSetup(
-                    "incoming setup prefix length must be a nonzero power of two".to_string(),
-                ));
-            }
-            let prefix_vars = checked_power_of_two_vars(n_prefix, "incoming setup prefix length")?;
-            OpeningClaimsLayout::from_groups(vec![
-                PolynomialGroupLayout::singleton(prefix_vars),
-                witness_group,
-            ])
-        }
-        None => OpeningClaimsLayout::from_groups(vec![witness_group]),
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn grouped_segment_rings(
     num_polys: usize,

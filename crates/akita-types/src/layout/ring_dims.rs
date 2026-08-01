@@ -1,10 +1,9 @@
 //! Per-level and per-schedule ring dimension validation.
 //!
-//! [`validate_schedule_ring_dims`] checks every fold level's [`CommitmentRingDims`]
-//! against the setup seed. Per-level geometry (`n_ring_elems`, `flat_field_len`, …)
-//! lives on [`super::CommittedGroupParams`].
+//! [`validate_schedule_ring_dims`] checks every fold level's [`CommitmentRingDims`].
+//! Per-level geometry (`n_ring_elems`, `flat_field_len`, …) lives on
+//! [`super::CommittedGroupParams`].
 
-use crate::proof::AkitaSetupSeed;
 use crate::schedule::FoldSchedule;
 use akita_field::AkitaError;
 
@@ -154,26 +153,18 @@ impl CommitmentRingDims {
     }
 }
 
-/// Validate every fold level's per-role ring dimensions and setup capacity.
+/// Validate every fold level's per-role ring dimensions.
 ///
 /// Reads [`super::CommittedGroupParams::role_dims`] from each scheduled fold step; does
 /// not copy them into a separate plan object.
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidSetup`] when any catalog, key-consistency,
-/// setup-capacity, or witness-length check fails.
-pub fn validate_schedule_ring_dims(
-    schedule: &FoldSchedule,
-    seed: &AkitaSetupSeed,
-) -> Result<(), AkitaError> {
-    let required_num_field_elements = crate::setup_matrix_field_elements_for_schedule(schedule)?;
-    if seed.num_field_elements < required_num_field_elements {
-        return Err(AkitaError::InvalidSetup(format!(
-            "setup has {} field elements but schedule requires {required_num_field_elements}",
-            seed.num_field_elements
-        )));
-    }
+/// Returns [`AkitaError::InvalidSetup`] when any catalog, key-consistency, or
+/// witness-length check fails. Prover and verifier setup capacity are checked
+/// separately because offloaded setup-prefix claims give them different matrix
+/// requirements.
+pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaError> {
     let num_folds = schedule.num_fold_levels();
     if num_folds > MAX_FOLD_LEVELS {
         return Err(AkitaError::InvalidSetup(format!(

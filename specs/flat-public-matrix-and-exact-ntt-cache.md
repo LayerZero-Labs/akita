@@ -429,6 +429,81 @@ MAY deliberately materialize a larger prefix for future reuse, but that is an
 explicit cache policy and MUST NOT change public matrix identity, proof bytes,
 or schedule admissibility.
 
+#### A schedule-scoped verifier setup
+
+A prover package and a verifier hot path have different matrix requirements
+when setup contributions are offloaded. The prover package must materialize
+every source prefix and every matrix needed to build the setup-prefix
+commitments. A verifier that has already accepted those commitment artifacts
+does not scan an offloaded producer's natural source prefix during proof
+verification.
+
+For a resolved schedule, number the nonterminal producers from the root through
+the last recursive fold. Producer `i` is offloaded exactly when recursive
+successor `i` carries `incoming_setup_prefix`. Define the schedule-scoped
+verifier matrix requirement as:
+
+```text
+verifier_matrix_capacity = max(
+    1,
+    terminal A matrix fields,
+    active setup fields for every non-offloaded producer
+)
+```
+
+The opening layout for the root is the exact call layout. The opening layout
+for a recursive producer consists of its witness group and, when present, its
+incoming setup-prefix group. The latter uses the padded prefix domain. These
+layouts and `active_setup_field_len` are canonical. Capacity code MUST NOT
+reconstruct them with a second approximation.
+
+This value is not generally “the second setup prefix.” There may be no
+offloaded edge, one edge, or several edges. The terminal matrix may dominate,
+and the first direct producer after the offloaded chain may require a different
+prefix from every stored setup-prefix slot. The implementation therefore names
+the value `verifier_setup_matrix_capacity_for_schedule` and returns the ordinary
+`SetupMatrixCapacity` type.
+
+`AkitaCommitmentScheme::setup_verifier_for_schedule` constructs this exact
+slice. It retains the complete verifier setup-prefix registry, copies only the
+required coefficient prefix, and records that shorter field count in the
+expanded verifier setup. `setup_verifier` remains the full-package conversion
+for callers that have not selected one schedule. Verification always checks
+the selected schedule against the matrix actually present, so a schedule-scoped
+package cannot silently verify a larger direct schedule.
+
+The inherited `max_num_vars` and `max_num_batched_polys` remain provisioning
+metadata. On a schedule-scoped verifier artifact they do not promise that the
+shorter matrix covers every shape below those bounds. The concrete matrix
+capacity and the role-specific verification check are authoritative.
+
+For the shipped `nv=32` W8R2 multi-group schedule, the distinctions are:
+
+| Quantity | Field elements |
+|----------|---------------:|
+| Config provisioning at `K=2` | 112,721,920 |
+| Config provisioning at `K=4` | 225,443,840 |
+| Exact schedule prover matrix maximum | 28,180,480 |
+| First offloaded natural prefix | 28,180,480 |
+| Second offloaded natural prefix | 20,447,232 |
+| Schedule-scoped verifier matrix prefix | 10,223,616 |
+
+The first two values are broad setup-construction envelopes. They are not the
+matrix footprint of this exact generated row. The verifier value is smaller
+than the second offloaded natural prefix because the proof hot path consumes
+the stored commitment to that prefix rather than rederiving the prefix itself.
+It still performs the first remaining direct setup scan and terminal matrix
+check from the retained 10,223,616-field prefix.
+
+This hot-path narrowing does not solve setup-prefix commitment provenance. A
+setup installer that directly recomputes a 28,180,480-field commitment still
+needs that source prefix while installing the package. A future certificate
+chain may validate it from the 20,447,232-field commitment, then continue to
+smaller commitments until a directly derived terminal prefix. That work belongs
+to installation or first use, not per-proof verification. The verifier package
+must retain the commitment registry and its future certificates even when its
+hot-path public matrix is shorter.
+
 ### Setup-prefix offloading
 
 Setup-prefix offloading has two lengths with different meanings:

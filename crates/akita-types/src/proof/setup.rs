@@ -92,9 +92,9 @@ impl SetupMatrixCapacity {
 /// Seed-only stage for deterministic setup expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaSetupSeed {
-    /// Maximum supported variable count.
+    /// Provisioning variable bound inherited from setup construction.
     pub max_num_vars: usize,
-    /// Maximum number of batched polynomials supported by setup.
+    /// Provisioning polynomial-count bound inherited from setup construction.
     pub max_num_batched_polys: usize,
     /// Number of materialized public-matrix field elements.
     pub num_field_elements: usize,

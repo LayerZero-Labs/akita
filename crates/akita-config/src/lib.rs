@@ -112,7 +112,10 @@ pub mod test_support;
 mod transcript_binding;
 pub use akita_schedules::ResolvedScheduleRow;
 pub use precommitted_commitment::{committed_group_params, PrecommittedCommitmentConfig};
-pub use proof_optimized::{ensure_schedule_fits_setup, setup_level_params_from_schedule};
+pub use proof_optimized::{
+    ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
+    setup_level_params_from_schedule,
+};
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
 pub use setup_prefix_slots::setup_prefix_slot_ids_for_capacity;

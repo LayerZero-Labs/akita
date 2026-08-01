@@ -3,8 +3,8 @@ use super::*;
 // Top-level batched verifier orchestration once a schedule is selected.
 
 use akita_config::{
-    bind_transcript_instance_descriptor, effective_batched_schedule, ensure_schedule_fits_setup,
-    CommitmentConfig,
+    bind_transcript_instance_descriptor, effective_batched_schedule,
+    ensure_verifier_schedule_fits_setup, CommitmentConfig,
 };
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
@@ -310,8 +310,8 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    validate_schedule_ring_dims(schedule, setup.expanded.seed())?;
-    ensure_schedule_fits_setup::<Cfg>(setup.expanded.as_ref(), schedule, &opening_batch)?;
+    validate_schedule_ring_dims(schedule)?;
+    ensure_verifier_schedule_fits_setup(setup.expanded.as_ref(), schedule, &opening_batch)?;
     schedule
         .validate_structure()
         .map_err(|_| AkitaError::InvalidProof)?;

@@ -89,8 +89,7 @@ fn per_matrix_ring_dims_root_proves_verifies_and_rejects_tamper() {
         let opening = opening_from_poly::<ENVELOPE_D, _>(&poly, &point, &layout);
 
         let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
-        validate_schedule_ring_dims(&schedule, setup.expanded.seed())
-            .expect("valid commitment-matrix dimensions");
+        validate_schedule_ring_dims(&schedule).expect("valid commitment-matrix dimensions");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,

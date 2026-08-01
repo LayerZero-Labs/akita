@@ -904,7 +904,7 @@ capabilities by this PR.
 5. Every selected role key is covered by the canonical SIS table at its exact
    width and coefficient bucket.
 6. Planner, generated-row replay, setup allocation, and
-   `ensure_schedule_fits_setup` agree on physical setup field elements.
+   `ensure_prover_schedule_fits_setup` agree on physical setup field elements.
 7. DP output and generated-row expansion produce identical schedule descriptor
    bytes, proof-byte estimates, level counts, witness transitions, and setup
    cost.

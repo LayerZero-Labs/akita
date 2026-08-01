@@ -7,7 +7,9 @@ use crate::compute::{
     SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
-use akita_config::{effective_batched_schedule, ensure_schedule_fits_setup, CommitmentConfig};
+use akita_config::{
+    effective_batched_schedule, ensure_prover_schedule_fits_setup, CommitmentConfig,
+};
 use akita_field::unreduced::ReduceTo;
 use akita_field::{AdditiveGroup, CanonicalField};
 use akita_types::OpeningScheduleSelection;
@@ -87,7 +89,7 @@ where
     let resolved = Cfg::resolve_schedule_selection(selection)?;
     let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)?;
     let schedule = resolved.schedule();
-    ensure_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, &opening_batch)?;
+    ensure_prover_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, &opening_batch)?;
     let ntt_requirements = NttExecutionRequirements::from_prove_schedule(schedule)?;
     prewarm_ntt_requirements::<Cfg::Field, _>(stacks, &ntt_requirements)?;
     bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(

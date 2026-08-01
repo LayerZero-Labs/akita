@@ -23,8 +23,6 @@ use akita_types::{
     sample_public_matrix_id, AkitaScheduleLookupKey, AkitaSetupSeed, FlatMatrix,
     PolynomialGroupLayout, PublicMatrixId, SetupPrefixProverRegistry,
 };
-#[cfg(test)]
-use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
 #[cfg(feature = "disk-persistence")]
 use std::fmt::Write as _;
 #[cfg(feature = "disk-persistence")]
@@ -585,7 +583,7 @@ mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-    use std::sync::Arc;
+    use akita_types::SetupMatrixCapacity;
 
     type Cfg = fp128::D64Dense;
     type TestF = fp128::Field;
@@ -593,7 +591,10 @@ mod tests {
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
         let prover_setup = new_prover_setup::<TestF, Cfg>(13, 3).unwrap();
-        let verifier_setup = prover_setup.verifier_setup().unwrap();
+        let capacity = SetupMatrixCapacity {
+            num_field_elements: prover_setup.expanded.shared_matrix().num_field_elements() / 2,
+        };
+        let verifier_setup = prover_setup.to_verifier_setup(capacity).unwrap();
 
         let mut bytes = Vec::new();
         prover_setup
@@ -605,12 +606,13 @@ mod tests {
         assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
         assert_eq!(decoded.seed().max_num_batched_polys, 3);
 
-        let derived_verifier = AkitaVerifierSetup::from_parts(
-            Arc::new(decoded.clone()),
-            SetupPrefixVerifierRegistry::new(decoded.seed().public_matrix_id.clone()),
-        )
-        .unwrap();
+        let decoded_prover = AkitaProverSetup::from_validated_expanded(decoded.clone()).unwrap();
+        let derived_verifier = decoded_prover.to_verifier_setup(capacity).unwrap();
         assert_eq!(derived_verifier, verifier_setup);
+        assert_eq!(
+            verifier_setup.expanded.shared_matrix().num_field_elements(),
+            capacity.num_field_elements
+        );
     }
 
     #[test]
