@@ -49,6 +49,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
         Cfg::ring_subfield_embedding_norm_bound()
     }
 
+    fn selection_policy() -> akita_schedules::SelectionPolicyId {
+        Cfg::selection_policy()
+    }
+
     fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,

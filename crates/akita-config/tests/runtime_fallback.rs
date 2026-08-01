@@ -305,7 +305,7 @@ fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
 }
 
 #[test]
-fn adapters_forward_ring_dimension_candidates() {
+fn adapters_forward_mixed_dimension_policy() {
     type Base = fp128::MixedDimFp128OneHot;
     assert_eq!(
         <RecursiveCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
@@ -315,6 +315,14 @@ fn adapters_forward_ring_dimension_candidates() {
         <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
         Base::RING_DIMENSION_CANDIDATES,
     );
+    assert_eq!(
+        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::selection_policy(),
+        Base::selection_policy(),
+    );
+    akita_schedules::planner_support::validate_policy(&policy_of::<
+        PrecommittedCommitmentConfig<Base>,
+    >())
+    .expect("precommitted mixed-dimension policy must remain valid");
 }
 
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
