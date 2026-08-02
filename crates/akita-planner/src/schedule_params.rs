@@ -13,13 +13,12 @@ use akita_field::AkitaError;
 #[cfg(all(test, feature = "catalog-gen"))]
 use akita_types::extension_opening_reduction_level_bytes;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
+    ceil_supported_l2_collision_sq, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    decomposed_w_ring_count, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
     role_a_collision_l2_sq_for_response_bound, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, BalancedSignedDigitFoldPolicy, FoldChallengeNorms,
-    FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisTableKey,
-    UNCHECKED_L2_DIAGNOSTIC_NORM_SQ_CAP,
+    rounded_up_role_a_inf_norm, BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy,
+    HonestFoldPolicySpec, HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, SisTableKey, UNCHECKED_L2_DIAGNOSTIC_NORM_SQ_CAP,
 };
 use akita_types::{
     level_proof_bytes, padded_setup_prefix_len, try_extension_opening_reduction_level_bytes,
@@ -45,7 +44,7 @@ mod unpruned_search;
 
 pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
-    derive_candidate_level_params, derive_candidate_level_params_all_splits,
+    derive_candidate_level_params_all_splits, derive_candidate_level_params_frontier,
     planned_next_witness_len, scalar_root_fold_level_params_candidate,
 };
 pub(crate) use objective::{complete_schedule_score, select_complete_candidate};

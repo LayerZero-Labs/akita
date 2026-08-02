@@ -86,7 +86,7 @@ fn enumerate_suffixes(
                         requested_fold_shape,
                     )?
                 } else {
-                    derive_candidate_level_params(
+                    derive_candidate_level_params_frontier(
                         policy,
                         payload_mode,
                         &ring_challenge,
@@ -97,8 +97,6 @@ fn enumerate_suffixes(
                         None,
                         requested_fold_shape,
                     )?
-                    .into_iter()
-                    .collect()
                 };
 
                 for (params, output_witness_len) in candidates {

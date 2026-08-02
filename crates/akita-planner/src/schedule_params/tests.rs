@@ -253,7 +253,10 @@ fn pruned_mixed_search_matches_unpruned_traversal_and_is_canonical() {
     let reversed_with_duplicate = RingDimensionSearchDomain::new([a128, d64, a128]).unwrap();
     let canonical = RingDimensionSearchDomain::new([d64, a128]).unwrap();
     let policy = policy_for_domain(base_policy, &canonical);
-    let key = PolynomialGroupLayout::singleton(16);
+    // Keep the exact unpruned oracle on a compact fixture. Recursive rank
+    // frontiers deliberately branch, and this oracle materializes every
+    // complete suffix instead of memoizing states like the production DP.
+    let key = PolynomialGroupLayout::singleton(12);
 
     let selected = find_schedule(
         key,
@@ -310,7 +313,7 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
 
     let domain = RingDimensionSearchDomain::uniform(64).unwrap();
     let policy = policy_for_domain(policy_of::<D64OneHot>(), &domain);
-    let key = PolynomialGroupLayout::singleton(16);
+    let key = PolynomialGroupLayout::singleton(12);
     let selected = find_schedule(
         key,
         &policy,
@@ -690,6 +693,70 @@ fn dimension_domain_is_independent_of_setup_generation_dimension() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
+fn tighter_l2_floor_preserves_small_field_recursive_frontiers() {
+    use akita_config::{
+        policy_of,
+        proof_optimized::{fp32, fp64},
+        CommitmentConfig,
+    };
+
+    fn planned<Cfg: CommitmentConfig>() -> PlannedFoldSchedule {
+        let policy = policy_of::<Cfg>();
+        let domain = RingDimensionSearchDomain::uniform(Cfg::D).unwrap();
+        find_schedule(
+            PolynomialGroupLayout::singleton(28),
+            &policy,
+            Cfg::root_honest_fold_policy(),
+            &domain,
+            Cfg::ring_challenge_config,
+            Cfg::fold_challenge_shape_at_level,
+        )
+        .unwrap()
+    }
+
+    let fp64 = planned::<fp64::D128OneHot>();
+    assert_eq!(fp64.schedule.recursive_folds.len(), 5);
+    assert_eq!(fp64.schedule.terminal.params.witness.num_live_blocks, 5);
+    assert_eq!(
+        fp64.schedule.recursive_folds[2]
+            .params
+            .witness
+            .inner_commit_matrix
+            .output_rank(),
+        3
+    );
+    assert_eq!(
+        fp64.schedule.recursive_folds[2]
+            .params
+            .witness
+            .inner_commit_matrix
+            .unchecked_l2_collision_sq(),
+        Some(1u128 << 44)
+    );
+
+    let fp32 = planned::<fp32::D128OneHot>();
+    assert_eq!(fp32.schedule.recursive_folds.len(), 5);
+    assert_eq!(fp32.schedule.terminal.params.witness.num_live_blocks, 5);
+    assert_eq!(
+        fp32.schedule.recursive_folds[2]
+            .params
+            .witness
+            .inner_commit_matrix
+            .output_rank(),
+        6
+    );
+    assert_eq!(
+        fp32.schedule.recursive_folds[2]
+            .params
+            .witness
+            .inner_commit_matrix
+            .unchecked_l2_collision_sq(),
+        Some(1u128 << 44)
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
 fn mixed_search_applies_setup_budget_in_physical_fields() {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
@@ -803,6 +870,6 @@ fn recursive_exact_cutover_proof_size_is_documented() {
 
     assert_eq!(
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
-        93_432
+        93_112
     );
 }

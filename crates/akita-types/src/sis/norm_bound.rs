@@ -85,18 +85,20 @@ pub fn role_a_collision_inf_norm_for_response_bound(
 /// Whole-vector squared-L2 collision bound for two accepted folded responses.
 ///
 /// If each response has squared norm at most `response_l2_sq_bound`, the same
-/// Lemma 7 factors used by [`role_a_collision_inf_norm_for_response_bound`]
-/// give collision length at most `8 * omega * nu * ||z||_2`.
+/// three symmetric-difference factors used by
+/// [`role_a_collision_inf_norm_for_response_bound`] contribute `8²`. The
+/// challenge and fixed ring-subfield embedding then contribute their squared
+/// L2 norms exactly once.
 #[must_use]
 pub fn role_a_collision_l2_sq_for_response_bound(
-    challenge_l1_norm: u128,
-    ring_subfield_norm_bound: u32,
+    challenge_l2_sq: u128,
+    ring_subfield_l2_op_norm_sq: u32,
     response_l2_sq_bound: u128,
 ) -> Option<u128> {
-    let scale = 8u128
-        .checked_mul(challenge_l1_norm)?
-        .checked_mul(u128::from(ring_subfield_norm_bound))?;
-    scale.checked_mul(scale)?.checked_mul(response_l2_sq_bound)
+    64u128
+        .checked_mul(challenge_l2_sq)?
+        .checked_mul(u128::from(ring_subfield_l2_op_norm_sq))?
+        .checked_mul(response_l2_sq_bound)
 }
 
 /// Largest raw folded-response `L∞` bound fitting an A-role collision bucket.
@@ -416,13 +418,16 @@ mod tests {
 
     #[test]
     fn l2_collision_scales_the_complete_witness_norm_once() {
-        let challenge_l1 = 51u128;
-        let subfield_norm = 1u32;
+        let challenge_l2_sq = 71u128;
+        let subfield_op_norm_sq = 1u32;
         let response_l2_sq = 1u128 << 32;
-        let scale = 8 * challenge_l1 * u128::from(subfield_norm);
         assert_eq!(
-            role_a_collision_l2_sq_for_response_bound(challenge_l1, subfield_norm, response_l2_sq,),
-            Some(scale * scale * response_l2_sq),
+            role_a_collision_l2_sq_for_response_bound(
+                challenge_l2_sq,
+                subfield_op_norm_sq,
+                response_l2_sq,
+            ),
+            Some(64 * challenge_l2_sq * u128::from(subfield_op_norm_sq) * response_l2_sq),
         );
     }
 

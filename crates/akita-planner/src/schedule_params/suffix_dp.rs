@@ -13,9 +13,9 @@ use akita_types::{
 use crate::{group_batch::multi_group_root_level_candidates_for_basis, PlannerPolicy};
 
 use super::{
-    derive_candidate_level_params, level_setup_field_elements, stage3_payload_bytes_for_successor,
-    suffix_opening_layout, terminal_setup_field_elements, CandidateFoldStep,
-    CandidateTerminalResponse, ScheduleCandidate, MAX_RECURSION_DEPTH,
+    derive_candidate_level_params_frontier, level_setup_field_elements,
+    stage3_payload_bytes_for_successor, suffix_opening_layout, terminal_setup_field_elements,
+    CandidateFoldStep, CandidateTerminalResponse, ScheduleCandidate, MAX_RECURSION_DEPTH,
 };
 
 /// Result of the suffix DP at one state. Both shape options are reported
@@ -501,7 +501,7 @@ fn price_level_candidate_with_children(
 ///
 /// At each state, `best_by_first_direct_setup_per_lb` keeps one candidate per
 /// `log_basis` (from
-/// [`derive_candidate_level_params`]). A candidate may terminate on the current
+/// [`derive_candidate_level_params_frontier`]). A candidate may terminate on the current
 /// witness when there is no incoming setup prefix, or fold again and consume
 /// `incoming_setup_prefix` when present. Fold-again edges plan exactly one child
 /// state: recursive setup edges pass the outgoing setup prefix to the child,
@@ -634,7 +634,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 continue;
             };
             for &mode in payload_phase.candidate_modes(level, incoming_setup_prefix.is_some()) {
-                if let Some(candidate) = derive_candidate_level_params(
+                candidates.extend(derive_candidate_level_params_frontier(
                     policy,
                     mode,
                     &ring_challenge_cfg,
@@ -644,9 +644,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     level,
                     incoming_setup_prefix,
                     requested_fold_shape,
-                )? {
-                    candidates.push(candidate);
-                }
+                )?);
             }
             if candidates.is_empty() {
                 continue;
