@@ -96,11 +96,15 @@ pub(crate) fn recursive_fold_level_params_candidates(
         // For every current fixed `psi` embedding, this policy value is also
         // its exact squared L2 operator norm: one on the base-field path and
         // two on the degree-2/4 paired-lane paths.
-        let collision_l2_sq = role_a_collision_l2_sq_for_response_bound(
-            ring_challenge_cfg.challenge_l2_sq_max(),
-            policy.ring_subfield_norm_bound,
-            UNCHECKED_L2_DIAGNOSTIC_NORM_SQ_CAP,
-        );
+        let collision_l2_sq = UNCHECKED_L2_DIAGNOSTIC_CHALLENGE_OP_NORM_CAP
+            .checked_mul(UNCHECKED_L2_DIAGNOSTIC_CHALLENGE_OP_NORM_CAP)
+            .and_then(|challenge_op_norm_sq| {
+                role_a_collision_l2_sq_for_response_bound(
+                    challenge_op_norm_sq,
+                    policy.ring_subfield_norm_bound,
+                    UNCHECKED_L2_DIAGNOSTIC_NORM_SQ_CAP,
+                )
+            });
         if let Some(mut bucket) = collision_l2_sq.and_then(ceil_supported_l2_collision_sq) {
             let mut previous_rank = None;
             while bucket <= (1u128 << 84) {

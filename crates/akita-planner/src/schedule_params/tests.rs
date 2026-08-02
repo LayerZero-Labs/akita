@@ -715,35 +715,34 @@ fn tighter_l2_floor_preserves_small_field_recursive_frontiers() {
     }
 
     let fp64 = planned::<fp64::D128OneHot>();
-    assert_eq!(fp64.schedule.recursive_folds.len(), 5);
-    assert_eq!(fp64.schedule.terminal.params.witness.num_live_blocks, 5);
-    assert_eq!(
-        fp64.schedule.recursive_folds[2]
-            .params
-            .witness
-            .inner_commit_matrix
-            .output_rank(),
-        3
-    );
-    assert_eq!(
-        fp64.schedule.recursive_folds[2]
-            .params
-            .witness
-            .inner_commit_matrix
-            .unchecked_l2_collision_sq(),
-        Some(1u128 << 44)
-    );
-
     let fp32 = planned::<fp32::D128OneHot>();
+    assert_eq!(fp64.schedule.recursive_folds.len(), 4);
+    assert_eq!(fp64.schedule.terminal.params.witness.num_live_blocks, 7);
+    assert_eq!(
+        fp64.schedule.recursive_folds[3]
+            .params
+            .witness
+            .inner_commit_matrix
+            .output_rank(),
+        4
+    );
+    assert_eq!(
+        fp64.schedule.recursive_folds[3]
+            .params
+            .witness
+            .inner_commit_matrix
+            .unchecked_l2_collision_sq(),
+        Some(1u128 << 48)
+    );
     assert_eq!(fp32.schedule.recursive_folds.len(), 5);
-    assert_eq!(fp32.schedule.terminal.params.witness.num_live_blocks, 5);
+    assert_eq!(fp32.schedule.terminal.params.witness.num_live_blocks, 6);
     assert_eq!(
         fp32.schedule.recursive_folds[2]
             .params
             .witness
             .inner_commit_matrix
             .output_rank(),
-        6
+        7
     );
     assert_eq!(
         fp32.schedule.recursive_folds[2]
@@ -751,7 +750,7 @@ fn tighter_l2_floor_preserves_small_field_recursive_frontiers() {
             .witness
             .inner_commit_matrix
             .unchecked_l2_collision_sq(),
-        Some(1u128 << 44)
+        Some(1u128 << 48)
     );
 }
 

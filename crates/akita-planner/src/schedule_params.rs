@@ -18,7 +18,8 @@ use akita_types::sis::{
     role_a_collision_l2_sq_for_response_bound, rounded_up_collision_inf_norm,
     rounded_up_role_a_inf_norm, BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy,
     HonestFoldPolicySpec, HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, SisTableKey, UNCHECKED_L2_DIAGNOSTIC_NORM_SQ_CAP,
+    OuterCommitMatrixParams, SisTableKey, UNCHECKED_L2_DIAGNOSTIC_CHALLENGE_OP_NORM_CAP,
+    UNCHECKED_L2_DIAGNOSTIC_NORM_SQ_CAP,
 };
 use akita_types::{
     level_proof_bytes, padded_setup_prefix_len, try_extension_opening_reduction_level_bytes,

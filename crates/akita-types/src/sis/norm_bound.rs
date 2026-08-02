@@ -21,6 +21,11 @@ use crate::layout::digit_math::isqrt_ceil;
 /// probe. No verifier check enforces this value in the diagnostic rollout.
 pub const UNCHECKED_L2_DIAGNOSTIC_NORM_SQ_CAP: u128 = 1u128 << 32;
 
+/// Counterfactual negacyclic-convolution operator-norm cap used by the
+/// unchecked planning probe. No challenge rejection check enforces this value
+/// in the diagnostic rollout.
+pub const UNCHECKED_L2_DIAGNOSTIC_CHALLENGE_OP_NORM_CAP: u128 = 17;
+
 pub use super::fold_linf_cap::{
     fold_witness_linf_cap_policy, rademacher_proxy_variance,
     rademacher_proxy_variance_flat_challenges, rademacher_proxy_variance_tensor_challenges,
@@ -87,16 +92,17 @@ pub fn role_a_collision_inf_norm_for_response_bound(
 /// If each response has squared norm at most `response_l2_sq_bound`, the same
 /// three symmetric-difference factors used by
 /// [`role_a_collision_inf_norm_for_response_bound`] contribute `8²`. The
-/// challenge and fixed ring-subfield embedding then contribute their squared
-/// L2 norms exactly once.
+/// challenge's negacyclic-convolution operator norm and the fixed
+/// ring-subfield embedding then contribute their squared L2 operator norms
+/// exactly once.
 #[must_use]
 pub fn role_a_collision_l2_sq_for_response_bound(
-    challenge_l2_sq: u128,
+    challenge_l2_op_norm_sq: u128,
     ring_subfield_l2_op_norm_sq: u32,
     response_l2_sq_bound: u128,
 ) -> Option<u128> {
     64u128
-        .checked_mul(challenge_l2_sq)?
+        .checked_mul(challenge_l2_op_norm_sq)?
         .checked_mul(u128::from(ring_subfield_l2_op_norm_sq))?
         .checked_mul(response_l2_sq_bound)
 }
@@ -418,16 +424,16 @@ mod tests {
 
     #[test]
     fn l2_collision_scales_the_complete_witness_norm_once() {
-        let challenge_l2_sq = 71u128;
+        let challenge_l2_op_norm_sq = 17u128.pow(2);
         let subfield_op_norm_sq = 1u32;
         let response_l2_sq = 1u128 << 32;
         assert_eq!(
             role_a_collision_l2_sq_for_response_bound(
-                challenge_l2_sq,
+                challenge_l2_op_norm_sq,
                 subfield_op_norm_sq,
                 response_l2_sq,
             ),
-            Some(64 * challenge_l2_sq * u128::from(subfield_op_norm_sq) * response_l2_sq),
+            Some(64 * challenge_l2_op_norm_sq * u128::from(subfield_op_norm_sq) * response_l2_sq),
         );
     }
 
