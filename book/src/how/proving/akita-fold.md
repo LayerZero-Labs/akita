@@ -8,10 +8,11 @@ $$
 R=F[X]/(X^D+1).
 $$
 
-The current implementation also supports multiple polynomial groups,
-multiple claims, chunked witnesses, and different ring dimensions for
-different relation rows. Those extensions change the layout, but not the four
-core relations developed below.
+The current implementation also supports more elaborate physical layouts, but
+those extensions do not change the four core relations developed below. After
+establishing the basic case, [Advanced relation
+layouts](./advanced-relation-layouts.md) adds commitment groups, witness chunks,
+and different ring dimensions one axis at a time.
 
 The Akita paper presents a more general matrix with additional compression
 relations. Its basic Greyhound relation motivates the four row families here;
@@ -44,9 +45,6 @@ described on this page.
   - [Outer-commitment consistency](#3-outer-commitment-consistency)
   - [Opening-commitment consistency](#4-opening-commitment-consistency)
 - [Assemble the ring relation](#assemble-the-ring-relation)
-- [Relation layouts beyond the basic setting](#relation-layouts-beyond-the-basic-setting)
-  - [Multiple polynomial groups](#multiple-polynomial-groups)
-  - [Multiple witness chunks](#multiple-witness-chunks)
 - [Lift the ring relation before sumcheck](#lift-the-ring-relation-before-sumcheck)
 - [The scalar opening claim is a virtual row](#the-scalar-opening-claim-is-a-virtual-row)
 - [Code reference](#code-reference)
@@ -466,191 +464,6 @@ from the fold challenges, opening weights, gadget weights, and the setup
 matrices $\mathbf A$, $\mathbf B$, and $\mathbf D$. The code generates these
 contributions directly from the canonical witness layout.
 
-## Relation layouts beyond the basic setting
-
-The relation above uses one polynomial group and one witness chunk. The code
-also supports multiple groups and multiple chunks. These cases change how the
-physical rows or witness columns are arranged, while preserving the basic
-relations above.
-
-### Multiple polynomial groups
-
-In zkVM applications, polynomials such as execution traces, advice, and
-preprocessed data may be committed at different times. When one commitment is
-formed, the prover may not yet know which other commitments it will later be
-opened with, the opening point, or the root schedule that will combine them.
-Akita calls the polynomials held under one independently formed outer
-commitment a **commitment group**. All claims in one group share an opening
-point. In the current implementation, all groups are opened at one shared root
-point. One group is the **final/new group**, while commitments formed earlier
-enter as **precommitted groups** with already-fixed parameters.
-
-Proving each commitment group separately would repeat the entire recursive
-opening protocol. Akita instead batches the groups in one root transition and
-then resumes the ordinary single-opening recursion. The batching preserves
-the separate group commitments and folded responses: each group has its own
-$\mathbf z_g$, $\hat{\mathbf t}_g$, and group-local `consistency | A | B`
-relations. On the opening side, however, every group contributes an
-$\hat{\mathbf e}_g$ segment to one concatenated vector. One $\mathbf D$ matrix
-binds that entire vector, and the field-level evaluation trace separately
-batches the claimed evaluations.
-
-To show only what changes from the basic setting, assume one polynomial claim
-per group and add a group index $g$ to the previous notation. Group $g$ has
-its own blocks $\mathbf s_{g,b}$, fold challenges $c_{g,b}$, and folded response
-
-$$
-\boxed{
-\mathbf z_g
-=
-\sum_b c_{g,b}\mathbf s_{g,b}.
-}
-$$
-
-There is no sum over $g$: the folded responses $\mathbf z_g$ remain separate.
-The basic consistency, $\mathbf A$, and $\mathbf B$ relations are repeated
-independently for every group. In particular, the $\mathbf B_g$ rows bind
-$\hat{\mathbf t}_g$ to that group's public commitment $\mathbf u_g$. Each
-group also produces opening digits $\hat{\mathbf e}_g$, which become one
-segment of the shared opening vector below.
-
-The fold and outer-commitment parts remain group-local because each commitment
-fixes its own $\mathbf A_g$ and $\mathbf B_g$ matrices, decomposition
-parameters, and public target $\mathbf u_g$. Its folded response $\mathbf z_g$
-is formed with that group's challenges and must be checked against those fixed
-parameters. Combining the responses across groups would lose these
-group-specific commitment bindings.
-
-The $\mathbf D$ relation can be shared for a different reason. Unlike
-$\mathbf A_g$ and $\mathbf B_g$, $\mathbf D$ is owned by the fold level rather
-than by an individual commitment group. Every $\hat{\mathbf e}_g$ segment uses
-the same opening-role ring dimension and decomposition basis, so the segments
-can occupy disjoint column ranges of one matrix
-
-$$
-\mathbf D
-=
-[\mathbf D_0\mid\mathbf D_1\mid\cdots],
-$$
-
-and be concatenated into one input vector:
-
-$$
-\hat{\mathbf e}_{\mathrm{all}}
-=
-\big\Vert_{g\in\mathrm{relation\ order}}\hat{\mathbf e}_g,
-\qquad
-\mathbf D\hat{\mathbf e}_{\mathrm{all}}
-=
-\sum_g\mathbf D_g\hat{\mathbf e}_g
-=
-\mathbf v_D.
-$$
-
-Thus the opening digits are not committed separately by group: they are
-concatenated and bound together by the single relation
-$\mathbf D\hat{\mathbf e}_{\mathrm{all}}=\mathbf v_D$. The fixed column ranges
-record which coordinates came from each group, and the group-local consistency
-rows prove what each $\hat{\mathbf e}_g$ segment represents.
-
-In the canonical physical row order, the final/new group is placed first,
-followed by the precommitted groups. The shared $\mathbf D$ rows remain at the
-end:
-
-$$
-\begin{aligned}
-{}&
-[\mathrm{consistency}_{\mathrm{final}}
- \mid \mathbf A_{\mathrm{final}}
- \mid \mathbf B_{\mathrm{final}}]
-\\[-2pt]
-&\quad\Vert
-\big\Vert_{g\in\mathrm{precommitted}}
-[\mathrm{consistency}_g\mid\mathbf A_g\mid\mathbf B_g]
-\quad\Vert\quad
-\mathbf D.
-\end{aligned}
-$$
-
-Consequently, the full right-hand side is
-
-$$
-\mathbf y
-=
-\big\Vert_{g\in\mathrm{relation\ order}}
-[0\mid\mathbf 0_{\mathbf A_g}\mid\mathbf u_g]
-\quad\Vert\quad
-\mathbf v_D.
-$$
-
-This relation is block sparse: a group's consistency, $\mathbf A_g$, and
-$\mathbf B_g$ rows touch only that group's witness segment, whereas the
-shared $\mathbf D$ rows touch the $\hat{\mathbf e}_g$ segments from every
-group. Stage 2 batches all physical rows into one sumcheck, but this batching
-does not merge the group-local relations.
-
-For a single chunk per group, the corresponding pre-switch witness layout is
-
-$$
-\mathbf w_0
-=
-\big\Vert_{g\in\mathrm{relation\ order}}
-[\hat{\mathbf z}_g\mid\hat{\mathbf e}_g\mid\hat{\mathbf t}_g].
-$$
-
-The quotient digits for all physical rows are stored once, in one shared
-$\hat{\mathbf r}$ tail after these group segments.
-
-The root fold consumes this multi-group structure. After ring switching, the
-group segments and the shared quotient tail form one witness
-
-$$
-\mathbf w^{\mathrm{next}}
-=
-\mathbf w_0\Vert\hat{\mathbf r},
-$$
-
-which is committed once for the next level. The output of the multi-group root
-is therefore the basic recursive object: one polynomial group, one committed
-witness, and one opening claim at one point. The original root groups remain
-only as ranges inside the flat witness; they no longer define separate folded
-responses or relation rows.
-
-### Multiple witness chunks
-
-The chunked or distributed layout further partitions each group's live blocks
-into disjoint ranges $I_{g,k}$. Chunk $k$ computes the partial folded response
-
-$$
-\mathbf z_{g,k}
-=
-\sum_{b\in I_{g,k}}c_{g,b}\mathbf s_{g,b},
-\qquad
-\mathbf z_g=\sum_k\mathbf z_{g,k}.
-$$
-
-The canonical layout is group-major and then chunk-minor:
-
-$$
-\boxed{
-\mathbf w
-=
-\big\Vert_g\big\Vert_k
-[\hat{\mathbf z}_{g,k}
- \mid\hat{\mathbf e}_{g,k}
- \mid\hat{\mathbf t}_{g,k}]
-\quad\Vert\quad
-\hat{\mathbf r}.
-}
-$$
-
-Every chunk has a full-shaped local $\hat z$ segment, while its $\hat e$ and
-$\hat t$ segments contain only the live blocks owned by that chunk. Chunking
-adds witness columns, not relation rows: the chunk matrices are stacked
-horizontally and contribute to the same group-level `consistency | A | B`
-rows. The $\mathbf D$ rows and the quotient tail $\hat{\mathbf r}$ are shared
-across all groups and chunks.
-
 ## Lift the ring relation before sumcheck
 
 Equation (20) is an equality modulo $X^D+1$. Sumcheck, however, needs a field
@@ -870,6 +683,8 @@ ring_switch_verifier --------------------------------------> Stage 2 verifier
 Only the public instance is reconstructed on the verifier. The
 `RingRelationWitness` and its group witnesses remain prover-only.
 
-The canonical multi-group and multi-chunk physical layout is described in
-[Opening points and digit-innermost
-layout](./opening-points-layout.md#witness-order).
+The basic case on this page extends to multiple commitment groups, witness
+chunks, and mixed ring dimensions in [Advanced relation
+layouts](./advanced-relation-layouts.md). [Opening points and digit-innermost
+layout](./opening-points-layout.md#witness-order) then specifies the canonical
+physical source and digit order.
