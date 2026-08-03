@@ -13,7 +13,7 @@ the **A**, **B**, and **D** matrices at every fold level. Setup is generated
 **once at capacity time** and reused across instances: it cannot depend on one
 runtime schedule, so the setup-time generation ring dimension `gen_ring_dim` is
 the **max `ring_dimension` across the config's schedule policy/catalog**
-(`crates/akita-setup/src/lib.rs:38-49`, `setup_gen_ring_dim`). For the current
+(`crates/akita-setup/src/lib.rs`, `setup_gen_ring_dim`). For the current
 uniform-D presets this equals `Cfg::D`, and the verifier binds the same
 `gen_ring_dim`, preserving transcript byte-parity.
 
@@ -26,16 +26,16 @@ Ownership is split across crates:
 | Config-backed construction + optional persistence | `akita-setup` |
 
 The prover setup artifact itself is **D-free**; the ring dimension is derived
-from `Cfg` at construction (`crates/akita-setup/src/lib.rs:71-79`).
+from `Cfg` at construction (`crates/akita-setup/src/lib.rs`).
 
 ### Disk persistence
 
 With the `disk-persistence` feature, a cache file stores the expanded setup
 followed by the setup-prefix slots. Cache layout is versioned: **caches written
 before setup-prefix persistence will fail to deserialize and must be
-regenerated** (`crates/akita-setup/src/lib.rs:1-5`). When `Cfg` plans recursive
+regenerated** (`crates/akita-setup/src/lib.rs`). When `Cfg` plans recursive
 setup, the loader validates that the cached prefix registry covers every slot
-the capacity needs (`lib.rs:51-69`, `validate_loaded_prefix_registry`).
+the capacity needs (`lib.rs`, `validate_loaded_prefix_registry`).
 
 The packed-overlapping-prefix layout and its verifier-side reuse are specified
 in [`specs/setup-layout-repack.md`](../../../specs/setup-layout-repack.md).
@@ -55,12 +55,12 @@ module-lattice hardness assumption ([lattices-sis.md](../foundations/lattices-si
 The public API entry points live in `crates/akita-prover/src/api/commitment.rs`:
 
 - `commit` commits one commitment group
-  (`commitment.rs:490-525`); `batched_commit` is the batch path
-  (`commitment.rs:770`).
+  (`commitment.rs`); `batched_commit` is the batch path
+  (`commitment.rs`).
 - `prepare_batched_commit_inputs` validates the group: it must be nonempty, its
   padded `num_vars` and count must fit the setup capacity, and its natural
   polynomial arity selects that group's root layout
-  (`commitment.rs:536-572`).
+  (`commitment.rs`).
 
 ### SIS sizing
 
@@ -69,7 +69,7 @@ security floor, what is the minimum SIS-secure module rank, and what audited
 commit-matrix parameters does it yield" is `crates/akita-types/src/sis/ajtai_key.rs`.
 It consults the generated SIS-floor tables in the sibling
 `generated_sis_table/` module. The key types are `SisSecurityPolicyId`
-(`ajtai_key.rs:81`) and `SisModulusProfileId` (`ajtai_key.rs:105`); the
+(`ajtai_key.rs`) and `SisModulusProfileId` (`ajtai_key.rs`); the
 `Quantum128BitADPS16` policy is described in
 [security.md](./security.md).
 
@@ -82,7 +82,7 @@ The inner commitment `t = A * s_hat` is the performance-critical mat-vec. The
 one-hot backend does **not** materialize the decomposed vector `s_hat` and run a
 dense mat-vec; instead it accumulates **only the nonzero contributions** using a
 fused shift-accumulate into a `WideCyclotomicRing` (carry-free `i32` additions),
-then reduces once at the end (`crates/akita-prover/src/backend/onehot/inner_ajtai.rs:3-16`):
+then reduces once at the end (`crates/akita-prover/src/backend/onehot/inner_ajtai.rs`):
 
 ```text
 t[a] += A[a][entry.commit_col(num_digits)] * (X^{k_1} + X^{k_2} + ...)

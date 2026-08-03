@@ -39,7 +39,7 @@ The role-crate boundaries are enforced by `scripts/check-crate-deps.sh`
 ## The verification entry point
 
 Call `akita_verifier::batched_verify::<Cfg, T>` directly
-(`crates/akita-verifier/src/protocol/core/verify.rs:217-248`). The proof, setup,
+(`crates/akita-verifier/src/protocol/core/verify.rs`). The proof, setup,
 and claim types — `AkitaBatchedProof`, `AkitaVerifierSetup`, `OpeningClaims`,
 `BasisMode` — live in `akita-types` (the verifier re-exports only
 `CommitmentVerifier`; reference the others via the `akita-types` dependency
@@ -56,9 +56,9 @@ pub fn batched_verify<Cfg, T>(
 ```
 
 Prefer this over `AkitaCommitmentScheme::batched_verify`
-(`crates/akita-pcs/src/scheme/mod.rs:264-273`): the umbrella wrapper measures
+(`crates/akita-pcs/src/scheme/mod.rs`): the umbrella wrapper measures
 elapsed time with `Instant::now()` for its telemetry span
-(`scheme/mod.rs:305-312`), a host-timer dependency that the recursion guest does
+(`scheme/mod.rs`), a host-timer dependency that the recursion guest does
 not provide. The direct call also has no caller-selected setup-contribution
 mode — the verifier derives that behavior from the resolved schedule.
 
@@ -66,7 +66,7 @@ mode — the verifier derives that behavior from the resolved schedule.
 
 Every validation failure returns a typed `AkitaError` — the verifier never
 panics on malformed input. The error variant distinguishes the failure class
-(`verify.rs:236-253`):
+(`verify.rs`):
 
 1. `claims.validate(...)` — claim shapes against the setup seed
    → `InvalidProof`
@@ -78,7 +78,7 @@ panics on malformed input. The error variant distinguishes the failure class
    → `InvalidProof`
 
 Only then does replay begin, after warming the terminal-NTT prefixes for the
-resolved schedule (`verify.rs:255-259`).
+resolved schedule (`verify.rs`).
 
 ## The no-panic contract
 
@@ -93,11 +93,11 @@ Note that the schedule planner is **not** pulled into the verifier path. Runtime
 schedule resolution is strict: `akita_schedules::resolve_group_batch_schedule`
 resolves only against the enabled generated catalog and **never invokes planner
 search** — a missing catalog or row returns `AkitaError::UnsupportedSchedule`
-(`crates/akita-schedules/src/resolve.rs:14-18`), and `akita-config`'s runtime
+(`crates/akita-schedules/src/resolve.rs`), and `akita-config`'s runtime
 resolution rejects instead of falling back to the DP
-(`crates/akita-config/src/lib.rs:5-7`). `akita-planner` is only a dev-dependency
+(`crates/akita-config/src/lib.rs`). `akita-planner` is only a dev-dependency
 of `akita-config`, and `akita-verifier` deliberately avoids planner search
-(`crates/akita-verifier/src/lib.rs:5`). The strict resolution that *is*
+(`crates/akita-verifier/src/lib.rs`). The strict resolution that *is*
 verifier-reachable rejects unsupported requests with `AkitaError` rather than
 panicking, so it is still covered by the no-panic contract.
 

@@ -8,7 +8,7 @@ debugging the recursion guest. Each entry is symptom → cause → fix.
 **Symptom:** the profile binary refuses to run in a debug build.
 
 **Cause:** the profile harness refuses non-release builds to avoid misleading
-timings (`crates/akita-pcs/examples/profile/main.rs:35-38`).
+timings (`crates/akita-pcs/examples/profile/main.rs`).
 
 **Fix:** build with `--release`, or override with
 `AKITA_ALLOW_DEBUG_PROFILE=1` for a correctness-only run.
@@ -20,7 +20,7 @@ materialized eq-table budget at large `num_vars`.
 
 **Cause:** some paths materialize large `2^num_vars`-scale eq tables against the
 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling
-(`crates/akita-algebra/src/eq_poly.rs:32`, `check_element_budget`). On the
+(`crates/akita-algebra/src/eq_poly.rs`, `check_element_budget`). On the
 small-field one-hot profiles the profile-bench matrix observes the prover's
 eq-evaluation table exceeding that ceiling at `num_vars ≥ 30`; the raw full
 `2^num_vars` table bound is lower, around `num_vars ≥ 27–29` depending on field
@@ -39,7 +39,7 @@ prover dependence on it
 
 **Cause:** setup cache layout is versioned; the cache file stores the expanded
 setup followed by setup-prefix slots, and caches written before setup-prefix
-persistence are rejected (`crates/akita-setup/src/lib.rs:1-5`).
+persistence are rejected (`crates/akita-setup/src/lib.rs`).
 
 **Fix:** delete the cache and regenerate. There is no compatibility wrapper —
 regenerate the setup for the upgraded code.
@@ -64,7 +64,7 @@ Rayon pool for scheme compute is under review upstream
 panic message gives no source location.
 
 **Fix:** flip it to `backtrace = "dwarf"` for one diagnostic iteration and re-run
-(`profile/akita-recursion/README.md:94-113`). The invocation reads
+(`profile/akita-recursion/README.md`). The invocation reads
 `target/akita_recursion_inputs_nv32.bin`, which the artifact step must generate
 first:
 
@@ -95,7 +95,7 @@ looks like a valid proof.
 **Cause:** this is expected behavior — the guest decodes and verifies in-guest,
 so a malformed proof yields guest status `1` (input decoding failed) or `2`
 (verifier rejected the proof), not a guest panic
-(`profile/akita-recursion/README.md:87-92`).
+(`profile/akita-recursion/README.md`).
 
 ## Environment-variable quick reference
 
@@ -109,7 +109,7 @@ Profile harness (`crates/akita-pcs/examples/profile/main.rs`):
 | `AKITA_PROFILE_LOG` | `trace` | `tracing-subscriber` filter. |
 | `AKITA_ALLOW_DEBUG_PROFILE` | unset | `1` ⇒ bypass the `--release` guard. |
 
-Recursion workspace (`profile/akita-recursion/README.md:115-124`):
+Recursion workspace (`profile/akita-recursion/README.md`):
 
 | Variable | Default | Effect |
 |----------|---------|--------|
