@@ -20,7 +20,13 @@ boundaries.
 akita-verifier   = { git = "https://github.com/LayerZero-Labs/akita", rev = "<exact-commit>" }
 akita-types      = { git = "https://github.com/LayerZero-Labs/akita", rev = "<exact-commit>" }
 akita-config     = { git = "https://github.com/LayerZero-Labs/akita", rev = "<exact-commit>" }
+akita-field      = { git = "https://github.com/LayerZero-Labs/akita", rev = "<exact-commit>" }      # AkitaError
+akita-transcript = { git = "https://github.com/LayerZero-Labs/akita", rev = "<exact-commit>" }      # Transcript trait
 ```
+
+`AkitaError` lives in `akita-field` and the `Transcript` trait lives in
+`akita-transcript`; neither is re-exported by the role crates, so add both to
+compile the `batched_verify` call below.
 
 Pin a specific git revision: Akita makes **no backward-compatibility
 guarantees**, so `rev` must be pinned exactly (`crates/akita-types` bumps
@@ -35,8 +41,9 @@ The role-crate boundaries are enforced by `scripts/check-crate-deps.sh`
 Call `akita_verifier::batched_verify::<Cfg, T>` directly
 (`crates/akita-verifier/src/protocol/core/verify.rs:217-248`). The proof, setup,
 and claim types — `AkitaBatchedProof`, `AkitaVerifierSetup`, `OpeningClaims`,
-`BasisMode` — live in `akita-types` (re-exported by the verifier's public
-surface):
+`BasisMode` — live in `akita-types` (the verifier re-exports only
+`CommitmentVerifier`; reference the others via the `akita-types` dependency
+directly):
 
 ```rust
 pub fn batched_verify<Cfg, T>(
