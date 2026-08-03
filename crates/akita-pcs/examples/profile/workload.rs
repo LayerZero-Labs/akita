@@ -1083,6 +1083,7 @@ pub(crate) fn run_recursive_multi_group_onehot_mixed<FF, const D: usize, Cfg>(
         + PseudoMersenneField
         + HalvingField
         + HasWide
+        + HasCommitAccum
         + Valid
         + AkitaSerialize
         + 'static,

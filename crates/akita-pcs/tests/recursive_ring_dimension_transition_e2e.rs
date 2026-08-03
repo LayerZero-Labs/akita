@@ -204,7 +204,12 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         assert_eq!(prefix_slot.natural_len, natural_len);
         assert_eq!(prefix_slot.padded_len, padded_setup_prefix_len(natural_len));
         assert!(
-            setup.expanded.shared_matrix().as_field_slice().len() >= natural_len,
+            setup
+                .expanded
+                .shared_matrix()
+                .total_ring_elements_at::<1>()
+                .expect("setup field length")
+                >= natural_len,
             "prepared setup must cover the canonical natural prefix"
         );
         let stack = akita_prover::UniformProverStack::uniform(

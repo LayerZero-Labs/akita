@@ -831,8 +831,8 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaExpandedSetup<F> {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        let matrix_field_elements = self.shared_matrix.total_ring_elements()
-            * self.shared_matrix.gen_ring_dim();
+        let matrix_field_elements =
+            self.shared_matrix.total_ring_elements() * self.shared_matrix.gen_ring_dim();
         let matrix_size = 2 * core::mem::size_of::<usize>()
             + matrix_field_elements * F::zero().serialized_size(compress);
         self.seed.serialized_size(compress) + matrix_size
