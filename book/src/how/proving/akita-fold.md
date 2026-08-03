@@ -31,6 +31,26 @@ reduction](./field-ring-reduction.md) is a separate field-valued relation. It
 is fused with the physical rows later, but it is not a row of the ring matrix
 described on this page.
 
+## Contents
+
+- [Objects entering the fold](#objects-entering-the-fold)
+  - [Why the witness is digit-decomposed](#why-the-witness-is-digit-decomposed)
+  - [Polynomial blocks and inner digits](#polynomial-blocks-and-inner-digits)
+  - [Partial evaluations and opening digits](#partial-evaluations-and-opening-digits)
+  - [The folded response and its digitization](#the-folded-response-and-its-digitization)
+- [The four physical relation families](#the-four-physical-relation-families)
+  - [Fold-evaluation consistency](#1-fold-evaluation-consistency)
+  - [Inner-commitment consistency](#2-inner-commitment-consistency)
+  - [Outer-commitment consistency](#3-outer-commitment-consistency)
+  - [Opening-commitment consistency](#4-opening-commitment-consistency)
+- [Assemble the ring relation](#assemble-the-ring-relation)
+- [Relation layouts beyond the basic setting](#relation-layouts-beyond-the-basic-setting)
+  - [Multiple polynomial groups](#multiple-polynomial-groups)
+  - [Multiple witness chunks](#multiple-witness-chunks)
+- [Lift the ring relation before sumcheck](#lift-the-ring-relation-before-sumcheck)
+- [The scalar opening claim is a virtual row](#the-scalar-opening-claim-is-a-virtual-row)
+- [Code reference](#code-reference)
+
 ## Objects entering the fold
 
 ### Why the witness is digit-decomposed
