@@ -73,12 +73,16 @@ first:
 #    workspace, which the referenced README commands assume.
 cd profile/akita-recursion
 
-# 1. Generate the verifier-input blob (required before the host run).
+# 1. Build the binaries first (README quick-start step 1); otherwise
+#    ./target/release/akita-recursion-* does not exist yet.
+cargo build --release
+
+# 2. Generate the verifier-input blob (required before the host run).
 AKITA_NUM_VARS=32 \
     AKITA_RECURSION_BLOB=target/akita_recursion_inputs_nv32.bin \
     ./target/release/akita-recursion-artifact
 
-# 2. Reproduce the panic with a symbolic backtrace.
+# 3. Reproduce the panic with a symbolic backtrace.
 ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
     JOLT_BACKTRACE=full AKITA_RECURSION_LOG=info \
     ./target/release/akita-recursion-host --trace-only \
