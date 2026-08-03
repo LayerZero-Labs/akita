@@ -96,9 +96,12 @@ search** — a missing catalog or row returns `AkitaError::UnsupportedSchedule`
 resolution rejects instead of falling back to the DP
 (`crates/akita-config/src/lib.rs`). `akita-planner` is only a dev-dependency
 of `akita-config`, and `akita-verifier` deliberately avoids planner search
-(`crates/akita-verifier/src/lib.rs`). The strict resolution that *is*
-verifier-reachable rejects unsupported requests with `AkitaError` rather than
-panicking, so it is still covered by the no-panic contract.
+(`crates/akita-verifier/src/lib.rs`). This symbol is reached transitively via
+`akita-config` and is described here only to explain the strictness behavior;
+consumer code does not need to name `akita-schedules` directly. The strict
+resolution that *is* verifier-reachable rejects unsupported requests with
+`AkitaError` rather than panicking, so it is still covered by the no-panic
+contract.
 
 Verifier replay internals (per-level verifiers, the stage-2 verifier,
 prepared-claim shapes) are crate-private. A few replay primitives
