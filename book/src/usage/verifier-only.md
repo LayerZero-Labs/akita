@@ -52,6 +52,12 @@ pub fn batched_verify<Cfg, T>(
     claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
     basis: BasisMode,
 ) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField
+        + HalvingField + Valid,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    T: Transcript<Cfg::Field>,
 ```
 
 Prefer this over `AkitaCommitmentScheme::batched_verify`

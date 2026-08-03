@@ -69,8 +69,8 @@ panic message gives no source location.
 first:
 
 ```bash
-# 0. These commands run from the recursion workspace
-#    (profile/akita-recursion/README.md assumes you are inside it).
+# 0. Run from the repository root; this cd takes you into the recursion
+#    workspace, which the referenced README commands assume.
 cd profile/akita-recursion
 
 # 1. Generate the verifier-input blob (required before the host run).
