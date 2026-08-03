@@ -6,6 +6,7 @@
 | Created   | 2026-05-26                            |
 | Status    | implemented                           |
 | PR        | `taghi/perf/simd-subfield-fp8`        |
+| Book-chapter | book/src/how/commitment.md         |
 
 ## Summary
 

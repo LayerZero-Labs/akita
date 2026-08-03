@@ -13,6 +13,7 @@
 | Status    | implemented |
 | Suggested branch | `setup-layout-repack` |
 | PR         | #112, implemented by #132; verifier reuse revised by #318 |
+| Book-chapter | book/src/how/commitment.md |
 
 ## Revision authority
 

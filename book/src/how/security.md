@@ -1,7 +1,5 @@
 # Security model
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
-
 One canonical security narrative: the hardness assumption, how Ajtai ranks
 connect to security bits, the weak-binding fold price, and the current SIS table
 model. Keep the marketing claim separate from audited reality. See
