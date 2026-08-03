@@ -831,17 +831,11 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaExpandedSetup<F> {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        // Sizing must reflect the FULL matrix (serialization materializes
-        // it), but must not permanently re-cache a released store.
-        self.seed.serialized_size(compress)
-            + self
-                .shared_matrix
-                .covering_at_dyn(
-                    self.shared_matrix.total_ring_elements(),
-                    self.shared_matrix.gen_ring_dim(),
-                )
-                .map(|matrix| matrix.serialized_size(compress))
-                .unwrap_or(0)
+        let matrix_field_elements = self.shared_matrix.total_ring_elements()
+            * self.shared_matrix.gen_ring_dim();
+        let matrix_size = 2 * core::mem::size_of::<usize>()
+            + matrix_field_elements * F::zero().serialized_size(compress);
+        self.seed.serialized_size(compress) + matrix_size
     }
 }
 
@@ -1025,6 +1019,34 @@ mod tests {
 
         assert_eq!(decoded.prefix_slots.len(), 1);
         assert_eq!(decoded, setup);
+    }
+
+    #[test]
+    fn serialized_size_does_not_recache_released_matrix() {
+        let setup_seed = seed([7u8; 32]);
+        let shared_matrix = derive_public_matrix_flat::<F, D>(2, &setup_seed.public_matrix_seed);
+        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            setup_seed,
+            shared_matrix,
+        );
+        let mut expected_bytes = Vec::new();
+        setup
+            .serialize_compressed(&mut expected_bytes)
+            .expect("serialize full setup");
+        let expected_size = setup.serialized_size(Compress::Yes);
+        assert_eq!(expected_bytes.len(), expected_size);
+
+        setup.shared_matrix.release_to_prefix(1);
+        let retained = setup.shared_matrix.materialized_field_elements();
+
+        assert_eq!(setup.serialized_size(Compress::Yes), expected_size);
+        assert_eq!(setup.shared_matrix.materialized_field_elements(), retained);
+
+        let mut released_bytes = Vec::new();
+        setup
+            .serialize_compressed(&mut released_bytes)
+            .expect("serialize released setup");
+        assert_eq!(released_bytes, expected_bytes);
     }
 
     #[test]
