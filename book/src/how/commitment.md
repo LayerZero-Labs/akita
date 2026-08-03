@@ -92,7 +92,7 @@ The wide accumulator avoids a modular reduction per addition compared with a
 direct field-ring accumulator. One-hot storage is described in
 `crates/akita-prover/src/backend/onehot/mod.rs`.
 
-Paper reference: App B.2.5 (one-hot commitment optimization).
+Paper references: App B.2.5 (one-hot commitment optimization).
 
 ## Polynomial backends: dense vs one-hot
 
@@ -124,4 +124,4 @@ technique note is kept in
 and the broader packed-SIMD field-arithmetic story is listed for folding in
 [optimizations.md](./optimizations.md) (chapter pending).
 
-Paper reference: §3.2 `sec:akita-layout`, App B.2.5 (`sec:akita-crt-matvec`).
+Paper references: §3.2 `sec:akita-layout`, `sec:akita-crt-matvec`.

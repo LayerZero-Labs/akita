@@ -41,9 +41,8 @@ The role-crate boundaries are enforced by `scripts/check-crate-deps.sh`
 Call `akita_verifier::batched_verify::<Cfg, T>` directly
 (`crates/akita-verifier/src/protocol/core/verify.rs`). The proof, setup,
 and claim types — `AkitaBatchedProof`, `AkitaVerifierSetup`, `OpeningClaims`,
-`BasisMode` — live in `akita-types` (the verifier re-exports only
-`CommitmentVerifier`; reference the others via the `akita-types` dependency
-directly):
+`BasisMode` — live in `akita-types` (of these four, the verifier re-exports
+none; reference them via the `akita-types` dependency directly):
 
 ```rust
 pub fn batched_verify<Cfg, T>(
@@ -101,7 +100,10 @@ of `akita-config`, and `akita-verifier` deliberately avoids planner search
 verifier-reachable rejects unsupported requests with `AkitaError` rather than
 panicking, so it is still covered by the no-panic contract.
 
-Verifier replay internals (per-level verifiers, ring-switch replay, the stage-2
-verifier, prepared-claim shapes) are crate-private; only the entry points
-actually consumed downstream are public
+Verifier replay internals (per-level verifiers, the stage-2 verifier,
+prepared-claim shapes) are crate-private. A few replay primitives
+(`RingSwitchReplay`, `RelationMatrixEvaluator`,
+`prepare_relation_matrix_evaluator`, `AkitaStage1Verifier`) are kept public
+solely so integration tests in `akita-pcs` can exercise them in isolation;
+they are not part of the intended downstream API
 (`crates/akita-verifier/src/lib.rs`).

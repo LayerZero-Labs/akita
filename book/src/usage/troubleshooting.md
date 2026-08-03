@@ -69,6 +69,10 @@ panic message gives no source location.
 first:
 
 ```bash
+# 0. These commands run from the recursion workspace
+#    (profile/akita-recursion/README.md assumes you are inside it).
+cd profile/akita-recursion
+
 # 1. Generate the verifier-input blob (required before the host run).
 AKITA_NUM_VARS=32 \
     AKITA_RECURSION_BLOB=target/akita_recursion_inputs_nv32.bin \
