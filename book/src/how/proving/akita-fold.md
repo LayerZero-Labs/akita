@@ -475,10 +475,60 @@ relations above.
 
 ### Multiple polynomial groups
 
-At a multi-group root, each group $g$ has its own opening claims, fold
-challenges, ring dimensions, commitment parameters, and
-`consistency | A | B` row block. The final/new group is placed first, followed
-by the precommitted groups. The shared $\mathbf D$ rows remain at the end:
+In zkVM applications, polynomials such as execution traces, advice, and
+preprocessed data may be committed at different times. When one commitment is
+formed, the prover may not yet know which other commitments it will later be
+opened with, the opening point, or the root schedule that will combine them.
+Akita calls the polynomials held under one independently formed outer
+commitment a **commitment group**. All claims in one group share an opening
+point. In the current implementation, all groups are opened at one shared root
+point. One group is the **final/new group**, while commitments formed earlier
+enter as **precommitted groups** with already-fixed parameters.
+
+Proving each commitment group separately would repeat the entire recursive
+opening protocol. Akita instead batches the groups in one root transition and
+then resumes the ordinary single-opening recursion. The batching does not
+merge the group witnesses or commitments: each group keeps its own folded
+response $\mathbf z_g$, digit witnesses $\hat{\mathbf e}_g$ and
+$\hat{\mathbf t}_g$, and group-local `consistency | A | B` relations. Within
+the physical ring matrix, only the opening-commitment relation spans the
+groups: one $\mathbf D$ matrix acts on their concatenated opening digits. The
+field-level evaluation trace separately batches their claimed evaluations.
+
+To show only what changes from the basic setting, assume one polynomial claim
+per group and add a group index $g$ to the previous notation. Group $g$ has
+its own blocks $\mathbf s_{g,b}$, fold challenges $c_{g,b}$, and folded response
+
+$$
+\boxed{
+\mathbf z_g
+=
+\sum_b c_{g,b}\mathbf s_{g,b}.
+}
+$$
+
+There is no sum over $g$. Each group keeps a separate response
+$\mathbf z_g$, opening digits $\hat{\mathbf e}_g$, and inner-commitment digits
+$\hat{\mathbf t}_g$. The basic consistency, $\mathbf A$, and $\mathbf B$
+relations are repeated independently for every group. In particular, the
+$\mathbf B_g$ rows bind $\hat{\mathbf t}_g$ to that group's public commitment
+$\mathbf u_g$.
+
+Among the four physical relation families, only the $\mathbf D$ relation
+combines witness data from different groups. It acts once on the concatenated
+opening digits:
+
+$$
+\hat{\mathbf e}_{\mathrm{all}}
+=
+\big\Vert_{g\in\mathrm{relation\ order}}\hat{\mathbf e}_g,
+\qquad
+\mathbf D\hat{\mathbf e}_{\mathrm{all}}=\mathbf v_D.
+$$
+
+In the canonical physical row order, the final/new group is placed first,
+followed by the precommitted groups. The shared $\mathbf D$ rows remain at the
+end:
 
 $$
 \begin{aligned}
@@ -495,9 +545,22 @@ $$
 \end{aligned}
 $$
 
-Each group-local block has right-hand side
-$0\Vert\mathbf 0_{\mathbf A_g}\Vert\mathbf u_g$. The final shared block has
-right-hand side $\mathbf v_D$.
+Consequently, the full right-hand side is
+
+$$
+\mathbf y
+=
+\big\Vert_{g\in\mathrm{relation\ order}}
+[0\mid\mathbf 0_{\mathbf A_g}\mid\mathbf u_g]
+\quad\Vert\quad
+\mathbf v_D.
+$$
+
+This relation is block sparse: a group's consistency, $\mathbf A_g$, and
+$\mathbf B_g$ rows touch only that group's witness segment, whereas the
+shared $\mathbf D$ rows touch the $\hat{\mathbf e}_g$ segments from every
+group. Stage 2 batches all physical rows into one sumcheck, but this batching
+does not merge the group-local relations.
 
 For a single chunk per group, the corresponding pre-switch witness layout is
 
@@ -510,6 +573,21 @@ $$
 
 The quotient digits for all physical rows are stored once, in one shared
 $\hat{\mathbf r}$ tail after these group segments.
+
+The root fold consumes this multi-group structure. After ring switching, the
+group segments and the shared quotient tail form one witness
+
+$$
+\mathbf w^{\mathrm{next}}
+=
+\mathbf w_0\Vert\hat{\mathbf r},
+$$
+
+which is committed once for the next level. The output of the multi-group root
+is therefore the basic recursive object: one polynomial group, one committed
+witness, and one opening claim at one point. The original root groups remain
+only as ranges inside the flat witness; they no longer define separate folded
+responses or relation rows.
 
 ### Multiple witness chunks
 
