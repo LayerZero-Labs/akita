@@ -11,9 +11,13 @@ Any malformed verifier-facing proof, setup, schedule, public claim, opening poin
 - `akita-verifier`
 - Verifier-reachable code in `akita-types` (including SIS derivation and table materialization), `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, verifier-used `akita-field` paths
 - `akita-config` (every `CommitmentConfig` method reachable from `batched_verify`)
-- `akita-planner` (the schedule-search DP is verifier-reachable through `CommitmentConfig::runtime_schedule` table-miss fallback)
+- `akita-schedules` (strict runtime schedule resolution: `resolve_group_batch_schedule` resolves only against the enabled generated catalog and never invokes planner search)
 
-The verifier must validate `key.num_vars` against setup capacity before invoking the DP so a malformed proof cannot blow up the search's bounded state space.
+Runtime schedule resolution is strict: `akita_schedules::resolve_group_batch_schedule`
+rejects a missing catalog or missing row with `AkitaError::UnsupportedSchedule`
+and does not fall back to the planner DP
+(`crates/akita-schedules/src/resolve.rs`, `crates/akita-config/src/lib.rs`).
+`akita-planner` is not verifier-reachable.
 
 The accepted proof topology is structural: a root fold, at least one suffix
 fold, and one terminal cleartext witness. The verifier rejects empty/one-fold

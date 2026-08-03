@@ -117,8 +117,10 @@ and when to choose one-hot vs dense by field family are in
 [quickstart.md](../usage/quickstart.md).
 
 The packed `RingSubfieldFpExt8` multiplication kernels were an early SIMD
-optimization for fp16 small-field presets; the primary fp16 consumer has since
-been removed, but the technique note remains in
+optimization for fp16 small-field presets. The fp16 field family and the
+`RingSubfieldFpExt8` type have since been **fully removed** from the codebase
+(no `Fp16` / `RingSubfieldFpExt8` paths remain in `crates/`); the historical
+technique note is kept in
 [`specs/simd-ring-subfield-fp8.md`](../../../specs/simd-ring-subfield-fp8.md)
 and the broader packed-SIMD field-arithmetic story is listed for folding in
 [optimizations.md](./optimizations.md) (chapter pending).

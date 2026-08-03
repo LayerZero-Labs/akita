@@ -1,8 +1,9 @@
 # Verifier-only integration
 
-For consumers that only **verify** (the Jolt guest is the canonical example),
-there is a slim dependency path that avoids the umbrella `akita-pcs` crate and
-its prover-facing APIs.
+For consumers that only **verify** (the Jolt guest is the canonical example —
+see [`profile/akita-recursion/README.md`](../../../profile/akita-recursion/README.md)
+for the recursion integration), there is a slim dependency path that avoids the
+umbrella `akita-pcs` crate and its prover-facing APIs.
 
 ## When to go verifier-only
 
@@ -32,7 +33,10 @@ The role-crate boundaries are enforced by `scripts/check-crate-deps.sh`
 ## The verification entry point
 
 Call `akita_verifier::batched_verify::<Cfg, T>` directly
-(`crates/akita-verifier/src/protocol/core/verify.rs:217-248`):
+(`crates/akita-verifier/src/protocol/core/verify.rs:217-248`). The proof, setup,
+and claim types — `AkitaBatchedProof`, `AkitaVerifierSetup`, `OpeningClaims`,
+`BasisMode` — live in `akita-types` (re-exported by the verifier's public
+surface):
 
 ```rust
 pub fn batched_verify<Cfg, T>(
