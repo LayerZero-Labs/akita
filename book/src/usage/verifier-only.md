@@ -16,15 +16,15 @@ boundaries.
 
 ```toml
 [dependencies]
-akita-verifier   = { git = "..." }   # verifier replay
-akita-types      = { git = "..." }   # proof / setup / claim shapes
-akita-config     = { git = "..." }   # concrete schedule / config policy
+akita-verifier   = { git = "https://github.com/LayerZero-Labs/akita", rev = "<exact-commit>" }
+akita-types      = { git = "https://github.com/LayerZero-Labs/akita", rev = "<exact-commit>" }
+akita-config     = { git = "https://github.com/LayerZero-Labs/akita", rev = "<exact-commit>" }
 ```
 
 Pin a specific git revision: Akita makes **no backward-compatibility
-guarantees**, and the crate revisions that both identify as instance-descriptor
-version 1 are not interchangeable (see [`how/transcript.md`](../how/transcript.md)).
-Pin an exact commit and re-run the prove/verify integration tests when upgrading.
+guarantees**, so `rev` must be pinned exactly (`crates/akita-types` bumps
+`AKITA_INSTANCE_DESCRIPTOR_VERSION` on protocol breaks). Pin an exact commit and
+re-run the prove/verify integration tests when upgrading.
 
 The role-crate boundaries are enforced by `scripts/check-crate-deps.sh`
 (`akita-verifier` must not reach prover-only polynomial backends).
@@ -78,9 +78,17 @@ contributor rules are in
 panic-audit record in
 [`docs/verifier-panic-audit.md`](../../../docs/verifier-panic-audit.md).
 
-Note that the schedule planner is reached **transitively** via `akita-config`
-(the DP fallback on a generated-table miss), so the planner is also
-verifier-reachable and subject to the same contract.
+Note that the schedule planner is **not** pulled into the verifier path. Runtime
+schedule resolution is strict: `akita_schedules::resolve_group_batch_schedule`
+resolves only against the enabled generated catalog and **never invokes planner
+search** — a missing catalog or row returns `AkitaError::UnsupportedSchedule`
+(`crates/akita-schedules/src/resolve.rs:14-18`), and `akita-config`'s runtime
+resolution rejects instead of falling back to the DP
+(`crates/akita-config/src/lib.rs:5-7`). `akita-planner` is only a dev-dependency
+of `akita-config`, and `akita-verifier` deliberately avoids planner search
+(`crates/akita-verifier/src/lib.rs:5`). The strict resolution that *is*
+verifier-reachable rejects unsupported requests with `AkitaError` rather than
+panicking, so it is still covered by the no-panic contract.
 
 Verifier replay internals (per-level verifiers, ring-switch replay, the stage-2
 verifier, prepared-claim shapes) are crate-private; only the entry points

@@ -47,5 +47,5 @@ mdbook-katex is expected.
 
 Status: scaffold in progress. Architecture, verification, profiling, feature
 flags, transcript, commitment, recursion, proving-layout, distributed-prover,
-matrix-evaluation, and verifier-only-integration chapters are written; many
-other pages remain stubs.
+matrix-evaluation, troubleshooting, and verifier-only-integration chapters are
+written; many other pages remain stubs.

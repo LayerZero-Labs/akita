@@ -18,10 +18,13 @@ timings (`crates/akita-pcs/examples/profile/main.rs:35-38`).
 **Symptom:** `EqPolynomial` allocation failure, or the prover tripping the
 materialized eq-table budget at large `num_vars`.
 
-**Cause:** some paths materialize full `2^num_vars` eq tables against the 1 GiB
-`MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling (`crates/akita-algebra/src/eq_poly.rs:32`,
-`check_element_budget`). On the small-field one-hot profiles the prover's
-eq-evaluation table exceeds that ceiling at `num_vars ≥ 30`.
+**Cause:** some paths materialize large `2^num_vars`-scale eq tables against the
+1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling
+(`crates/akita-algebra/src/eq_poly.rs:32`, `check_element_budget`). On the
+small-field one-hot profiles the profile-bench matrix observes the prover's
+eq-evaluation table exceeding that ceiling at `num_vars ≥ 30`; the raw full
+`2^num_vars` table bound is lower, around `num_vars ≥ 27–29` depending on field
+element size (fp128/fp64/fp32).
 
 **Fix:** lower `AKITA_NUM_VARS`. CI benches small-field presets at `nv=28`
 under the eq-table memory budget (see the notes in
@@ -54,12 +57,13 @@ Rayon pool for scheme compute is under review upstream
 
 ## Recursion-guest panics
 
-**Symptom:** the Jolt recursion host returns a guest panic or a nonzero status.
+**Symptom:** the Jolt recursion host returns a guest panic.
 
-**Fix:** the guest enables `jolt/stdout` so panic messages reach the host. To
-get a symbolic backtrace, the `#[jolt::provable]` attribute defaults to
-`backtrace = "off"` (faster traces); flip it to `backtrace = "dwarf"` for one
-diagnostic iteration and re-run
+**Cause:** the guest enables `jolt/stdout` so panic messages reach the host, but
+`#[jolt::provable]` defaults to `backtrace = "off"` (measured faster), so a bare
+panic message gives no source location.
+
+**Fix:** flip it to `backtrace = "dwarf"` for one diagnostic iteration and re-run
 (`profile/akita-recursion/README.md:94-113`):
 
 ```bash
@@ -75,8 +79,14 @@ To force a clean guest rebuild:
 rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 ```
 
-Malformed proofs produce a **proved nonzero result** rather than a guest panic
-(status code `1`), because the guest decodes and verifies in-guest
+### Malformed proofs (nonzero status without a panic)
+
+**Symptom:** the host reports a proved nonzero result even though the input
+looks like a valid proof.
+
+**Cause:** this is expected behavior — the guest decodes and verifies in-guest,
+so a malformed proof yields guest status `1` (input decoding failed) or `2`
+(verifier rejected the proof), not a guest panic
 (`profile/akita-recursion/README.md:87-92`).
 
 ## Environment-variable quick reference

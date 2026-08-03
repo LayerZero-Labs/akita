@@ -1,5 +1,8 @@
 # Security model
 
+> **Status:** partially written. The SIS / MSIS and Ajtai sizing sections below
+> are written; the norm-bounds section at the bottom is still pending fold.
+
 One canonical security narrative: the hardness assumption, how Ajtai ranks
 connect to security bits, the weak-binding fold price, and the current SIS table
 model. Keep the marketing claim separate from audited reality. See
@@ -63,10 +66,6 @@ implementation acceptance criteria live in
   infinity-width golden grid).
 
 ## Norm bounds and weak binding
-
-> **Status:** pending. This section is not yet written; the fold-response
-> bounds, the committed-fold price as relaxed binding, and the batched
-> weak-opening definition still need to be folded in from the sources below.
 
 The fold-response bounds, the committed-fold price as relaxed binding, the
 batched weak-opening definition, and why range checks do not lower the binding
