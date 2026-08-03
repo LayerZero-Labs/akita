@@ -60,7 +60,7 @@ The public API entry points live in `crates/akita-prover/src/api/commitment.rs`:
 - `prepare_batched_commit_inputs` validates the group: it must be nonempty, its
   padded `num_vars` and count must fit the setup capacity, and its natural
   polynomial arity selects that group's root layout
-  (`commitment.rs:527-559`).
+  (`commitment.rs:536-572`).
 
 ### SIS sizing
 
@@ -69,7 +69,7 @@ security floor, what is the minimum SIS-secure module rank, and what audited
 commit-matrix parameters does it yield" is `crates/akita-types/src/sis/ajtai_key.rs`.
 It consults the generated SIS-floor tables in the sibling
 `generated_sis_table/` module. The key types are `SisSecurityPolicyId`
-(`ajtai_key.rs:87`) and `SisModulusProfileId` (`ajtai_key.rs:115`); the
+(`ajtai_key.rs:81`) and `SisModulusProfileId` (`ajtai_key.rs:105`); the
 `Quantum128BitADPS16` policy is described in
 [security.md](./security.md).
 
@@ -120,7 +120,7 @@ The packed `RingSubfieldFpExt8` multiplication kernels were an early SIMD
 optimization for fp16 small-field presets; the primary fp16 consumer has since
 been removed, but the technique note remains in
 [`specs/simd-ring-subfield-fp8.md`](../../../specs/simd-ring-subfield-fp8.md)
-and the packed field backends are documented in
-[optimizations.md](./optimizations.md).
+and the broader packed-SIMD field-arithmetic story is listed for folding in
+[optimizations.md](./optimizations.md) (chapter pending).
 
 Paper reference: §3.2 `sec:akita-layout`, App B.2.5 (`sec:akita-crt-matvec`).

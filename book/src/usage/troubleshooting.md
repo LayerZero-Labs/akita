@@ -18,9 +18,10 @@ timings (`crates/akita-pcs/examples/profile/main.rs:35-38`).
 **Symptom:** `EqPolynomial` allocation failure, or the prover tripping the
 materialized eq-table budget at large `num_vars`.
 
-**Cause:** some paths materialize full `2^num_vars` eq tables; the budget is a
-real ceiling for `num_vars ≳ 41` on small-field one-hot profiles
-(`crates/akita-algebra/src/eq_poly.rs`, `check_element_budget`).
+**Cause:** some paths materialize full `2^num_vars` eq tables against the 1 GiB
+`MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling (`crates/akita-algebra/src/eq_poly.rs:32`,
+`check_element_budget`). On the small-field one-hot profiles the prover's
+eq-evaluation table exceeds that ceiling at `num_vars ≥ 30`.
 
 **Fix:** lower `AKITA_NUM_VARS`. CI benches small-field presets at `nv=28`
 under the eq-table memory budget (see the notes in
@@ -85,7 +86,7 @@ Profile harness (`crates/akita-pcs/examples/profile/main.rs`):
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `AKITA_MODE` | `onehot_fp128_d64` | Profile preset (`onehot_*` / `dense_*`). |
-| `AKITA_NUM_VARS` | `32` | Polynomial arity for the prover. |
+| `AKITA_NUM_VARS` | `25` | Polynomial arity for the prover. |
 | `AKITA_NUM_POLYS` | `1` | Number of committed polynomials. |
 | `AKITA_PROFILE_LOG` | `trace` | `tracing-subscriber` filter. |
 | `AKITA_ALLOW_DEBUG_PROFILE` | unset | `1` ⇒ bypass the `--release` guard. |

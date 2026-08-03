@@ -21,6 +21,11 @@ akita-types      = { git = "..." }   # proof / setup / claim shapes
 akita-config     = { git = "..." }   # concrete schedule / config policy
 ```
 
+Pin a specific git revision: Akita makes **no backward-compatibility
+guarantees**, and the crate revisions that both identify as instance-descriptor
+version 1 are not interchangeable (see [`how/transcript.md`](../how/transcript.md)).
+Pin an exact commit and re-run the prove/verify integration tests when upgrading.
+
 The role-crate boundaries are enforced by `scripts/check-crate-deps.sh`
 (`akita-verifier` must not reach prover-only polynomial backends).
 
@@ -48,14 +53,18 @@ mode — the verifier derives that behavior from the resolved schedule.
 
 ### Replay validation flow
 
-Every validation failure returns `AkitaError::InvalidProof` — the verifier
-never panics on malformed input (`verify.rs:236-253`):
+Every validation failure returns a typed `AkitaError` — the verifier never
+panics on malformed input. The error variant distinguishes the failure class
+(`verify.rs:236-253`):
 
 1. `claims.validate(...)` — claim shapes against the setup seed
-2. schedule resolution for the opening batch
+   → `InvalidProof`
+2. schedule resolution for the opening batch → `InvalidProof`
 3. `validate_schedule_ring_dims` — ring dimensions against the setup seed
-4. `ensure_schedule_fits_setup` — schedule within setup capacity
+   → `InvalidSetup`
+4. `ensure_schedule_fits_setup` — schedule within setup capacity → `InvalidSetup`
 5. `validate_proof_against_schedule` — proof structure matches the schedule
+   → `InvalidProof`
 
 Only then does replay begin, after warming the terminal-NTT prefixes for the
 resolved schedule (`verify.rs:255-259`).
