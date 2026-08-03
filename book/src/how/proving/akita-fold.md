@@ -33,6 +33,42 @@ described on this page.
 
 ## Objects entering the fold
 
+### Why the witness is digit-decomposed
+
+The witness committed for the next level must have bounded coefficients. This
+shortness condition is essential for the Module-SIS binding argument: two
+different bounded openings of the same linear commitment would give a short,
+nonzero vector in the kernel of its commitment matrix.
+
+Gadget decomposition provides the bounded representation. For a power-of-two
+base $g$ and digit depth $\delta$, define
+
+$$
+\mathbf G_{g,n}
+=
+\mathbf I_n\otimes(1,g,\ldots,g^{\delta-1}).
+$$
+
+A balanced decomposition of $\mathbf x$ is a digit vector $\hat{\mathbf x}$
+such that
+
+$$
+\mathbf x=\mathbf G_{g,n}\hat{\mathbf x},
+\qquad
+\hat x_i\in
+\{-g/2,\ldots,g/2-1\}.
+$$
+
+The decomposition specifies this small-digit representation; the protocol's
+range check proves that the committed coordinates really lie in the required
+range. Akita may use different bases and depths for the inner, outer, opening,
+fold-response, and quotient decompositions. Below, $G_a^{\mathrm{in}}$,
+$G_h^{\mathrm{out}}$, $G_h^{\mathrm{open}}$, and $G_f^{\mathrm{fold}}$ denote
+the scalar gadget weights used to decompose $F_{p,b}$, $\mathbf t_b$, $E_b$,
+and $\mathbf z$, respectively. They are entries of the corresponding gadget
+rows defined above. We omit the role-specific base and depth from this notation
+for simplicity.
+
 ### Polynomial blocks and inner digits
 
 As in the previous page, split the ring-valued polynomial table into blocks.
@@ -125,7 +161,7 @@ opening target $v_{\mathrm{tr}}$. Equation (7) is a commitment relation; it
 does not prove that the multilinear evaluation equals
 $v_{\mathrm{tr}}$.
 
-### The folded response
+### The folded response and its digitization
 
 After the relevant data is fixed, the transcript samples one sparse
 ring-valued fold challenge $c_b(X)$ for each live block. The prover folds the
@@ -138,8 +174,78 @@ z_{p,a}(X)
 \tag{8}
 $$
 
-The coefficients of $z$ are larger than the original digits, so $z$ is
-digit-decomposed once more:
+The response $\mathbf z$ no longer carries a live-block index. This is the
+fold's main reduction toward a smaller next-level witness, but combining the
+blocks increases coefficient magnitudes. Let $\sigma_\infty$ bound the
+coefficient norm of every digit block $\mathbf s_b$, and let
+$\omega=\max_b\lVert c_b\rVert_1$. Negacyclic multiplication gives
+
+$$
+\begin{aligned}
+\lVert\mathbf z\rVert_{\infty,\mathrm{coef}}
+&\le
+\sum_b
+\lVert c_b\mathbf s_b\rVert_{\infty,\mathrm{coef}}\\
+&\le
+|\mathcal B|\,\omega\,\sigma_\infty,
+\end{aligned}
+$$
+
+where $\mathcal B$ is the set of live blocks. The schedule fixes the challenge
+family, its relevant norm bounds, an admissible fold-response bound
+$\beta_{\mathrm{fold}}$, and a digit depth large enough to represent the
+accepted response. The implementation may resample the transcript nonce until
+the resulting $\mathbf z$ fits that scheduled bound. This grinding helps the
+honest prover find a compact response; the range check on its committed digits
+is what certifies the bound in the protocol.
+
+Before digitizing $\mathbf z$, the two challenge-dependent relations already
+follow directly from linearity. For the partial evaluations,
+
+$$
+\begin{aligned}
+\sum_b c_bE_b
+&=
+\sum_b c_b\sum_pQ_pF_{p,b}\\
+&=
+\sum_{p,a}Q_pG_a^{\mathrm{in}}
+\left(\sum_bc_bs_{b,p,a}\right)\\
+&=
+\sum_{p,a}Q_pG_a^{\mathrm{in}}z_{p,a}.
+\end{aligned}
+$$
+
+Using the opening digits from Equation (6), this is
+
+$$
+\sum_{b,h}c_bG_h^{\mathrm{open}}\hat e_{b,h}
+=
+\sum_{p,a}Q_pG_a^{\mathrm{in}}z_{p,a}.
+$$
+
+Similarly, $\mathbf t_b=\mathbf A\mathbf s_b$ implies
+
+$$
+\sum_bc_b\mathbf t_b
+=
+\mathbf A\left(\sum_bc_b\mathbf s_b\right)
+=
+\mathbf A\mathbf z.
+$$
+
+For row $\rho$ of $\mathbf A$, and using the outer digits from Equation (3),
+this becomes
+
+$$
+\sum_{b,h}c_bG_h^{\mathrm{out}}\hat t_{b,\rho,h}
+=
+\sum_{p,a}A_{\rho,(p,a)}z_{p,a}.
+$$
+
+These identities explain the relations in terms of the raw folded response.
+The next-level committed witness, however, must again consist of bounded
+digits so that its shortness is certified for the Module-SIS binding argument.
+Akita therefore decomposes $\mathbf z$ once more:
 
 $$
 z_{p,a}(X)
@@ -325,7 +431,7 @@ Consequently,
 $$
 \mathbf y
 =
-\mathbf 0
+0
 \;\Vert\;
 \mathbf 0_{\mathbf A}
 \;\Vert\;
