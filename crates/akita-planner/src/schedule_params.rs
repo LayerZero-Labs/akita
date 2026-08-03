@@ -240,7 +240,6 @@ pub(crate) fn find_schedule_singular(
     )
 }
 
-#[expect(clippy::too_many_arguments)]
 fn find_rank_aware_singular(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
