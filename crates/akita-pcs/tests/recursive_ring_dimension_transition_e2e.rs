@@ -379,7 +379,7 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
 }
 
 #[test]
-fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
+fn recursive_mixed_d_prefix_commit_builds_missing_outer_ntt_slot() {
     let _serial = RECURSIVE_E2E_LOCK.lock().expect("recursive E2E lock");
     init_rayon_pool();
     run_on_large_stack(|| {
@@ -409,9 +409,10 @@ fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
         CpuBackend
             .ensure_ntt_slot(&prepared, source_ntt)
             .expect("warm only source NTT slot");
+        let source_cache_bytes = prepared.shared_ntt_cache_bytes();
 
         let n_prefix = prefix.n_prefix().expect("padded prefix length");
-        let error = dispatch_for_field!(
+        dispatch_for_field!(
             akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
             F,
             prefix.d_setup,
@@ -426,11 +427,8 @@ fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
                 )
             }
         )
-        .expect_err("missing D64 outer NTT slot must reject");
-        assert!(
-            error.to_string().contains("NTT slot not warmed"),
-            "unexpected missing-slot error: {error}"
-        );
+        .expect("missing D64 outer NTT slot must build lazily");
+        assert!(prepared.shared_ntt_cache_bytes() > source_cache_bytes);
     });
 }
 
