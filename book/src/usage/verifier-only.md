@@ -54,9 +54,14 @@ pub fn batched_verify<Cfg, T>(
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField
-        + HalvingField + Valid,
+    Cfg::Field:
+        FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField + Valid,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + Valid,
     T: Transcript<Cfg::Field>,
 ```
 
