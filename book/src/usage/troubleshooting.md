@@ -64,9 +64,17 @@ Rayon pool for scheme compute is under review upstream
 panic message gives no source location.
 
 **Fix:** flip it to `backtrace = "dwarf"` for one diagnostic iteration and re-run
-(`profile/akita-recursion/README.md:94-113`):
+(`profile/akita-recursion/README.md:94-113`). The invocation reads
+`target/akita_recursion_inputs_nv32.bin`, which the artifact step must generate
+first:
 
 ```bash
+# 1. Generate the verifier-input blob (required before the host run).
+AKITA_NUM_VARS=32 \
+    AKITA_RECURSION_BLOB=target/akita_recursion_inputs_nv32.bin \
+    ./target/release/akita-recursion-artifact
+
+# 2. Reproduce the panic with a symbolic backtrace.
 ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
     JOLT_BACKTRACE=full AKITA_RECURSION_LOG=info \
     ./target/release/akita-recursion-host --trace-only \

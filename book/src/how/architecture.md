@@ -33,12 +33,12 @@ CI enforces one-way boundaries via `scripts/check-crate-deps.sh`.
 Key structural facts:
 
 - `akita-planner` sits **below** `akita-config` and names no `CommitmentConfig` type.
-- `akita-verifier` depends on `akita-config` and therefore reaches `akita-planner` transitively; the schedule DP is verifier-reachable.
+- Runtime schedule resolution is strict: `akita-schedules::resolve_group_batch_schedule` resolves only against the enabled generated catalog and never invokes the planner DP (a catalog or row miss returns `AkitaError::UnsupportedSchedule`). `akita-planner` is not verifier-reachable.
 - Verifier-only integrations should use `akita-verifier` + `akita-types` + `akita-config`, not the umbrella `akita-pcs` package.
 
 ## End-to-end lifecycle
 
-1. **Preset selection.** The caller picks a `CommitmentConfig` preset (`fp32` / `fp64` / `fp128` families). `CommitmentConfig::runtime_schedule` resolves the recursion schedule from a shipped table or the offline DP (`akita_planner::resolve_schedule`). The preset also fixes the protocol geometry: when the claim field coincides with the coefficient field (`EXT_DEGREE == 1`, today's `fp128` families) the fold path never runs extension-opening reduction; when claims live in a proper extension (`fp32` / `fp64`), root EOR follows `akita_types::root_tensor_projection_enabled` and suffix EOR follows `EXT_DEGREE > 1`. See [Fold path and field geometry](./proving/fold-path.md).
+1. **Preset selection.** The caller picks a `CommitmentConfig` preset (`fp32` / `fp64` / `fp128` families). `CommitmentConfig::runtime_schedule` resolves the recursion schedule from the generated catalog via `akita_schedules::resolve_group_batch_schedule` (strict — a missing row is `UnsupportedSchedule`, never the planner DP). The preset also fixes the protocol geometry: when the claim field coincides with the coefficient field (`EXT_DEGREE == 1`, today's `fp128` families) the fold path never runs extension-opening reduction; when claims live in a proper extension (`fp32` / `fp64`), root EOR follows `akita_types::root_tensor_projection_enabled` and suffix EOR follows `EXT_DEGREE > 1`. See [Fold path and field geometry](./proving/fold-path.md).
 2. **Setup.** `akita-setup` expands the config-backed setup (Ajtai matrices, stride envelopes). Setup capacity must cover the requested `num_vars`.
 3. **Commit.** `commit` / `batched_commit` (in `akita-prover`, orchestrated by `akita-pcs`) produce commitments over root polynomials at the opening layout implied by the schedule.
 4. **Claims.** The caller supplies ordered `PolynomialGroupClaims`; each group owns its complete point, evaluations, and commitment.

@@ -90,8 +90,7 @@ t[a] += A[a][entry.commit_col(num_digits)] * (X^{k_1} + X^{k_2} + ...)
 
 The wide accumulator avoids a modular reduction per addition compared with a
 direct field-ring accumulator. One-hot storage is described in
-[rings-and-fields.md](../foundations/rings-and-fields.md) and
-`backend/onehot/mod.rs`.
+`crates/akita-prover/src/backend/onehot/mod.rs`.
 
 Paper reference: App B.2.5 (one-hot commitment optimization).
 
