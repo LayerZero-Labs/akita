@@ -487,13 +487,13 @@ enter as **precommitted groups** with already-fixed parameters.
 
 Proving each commitment group separately would repeat the entire recursive
 opening protocol. Akita instead batches the groups in one root transition and
-then resumes the ordinary single-opening recursion. The batching does not
-merge the group witnesses or commitments: each group keeps its own folded
-response $\mathbf z_g$, digit witnesses $\hat{\mathbf e}_g$ and
-$\hat{\mathbf t}_g$, and group-local `consistency | A | B` relations. Within
-the physical ring matrix, only the opening-commitment relation spans the
-groups: one $\mathbf D$ matrix acts on their concatenated opening digits. The
-field-level evaluation trace separately batches their claimed evaluations.
+then resumes the ordinary single-opening recursion. The batching preserves
+the separate group commitments and folded responses: each group has its own
+$\mathbf z_g$, $\hat{\mathbf t}_g$, and group-local `consistency | A | B`
+relations. On the opening side, however, every group contributes an
+$\hat{\mathbf e}_g$ segment to one concatenated vector. One $\mathbf D$ matrix
+binds that entire vector, and the field-level evaluation trace separately
+batches the claimed evaluations.
 
 To show only what changes from the basic setting, assume one polynomial claim
 per group and add a group index $g$ to the previous notation. Group $g$ has
@@ -507,24 +507,51 @@ $$
 }
 $$
 
-There is no sum over $g$. Each group keeps a separate response
-$\mathbf z_g$, opening digits $\hat{\mathbf e}_g$, and inner-commitment digits
-$\hat{\mathbf t}_g$. The basic consistency, $\mathbf A$, and $\mathbf B$
-relations are repeated independently for every group. In particular, the
-$\mathbf B_g$ rows bind $\hat{\mathbf t}_g$ to that group's public commitment
-$\mathbf u_g$.
+There is no sum over $g$: the folded responses $\mathbf z_g$ remain separate.
+The basic consistency, $\mathbf A$, and $\mathbf B$ relations are repeated
+independently for every group. In particular, the $\mathbf B_g$ rows bind
+$\hat{\mathbf t}_g$ to that group's public commitment $\mathbf u_g$. Each
+group also produces opening digits $\hat{\mathbf e}_g$, which become one
+segment of the shared opening vector below.
 
-Among the four physical relation families, only the $\mathbf D$ relation
-combines witness data from different groups. It acts once on the concatenated
-opening digits:
+The fold and outer-commitment parts remain group-local because each commitment
+fixes its own $\mathbf A_g$ and $\mathbf B_g$ matrices, decomposition
+parameters, and public target $\mathbf u_g$. Its folded response $\mathbf z_g$
+is formed with that group's challenges and must be checked against those fixed
+parameters. Combining the responses across groups would lose these
+group-specific commitment bindings.
+
+The $\mathbf D$ relation can be shared for a different reason. Unlike
+$\mathbf A_g$ and $\mathbf B_g$, $\mathbf D$ is owned by the fold level rather
+than by an individual commitment group. Every $\hat{\mathbf e}_g$ segment uses
+the same opening-role ring dimension and decomposition basis, so the segments
+can occupy disjoint column ranges of one matrix
+
+$$
+\mathbf D
+=
+[\mathbf D_0\mid\mathbf D_1\mid\cdots],
+$$
+
+and be concatenated into one input vector:
 
 $$
 \hat{\mathbf e}_{\mathrm{all}}
 =
 \big\Vert_{g\in\mathrm{relation\ order}}\hat{\mathbf e}_g,
 \qquad
-\mathbf D\hat{\mathbf e}_{\mathrm{all}}=\mathbf v_D.
+\mathbf D\hat{\mathbf e}_{\mathrm{all}}
+=
+\sum_g\mathbf D_g\hat{\mathbf e}_g
+=
+\mathbf v_D.
 $$
+
+Thus the opening digits are not committed separately by group: they are
+concatenated and bound together by the single relation
+$\mathbf D\hat{\mathbf e}_{\mathrm{all}}=\mathbf v_D$. The fixed column ranges
+record which coordinates came from each group, and the group-local consistency
+rows prove what each $\hat{\mathbf e}_g$ segment represents.
 
 In the canonical physical row order, the final/new group is placed first,
 followed by the precommitted groups. The shared $\mathbf D$ rows remain at the
