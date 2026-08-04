@@ -16,7 +16,7 @@ trusted-benchmark-artifact = []
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../../../crates/akita-algebra" }
-jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "46e2ce8f7525364c69b5534d2d3918bdcf0684d3", default-features = false, features = ["solinas"] }
+jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "505d8ebcb45e5796afcf16468972b10e51b4a355", default-features = false, features = ["solinas"] }
 akita-serialization = { version = "0.1.0", path = "../../../crates/akita-serialization" }
 akita-types = { version = "0.1.0", path = "../../../crates/akita-types" }
 
