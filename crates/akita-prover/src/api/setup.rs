@@ -107,6 +107,10 @@ impl<F: Field> AkitaProverSetup<F> {
 
     /// Derive a verifier setup from this prover setup.
     ///
+    /// This copies protocol-independent setup state. Verifier setup initializes
+    /// a non-serialized lazy terminal NTT-prefix cache; direct terminal checks
+    /// prepare exact or covering prefixes on demand.
+    ///
     /// # Errors
     ///
     /// Returns an error if prover prefix-slot metadata cannot be converted into
@@ -114,10 +118,10 @@ impl<F: Field> AkitaProverSetup<F> {
     pub fn verifier_setup(&self) -> Result<AkitaVerifierSetup<F>, AkitaError> {
         let mut prefix_slots = SetupPrefixVerifierRegistry::new();
         prefix_slots.replace_from_prover_registry(&self.prefix_slots)?;
-        Ok(AkitaVerifierSetup {
-            expanded: self.expanded.clone(),
+        Ok(AkitaVerifierSetup::from_parts(
+            self.expanded.clone(),
             prefix_slots,
-        })
+        ))
     }
 
     /// Wrap an already-validated [`AkitaExpandedSetup`] in a prover setup.
@@ -228,6 +232,7 @@ impl<F: Field + Valid + AkitaSerialize> Valid for AkitaProverSetup<F> {
 mod tests {
     use super::*;
     use jolt_field::Prime128Offset275;
+    use jolt_field::Zero;
 
     #[test]
     fn generate_with_capacity_rejects_zero_setup_len() {
@@ -247,7 +252,7 @@ mod tests {
             8,
             1,
             48,
-            SetupMatrixEnvelope { max_setup_len: 1 },
+            SetupMatrixEnvelope::minimum(),
         )
         .expect_err("unsupported gen_ring_dim must be rejected");
         assert!(
@@ -262,7 +267,7 @@ mod tests {
             8,
             1,
             64,
-            SetupMatrixEnvelope { max_setup_len: 1 },
+            SetupMatrixEnvelope::minimum(),
         )
         .expect("generate D=64 setup");
         // Uniform-D: level dim equals gen_ring_dim.
@@ -284,48 +289,61 @@ mod tests {
     #[test]
     fn prover_setup_check_validates_prefix_slots() {
         use akita_types::{
-            setup_prefix_slot_id, AjtaiKeyParams, AkitaCommitmentHint, DigitBlocks,
-            PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams, RingVec,
-            SetupPrefixPublicCommitment, SetupPrefixSlot, SisModulusFamily,
+            setup_prefix_slot_id, AkitaCommitmentHint, InnerCommitMatrixParams,
+            OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+            PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
+            SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
         };
 
         let mut setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
             8,
             1,
             64,
-            SetupMatrixEnvelope { max_setup_len: 1 },
+            SetupMatrixEnvelope::minimum(),
         )
         .expect("generate setup");
-        let decomposed = DigitBlocks::empty(64);
-        let hint = AkitaCommitmentHint::singleton(decomposed);
+        let hint = AkitaCommitmentHint::singleton(
+            RingVec::from_coeffs_with_ring_dim(vec![Prime128Offset275::zero(); 64], 64)
+                .expect("inner rows"),
+        )
+        .expect("hint");
         let commitment_params = PrecommittedLevelParams {
-            layout: PrecommittedGroupParams {
+            layout: PrecommittedGroupDescriptor {
                 group: PolynomialGroupLayout::singleton(6),
-                m_vars: 0,
-                r_vars: 0,
-                log_basis: 1,
+                num_live_ring_elements_per_claim: 1,
+                num_positions_per_block: 1,
+                num_live_blocks: 1,
+                log_basis_inner: 1,
+                log_basis_outer: 1,
+                inner_ring_dimension: 64,
+                outer_ring_dimension: 64,
                 n_a: 1,
-                conservative_n_b: 1,
+                a_coeff_linf_bound: 1,
+                n_b: 1,
+                b_coeff_linf_bound: 1,
             },
-            a_key: AjtaiKeyParams::new_unchecked(
-                akita_types::DEFAULT_SIS_SECURITY_BITS,
-                SisModulusFamily::Q128,
+            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
                 1,
                 1,
                 1,
                 64,
             ),
-            b_key: AjtaiKeyParams::new_unchecked(
-                akita_types::DEFAULT_SIS_SECURITY_BITS,
-                SisModulusFamily::Q128,
+            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
                 1,
                 1,
                 1,
                 64,
             ),
-            num_blocks: 1,
-            block_len: 1,
-            num_digits_commit: 1,
+            log_basis_open: 1,
+            fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
+            num_digits_inner: 1,
+            num_digits_outer: 1,
             num_digits_open: 1,
             num_digits_fold_one: 1,
         };

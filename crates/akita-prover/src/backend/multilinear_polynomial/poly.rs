@@ -1,16 +1,14 @@
 //! The multilinear-polynomial wrapper enum, its borrowed dispatch views, and
 //! the source-trait impls. The `CpuBackend` kernel impls live in [`super::ops`].
 
-use akita_error::AkitaError;
-use akita_types::CleartextWitnessProof;
-use jolt_field::Unreduced;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring, Unreduced};
 
 use crate::compute::{
-    CpuBackend, CpuPreparedSetup, DirectRootWitnessSource, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootTensorSource, TensorProjectionKernel,
+    CpuBackend, CpuPreparedSetup, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
+    RootTensorSource, TensorProjectionKernel,
 };
 use crate::{DensePoly, OneHotIndex, OneHotPoly};
+use akita_error::AkitaError;
 
 /// Owned multilinear-polynomial wrapper for dense and one-hot batches.
 ///
@@ -244,18 +242,5 @@ where
         polys: &'view [&'view Self],
     ) -> Result<Self::TensorBatchView<'view>, AkitaError> {
         Ok(MultilinearPolynomialBatchView { polys })
-    }
-}
-
-impl<F, const D: usize, I> DirectRootWitnessSource<F, D> for MultilinearPolynomial<F, I>
-where
-    F: Field + CanonicalEncoding,
-    I: OneHotIndex,
-{
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        match self {
-            Self::Dense(poly) => DirectRootWitnessSource::<F, D>::direct_root_witness(poly),
-            Self::OneHot(poly) => DirectRootWitnessSource::<F, D>::direct_root_witness(poly),
-        }
     }
 }

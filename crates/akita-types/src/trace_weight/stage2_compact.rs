@@ -1,5 +1,5 @@
 use super::build::{
-    build_trace_weight_table_field_block_weights, build_trace_weight_table_field_terms,
+    build_trace_weight_table_field_live_block_weights, build_trace_weight_table_field_terms,
     build_trace_weight_table_ring_terms,
 };
 use super::stage2::{
@@ -8,7 +8,10 @@ use super::stage2::{
 };
 use super::TraceWeightLayout;
 use super::{eval_trace_terms_closed, TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm};
-use crate::{lagrange_weights, reduce_inner_opening_to_ring_element, BasisMode};
+use crate::{
+    lagrange_weights, reduce_inner_opening_to_ring_element, BasisMode, CommittedGroupParams,
+    OpeningClaimsLayout, SisModulusProfileId, WitnessLayout,
+};
 use akita_algebra::CyclotomicRing;
 use akita_algebra::One;
 use akita_algebra::Ring;
@@ -18,15 +21,33 @@ type F = Prime128OffsetA7F7;
 const D: usize = 8;
 
 fn layout() -> TraceWeightLayout {
+    let group_id = 0;
+    let lp = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q128OffsetA7F7,
+        D,
+        1,
+        1,
+        1,
+        1,
+        akita_challenges::SparseChallengeConfig::pm1_only(1),
+    )
+    .with_decomp(1, 2, 1, 2, 2)
+    .unwrap();
+    let opening_batch = OpeningClaimsLayout::new(0, 1).unwrap();
+    let witness_layout = WitnessLayout::new(&lp, &opening_batch, 1, 1).unwrap();
+    let opening_source_len = witness_layout.live_coeff_len() / D;
     TraceWeightLayout {
         ring_bits: 3,
-        col_bits: 3,
-        opening_digit_offset: 2,
-        num_blocks: 2,
+        col_bits: 4,
+        num_live_blocks: 2,
         num_digits_open: 2,
-        r_vars: 1,
-        log_basis: 3,
-        chunk: crate::TraceChunkLayout::single(),
+        source_ring_dim: D,
+        opening_ring_dim: D,
+        block_index_bits: 1,
+        log_basis_open: 3,
+        witness_layout,
+        opening_source_len,
+        group_id,
     }
 }
 
@@ -59,12 +80,12 @@ fn trace_table_field_sparse_matches_materialized_dense() {
     let terms = vec![
         TraceFieldBlockOpening {
             block_offset: 0,
-            block_weights: vec![F::from_u64(2), F::from_u64(5)],
+            live_block_weights: vec![F::from_u64(2), F::from_u64(5)],
             inner_opening_ring: test_ring(10),
         },
         TraceFieldBlockOpening {
             block_offset: 1,
-            block_weights: vec![F::from_u64(7)],
+            live_block_weights: vec![F::from_u64(7)],
             inner_opening_ring: test_ring(40),
         },
     ];
@@ -85,12 +106,12 @@ fn stage2_compact_field_matches_dense_slice_for_partial_live_columns() {
     let terms = vec![
         TraceFieldBlockOpening {
             block_offset: 0,
-            block_weights: vec![F::from_u64(2), F::from_u64(5)],
+            live_block_weights: vec![F::from_u64(2), F::from_u64(5)],
             inner_opening_ring: test_ring(10),
         },
         TraceFieldBlockOpening {
             block_offset: 1,
-            block_weights: vec![F::from_u64(7)],
+            live_block_weights: vec![F::from_u64(7)],
             inner_opening_ring: test_ring(40),
         },
     ];
@@ -168,11 +189,11 @@ fn trace_claim_eval_matches_dense_table_for_k1() {
     let layout = layout();
     let inner_open = vec![F::from_u64(3), F::from_u64(5), F::from_u64(7)];
     let b_open = vec![F::from_u64(11)];
-    let block_weights = lagrange_weights(&b_open).unwrap();
+    let live_block_weights = lagrange_weights(&b_open).unwrap();
     let inner_ring =
         reduce_inner_opening_to_ring_element::<F, D>(&inner_open, BasisMode::Lagrange).unwrap();
     let claim = TraceClaim {
-        layout,
+        layout: layout.clone(),
         trace_terms: vec![TraceTerm {
             block_offset: 0,
             b_open: b_open.clone(),
@@ -186,14 +207,19 @@ fn trace_claim_eval_matches_dense_table_for_k1() {
         dense_evals: None,
     };
 
-    let table = build_trace_weight_table_field_block_weights::<F, F, D>(
+    let table = build_trace_weight_table_field_live_block_weights::<F, F, D>(
         &layout,
-        &block_weights,
+        &live_block_weights,
         &inner_ring,
     )
     .unwrap();
     let ring_point = vec![F::from_u64(19), F::from_u64(23), F::from_u64(29)];
-    let col_point = vec![F::from_u64(31), F::from_u64(37), F::from_u64(41)];
+    let col_point = vec![
+        F::from_u64(31),
+        F::from_u64(37),
+        F::from_u64(41),
+        F::from_u64(43),
+    ];
     let dense =
         crate::trace_weight::trace_weight_mle_eval(&layout, &table, &col_point, &ring_point)
             .unwrap();

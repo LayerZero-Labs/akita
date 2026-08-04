@@ -12,7 +12,6 @@ use crate::backend::poly_helpers::{
 };
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{CommitInnerPlan, CommitmentComputeBackend};
-use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
@@ -30,17 +29,17 @@ where
     pub(crate) fn fold_blocks<const D: usize>(
         &self,
         scalars: &[F],
-        block_len: usize,
+        num_positions_per_block: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
         let coeffs = self
             .ring_coeffs::<D>()
             .expect("DensePoly::fold_blocks: invalid ring view");
         let n = coeffs.len();
-        let num_blocks = n.div_ceil(block_len);
-        cfg_into_iter!(0..num_blocks)
+        let num_live_blocks = n.div_ceil(num_positions_per_block);
+        cfg_into_iter!(0..num_live_blocks)
             .map(|i| {
-                let start = i * block_len;
-                let end = (start + block_len).min(n);
+                let start = i * num_positions_per_block;
+                let end = (start + num_positions_per_block).min(n);
                 let block = &coeffs[start..end];
                 let mut acc = CyclotomicRing::<F, D>::zero();
                 for (b_j, &a_j) in block.iter().zip(scalars.iter()) {
@@ -54,17 +53,17 @@ where
     pub(crate) fn fold_blocks_ring<const D: usize>(
         &self,
         scalars: &[CyclotomicRing<F, D>],
-        block_len: usize,
+        num_positions_per_block: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
         let coeffs = self
             .ring_coeffs::<D>()
             .expect("DensePoly::fold_blocks_ring: invalid ring view");
         let n = coeffs.len();
-        let num_blocks = n.div_ceil(block_len);
-        cfg_into_iter!(0..num_blocks)
+        let num_live_blocks = n.div_ceil(num_positions_per_block);
+        cfg_into_iter!(0..num_live_blocks)
             .map(|i| {
-                let start = i * block_len;
-                let end = (start + block_len).min(n);
+                let start = i * num_positions_per_block;
+                let end = (start + num_positions_per_block).min(n);
                 let block = &coeffs[start..end];
                 let mut acc = CyclotomicRing::<F, D>::zero();
                 for (b_j, &a_j) in block.iter().zip(scalars.iter()) {
@@ -77,25 +76,25 @@ where
 
     pub(crate) fn evaluate_and_fold<const D: usize>(
         &self,
-        eval_outer_scalars: &[F],
-        fold_scalars: &[F],
-        block_len: usize,
+        live_block_weights: &[F],
+        position_weights: &[F],
+        num_positions_per_block: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
         crate::backend::poly_helpers::fused_evaluate_and_fold_base(
-            self.fold_blocks::<D>(fold_scalars, block_len),
-            eval_outer_scalars,
+            self.fold_blocks::<D>(position_weights, num_positions_per_block),
+            live_block_weights,
         )
     }
 
     pub(crate) fn evaluate_and_fold_ring<const D: usize>(
         &self,
-        eval_outer_scalars: &[CyclotomicRing<F, D>],
-        fold_scalars: &[CyclotomicRing<F, D>],
-        block_len: usize,
+        live_block_weights: &[CyclotomicRing<F, D>],
+        position_weights: &[CyclotomicRing<F, D>],
+        num_positions_per_block: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
         crate::backend::poly_helpers::fused_evaluate_and_fold_ring(
-            self.fold_blocks_ring::<D>(fold_scalars, block_len),
-            eval_outer_scalars,
+            self.fold_blocks_ring::<D>(position_weights, num_positions_per_block),
+            live_block_weights,
         )
     }
 
@@ -241,7 +240,7 @@ where
     pub(crate) fn decompose_fold<const D: usize>(
         &self,
         challenges: &[SparseChallenge],
-        block_len: usize,
+        num_positions_per_block: usize,
         num_digits: usize,
         log_basis: u32,
     ) -> DecomposeFoldWitness<F> {
@@ -256,7 +255,7 @@ where
                 cached_digit_decompose_fold_partitioned::<D>(
                     digit_planes,
                     challenges,
-                    block_len,
+                    num_positions_per_block,
                     num_digits,
                 )
             };
@@ -287,12 +286,12 @@ where
                 let coeff_accum: Vec<[i32; D]> = {
                     let _span =
                         tracing::info_span!("dense_single_digit_cached_accumulate").entered();
-                    cfg_into_iter!(0..block_len)
+                    cfg_into_iter!(0..num_positions_per_block)
                         .map(|elem_idx| {
                             let mut z_local = [0i32; D];
 
                             for (block_idx, c_i) in challenges.iter().enumerate() {
-                                let global_idx = block_idx * block_len + elem_idx;
+                                let global_idx = block_idx * num_positions_per_block + elem_idx;
                                 if global_idx >= small_coeffs.len() {
                                     continue;
                                 }
@@ -310,13 +309,13 @@ where
 
             let coeff_accum: Vec<[i32; D]> = {
                 let _span = tracing::info_span!("dense_single_digit_accumulate").entered();
-                cfg_into_iter!(0..block_len)
+                cfg_into_iter!(0..num_positions_per_block)
                     .map(|elem_idx| {
                         let mut z_local = [0i32; D];
                         let mut digit_plane = [0i8; D];
 
                         for (block_idx, c_i) in challenges.iter().enumerate() {
-                            let global_idx = block_idx * block_len + elem_idx;
+                            let global_idx = block_idx * num_positions_per_block + elem_idx;
                             if global_idx >= n {
                                 continue;
                             }
@@ -337,7 +336,11 @@ where
         let centered_coeffs = {
             let _span = tracing::info_span!("dense_multi_digit_accumulate").entered();
             balanced_ring_decompose_fold_partitioned::<F, D>(
-                coeffs, challenges, block_len, num_digits, &params,
+                coeffs,
+                challenges,
+                num_positions_per_block,
+                num_digits,
+                &params,
             )
         };
 
@@ -349,12 +352,16 @@ where
     pub(crate) fn decompose_fold_tensor_batched<const D: usize>(
         polys: &[&Self],
         tensor: &TensorChallengeSet,
-        block_len: usize,
+        num_positions_per_block: usize,
         num_digits: usize,
         log_basis: u32,
     ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
         tensor_fold::decompose_fold_batched_tensor_dense::<F, D>(
-            polys, tensor, block_len, num_digits, log_basis,
+            polys,
+            tensor,
+            num_positions_per_block,
+            num_digits,
+            log_basis,
         )
     }
 
@@ -372,12 +379,10 @@ where
             backend,
             prepared,
             plan.n_a,
-            plan.block_len,
-            plan.num_digits_commit,
-            plan.log_basis,
+            plan.num_positions_per_block,
+            plan.num_digits_inner,
+            plan.log_basis_inner,
         )?;
-        let decomposed_inner_rows =
-            decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_open, plan.log_basis)?;
-        CommitInnerWitness::from_parts(t, decomposed_inner_rows)
+        Ok(CommitInnerWitness::from_rows(t))
     }
 }

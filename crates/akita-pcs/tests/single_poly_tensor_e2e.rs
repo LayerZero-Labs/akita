@@ -23,11 +23,11 @@ fn run_single_onehot_tensor(nv: usize) {
             &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let total_ring = layout.num_blocks * layout.block_len;
+        let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
         assert_eq!(total_ring * TENSOR_K, 1usize << nv);
         assert_eq!(
             layout.fold_challenge_shape,
-            akita_challenges::TensorChallengeShape::Tensor,
+            akita_challenges::TensorChallengeShape::Tensor { fold_low_len: 2 },
             "D64OneHotTensor must emit a tensor-shaped root fold"
         );
 
@@ -49,7 +49,8 @@ fn run_single_onehot_tensor(nv: usize) {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup);
+        let verifier_setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup)
+            .expect("verifier setup");
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
             AkitaCommitmentScheme::<D64OneHotTensor>::commit::<_, _>(&setup, commit_input, &stack)
@@ -67,7 +68,6 @@ fn run_single_onehot_tensor(nv: usize) {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
 
@@ -80,7 +80,6 @@ fn run_single_onehot_tensor(nv: usize) {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -97,11 +96,11 @@ fn run_single_dense_tensor(nv: usize) {
             &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let total_ring = layout.num_blocks * layout.block_len;
+        let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
         assert_eq!(total_ring * TENSOR_D, 1usize << nv);
         assert_eq!(
             layout.fold_challenge_shape,
-            akita_challenges::TensorChallengeShape::Tensor,
+            akita_challenges::TensorChallengeShape::Tensor { fold_low_len: 2 },
             "D64OneHotTensor must emit a tensor-shaped root fold"
         );
 
@@ -123,7 +122,8 @@ fn run_single_dense_tensor(nv: usize) {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup);
+        let verifier_setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup)
+            .expect("verifier setup");
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
             AkitaCommitmentScheme::<D64OneHotTensor>::commit::<_, _>(&setup, commit_input, &stack)
@@ -141,7 +141,6 @@ fn run_single_dense_tensor(nv: usize) {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
 
@@ -154,7 +153,6 @@ fn run_single_dense_tensor(nv: usize) {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),

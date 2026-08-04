@@ -216,11 +216,16 @@ larger ring degree.
     Protocol code must continue to request operations such as dense commit rows,
     digit rows, cyclic rows, and ring-switch relation rows, not inspect
     backend-specific buffers.
-13. Production CRT profiles are homogeneous in limb width (`i16` or `i32`) unless
-    a later measured experiment proves a mixed-width profile is worth the added
+13. Base production CRT profiles are homogeneous in limb width. The optional
+    exactness tail is the measured exception: one 12289/i16 residue is appended
+    only when the canonical accumulation bound requires it, preserving the
+    base cache for i8 schedules while adding 10--25% rather than another 30-bit
+    limb. A later experiment may replace this choice only if it proves a
+    different mixed-width profile is worth the added
     representation complexity.
-    The current `CyclotomicCrtNtt<W, K, D>` and `CrtNttParamSet<W, K, D>` model
-    assume one `W` per profile, and SIMD kernels assume homogeneous lanes.
+    Each component `CyclotomicCrtNtt<W, K, D>` remains homogeneous; the mixed
+    representation composes an i32 prefix and an i16 tail so each SIMD kernel
+    still sees native homogeneous lanes.
 14. `MAX_CRT_RING_DEGREE = 256`; `D in {32, 64, 128, 256}` are the only supported
     ring degrees.
     Every i16 NTT prime must satisfy `512 | (p - 1)` (a primitive `2 * 256`-th
@@ -228,8 +233,8 @@ larger ring degree.
     the same `512 | (p - 1)`; the reused i32 primes already satisfy the stronger
     `2048 | (p - 1)`.
     `D = 512` and `D = 1024` are removed from `SUPPORTED_RING_DIMS`, the
-    `dispatch_ring_dim` / `dispatch_ring_dim_result` arms, the fp16/fp32
-    `D512Full` / `D512OneHot` public config presets, and the generated
+    `dispatch_for_field!` arms, the fp16/fp32
+    `D512Dense` / `D512OneHot` public config presets, and the generated
     family/table lists; no production path may instantiate them.
     The `D512*` config preset names are removed rather than left as dead public
     aliases, so downstream attempts to use them fail at compile time instead of
@@ -249,7 +254,7 @@ larger ring degree.
    amended).
 6. Q32 four-i16 production dispatch. The four-prime i16 profile remains only as
    comparison evidence for the measured Q32/2xi32 production profile.
-7. Planner / SIS table / `SisModulusFamily::Q16` floor generation (already on
+7. Planner / SIS table / `SisModulusProfileId::Q16` floor generation (already on
    `main` via fp16 support; orthogonal to CRT dispatch).
 8. Rewriting #134 chunking or "fixing" merged `single_cyclic` driver args for
    the Bugbot false positive (tests and optional cosmetic clarity only).
@@ -295,7 +300,7 @@ This section records whether each finding is still valid on current `main`
 | `single_cyclic` "wrong" `safe_width` / `tile_width` args | Medium | **No** (false positive; see below) | **Regression tests only** |
 | `fused_split_eq_quotients_prover_bounds` lacks `w_hat` check | Medium | **No** (`with_params` returns `InvalidInput`) | None (optional `debug_assert!`) |
 | CRT capacity uses `q` not `floor(q/2)` | Medium | **No** (fixed before merge) | None |
-| `.expect` in raw-i8 strided `Result` path | Medium | **No** (`ok_or_else`) | None |
+| `.expect` in the removed raw-i8 strided path | Medium | **No** (path deleted) | None |
 | Hardcoded digit bound 32 | Low | **No** | None |
 | Redundant `i32::MIN` branch | Low | **No** | None |
 | Duplicate comment in `digits.rs` | Low | **No** | None |
@@ -378,8 +383,8 @@ Criteria sections above, with #134 providing the chunking implementation.
       There is no `D`-keyed width fallback (no "16-bit field with `D > 64` uses
       Q64").
 - [ ] `D = 512` / `D = 1024` are removed from `SUPPORTED_RING_DIMS`, the
-      `dispatch_ring_dim` / `dispatch_ring_dim_result` macro arms, the fp16/fp32
-      `D512Full` / `D512OneHot` public config presets, `generated_families`, and
+      `dispatch_for_field!` macro arms, the fp16/fp32
+      `D512Dense` / `D512OneHot` public config presets, `generated_families`, and
       any generated table/drift-guard list, with `cargo test -q` and the drift
       guard green.
       The `D512*` preset names are not kept as deprecated aliases.
@@ -400,8 +405,8 @@ Criteria sections above, with #134 providing the chunking implementation.
 - [ ] `max_safe_crt_accumulation_width` unit tests for Q16, reduced Q32, and
       reduced Q64 cover balanced-i8 and centered-i32 (`z_pre_max_abs`) RHS
       bounds at concrete `D` and `log_basis` values.
-      Walk every committed generated schedule table entry for `fp16_d32_full`,
-      `fp16_d32_onehot`, `fp16_d64_full`, `fp16_d64_onehot`, `fp32_d32`,
+      Walk every committed generated schedule table entry for `fp16_d32_dense`,
+      `fp16_d32_onehot`, `fp16_d64_dense`, `fp16_d64_onehot`, `fp32_d32`,
       `fp32_d32_onehot`, `fp32_d64`, `fp32_d64_onehot`, `fp64_d32`,
       `fp64_d32_onehot`, `fp64_d64`, and `fp64_d64_onehot` (these are the only
       committed tables; `D in {128, 256}` tables do not exist yet).
@@ -587,19 +592,18 @@ The durable API is the compute operation surface in `crates/akita-prover/src/com
 `ring_switch_quotient_rows`.
 The CPU reference keeps `NttSlotCache` for this PR.
 
-Mixed-width CRT profiles such as `2 × i16 + 1 × i32` are intentionally not part
-of this PR's production target.
-They can reduce byte footprint for a desired `P_crt`, but they cut against the
-current homogeneous `PrimeWidth` model and make SIMD lanes, twiddle tables,
-Garner reconstruction, and backend-prepared buffers heterogeneous.
-The first implementation compared homogeneous candidates (`4 × i16` reference
-vs `2 × i32` production for Q32) before considering mixed-width profiles.
+The only production mixed-width profile is the exactness extension described
+above: an existing homogeneous i32 prefix plus one 12289/i16 tail. It is
+selected from the exact accumulation bound and keeps the two NTT widths in
+separate kernels. Other mixed-width prime substitutions remain out of scope;
+they would add reconstruction and backend complexity without serving a current
+schedule contract.
 
 ### Block-parallel i8 digit matvec kernel
 
 The block-parallel i8 digit matvec previously special-cased `n_a in {1, 2, 3}`
 output rows with separate single/pair/triple kernels plus a generic fallback,
-duplicated across the plain, chunked, strided, and on-the-fly-decompose families.
+duplicated across the plain, chunked, and on-the-fly-decompose families.
 Those specializations only hoisted the per-digit CRT+NTT conversion out of the
 row loop; the per-row multiply-accumulate was identical to the generic path.
 The implementation now uses one kernel,

@@ -1,0 +1,234 @@
+//! Exact-prefix NTT cache used only by shadow compression diagnostics.
+
+use super::ErasedCpuNttCache;
+use akita_error::AkitaError;
+use akita_types::{prepare_compression_ntt_cache, AkitaExpandedSetup, PreparedNttCache};
+use jolt_field::{CanonicalEncoding, Field};
+use std::any::Any;
+use std::collections::HashMap;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+
+type CompressionSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct CompressionNttCacheKey {
+    ring_d: usize,
+    input_width: usize,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct CompressionNttCache {
+    slots: Mutex<HashMap<CompressionNttCacheKey, Arc<CompressionSlotCell>>>,
+    #[cfg(test)]
+    slot_build_count: AtomicUsize,
+}
+
+impl CompressionNttCache {
+    pub(super) fn with_ntt<F, const D: usize, R>(
+        &self,
+        expanded: &AkitaExpandedSetup<F>,
+        input_width: usize,
+        f: impl FnOnce(&PreparedNttCache<D>) -> Result<R, AkitaError>,
+    ) -> Result<R, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+    {
+        let key = CompressionNttCacheKey {
+            ring_d: D,
+            input_width,
+        };
+        let entry = {
+            let mut slots = self.slots.lock().map_err(|_| {
+                AkitaError::InvalidSetup("compression NTT cache lock poisoned".into())
+            })?;
+            Arc::clone(
+                slots
+                    .entry(key)
+                    .or_insert_with(|| Arc::new(OnceLock::new())),
+            )
+        };
+        let build_result = entry.get_or_init(|| {
+            #[cfg(test)]
+            self.slot_build_count.fetch_add(1, Ordering::Relaxed);
+            build_slot::<F, D>(expanded, input_width).map(Arc::new)
+        });
+        let slot = build_result.as_ref().map_err(Clone::clone)?;
+        if slot.ring_d != D {
+            return Err(AkitaError::InvalidSetup(format!(
+                "prepared compression NTT ring_d mismatch: stored {}, requested {D}",
+                slot.ring_d
+            )));
+        }
+        let typed = slot
+            .cache
+            .downcast_ref::<PreparedNttCache<D>>()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("prepared compression NTT type mismatch".into())
+            })?;
+        f(typed)
+    }
+
+    pub(super) fn cache_bytes(&self) -> usize {
+        self.slots
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .values()
+            .filter_map(|entry| entry.get())
+            .filter_map(|result| result.as_ref().ok())
+            .map(|slot| slot.cache_bytes)
+            .sum()
+    }
+
+    #[cfg(test)]
+    fn slot_count(&self) -> usize {
+        self.slots
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .len()
+    }
+
+    #[cfg(test)]
+    fn slot_build_count(&self) -> usize {
+        self.slot_build_count.load(Ordering::Relaxed)
+    }
+}
+
+fn build_slot<F: Field + CanonicalEncoding, const D: usize>(
+    expanded: &AkitaExpandedSetup<F>,
+    input_width: usize,
+) -> Result<ErasedCpuNttCache, AkitaError> {
+    let view = expanded.shared_matrix().ring_view::<D>(1, input_width)?;
+    let cache = Arc::new(prepare_compression_ntt_cache(view, input_width)?);
+    if cache.has_cyclic() {
+        return Err(AkitaError::InvalidSetup(
+            "compression NTT cache unexpectedly contains a cyclic transform".into(),
+        ));
+    }
+    Ok(ErasedCpuNttCache {
+        ring_d: D,
+        cache_bytes: cache.cache_bytes(),
+        cache: cache as Arc<dyn Any + Send + Sync>,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{CpuBackend, CpuPreparedSetup};
+    use crate::compute::{
+        CompressionDiagnosticBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
+    };
+    use crate::AkitaProverSetup;
+    use akita_types::{NttCacheKey, SetupMatrixEnvelope};
+    use jolt_field::Prime64Offset59;
+
+    type F = Prime64Offset59;
+    const D: usize = 64;
+
+    fn setup_envelope(max_setup_len: usize) -> SetupMatrixEnvelope {
+        SetupMatrixEnvelope { max_setup_len }
+    }
+
+    fn empty_prepared() -> CpuPreparedSetup<F> {
+        let setup =
+            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
+        CpuBackend
+            .prepare_expanded::<D>(setup.expanded)
+            .expect("empty prepared setup")
+    }
+
+    #[test]
+    fn cache_is_exact_prefix_and_negacyclic_only() {
+        let prepared = empty_prepared();
+        let vectors = [vec![[0i8; D]; 3], vec![[-1i8; D]; 3]];
+        let views = vectors.iter().map(Vec::as_slice).collect::<Vec<_>>();
+
+        CpuBackend
+            .compression_rows::<D>(&prepared, &views)
+            .expect("compression rows");
+
+        let expected_bytes = 3 * D * 3 * core::mem::size_of::<i32>();
+        assert_eq!(prepared.compression_ntt_cache_bytes(), expected_bytes);
+        assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
+        prepared
+            .with_compression_ntt::<D, _>(3, |cache| {
+                assert!(!cache.has_cyclic());
+                Ok(())
+            })
+            .expect("typed compression cache");
+    }
+
+    #[test]
+    fn cache_cannot_alias_full_envelope_both_transform_cache() {
+        let prepared = empty_prepared();
+        let envelope_width = prepared
+            .expanded
+            .shared_matrix()
+            .total_ring_elements_at::<D>()
+            .expect("envelope width");
+        let compression_digits = vec![[0i8; D]; envelope_width];
+        CpuBackend
+            .compression_rows::<D>(&prepared, &[compression_digits.as_slice()])
+            .expect("compression cache at full envelope length");
+        assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
+
+        let envelope_key =
+            NttCacheKey::from_envelope(prepared.expanded.as_ref(), D).expect("envelope key");
+        CpuBackend
+            .ensure_ntt_slot(&prepared, envelope_key)
+            .expect("independent both-transform envelope cache");
+        assert!(prepared.shared_ntt_cache_bytes() > 0);
+        let cyclic_digits = vec![[0i8; D]; envelope_width];
+        CpuBackend
+            .cyclic_digit_rows::<D>(&prepared, 1, &cyclic_digits, 1)
+            .expect("cyclic transform remains available");
+    }
+
+    #[test]
+    fn concurrent_same_shape_warm_builds_once() {
+        let prepared = empty_prepared();
+        let digits = vec![[0i8; D]; 3];
+
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let prepared = &prepared;
+                let digits = &digits;
+                scope.spawn(move || {
+                    CpuBackend
+                        .compression_rows::<D>(prepared, &[digits.as_slice()])
+                        .expect("compression rows");
+                });
+            }
+        });
+
+        assert_eq!(prepared.compression_ntt.slot_build_count(), 1);
+    }
+
+    #[test]
+    fn cache_key_includes_input_width() {
+        let prepared = empty_prepared();
+        for input_width in [3, 6] {
+            let digits = vec![[0i8; D]; input_width];
+            CpuBackend
+                .compression_rows::<D>(&prepared, &[digits.as_slice()])
+                .expect("compression rows");
+        }
+
+        assert_eq!(prepared.compression_ntt.slot_count(), 2);
+        assert_eq!(prepared.compression_ntt.slot_build_count(), 2);
+    }
+
+    #[test]
+    fn invalid_request_does_not_warm_a_cache_slot() {
+        let prepared = empty_prepared();
+        let valid = vec![[0i8; D]; 3];
+        let short = vec![[0i8; D]; 2];
+
+        assert!(CpuBackend
+            .compression_rows::<D>(&prepared, &[valid.as_slice(), short.as_slice()])
+            .is_err());
+        assert_eq!(prepared.compression_ntt.slot_count(), 0);
+        assert_eq!(prepared.compression_ntt_cache_bytes(), 0);
+    }
+}

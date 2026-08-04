@@ -1,12 +1,12 @@
 use akita_sis_estimator::{
-    estimate, scalar_sis_from_ring, AkitaModulusFamily, CostValue, EstimateConfig, NumericConfig,
+    estimate, scalar_sis_from_ring, AkitaModulusProfileId, CostValue, EstimateConfig, NumericConfig,
 };
 
 const GOLDEN_CSV: &str = include_str!("../../../scripts/sis_golden/infinity_golden.csv");
 
 #[derive(Debug)]
 struct OptimizerGoldenRow {
-    family: AkitaModulusFamily,
+    family: AkitaModulusProfileId,
     d: u32,
     rank: u32,
     width: u32,
@@ -89,7 +89,7 @@ fn parse_rows() -> Vec<OptimizerGoldenRow> {
                 return None;
             }
             Some(OptimizerGoldenRow {
-                family: AkitaModulusFamily::parse(get("family")).unwrap(),
+                family: AkitaModulusProfileId::parse(get("family")).unwrap(),
                 d: parse(get("d")),
                 rank: parse(get("rank")),
                 width: parse(get("width")),
@@ -140,7 +140,10 @@ fn record_log2_mismatch(
             record_log2_close_mismatch(expected, actual, field, row, mismatches);
         }
         ExpectedLog2::Infinity => {
-            if !matches!(actual, CostValue::Infinity) {
+            if !matches!(
+                actual,
+                CostValue::Infinity | CostValue::ProvenAboveTarget(_)
+            ) {
                 mismatches.push(format!("{field}: expected inf, got {actual:?} for {row:?}"));
             }
         }
@@ -164,7 +167,7 @@ fn record_log2_close_mismatch(
                 ));
             }
         }
-        CostValue::Infinity => {
+        CostValue::ProvenAboveTarget(_) | CostValue::Infinity => {
             mismatches.push(format!(
                 "{field}: expected finite {expected}, got inf for {row:?}"
             ));

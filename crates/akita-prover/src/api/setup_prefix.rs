@@ -1,26 +1,23 @@
 //! Preprocessing helpers for setup-prefix commitment artifacts (slice 02B).
 
-use crate::api::commitment::{
-    commit_inner_block_digit_count, commit_inner_flat_digit_count,
-    validate_commit_outer_input_nonempty,
-};
+use crate::api::commitment::validate_commit_outer_input_nonempty;
 use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
-use crate::kernels::linear::decompose_rows_i8_into;
+use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_algebra::CyclotomicRing;
-use akita_error::AkitaError;
 use akita_types::{
-    setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup, DigitBlocks,
+    dispatch_for_field, setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup,
     PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
 };
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
+
+use akita_error::AkitaError;
 
 /// Commit one padded flat prefix of the shared setup matrix.
 ///
 /// The witness is the coefficient form of `S^flat[0..natural_len]`,
 /// zero-padded to `n_prefix`. The caller must supply `level_params` whose inner
-/// witness shape satisfies `num_blocks * block_len == n_prefix / D`.
+/// witness shape satisfies `num_live_blocks * num_positions_per_block == n_prefix / D`.
 ///
 /// # Errors
 ///
@@ -51,8 +48,9 @@ where
     }
     let padded_ring_slots = n_prefix / D;
     let witness_ring_slots = level_params
-        .num_blocks
-        .checked_mul(level_params.block_len)
+        .layout
+        .num_live_blocks
+        .checked_mul(level_params.layout.num_positions_per_block)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("setup prefix witness shape overflow".to_string())
         })?;
@@ -69,102 +67,81 @@ where
         .ok_or_else(|| {
             AkitaError::InvalidSetup("setup matrix field length overflow".to_string())
         })?;
-    if n_prefix > available_field_len {
+    if natural_len > available_field_len {
         return Err(AkitaError::InvalidSetup(
-            "setup prefix length exceeds shared matrix capacity".to_string(),
+            "setup prefix natural length exceeds shared matrix capacity".to_string(),
         ));
     }
 
     let ring_elems =
         extract_setup_prefix_ring_elems::<F, D>(expanded, padded_ring_slots, natural_len)?;
-    let block_slices =
-        setup_prefix_block_slices(&ring_elems, level_params.num_blocks, level_params.block_len)?;
+    let block_slices = setup_prefix_block_slices(
+        &ring_elems,
+        level_params.layout.num_live_blocks,
+        level_params.layout.num_positions_per_block,
+    )?;
 
     let recomposed_inner_rows = backend.dense_commit_rows(
         prepared,
         DenseCommitRowsPlan {
-            n_a: level_params.a_key.row_len(),
+            n_a: level_params.inner_commit_matrix.output_rank(),
             input: DenseCommitInput::CoeffBlocks {
                 block_slices,
-                num_digits_commit: level_params.num_digits_commit,
-                log_basis: level_params.layout.log_basis,
+                num_digits_inner: level_params.num_digits_inner,
+                log_basis_inner: level_params.layout.log_basis_inner,
             },
         },
     )?;
 
-    let block_sizes = recomposed_inner_rows
+    let n_b = level_params.outer_commit_matrix.output_rank();
+    let d_b = level_params.outer_commit_matrix.ring_dimension();
+    let commitment_rows =
+        dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Outer), F, d_b, |D_B| {
+            let blocks = recomposed_inner_rows
+                .iter()
+                .map(Vec::as_slice)
+                .collect::<Vec<_>>();
+            let decomposed_inner_rows = decompose_commit_blocks_into::<F, D, D_B>(
+                &blocks,
+                level_params.num_digits_outer,
+                level_params.layout.log_basis_outer,
+            )?;
+            validate_commit_outer_input_nonempty(decomposed_inner_rows.total_planes())?;
+            let u = backend.digit_rows::<D_B>(
+                prepared,
+                n_b,
+                decomposed_inner_rows.typed_planes::<D_B>()?,
+                level_params.layout.log_basis_outer,
+            )?;
+            if u.len() != n_b {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "setup prefix commit returned {} B rows, expected {n_b}",
+                    u.len(),
+                )));
+            }
+            Ok::<_, AkitaError>(RingVec::from_ring_elems(&u))
+        })?;
+    let inner_coefficient_count = recomposed_inner_rows
         .iter()
-        .map(|_| {
-            commit_inner_block_digit_count(
-                level_params.a_key.row_len(),
-                level_params.num_digits_open,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut decomposed_inner_rows = DigitBlocks::zeroed(block_sizes, D)?;
-    let dst_blocks = decomposed_inner_rows.split_typed_blocks_mut::<D>()?;
-    #[cfg(feature = "parallel")]
-    cfg_into_iter!(dst_blocks)
-        .zip(cfg_iter!(recomposed_inner_rows))
-        .try_for_each(|(dst, rows)| -> Result<(), AkitaError> {
-            decompose_rows_i8_into(
-                rows,
-                dst,
-                level_params.num_digits_open,
-                level_params.layout.log_basis,
-            );
-            Ok(())
-        })?;
-    #[cfg(not(feature = "parallel"))]
-    dst_blocks
-        .into_iter()
-        .zip(recomposed_inner_rows.iter())
-        .try_for_each(|(dst, rows)| -> Result<(), AkitaError> {
-            decompose_rows_i8_into(
-                rows,
-                dst,
-                level_params.num_digits_open,
-                level_params.layout.log_basis,
-            );
-            Ok(())
-        })?;
-
-    let b_input_len = commit_inner_flat_digit_count(
-        level_params.num_blocks,
-        level_params.a_key.row_len(),
-        level_params.num_digits_open,
-    )?;
-    validate_commit_outer_input_nonempty(b_input_len)?;
-    let mut b_input_digits = vec![[0i8; D]; b_input_len];
-    let planes = decomposed_inner_rows.typed_planes::<D>()?;
-    b_input_digits.copy_from_slice(planes);
-    let u = backend.digit_rows::<D>(
-        prepared,
-        level_params.b_key.row_len(),
-        &b_input_digits,
-        level_params.layout.log_basis,
-    )?;
-    if u.len() != level_params.b_key.row_len() {
-        return Err(AkitaError::InvalidSetup(format!(
-            "setup prefix commit returned {} B rows, expected {}",
-            u.len(),
-            level_params.b_key.row_len()
-        )));
+        .map(Vec::len)
+        .sum::<usize>()
+        .checked_mul(D)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix inner rows overflow".into()))?;
+    let mut inner_coefficients = Vec::with_capacity(inner_coefficient_count);
+    for block in recomposed_inner_rows {
+        for row in block {
+            inner_coefficients.extend_from_slice(row.coefficients());
+        }
     }
-
-    // `recomposed_inner_rows` was only needed to decompose into the digit
-    // stream above; the protocol slot stores the D-free decomposed digits and a
-    // D-free flat commitment. Recomposed rows are recomputed on demand
-    // downstream (S5 re-home), not cached on the slot.
-    let _ = &recomposed_inner_rows;
-    let hint = AkitaCommitmentHint::singleton(decomposed_inner_rows);
+    let hint =
+        AkitaCommitmentHint::singleton(RingVec::from_coeffs_with_ring_dim(inner_coefficients, D)?)?;
     let id = setup_prefix_slot_id(D, natural_len, level_params.clone());
     Ok(SetupPrefixSlot {
         id,
         natural_len,
         padded_len: n_prefix,
         commitment: SetupPrefixPublicCommitment {
-            rows: vec![RingVec::from_ring_elems(&u)],
+            rows: vec![commitment_rows],
         },
         hint,
     })
@@ -182,9 +159,9 @@ where
     let padded_field_len = padded_ring_slots.checked_mul(D).ok_or_else(|| {
         AkitaError::InvalidSetup("setup prefix padded field length overflow".to_string())
     })?;
-    if natural_len > padded_field_len || padded_field_len > fields.len() {
+    if natural_len > padded_field_len || natural_len > fields.len() {
         return Err(AkitaError::InvalidSetup(
-            "setup prefix length exceeds shared matrix capacity".to_string(),
+            "setup prefix natural length exceeds shared matrix capacity".to_string(),
         ));
     }
 
@@ -197,26 +174,26 @@ where
 
 fn setup_prefix_block_slices<F, const D: usize>(
     ring_elems: &[CyclotomicRing<F, D>],
-    num_blocks: usize,
-    block_len: usize,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
 ) -> Result<Vec<&[CyclotomicRing<F, D>]>, AkitaError>
 where
     F: Field,
 {
-    if num_blocks
-        .checked_mul(block_len)
+    if num_live_blocks
+        .checked_mul(num_positions_per_block)
         .is_none_or(|witness| witness != ring_elems.len())
     {
         return Err(AkitaError::InvalidSetup(
             "setup prefix ring elements do not match witness block layout".to_string(),
         ));
     }
-    Ok((0..num_blocks)
+    Ok((0..num_live_blocks)
         .map(|block_idx| {
             let start = block_idx
-                .checked_mul(block_len)
+                .checked_mul(num_positions_per_block)
                 .expect("block index fits after witness length check");
-            &ring_elems[start..start + block_len]
+            &ring_elems[start..start + num_positions_per_block]
         })
         .collect())
 }
@@ -228,15 +205,16 @@ mod tests {
     use crate::AkitaProverSetup;
     use akita_challenges::SparseChallengeConfig;
     use akita_types::{
-        active_setup_field_len, padded_setup_prefix_len, setup_prefix_precommitted_params,
-        LevelParams, OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusFamily,
+        active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
+        NttCacheKey, OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixEnvelope,
+        SisModulusProfileId,
     };
     use jolt_field::Prime128Offset275 as F;
     use jolt_field::Zero;
 
-    fn prefix_level_params(ring_dimension: usize) -> LevelParams {
-        LevelParams::params_only(
-            SisModulusFamily::Q128,
+    fn prefix_level_params(ring_dimension: usize) -> CommittedGroupParams {
+        CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
             ring_dimension,
             3,
             2,
@@ -244,19 +222,19 @@ mod tests {
             2,
             SparseChallengeConfig::pm1_only(3),
         )
-        .with_decomp(2, 3, 2, 2, 3)
+        .with_decomp(4, 3, 2, 2, 2)
         .expect("level params")
     }
 
-    fn setup_capacity_for(level_params: &LevelParams, n_prefix: usize) -> usize {
+    fn setup_capacity_for(level_params: &CommittedGroupParams, n_prefix: usize) -> usize {
         n_prefix.max(
             level_params
-                .b_key
-                .row_len()
+                .outer_commit_matrix
+                .output_rank()
                 .checked_mul(
                     level_params
-                        .num_blocks
-                        .checked_mul(level_params.a_key.row_len())
+                        .num_live_blocks
+                        .checked_mul(level_params.inner_commit_matrix.output_rank())
                         .and_then(|n| n.checked_mul(level_params.num_digits_open))
                         .expect("b input shape"),
                 )
@@ -265,7 +243,7 @@ mod tests {
     }
 
     fn test_setup<const D: usize>(
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         n_prefix: usize,
     ) -> AkitaProverSetup<F> {
         AkitaProverSetup::<F>::generate_with_capacity(
@@ -281,11 +259,18 @@ mod tests {
 
     #[test]
     fn setup_prefix_extraction_zero_pads_after_natural_len() {
-        let level_params = prefix_level_params(64);
-        let natural_len = 65usize;
-        let padded_ring_slots = 2usize;
-        let setup = test_setup::<64>(&level_params, padded_ring_slots * 64);
+        let natural_len = 129usize;
+        let padded_ring_slots = 4usize;
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(
+            8,
+            1,
+            64,
+            SetupMatrixEnvelope { max_setup_len: 3 },
+        )
+        .expect("setup");
         let fields = setup.expanded.shared_matrix().as_field_slice();
+        assert_eq!(fields.len(), 192);
+        assert!(fields.len() < padded_ring_slots * 64);
 
         let ring_elems = extract_setup_prefix_ring_elems::<F, 64>(
             &setup.expanded,
@@ -296,25 +281,76 @@ mod tests {
 
         assert_eq!(ring_elems.len(), padded_ring_slots);
         assert_eq!(ring_elems[0].coefficients(), &fields[..64]);
-        assert_eq!(ring_elems[1].coefficients()[0], fields[64]);
+        assert_eq!(ring_elems[1].coefficients(), &fields[64..128]);
+        assert_eq!(ring_elems[2].coefficients()[0], fields[128]);
         assert!(
-            ring_elems[1].coefficients()[1..]
+            ring_elems[2].coefficients()[1..]
                 .iter()
                 .all(|coeff| coeff.is_zero()),
             "coefficients after natural_len must be zero padded"
         );
+        assert!(
+            ring_elems[3]
+                .coefficients()
+                .iter()
+                .all(|coeff| coeff.is_zero()),
+            "padding may extend beyond the shared setup backing"
+        );
+    }
+
+    #[test]
+    fn commit_setup_prefix_does_not_back_zero_padding_with_shared_setup() {
+        let level_params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            64,
+            3,
+            2,
+            3,
+            2,
+            SparseChallengeConfig::pm1_only(3),
+        )
+        .with_decomp(16, 256, 2, 2, 2)
+        .expect("level params");
+        let witness_ring_slots = level_params
+            .num_live_blocks
+            .checked_mul(level_params.num_positions_per_block)
+            .expect("witness shape");
+        let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
+        let natural_len = n_prefix / 2 + 1;
+        let mut setup = test_setup::<64>(&level_params, natural_len.div_ceil(64));
+        let available_field_len = setup.expanded.shared_matrix().as_field_slice().len();
+        assert!(available_field_len >= natural_len);
+        assert!(available_field_len < n_prefix);
+
+        let backend = CpuBackend;
+        let prepared = backend.prepare_setup(&setup).expect("prepared setup");
+        let prefix_params =
+            setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
+        let slot = commit_setup_prefix::<F, 64, _>(
+            &setup.expanded,
+            &backend,
+            &prepared,
+            &prefix_params,
+            n_prefix,
+            natural_len,
+        )
+        .expect("commit prefix");
+        assert_eq!(slot.natural_len, natural_len);
+        assert_eq!(slot.padded_len, n_prefix);
+        setup.prefix_slots.insert(slot).expect("insert");
     }
 
     fn assert_commit_setup_prefix_populates_singleton_slot<const D: usize>() {
-        let mut level_params = prefix_level_params(D);
+        let level_params = prefix_level_params(D);
         let opening_batch = OpeningClaimsLayout::new(4, 1).expect("opening_batch");
-        let natural_len =
-            active_setup_field_len(&level_params, &opening_batch, D).expect("natural len");
-        let n_prefix = padded_setup_prefix_len(natural_len);
-        level_params.num_blocks = 1;
-        level_params.block_len = n_prefix.checked_div(D).expect("prefix ring slots");
-        level_params.m_vars = 0;
-        level_params.r_vars = level_params.block_len.trailing_zeros() as usize;
+        let witness_ring_slots = level_params
+            .num_live_blocks
+            .checked_mul(level_params.num_positions_per_block)
+            .expect("witness shape");
+        let n_prefix = witness_ring_slots.checked_mul(D).expect("prefix length");
+        let natural_len = active_setup_field_len(&level_params, &opening_batch)
+            .expect("natural len")
+            .min(n_prefix);
         let mut setup = test_setup::<D>(&level_params, n_prefix);
         let backend = CpuBackend;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
@@ -338,5 +374,50 @@ mod tests {
     #[test]
     fn commit_setup_prefix_populates_d64_singleton_slot() {
         assert_commit_setup_prefix_populates_singleton_slot::<64>();
+    }
+
+    #[test]
+    fn commit_setup_prefix_dispatches_smaller_outer_dimension() {
+        let level_params = prefix_level_params(64);
+        let witness_ring_slots = level_params
+            .num_live_blocks
+            .checked_mul(level_params.num_positions_per_block)
+            .expect("witness shape");
+        let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
+        let mut prefix_params =
+            setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
+        let outer = &prefix_params.outer_commit_matrix;
+        prefix_params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+            outer.security_policy(),
+            outer.sis_table_key().table_digest,
+            outer.sis_modulus_profile(),
+            outer.output_rank(),
+            outer.input_width() * 2,
+            outer.coeff_linf_bound(),
+            32,
+        );
+        prefix_params.layout.outer_ring_dimension = 32;
+
+        let setup = test_setup::<64>(&level_params, n_prefix);
+        let backend = CpuBackend;
+        let prepared = backend.prepare_setup(&setup).expect("prepared setup");
+        let ntt_key = NttCacheKey::from_envelope(&setup.expanded, 32).expect("D32 NTT key");
+        backend
+            .ensure_ntt_slot(&prepared, ntt_key)
+            .expect("warm D32 NTT slot");
+        let slot = commit_setup_prefix::<F, 64, _>(
+            &setup.expanded,
+            &backend,
+            &prepared,
+            &prefix_params,
+            n_prefix,
+            n_prefix,
+        )
+        .expect("commit mixed-D prefix");
+
+        assert_eq!(
+            slot.commitment.rows[0].coeff_len(),
+            prefix_params.outer_commit_matrix.output_rank() * 32
+        );
     }
 }

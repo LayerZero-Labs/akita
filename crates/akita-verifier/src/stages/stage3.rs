@@ -2,34 +2,33 @@
 //! prover-side `AkitaStage3Prover`.
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
-use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
-use akita_error::AkitaError;
+use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
+use akita_algebra::ring::{eval_ring_at_pows_fast, evaluate_power_sequence_mle};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::{
     ABSORB_SETUP_PREFIX_SLOT, ABSORB_SUMCHECK_CLAIM, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget,
-    stage3_offload_natural_field_len, AkitaExpandedSetup, AkitaVerifierSetup,
-    BatchedStage3Geometry, LevelParams, SetupContributionPlan, SetupIndexWeightEvaluator,
-    SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, AkitaExpandedSetup,
+    AkitaVerifierSetup, CommittedGroupParams, PreparedRelationAddress, SetupContributionPlan,
+    SetupSumcheckProof, SETUP_SUMCHECK_DEGREE,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+
+use akita_error::AkitaError;
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
 /// sumcheck for the setup contribution at `x_challenges`.
 ///
 /// Construct with [`SetupSumcheckVerifier::new`], which derives the setup
 /// evaluation plan and sumcheck round count from the ring-switch row
-/// evaluation, then call [`verify_batched_stage3`](Self::verify_batched_stage3)
+/// evaluation, then call [`verify_stage3`](Self::verify_stage3)
 /// with the proof and transcript.
 pub(crate) struct SetupSumcheckVerifier<E: Field> {
-    plan: SetupContributionPlan<E>,
-    setup_index_weight_evaluator: Option<SetupIndexWeightEvaluator<E>>,
-    alpha_pows: Vec<E>,
+    setup_contribution_plan: SetupContributionPlan<E>,
+    alpha: E,
     ring_bits: usize,
     rounds: usize,
 }
@@ -40,99 +39,57 @@ impl<E: Field> SetupSumcheckVerifier<E> {
     ///
     /// Derives the setup evaluation plan (and thus the per-round shape) from
     /// the relation-matrix evaluation; must be called before
-    /// [`verify_batched_stage3`](Self::verify_batched_stage3).
+    /// [`verify_stage3`](Self::verify_stage3).
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new<F, const D: usize>(
+    pub(crate) fn new<F>(
         relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
         x_challenges: &[E],
-        tau1: &[E],
         alpha: E,
     ) -> Result<Self, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
-        let alpha_pows = scalar_powers(alpha, D);
-        let fold_gadget =
-            shared_setup_fold_gadget::<F>(&relation_matrix_evaluator.setup_contribution_groups);
-        let plan = SetupContributionPlan::finish_plan::<F>(
-            &relation_matrix_evaluator.setup_contribution_static,
-            x_challenges,
-            None,
-            None,
-            fold_gadget.as_deref(),
-            &relation_matrix_evaluator.setup_contribution_groups,
-        )?;
-        let role_dims = relation_matrix_evaluator.role_dims;
-        let setup_index_weight_evaluator = if let Some(fold_gadget) = fold_gadget.as_deref() {
-            if role_dims.d_a() == D && role_dims.d_b() == D && role_dims.d_d() == D {
-                let evaluator = SetupIndexWeightEvaluator::new::<F>(
-                    &relation_matrix_evaluator.setup_contribution_inputs,
-                    &relation_matrix_evaluator.setup_contribution_static,
-                    &relation_matrix_evaluator.setup_contribution_groups,
-                    tau1,
-                    x_challenges,
-                    fold_gadget,
-                    D,
-                    role_dims,
-                    alpha,
-                )?;
-                evaluator.prefers_succinct_path().then_some(evaluator)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        let setup_idx_len = plan
-            .required()?
-            .checked_next_power_of_two()
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("setup product index length overflow".into())
-            })?;
-        let setup_idx_bits = setup_idx_len.trailing_zeros() as usize;
-        let ring_bits = D.trailing_zeros() as usize;
-        let rounds = ring_bits
-            .checked_add(setup_idx_bits)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup product round count overflow".into()))?;
-
+        let fold_gadget = relation_matrix_evaluator.setup_contribution_fold_gadget::<F>()?;
+        let plan = relation_matrix_evaluator
+            .take_cached_setup_contribution_plan(x_challenges)?
+            .map_or_else(
+                || {
+                    relation_matrix_evaluator.setup_contribution_plan::<F>(
+                        PreparedRelationAddress::new(x_challenges)?,
+                        fold_gadget.as_deref(),
+                    )
+                },
+                Ok,
+            )?;
+        let geometry = plan.projection_geometry();
         Ok(Self {
-            plan,
-            setup_index_weight_evaluator,
-            alpha_pows,
-            ring_bits,
-            rounds,
+            setup_contribution_plan: plan,
+            alpha,
+            ring_bits: geometry.ring_bits(),
+            rounds: geometry.rounds(),
         })
     }
 
-    /// Verify the batched setup-product + carried-next-witness stage-3 sumcheck.
+    /// Verify the setup-product stage-3 sumcheck.
     ///
-    /// Returns the projected next-witness opening point `rho_w` to be threaded
-    /// into the next recursive suffix level.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn verify_batched_stage3<F, T>(
+    /// Returns the setup opening point for the next recursive suffix level.
+    pub(crate) fn verify_stage3<F, T>(
         &self,
         setup: &AkitaVerifierSetup<F>,
-        next_fold_level_params: &LevelParams,
-        ring_d: usize,
+        next_fold_level_params: &CommittedGroupParams,
         proof: &SetupSumcheckProof<E>,
-        stage2_next_w_eval: E,
-        stage2_challenges: &[E],
-        witness_rounds: usize,
-        eta: E,
         transcript: &mut T,
-    ) -> Result<(Vec<E>, Vec<E>), AkitaError>
+    ) -> Result<Vec<E>, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
-        if stage2_challenges.len() != witness_rounds {
-            return Err(AkitaError::InvalidSize {
-                expected: witness_rounds,
-                actual: stage2_challenges.len(),
-            });
-        }
+        let ring_d = self
+            .setup_contribution_plan
+            .projection_geometry()
+            .base_ring_dim();
         let setup_len = setup
             .expanded
             .shared_matrix()
@@ -149,19 +106,15 @@ impl<E: Field> SetupSumcheckVerifier<E> {
             .as_ref()
             .map(|_| proof.setup_prefix_eval);
         dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
+            ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
             ring_d,
             |D| {
-                self.verify_batched_stage3_kernel::<F, T, D>(
+                self.verify_stage3_kernel::<F, T, D>(
                     setup,
                     proof,
-                    stage2_next_w_eval,
-                    stage2_challenges,
-                    witness_rounds,
                     setup_eval_len,
                     setup_prefix_eval,
-                    eta,
                     transcript,
                 )
             }
@@ -171,7 +124,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
     fn setup_eval_len<F, T>(
         &self,
         setup: &AkitaVerifierSetup<F>,
-        next_fold_level_params: &LevelParams,
+        next_fold_level_params: &CommittedGroupParams,
         ring_d: usize,
         setup_len: usize,
         transcript: &mut T,
@@ -180,10 +133,10 @@ impl<E: Field> SetupSumcheckVerifier<E> {
         F: Field + CanonicalEncoding,
         T: Transcript<F>,
     {
-        if ring_d == SETUP_OFFLOAD_D_SETUP {
-            let natural_field_len =
-                stage3_offload_natural_field_len(self.plan.required()?, ring_d)?;
-            ensure_setup_envelope(&setup.expanded, self.plan.required()?, ring_d)?;
+        if next_fold_level_params.setup_prefix.is_some() {
+            let geometry = self.setup_contribution_plan.projection_geometry();
+            let natural_field_len = geometry.natural_field_len();
+            ensure_setup_envelope(&setup.expanded, geometry.required(), ring_d)?;
             let setup_prefix_selection = select_setup_prefix_slot(
                 setup_len,
                 |id| {
@@ -212,91 +165,62 @@ impl<E: Field> SetupSumcheckVerifier<E> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn verify_batched_stage3_kernel<F, T, const D: usize>(
+    fn verify_stage3_kernel<F, T, const D: usize>(
         &self,
         setup: &AkitaVerifierSetup<F>,
         proof: &SetupSumcheckProof<E>,
-        stage2_next_w_eval: E,
-        stage2_challenges: &[E],
-        witness_rounds: usize,
         setup_eval_len: usize,
         setup_prefix_eval: Option<E>,
-        eta: E,
         transcript: &mut T,
-    ) -> Result<(Vec<E>, Vec<E>), AkitaError>
+    ) -> Result<Vec<E>, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
-        let required = self.plan.required()?;
-        let geometry = BatchedStage3Geometry::new(witness_rounds, self.rounds)?;
-        let batched_rounds = geometry.batched_rounds();
-        transcript.append_serde(
-            ABSORB_SUMCHECK_CLAIM,
-            &(proof.claim + eta * stage2_next_w_eval),
-        );
+        let required = self.setup_contribution_plan.required();
+        transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
         let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
-            proof.claim + eta * stage2_next_w_eval,
-            batched_rounds,
+            proof.claim,
+            self.rounds,
             SETUP_SUMCHECK_DEGREE,
             transcript,
             |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         )?;
-        let rho_w = geometry.witness_point(&challenges)?;
-        let rho_setup = geometry.setup_point(&challenges)?;
-        let (rho_y, rho_setup_idx) = geometry.setup_y_and_index(&rho_setup, self.ring_bits)?;
+        let (rho_y, rho_setup_idx) = challenges.split_at(self.ring_bits);
 
         // The setup prefix itself is still evaluated by scanning the selected
         // prefix. The setup-index weight is structured, so evaluate its MLE
         // directly at `rho_setup_idx` instead of building a dense equality
         // table for that factor.
-        let eq_setup_idx = setup_idx_eq_table(required, rho_setup_idx)?;
         let eq_y = ring_eq_table::<E, D>(rho_y)?;
-        let setup_val = match setup_prefix_eval {
-            Some(value) => value,
-            None => setup_mle_at_eq_tables::<F, E, D>(
-                &setup.expanded,
-                required,
-                setup_eval_len,
-                &eq_setup_idx,
-                &eq_y,
-            )?,
-        };
-        let setup_index_weight = match &self.setup_index_weight_evaluator {
-            Some(evaluator) => match evaluator.evaluate(rho_setup_idx)? {
+        let setup_val = {
+            let _span =
+                tracing::info_span!("stage3_setup_prefix", cached = setup_prefix_eval.is_some())
+                    .entered();
+            match setup_prefix_eval {
                 Some(value) => value,
-                None => self.plan.evaluate_setup_index_weight_mle(rho_setup_idx)?,
-            },
-            None => self.plan.evaluate_setup_index_weight_mle(rho_setup_idx)?,
+                None => setup_mle_at_eq_tables::<F, E, D>(
+                    &setup.expanded,
+                    required,
+                    setup_eval_len,
+                    rho_setup_idx,
+                    &eq_y,
+                )?,
+            }
         };
-        let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
-        let witness_scale = geometry.witness_lift_scale::<E>()?;
-        let setup_scale = geometry.setup_lift_scale::<E>()?;
-        let eq_w = EqPolynomial::mle(stage2_challenges, &rho_w)?;
-        let expected = eta * witness_scale * eq_w * proof.next_w_eval
-            + setup_scale * setup_val * setup_index_weight * alpha_val;
-        if final_claim != expected {
-            return Err(AkitaError::InvalidInput(
-                "batched stage-3 final relation mismatch".to_string(),
-            ));
+        let setup_index_weight = {
+            let _span = tracing::info_span!("stage3_setup_index_weight_eval").entered();
+            self.setup_contribution_plan
+                .evaluate_setup_index_weight_mle(rho_setup_idx, self.alpha)?
+        };
+        let alpha_val = evaluate_power_sequence_mle(self.alpha, rho_y);
+        let setup_term = setup_val * setup_index_weight * alpha_val;
+        if final_claim != setup_term {
+            return Err(AkitaError::InvalidProof);
         }
-        Ok((rho_w, rho_setup))
+        Ok(challenges)
     }
-}
-
-fn setup_idx_eq_table<E: Field>(
-    required: usize,
-    rho_setup_idx: &[E],
-) -> Result<Vec<E>, AkitaError> {
-    let setup_idx_len = required
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("setup product index length overflow".into()))?;
-    if rho_setup_idx.len() != setup_idx_len.trailing_zeros() as usize {
-        return Err(AkitaError::InvalidProof);
-    }
-    EqPolynomial::evals(rho_setup_idx)
 }
 
 fn ring_eq_table<E: Field, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, AkitaError> {
@@ -313,29 +237,11 @@ fn ring_eq_table<E: Field, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, AkitaE
     Ok(eq_y)
 }
 
-fn eval_dense_table_with_eq<E: Field>(evals: &[E], eq: &[E]) -> Result<E, AkitaError> {
-    if evals.len() != eq.len() {
-        return Err(AkitaError::InvalidSize {
-            expected: evals.len(),
-            actual: eq.len(),
-        });
-    }
-    Ok(cfg_fold_reduce!(
-        0..evals.len(),
-        E::zero,
-        |mut acc, idx| {
-            acc += evals[idx] * eq[idx];
-            acc
-        },
-        |lhs, rhs| lhs + rhs
-    ))
-}
-
 fn setup_mle_at_eq_tables<F, E, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
     required: usize,
     setup_eval_len: usize,
-    eq_setup_idx: &[E],
+    rho_setup_idx: &[E],
     eq_y: &[E],
 ) -> Result<E, AkitaError>
 where
@@ -350,6 +256,7 @@ where
     let setup_idx_len = required
         .checked_next_power_of_two()
         .ok_or_else(|| AkitaError::InvalidSetup("setup MLE index length overflow".into()))?;
+    let eq_setup_idx = SplitEqEvals::new(rho_setup_idx)?;
     if eq_setup_idx.len() != setup_idx_len {
         return Err(AkitaError::InvalidSize {
             expected: setup_idx_len,
@@ -365,14 +272,18 @@ where
     let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_eval_len)?;
     let setup_entries = setup_view.as_slice();
 
-    Ok(cfg_fold_reduce!(
-        0..required,
-        E::zero,
-        |mut acc, setup_idx| {
-            let ring_eval = eval_ring_at_pows_fast(&setup_entries[setup_idx], eq_y);
-            acc += eq_setup_idx[setup_idx] * ring_eval;
-            acc
-        },
-        |lhs, rhs| lhs + rhs
-    ))
+    // Scan the selected setup prefix once. Each entry contracts the ring with
+    // `eq_y` and the setup-index equality; the scan is `O(required · D)` and is
+    // the dominant recursive-mode verifier cost, so evaluate it in parallel.
+    let _span = tracing::info_span!("stage3_setup_mle_scan", required).entered();
+    let terms = cfg_into_iter!(0..required)
+        .map(|setup_idx| -> Result<E, AkitaError> {
+            let entry = setup_entries
+                .get(setup_idx)
+                .ok_or(AkitaError::InvalidProof)?;
+            let ring_eval = eval_ring_at_pows_fast(entry, eq_y);
+            Ok(eq_setup_idx.eval_at(setup_idx)? * ring_eval)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(terms.into_iter().fold(E::zero(), |acc, value| acc + value))
 }

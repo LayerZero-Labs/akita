@@ -1,144 +1,120 @@
 use super::*;
 
 impl<E: Field> SetupContributionPlan<E> {
-    pub fn prepare_static(
-        inputs: &SetupContributionPlanInputs<E>,
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare<F>(
+        level_params: &CommittedGroupParams,
+        opening_batch: &OpeningClaimsLayout,
+        eq_tau1: std::sync::Arc<[E]>,
+        witness_layout: &WitnessLayout,
         groups: &[SetupContributionGroupInputs],
-        d_row_start: usize,
-        d_rows: usize,
-        d_physical_cols: usize,
-    ) -> Result<SetupContributionStatic<E>, AkitaError> {
-        let d_weights: std::sync::Arc<[E]> = if d_rows == 0 {
-            Vec::new().into()
-        } else {
-            checked_slice(&inputs.eq_tau1, d_row_start, d_rows, "setup D rows")?
-                .to_vec()
-                .into()
-        };
-        let num_groups = groups.len();
-        let static_groups = groups
-            .iter()
-            .map(|group| {
-                validate_group_chunk_layout(group, num_groups)?;
-                let t_cols = group
-                    .num_claims
-                    .checked_mul(group.t_cols_per_vector)
-                    .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
-                let z_cols = group
-                    .block_len
-                    .checked_mul(group.depth_commit)
-                    .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
-                let a_row_weights: std::sync::Arc<[E]> = checked_slice(
-                    &inputs.eq_tau1,
-                    group.a_row_start,
-                    group.n_a,
-                    "setup A rows",
-                )?
-                .to_vec()
-                .into();
-                let b_weights: std::sync::Arc<[E]> = checked_slice(
-                    &inputs.eq_tau1,
-                    group.b_row_start,
-                    group.n_b,
-                    "setup B rows",
-                )?
-                .to_vec()
-                .into();
-                let e_cols = group
-                    .num_claims
-                    .checked_mul(group.num_blocks)
-                    .and_then(|cols| cols.checked_mul(group.depth_open))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("setup E active width overflow".into())
-                    })?;
-                let (required, segments) = build_packed_segments(
-                    group.e_col_offset,
-                    e_cols,
-                    t_cols,
-                    z_cols,
-                    group.n_a,
-                    group.n_b,
-                    &a_row_weights,
-                    &b_weights,
-                    &d_weights,
-                    d_rows,
-                    d_physical_cols,
-                )?;
-                Ok(SetupContributionGroupStatic {
-                    e_col_offset: group.e_col_offset,
-                    t_cols,
-                    z_cols,
-                    n_a: group.n_a,
-                    n_b: group.n_b,
-                    required,
-                    segments: segments.into(),
-                    a_row_weights,
-                    b_weights,
-                })
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-        Ok(SetupContributionStatic {
-            groups: static_groups,
-            d_rows,
-            d_physical_cols,
-            d_weights,
-        })
-    }
-
-    pub fn finish_plan<F>(
-        static_plan: &SetupContributionStatic<E>,
-        full_vec_randomness: &[E],
-        eq_low: Option<&[E]>,
-        z_block_low_eq: Option<&[E]>,
+        relation_address: PreparedRelationAddress<E>,
         fold_gadget: Option<&[F]>,
-        groups: &[SetupContributionGroupInputs],
+        relation_address_geometry: RelationAddressGeometry,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
         let _span = tracing::info_span!("setup_prepare_plan").entered();
-        if static_plan.groups.len() != groups.len() {
+        let full_vec_randomness = relation_address.point();
+        let expected_address_variables = relation_address_geometry.relation_lane_variable_count();
+        if full_vec_randomness.len() != expected_address_variables {
             return Err(AkitaError::InvalidSize {
-                expected: groups.len(),
-                actual: static_plan.groups.len(),
+                expected: expected_address_variables,
+                actual: full_vec_randomness.len(),
             });
         }
-        let dynamic_groups = static_plan
-            .groups
+        let rows = {
+            let _span = tracing::info_span!("setup_prepare_validate").entered();
+            validate_setup_inputs(level_params, opening_batch, witness_layout, groups)?;
+            validate_static_inputs(level_params, opening_batch, &eq_tau1)?
+        };
+        let group_geometry = groups
             .iter()
-            .zip(groups)
-            .map(|(static_group, group)| {
-                let e_eq_slice = {
-                    let _span = tracing::info_span!("setup_prepare_e_weights").entered();
-                    setup_e_col_weights::<E>(
-                        &group.chunks,
-                        group.blocks_per_chunk,
-                        group.num_blocks,
-                        group.num_claims,
-                        group.depth_open,
-                        full_vec_randomness,
-                        eq_low,
-                    )?
-                };
-                let t_eq_slice = {
-                    let _span = tracing::info_span!("setup_prepare_t_weights").entered();
-                    setup_t_col_weights::<E>(
-                        &group.chunks,
-                        group.blocks_per_chunk,
-                        group.depth_open,
-                        group.n_a,
-                        group.t_cols_per_vector,
-                        group.num_claims,
-                        group.num_claims,
-                        0,
-                        group.num_claims,
-                        full_vec_randomness,
-                        eq_low,
-                    )?
-                };
+            .map(|group| {
+                let role_dims = level_params.group_role_dims(opening_batch, group.group_id)?;
+                let (b_subcolumns, d_subcolumns) =
+                    SetupProjectionGeometry::native_role_subcolumn_counts(role_dims)?;
+                let raw_d_cols = group.d_active_cols(level_params, opening_batch)?;
+                Ok((role_dims, b_subcolumns, d_subcolumns, raw_d_cols))
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let mut d_cursor = 0usize;
+        let d_col_ranges = group_geometry
+            .iter()
+            .map(|(_, _, d_subcolumns, raw_d_cols)| {
+                let width = raw_d_cols.checked_mul(*d_subcolumns).ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup D subcolumn width overflow".into())
+                })?;
+                let end = d_cursor
+                    .checked_add(width)
+                    .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
+                let range = d_cursor..end;
+                d_cursor = end;
+                Ok(range)
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let (d_rows, d_physical_cols, d_weights) = {
+            let _span = tracing::info_span!("setup_prepare_global_geometry").entered();
+            let d_rows = level_params.open_commit_matrix.output_rank();
+            let d_row_start = rows.checked_sub(d_rows).ok_or_else(|| {
+                AkitaError::InvalidSetup("setup D rows exceed relation rows".into())
+            })?;
+            let d_physical_cols = d_cursor;
+            let d_weights: std::sync::Arc<[E]> = if d_rows == 0 {
+                Vec::new().into()
+            } else {
+                checked_slice(&eq_tau1, d_row_start, d_rows, "setup D rows")?
+                    .to_vec()
+                    .into()
+            };
+            (d_rows, d_physical_cols, d_weights)
+        };
+        let mut dynamic_groups = groups
+            .iter()
+            .zip(&group_geometry)
+            .zip(&d_col_ranges)
+            .map(|((group, (role_dims, b_subcolumns, _, _)), d_col_range)| {
+                let geometry_span =
+                    tracing::info_span!("setup_prepare_group_geometry", group_id = group.group_id)
+                        .entered();
+                let num_live_blocks = group.num_live_blocks(level_params, opening_batch)?;
+                let num_positions_per_block =
+                    group.num_positions_per_block(level_params, opening_batch)?;
+                let depth_witness = group.depth_witness(level_params, opening_batch)?;
+                let depth_commit = group.depth_commit(level_params, opening_batch)?;
+                let depth_open = group.depth_open(level_params, opening_batch)?;
+                let log_basis_open = group.log_basis_open(level_params, opening_batch)?;
+                let group_params = level_params.group_params(opening_batch, group.group_id)?;
+                let log_basis_inner = group_params.log_basis_inner();
+                let log_basis_outer = group_params.log_basis_outer();
+                let n_a = group.n_a(level_params, opening_batch)?;
+                let n_b = group.n_b(level_params, opening_batch)?;
+                let t_vector_width = group.t_vector_width(level_params, opening_batch)?;
+                let d_col_range = d_col_range.clone();
+                let t_cols = group
+                    .num_claims
+                    .checked_mul(t_vector_width)
+                    .and_then(|cols| cols.checked_mul(*b_subcolumns))
+                    .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
+                let z_cols = num_positions_per_block
+                    .checked_mul(depth_witness)
+                    .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
+                let a_row_weights: std::sync::Arc<[E]> =
+                    checked_slice(&eq_tau1, group.a_row_start, n_a, "setup A rows")?
+                        .to_vec()
+                        .into();
+                let b_weights: std::sync::Arc<[E]> =
+                    checked_slice(&eq_tau1, group.b_row_start, n_b, "setup B rows")?
+                        .to_vec()
+                        .into();
+                let consistency_weight = *eq_tau1
+                    .get(level_params.consistency_row_index(opening_batch, group.group_id)?)
+                    .ok_or(AkitaError::InvalidProof)?;
+                drop(geometry_span);
                 let fold_gadget_storage;
-                let fold_gadget = if let Some(fold_gadget) = fold_gadget {
+                let group_fold_gadget = if let Some(fold_gadget) = fold_gadget {
                     if fold_gadget.len() < group.depth_fold {
                         return Err(AkitaError::InvalidSize {
                             expected: group.depth_fold,
@@ -146,64 +122,256 @@ impl<E: Field> SetupContributionPlan<E> {
                         });
                     }
                     fold_gadget
+                        .get(..group.depth_fold)
+                        .ok_or(AkitaError::InvalidProof)?
                 } else {
                     fold_gadget_storage =
-                        crate::gadget_row_scalars::<F>(group.depth_fold, group.log_basis);
+                        crate::gadget_row_scalars::<F>(group.depth_fold, log_basis_open);
                     &fold_gadget_storage
                 };
-                let z_range = group
-                    .block_len
-                    .checked_mul(group.depth_commit)
-                    .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
-                let mut z_eq_slice = vec![E::zero(); z_range];
-                {
-                    let _span = tracing::info_span!("setup_prepare_z_weights").entered();
-                    setup_z_col_weights::<F, E>(
-                        &group.chunks,
-                        group.block_len,
-                        group.depth_commit,
-                        group.depth_fold,
-                        1,
-                        full_vec_randomness,
-                        z_block_low_eq,
-                        fold_gadget,
-                        &mut z_eq_slice,
-                    )?;
-                }
-                let a_row_weights = static_group.a_row_weights.clone();
-                let b_weights = static_group.b_weights.clone();
-                let d_weights = static_plan.d_weights.clone();
+                let fold_gadget: std::sync::Arc<[E]> = group_fold_gadget
+                    .iter()
+                    .take(group.depth_fold)
+                    .copied()
+                    .map(|fold| E::one().mul_base(fold))
+                    .collect::<Vec<_>>()
+                    .into();
                 Ok(SetupContributionGroupPlan {
-                    e_col_offset: static_group.e_col_offset,
-                    t_cols: static_group.t_cols,
-                    z_cols: static_group.z_cols,
-                    n_a: static_group.n_a,
-                    n_b: static_group.n_b,
-                    required: static_group.required,
-                    segments: static_group.segments.clone(),
-                    e_eq_slice,
-                    t_eq_slice,
-                    z_eq_slice,
+                    group_id: group.group_id,
+                    role_dims: *role_dims,
+                    a_ratio: 0,
+                    b_ratio: 0,
+                    d_ratio: 0,
+                    consistency_weight,
+                    num_claims: group.num_claims,
+                    num_live_blocks,
+                    num_positions_per_block,
+                    depth_witness,
+                    depth_commit,
+                    depth_open,
+                    log_basis_inner,
+                    log_basis_outer,
+                    log_basis_open,
+                    d_col_range,
+                    t_cols,
+                    z_cols,
+                    n_a,
+                    n_b,
+                    required: 0,
+                    segments: Vec::new().into(),
                     a_row_weights,
                     b_weights,
-                    d_weights,
+                    fold_gadget,
+                    direct_scan_weights: None,
+                    d_tensors: Vec::new(),
+                    b_tensors: Vec::new(),
+                    a_tensors: Vec::new(),
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
-        Ok(SetupContributionPlan {
+        let projection_groups = dynamic_groups
+            .iter()
+            .map(|planned| {
+                Ok(SetupProjectionGroupGeometry {
+                    role_dims: planned.role_dims,
+                    a_rows: planned.n_a,
+                    a_cols: planned.z_cols,
+                    b_rows: planned.n_b,
+                    b_cols: planned.t_cols,
+                    d_active_cols: planned.d_col_range.len(),
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let projection_geometry = crate::SetupProjectionGeometry::from_groups(
+            relation_address_geometry.role_dims(),
+            d_rows,
+            d_physical_cols,
+            &projection_groups,
+        )?;
+        if projection_geometry.base_ring_dim()
+            != relation_address_geometry.relation_coefficient_block_len()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "Stage 3 setup projection and relation point use different current-role bases"
+                    .into(),
+            ));
+        }
+        let base = projection_geometry.base_ring_dim();
+        for group in &mut dynamic_groups {
+            group.set_projection_ratios(base)?;
+        }
+        let mut plan = SetupContributionPlan {
             groups: dynamic_groups,
-            d_rows: static_plan.d_rows,
-            d_physical_cols: static_plan.d_physical_cols,
-        })
+            d_rows,
+            d_physical_cols,
+            d_weights,
+            setup_index_tensors: Vec::new(),
+            relation_address,
+            relation_address_geometry,
+            projection_geometry,
+            direct_scan_alpha: None,
+        };
+        plan.setup_index_tensors = plan.prepare_setup_index_tensors(witness_layout)?;
+        Ok(plan)
     }
 
-    /// Packed-scan footprint length: max over groups of each role's `rows * cols`.
-    /// `D` rows/cols are plan-level (shared); `B`/`A` are per-group.
-    pub fn required(&self) -> Result<usize, AkitaError> {
-        self.groups
-            .iter()
-            .map(|group| group.required)
-            .max()
-            .ok_or_else(|| AkitaError::InvalidSetup("setup contribution has no groups".into()))
+    /// Materialize the derived column-weight and scan caches used only by the
+    /// direct setup scan.
+    pub fn materialize_direct_scan(&mut self, alpha: E) -> Result<(), AkitaError> {
+        if self
+            .direct_scan_alpha
+            .is_some_and(|prepared| prepared != alpha)
+        {
+            return Err(AkitaError::InvalidInput(
+                "direct setup weights were prepared for a different alpha".into(),
+            ));
+        }
+        self.direct_scan_alpha = Some(alpha);
+        for group_index in 0..self.groups.len() {
+            if self
+                .groups
+                .get(group_index)
+                .is_some_and(|group| group.direct_scan_weights.is_some())
+            {
+                continue;
+            }
+            let (e, t, z) = {
+                let group = self
+                    .groups
+                    .get(group_index)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let e = {
+                    let _span = tracing::info_span!("setup_materialize_e_weights").entered();
+                    self.materialize_role_tensor_weights(
+                        group.d_ratio,
+                        &group.d_tensors,
+                        group.d_col_range.len(),
+                        alpha,
+                    )?
+                };
+                let t = {
+                    let _span = tracing::info_span!("setup_materialize_t_weights").entered();
+                    self.materialize_role_tensor_weights(
+                        group.b_ratio,
+                        &group.b_tensors,
+                        group.t_cols,
+                        alpha,
+                    )?
+                };
+                let z = {
+                    let _span = tracing::info_span!("setup_materialize_z_weights").entered();
+                    self.materialize_role_tensor_weights(
+                        group.a_ratio,
+                        &group.a_tensors,
+                        group.z_cols,
+                        alpha,
+                    )?
+                };
+                (e, t, z)
+            };
+            let group = self
+                .groups
+                .get_mut(group_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            group.direct_scan_weights = Some(DirectScanWeights { e, t, z });
+            {
+                let _span = tracing::info_span!("setup_materialize_scan_segments").entered();
+                group.refresh_segments(
+                    &self.d_weights,
+                    self.d_rows,
+                    self.d_physical_cols,
+                    group.a_ratio,
+                    group.b_ratio,
+                    group.d_ratio,
+                )?;
+            }
+        }
+        Ok(())
     }
+
+    /// Common-base packed-scan footprint.
+    #[must_use]
+    pub const fn required(&self) -> usize {
+        self.projection_geometry.required()
+    }
+
+    /// Canonical common-base Stage 3 projection geometry.
+    #[must_use]
+    pub const fn projection_geometry(&self) -> SetupProjectionGeometry {
+        self.projection_geometry
+    }
+
+    /// Canonical relation-address geometry used by every setup contribution
+    /// tensor.
+    #[must_use]
+    pub const fn relation_address_geometry(&self) -> RelationAddressGeometry {
+        self.relation_address_geometry
+    }
+}
+
+fn validate_static_inputs<E: Field>(
+    level_params: &CommittedGroupParams,
+    opening_batch: &OpeningClaimsLayout,
+    eq_tau1: &[E],
+) -> Result<usize, AkitaError> {
+    opening_batch.check()?;
+    let num_groups = opening_batch.num_groups();
+    let num_polynomials = opening_batch.num_total_polynomials();
+    let depth_fold =
+        level_params.num_digits_fold(num_polynomials, level_params.field_bits_for_cache())?;
+    if level_params.num_live_blocks == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "num_live_blocks must be positive".into(),
+        ));
+    }
+    if depth_fold == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "setup evaluator layout has zero width".into(),
+        ));
+    }
+    for group_index in 0..num_groups {
+        let group_layout = opening_batch.group_layout(group_index)?;
+        let group_params = level_params.group_params(opening_batch, group_index)?;
+        let depth_witness = group_params.num_digits_inner();
+        let depth_commit = group_params.num_digits_outer();
+        let depth_open = group_params.num_digits_open();
+        let num_positions_per_block = group_params.num_positions_per_block();
+        let num_live_blocks = group_params.num_live_blocks();
+        if num_positions_per_block == 0
+            || depth_witness == 0
+            || depth_commit == 0
+            || depth_open == 0
+        {
+            return Err(AkitaError::InvalidSetup(
+                "setup evaluator layout has zero width".into(),
+            ));
+        }
+        let inner_width = num_positions_per_block
+            .checked_mul(depth_witness)
+            .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".into()))?;
+        if group_params.a_col_len() < inner_width {
+            return Err(AkitaError::InvalidSetup(
+                "A-key column width is too small for setup contribution layout".into(),
+            ));
+        }
+        let expected_b_width = group_layout
+            .num_polynomials()
+            .checked_mul(group_params.a_rows_len())
+            .and_then(|width| width.checked_mul(depth_commit))
+            .and_then(|width| width.checked_mul(num_live_blocks))
+            .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".into()))?;
+        if group_params.b_col_len() < expected_b_width {
+            return Err(AkitaError::InvalidSetup(
+                "B-key column width is too small for setup contribution layout".into(),
+            ));
+        }
+    }
+    let rows = level_params.relation_matrix_row_count(num_groups)?;
+    if eq_tau1.len() < rows {
+        return Err(AkitaError::InvalidSize {
+            expected: rows,
+            actual: eq_tau1.len(),
+        });
+    }
+    Ok(rows)
 }

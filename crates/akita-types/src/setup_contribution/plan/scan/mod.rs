@@ -1,6 +1,8 @@
 mod group;
 
 use super::*;
+use akita_algebra::cfg_try_fold_reduce;
+use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
 
 impl<E: Field> SetupContributionPlan<E> {
     pub fn evaluate_direct<F>(
@@ -28,39 +30,52 @@ impl<E: Field> SetupContributionPlan<E> {
         F: Field + CanonicalEncoding,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
-        let d_a = alpha_pows_a.len();
-        let d_b = alpha_pows_b.len();
-        let d_d = alpha_pows_d.len();
-        let base_d = role_alpha_base_len(d_a, d_b, d_d)?;
-        let base_pows = alpha_pows_a.get(..base_d).ok_or(AkitaError::InvalidProof)?;
-        let a_projection = if d_a == base_d {
-            RoleProjection::identity()
-        } else {
-            role_projection(alpha_pows_a, base_pows).ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "A alpha powers do not decompose over base dimension".into(),
-                )
-            })?
-        };
-        let b_projection = role_projection(alpha_pows_b, base_pows).ok_or_else(|| {
-            AkitaError::InvalidSetup("B alpha powers do not decompose over base dimension".into())
-        })?;
-        let d_projection = role_projection(alpha_pows_d, base_pows).ok_or_else(|| {
-            AkitaError::InvalidSetup("D alpha powers do not decompose over base dimension".into())
-        })?;
+        let geometry = self.projection_geometry;
+        geometry.validate_alpha_power_lengths(
+            alpha_pows_a.len(),
+            alpha_pows_b.len(),
+            alpha_pows_d.len(),
+        )?;
+        let base_d = geometry.base_ring_dim();
+        let alpha = *alpha_pows_a.get(1).ok_or(AkitaError::InvalidProof)?;
+        let base_pows = scalar_powers(alpha, base_d);
+        for (role, powers, ratio) in [
+            ("A", alpha_pows_a, geometry.a_ratio()),
+            ("B", alpha_pows_b, geometry.b_ratio()),
+            ("D", alpha_pows_d, geometry.d_ratio()),
+        ] {
+            role_projection(powers, &base_pows, ratio).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "{role} alpha powers do not decompose over the shared setup base"
+                ))
+            })?;
+        }
+        let projections = self
+            .groups
+            .iter()
+            .map(|group| {
+                let build = |role: &'static str, dimension: usize, ratio: usize| {
+                    let powers = scalar_powers(alpha, dimension);
+                    role_projection(&powers, &base_pows, ratio).ok_or_else(|| {
+                        AkitaError::InvalidSetup(format!(
+                            "{role} alpha powers do not decompose over the shared setup base"
+                        ))
+                    })
+                };
+                Ok([
+                    build("A", group.role_dims.d_a(), group.a_ratio)?,
+                    build("B", group.role_dims.d_b(), group.b_ratio)?,
+                    build("D", group.role_dims.d_d(), group.d_ratio)?,
+                ])
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
 
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
             base_d,
             |BASE_D| {
-                self.evaluate_role_dims_direct_typed::<F, BASE_D>(
-                    setup,
-                    base_pows,
-                    &a_projection,
-                    &b_projection,
-                    &d_projection,
-                )
+                self.evaluate_role_dims_direct_typed::<F, BASE_D>(setup, &base_pows, &projections)
             }
         )
     }
@@ -69,25 +84,53 @@ impl<E: Field> SetupContributionPlan<E> {
         &self,
         setup: &AkitaExpandedSetup<F>,
         base_pows: &[E],
-        a_projection: &RoleProjection<E>,
-        b_projection: &RoleProjection<E>,
-        d_projection: &RoleProjection<E>,
+        projections: &[[RoleProjection<E>; 3]],
     ) -> Result<E, AkitaError>
     where
         F: Field,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
+        let fused_groups = self.groups.len() > 1;
+        let logical_group_rings = self
+            .groups
+            .iter()
+            .fold(0usize, |sum, group| sum.saturating_add(group.required));
+        let physical_ring_evaluations = if fused_groups {
+            self.projection_geometry.required()
+        } else {
+            logical_group_rings
+        };
+        let jobs = if fused_groups {
+            self.projection_geometry
+                .required()
+                .div_ceil(super::segments::SETUP_SCAN_JOB_RINGS)
+        } else {
+            self.groups
+                .iter()
+                .map(|group| group.segments.len())
+                .sum::<usize>()
+        };
+        let _span = tracing::info_span!(
+            "setup_contribution_scan",
+            required = self.projection_geometry.required(),
+            groups = self.groups.len(),
+            logical_group_rings,
+            physical_ring_evaluations,
+            jobs,
+            fused_groups,
+            base_d = BASE_D,
+            final_a_ratio = self.projection_geometry.a_ratio(),
+            final_b_ratio = self.projection_geometry.b_ratio(),
+            final_d_ratio = self.projection_geometry.d_ratio()
+        )
+        .entered();
         if base_pows.len() != BASE_D {
             return Err(AkitaError::InvalidSize {
                 expected: BASE_D,
                 actual: base_pows.len(),
             });
         }
-        let required = self.required_base_ring_rows(
-            a_projection.ratio(),
-            b_projection.ratio(),
-            d_projection.ratio(),
-        )?;
+        let required = self.projection_geometry.required();
         let setup_len = setup.shared_matrix().total_ring_elements_at::<BASE_D>()?;
         if required > setup_len {
             return Err(AkitaError::InvalidSetup(
@@ -95,14 +138,18 @@ impl<E: Field> SetupContributionPlan<E> {
             ));
         }
         let setup_view = setup.shared_matrix().ring_view::<BASE_D>(1, setup_len)?;
+        if fused_groups {
+            return self.evaluate_groups_fused::<F, BASE_D>(&setup_view, base_pows, projections);
+        }
         let mut acc = E::zero();
-        for group in &self.groups {
+        for (group, projection) in self.groups.iter().zip(projections) {
             acc += group.evaluate_base_ring_direct::<F, BASE_D>(
                 &setup_view,
                 base_pows,
-                a_projection,
-                b_projection,
-                d_projection,
+                &self.d_weights,
+                &projection[0],
+                &projection[1],
+                &projection[2],
                 self.d_rows,
                 self.d_physical_cols,
             )?;
@@ -110,48 +157,76 @@ impl<E: Field> SetupContributionPlan<E> {
         Ok(acc)
     }
 
-    fn required_base_ring_rows(
+    fn evaluate_groups_fused<F, const BASE_D: usize>(
         &self,
-        a_ratio: usize,
-        b_ratio: usize,
-        d_ratio: usize,
-    ) -> Result<usize, AkitaError> {
-        let mut required = self
-            .d_rows
-            .checked_mul(self.d_physical_cols)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D footprint overflow".into()))?
-            .checked_mul(d_ratio)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("setup D base-ring footprint overflow".into())
-            })?;
-        for group in &self.groups {
-            let b_required = group
-                .n_b
-                .checked_mul(group.t_cols)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup B footprint overflow".into()))?;
-            let a_required = group
-                .n_a
-                .checked_mul(group.z_cols)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup A footprint overflow".into()))?;
-            let b_base_required = b_required.checked_mul(b_ratio).ok_or_else(|| {
-                AkitaError::InvalidSetup("setup B base-ring footprint overflow".into())
-            })?;
-            let a_base_required = a_required.checked_mul(a_ratio).ok_or_else(|| {
-                AkitaError::InvalidSetup("setup A base-ring footprint overflow".into())
-            })?;
-            required = required.max(b_base_required).max(a_base_required);
+        setup_view: &RingMatrixView<'_, F, BASE_D>,
+        base_pows: &[E],
+        projections: &[[RoleProjection<E>; 3]],
+    ) -> Result<E, AkitaError>
+    where
+        F: Field,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        let setup_flat = setup_view.as_slice();
+        let required = self.projection_geometry.required();
+        if self.d_weights.len() != self.d_rows {
+            return Err(AkitaError::InvalidSetup(
+                "cached setup scan geometry is malformed".into(),
+            ));
         }
-        Ok(required)
+        let job_rings = super::segments::SETUP_SCAN_JOB_RINGS;
+        let num_jobs = required.div_ceil(job_rings);
+        cfg_try_fold_reduce!(
+            0..num_jobs,
+            E::zero,
+            |acc, job| {
+                let lo = job.checked_mul(job_rings).ok_or(AkitaError::InvalidProof)?;
+                let hi = lo.saturating_add(job_rings).min(required);
+                let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
+                let mut weights = vec![E::zero(); setup.len()];
+                for (group, projection) in self.groups.iter().zip(projections) {
+                    let (e_eq_slice, t_eq_slice, z_eq_slice) = group.require_column_eq_slices()?;
+                    let first = group.segments.partition_point(|segment| segment.hi <= lo);
+                    for segment in group.segments.iter().skip(first) {
+                        if segment.lo >= hi {
+                            break;
+                        }
+                        let overlap = segment.lo.max(lo)..segment.hi.min(hi);
+                        let weight_start = overlap
+                            .start
+                            .checked_sub(lo)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        dispatch_segment_roles!(segment, Ok(()), |HAS_D, HAS_B, HAS_A| {
+                            for_each_base_ring_segment_weight_typed::<E, HAS_D, HAS_B, HAS_A>(
+                                overlap,
+                                segment,
+                                e_eq_slice,
+                                t_eq_slice,
+                                z_eq_slice,
+                                &projection[2],
+                                &projection[1],
+                                &projection[0],
+                                |offset, weight| {
+                                    let slot = weight_start
+                                        .checked_add(offset)
+                                        .and_then(|index| weights.get_mut(index))
+                                        .ok_or(AkitaError::InvalidProof)?;
+                                    *slot += weight;
+                                    Ok(())
+                                },
+                            )
+                        })?;
+                    }
+                }
+                let mut term = E::zero();
+                for (ring, weight) in setup.iter().zip(weights) {
+                    if !weight.is_zero() {
+                        term += eval_ring_at_pows_fast(ring, base_pows) * weight;
+                    }
+                }
+                Ok(acc + term)
+            },
+            |lhs, rhs| Ok(lhs + rhs)
+        )
     }
-}
-
-fn role_alpha_base_len(d_a: usize, d_b: usize, d_d: usize) -> Result<usize, AkitaError> {
-    for (role, dim) in [("A", d_a), ("B", d_b), ("D", d_d)] {
-        if dim == 0 || !dim.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "{role} setup contribution ring dimension must be a non-zero power of two"
-            )));
-        }
-    }
-    Ok(d_a.min(d_b).min(d_d))
 }

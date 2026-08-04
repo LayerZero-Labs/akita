@@ -2,7 +2,7 @@
 
 use crate::backend::poly_helpers::try_small_i8_cache_from_ring_coeffs;
 use crate::kernels::linear::try_centered_i8;
-use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{tensor_opening_split, RingVec, TensorColumnSource};
@@ -325,7 +325,7 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
             .to_u128_checked()
             .expect("canonical prime-field value fits in u128")
             + 1;
-        let params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
+        let params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
         let mut planes = vec![0i8; num_rings * num_digits * D];
         cfg_chunks_mut!(planes, num_digits * D)
             .zip(cfg_iter!(rings))

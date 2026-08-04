@@ -40,15 +40,22 @@ Key structural facts:
 
 ## End-to-end lifecycle
 
-1. **Preset selection.** The caller picks a `CommitmentConfig` preset (`fp32` / `fp64` / `fp128` families). `CommitmentConfig::runtime_schedule` resolves the recursion schedule from a shipped table or the offline DP (`akita_planner::resolve_schedule`).
+1. **Preset selection.** The caller picks a `CommitmentConfig` preset (`fp32` / `fp64` / `fp128` families). `CommitmentConfig::runtime_schedule` resolves the recursion schedule from a shipped table or the offline DP (`akita_planner::resolve_schedule`). The preset also fixes the protocol geometry: when the claim field coincides with the coefficient field (`EXT_DEGREE == 1`, today's `fp128` families) the fold path never runs extension-opening reduction; when claims live in a proper extension (`fp32` / `fp64`), root EOR follows `akita_types::root_tensor_projection_enabled` and suffix EOR follows `EXT_DEGREE > 1`. See [Fold path and field geometry](./proving/fold-path.md).
 2. **Setup.** `akita-setup` expands the config-backed setup (Ajtai matrices, stride envelopes). Setup capacity must cover the requested `num_vars`.
 3. **Commit.** `commit` / `batched_commit` (in `akita-prover`, orchestrated by `akita-pcs`) produce commitments over root polynomials at the opening layout implied by the schedule.
-4. **Prove.** `batched_prove` walks the resolved schedule level by level: sumcheck stages, fold or direct openings, extension-opening reduction, and recursive suffix work as dictated by each `LevelParams` step. The same batched API dispatches to ZeroFold, terminal-root, and fold+recursive families purely from schedule shape.
-5. **Verify.** `batched_verify` re-derives the schedule, replays each level's sumcheck and opening checks, and evaluates the relation matrix at the derived point. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.
+4. **Claims.** The caller supplies ordered `PolynomialGroupClaims`; each group owns its complete point, evaluations, and commitment.
+5. **Prove.** `batched_prove` walks the folded-only schedule level by level: per-group opening preparation, sumcheck stages, extension-opening reduction, recursive suffix work, and the final direct terminal handoff.
+6. **Verify.** `batched_verify` re-derives the schedule, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.
 
 Entry points: `crates/akita-pcs/src/scheme/mod.rs`, `crates/akita-prover/src/protocol/core/prove.rs`, `crates/akita-verifier/src/protocol/core/verify.rs`.
 
 Further reading: [Configuration and planning](./configuration.md), [Proving](./proving/proving.md), [Verification](./verification.md).
+
+Recursive setup offloading adds one setup-only `SetupSumcheckProof` at each
+nonterminal producer whose successor consumes a setup prefix.
+Its wire payload is the setup claim, the setup-prefix evaluation, and one
+degree-two sumcheck over the native setup domain.
+Its round count and planned size do not depend on the successor witness length.
 
 ## Ring-dimension ownership
 
@@ -58,8 +65,13 @@ claims, and root polynomial storage (`DensePoly<F>`, `OneHotPoly<F, I>`,
 `SparseRingPoly<F>`) — is flat field-element vectors (`RingVec<F>`). Per-level
 `CommitmentRingDims` (`d_a` / `d_b` / `d_d` on `LevelParams::role_dims`) is
 the operation authority for how those vectors are interpreted; levels may
-differ. [`validate_schedule_ring_dims`] checks every level
-dimension against the setup's generation dimension.
+differ. Here, *role* is the historical protocol name for a commitment matrix's
+fixed job: A carries the relation witness, B commits the next witness, and D
+commits the opening digits. The matrices do not switch roles when their ring
+dimensions change. User-facing prose therefore calls a non-uniform tuple such
+as `128/64/32` **per-matrix ring dimensions** and a change between levels a
+**ring-dimension transition**. [`validate_schedule_ring_dims`] checks
+every level dimension against the setup's generation dimension.
 
 Every function on the prove/verify path has one of two roles:
 
@@ -71,13 +83,13 @@ Every function on the prove/verify path has one of two roles:
 
 The bridge is the *operation adapter*: a D-free function that extracts the
 ring dimension of the specific data one operation touches and enters the
-kernel through `akita_types::dispatch_ring_dim_result!` exactly once,
+kernel through `akita_types::dispatch_for_field!` exactly once,
 returning D-free storage. Dispatch is per operation — never per level or per
-proof — so that per-role ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
+proof — so that per-matrix ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
 see `specs/mixed-row-ring-dimensions.md`) reduce to feeding different
 dimensions to different adapters. `CommitmentRingDims` on `LevelParams::role_dims`
-names the per-role dimensions; prove/verify hot paths dispatch on `d_a()`, `d_b()`,
-or `d_d()` per operation, not on a single fused dimension.
+names the per-matrix ring dimensions; prove/verify hot paths dispatch on
+`d_a()`, `d_b()`, or `d_d()` per operation, not on a single fused dimension.
 
 The normative contract (discriminator rule, forbidden facade/level-
 monomorphization patterns) lives in `specs/runtime-ring-cutover.md`.
@@ -92,14 +104,15 @@ Mixed-dimension execution is exercised end-to-end by
 | `AkitaCommitmentScheme<Cfg>` | Top-level PCS `commit` / `prove` / `verify` orchestration (`akita-pcs`) |
 | `AkitaProverSetup<F>` | Prover setup wrapper; `gen_ring_dim` is runtime shape metadata |
 | `Commitment<F>`, `RingVec<F>` | protocol commitment and field-vector storage |
-| `CommitmentRingDims`, `validate_schedule_ring_dims` | Per-role ring dimensions and schedule validation |
-| `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, SIS family, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
+| `CommitmentRingDims`, `validate_schedule_ring_dims` | A/B/D commitment-matrix ring dimensions and schedule validation |
+| `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, exact SIS profile, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
 | `LevelParams` | Per-level recursion layout and config (fold shape, ring/ext degrees, decomposition depth, `role_dims`) |
-| `PlanPolicy` | Value-typed inputs to `akita_types::schedule_plan_from_table` |
-| `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_group_batch_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
-| `DensePoly`, `OneHotPoly`, `AkitaPolyOps` | Polynomial backends consumed by the scheme |
-| `BlockOrder` | Root-vs-recursive opening split convention ([`docs/block-order.md`](../../../docs/block-order.md)) |
-| `AkitaBatchedProof`, `AkitaLevelProof`, `AkitaProofStep` | Serialized proof structure (singleton openings are the 1×1 batched case) |
-| `OpeningClaims` / `OpeningClaimsLayout` | Public single-point opening claims and layout-only batch geometry for prove/verify, setup, and schedule lookup ([`specs/shared-opening-claims-api.md`](../../../specs/shared-opening-claims-api.md)) |
+| `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
+| `DensePoly`, `OneHotPoly`, `Root*Source`, compute-backend traits | Polynomial sources and operation capabilities consumed by the scheme |
+| `WitnessLayout`, `WitnessUnitLayout` | Canonical digit-innermost group-and-chunk ranges ([opening layout](./proving/opening-points-layout.md)) |
+| `AkitaBatchedProof`, `FoldLevelProof`, `TerminalLevelProof` | Structural serialized proof: root fold, recursive folds, and one terminal witness (singleton openings are the 1×1 batched case) |
+| `PolynomialGroupClaims` | One commitment group's complete opening point, evaluations, and commitment |
+| `OpeningClaims` | Ordered group-owned public claims in transcript order |
+| `OpeningClaimsLayout` | Value-free group arities and polynomial counts for setup and schedule lookup |
 | `AkitaTranscript`, `Transcript` | Spongefish-backed Fiat-Shamir layer |
 | `AkitaInstanceDescriptor` | Canonical transcript preamble binding algebra, setup, plan, and call shape |

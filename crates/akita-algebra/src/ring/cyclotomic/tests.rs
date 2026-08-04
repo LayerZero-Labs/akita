@@ -1,6 +1,6 @@
 use super::*;
-use jolt_field::{Fp128x8i32, Fp64x4i32};
-use jolt_field::{Fp64, Prime128Offset275};
+use jolt_field::{Fp128x8i32, Fp64, Fp64x4i32, Prime128Offset275};
+
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -220,5 +220,96 @@ fn asymmetric_centering_boundary_roundtrip_fp128() {
             ring, recomposed_i8,
             "i8 roundtrip failed for log_basis={log_basis}, levels={levels}"
         );
+    }
+}
+
+#[test]
+fn flat_coefficient_decomposition_matches_ring_digit_layout() {
+    let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|index| match index % 6 {
+        0 => F128::zero(),
+        1 => F128::one(),
+        2 => -F128::one(),
+        3 => F128::from_u64((index * 17) as u64),
+        4 => F128::from_i64(-((index * 19) as i64)),
+        _ => F128::from_u128_reduced(u128::MAX - index as u128),
+    }));
+
+    for (levels, log_basis) in [(128, 1), (64, 2), (32, 4), (16, 8)] {
+        let ring_digits = ring.balanced_decompose_pow2_i8(levels, log_basis);
+        let mut flat_digits = vec![0i8; D * levels];
+        let q = (-F128::one()).to_canonical_u128() + 1;
+        let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
+        balanced_decompose_coefficients_pow2_i8_into(&ring.coeffs, &mut flat_digits, &params);
+        assert_eq!(flat_digits, ring_digits.as_flattened());
+    }
+}
+
+/// Run with:
+/// `cargo test -p akita-algebra --release balanced_i8_decomposition_bench -- --ignored --nocapture`
+#[test]
+#[ignore = "release-only balanced decomposition microbenchmark"]
+fn balanced_i8_decomposition_bench() {
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    const ITERATIONS: usize = 100_000;
+    let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|index| {
+        F128::from_u64((index * 0x9e37 + 0x1234) as u64)
+    }));
+    let mut digits = vec![[0i8; D]; 128];
+    let started = Instant::now();
+    for _ in 0..ITERATIONS {
+        black_box(&ring).balanced_decompose_pow2_i8_into(black_box(&mut digits), 1);
+    }
+    let elapsed = started.elapsed();
+    println!(
+        "balanced i8 D64 x 128: {} ns/iteration",
+        elapsed.as_nanos() / ITERATIONS as u128
+    );
+}
+
+#[test]
+fn balanced_i16_decomposition_supports_bases_ten_and_eleven() {
+    let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|i| match i % 6 {
+        0 => F128::from_i64(-1024),
+        1 => F128::from_i64(-512),
+        2 => F128::from_i64(-1),
+        3 => F128::zero(),
+        4 => F128::from_i64(511),
+        _ => F128::from_i64(1023),
+    }));
+
+    for log_basis in [10, 11] {
+        let digits = ring.balanced_decompose_pow2_i16(12, log_basis);
+        let bound = 1i16 << (log_basis - 1);
+        assert!(digits
+            .iter()
+            .flatten()
+            .all(|digit| (-bound..bound).contains(digit)));
+        for coefficient in 0..D {
+            let mut recomposed = F128::zero();
+            let mut power = F128::one();
+            let basis = F128::from_u64(1u64 << log_basis);
+            for plane in &digits {
+                recomposed += F128::from_i64(i64::from(plane[coefficient])) * power;
+                power *= basis;
+            }
+            assert_eq!(recomposed, ring.coeffs[coefficient]);
+        }
+    }
+}
+
+#[test]
+fn balanced_i8_decomposition_includes_bases_seven_and_eight() {
+    let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|i| match i % 4 {
+        0 => F128::from_i64(-128),
+        1 => F128::from_i64(-64),
+        2 => F128::from_i64(63),
+        _ => F128::from_i64(127),
+    }));
+    for log_basis in [7, 8] {
+        let digits = ring.balanced_decompose_pow2_i8(16, log_basis);
+        let recomposed = CyclotomicRing::gadget_recompose_pow2_i8(&digits, log_basis);
+        assert_eq!(recomposed, ring);
     }
 }

@@ -1,6 +1,5 @@
 use super::*;
-use jolt_field::One;
-use jolt_field::Ring;
+use jolt_field::{One, Ring};
 
 #[test]
 fn mat_vec_mul_ntt_i8_dense_single_row_chunks_q128() {
@@ -15,7 +14,7 @@ fn mat_vec_mul_ntt_i8_dense_single_row_chunks_q128() {
     let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
     let flat_rows = vec![row; cols];
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
-    let slot = build_ntt_slot(
+    let slot = prepare_both_transforms(
         flat.ring_view::<D>(1, cols)
             .expect("valid ring matrix view"),
     )
@@ -41,14 +40,14 @@ fn q128_many_blocks_digits_chunk_instead_of_unsafe_block_parallel() {
     type F = Prime128Offset275;
     const D: usize = 64;
     let cols = 2_050;
-    let num_blocks = 16;
+    let num_live_blocks = 16;
     let log_basis = 6;
     let modulus = (-F::one()).to_canonical_u128() + 1;
     let half = F::from_u128_reduced(modulus / 2);
     let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..3)
         .map(|_| vec![CyclotomicRing::from_coefficients([half; D]); cols])
         .collect();
-    let digit_blocks: Vec<Vec<[i8; D]>> = (0..num_blocks)
+    let digit_blocks: Vec<Vec<[i8; D]>> = (0..num_live_blocks)
         .map(|block_idx| {
             (0..cols)
                 .map(|col| {

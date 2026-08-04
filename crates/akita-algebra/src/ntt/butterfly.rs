@@ -145,6 +145,19 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
     tw: &NttTwiddles<W, D>,
 ) {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if std::mem::size_of::<W>() == std::mem::size_of::<i16>()
+        && super::avx::use_avx2_transform_ntt()
+    {
+        unsafe {
+            super::avx::forward_ntt_i16(
+                &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
+                *(&prime as *const _ as *const NttPrime<i16>),
+                &*(tw as *const _ as *const NttTwiddles<i16, D>),
+            );
+        }
+        return;
+    }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_x86_i32_transform_ntt::<W, D>() {
         unsafe {
             super::avx::forward_ntt_i32(
@@ -215,6 +228,19 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
     prime: NttPrime<W>,
     tw: &NttTwiddles<W, D>,
 ) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if std::mem::size_of::<W>() == std::mem::size_of::<i16>()
+        && super::avx::use_avx2_transform_ntt()
+    {
+        unsafe {
+            super::avx::inverse_ntt_i16(
+                &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
+                *(&prime as *const _ as *const NttPrime<i16>),
+                &*(tw as *const _ as *const NttTwiddles<i16, D>),
+            );
+        }
+        return;
+    }
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_x86_i32_transform_ntt::<W, D>() {
         unsafe {

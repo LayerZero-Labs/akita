@@ -15,6 +15,11 @@ description = "Verifier-facing API surface for the Akita polynomial commitment s
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
+# `rayon` is consumed only through jolt-field's `cfg_join!` macro expansion,
+# which references `rayon::join` at the call site; machete cannot see that.
+[package.metadata.cargo-machete]
+ignored = ["rayon"]
+
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
@@ -26,11 +31,14 @@ akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"
+rayon = { version = "1.10", optional = true }
 
 [features]
 default = ["schedules-default"]
+benchmark-support = []
 schedules-default = ["akita-config/schedules-default"]
 parallel = [
+  "dep:rayon",
   "akita-algebra/parallel",
   "jolt-field/parallel",
   "akita-sumcheck/parallel",
@@ -42,6 +50,12 @@ workspace = true
 [dev-dependencies]
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
-  "schedules-fp128-d128-full",
-  "schedules-fp128-d64-full",
+  "schedules-fp128-d128-dense",
+  "schedules-fp128-d64-dense",
 ] }
+criterion = "0.5"
+
+[[bench]]
+name = "relation_evaluator"
+harness = false
+required-features = ["benchmark-support"]

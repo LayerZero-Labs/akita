@@ -41,6 +41,13 @@ removed_api_patterns=(
   'CommitmentGroupLayout'
   'GeneratedCommitmentGroup'
   'GeneratedScheduleLookupKey'
+  'CleartextWitnessProof'
+  'CleartextWitnessShape'
+  'DirectStep'
+  'GeneratedDirectStep'
+  'direct_witness_bytes'
+  'segment_typed_witness_shape_from_groups'
+  'dispatch_ring_dim_result'
 )
 
 api_pattern="$(IFS='|'; echo "${removed_api_patterns[*]}")"

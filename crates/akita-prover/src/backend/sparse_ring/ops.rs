@@ -1,21 +1,20 @@
 //! Source-typed views and `CpuBackend` kernels for [`super::SparseRingPoly`].
 
-use akita_error::AkitaError;
-use akita_types::{CleartextWitnessProof, FpExtEncoding, RingVec};
-use jolt_field::Unreduced;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring, Unreduced};
+
+use akita_types::FpExtEncoding;
 
 use super::SparseRingPoly;
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
-    DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
-    OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
+    RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
+    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
+use akita_error::AkitaError;
 
 /// Borrowed single-polynomial view over sparse signed ring coefficients.
 ///
@@ -54,7 +53,7 @@ where
     F: Field,
 {
     fn num_ring_elems(&self) -> usize {
-        (1usize << self.num_vars) / D
+        (1usize << self.num_vars).div_ceil(D)
     }
 
     fn num_vars(&self) -> usize {
@@ -122,17 +121,6 @@ where
     }
 }
 
-impl<F, const D: usize> DirectRootWitnessSource<F, D> for SparseRingPoly<F>
-where
-    F: Field + Ring,
-{
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        Ok(CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
-            self.direct_field_evals()?,
-        )))
-    }
-}
-
 impl<F, const D: usize> RootCommitKernel<SparseRingView<'_, F, D>, F, D> for CpuBackend
 where
     F: Field + CanonicalEncoding + Ring + Unreduced,
@@ -157,23 +145,27 @@ where
         source: SparseRingView<'_, F, D>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
+        let blocks = source.poly.blocks_for(D, plan.num_positions_per_block())?;
+        plan.validate(blocks.num_live_blocks())?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
-                eval_outer_scalars,
-                fold_scalars,
-                block_len,
-            } => source
-                .poly
-                .evaluate_and_fold::<D>(eval_outer_scalars, fold_scalars, block_len),
+                live_block_weights,
+                position_weights,
+                num_positions_per_block,
+            } => source.poly.evaluate_and_fold::<D>(
+                live_block_weights,
+                position_weights,
+                num_positions_per_block,
+            ),
             OpeningFoldPlan::Ring {
-                eval_outer_scalars,
-                fold_scalars,
-                block_len,
-            } => {
-                source
-                    .poly
-                    .evaluate_and_fold_ring::<D>(eval_outer_scalars, fold_scalars, block_len)
-            }
+                live_block_weights,
+                position_weights,
+                num_positions_per_block,
+            } => source.poly.evaluate_and_fold_ring::<D>(
+                live_block_weights,
+                position_weights,
+                num_positions_per_block,
+            ),
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
@@ -186,7 +178,7 @@ where
     ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         Ok(source.poly.decompose_fold::<D>(
             plan.challenges,
-            plan.block_len,
+            plan.num_positions_per_block,
             plan.num_digits,
             plan.log_basis,
         ))
@@ -207,13 +199,13 @@ where
             DecomposeFoldBatchPlan::Sparse { .. } => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
             DecomposeFoldBatchPlan::Tensor {
                 tensor,
-                block_len,
+                num_positions_per_block,
                 num_digits,
                 log_basis,
             } => match SparseRingPoly::decompose_fold_tensor_batched::<D>(
                 source.polys,
                 tensor,
-                block_len,
+                num_positions_per_block,
                 num_digits,
                 log_basis,
             )? {

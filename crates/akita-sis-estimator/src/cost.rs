@@ -22,6 +22,12 @@ impl LogCost {
 pub enum CostValue {
     /// Finite cost.
     Finite(LogCost),
+    /// A certified lower bound that is already above the configured target.
+    ///
+    /// The exact cost is intentionally not represented. Consumers may use the
+    /// value only for a target decision when the lower bound is finite and
+    /// meets that target.
+    ProvenAboveTarget(LogCost),
     /// Infinite or unbounded cost.
     Infinity,
 }
@@ -38,6 +44,7 @@ impl CostValue {
     pub const fn log2(self) -> Option<f64> {
         match self {
             Self::Finite(cost) => Some(cost.log2),
+            Self::ProvenAboveTarget(_) => None,
             Self::Infinity => None,
         }
     }
@@ -101,6 +108,10 @@ mod tests {
     #[test]
     fn cost_value_keeps_infinity_explicit() {
         assert_eq!(CostValue::finite_log2(138.0).log2(), Some(138.0));
+        assert_eq!(
+            CostValue::ProvenAboveTarget(LogCost::new(128.0)).log2(),
+            None
+        );
         assert_eq!(CostValue::Infinity.log2(), None);
     }
 

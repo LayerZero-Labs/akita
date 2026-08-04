@@ -27,7 +27,7 @@ env:
   # - fp128: D64 is the actual proof-size optimum for both dense and one-hot
   #   (~20% smaller than D128 while still folding through 8-9 secure levels;
   #   confirmed by `current_d64_onehot_schedule_stays_within_audited_sis_widths`
-  #   and the `best_full_schedule`/`best_onehot_schedule` selectors, which pick
+  #   and the `best_dense_schedule`/`best_onehot_schedule` selectors, which pick
   #   D64 over D128). The fp128 cells therefore track D64, not D128.
   AKITA_BENCH_MODE: onehot_fp128_d64
   AKITA_BENCH_RUNS: "3"
@@ -85,12 +85,18 @@ jobs:
               onehot_fp32_d128:28:1
               onehot_fp64_d128:28:1
               onehot_fp128_d64:32:1
-              onehot_fp128_d64:32:1:recursive
+              onehot_fp128_mixed_dim:32:1
               onehot_fp128_d64:30:4
-          - name: 4-multi-group-recursive
+          - name: 4-multi-group-recursive-direct
+            cases: |
+              onehot_fp128_d64_multi_group_recursive:32:4:direct
+          - name: 5-multi-group-recursive
             cases: |
               onehot_fp128_d64_multi_group_recursive:32:4:recursive
-          - name: 5-distributed
+          - name: 6-multi-group-recursive-w8r2
+            cases: |
+              onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2:32:4:recursive
+          - name: 7-distributed
             cases: |
               onehot_fp128_d64_multi_chunk_w2r2:32:1
               onehot_fp128_d64_multi_chunk_w4r2:32:1
@@ -170,6 +176,7 @@ jobs:
         with:
           rustflags: -D warnings -C target-cpu=x86-64-v3
           cache: false
+          components: rustfmt
 
       - name: Record CPU fingerprint
         run: |
@@ -182,6 +189,9 @@ jobs:
       # produced phantom double-digit deltas.
       - name: Verify profile-ci feature coverage
         run: ./scripts/check_profile_ci_features.sh
+
+      - name: Generate schedule tables
+        run: scripts/generate-schedule-tables.sh
 
       - name: Build merge-base profile binary
         if: github.event_name == 'pull_request' && env.AKITA_BENCH_BASELINE_MODES_OK == '1'
@@ -196,6 +206,9 @@ jobs:
           fi
           (
             cd "$RUNNER_TEMP/bench-base" &&
+            if [ -x ./scripts/generate-schedule-tables.sh ]; then
+              ./scripts/generate-schedule-tables.sh
+            fi
             if python3 scripts/cargo_feature_exists.py akita-pcs profile-ci; then
               CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
                 cargo build --release --quiet --example profile \

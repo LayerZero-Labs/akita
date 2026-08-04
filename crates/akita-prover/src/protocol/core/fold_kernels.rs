@@ -1,7 +1,7 @@
 //! Pure fold kernels and operation adapters for the prover core.
 //!
 //! Everything here passes the spec's kernel discriminator: no function reads a
-//! schedule type (`ExecutionSchedule`, `LevelParams`). Const-D functions receive extracted numbers and typed
+//! typed fold parameters. Const-D functions receive extracted numbers and typed
 //! buffers; the D-free functions are operation adapters that dispatch exactly
 //! once on a schedule-derived ring dimension supplied by the caller.
 
@@ -9,26 +9,22 @@ use super::*;
 use crate::compute::{
     ComputeBackendSetup, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
 };
-use akita_types::{dispatch_for_field, TraceWeightLayout};
-
 /// Batched trace-target data derived from folded claim openings.
 pub(in crate::protocol::core) struct TraceTarget<E: Field> {
     pub(in crate::protocol::core) trace_eval_target: E,
-    pub(in crate::protocol::core) trace_claim_scales: Option<Vec<E>>,
-    pub(in crate::protocol::core) trace_scale: E,
 }
 
-/// Extract the typed `b`/`a` ring-weight slices from a ring multiplier point.
+/// Extract the typed fold/position ring-weight slices from a multiplier point.
 pub(in crate::protocol::core) fn multiplier_ring_weights<F: Field, const D: usize>(
     point: &RingMultiplierOpeningPoint<F>,
 ) -> Result<MultiplierWeightSlices<'_, F, D>, AkitaError> {
-    let b = point.b_rings_trusted::<D>()?.ok_or_else(|| {
-        AkitaError::InvalidInput("ring multiplier must carry ring b weights".to_string())
+    let live_block_weights = point.fold_rings_trusted::<D>()?.ok_or_else(|| {
+        AkitaError::InvalidInput("ring multiplier must carry fold weights".to_string())
     })?;
-    let a = point.a_rings_trusted::<D>()?.ok_or_else(|| {
-        AkitaError::InvalidInput("ring multiplier must carry ring a weights".to_string())
+    let position_weights = point.position_rings_trusted::<D>()?.ok_or_else(|| {
+        AkitaError::InvalidInput("ring multiplier must carry position weights".to_string())
     })?;
-    Ok((b, a))
+    Ok((live_block_weights, position_weights))
 }
 
 fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
@@ -36,7 +32,7 @@ fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
     prepared: Option<&B::PreparedSetup>,
     poly: &Q,
     point: &RingMultiplierOpeningPoint<F>,
-    block_len: usize,
+    num_positions_per_block: usize,
 ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -45,16 +41,16 @@ where
 {
     let plan = if let Some(base_point) = point.as_base() {
         OpeningFoldPlan::Base {
-            eval_outer_scalars: &base_point.b,
-            fold_scalars: &base_point.a,
-            block_len,
+            live_block_weights: &base_point.live_block_weights,
+            position_weights: &base_point.position_weights,
+            num_positions_per_block,
         }
     } else {
-        let (b, a) = multiplier_ring_weights(point)?;
+        let (live_block_weights, position_weights) = multiplier_ring_weights(point)?;
         OpeningFoldPlan::Ring {
-            eval_outer_scalars: b,
-            fold_scalars: a,
-            block_len,
+            live_block_weights,
+            position_weights,
+            num_positions_per_block,
         }
     };
     let OpeningFoldOutput { eval, folded } =
@@ -67,7 +63,7 @@ pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, E, Q, B, c
     prepared: Option<&B::PreparedSetup>,
     polys: &[&Q],
     prepared_point: &PreparedOpeningPoint<F, E>,
-    block_len: usize,
+    num_positions_per_block: usize,
 ) -> Result<FoldedClaimEvals<F, D>, AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -84,12 +80,50 @@ where
             prepared,
             *poly,
             &prepared_point.ring_multiplier_point,
-            block_len,
+            num_positions_per_block,
         )?;
         folded_rings.push(folded_ring);
         folded_blocks.push(folded_block);
     }
     Ok((folded_rings, folded_blocks))
+}
+
+/// Prepare one group's opening point and evaluate all of its claims.
+///
+/// Transcript ownership stays with the protocol layer so preparation-only
+/// padding can never become public transcript state.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn prepare_and_evaluate_opening_group<F, E, Q, B, const D: usize>(
+    backend: &B,
+    prepared: Option<&B::PreparedSetup>,
+    polys: &[&Q],
+    protocol_point: &[E],
+    basis: BasisMode,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
+    alpha_bits: usize,
+) -> Result<(PreparedOpeningPoint<F, E>, FoldedClaimEvals<F, D>), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F>,
+    Q: RootOpeningSource<F, D>,
+    B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
+{
+    let prepared_point = prepare_opening_point::<F, E, D>(
+        protocol_point,
+        basis,
+        num_positions_per_block,
+        num_live_blocks,
+        alpha_bits,
+    )?;
+    let folded = evaluate_claims_at_prepared_point(
+        backend,
+        prepared,
+        polys,
+        &prepared_point,
+        num_positions_per_block,
+    )?;
+    Ok((prepared_point, folded))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -125,20 +159,32 @@ where
     let mut openings = Vec::with_capacity(opening_batch.num_total_polynomials());
     let mut claim_offset = 0usize;
     for (group_index, prepared_point) in prepared_points.iter().enumerate() {
-        let group_layout = opening_batch.group_layout(group_index)?;
+        let group_layout = opening_batch.group_layout(group_index).map_err(|err| {
+            AkitaError::InvalidInput(format!("trace group layout {group_index} failed: {err:?}"))
+        })?;
         let end = claim_offset
             .checked_add(group_layout.num_polynomials())
             .ok_or(AkitaError::InvalidProof)?;
-        let group_folded_rings = folded_rings
-            .get(claim_offset..end)
-            .ok_or(AkitaError::InvalidProof)?;
+        let group_folded_rings = folded_rings.get(claim_offset..end).ok_or_else(|| {
+            AkitaError::InvalidInput(format!(
+                "folded ring range {claim_offset}..{end} is outside {} folded rings",
+                folded_rings.len()
+            ))
+        })?;
         for folded_ring in group_folded_rings {
-            openings.push(scalar_opening_from_folded_ring::<F, E, D>(
-                folded_ring,
-                prepared_point,
-                inner_claim_point,
-                basis,
-            )?);
+            openings.push(
+                scalar_opening_from_folded_ring::<F, E, D>(
+                    folded_ring,
+                    prepared_point,
+                    inner_claim_point,
+                    basis,
+                )
+                .map_err(|err| {
+                    AkitaError::InvalidInput(format!(
+                        "scalar opening group {group_index} failed: {err:?}"
+                    ))
+                })?,
+            );
         }
         claim_offset = end;
     }
@@ -152,98 +198,27 @@ where
             sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
         }
     };
-    let ordinary_trace_eval_target =
-        opening_batch.batched_eval_target(&row_coefficients, &openings)?;
-    let trace_eval_target = reduction.as_ref().map_or(
-        Ok::<_, AkitaError>(ordinary_trace_eval_target),
+    let claim_coefficients = reduction.as_ref().map_or_else(
+        || Ok(row_coefficients.clone()),
         |reduction| {
-            check_extension_opening_reduction_output(
-                reduction.final_claim,
-                ordinary_trace_eval_target,
-                reduction.final_factor,
-            )?;
-            Ok(reduction.final_claim)
+            opening_batch
+                .scale_row_coefficients_by_group(&row_coefficients, &reduction.final_factors)
         },
     )?;
-    let trace_claim_scales = reduction
+    let expected_trace_eval_target = opening_batch
+        .batched_eval_target(&claim_coefficients, &openings)
+        .map_err(|err| {
+            AkitaError::InvalidInput(format!("batched trace evaluation failed: {err:?}"))
+        })?;
+    let trace_eval_target = reduction
         .as_ref()
-        .map(|reduction| vec![reduction.final_factor; opening_batch.num_total_polynomials()]);
-    let trace_scale = reduction
-        .as_ref()
-        .map_or(E::one(), |reduction| reduction.final_factor);
-
-    Ok((
-        TraceTarget {
-            trace_eval_target,
-            trace_claim_scales,
-            trace_scale,
-        },
-        row_coefficients,
-    ))
-}
-
-/// Build the recursive-suffix stage-2 trace table (operation adapter).
-///
-/// `ring_d` is the level's schedule-derived fold ring dimension; `layout` was
-/// derived by the caller from the level geometry.
-pub(in crate::protocol::core) fn build_recursive_stage2_trace_table<F, E>(
-    ring_d: usize,
-    layout: &TraceWeightLayout,
-    prepared: &PreparedOpeningPoint<F, E>,
-    trace_scale: E,
-    output_scale: E,
-    live_x_cols: usize,
-) -> Result<TraceTable<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding + Ring,
-    E: FpExtEncoding<F> + ExtField<F> + Ring,
-{
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        ring_d,
-        |D| {
-            let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
-            build_trace_table_scaled(layout, &public_weights, live_x_cols, output_scale)
-        }
-    )
-}
-
-/// Build the root stage-2 trace table (operation adapter).
-///
-/// `ring_d` / `num_blocks` are extracted level numbers; `layout` was derived by
-/// the caller from the level geometry.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn build_root_stage2_trace_table<F, E>(
-    ring_d: usize,
-    num_blocks: usize,
-    layout: &akita_types::TraceWeightLayout,
-    opening_batch: &OpeningClaimsLayout,
-    prepared_point: &PreparedOpeningPoint<F, E>,
-    row_coefficients: &[E],
-    trace_claim_scales: Option<&[E]>,
-    output_scale: E,
-    live_x_cols: usize,
-) -> Result<TraceTable<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding + Ring,
-    E: FpExtEncoding<F> + ExtField<F> + Ring,
-{
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        ring_d,
-        |D| {
-            let public_weights = trace_public_weights_root_terms::<F, E, D>(
-                num_blocks,
-                opening_batch,
-                prepared_point,
-                row_coefficients,
-                trace_claim_scales,
-            )?;
-            build_trace_table_scaled(layout, &public_weights, live_x_cols, output_scale)
-        }
-    )
+        .map_or(expected_trace_eval_target, |reduction| {
+            reduction.final_claim
+        });
+    if trace_eval_target != expected_trace_eval_target {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok((TraceTarget { trace_eval_target }, row_coefficients))
 }
 
 pub(in crate::protocol::core) fn scalar_opening_from_folded_ring<F, E, const D: usize>(
@@ -316,4 +291,67 @@ where
             )
         })
         .collect()
+}
+
+/// Prepared public evaluation-trace claim and its per-opening coefficients (#314 Stage-2).
+pub(in crate::protocol::core) struct PreparedEvaluationTraceClaim<E: Field> {
+    pub(in crate::protocol::core) claimed_evaluation: E,
+    pub(in crate::protocol::core) claim_coefficients: Vec<E>,
+}
+
+pub(in crate::protocol::core) fn prepare_evaluation_trace_claim<F, E, T>(
+    reduction: &Option<ExtensionOpeningReduction<E>>,
+    openings: &[E],
+    opening_batch: &OpeningClaimsLayout,
+    row_coefficients: Option<Vec<E>>,
+    transcript: &mut T,
+) -> Result<(PreparedEvaluationTraceClaim<E>, Vec<E>), AkitaError>
+where
+    F: Field + CanonicalEncoding + Ring + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F>,
+    T: Transcript<F>,
+{
+    if openings.len() != opening_batch.num_total_polynomials() {
+        return Err(AkitaError::InvalidSize {
+            expected: opening_batch.num_total_polynomials(),
+            actual: openings.len(),
+        });
+    }
+    let row_coefficients = if let Some(row_coefficients) = row_coefficients {
+        row_coefficients
+    } else {
+        append_claim_values_to_transcript::<F, E, T>(openings, transcript);
+        if opening_batch.num_total_polynomials() == 1 {
+            vec![E::one()]
+        } else {
+            sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
+        }
+    };
+    let claim_coefficients = reduction.as_ref().map_or_else(
+        || Ok(row_coefficients.clone()),
+        |reduction| {
+            opening_batch
+                .scale_row_coefficients_by_group(&row_coefficients, &reduction.final_factors)
+        },
+    )?;
+    let expected_trace_eval_target = opening_batch
+        .batched_eval_target(&claim_coefficients, openings)
+        .map_err(|err| {
+            AkitaError::InvalidInput(format!("batched trace evaluation failed: {err:?}"))
+        })?;
+    let trace_eval_target = reduction
+        .as_ref()
+        .map_or(expected_trace_eval_target, |reduction| {
+            reduction.final_claim
+        });
+    if trace_eval_target != expected_trace_eval_target {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok((
+        PreparedEvaluationTraceClaim {
+            claimed_evaluation: trace_eval_target,
+            claim_coefficients,
+        },
+        row_coefficients,
+    ))
 }

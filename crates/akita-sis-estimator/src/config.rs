@@ -32,6 +32,45 @@ pub enum ReductionCostModel {
     },
 }
 
+/// A hard lower bound attached to one independently optimized reduction model.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SisSecurityConstraint {
+    /// Reduction model to optimize.
+    pub reduction_model: ReductionCostModel,
+    /// Minimum accepted `log2(rop)` score.
+    pub minimum_log2_rop: f64,
+}
+
+/// SIS security policy understood by the offline estimator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SisSecurityPolicy {
+    /// ADPS16 quantum LGSA gate at 128 bits.
+    Quantum128BitADPS16,
+}
+
+impl SisSecurityPolicy {
+    /// Stable descriptive label shared with generated runtime policy identity.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Quantum128BitADPS16 => "Quantum128BitADPS16",
+        }
+    }
+
+    /// The single hard ADPS16 quantum constraint.
+    #[must_use]
+    pub const fn adps16_quantum_constraint(self) -> SisSecurityConstraint {
+        match self {
+            Self::Quantum128BitADPS16 => SisSecurityConstraint {
+                reduction_model: ReductionCostModel::Adps16 {
+                    mode: Adps16Mode::Quantum,
+                },
+                minimum_log2_rop: 128.0,
+            },
+        }
+    }
+}
+
 impl Default for ReductionCostModel {
     fn default() -> Self {
         Self::Adps16 {
@@ -161,11 +200,14 @@ pub struct EstimateConfig {
 }
 
 impl EstimateConfig {
-    /// Akita infinity table generation profile: ADPS16 classical + LGSA with
+    /// Akita infinity table generation profile: ADPS16 quantum + LGSA with
     /// exhaustive beta and zeta search.
     #[must_use]
     pub fn akita_infinity_table() -> Self {
         Self {
+            red_cost_model: ReductionCostModel::Adps16 {
+                mode: Adps16Mode::Quantum,
+            },
             optimizer: OptimizerConfig::OptimizeZeta {
                 beta: SearchMode::Exhaustive,
                 zeta: SearchMode::Exhaustive,
@@ -321,5 +363,19 @@ mod tests {
         assert_eq!(reduction_models.len(), 7);
         assert_eq!(shape_models.len(), 5);
         assert_eq!(search_modes.len(), 4);
+    }
+
+    #[test]
+    fn quantum_policy_pins_the_single_adps16_gate() {
+        let policy = SisSecurityPolicy::Quantum128BitADPS16;
+        assert_eq!(
+            policy.adps16_quantum_constraint(),
+            SisSecurityConstraint {
+                reduction_model: ReductionCostModel::Adps16 {
+                    mode: Adps16Mode::Quantum,
+                },
+                minimum_log2_rop: 128.0,
+            }
+        );
     }
 }

@@ -3,13 +3,12 @@ use crate::compute::plans::{
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
     SparseRingCommitRowsPlan,
 };
-use crate::kernels::crt_ntt::NttSlotCacheAny;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey};
-use jolt_field::Unreduced;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_field::{CanonicalEncoding, Field, Unreduced};
+
 use std::sync::Arc;
 
 /// Shared prepared-setup contract for prover compute backends.
@@ -97,14 +96,6 @@ where
         key: NttCacheKey,
     ) -> Result<(), AkitaError>;
 
-    /// Run `f` with a warmed NTT slot for `key`.
-    fn with_ntt_slot<R>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        key: NttCacheKey,
-        f: impl FnOnce(&NttSlotCacheAny) -> Result<R, AkitaError>,
-    ) -> Result<R, AkitaError>;
-
     /// Expanded setup used to prepare this backend context.
     fn prepared_expanded_setup<'a>(
         &self,
@@ -127,8 +118,51 @@ where
     }
 }
 
+/// Opt-in shadow-compression operations.
+#[cfg(feature = "compression-diagnostics")]
+pub trait CompressionDiagnosticBackend<F>: ComputeBackendSetup<F>
+where
+    F: Field + CanonicalEncoding,
+{
+    /// Current byte footprint of backend-owned compression caches, when exposed.
+    ///
+    /// This is diagnostic metadata only and does not participate in protocol
+    /// sizing or setup validation.
+    fn compression_cache_bytes(&self, _prepared: &Self::PreparedSetup) -> Option<usize> {
+        None
+    }
+
+    /// Exact-shape rank-one negative-binary compression products over one matrix prefix.
+    ///
+    /// Compression-capable backends must implement this explicitly. There is no
+    /// default coefficient-form fallback that would hide missing support.
+    fn compression_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        digit_vectors: &[&[[i8; D]]],
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
+}
+
 /// Negacyclic digit mat-vec operations shared by commitment and protocol code.
+#[cfg(not(feature = "compression-diagnostics"))]
 pub trait DigitRowsComputeBackend<F>: ComputeBackendSetup<F>
+where
+    F: Field + CanonicalEncoding,
+{
+    /// Negacyclic single-input digit mat-vec rows.
+    fn digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        row_len: usize,
+        digits: &[[i8; D]],
+        log_basis: u32,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+}
+
+/// Negacyclic digit mat-vec operations shared by commitment and protocol code.
+#[cfg(feature = "compression-diagnostics")]
+pub trait DigitRowsComputeBackend<F>:
+    ComputeBackendSetup<F> + CompressionDiagnosticBackend<F>
 where
     F: Field + CanonicalEncoding,
 {

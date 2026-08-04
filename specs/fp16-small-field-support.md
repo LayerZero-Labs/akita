@@ -103,7 +103,7 @@ The result should let us answer, with implementation-backed numbers, whether fp1
    - The planner rejects configs without a valid fp16 SIS floor instead of silently falling back to fp32/fp64 floors.
 
 4. Planner and generated schedules
-   - `gen_schedule_tables` can emit fp16 full and one-hot schedule tables.
+   - `gen_schedule_tables` can emit fp16 dense and one-hot schedule tables.
    - Generated fp16 schedule modules are wired into `akita-types/src/generated`.
    - `akita-config` exposes fp16 presets comparable to fp32/fp64.
    - Singleton and batched schedule keys are generated for dense and one-hot shapes.
@@ -146,7 +146,7 @@ AKITA_PROFILE_LOG=warn AKITA_MODE=onehot_fp16_d32 AKITA_NUM_VARS=32 \
   cargo run --release --example profile
 
 AKITA_PROFILE_TRACE=0 AKITA_PROFILE_SPAN_CLOSES=0 AKITA_PROFILE_ANSI=0 \
-AKITA_PROFILE_LOG=warn AKITA_MODE=full_fp16_d32 AKITA_NUM_VARS=20 \
+AKITA_PROFILE_LOG=warn AKITA_MODE=dense_fp16_d32 AKITA_NUM_VARS=20 \
   cargo run --release --example profile
 ```
 
@@ -219,7 +219,7 @@ cargo test -p akita-types field_reduction
 cargo test -p akita-planner fp16
 cargo check -p akita-config --bin gen_schedule_tables
 AKITA_MODE=onehot_fp16_d32 AKITA_NUM_VARS=32 cargo run --release --example profile
-AKITA_MODE=full_fp16_d32 AKITA_NUM_VARS=27 cargo run --release --example profile
+AKITA_MODE=dense_fp16_d32 AKITA_NUM_VARS=27 cargo run --release --example profile
 ```
 
 Exact mode names are subject to the profile-mode naming chosen during implementation.
@@ -443,9 +443,9 @@ Extend `crates/akita-config/src/bin/gen_schedule_tables.rs` with fp16 families.
 
 Proposed generated families:
 
-- `Fp16D32Full`
+- `Fp16D32Dense`
 - `Fp16D32OneHot`
-- `Fp16D64Full`
+- `Fp16D64Dense`
 - `Fp16D64OneHot`
 
 Wire D32 as the primary production target and D64 as the only comparison schedule. Do not generate D128-or-larger schedules for any prime family unless a future measured proof-size result reverses the current ordering.
@@ -467,7 +467,7 @@ pub type Field = Prime16Offset99;
 pub type ExtensionField = RingSubfieldFp8<Field>;
 ```
 
-Presets should include full and one-hot variants for D32 and D64. Larger-D preset structs may remain planner-backed experiments, but they must not be wired to generated schedule tables.
+Presets should include dense and one-hot variants for D32 and D64. Larger-D preset structs may remain planner-backed experiments, but they must not be wired to generated schedule tables.
 
 Each preset must select:
 
@@ -536,9 +536,9 @@ Add profile modes mirroring fp32/fp64.
 Suggested modes:
 
 - `onehot_fp16_d32`;
-- `full_fp16_d32`;
+- `dense_fp16_d32`;
 - `onehot_fp16_d64`;
-- `full_fp16_d64`;
+- `dense_fp16_d64`;
 - `all_fp16` if useful for sweeps.
 
 Update relevant docs:

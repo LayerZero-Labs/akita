@@ -3,9 +3,8 @@
 use akita_pcs::fft::{field_pow, primitive_nth_root, rs_extend_fft, SmoothDomain};
 use akita_pcs::SmoothFftField;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use jolt_field::One;
-use jolt_field::{Field, Zero};
-use jolt_field::{Prime128Offset2355, Prime128OffsetA7F7};
+use jolt_field::{Field, One, Prime128Offset2355, Prime128OffsetA7F7, Zero};
+
 use rand::{rngs::StdRng, SeedableRng};
 
 #[cfg(feature = "parallel")]

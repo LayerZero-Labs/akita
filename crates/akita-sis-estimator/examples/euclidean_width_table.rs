@@ -3,7 +3,7 @@ use akita_sis_estimator::{
         generate_euclidean_width_rows, is_full_euclidean_width_table_config, rust_table_arms,
         validate_euclidean_width_rows, EuclideanWidthRow, EuclideanWidthTableConfig,
     },
-    AkitaModulusFamily,
+    AkitaModulusProfileId,
 };
 use std::{
     env, fs,
@@ -134,9 +134,9 @@ fn write_rust_split(
     fs::write(out_dir.join("mod.rs"), rust_mod_source())?;
     let arms = rust_table_arms(rows, config.max_rank);
     for family in [
-        AkitaModulusFamily::Q32,
-        AkitaModulusFamily::Q64,
-        AkitaModulusFamily::Q128,
+        AkitaModulusProfileId::Q32Offset99,
+        AkitaModulusProfileId::Q64Offset59,
+        AkitaModulusProfileId::Q128OffsetA7F7,
     ] {
         fs::write(
             out_dir.join(format!("{}.rs", family.label())),
@@ -148,11 +148,11 @@ fn write_rust_split(
 
 fn rust_mod_source() -> String {
     format!(
-        "{TABLE_HEADER}mod q128;\nmod q32;\nmod q64;\n\nuse super::SisModulusFamily;\n\n/// Generated SIS max-width table: for each `(family, d, collision_l2_sq)` the\n/// maximum secure ring-element width per module rank (`widths[rank - 1]`).\n#[rustfmt::skip]\npub(crate) fn sis_max_widths(\n    family: SisModulusFamily,\n    d: u32,\n    collision_l2_sq: u128,\n) -> Option<&'static [u64]> {{\n    match family {{\n        SisModulusFamily::Q32 => q32::sis_max_widths(d, collision_l2_sq),\n        SisModulusFamily::Q64 => q64::sis_max_widths(d, collision_l2_sq),\n        SisModulusFamily::Q128 => q128::sis_max_widths(d, collision_l2_sq),\n    }}\n}}\n"
+        "{TABLE_HEADER}mod q128;\nmod q32;\nmod q64;\n\nuse super::SisModulusProfileId;\n\n/// Generated SIS max-width table: for each `(family, d, collision_l2_sq)` the\n/// maximum secure ring-element width per module rank (`widths[rank - 1]`).\n#[rustfmt::skip]\npub(crate) fn sis_max_widths(\n    family: SisModulusProfileId,\n    d: u32,\n    collision_l2_sq: u128,\n) -> Option<&'static [u64]> {{\n    match family {{\n        SisModulusProfileId::Q32Offset99 => q32::sis_max_widths(d, collision_l2_sq),\n        SisModulusProfileId::Q64Offset59 => q64::sis_max_widths(d, collision_l2_sq),\n        SisModulusProfileId::Q128OffsetA7F7 => q128::sis_max_widths(d, collision_l2_sq),\n    }}\n}}\n"
     )
 }
 
-fn rust_family_source(family: AkitaModulusFamily, arms: &[String]) -> String {
+fn rust_family_source(family: AkitaModulusProfileId, arms: &[String]) -> String {
     let mut source = format!(
         "{TABLE_HEADER}// Family: {}\n\n#[rustfmt::skip]\npub(super) fn sis_max_widths(d: u32, collision_l2_sq: u128) -> Option<&'static [u64]> {{\n    match (d, collision_l2_sq) {{\n",
         family.label().to_uppercase()
@@ -166,11 +166,11 @@ fn rust_family_source(family: AkitaModulusFamily, arms: &[String]) -> String {
     source
 }
 
-fn parse_families(raw: &str) -> Vec<AkitaModulusFamily> {
+fn parse_families(raw: &str) -> Vec<AkitaModulusProfileId> {
     raw.split(',')
         .filter(|value| !value.trim().is_empty())
         .map(|value| {
-            AkitaModulusFamily::parse(value.trim())
+            AkitaModulusProfileId::parse(value.trim())
                 .unwrap_or_else(|error| fatal(&format!("invalid --families entry: {error}")))
         })
         .collect()

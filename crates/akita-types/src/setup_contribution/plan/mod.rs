@@ -1,52 +1,50 @@
 //! Setup-contribution planning and evaluation.
 //!
-//! The public API has three protocol-facing operations:
-//! prepare the challenge-free plan data, finish it after challenges are known,
-//! and evaluate the resulting setup contribution. Internally, the shape is:
+//! The public API has two protocol-facing operations:
+//! prepare the plan from verifier/prover-local inputs, and evaluate the
+//! resulting setup contribution. Internally, the shape is:
 //!
 //! - `prepare`: static and challenge-dependent plan construction.
-//! - `segments`: the single packed D/B/A segment partition used by every
-//!   evaluator.
+//! - `segments`: the packed D/B/A partition used by the specialized
+//!   single-group direct scanner.
 //! - `setup_index_weight`: the setup-index weight polynomial used by the
 //!   recursive stage-3 setup-product sumcheck.
-//! - `scan`: direct verifier evaluation of the setup matrix against those same
-//!   segment weights.
+//! - `scan`: direct verifier evaluation of the setup matrix. Multi-group scans
+//!   add every group's weight before evaluating each shared setup ring once.
 //!
-//! The important invariant is that `setup_index_weight` and `scan` both use the
-//! same cached [`GroupSetupSegment`] partition. Direct setup evaluation always projects
-//! role dimensions onto one base ring dimension; the ratio-1 case keeps a
-//! segment-based hot loop, but it is an optimization inside that single
-//! base-dimension scan rather than a separate product definition.
+//! The direct scanner and `setup_index_weight` implement the same additive
+//! setup-position weight. Direct setup evaluation always projects role
+//! dimensions onto one base ring dimension. A singleton retains the specialized
+//! segment hot loop; a multi-group evaluation fuses overlapping group views into
+//! one base-dimension scan.
 
 mod kernels;
 mod prepare;
 mod scan;
 mod segments;
 mod setup_index_weight;
+mod structured;
 #[cfg(test)]
 mod test_oracle;
 mod types;
 
-pub use types::{
-    SetupContributionGroupInputs, SetupContributionPlan, SetupContributionStatic,
-    SingleGroupSetupContributionLayout,
-};
-pub(crate) use types::{SetupContributionGroupPlan, SetupContributionGroupStatic};
+pub(crate) use types::validate_setup_inputs;
+pub(crate) use types::{DirectScanWeights, SetupContributionGroupPlan};
+pub use types::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan};
 
-use super::weights::{setup_e_col_weights, setup_t_col_weights, setup_z_col_weights};
-use super::{checked_slice, push_role_boundaries, SetupContributionPlanInputs};
+use super::geometry::SetupProjectionGroupGeometry;
+use super::{checked_slice, SetupProjectionGeometry};
 use crate::dispatch_for_field;
-use crate::layout::RingMatrixView;
+use crate::layout::{CommittedGroupParams, RingMatrixView};
 use crate::proof::AkitaExpandedSetup;
-use akita_error::AkitaError;
+use crate::{OpeningClaimsLayout, RelationAddressGeometry, WitnessLayout};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
+use akita_error::AkitaError;
 #[cfg(test)]
 use kernels::evaluate_weighted_setup_row;
 use kernels::{
     base_ring_segment_inner_sum_typed, dispatch_segment_roles,
-    identity_base_ring_segment_inner_sum_typed, role_projection, GroupSetupSegment,
-    ProjectedRoleWeights, RoleProjection,
+    for_each_base_ring_segment_weight_typed, role_projection, GroupSetupSegment, RoleProjection,
 };
-use segments::{build_packed_segments, validate_group_chunk_layout};

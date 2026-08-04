@@ -14,8 +14,8 @@ use akita_types::{
     project_tensor_factor_value, tensor_opening_split, validate_reduction_tables,
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
-use jolt_field::{ExtField, Field, Zero};
-use jolt_field::{Fold, Unreduced};
+use jolt_field::{ExtField, Field, Fold, Unreduced, Zero};
+
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

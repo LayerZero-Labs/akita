@@ -13,8 +13,42 @@ At a high level:
 
 1. **Bind the instance** and absorb the opening batch shape into the transcript.
 2. **Resolve the schedule** the prover used (`CommitmentConfig::runtime_schedule`), validating `num_vars` against setup capacity before any DP fallback.
-3. **For each level**, replay sumcheck stages, opening checks, and fold or direct paths as dictated by `LevelParams` (see `protocol/levels/`, `levels/root_fold.rs`, `levels/suffix.rs`, `src/stages/`).
-4. **Evaluate the relation matrix** `M` at the derived point ([Matrix evaluation](./verifying/matrix_evaluation.md)).
+3. **Replay the structural folds** in `protocol/core`: the root fold followed by
+   every recursive fold, using the schedule-selected `LevelParams`.
+4. **Check the terminal witness directly** against its predecessor-bound `t`
+   state. The terminal relation is `consistency | A`; it has no outer `u`, B
+   block, D block, or quotient sumcheck.
+
+Root replay reads each commitment group's point directly from
+`PolynomialGroupClaims`.
+The verifier prepares the per-group relation and extension-opening factors from
+that complete point, without reconstructing a common point.
+When EOR is required, the groups enter one batched reduction but retain their
+own public points and native arities.
+
+At a recursive boundary, Stage 2 supplies the next-witness claim
+`(stage2_point, stage2_next_w_eval)`.
+Stage 3 independently proves the setup product and supplies
+`(stage3_setup_point, stage3_setup_prefix_eval)`.
+The successor consumes these as separate witness and setup groups.
+Stage 3 does not re-randomize, project, or serialize the witness claim.
+
+The terminal `A * z` check accepts exactly the signed-i16 coefficient class.
+Decoded coefficients outside `[-32768, 32767]` are rejected before arithmetic;
+there is no alternate i8 or balanced-radix verifier path. The exact
+CRT-capability selector keeps the base profile when
+`2 * width * D * floor(q/2) * 32768 < product(base primes)` and otherwise adds
+the 12289 i16 tail. A schedule whose accumulation exceeds both profiles is
+rejected as an invalid setup.
+
+The verifier warms the strongest representation selected by the validated
+terminal schedule before transcript replay. Prepared forms are derived from
+the coefficient setup, keyed by ring dimension, and never serialized. Groups
+share one base prefix; its optional tail is only as long as the largest
+tail-requiring group. Thus a base-only schedule never constructs the tail, and
+a larger base-only group cannot unnecessarily extend one required by a smaller
+group. Shape and setup-prefix checks happen before either kernel indexes
+prepared state.
 
 The verifier never constructs prover-only polynomial backends or setup expansion
 kernels.

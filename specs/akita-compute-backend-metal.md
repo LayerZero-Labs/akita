@@ -193,8 +193,8 @@ The key surfaces modified by this spec are:
 - [x] The migrated ring/commit plan explicitly covers the current root commit
       and ring-switch NTT work used by `compute_v_rows`, `compute_r_split_eq`,
       `commit_w`, `commit_next_w_with_policy`, dense digit mat-vec, dense
-      coefficient mat-vec, single-row cyclic/negacyclic variants, and strided
-      recursive variants.
+      coefficient mat-vec, single-row cyclic/negacyclic variants, and
+      recursive-witness variants.
 - [x] Ring/CRT parity tests enumerate concrete `(field family, D)` tuples that
       exercise the actual Q32, Q64, and Q128 dispatch branches, including both
       negacyclic and cyclic cache paths.
@@ -238,7 +238,7 @@ New focused tests:
   setup accessor.
 - CPU backend parity for `compute_v_rows`, `compute_r_split_eq`, `commit_w`,
   `commit_next_w_with_policy`, dense digit mat-vec, dense coefficient mat-vec,
-  single-row variants, and strided recursive variants.
+  single-row variants, and recursive-witness variants.
 - Transcript-event equality around prover `v` absorption and the stage
   challenge squeezes that follow it.
 - Concrete CRT/NTT branch tests:
@@ -465,7 +465,7 @@ tied to `NttSlotCache`:
   `mat_vec_mul_ntt_dense_digits_i8`;
 - dense ring-coefficient mat-vec equivalent to `mat_vec_mul_ntt_i8_dense`;
 - single-row cyclic and negacyclic variants;
-- strided recursive witness variants;
+- recursive witness variants;
 - `compute_v_rows` and the transcript-adjacent `v` computation before
   absorption;
 - `compute_r_split_eq` and quotient/cyclic rows used by ring switch;

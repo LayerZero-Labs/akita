@@ -15,7 +15,7 @@ pub const DOMAIN_AKITA_PROTOCOL: &[u8] = b"ak/p";
 pub const ABSORB_COMMITMENT: &[u8] = b"ak/a/cm";
 /// Absorb claimed openings/evaluations before relation reduction (paper §4.2).
 pub const ABSORB_EVALUATION_CLAIMS: &[u8] = b"ak/a/ec";
-/// Absorb the public batch nesting shape for multi-group single-point batching.
+/// Absorb the ordered group-local opening shape.
 pub const ABSORB_BATCH_SHAPE: &[u8] = b"ak/a/bs";
 /// Challenge for the evaluation-to-linear-relation reduction (paper §4.2).
 pub const CHALLENGE_LINEAR_RELATION: &[u8] = b"ak/c/lr";
@@ -35,12 +35,10 @@ pub const ABSORB_SETUP_PREFIX_SLOT: &[u8] = b"ak/a/sps";
 pub const ABSORB_SUMCHECK_ROUND: &[u8] = b"ak/a/scr";
 /// Challenge sampled per sumcheck round (paper §4.3).
 pub const CHALLENGE_SUMCHECK_ROUND: &[u8] = b"ak/c/scr";
-/// Absorb the stage-1 final `s_claim` before the batching challenge.
-pub const ABSORB_SUMCHECK_S_CLAIM: &[u8] = b"ak/a/scs";
+/// Absorb the stage-1 final `range_image_evaluation` before the batching challenge.
+pub const ABSORB_RANGE_IMAGE_EVALUATION: &[u8] = b"ak/a/scs";
 /// Absorb the stage-2 next-witness evaluation handoff before recursion continues.
 pub const ABSORB_STAGE2_NEXT_W_EVAL: &[u8] = b"ak/a/s2w";
-/// Absorb the stage-3 carried next-witness evaluation before recursion continues.
-pub const ABSORB_STAGE3_NEXT_W_EVAL: &[u8] = b"ak/a/s3w";
 /// Absorb stage-1 inter-stage claims before batching them into the next stage.
 pub const ABSORB_SUMCHECK_INTERSTAGE_CLAIM: &[u8] = b"ak/a/sci";
 /// Challenge for batched sumcheck coefficient sampling.
@@ -61,40 +59,43 @@ pub const ABSORB_PROVER_V: &[u8] = b"ak/a/v";
 /// The buffer is appended under [`ABSORB_SPARSE_CHALLENGE`]; this string is not
 /// absorbed by itself into the positional production sponge.
 pub const CHALLENGE_WITNESS_FOLD: &[u8] = b"ak/c/wf";
-/// Challenge label for the left factor `α` in a tensor-shaped fold round.
+/// Challenge label for the high factor `α` in a tensor-shaped fold round.
 ///
-/// Tensor folds sample `√N` left and `√N` right sparse challenges per claim and
-/// use `c_{p,q} = α_p · β_q`. This prefixes the absorb buffer for the **left**
-/// draw batch (under [`ABSORB_SPARSE_CHALLENGE`]). After the left challenges are
-/// expanded, [`ABSORB_TENSOR_FOLD_LEFT`] commits a digest of the left vector
-/// before the right batch is drawn.
-pub const CHALLENGE_TENSOR_FOLD_LEFT: &[u8] = b"ak/c/wfl";
-/// Digest of the sampled left tensor factor, appended between left and right draws.
+/// Tensor folds sample fold-high and fold-low sparse challenges per claim and
+/// use `c_{p,q} = α_p · β_q`. This prefixes the absorb buffer for the
+/// **fold-high** draw batch (under [`ABSORB_SPARSE_CHALLENGE`]). After the
+/// fold-high challenges are expanded, [`ABSORB_FOLD_HIGH`] commits their digest
+/// before the fold-low batch is drawn.
+pub const CHALLENGE_FOLD_HIGH: &[u8] = b"ak/c/wfh";
+/// Digest of the sampled high tensor factor, appended between high and low draws.
 ///
-/// Canonical hash of the left sparse-challenge vector (`tensor_left_digest`).
-/// Prevents choosing the right factor `β` adaptively after seeing `α`. This is
-/// a real transcript append (positional sponge); it is not the challenges themselves.
-pub const ABSORB_TENSOR_FOLD_LEFT: &[u8] = b"ak/a/wtl";
-/// Challenge label for the right factor `β` in a tensor-shaped fold round.
+/// Canonical hash of the fold-high sparse-challenge vector (`fold_high_digest`).
+/// Prevents choosing the fold-low factor `β` adaptively after seeing `α`. This
+/// is a real transcript append (positional sponge); it is not the challenges
+/// themselves.
+pub const ABSORB_FOLD_HIGH: &[u8] = b"ak/a/wfh";
+/// Challenge label for the low factor `β` in a tensor-shaped fold round.
 ///
-/// Prefixes the absorb buffer for the **right** draw batch (under
-/// [`ABSORB_SPARSE_CHALLENGE`]), after [`ABSORB_TENSOR_FOLD_LEFT`]. There is no
-/// symmetric digest absorb for the right vector.
-pub const CHALLENGE_TENSOR_FOLD_RIGHT: &[u8] = b"ak/c/wfr";
+/// Prefixes the absorb buffer for the **fold-low** draw batch (under
+/// [`ABSORB_SPARSE_CHALLENGE`]), after [`ABSORB_FOLD_HIGH`]. There is no
+/// symmetric digest absorb for the fold-low vector.
+pub const CHALLENGE_FOLD_LOW: &[u8] = b"ak/c/wfl";
 
 /// Absorb field-element evaluation claims for γ-batching.
 pub const ABSORB_EVAL_OPENINGS_FIELD: &[u8] = b"ak/a/eof";
-/// Challenge for γ-batching evaluation claims at the same point.
+/// Challenge for γ-batching ordered group-local evaluation claims.
 pub const CHALLENGE_EVAL_BATCH: &[u8] = b"ak/c/eb";
 
-/// Binds the next-level witness at this fold step. Intermediate folds absorb
-/// the Ajtai commitment `u'` to the next-level witness `w` (`next_w_commitment`);
-/// the terminal fold absorbs the cleartext `final_witness` (packed `w`) in the
-/// same wire position. Diagnostic label only; sponge bytes are positional.
+/// Binds the outgoing witness state of an intermediate fold. Ordinary recursive
+/// edges absorb the outer Ajtai commitment `u = B * decompose(t)`; the final
+/// edge into a suffix terminal absorbs that terminal witness's canonical inner
+/// `t` bytes instead. A terminal fold has no outgoing binding. Diagnostic label
+/// only; sponge bytes are positional and the schedule descriptor fixes the
+/// binding policy.
 pub const ABSORB_NEXT_LEVEL_WITNESS_BINDING: &[u8] = b"ak/a/w";
-/// Absorb terminal logical `e_hat` digits before sparse-challenge sampling.
+/// Absorb terminal raw-field `e_folded` bytes before sparse-challenge sampling.
 pub const ABSORB_TERMINAL_E_HAT: &[u8] = b"ak/a/twh";
-/// Absorb terminal final-witness digits outside logical `e_hat`.
+/// Absorb the terminal `z` response after sparse-challenge sampling.
 pub const ABSORB_TERMINAL_W_REMAINDER: &[u8] = b"ak/a/twr";
 /// Challenge for sampling `τ₀` (F_0 range-check batching point, paper §4.3).
 pub const CHALLENGE_TAU0: &[u8] = b"ak/c/t0";
@@ -116,9 +117,8 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_SETUP_PREFIX_SLOT,
     ABSORB_SUMCHECK_ROUND,
     CHALLENGE_SUMCHECK_ROUND,
-    ABSORB_SUMCHECK_S_CLAIM,
+    ABSORB_RANGE_IMAGE_EVALUATION,
     ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_STAGE3_NEXT_W_EVAL,
     ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
     CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
@@ -126,9 +126,9 @@ pub const ALL_LABELS: &[&[u8]] = &[
     CHALLENGE_STOP_CONDITION,
     ABSORB_PROVER_V,
     CHALLENGE_WITNESS_FOLD,
-    CHALLENGE_TENSOR_FOLD_LEFT,
-    ABSORB_TENSOR_FOLD_LEFT,
-    CHALLENGE_TENSOR_FOLD_RIGHT,
+    CHALLENGE_FOLD_HIGH,
+    ABSORB_FOLD_HIGH,
+    CHALLENGE_FOLD_LOW,
     ABSORB_EVAL_OPENINGS_FIELD,
     CHALLENGE_EVAL_BATCH,
     ABSORB_NEXT_LEVEL_WITNESS_BINDING,

@@ -74,10 +74,10 @@ $(X^d+1)$ quotient. (See `crates/akita-types/src/proof/ring_relation.rs`.)
 
 ### The modified relation, parameterized by `num_chunks = W`
 
-Partition the block index set $[B]$ into $W$ contiguous windows
-$\mathcal I_i = [\,iB_{\mathsf{loc}},(i{+}1)B_{\mathsf{loc}})$ with
-$B_{\mathsf{loc}} = B/W$ (require $W \mid B$ and $W$ a power of two, so each window
-is a clean power-of-two block range). Window $i$ gets its **own** sub-witness
+Partition the block index set $[B]$ into $W$ balanced contiguous windows. Let
+$q = \lfloor B/W\rfloor$ and $r = B\bmod W$; the first $r$ windows contain
+$q+1$ blocks and the rest contain $q$. Require $B\ge W$ and $W$ a power of two.
+Window $i$ gets its **own** sub-witness
 $\mathbf w_i = (\widehat{\mathbf e}_i,\widehat{\mathbf t}_i,\mathbf z_i)$ where:
 
 - $\widehat{\mathbf e}_i,\widehat{\mathbf t}_i$ are the original $\widehat{\mathbf e},
@@ -113,11 +113,11 @@ within each window, with the single shared quotient appended:
 This is the layout the [planner](distributed-planner.md) prices
 (`w_ring_element_count_for_chunks`) and the
 [verifier](distributed-verifier-row-eval.md) evaluates (`segment_layout` /
-`eval_at_point`). The per-window segment lengths are:
+`eval_flat_at_point`). The per-window segment lengths are:
 
-- `z_len_i = num_digits_fold · num_digits_commit · block_len` (replicated, full),
-- `e_len_i = num_digits_open · num_claims · blocks_per_chunk` (partitioned),
-- `t_len_i = num_digits_open · n_a · num_t_vectors · blocks_per_chunk` (partitioned),
+- `z_len_i = num_digits_fold · num_digits_inner · num_positions_per_block` (replicated, full),
+- `e_len_i = num_digits_open · num_claims · blocks_in_chunk(i)` (partitioned),
+- `t_len_i = num_digits_open · n_a · num_t_vectors · blocks_in_chunk(i)` (partitioned),
 - per-window stride `L = z_len_i + e_len_i + t_len_i`,
 - one shared `r̂` tail of `num_rows · r_decomp_levels(log_basis)` after window $W-1$,
   where `num_rows` is the **single-machine** relation row count (the windows stack
@@ -149,8 +149,9 @@ count the planner stamped and derive the windows:
 
 ```rust
 let num_chunks = lp.witness_chunk.num_chunks;        // W; 1 on non-modified levels
-let blocks_per_chunk = lp.num_blocks / num_chunks;   // B_loc, power of two
-// window i owns global blocks [ i*B_loc, (i+1)*B_loc )
+let base_blocks = lp.num_live_blocks / num_chunks;
+let extra_blocks = lp.num_live_blocks % num_chunks;
+// the first extra_blocks windows own base_blocks + 1; the rest own base_blocks
 ```
 
 Validate at this boundary, before any witness math (no-panic contract):
@@ -159,7 +160,7 @@ Validate at this boundary, before any witness math (no-panic contract):
 |------|-------|
 | `num_chunks == 0` | `InvalidSetup` |
 | `num_chunks > 1` and not a power of two | `InvalidSetup` |
-| `num_chunks > 1` and `lp.num_blocks % num_chunks != 0` | `InvalidSetup` |
+| `num_chunks > lp.num_live_blocks` | `InvalidSetup` |
 | `num_chunks > 1` under `feature = "zk"` | `InvalidSetup` |
 
 (`zk` blinding segments are not specified for the chunked witness yet; reject
@@ -242,10 +243,10 @@ prover-internal column evaluation `compute_relation_matrix_col_evals`
 
 This is the column-MLE counterpart of the verifier's chunked row-MLE
 (specified in [`distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)).
-If the prover and verifier share the structured slice evaluators
-(`crates/akita-verifier/src/protocol/slice_mle/`), the chunked support added there
-is reused and this step is a thin fold over windows; otherwise the prover gets the
-analogous per-window fold. The **sum-check prover bodies are unchanged** — they
+The prover and verifier share checked `WitnessLayout` geometry while the verifier's
+structured contraction is owned by
+`crates/akita-types/src/setup_contribution/plan/structured.rs`; chunked support is a
+thin fold over those common units. The **sum-check prover bodies are unchanged** — they
 consume `relation_matrix_col_evals` and `w_evals_compact` exactly as before.
 
 ### Reused unchanged
@@ -277,15 +278,13 @@ prover reads `num_chunks` per level and the chunked construction is inert for
 
 ### Terminal level
 
-The terminal direct witness (`build_segment_typed_witness`, z-first
-`SegmentTypedWitness`) is reached after the witness has shrunk. If a terminal
-predecessor is itself a modified (`W > 1`) level, the planner prices the chunked
-terminal **as an upper bound** via the chunked ring count
-(`w_ring_element_count_for_chunks(.., WithoutDBlock, num_chunks)`) — its first
-landing does not yet add a per-chunk `num_segments` to `tail_segment_layout`
-(see [`distributed-planner.md`](distributed-planner.md) Step 5). The prover emits
-the per-window terminal segments matching that count. Otherwise the terminal is the
-ordinary single-segment witness.
+PR #311 removed quotient-backed terminal layouts. The current terminal is the
+structural `WithoutCommitmentBlocks` clear witness and contains only typed
+`z | e | t` segments checked by direct consistency/A and trace equations.
+Chunked/grouped terminal geometry is not currently accepted; this proposal must
+extend `TerminalResponseShape` and the terminal checker before enabling a `W > 1`
+terminal predecessor. It must not price or reconstruct a `WithoutDBlock`
+quotient tail.
 
 ### Prover flow
 
@@ -364,7 +363,7 @@ Produce $W$ full-ambient responses in the decompose-fold path; wire
 
 - **Invariant:** $\sum_i z_i$ == single global fold; each `z_i` full
   `inner_width`; L∞ cap satisfied per window.
-- **Tests:** `fold_responses_sum_to_global_fold` (`W ∈ {2,4,8}`).
+- **Tests:** `fold_responses_sum_to_global_block` (`W ∈ {2,4,8}`).
 
 ### S3 — Modified relation MLE (`compute_relation_matrix_col_evals`)
 
@@ -389,7 +388,7 @@ relation.
 ### S5 — End-to-end prove → verify
 
 With the chunked verifier landed, prove with a multi-chunk preset and verify with
-the same preset for `W ∈ {1,2,4,8}`, `block_len` pow2 (root) and dense (recursive).
+the same preset for `W ∈ {1,2,4,8}`, `num_positions_per_block` pow2 (root) and dense (recursive).
 
 - **Invariant:** the modified-relation proof verifies; `W = 1` matches the legacy
   proof.
@@ -407,7 +406,7 @@ the same preset for `W ∈ {1,2,4,8}`, `block_len` pow2 (root) and dense (recurs
 - [ ] Produced proof size equals the planner `Schedule.total_bytes` for the D64
   multi-chunk presets (shared `r̂` tail keeps its single-machine row count).
 - [ ] The modified-relation proof verifies under the chunked verifier for
-  `W ∈ {2,4,8}` (pow2 and dense `block_len`); `W = 1` matches the legacy proof.
+  `W ∈ {2,4,8}` (pow2 and dense `num_positions_per_block`); `W = 1` matches the legacy proof.
 - [ ] No change to the matvec commit kernels, `compute_relation_quotient`, or the
   `AkitaStage{1,2,3}Prover` bodies (review assertion).
 - [ ] `W > 1` under `zk` rejects with `AkitaError` (no panic).
@@ -416,13 +415,13 @@ the same preset for `W ∈ {1,2,4,8}`, `block_len` pow2 (root) and dense (recurs
 ### Testing Strategy
 
 1. **Layout cross-check** against `segment_layout` (`W ∈ {1,2,4,8}`).
-2. **Fold-response unit:** `fold_responses_sum_to_global_fold`.
+2. **Fold-response unit:** `fold_responses_sum_to_global_block`.
 3. **Relation-MLE unit:** prover `compute_relation_matrix_col_evals` vs the verifier-materialized
    chunked relation row.
 4. **Proof-size parity** vs the planner schedule.
 5. **End-to-end roundtrip** (gated on verifier landing).
 6. **Determinism** and **no-panic negatives** (bad `num_chunks`,
-   `num_chunks ∤ num_blocks`, zk+chunked).
+   `num_chunks > num_live_blocks`, zk+chunked).
 
 ### Performance
 

@@ -6,21 +6,65 @@ use super::*;
 /// Base field for the default fp128 presets.
 pub type Field = Prime128OffsetA7F7;
 
-/// Full-field `D=128` preset for planner-backed experiments.
+/// Dense `D=128` preset for planner-backed experiments.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D128Full;
+pub struct D128Dense;
 
-/// Full-field adaptive `D=64` preset.
+/// Dense adaptive `D=64` preset.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D64Full;
+pub struct D64Dense;
 
 /// Binary onehot generated `D=64` preset.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHot;
 
+/// Binary onehot `D=64`, `K=16` preset with planner-derived schedules.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D64OneHotK16;
+
 /// Binary onehot `D=128` preset for planner-backed experiments.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
+
+/// Binary onehot `D=256` tableless preset for mixed-ring experiments.
+/// fp128 certifies all three commitment roles at this dimension.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D256OneHot;
+
+/// Binary onehot preset with D256 setup generation and planner-selected
+/// per-level commitment dimensions.
+///
+/// Mixed-dimension planning is an offline generation step. Runtime proving
+/// and verification resolve the exact generated catalog row.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MixedDimFp128OneHot;
+
+impl MixedDimFp128OneHot {
+    /// Audited commitment-role dimension candidates used by offline planning.
+    pub const RING_DIMENSION_CANDIDATES: [akita_types::CommitmentRingDims; 4] = [
+        akita_types::CommitmentRingDims::uniform(64),
+        akita_types::CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 64,
+        },
+        akita_types::CommitmentRingDims::uniform(128),
+        akita_types::CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 128,
+        },
+    ];
+}
+
+/// Tableless policy marker for a `D = 512` inner (A-role) root.
+///
+/// fp128 certifies the A role at `D = 512` for the Q128 profile, but not B/D.
+/// Consequently this preset is used only as the envelope type for the
+/// three-band mixed-role builder, which keeps B/D within their audited
+/// dimensions; it cannot produce a standalone uniform-D512 schedule.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D512OneHot;
 
 /// Multi-chunk (distributed-prover) companion of [`D64OneHot`]. Shares every
 /// layout parameter with its sibling but prices the chunked witness layout.
@@ -35,29 +79,29 @@ pub struct D64OneHotMultiChunkW2R2;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHotMultiChunkW4R2;
 
-/// Multi-chunk (distributed-prover) companion of [`D64Full`].
+/// Multi-chunk (distributed-prover) companion of [`D64Dense`].
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D64FullMultiChunk;
+pub struct D64DenseMultiChunk;
 
 impl_proof_optimized_preset!(
-    D128Full,
+    D128Dense,
     Field,
     Field,
-    akita_types::SisModulusFamily::Q128,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
     128,
     128,
     128,
     schedules = (
-        "schedules-fp128-d128-full",
-        "fp128_d128_full",
-        fp128_d128_full_table
+        "schedules-fp128-d128-dense",
+        "fp128_d128_dense",
+        fp128_d128_dense_table
     )
 );
 impl_proof_optimized_preset!(
     D128OneHot,
     Field,
     Field,
-    akita_types::SisModulusFamily::Q128,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
     128,
     128,
     1,
@@ -68,24 +112,24 @@ impl_proof_optimized_preset!(
     )
 );
 impl_proof_optimized_preset!(
-    D64Full,
+    D64Dense,
     Field,
     Field,
-    akita_types::SisModulusFamily::Q128,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
     64,
     128,
     128,
     schedules = (
-        "schedules-fp128-d64-full",
-        "fp128_d64_full",
-        fp128_d64_full_table
+        "schedules-fp128-d64-dense",
+        "fp128_d64_dense",
+        fp128_d64_dense_table
     )
 );
 impl_proof_optimized_preset!(
     D64OneHot,
     Field,
     Field,
-    akita_types::SisModulusFamily::Q128,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
     64,
     128,
     1,
@@ -95,6 +139,52 @@ impl_proof_optimized_preset!(
         "fp128_d64_onehot",
         fp128_d64_onehot_table
     )
+);
+impl_proof_optimized_preset!(
+    D64OneHotK16,
+    Field,
+    Field,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    64,
+    128,
+    1,
+    16
+);
+impl_proof_optimized_preset!(
+    D256OneHot,
+    Field,
+    Field,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    256,
+    128,
+    1,
+    256
+);
+impl_proof_optimized_preset!(
+    MixedDimFp128OneHot,
+    Field,
+    Field,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    256,
+    128,
+    1,
+    256,
+    schedules = (
+        "schedules-fp128-mixed-dim-onehot",
+        "fp128_mixed_dim_onehot",
+        fp128_mixed_dim_onehot_table
+    ),
+    ring_dimension_candidates = &MixedDimFp128OneHot::RING_DIMENSION_CANDIDATES
+);
+impl_proof_optimized_preset!(
+    D512OneHot,
+    Field,
+    Field,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    512,
+    128,
+    1,
+    256
 );
 impl_multi_chunk_companion!(
     D64OneHotMultiChunk,
@@ -118,21 +208,21 @@ impl_multi_chunk_companion!(
     fp128_d64_onehot_multi_chunk_w4r2_table
 );
 impl_multi_chunk_companion!(
-    D64FullMultiChunk,
-    D64Full,
+    D64DenseMultiChunk,
+    D64Dense,
     akita_types::MultiChunkProfileId::W8R2,
-    "schedules-fp128-d64-full-multi-chunk",
-    fp128_d64_full_multi_chunk_table
+    "schedules-fp128-d64-dense-multi-chunk",
+    fp128_d64_dense_multi_chunk_table
 );
 
 /// Concrete fp128 preset selected by a schedule-family query.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fp128Preset {
-    /// Full-field adaptive `D=64` preset.
-    D64Full,
-    /// Full-field `D=128` preset (comparison / legacy; D64 is smaller under
+    /// Dense adaptive `D=64` preset.
+    D64Dense,
+    /// Dense `D=128` preset (comparison / legacy; D64 is smaller under
     /// committed-fold A-role pricing).
-    D128Full,
+    D128Dense,
     /// Binary onehot generated `D=64` preset.
     D64OneHot,
     /// Binary onehot `D=128` preset (comparison / legacy; D64 is smaller under
@@ -144,8 +234,8 @@ impl Fp128Preset {
     /// Ring dimension used by this preset.
     pub const fn ring_dimension(self) -> usize {
         match self {
-            Self::D64Full | Self::D64OneHot => 64,
-            Self::D128Full | Self::D128OneHot => 128,
+            Self::D64Dense | Self::D64OneHot => 64,
+            Self::D128Dense | Self::D128OneHot => 128,
         }
     }
 
@@ -157,8 +247,8 @@ impl Fp128Preset {
     /// Stable human-readable preset name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::D64Full => "D64Full",
-            Self::D128Full => "D128Full",
+            Self::D64Dense => "D64Dense",
+            Self::D128Dense => "D128Dense",
             Self::D64OneHot => "D64OneHot",
             Self::D128OneHot => "D128OneHot",
         }
@@ -171,20 +261,46 @@ pub struct Fp128ScheduleSelection {
     /// Selected concrete preset.
     pub preset: Fp128Preset,
     /// Runtime schedule selected for the supplied lookup key.
-    pub schedule: Schedule,
+    pub schedule: FoldSchedule,
+    /// Non-protocol planner estimate used to compare presets.
+    pub estimate: akita_types::FoldScheduleEstimate,
 }
 
 fn candidate<Cfg: CommitmentConfig>(
     preset: Fp128Preset,
     key: PolynomialGroupLayout,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    // A genuine planner failure (invalid key shape, witness overflow,
-    // SIS-floor gap) propagates rather than being swallowed into a missing
-    // candidate. For any valid key the DP always yields a schedule (it falls
-    // back to a root-direct cleartext schedule), so no preset is silently
-    // dropped — the caller only ever sees `Err` on a real error.
-    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))?;
-    Ok(Some(Fp128ScheduleSelection { preset, schedule }))
+    let lookup_key = AkitaScheduleLookupKey::single(key);
+    let Some(catalog) = Cfg::schedule_catalog() else {
+        return Ok(None);
+    };
+    let Some(entry) = akita_schedules::generated::table_entry(catalog, &lookup_key) else {
+        return Ok(None);
+    };
+    let policy = crate::policy_of::<Cfg>();
+    let estimate = akita_schedules::estimate_proof_bytes(
+        entry,
+        &lookup_key,
+        &policy,
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )?;
+    let schedule = Cfg::runtime_schedule(lookup_key)?;
+    Ok(Some(Fp128ScheduleSelection {
+        preset,
+        schedule,
+        estimate: akita_types::FoldScheduleEstimate {
+            estimated_root_direct_payload_bytes: estimate,
+            estimated_root_stage3_payload_bytes: 0,
+            estimated_recursive_direct_payload_bytes: Vec::new(),
+            estimated_recursive_stage3_payload_bytes: Vec::new(),
+            estimated_terminal_direct_payload_bytes: 0,
+            estimated_terminal_response_payload_bytes: 0,
+            estimated_setup_envelope_ring_elements: 0,
+            first_direct_setup_field_len: None,
+            selected_offload_edges: 0,
+        },
+    }))
 }
 
 fn best_by_exact_bytes<I>(candidates: I) -> Option<Fp128ScheduleSelection>
@@ -193,30 +309,32 @@ where
 {
     candidates.into_iter().flatten().min_by_key(|selection| {
         (
-            selection.schedule.total_bytes,
+            selection
+                .estimate
+                .estimated_proof_payload_bytes()
+                .unwrap_or(usize::MAX),
             selection.preset.ring_dimension(),
         )
     })
 }
 
-/// Select the best full-field fp128 preset for a schedule lookup key.
+/// Select the best dense fp128 preset for a schedule lookup key.
 ///
 /// The key carries singleton and multi-group batch shape data, so
 /// this helper can be used by profile tooling without manually comparing
 /// typed preset schedule tables. A genuine planner failure propagates as an
-/// error; for any valid key every preset yields a schedule (the DP falls back
-/// to a root-direct cleartext schedule), so the best one is always returned.
+/// error; supported keys yield a folded schedule for each candidate preset.
 ///
 /// # Errors
 ///
 /// Propagates a planner / runtime-schedule failure (invalid key shape,
 /// witness overflow, or an uncovered SIS-floor width).
-pub fn best_full_schedule(
+pub fn best_dense_schedule(
     key: PolynomialGroupLayout,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
     Ok(best_by_exact_bytes([
-        candidate::<D64Full>(Fp128Preset::D64Full, key)?,
-        candidate::<D128Full>(Fp128Preset::D128Full, key)?,
+        candidate::<D64Dense>(Fp128Preset::D64Dense, key)?,
+        candidate::<D128Dense>(Fp128Preset::D128Dense, key)?,
     ]))
 }
 

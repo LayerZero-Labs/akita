@@ -40,6 +40,8 @@
 #![warn(unreachable_pub)]
 
 mod scheme;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 
 pub use akita_algebra::Module;
 // Specialized field surfaces mirror jolt-field's curated facades.
@@ -59,19 +61,5 @@ pub use akita_prover::{
 };
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};
-pub use akita_types::{
-    BasisMode, BlockOrder, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims,
-};
-pub use jolt_field::{
-    cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
-};
-pub use jolt_field::{
-    is_registered_prime_offset, pseudo_mersenne_modulus, registered_prime_offset_spec,
-    AdditiveGroup, CanonicalEncoding, Ext2Config, ExtField, Field, Fp128, Fp32, Fp64, FpExt2,
-    FpExt4, FpExt8, Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
-    Prime24Offset3, Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime40Offset195,
-    Prime48Offset59, Prime56Offset27, Prime64Offset59, PrimeOffsetSpec, PseudoMersenne, Ring,
-    PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
-};
+pub use akita_types::{BasisMode, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims};
 pub use scheme::AkitaCommitmentScheme;

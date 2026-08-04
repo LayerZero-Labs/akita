@@ -1,10 +1,10 @@
 //! Mixed ring-dimension-per-level E2E acceptance test for the runtime ring
 //! cutover (specs/runtime-ring-cutover.md §Acceptance / §Testing Strategy).
 //!
-//! Uses the fp128 `D128Full` setup (`gen_ring_dim = 128`) with a hand-built
+//! Uses the fp128 `D128Dense` setup (`gen_ring_dim = 128`) with a hand-built
 //! schedule: fold levels `[0, MIXED_D_SWITCH_FOLD)` at `D = 128`, levels
 //! `[MIXED_D_SWITCH_FOLD, …)` at `D = 64` (stitched from the shipped
-//! `D64Full` table by [`mixed_d_per_level_fixture::mixed_d_per_level_schedule`]).
+//! `D64Dense` table by [`mixed_d_per_level_fixture::mixed_d_per_level_schedule`]).
 //!
 //! The proof is produced and checked exclusively through the **normal public
 //! PCS API** — `AkitaCommitmentScheme::{commit, batched_prove,
@@ -15,29 +15,27 @@
 
 #![allow(missing_docs)]
 
-use jolt_field::Zero;
+use jolt_field::{One, Zero};
 mod common;
-#[path = "mixed_d_per_level/fixture.rs"]
-mod mixed_d_per_level_fixture;
 
 use akita_config::proof_optimized::fp128;
 use akita_error::AkitaError;
+use akita_pcs::test_support::{mixed_d_per_level_schedule, MixedDConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    validate_schedule_ring_dims, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaStage2Proof, CleartextWitnessProof, OpeningClaimsLayout, RingVec, Schedule,
-    SetupContributionMode, Step,
+    setup_matrix_envelope_for_schedule, validate_schedule_ring_dims, AkitaBatchedProof,
+    AkitaScheduleLookupKey, FoldSchedule, NextWitnessBinding, OpeningClaimsLayout,
+    PolynomialGroupLayout, RingVec,
 };
 use common::*;
-use mixed_d_per_level_fixture::mixed_d_per_level_schedule;
 
 /// Envelope preset: root levels at `D = 128`, generation ring dimension 128.
-type Envelope = fp128::D128Full;
+type Envelope = fp128::D128Dense;
 /// Suffix preset: recursive levels at `D = 64`.
-type Suffix = fp128::D64Full;
+type Suffix = fp128::D64Dense;
 
 /// Fold levels `[0, MIXED_D_SWITCH_FOLD)` run at `D = 128`; levels
 /// `[MIXED_D_SWITCH_FOLD, …)` run at `D = 64`.
@@ -53,48 +51,7 @@ const TRANSCRIPT_LABEL: &[u8] = b"test/mixed_d_per_level_e2e";
 /// `batched_prove` and `batched_verify` resolve their schedule through
 /// `effective_batched_schedule::<Cfg>` → `Cfg::get_params_for_prove`, so this
 /// override is the normal public plumbing, not a test-only side door.
-#[derive(Clone, Copy, Debug, Default)]
-struct MixedD128To64;
-
-impl akita_config::CommitmentConfig for MixedD128To64 {
-    type Field = <Envelope as akita_config::CommitmentConfig>::Field;
-    type ExtField = <Envelope as akita_config::CommitmentConfig>::ExtField;
-
-    const D: usize = <Envelope as akita_config::CommitmentConfig>::D;
-
-    fn decomposition() -> akita_types::DecompositionParams {
-        Envelope::decomposition()
-    }
-
-    fn ring_challenge_config(
-        d: usize,
-    ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-        Envelope::ring_challenge_config(d)
-    }
-
-    fn sis_modulus_family() -> akita_types::SisModulusFamily {
-        Envelope::sis_modulus_family()
-    }
-
-    fn max_setup_matrix_size(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-    ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
-        Envelope::max_setup_matrix_size(max_num_vars, max_num_batched_polys)
-    }
-
-    fn basis_range() -> (u32, u32) {
-        Envelope::basis_range()
-    }
-
-    fn get_params_for_prove(opening_batch: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
-        mixed_d_per_level_schedule::<Envelope, Suffix>(
-            opening_batch.max_num_vars(),
-            opening_batch.num_total_polynomials(),
-            MIXED_D_SWITCH_FOLD,
-        )
-    }
-}
+type MixedD128To64 = MixedDConfig<Envelope, Suffix, MIXED_D_SWITCH_FOLD>;
 
 /// Like [`MixedD128To64`], but one suffix fold level advertises a ring
 /// dimension that does not divide the setup's `gen_ring_dim`. Entry
@@ -118,8 +75,8 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
         Envelope::ring_challenge_config(d)
     }
 
-    fn sis_modulus_family() -> akita_types::SisModulusFamily {
-        Envelope::sis_modulus_family()
+    fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+        Envelope::sis_modulus_profile()
     }
 
     fn max_setup_matrix_size(
@@ -133,7 +90,9 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
         Envelope::basis_range()
     }
 
-    fn get_params_for_prove(opening_batch: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+    fn get_params_for_prove(
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<FoldSchedule, AkitaError> {
         let mut schedule = mixed_d_per_level_schedule::<Envelope, Suffix>(
             opening_batch.max_num_vars(),
             opening_batch.num_total_polynomials(),
@@ -141,8 +100,18 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
         )?;
         // Corrupt the first suffix fold level: 96 does not divide the
         // setup's gen_ring_dim (128) and is not a power of two.
-        if let Some(akita_types::Step::Fold(fold)) = schedule.steps.get_mut(MIXED_D_SWITCH_FOLD) {
-            fold.params.ring_dimension = 96;
+        if let Some(fold) = schedule.recursive_folds.get_mut(MIXED_D_SWITCH_FOLD - 1) {
+            let matrix = &fold.params.witness.inner_commit_matrix;
+            fold.params.witness.inner_commit_matrix =
+                akita_types::InnerCommitMatrixParams::new_unchecked(
+                    matrix.security_policy(),
+                    matrix.sis_table_key().table_digest,
+                    matrix.sis_modulus_profile(),
+                    matrix.output_rank(),
+                    matrix.input_width(),
+                    matrix.coeff_linf_bound(),
+                    96,
+                );
         }
         Ok(schedule)
     }
@@ -155,27 +124,32 @@ fn make_envelope_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {
     DensePoly::<F>::from_field_evals(nv, ENVELOPE_D, &evals).expect("dense poly")
 }
 
-fn mixed_schedule() -> Schedule {
+fn mixed_schedule() -> FoldSchedule {
     mixed_d_per_level_schedule::<Envelope, Suffix>(NUM_VARS, 1, MIXED_D_SWITCH_FOLD)
         .expect("mixed-D schedule")
 }
 
-fn assert_mixed_d_fixture_schedule(schedule: &Schedule) {
-    let folds: Vec<_> = schedule.fold_steps().collect();
+fn assert_mixed_d_fixture_schedule(schedule: &FoldSchedule) {
+    let dims = std::iter::once(schedule.root.params.final_group.commitment.d_a())
+        .chain(
+            schedule
+                .recursive_folds
+                .iter()
+                .map(|step| step.params.witness.d_a()),
+        )
+        .chain(std::iter::once(schedule.terminal.params.witness.d_a()))
+        .collect::<Vec<_>>();
     assert!(
-        folds.len() > MIXED_D_SWITCH_FOLD,
+        dims.len() > MIXED_D_SWITCH_FOLD,
         "fixture must reach suffix levels at D={SUFFIX_D}"
     );
-    for (level, fold) in folds.iter().enumerate() {
+    for (level, actual_d) in dims.into_iter().enumerate() {
         let expected_d = if level < MIXED_D_SWITCH_FOLD {
             ENVELOPE_D
         } else {
             SUFFIX_D
         };
-        assert_eq!(
-            fold.params.ring_dimension, expected_d,
-            "fold level {level} ring_dimension"
-        );
+        assert_eq!(actual_d, expected_d, "fold level {level} ring_dimension");
     }
 }
 
@@ -207,7 +181,7 @@ fn prove_mixed_fixture() -> MixedDFixture {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) =
         Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
@@ -219,7 +193,6 @@ fn prove_mixed_fixture() -> MixedDFixture {
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        SetupContributionMode::Direct,
     )
     .expect("mixed-D prove");
 
@@ -250,7 +223,6 @@ fn verify_mixed(
         &mut verifier_transcript,
         verify_input(&fixture.point, &fixture.openings, commitment),
         BasisMode::Lagrange,
-        SetupContributionMode::Direct,
     )
 }
 
@@ -278,39 +250,51 @@ fn truncate_ring_vec(rv: &mut RingVec<F>, new_len: usize) {
 fn mixed_d_schedule_shape_and_ring_dim_validation() {
     let schedule = mixed_schedule();
     assert_mixed_d_fixture_schedule(&schedule);
-    assert_eq!(schedule.num_fold_levels(), 4);
 
     init_rayon_pool();
     run_on_large_stack(|| {
         let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
         let schedule = mixed_schedule();
         validate_schedule_ring_dims(&schedule, setup.expanded.seed()).expect("ring dims valid");
-        for (level, expected_d) in [
-            (0, ENVELOPE_D),
-            (1, ENVELOPE_D),
-            (2, SUFFIX_D),
-            (3, SUFFIX_D),
-        ] {
-            let Step::Fold(step) = &schedule.steps[level] else {
-                panic!("level {level} is not a fold step");
-            };
-            assert_eq!(step.params.d_a(), expected_d, "level {level} d_a");
-        }
+        assert_mixed_d_fixture_schedule(&schedule);
         let mut unique = std::collections::BTreeSet::new();
-        for level in 0..schedule.num_fold_levels() {
-            let Step::Fold(step) = &schedule.steps[level] else {
-                panic!("level {level} is not a fold step");
-            };
-            let dims = step.params.role_dims;
+        let root_dims = schedule.root.params.final_group.commitment.role_dims();
+        unique.insert(root_dims.inner);
+        unique.insert(root_dims.outer);
+        unique.insert(root_dims.opening);
+        for step in &schedule.recursive_folds {
+            let dims = step.params.witness.role_dims();
             unique.insert(dims.inner);
             unique.insert(dims.outer);
             unique.insert(dims.opening);
         }
+        unique.insert(schedule.terminal.params.witness.d_a());
         assert_eq!(
             unique.into_iter().collect::<Vec<_>>(),
             vec![SUFFIX_D, ENVELOPE_D]
         );
     });
+}
+
+#[test]
+fn tableless_mixed_d_setup_uses_the_synthetic_schedule_envelope() {
+    type TablelessMixedD = MixedDConfig<fp128::D256OneHot, fp128::D64OneHot, 1>;
+    type TablelessScheme = AkitaCommitmentScheme<TablelessMixedD>;
+    const TABLELESS_NUM_VARS: usize = 20;
+
+    let schedule = TablelessMixedD::runtime_schedule(AkitaScheduleLookupKey::single(
+        PolynomialGroupLayout::singleton(TABLELESS_NUM_VARS),
+    ))
+    .expect("tableless mixed-D schedule");
+    let required = setup_matrix_envelope_for_schedule(&schedule, TablelessMixedD::D)
+        .expect("synthetic schedule envelope");
+    let configured = TablelessMixedD::max_setup_matrix_size(TABLELESS_NUM_VARS, 1)
+        .expect("mixed-D setup envelope");
+    assert!(configured.max_setup_len >= required.max_setup_len);
+
+    let setup = TablelessScheme::setup_prover(TABLELESS_NUM_VARS, 1)
+        .expect("tableless mixed-D prover setup");
+    assert!(setup.expanded.seed().max_setup_len >= required.max_setup_len);
 }
 
 #[test]
@@ -321,12 +305,8 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
 
         // The proof must exercise the folded recursive path across both ring
         // dimensions: root fold + 3 recursive steps.
-        assert!(
-            matches!(fixture.proof.root, AkitaBatchedRootProof::Fold(_)),
-            "mixed-D fixture must exercise the folded recursive prove path"
-        );
         assert_eq!(
-            fixture.proof.steps.len() + 1,
+            fixture.proof.num_fold_levels(),
             mixed_schedule().num_fold_levels(),
             "proof must carry one step per scheduled fold level"
         );
@@ -382,19 +362,28 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
             let _: AkitaError = err;
         }
 
+        // A value-level root commitment-row tamper must fail root replay.
+        {
+            let mut commitment = fixture.commitment.clone();
+            let mut coeffs = commitment.0.coeffs().to_vec();
+            coeffs[0] += F::one();
+            commitment.0 = RingVec::from_coeffs(coeffs);
+            verify_mixed(&fixture, &fixture.proof, &commitment)
+                .expect_err("tampered commitment row must be rejected");
+        }
+
         // Root fold `next_w_commitment` length: size it at the wrong level's
         // ring dimension footprint.
         {
             let mut proof = fixture.proof.clone();
-            let AkitaBatchedRootProof::Fold(root) = &mut proof.root else {
-                panic!("fixture root must be a fold proof");
+            let stage2 = &mut proof.root.stage2;
+            let NextWitnessBinding::OuterCommitment(next_w_commitment) =
+                &mut stage2.next_witness_binding
+            else {
+                panic!("mixed-D fixture root must carry an outer commitment");
             };
-            let stage2 = root
-                .stage2
-                .as_intermediate_mut()
-                .expect("root fold stage2 must be intermediate");
-            let len = stage2.next_w_commitment.coeffs().len();
-            truncate_ring_vec(&mut stage2.next_w_commitment, len / (ENVELOPE_D / SUFFIX_D));
+            let len = next_w_commitment.coeffs().len();
+            truncate_ring_vec(next_w_commitment, len / (ENVELOPE_D / SUFFIX_D));
             verify_mixed(&fixture, &proof, &fixture.commitment)
                 .expect_err("wrong-dim root next_w_commitment must be rejected");
         }
@@ -402,29 +391,26 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // Recursive fold commitment length at every intermediate suffix
         // level: a commitment sized at the OTHER level's dim must be
         // rejected (this is the mixed-D-specific length confusion).
-        for (idx, step) in fixture.proof.steps.iter().enumerate() {
+        for (idx, _) in fixture.proof.recursive_folds.iter().enumerate() {
             let level = idx + 1;
-            if !matches!(step, AkitaLevelProof::Intermediate { .. }) {
-                continue;
-            }
             let mut proof = fixture.proof.clone();
-            let AkitaLevelProof::Intermediate { stage2, .. } = &mut proof.steps[idx] else {
-                unreachable!();
+            let inner = &mut proof.recursive_folds[idx].stage2;
+            let NextWitnessBinding::OuterCommitment(next_w_commitment) =
+                &mut inner.next_witness_binding
+            else {
+                continue;
             };
-            let AkitaStage2Proof::Intermediate(inner) = stage2 else {
-                panic!("intermediate level {level} must carry intermediate stage2");
-            };
-            let len = inner.next_w_commitment.coeffs().len();
+            let len = next_w_commitment.coeffs().len();
             // Rescale the commitment as if it had been produced at the wrong
             // level's ring dimension.
             let wrong_len = len * expected_dim(level.saturating_sub(1)) / expected_dim(level + 1);
             let new_len = if wrong_len == len { len / 2 } else { wrong_len };
             if new_len >= len {
-                let mut coeffs = inner.next_w_commitment.coeffs().to_vec();
+                let mut coeffs = next_w_commitment.coeffs().to_vec();
                 coeffs.resize(new_len, F::zero());
-                inner.next_w_commitment = RingVec::from_coeffs(coeffs);
+                *next_w_commitment = RingVec::from_coeffs(coeffs);
             } else {
-                truncate_ring_vec(&mut inner.next_w_commitment, new_len);
+                truncate_ring_vec(next_w_commitment, new_len);
             }
             verify_mixed(&fixture, &proof, &fixture.commitment).expect_err(
                 "recursive fold commitment sized at the wrong level's dim must be rejected",
@@ -434,9 +420,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // Fold `v` vector length (D · ŵ at the level's own dim).
         {
             let mut proof = fixture.proof.clone();
-            let AkitaLevelProof::Intermediate { v, .. } = &mut proof.steps[0] else {
-                panic!("first recursive step must be intermediate");
-            };
+            let v = &mut proof.recursive_folds[0].v;
             let len = v.coeffs().len();
             truncate_ring_vec(v, len / 2);
             verify_mixed(&fixture, &proof, &fixture.commitment)
@@ -447,24 +431,8 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // from the cleartext terminal witness (which lives at D = 64 here).
         {
             let mut proof = fixture.proof.clone();
-            let terminal = proof
-                .steps
-                .last_mut()
-                .and_then(AkitaLevelProof::as_terminal_mut)
-                .expect("fixture must end in a terminal step");
-            let witness = terminal
-                .stage2_mut()
-                .final_witness_mut()
-                .expect("terminal step must carry final witness");
-            match witness {
-                CleartextWitnessProof::SegmentTyped(segment) => {
-                    segment.z_payloads[0].pop();
-                }
-                CleartextWitnessProof::FieldElements(elems) => {
-                    let len = elems.coeffs().len();
-                    truncate_ring_vec(elems, len.saturating_sub(1));
-                }
-            }
+            let witness = proof.terminal.terminal_response_mut();
+            witness.z_payloads[0].pop();
             verify_mixed(&fixture, &proof, &fixture.commitment)
                 .expect_err("wrong-length terminal witness must be rejected");
         }
@@ -472,27 +440,29 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // Terminal witness digit-field (e_fields) length.
         {
             let mut proof = fixture.proof.clone();
-            let terminal = proof
-                .steps
-                .last_mut()
-                .and_then(AkitaLevelProof::as_terminal_mut)
-                .expect("fixture must end in a terminal step");
-            let witness = terminal
-                .stage2_mut()
-                .final_witness_mut()
-                .expect("terminal step must carry final witness");
-            if let CleartextWitnessProof::SegmentTyped(segment) = witness {
-                let len = segment.e_fields.coeffs().len();
-                truncate_ring_vec(&mut segment.e_fields, len.saturating_sub(1));
-                verify_mixed(&fixture, &proof, &fixture.commitment)
-                    .expect_err("wrong-length terminal e_fields must be rejected");
-            }
+            let witness = proof.terminal.terminal_response_mut();
+            let len = witness.e_fields.coeffs().len();
+            truncate_ring_vec(&mut witness.e_fields, len.saturating_sub(1));
+            verify_mixed(&fixture, &proof, &fixture.commitment)
+                .expect_err("wrong-length terminal e_fields must be rejected");
+        }
+
+        // Terminal t segment is the predecessor-bound inner state and must be
+        // linked to the response by the direct A relation.
+        {
+            let mut proof = fixture.proof.clone();
+            let witness = proof.terminal.terminal_response_mut();
+            let mut coeffs = witness.t_fields.coeffs().to_vec();
+            coeffs[0] += F::one();
+            witness.t_fields = RingVec::from_coeffs(coeffs);
+            verify_mixed(&fixture, &proof, &fixture.commitment)
+                .expect_err("tampered terminal t_fields must be rejected");
         }
     });
 }
 
 #[test]
-fn mixed_d_malformed_hint_digit_length_rejected() {
+fn mixed_d_malformed_hint_inner_rows_rejected() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let poly = make_envelope_dense_poly(NUM_VARS, 0xcede_0001);
@@ -511,8 +481,8 @@ fn mixed_d_malformed_hint_digit_length_rejected() {
 
         let poly_refs = [&poly];
 
-        // Hint with no per-polynomial digit streams at all.
-        let empty_hint = AkitaCommitmentHint::<F>::new(Vec::new());
+        // Hint with no per-polynomial A rows at all.
+        let empty_hint = AkitaCommitmentHint::<F>::new(ENVELOPE_D, Vec::new()).expect("empty hint");
         let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
         Scheme::batched_prove(
             &setup,
@@ -520,15 +490,16 @@ fn mixed_d_malformed_hint_digit_length_rejected() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            SetupContributionMode::Direct,
         )
-        .expect_err("prove must reject a hint with a missing digit stream");
+        .expect_err("prove must reject a hint with missing inner rows");
 
-        // Hint whose digit stream is sized at the wrong level's ring
-        // dimension (D=64 stride for the D=128 root) with a wrong length.
+        // Hint whose semantic rows declare the suffix dimension instead of
+        // the root A dimension.
         let wrong_dim_hint = AkitaCommitmentHint::<F>::singleton(
-            akita_types::DigitBlocks::zeroed(vec![1], SUFFIX_D).expect("digit blocks"),
-        );
+            RingVec::from_coeffs_with_ring_dim(vec![F::zero(); SUFFIX_D], SUFFIX_D)
+                .expect("inner rows"),
+        )
+        .expect("wrong-dimension hint");
         let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
         Scheme::batched_prove(
             &setup,
@@ -536,9 +507,8 @@ fn mixed_d_malformed_hint_digit_length_rejected() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            SetupContributionMode::Direct,
         )
-        .expect_err("prove must reject a hint digit stream sized at the wrong level's dim");
+        .expect_err("prove must reject hint rows at the wrong A dimension");
     });
 }
 
@@ -565,7 +535,7 @@ fn mixed_d_schedule_with_non_dividing_level_dim_is_rejected() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = BadScheme::setup_verifier(&setup);
+        let verifier_setup = BadScheme::setup_verifier(&setup).expect("verifier setup");
         let (commitment, hint) =
             BadScheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
@@ -579,7 +549,6 @@ fn mixed_d_schedule_with_non_dividing_level_dim_is_rejected() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            SetupContributionMode::Direct,
         )
         .expect_err("prove must reject a level dim that does not divide gen_ring_dim");
 
@@ -593,7 +562,6 @@ fn mixed_d_schedule_with_non_dividing_level_dim_is_rejected() {
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitment),
             BasisMode::Lagrange,
-            SetupContributionMode::Direct,
         )
         .expect_err("verify must reject a level dim that does not divide gen_ring_dim");
     });

@@ -13,8 +13,8 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    let num_blocks = blocks.len();
-    if num_blocks == 0 {
+    let num_live_blocks = blocks.len();
+    if num_live_blocks == 0 {
         return vec![];
     }
     let n_a = ntt_mat.len();
@@ -26,14 +26,14 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
         .unwrap_or(0);
     let inner_width = mat_width.min(max_data_width);
     if inner_width == 0 || n_a == 0 {
-        return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
+        return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_live_blocks];
     }
 
     let digit_bound = balanced_digit_abs_bound(log_basis);
     let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
         .expect("single i8 CRT term must fit supported parameters");
     if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS
-        && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
+        && num_live_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
         && inner_width == max_data_width
     {
         if inner_width <= safe_width {
@@ -63,7 +63,7 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
     let tile_width = aligned_i8_tile_width(base_tile_width::<W, K, D>(), inner_width, num_digits);
     let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
     drive_block_chunked_matvec(
-        num_blocks,
+        num_live_blocks,
         n_a,
         inner_width,
         safe_width,
@@ -76,7 +76,7 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
             let digit_offset = start - ring_start * num_digits;
             let tile_len = end - start;
 
-            for block_idx in 0..num_blocks {
+            for block_idx in 0..num_live_blocks {
                 let block = blocks[block_idx];
                 if ring_start >= block.len() {
                     continue;
@@ -135,94 +135,5 @@ pub(super) fn mat_vec_mul_i8_dense_with_params<
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     mat_vec_mul_i8_with_params_impl::<F, W, K, D, false>(
         ntt_mat, blocks, num_digits, log_basis, params,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn mat_vec_mul_i8_strided_with_params<
-    F: Field + CanonicalEncoding,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
-    coeffs: &[CyclotomicRing<F, D>],
-    num_blocks: usize,
-    block_len: usize,
-    num_digits: usize,
-    log_basis: u32,
-    params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    if num_blocks == 0 {
-        return vec![];
-    }
-    let n_a = ntt_mat.len();
-    let mat_width = ntt_mat.first().map_or(0, |row| row.len());
-    let inner_width = mat_width.min(block_len.saturating_mul(num_digits));
-    if inner_width == 0 || n_a == 0 {
-        return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
-    }
-
-    let digit_bound = balanced_digit_abs_bound(log_basis);
-    let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
-        .expect("single i8 CRT term must fit supported parameters");
-    if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS
-        && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
-        && inner_width == block_len.saturating_mul(num_digits)
-        && inner_width <= safe_width
-    {
-        return mat_vec_mul_i8_strided_block_parallel_with_params(
-            ntt_mat, coeffs, num_blocks, block_len, num_digits, log_basis, params,
-        );
-    }
-
-    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
-    let tile_width = aligned_i8_tile_width(base_tile_width::<W, K, D>(), inner_width, num_digits);
-    let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
-    drive_block_chunked_matvec(
-        num_blocks,
-        n_a,
-        inner_width,
-        safe_width,
-        tile_width,
-        chunk_width,
-        params,
-        |accs, start, end| {
-            let ring_start = start / num_digits;
-            let ring_end = ((end - 1) / num_digits) + 1;
-            let digit_offset = start - ring_start * num_digits;
-            let tile_len = end - start;
-
-            for (block_idx, block_accs) in accs.iter_mut().enumerate() {
-                let mut partial_coeffs = Vec::with_capacity(ring_end.saturating_sub(ring_start));
-                for col in ring_start..ring_end {
-                    let seq = block_idx + col * num_blocks;
-                    let Some(coeff) = coeffs.get(seq) else {
-                        break;
-                    };
-                    partial_coeffs.push(*coeff);
-                }
-                if partial_coeffs.is_empty() {
-                    continue;
-                }
-
-                let all_digits = decompose_block_i8(&partial_coeffs, num_digits, log_basis);
-                let available = all_digits.len().saturating_sub(digit_offset);
-                let n = tile_len.min(available);
-
-                for (j, digit) in all_digits[digit_offset..digit_offset + n]
-                    .iter()
-                    .enumerate()
-                {
-                    if is_zero_plane(digit) {
-                        continue;
-                    }
-                    let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
-                    for (acc, mat_row) in block_accs.iter_mut().zip(ntt_mat.iter()) {
-                        accumulate_pointwise_product_into(acc, &mat_row[start + j], &ntt_d, params);
-                    }
-                }
-            }
-        },
     )
 }

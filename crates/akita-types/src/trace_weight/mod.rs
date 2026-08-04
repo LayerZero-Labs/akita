@@ -6,6 +6,7 @@
 
 mod build;
 mod eval;
+mod evaluation_trace;
 mod layout;
 mod stage2;
 mod trace_table;
@@ -16,20 +17,25 @@ mod stage2_compact;
 mod tests;
 
 pub use build::{
-    build_trace_weight_table_field_block_weights, build_trace_weight_table_field_terms,
-    build_trace_weight_table_ring_block_weights, build_trace_weight_table_ring_terms,
+    build_trace_weight_table_field_live_block_weights, build_trace_weight_table_field_terms,
+    build_trace_weight_table_ring_live_block_weights, build_trace_weight_table_ring_terms,
 };
 pub use eval::{
     eval_trace_terms_closed, eval_trace_weight_at_point, TraceFieldBlockOpening,
     TraceOpeningAtPoint, TraceRingBlockOpening, TraceTerm,
 };
-pub use layout::{TraceChunkLayout, TraceWeightLayout};
+pub use evaluation_trace::{
+    ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
+    scale_evaluation_trace_claim_coefficients, EvaluationTraceGroupParameters,
+    EvaluationTraceInputs,
+};
+pub use layout::TraceWeightLayout;
 pub use stage2::{
     build_multi_group_root_stage2_trace_table, build_trace_claim_multi_group_root,
-    build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
-    eval_dense_trace_table, root_trace_block_opening, trace_public_weights_recursive,
-    trace_public_weights_root_terms, trace_terms_recursive, trace_terms_root,
-    trace_weight_layout_from_segment, TraceClaim, TracePublicWeights,
+    build_trace_claim_root, build_trace_table_scaled, eval_dense_trace_table,
+    root_trace_block_opening, trace_public_weights_recursive, trace_public_weights_root_terms,
+    trace_terms_recursive, trace_terms_root, trace_weight_layout_from_segment, TraceClaim,
+    TracePublicWeights, TraceTermBatch,
 };
 pub use trace_table::{TraceSparseColumn, TraceTable};
 
@@ -42,7 +48,7 @@ mod test_only {
     use akita_error::AkitaError;
     use jolt_field::Field;
 
-    use super::TraceWeightLayout;
+    use super::layout::TraceWeightLayout;
 
     pub(crate) fn trace_weight_mle_eval<E: Field>(
         layout: &TraceWeightLayout,

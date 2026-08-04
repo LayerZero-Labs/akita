@@ -18,8 +18,8 @@
 
 #![allow(missing_docs)]
 
-use jolt_field::One;
-use jolt_field::Zero;
+use jolt_field::{CanonicalEncoding, One, Zero};
+
 mod common;
 
 use akita_config::proof_optimized::fp128;
@@ -34,7 +34,7 @@ use common::{
     dense_field_evals, init_rayon_pool, opening_from_poly, prove_input, random_point,
     run_on_large_stack, verify_input, F,
 };
-use jolt_field::CanonicalEncoding;
+
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -46,15 +46,15 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 /// Number of variables for the polynomial we actually commit/prove/verify.
 ///
 /// This is chosen to ensure these tests exercise a folded schedule (not the
-/// root-direct fast path) while keeping CI runtime reasonable.
+/// small supported folded path) while keeping CI runtime reasonable.
 const POLY_NV: usize = 16;
 /// How many polynomials we actually commit in the "same size" tests.
 const USE_BATCH: usize = 1;
 
 fn assert_folded_proof(label: &str, proof: &AkitaBatchedProof<F, F>) {
     assert!(
-        !proof.is_root_direct(),
-        "{label} should exercise a folded proof path, not the root-direct fast path"
+        proof.num_fold_levels() >= 2,
+        "{label} should exercise a folded proof path"
     );
 }
 
@@ -129,7 +129,8 @@ where
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup =
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
     let (commitment, hint) =
         AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)
@@ -153,7 +154,6 @@ where
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("prove");
     assert_folded_proof("single dense setup-capacity round trip", &proof);
@@ -165,7 +165,6 @@ where
         &mut verifier_transcript,
         verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("verify");
 }
@@ -191,7 +190,7 @@ where
     } else {
         D
     };
-    let total_ring = layout.num_blocks * layout.block_len;
+    let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     assert_eq!(
         total_ring * D,
         1usize << poly_nv,
@@ -213,7 +212,8 @@ where
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup =
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
     let (commitment, hint) =
         AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)
@@ -237,7 +237,6 @@ where
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("prove");
     assert_folded_proof("single onehot setup-capacity round trip", &proof);
@@ -249,9 +248,42 @@ where
         &mut verifier_transcript,
         verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("verify");
+
+    assert!(
+        proof.num_fold_levels() >= 2,
+        "folded-only protocol requires at least two folds"
+    );
+    let mut tampered = proof.clone();
+    let witness = tampered.terminal.terminal_response_mut();
+    let mut t_coeffs = witness.t_fields.coeffs().to_vec();
+    t_coeffs[0] += F::one();
+    witness.t_fields = akita_types::RingVec::from_coeffs(t_coeffs);
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
+    AkitaCommitmentScheme::<Cfg>::batched_verify(
+        &tampered,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        BasisMode::Lagrange,
+    )
+    .expect_err("tampering predecessor-bound terminal t must be rejected");
+
+    let mut wrong_binding = proof.clone();
+    wrong_binding.root.stage2.next_witness_binding =
+        akita_types::NextWitnessBinding::OuterCommitment(akita_types::RingVec::from_coeffs(
+            Vec::new(),
+        ));
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
+    AkitaCommitmentScheme::<Cfg>::batched_verify(
+        &wrong_binding,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        BasisMode::Lagrange,
+    )
+    .expect_err("schedule/proof binding mismatch must reject without panic");
 }
 
 /// Batched dense round-trip: commit `commit_batch` dense polynomials of
@@ -294,7 +326,8 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup =
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
     let poly_refs: Vec<&DensePoly<F>> = polys.iter().collect();
     let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack)
@@ -315,7 +348,6 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched prove");
     assert_folded_proof("batched dense setup-capacity round trip", &proof);
@@ -327,16 +359,15 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         &mut verifier_transcript,
         verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched verify");
 }
 
 /// Batched onehot round-trip.
 ///
-/// Important: onehot polys bake their `(r_vars, m_vars)` block split in at
+/// Important: onehot polys bake their `(block_index_bits, position_index_bits)` block split in at
 /// construction time, unlike dense polys which rebuild blocks from the
-/// prover-supplied `block_len`. Under batched commits that split must match
+/// prover-supplied `num_positions_per_block`. Under batched commits that split must match
 /// the layout the prover will use, which is
 /// `test_support::akita_batched_root_layout(nv, setup_polys)` — i.e., sized
 /// for the setup's `max_num_batched_polys`, not for a lone poly.
@@ -360,7 +391,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     } else {
         D
     };
-    let total_ring = layout.num_blocks * layout.block_len;
+    let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     assert_eq!(total_ring * D, 1usize << poly_nv);
     let total_chunks = total_ring * D / k;
 
@@ -387,7 +418,8 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup =
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
     let poly_refs: Vec<&OneHotPoly<F, usize>> = polys.iter().collect();
     let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack)
@@ -408,7 +440,6 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched onehot prove");
     assert_folded_proof("batched onehot setup-capacity round trip", &proof);
@@ -420,7 +451,6 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         &mut verifier_transcript,
         verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched onehot verify");
 }
@@ -517,15 +547,15 @@ macro_rules! preset_module {
 // default `runtime_schedule` fallback, so bare presets suffice — even
 // tables-only configs (`D128*` has no table at all).
 preset_module!(
-    d128_full,
-    fp128::D128Full,
+    d128_dense,
+    fp128::D128Dense,
     128,
     run_dense_e2e,
     run_dense_batched_e2e
 );
 preset_module!(
-    d64_full,
-    fp128::D64Full,
+    d64_dense,
+    fp128::D64Dense,
     64,
     run_dense_e2e,
     run_dense_batched_e2e

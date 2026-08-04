@@ -20,6 +20,12 @@ use std::marker::PhantomData;
 use std::mem;
 use std::panic::Location;
 
+#[cfg(test)]
+thread_local! {
+    static LAGRANGE_SPLIT_OPERATION_COUNTS: std::cell::Cell<(usize, usize)> =
+        const { std::cell::Cell::new((0, 0)) };
+}
+
 /// Maximum memory budget for one materialized equality-table allocation family.
 ///
 /// This is deliberately separate from serialization's generic sequence cap:
@@ -31,6 +37,18 @@ pub const MAX_MATERIALIZED_EQ_TABLE_BYTES: usize = 1 << 30;
 pub struct EqPolynomial<E: Field>(PhantomData<E>);
 
 impl<E: Field> EqPolynomial<E> {
+    #[inline]
+    fn split_lagrange_parent(value: E, coordinate: E) -> (E, E) {
+        let right = value * coordinate;
+        let left = value - right;
+        #[cfg(test)]
+        LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| {
+            let (multiplications, subtractions) = counts.get();
+            counts.set((multiplications + 1, subtractions + 1));
+        });
+        (left, right)
+    }
+
     fn table_len(num_vars: usize) -> Result<usize, AkitaError> {
         let shift = u32::try_from(num_vars).map_err(|_| AkitaError::InvalidSize {
             expected: usize::BITS as usize,
@@ -110,6 +128,22 @@ impl<E: Field> EqPolynomial<E> {
         Self::evals_with_scaling(r, None)
     }
 
+    /// Compute the first `len` entries of the little-endian equality table.
+    ///
+    /// The split representation keeps this bounded by the requested prefix
+    /// instead of allocating the full `2^|r|` table. This is useful when a
+    /// protocol has a padded row domain but only materializes its live rows.
+    pub fn evals_prefix(r: &[E], len: usize) -> Result<Vec<E>, AkitaError> {
+        let split = SplitEqEvals::new(r)?;
+        if len > split.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: split.len(),
+                actual: len,
+            });
+        }
+        (0..len).map(|index| split.eval_at(index)).collect()
+    }
+
     /// Compute the full evaluation table with optional scaling:
     /// `scaling_factor · eq(r, x)` for all `x ∈ {0,1}^n`.
     ///
@@ -137,10 +171,10 @@ impl<E: Field> EqPolynomial<E> {
         evals[0] = scaling_factor.unwrap_or(E::one());
         let mut len = 1usize;
         for &t in r.iter().rev() {
-            let one_minus_t = E::one() - t;
             for j in (0..len).rev() {
-                evals[2 * j + 1] = evals[j] * t;
-                evals[2 * j] = evals[j] * one_minus_t;
+                let (left, right) = Self::split_lagrange_parent(evals[j], t);
+                evals[2 * j] = left;
+                evals[2 * j + 1] = right;
             }
             len *= 2;
         }
@@ -183,11 +217,11 @@ impl<E: Field> EqPolynomial<E> {
         for j in 0..r.len() {
             let idx = r.len() - 1 - j;
             let t = r[idx];
-            let one_minus_t = E::one() - t;
             let prev_len = 1 << j;
             for i in (0..prev_len).rev() {
-                result[j + 1][2 * i + 1] = result[j][i] * t;
-                result[j + 1][2 * i] = result[j][i] * one_minus_t;
+                let (left, right) = Self::split_lagrange_parent(result[j][i], t);
+                result[j + 1][2 * i] = left;
+                result[j + 1][2 * i + 1] = right;
             }
         }
         Ok(result)
@@ -216,8 +250,7 @@ impl<E: Field> EqPolynomial<E> {
                 .par_iter_mut()
                 .zip(evals_right.par_iter_mut())
                 .for_each(|(x, y)| {
-                    *y = *x * r_i;
-                    *x -= *y;
+                    (*x, *y) = Self::split_lagrange_parent(*x, r_i);
                 });
 
             size *= 2;
@@ -273,6 +306,34 @@ impl<E: Field> SplitEqEvals<E> {
     /// Number of outer (high-bit) indices, `2^{n-m}`.
     pub fn out_len(&self) -> usize {
         self.e_out.len()
+    }
+
+    /// Total number of Boolean-hypercube entries represented by the split
+    /// tables.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.e_in.len() * self.e_out.len()
+    }
+
+    /// Whether either split factor is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.e_in.is_empty() || self.e_out.is_empty()
+    }
+
+    /// Evaluate the split equality table at one little-endian index.
+    ///
+    /// This keeps callers that need a sparse or strided subset of the table
+    /// from materializing the full `2^n` vector.
+    pub fn eval_at(&self, index: usize) -> Result<E, AkitaError> {
+        if index >= self.len() {
+            return Err(AkitaError::InvalidInput(format!(
+                "split equality index {index} is outside table length {}",
+                self.len()
+            )));
+        }
+        let in_len = self.in_len();
+        Ok(self.e_out[index / in_len] * self.e_in[index % in_len])
     }
 }
 
@@ -347,6 +408,24 @@ mod tests {
     }
 
     #[test]
+    fn split_eq_evals_supports_sparse_lookup() {
+        let mut rng = StdRng::seed_from_u64(0x5EED);
+        let point: Vec<F> = (0..17).map(|_| F::random(&mut rng)).collect();
+        let split = SplitEqEvals::new(&point).unwrap();
+        assert_eq!(split.len(), 1 << point.len());
+        for index in [0, 1, 127, 1 << 16, (1 << 17) - 1] {
+            let bits: Vec<F> = (0..point.len())
+                .map(|bit| F::from_u64(((index >> bit) & 1) as u64))
+                .collect();
+            assert_eq!(
+                split.eval_at(index).unwrap(),
+                EqPolynomial::mle(&point, &bits).unwrap()
+            );
+        }
+        assert!(split.eval_at(split.len()).is_err());
+    }
+
+    #[test]
     fn evals_cached_last_matches_evals() {
         let mut rng = StdRng::seed_from_u64(0xCD);
         for n in 1..8 {
@@ -356,6 +435,26 @@ mod tests {
             assert_eq!(cached.len(), n + 1);
             assert_eq!(cached[0], vec![F::one()]);
             assert_eq!(*cached.last().unwrap(), table);
+        }
+    }
+
+    #[test]
+    fn serial_expansions_use_one_multiply_and_subtract_per_parent() {
+        for num_vars in 0..9 {
+            let point = vec![F::from_u64(7); num_vars];
+            let expected = (1usize << num_vars) - 1;
+
+            LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| counts.set((0, 0)));
+            EqPolynomial::evals_serial(&point, None).unwrap();
+            LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| {
+                assert_eq!(counts.get(), (expected, expected), "serial n={num_vars}");
+            });
+
+            LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| counts.set((0, 0)));
+            EqPolynomial::evals_cached(&point).unwrap();
+            LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| {
+                assert_eq!(counts.get(), (expected, expected), "cached n={num_vars}");
+            });
         }
     }
 

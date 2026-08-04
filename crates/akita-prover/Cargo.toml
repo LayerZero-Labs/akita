@@ -40,6 +40,7 @@ akita-config = { version = "0.1.0", path = "../akita-config", features = [
 
 [features]
 default = ["schedules-default"]
+compression-diagnostics = []
 schedules-default = ["akita-config/schedules-default"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 parallel = [

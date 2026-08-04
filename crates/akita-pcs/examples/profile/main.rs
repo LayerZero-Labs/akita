@@ -1,7 +1,9 @@
 #![allow(missing_docs)]
 
 mod modes;
+mod parallel;
 mod report;
+#[cfg_attr(feature = "profile-onehot-fp128-d64", allow(dead_code))]
 mod workload;
 
 use std::env;
@@ -28,11 +30,7 @@ fn env_usize(name: &str, default: usize) -> usize {
 }
 
 fn main() {
-    #[cfg(feature = "parallel")]
-    rayon::ThreadPoolBuilder::new()
-        .stack_size(64 * 1024 * 1024)
-        .build_global()
-        .ok();
+    parallel::ProfileThreadPools::init();
 
     if cfg!(debug_assertions) && env::var("AKITA_ALLOW_DEBUG_PROFILE").as_deref() != Ok("1") {
         eprintln!("examples/profile must be run with --release for meaningful timings.");
@@ -47,7 +45,7 @@ fn main() {
         .unwrap_or(25);
     let num_polys = env_usize("AKITA_NUM_POLYS", 1);
 
-    // Keep the default explicit: old adaptive `full`/`onehot` selectors are
+    // Keep the default explicit: adaptive `dense`/`onehot` selectors are
     // intentionally not part of the profile surface. D64 is the default fp128
     // profile preset (`onehot_fp128_d64`); use best_*_schedule to compare D64 vs D128.
     let mode = env::var("AKITA_MODE").unwrap_or_else(|_| "onehot_fp128_d64".to_string());
@@ -103,11 +101,16 @@ fn main() {
     tracing::info!(num_vars = nv, num_polys, mode = %mode, "profile config");
     modes::log_active_fp128_prime_probe();
 
-    if mode == "all" {
-        modes::run_all_profile_modes(nv);
-    } else {
-        modes::run_profile_mode(&mode, nv, num_polys);
+    #[cfg(not(feature = "profile-onehot-fp128-d64"))]
+    {
+        if mode == "all" {
+            modes::run_all_profile_modes(nv);
+        } else {
+            modes::run_profile_mode(&mode, nv, num_polys);
+        }
     }
+    #[cfg(feature = "profile-onehot-fp128-d64")]
+    modes::run_profile_mode(&mode, nv, num_polys);
 
     if enable_trace {
         tracing::info!(trace_file = %trace_file, "Done. Trace saved");

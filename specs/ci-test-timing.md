@@ -170,7 +170,7 @@ cargo nextest run --profile ci --cargo-profile ci-test \
 ```bash
 cargo test -p akita-config --features all-schedules generated_schedule_tables_match_key_planner
 cargo test -p akita-config --no-default-features --test schedule_catalog_feature_off
-cargo test -p akita-config --features schedules-fp128-d64-onehot,schedules-fp128-d64-full --test schedule_catalog_miswire
+cargo test -p akita-config --features schedules-fp128-d64-onehot,schedules-fp128-d64-dense --test schedule_catalog_miswire
 ```
 
 `test-timing` should run even when `test` fails so the PR still receives a

@@ -9,7 +9,7 @@ mod decompose_fold_partitioned;
 mod rotated_accum;
 
 pub use decompose_fold_partitioned::{
-    balanced_digit_decompose_fold_partitioned, balanced_ring_decompose_fold_partitioned,
+    balanced_ring_decompose_fold_partitioned, balanced_tight_digit_fold_partitioned,
     cached_digit_decompose_fold_partitioned,
 };
 
@@ -451,14 +451,14 @@ pub fn build_decompose_fold_witness<F: Field + CanonicalEncoding, const D: usize
 /// Fused base-field fold + evaluation shared by backends that do not specialize it.
 pub(crate) fn fused_evaluate_and_fold_base<F, const D: usize>(
     folded: Vec<CyclotomicRing<F, D>>,
-    eval_outer_scalars: &[F],
+    live_block_weights: &[F],
 ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>)
 where
     F: Field + CanonicalEncoding,
 {
     let eval = folded
         .iter()
-        .zip(eval_outer_scalars.iter())
+        .zip(live_block_weights.iter())
         .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
             acc + f_i.scale(s_i)
         });
@@ -468,14 +468,14 @@ where
 /// Fused ring-multiplier fold + evaluation shared by backends that do not specialize it.
 pub(crate) fn fused_evaluate_and_fold_ring<F, const D: usize>(
     folded: Vec<CyclotomicRing<F, D>>,
-    eval_outer_scalars: &[CyclotomicRing<F, D>],
+    live_block_weights: &[CyclotomicRing<F, D>],
 ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>)
 where
     F: Field,
 {
     let eval = folded
         .iter()
-        .zip(eval_outer_scalars.iter())
+        .zip(live_block_weights.iter())
         .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
             acc + (*f_i * *s_i)
         });
@@ -493,7 +493,7 @@ mod tests {
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallenge;
-    use akita_types::sis::compute_num_digits_full_field;
+    use akita_types::sis::compute_num_digits_field_width;
     use jolt_field::CanonicalEncoding;
     use jolt_field::One;
     use jolt_field::Ring;
@@ -632,7 +632,7 @@ mod tests {
     fn partitioned_full_challenge_accumulate_matches_generic_sparse_path() {
         type F = Fp64<4294967197>;
         const D: usize = 32;
-        let block_len = 3;
+        let num_positions_per_block = 3;
         let num_digits = 4;
         let coeffs: Vec<_> = (0..6)
             .map(|idx| {
@@ -688,16 +688,16 @@ mod tests {
         let fused = balanced_ring_decompose_fold_partitioned::<F, D>(
             &coeffs,
             &challenges,
-            block_len,
+            num_positions_per_block,
             num_digits,
             &params,
         );
 
-        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut generic = vec![[0i32; D]; num_positions_per_block * num_digits];
         let mut digit_buf = vec![[0i8; D]; num_digits];
         for (block_idx, challenge) in challenges.iter().enumerate() {
-            let block_start = block_idx * block_len;
-            for local_idx in 0..block_len {
+            let block_start = block_idx * num_positions_per_block;
+            for local_idx in 0..num_positions_per_block {
                 let ring = &coeffs[block_start + local_idx];
                 decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, &params);
                 let base = local_idx * num_digits;
@@ -714,7 +714,7 @@ mod tests {
     fn partitioned_high_density_d32_challenge_uses_rotated_path() {
         type F = Fp64<4294967197>;
         const D: usize = 32;
-        let block_len = 3;
+        let num_positions_per_block = 3;
         let num_digits = 4;
         let coeffs: Vec<_> = (0..6)
             .map(|idx| {
@@ -762,16 +762,16 @@ mod tests {
         let mixed = balanced_ring_decompose_fold_partitioned::<F, D>(
             &coeffs,
             &challenges,
-            block_len,
+            num_positions_per_block,
             num_digits,
             &params,
         );
 
-        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut generic = vec![[0i32; D]; num_positions_per_block * num_digits];
         let mut digit_buf = vec![[0i8; D]; num_digits];
         for (block_idx, challenge) in challenges.iter().enumerate() {
-            let block_start = block_idx * block_len;
-            for local_idx in 0..block_len {
+            let block_start = block_idx * num_positions_per_block;
+            for local_idx in 0..num_positions_per_block {
                 let ring = &coeffs[block_start + local_idx];
                 decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, &params);
                 let base = local_idx * num_digits;
@@ -788,7 +788,7 @@ mod tests {
     fn partitioned_high_density_d64_challenge_uses_rotated_path() {
         type F = Fp64<4294967197>;
         const D: usize = 64;
-        let block_len = 2;
+        let num_positions_per_block = 2;
         let num_digits = 3;
         let coeffs: Vec<_> = (0..4)
             .map(|idx| {
@@ -837,16 +837,16 @@ mod tests {
         let mixed = balanced_ring_decompose_fold_partitioned::<F, D>(
             &coeffs,
             &challenges,
-            block_len,
+            num_positions_per_block,
             num_digits,
             &params,
         );
 
-        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut generic = vec![[0i32; D]; num_positions_per_block * num_digits];
         let mut digit_buf = vec![[0i8; D]; num_digits];
         for (block_idx, challenge) in challenges.iter().enumerate() {
-            let block_start = block_idx * block_len;
-            for local_idx in 0..block_len {
+            let block_start = block_idx * num_positions_per_block;
+            for local_idx in 0..num_positions_per_block {
                 let ring = &coeffs[block_start + local_idx];
                 decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, &params);
                 let base = local_idx * num_digits;
@@ -865,7 +865,7 @@ mod tests {
         const D: usize = 32;
 
         let log_basis = 4u32;
-        let num_digits = compute_num_digits_full_field(128, log_basis);
+        let num_digits = compute_num_digits_field_width(128, log_basis);
         let q = (-F::one()).to_canonical_u128() + 1;
         let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
             num_digits, log_basis, q,

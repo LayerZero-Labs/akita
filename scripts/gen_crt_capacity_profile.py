@@ -49,7 +49,7 @@ PROFILES = [
 
 RING_DIMS = [32, 64, 128, 256]
 ROLES = [
-    ("balanced32", 32),
+    ("balanced128", 128),
     ("raw128", 128),
     ("zpre32768", 32768),
 ]
@@ -139,8 +139,8 @@ def main() -> int:
     print("2 * width * D * floor(q / 2) * rhs_abs_bound < product(CRT primes)")
     print("```")
     print()
-    print("`balanced32` is the maximum supported balanced i8 digit bound for")
-    print("`log_basis = 6`. `raw128` is the raw signed-i8 recursive-witness bound.")
+    print("`balanced128` is the maximum supported balanced i8 digit bound for")
+    print("`log_basis = 8`. `raw128` is the raw signed-i8 recursive-witness bound.")
     print("`zpre32768` is included to document when fused split-eq must use its exact")
     print("fallback for centered `z_pre` values; zero means one centered term does not fit.")
     print()
@@ -159,7 +159,7 @@ def main() -> int:
     print()
     print("## Safe Widths")
     print()
-    print("| Profile | K | Limb | D | balanced32 | raw128 | zpre32768 |")
+    print("| Profile | K | Limb | D | balanced128 | raw128 | zpre32768 |")
     print("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
     for profile in PROFILES:
         crt_product = product(profile["primes"])
@@ -198,7 +198,7 @@ def main() -> int:
     print("The reference `4xi16` row remains here only as experiment evidence.")
     print()
     print(
-        "The production profiles all have nonzero `balanced32` and `raw128` widths at"
+        "The production profiles all have nonzero `balanced128` and `raw128` widths at"
     )
     print(
         "`D in {32, 64, 128, 256}`. The `zpre32768 = 0` entries are acceptable because"

@@ -1,6 +1,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
-use akita_types::LevelParams;
+use akita_error::AkitaError;
+use akita_types::CommittedGroupParams;
 use jolt_field::Field;
 
 // ===========================================================================
@@ -38,25 +39,22 @@ use jolt_field::Field;
 pub struct CommitInnerPlan {
     /// Number of A rows to produce.
     pub n_a: usize,
-    /// Root block length in ring elements.
-    pub block_len: usize,
+    /// Number of ring-element positions in each root block.
+    pub num_positions_per_block: usize,
     /// Number of balanced digits used for the A-side commit.
-    pub num_digits_commit: usize,
-    /// Number of balanced digits used when opening (recomposition width).
-    pub num_digits_open: usize,
-    /// Logarithm of the gadget basis.
-    pub log_basis: u32,
+    pub num_digits_inner: usize,
+    /// Logarithm of the committed source-witness gadget basis.
+    pub log_basis_inner: u32,
 }
 
 impl CommitInnerPlan {
     /// Build inner-commit parameters from a validated commitment layout.
-    pub fn from_level(params: &LevelParams) -> Self {
+    pub fn from_level(params: &CommittedGroupParams) -> Self {
         Self {
-            n_a: params.a_key.row_len(),
-            block_len: params.block_len,
-            num_digits_commit: params.num_digits_commit,
-            num_digits_open: params.num_digits_open,
-            log_basis: params.log_basis,
+            n_a: params.inner_commit_matrix.output_rank(),
+            num_positions_per_block: params.num_positions_per_block,
+            num_digits_inner: params.num_digits_inner,
+            log_basis_inner: params.log_basis_inner,
         }
     }
 }
@@ -71,21 +69,70 @@ pub enum OpeningFoldPlan<'a, F: Field, const D: usize> {
     /// Base multiplier point: scalar fold weights.
     Base {
         /// Outer evaluation scalars applied to the folded blocks.
-        eval_outer_scalars: &'a [F],
+        live_block_weights: &'a [F],
         /// Per-block fold scalars.
-        fold_scalars: &'a [F],
-        /// Block length in ring elements.
-        block_len: usize,
+        position_weights: &'a [F],
+        /// Number of ring-element positions in each block.
+        num_positions_per_block: usize,
     },
     /// Ring multiplier point: ring-element fold weights.
     Ring {
         /// Outer evaluation ring multipliers applied to the folded blocks.
-        eval_outer_scalars: &'a [CyclotomicRing<F, D>],
+        live_block_weights: &'a [CyclotomicRing<F, D>],
         /// Per-block fold ring multipliers.
-        fold_scalars: &'a [CyclotomicRing<F, D>],
-        /// Block length in ring elements.
-        block_len: usize,
+        position_weights: &'a [CyclotomicRing<F, D>],
+        /// Number of ring-element positions in each block.
+        num_positions_per_block: usize,
     },
+}
+
+impl<F: Field, const D: usize> OpeningFoldPlan<'_, F, D> {
+    pub(crate) fn num_positions_per_block(self) -> usize {
+        match self {
+            Self::Base {
+                num_positions_per_block,
+                ..
+            }
+            | Self::Ring {
+                num_positions_per_block,
+                ..
+            } => num_positions_per_block,
+        }
+    }
+
+    /// Validate exact position and live-fold weight lengths at a kernel boundary.
+    pub(crate) fn validate(self, num_live_blocks: usize) -> Result<(), AkitaError> {
+        let (fold_len, position_len, num_positions_per_block) = match self {
+            Self::Base {
+                live_block_weights,
+                position_weights,
+                num_positions_per_block,
+            } => (
+                live_block_weights.len(),
+                position_weights.len(),
+                num_positions_per_block,
+            ),
+            Self::Ring {
+                live_block_weights,
+                position_weights,
+                num_positions_per_block,
+            } => (
+                live_block_weights.len(),
+                position_weights.len(),
+                num_positions_per_block,
+            ),
+        };
+        if !num_positions_per_block.is_power_of_two()
+            || num_live_blocks == 0
+            || position_len != num_positions_per_block
+            || fold_len != num_live_blocks
+        {
+            return Err(AkitaError::InvalidInput(
+                "opening fold weights do not match exact L/F geometry".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Fused evaluate-and-fold output.
@@ -102,8 +149,8 @@ pub struct OpeningFoldOutput<F: Field, const D: usize> {
 pub struct DecomposeFoldPlan<'a> {
     /// Sparse fold challenges, outermost first.
     pub challenges: &'a [SparseChallenge],
-    /// Block length in ring elements.
-    pub block_len: usize,
+    /// Number of ring-element positions in each block.
+    pub num_positions_per_block: usize,
     /// Number of balanced digits.
     pub num_digits: usize,
     /// Logarithm of the gadget basis.
@@ -121,8 +168,8 @@ pub enum DecomposeFoldBatchPlan<'a> {
     Sparse {
         /// Sparse fold challenges, outermost first.
         challenges: &'a [SparseChallenge],
-        /// Block length in ring elements.
-        block_len: usize,
+        /// Number of ring-element positions in each block.
+        num_positions_per_block: usize,
         /// Number of balanced digits.
         num_digits: usize,
         /// Logarithm of the gadget basis.
@@ -132,8 +179,8 @@ pub enum DecomposeFoldBatchPlan<'a> {
     Tensor {
         /// Tensor-structured fold challenges.
         tensor: &'a TensorChallenges,
-        /// Block length in ring elements.
-        block_len: usize,
+        /// Number of ring-element positions in each block.
+        num_positions_per_block: usize,
         /// Number of balanced digits.
         num_digits: usize,
         /// Logarithm of the gadget basis.
@@ -153,8 +200,10 @@ pub struct RingSwitchRelationPlan {
     pub n_b: usize,
     /// Number of A-side quotient rows to produce.
     pub n_a: usize,
-    /// Logarithm of the gadget basis used to produce `e_hat` and `t_hat`.
-    pub log_basis: u32,
+    /// Logarithm of the D/opening gadget basis used to produce `e_hat`.
+    pub log_basis_open: u32,
+    /// Logarithm of the B/outer gadget basis used to produce `t_hat`.
+    pub log_basis_outer: u32,
 }
 
 /// Scalar operation parameters for additional public-row quotient rows.

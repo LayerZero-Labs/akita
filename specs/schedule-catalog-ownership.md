@@ -109,7 +109,7 @@ search is deterministic but not cheap at scale (CI drift tests today spend hundr
 of seconds re-running DP across all shipped keys).
 
 **Generated schedule tables** store the DP output in compact form
-(`GeneratedFoldStep`: `ring_d`, `log_basis`, `m_vars`, `r_vars`, `n_a`, `n_b`,
+(`GeneratedFoldStep`: `ring_d`, `log_basis`, `position_index_bits`, `block_index_bits`, `n_a`, `n_b`,
 `n_d`, optional tier fields). At runtime `schedule_from_entry` expands a table row
 into full `LevelParams` and a `Schedule` with correct proof-size accounting.
 
@@ -187,7 +187,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 ### Invariants
 
 - **DP is the source of truth.** Any shipped catalog row MUST match
-  `find_schedule(key, policy, …)` for the same policy and hooks. Drift guards enforce
+  `find_schedule(key, policy, …)` for the same catalog-bound policy and hooks. Drift guards enforce
   this per catalog (today: `generated_schedule_tables_match_find_schedule`; becomes
   per-family tests in `akita-schedules` and downstream catalogs).
 - **Catalog identity is checked before lookup.** A catalog is not just an entry slice.
@@ -254,7 +254,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
   global `crate::generated::*_table` import block and the `root_fold_is_tensor`
   disambiguation hack they required.
 - [ ] `akita_planner::resolve_schedule(key, policy, ring_challenge_config, fold_challenge_shape_at_level, catalog: Option<GeneratedScheduleTable>)` is the single runtime entry point (catalog passed **by value** because `GeneratedScheduleTable` is `Copy`).
-- [ ] `GeneratedScheduleTable` contains a validated identity, not only `sis_family`:
+- [ ] `GeneratedScheduleTable` contains a validated identity, not only `sis_modulus_profile`:
   generated policy fields, `zk_enabled`, root fold shape, ring dimensions covered by
   the table, and a deterministic digest of `ring_challenge_config(d)` for those
   dimensions.
@@ -274,7 +274,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 - [ ] New workspace crate `crates/akita-schedules` contains all generated table
   modules moved from `akita-planner/src/generated/`.
 - [ ] Root `Cargo.toml` adds `crates/akita-schedules` to `workspace.members`.
-- [ ] Each family is behind a Cargo feature (e.g. `fp128-d64-onehot`, `fp128-d64-full`).
+- [ ] Each family is behind a Cargo feature (e.g. `fp128-d64-onehot`, `fp128-d64-dense`).
 - [ ] `akita-planner` default build contains **no** generated table `.rs` files.
 - [ ] `gen_schedule_tables` writes into `akita-schedules/src/generated/`, emits catalog
   identities, and updates family feature wiring (not `akita-planner`). The binary
@@ -506,7 +506,7 @@ that each return their own `schedule_catalog()`, so the discriminator is deleted
 pub struct GeneratedScheduleCatalogIdentity {
     pub family_name: &'static str,
     pub zk_enabled: bool,
-    pub sis_family: SisModulusFamily,
+    pub sis_modulus_profile: SisModulusProfileId,
     pub ring_dimension: usize,
     pub decomposition: DecompositionParams,
     pub ring_subfield_norm_bound: u32,
@@ -659,9 +659,9 @@ widths without changing planner code.
 
 This replaces the stale incidence generalization plan for scalar same-bundle
 batching. Multi-commitment same-point batching is tracked separately in
-[`multi-group-batching.md`](multi-group-batching.md); until its multi-group key and
-descriptor shape land, scalar lookup must not collapse grouped inputs through
-`new_from_opening_batch`.
+[`multi-group-batching.md`](multi-group-batching.md); grouped roots construct an
+explicit `AkitaScheduleLookupKey` from their final and precommitted groups rather
+than projecting through the scalar `AkitaScheduleLookupKey::from_layout` path.
 
 ### `akita-schedules` crate
 
@@ -682,7 +682,7 @@ descriptor shape land, scalar lookup must not collapse grouped inputs through
 | Feature | Module | Typical preset |
 |---------|--------|----------------|
 | `fp128-d64-onehot` | `fp128_d64_onehot.rs` | `fp128::D64OneHot` |
-| `fp128-d64-full` | `fp128_d64_full.rs` | `fp128::D64Full` |
+| `fp128-d64-dense` | `fp128_d64_dense.rs` | `fp128::D64Dense` |
 | `fp128-d32-onehot` | (new/emitted) | `fp128::D32OneHot` |
 | `fp32-d128-onehot` | `fp32_d128_onehot.rs` | `fp32::D128OneHot` |
 | … | … | … |
@@ -703,12 +703,12 @@ default = []
 zk = ["akita-planner/zk"]
 all-schedules = [
     "fp128-d64-onehot",
-    "fp128-d64-full",
+    "fp128-d64-dense",
     "fp128-d64-onehot-tiered", # non-ZK-only; inert when feature = "zk"
     # every other family
 ]
 fp128-d64-onehot = []
-fp128-d64-full = []
+fp128-d64-dense = []
 ```
 
 `akita-config/Cargo.toml` shape:
@@ -719,13 +719,13 @@ default = ["schedules-default"]
 zk = ["akita-planner/zk", "akita-types/zk", "akita-schedules?/zk"]
 schedules-default = [
     "schedules-fp128-d64-onehot",
-    "schedules-fp128-d64-full",
+    "schedules-fp128-d64-dense",
     "schedules-fp128-d128-onehot",
-    "schedules-fp128-d128-full",
+    "schedules-fp128-d128-dense",
     "schedules-fp32-d128-onehot",
     "schedules-fp32-d256-onehot",
     "schedules-fp64-d128-onehot",
-    "schedules-fp64-d128-full",
+    "schedules-fp64-d128-dense",
     "schedules-fp64-d256-onehot",
 ]
 all-schedules = [
@@ -757,7 +757,7 @@ profile-ci = [
     "akita-config/schedules-fp32-d128-onehot",
     "akita-config/schedules-fp64-d128-onehot",
     "akita-config/schedules-fp128-d64-onehot",
-    "akita-config/schedules-fp128-d64-full",
+    "akita-config/schedules-fp128-d64-dense",
 ]
 ```
 
@@ -830,7 +830,7 @@ of the shipped table it is supposed to profile.
 
 This is the *only* drift that matters for the refactor. Note what is **not** a
 problem: link stripping already falls out of per-preset feature gating. The `profile`
-example names preset *types* (`type Cfg = fp128::D64Full`), which are always
+example names preset *types* (`type Cfg = fp128::D64Dense`), which are always
 available; only the table *data* is feature-gated. So
 `--no-default-features --features parallel,profile-ci` linking the schedule families
 for the bench matrix needs no manifest — it is just a feature list. We do not need a
@@ -848,7 +848,7 @@ profile-ci = [
     "akita-config/schedules-fp32-d128-onehot",
     "akita-config/schedules-fp64-d128-onehot",
     "akita-config/schedules-fp128-d64-onehot",
-    "akita-config/schedules-fp128-d64-full",
+    "akita-config/schedules-fp128-d64-dense",
 ]
 ```
 

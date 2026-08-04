@@ -1233,7 +1233,7 @@ This enum is intentionally left open-ended and is NOT the extensibility contract
   the non-streaming path. The palette is a convenience for the standard CpuBackend
   reduction, not a gate.
 - Risk acknowledged: a fixed encoding enum can become too restrictive (a packed
-  device buffer, a strided layout, a wider small-scalar type). The mitigation is to
+  device buffer, a non-contiguous layout, a wider small-scalar type). The mitigation is to
   keep the palette minimal at first, let real sources drive additions, and rely on
   the generic `S` escape hatch rather than enumerating speculatively. Whether this
   enum is introduced in the first cutover at all, or deferred until a streaming
@@ -1359,7 +1359,7 @@ and load-bearing:
 
 - `JoltPackedPoly` becomes a custom `RootCommitSource` `S`. Its traversal is exactly
   the per-block sparse iterator `for_each_block(block_idx) -> {(pos_in_block,
-  coeff_idx)}` plus `num_blocks` / `block_len` and a density hint. The
+  coeff_idx)}` plus `num_live_blocks` / `num_positions_per_block` and a density hint. The
   `PackedBitLayout` mapping stays inside the source, because the layout is a property
   of how this particular mega-poly is concatenated, not a backend concern.
 - The CpuBackend `commit_inner` kernel owns the strategy zoo currently inlined in the

@@ -1,5 +1,5 @@
 use akita_sis_estimator::{
-    cost_infinity, scalar_sis_from_ring, AkitaModulusFamily, CostValue, EstimateConfig,
+    cost_infinity, scalar_sis_from_ring, AkitaModulusProfileId, CostValue, EstimateConfig,
     EstimatorError, NearestNeighborModel, OptimizerConfig, ReductionCostModel, ShapeModel,
 };
 
@@ -7,7 +7,7 @@ const FLOAT_TOLERANCE: f64 = 1e-6;
 
 #[derive(Debug)]
 struct FixedGoldenRow {
-    family: AkitaModulusFamily,
+    family: AkitaModulusProfileId,
     d: u32,
     rank: u32,
     width: u32,
@@ -63,7 +63,7 @@ fn fixed_infinity_bdgl16_goldens_match_pinned_estimator_trusted_rows() {
 
 #[test]
 fn fixed_infinity_rejects_unsupported_profiles_without_panicking() {
-    let params = scalar_sis_from_ring(AkitaModulusFamily::Q32, 32, 1, 2, 15).unwrap();
+    let params = scalar_sis_from_ring(AkitaModulusProfileId::Q32Offset99, 32, 1, 2, 15).unwrap();
     let config = EstimateConfig {
         red_cost_model: ReductionCostModel::Matzov {
             nearest_neighbor: NearestNeighborModel::Classical,
@@ -134,7 +134,7 @@ fn parse_rows(csv: &str) -> Vec<FixedGoldenRow> {
                 fields[index]
             };
             FixedGoldenRow {
-                family: AkitaModulusFamily::parse(get("family")).unwrap(),
+                family: AkitaModulusProfileId::parse(get("family")).unwrap(),
                 d: parse(get("d")),
                 rank: parse(get("rank")),
                 width: parse(get("width")),
@@ -185,7 +185,10 @@ fn assert_log2_matches(
     match expected {
         ExpectedLog2::Finite(expected) => assert_log2_close(expected, actual, field, row),
         ExpectedLog2::Infinity => assert!(
-            matches!(actual, CostValue::Infinity),
+            matches!(
+                actual,
+                CostValue::Infinity | CostValue::ProvenAboveTarget(_)
+            ),
             "{field}: expected inf, got {actual:?} for {row:?}",
         ),
     }
@@ -201,6 +204,8 @@ fn assert_log2_close(expected: f64, actual: CostValue, field: &str, row: &FixedG
                 actual.log2
             );
         }
-        CostValue::Infinity => panic!("{field}: expected finite {expected}, got inf for {row:?}"),
+        CostValue::ProvenAboveTarget(_) | CostValue::Infinity => {
+            panic!("{field}: expected finite {expected}, got non-finite for {row:?}")
+        }
     }
 }

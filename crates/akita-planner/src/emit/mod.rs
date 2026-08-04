@@ -12,17 +12,21 @@ use std::process::Command;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_error::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, LevelParams, PolynomialGroupLayout,
-    PrecommittedGroupParams, Schedule, SetupContributionMode, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule,
+    OpenCommitMatrixParams, PolynomialGroupLayout, PrecommittedGroupDescriptor, RootFinalChallenge,
+    RootSource, SetupPrefixSlotId, WitnessPartition,
 };
 
-use crate::catalog_identity::expected_catalog_identity;
-use crate::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
-    GeneratedScheduleCatalogIdentity, GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup,
-    GeneratedStep, SisModulusFamily,
-};
 use crate::PlannerPolicy;
+use akita_schedules::expected_catalog_identity;
+use akita_schedules::generated::{
+    GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
+    GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix,
+    GeneratedRecursiveFold, GeneratedRootFinalChallenge, GeneratedRootFinalGroup,
+    GeneratedRootFold, GeneratedRootPrecommittedGroup, GeneratedRootSource,
+    GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput, GeneratedTerminalFold,
+    GeneratedWitnessPartition,
+};
 
 /// One family the emitter writes to `akita-schedules/src/generated/`.
 #[derive(Clone)]
@@ -36,8 +40,8 @@ pub struct EmitSpec {
     pub group_batch_keys: Vec<AkitaScheduleLookupKey>,
     pub emit_group_batch: bool,
     pub output_dir: PathBuf,
-    pub regen: fn(PolynomialGroupLayout) -> Result<Schedule, AkitaError>,
-    pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
+    pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
+    pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
     pub generator_command: &'static str,
@@ -46,68 +50,173 @@ pub struct EmitSpec {
 const MOD_WIRING_BEGIN: &str = "// @generated schedule module wiring begin";
 const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
 
-fn fold_step_from_params(p: &LevelParams) -> GeneratedFoldStep {
-    GeneratedFoldStep {
-        ring_d: p.ring_dimension as u32,
-        log_basis: p.log_basis,
-        m_vars: p.log_block_len() as u32,
-        r_vars: p.log_num_blocks() as u32,
-        n_a: p.a_key.row_len() as u32,
-        n_b: p.b_key.row_len() as u32,
-        n_d: p.d_key.row_len() as u32,
+fn geometry(p: &CommittedGroupParams) -> GeneratedBlockGeometry {
+    GeneratedBlockGeometry {
+        live_ring_elements_per_claim: p.num_live_ring_elements_per_claim as u64,
+        positions_per_block: p.num_positions_per_block as u64,
+        live_blocks: p.num_live_blocks as u64,
     }
 }
 
-fn setup_prefix_group_from_params(
-    p: &LevelParams,
-    include_setup_prefix_group: bool,
-) -> Option<GeneratedSetupPrefixGroup> {
-    include_setup_prefix_group
-        .then_some(p.setup_prefix.as_ref())
-        .flatten()
-        .map(|setup_prefix| {
-            let group = &setup_prefix.commitment_params;
-            GeneratedSetupPrefixGroup {
-                natural_len: setup_prefix.natural_len as u32,
-                m_vars: group.layout.m_vars as u32,
-                r_vars: group.layout.r_vars as u32,
-                n_a: group.a_key.row_len() as u32,
-                n_b: group.b_key.row_len() as u32,
-            }
-        })
+fn committed_group(p: &CommittedGroupParams) -> GeneratedCommittedGroup {
+    GeneratedCommittedGroup {
+        geometry: geometry(p),
+        inner_commit_matrix: GeneratedInnerCommitMatrix {
+            ring_dimension: p.inner_commit_matrix.ring_dimension() as u32,
+            log_basis: p.log_basis_inner,
+        },
+        outer_commit_matrix: GeneratedOuterCommitMatrix {
+            ring_dimension: p.outer_commit_matrix.ring_dimension() as u32,
+            log_basis: p.log_basis_outer,
+            slice_count: 1,
+        },
+    }
 }
 
-fn schedule_to_generated_steps(
-    _key: &AkitaScheduleLookupKey,
-    schedule: &Schedule,
-) -> Vec<GeneratedStep> {
-    schedule
-        .steps
+fn open_matrix_params(p: &OpenCommitMatrixParams, log_basis: u32) -> GeneratedOpenCommitMatrix {
+    GeneratedOpenCommitMatrix {
+        ring_dimension: p.ring_dimension() as u32,
+        log_basis,
+        slice_count: 1,
+    }
+}
+
+fn runtime_witness_partition(p: &WitnessPartition) -> GeneratedWitnessPartition {
+    match p {
+        WitnessPartition::Single => GeneratedWitnessPartition::Single,
+        WitnessPartition::Distributed { num_chunks } => GeneratedWitnessPartition::Distributed {
+            num_chunks: *num_chunks as u32,
+        },
+    }
+}
+
+fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInput {
+    let group = &slot.commitment_params;
+    GeneratedSetupPrefixInput {
+        natural_len: slot.natural_len as u64,
+        d_setup: group.inner_commit_matrix.ring_dimension() as u32,
+        commitment: GeneratedCommittedGroup {
+            geometry: GeneratedBlockGeometry {
+                live_ring_elements_per_claim: group.layout.num_live_ring_elements_per_claim as u64,
+                positions_per_block: group.layout.num_positions_per_block as u64,
+                live_blocks: group.layout.num_live_blocks as u64,
+            },
+            inner_commit_matrix: GeneratedInnerCommitMatrix {
+                ring_dimension: group.inner_commit_matrix.ring_dimension() as u32,
+                log_basis: group.layout.log_basis_inner,
+            },
+            outer_commit_matrix: GeneratedOuterCommitMatrix {
+                ring_dimension: group.outer_commit_matrix.ring_dimension() as u32,
+                log_basis: group.layout.log_basis_outer,
+                slice_count: 1,
+            },
+        },
+    }
+}
+
+fn generated_entry(
+    key: &AkitaScheduleLookupKey,
+    schedule: &FoldSchedule,
+) -> GeneratedFoldScheduleEntry {
+    let root_fold = &schedule.root.params;
+    let root_params = &root_fold.final_group.commitment;
+    let precommitted_groups = key
+        .precommitteds
         .iter()
-        .enumerate()
-        .map(|(idx, step)| match step {
-            Step::Fold(fold) => {
-                let include_setup_prefix_group = idx > 0 && fold.params.setup_prefix.is_some();
-                let setup_prefix_group =
-                    setup_prefix_group_from_params(&fold.params, include_setup_prefix_group);
-                let fold_step = fold_step_from_params(&fold.params);
-                if setup_prefix_group.is_some()
-                    || fold.params.setup_contribution_mode != SetupContributionMode::Direct
-                {
-                    GeneratedStep::FoldWithSetupMetadata(GeneratedFoldStepWithSetupMetadata {
-                        fold: fold_step,
-                        setup_prefix_group,
-                        setup_contribution_mode: fold.params.setup_contribution_mode,
-                    })
-                } else {
-                    GeneratedStep::Fold(fold_step)
-                }
-            }
-            Step::Direct(direct) => GeneratedStep::Direct(GeneratedDirectStep {
-                commit: direct.params.as_ref().map(fold_step_from_params),
-            }),
+        .copied()
+        .zip(&root_fold.precommitted_groups)
+        .map(|(descriptor, group)| GeneratedRootPrecommittedGroup {
+            descriptor,
+            commitment: GeneratedCommittedGroup {
+                geometry: GeneratedBlockGeometry {
+                    live_ring_elements_per_claim: group
+                        .commitment
+                        .layout
+                        .num_live_ring_elements_per_claim
+                        as u64,
+                    positions_per_block: group.commitment.layout.num_positions_per_block as u64,
+                    live_blocks: group.commitment.layout.num_live_blocks as u64,
+                },
+                inner_commit_matrix: GeneratedInnerCommitMatrix {
+                    ring_dimension: group.commitment.inner_commit_matrix.ring_dimension() as u32,
+                    log_basis: group.commitment.layout.log_basis_inner,
+                },
+                outer_commit_matrix: GeneratedOuterCommitMatrix {
+                    ring_dimension: group.commitment.outer_commit_matrix.ring_dimension() as u32,
+                    log_basis: group.commitment.layout.log_basis_outer,
+                    slice_count: 1,
+                },
+            },
         })
-        .collect()
+        .collect::<Vec<_>>();
+    let recursive_folds = schedule
+        .recursive_folds
+        .iter()
+        .map(|step| GeneratedRecursiveFold {
+            witness: committed_group(&step.params.witness),
+            open_commit_matrix: open_matrix_params(
+                &step.params.open_commit_matrix,
+                step.params.witness.log_basis_open,
+            ),
+            incoming_setup_prefix: step
+                .params
+                .incoming_setup_prefix
+                .as_ref()
+                .map(setup_prefix_slot_input),
+            witness_partition: runtime_witness_partition(&step.params.witness_partition),
+        })
+        .collect::<Vec<_>>();
+    let challenge = match root_fold.final_group.challenge {
+        RootFinalChallenge::Flat => GeneratedRootFinalChallenge::Flat,
+        RootFinalChallenge::Tensor { fold_low_len } => GeneratedRootFinalChallenge::Tensor {
+            fold_low_len: fold_low_len as u32,
+        },
+    };
+    let source = match root_fold.final_group.source {
+        RootSource::Dense { coefficient_bits } => GeneratedRootSource::Dense { coefficient_bits },
+        RootSource::OneHot { chunk_size } => GeneratedRootSource::OneHot {
+            chunk_size: chunk_size as u32,
+        },
+    };
+    GeneratedFoldScheduleEntry {
+        root: GeneratedRootFold {
+            final_group: GeneratedRootFinalGroup {
+                layout: key.final_group,
+                source,
+                challenge,
+                commitment: committed_group(root_params),
+            },
+            precommitted_groups: Box::leak(precommitted_groups.into_boxed_slice()),
+            open_commit_matrix: open_matrix_params(
+                &root_fold.open_commit_matrix,
+                root_params.log_basis_open,
+            ),
+            witness_partition: runtime_witness_partition(&root_fold.witness_partition),
+        },
+        recursive_folds: Box::leak(recursive_folds.into_boxed_slice()),
+        terminal: GeneratedTerminalFold {
+            geometry: GeneratedBlockGeometry {
+                live_ring_elements_per_claim: schedule
+                    .terminal
+                    .params
+                    .witness
+                    .num_live_ring_elements_per_claim
+                    as u64,
+                positions_per_block: schedule.terminal.params.witness.num_positions_per_block
+                    as u64,
+                live_blocks: schedule.terminal.params.witness.num_live_blocks as u64,
+            },
+            inner_commit_matrix: GeneratedInnerCommitMatrix {
+                ring_dimension: schedule
+                    .terminal
+                    .params
+                    .witness
+                    .inner_commit_matrix
+                    .ring_dimension() as u32,
+                log_basis: schedule.terminal.params.witness.log_basis_inner,
+            },
+        },
+    }
 }
 
 fn emit_key(key: PolynomialGroupLayout) -> String {
@@ -118,113 +227,161 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
     )
 }
 
-fn emit_precommitted_group_key(layout: &PrecommittedGroupParams) -> String {
+fn emit_precommitted_group_key(layout: &PrecommittedGroupDescriptor) -> String {
     format!(
-        "PrecommittedGroupParams {{ group: {}, m_vars: {}, r_vars: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
+        "PrecommittedGroupDescriptor {{ group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, log_basis_inner: {}, log_basis_outer: {}, inner_ring_dimension: {}, outer_ring_dimension: {}, n_a: {}, a_coeff_linf_bound: {}, n_b: {}, b_coeff_linf_bound: {} }}",
         emit_key(layout.group),
-        layout.m_vars,
-        layout.r_vars,
-        layout.log_basis,
+        layout.num_live_ring_elements_per_claim,
+        layout.num_positions_per_block,
+        layout.num_live_blocks,
+        layout.log_basis_inner,
+        layout.log_basis_outer,
+        layout.inner_ring_dimension,
+        layout.outer_ring_dimension,
         layout.n_a,
-        layout.conservative_n_b,
+        layout.a_coeff_linf_bound,
+        layout.n_b,
+        layout.b_coeff_linf_bound,
     )
 }
 
-fn emit_entry_fields(key: &AkitaScheduleLookupKey) -> String {
-    let precommitteds = key
-        .precommitteds
-        .iter()
-        .map(emit_precommitted_group_key)
-        .collect::<Vec<_>>()
-        .join(", ");
+fn emit_geometry(value: GeneratedBlockGeometry) -> String {
     format!(
-        "final_group: {}, precommitteds: &[{}]",
-        emit_key(key.final_group),
-        precommitteds,
+        "GeneratedBlockGeometry {{ live_ring_elements_per_claim: {}, positions_per_block: {}, live_blocks: {} }}",
+        value.live_ring_elements_per_claim, value.positions_per_block, value.live_blocks
     )
 }
 
-fn emit_compact_fold_struct(p: &LevelParams) -> String {
-    let fold = fold_step_from_params(p);
+fn emit_committed_group(value: GeneratedCommittedGroup) -> String {
     format!(
-        "GeneratedFoldStep {{ \
-         ring_d: {}, log_basis: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {} }}",
-        fold.ring_d, fold.log_basis, fold.m_vars, fold.r_vars, fold.n_a, fold.n_b, fold.n_d,
+        "GeneratedCommittedGroup {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_commit_matrix: GeneratedOuterCommitMatrix {{ ring_dimension: {}, log_basis: {}, slice_count: {} }} }}",
+        emit_geometry(value.geometry),
+        value.inner_commit_matrix.ring_dimension,
+        value.inner_commit_matrix.log_basis,
+        value.outer_commit_matrix.ring_dimension,
+        value.outer_commit_matrix.log_basis,
+        value.outer_commit_matrix.slice_count,
     )
 }
 
-fn emit_setup_contribution_mode(mode: SetupContributionMode) -> &'static str {
-    match mode {
-        SetupContributionMode::Direct => "SetupContributionMode::Direct",
-        SetupContributionMode::Recursive => "SetupContributionMode::Recursive",
+fn emit_open_matrix(value: GeneratedOpenCommitMatrix) -> String {
+    format!(
+        "GeneratedOpenCommitMatrix {{ ring_dimension: {}, log_basis: {}, slice_count: {} }}",
+        value.ring_dimension, value.log_basis, value.slice_count
+    )
+}
+
+fn emit_partition(value: GeneratedWitnessPartition) -> String {
+    match value {
+        GeneratedWitnessPartition::Single => "GeneratedWitnessPartition::Single".to_string(),
+        GeneratedWitnessPartition::Distributed { num_chunks } => {
+            format!("GeneratedWitnessPartition::Distributed {{ num_chunks: {num_chunks} }}")
+        }
     }
 }
 
-fn emit_setup_prefix_group(group: Option<GeneratedSetupPrefixGroup>) -> String {
-    match group {
-        Some(group) => format!(
-            "Some(GeneratedSetupPrefixGroup {{ natural_len: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {} }})",
-            group.natural_len, group.m_vars, group.r_vars, group.n_a, group.n_b
+fn emit_setup_prefix(value: Option<GeneratedSetupPrefixInput>) -> String {
+    match value {
+        Some(value) => format!(
+            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, d_setup: {}, commitment: {} }})",
+            value.natural_len,
+            value.d_setup,
+            emit_committed_group(value.commitment)
         ),
         None => "None".to_string(),
     }
 }
 
-fn emit_fold_step(p: &LevelParams, include_setup_prefix_group: bool) -> String {
-    let setup_prefix_group = setup_prefix_group_from_params(p, include_setup_prefix_group);
-    if setup_prefix_group.is_none() && p.setup_contribution_mode == SetupContributionMode::Direct {
-        return format!("GeneratedStep::Fold({})", emit_compact_fold_struct(p));
-    }
-
-    format!(
-        "GeneratedStep::FoldWithSetupMetadata(GeneratedFoldStepWithSetupMetadata {{ fold: {}, \
-         setup_prefix_group: {}, setup_contribution_mode: {} }})",
-        emit_compact_fold_struct(p),
-        emit_setup_prefix_group(setup_prefix_group),
-        emit_setup_contribution_mode(p.setup_contribution_mode),
-    )
-}
-
-fn emit_direct(direct: &DirectStep) -> String {
-    match &direct.params {
-        Some(commit) => format!(
-            "        GeneratedStep::Direct(GeneratedDirectStep {{ commit: Some({}) }}),",
-            emit_compact_fold_struct(commit)
-        ),
-        None => "        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),".to_string(),
-    }
-}
-
 fn emit_schedule_entry(
     out: &mut String,
-    _key: &AkitaScheduleLookupKey,
-    key_str: &str,
-    schedule: &Schedule,
+    key: &AkitaScheduleLookupKey,
+    schedule: &FoldSchedule,
 ) -> Result<(), String> {
+    let entry = generated_entry(key, schedule);
+    let source = match entry.root.final_group.source {
+        GeneratedRootSource::Dense { coefficient_bits } => {
+            format!("GeneratedRootSource::Dense {{ coefficient_bits: {coefficient_bits} }}")
+        }
+        GeneratedRootSource::OneHot { chunk_size } => {
+            format!("GeneratedRootSource::OneHot {{ chunk_size: {chunk_size} }}")
+        }
+    };
+    let challenge = match entry.root.final_group.challenge {
+        GeneratedRootFinalChallenge::Flat => "GeneratedRootFinalChallenge::Flat".to_string(),
+        GeneratedRootFinalChallenge::Tensor { fold_low_len } => {
+            format!("GeneratedRootFinalChallenge::Tensor {{ fold_low_len: {fold_low_len} }}")
+        }
+    };
+    writeln!(out, "    GeneratedFoldScheduleEntry {{").map_err(|e| e.to_string())?;
+    writeln!(out, "        root: GeneratedRootFold {{").map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "    GeneratedScheduleTableEntry {{ {key_str}, steps: &[",
+        "            final_group: GeneratedRootFinalGroup {{ layout: {}, source: {}, challenge: {},",
+        emit_key(entry.root.final_group.layout),
+        source,
+        challenge,
     )
     .map_err(|e| e.to_string())?;
-
-    for (idx, step) in schedule.steps.iter().enumerate() {
-        match step {
-            Step::Fold(fold) => {
-                let include_setup_prefix_group = idx > 0 && fold.params.setup_prefix.is_some();
-                writeln!(
-                    out,
-                    "        {},",
-                    emit_fold_step(&fold.params, include_setup_prefix_group)
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            Step::Direct(direct) => {
-                writeln!(out, "{}", emit_direct(direct)).map_err(|e| e.to_string())?;
-            }
+    writeln!(
+        out,
+        "                commitment: {} }},",
+        emit_committed_group(entry.root.final_group.commitment),
+    )
+    .map_err(|e| e.to_string())?;
+    if entry.root.precommitted_groups.is_empty() {
+        writeln!(out, "            precommitted_groups: &[],").map_err(|e| e.to_string())?;
+    } else {
+        writeln!(out, "            precommitted_groups: &[").map_err(|e| e.to_string())?;
+        for group in entry.root.precommitted_groups {
+            writeln!(
+                out,
+                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, commitment: {} }},",
+                emit_precommitted_group_key(&group.descriptor),
+                emit_committed_group(group.commitment),
+            )
+            .map_err(|e| e.to_string())?;
         }
+        writeln!(out, "            ],").map_err(|e| e.to_string())?;
     }
-
-    writeln!(out, "    ] }},").map_err(|e| e.to_string())
+    writeln!(
+        out,
+        "            open_commit_matrix: {},",
+        emit_open_matrix(entry.root.open_commit_matrix),
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(
+        out,
+        "            witness_partition: {},",
+        emit_partition(entry.root.witness_partition),
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(out, "        }},").map_err(|e| e.to_string())?;
+    if entry.recursive_folds.is_empty() {
+        writeln!(out, "        recursive_folds: &[],").map_err(|e| e.to_string())?;
+    } else {
+        writeln!(out, "        recursive_folds: &[").map_err(|e| e.to_string())?;
+        for fold in entry.recursive_folds {
+            writeln!(
+                out,
+                "            GeneratedRecursiveFold {{ witness: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
+                emit_committed_group(fold.witness),
+                emit_open_matrix(fold.open_commit_matrix),
+                emit_setup_prefix(fold.incoming_setup_prefix),
+                emit_partition(fold.witness_partition),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        writeln!(out, "        ],").map_err(|e| e.to_string())?;
+    }
+    writeln!(
+        out,
+        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }} }},",
+        emit_geometry(entry.terminal.geometry),
+        entry.terminal.inner_commit_matrix.ring_dimension,
+        entry.terminal.inner_commit_matrix.log_basis,
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(out, "    }},").map_err(|e| e.to_string())
 }
 
 fn emit_decomposition(d: akita_types::DecompositionParams) -> String {
@@ -240,18 +397,25 @@ fn emit_decomposition(d: akita_types::DecompositionParams) -> String {
     }
 }
 
-fn emit_sis_family(family: SisModulusFamily) -> &'static str {
+fn emit_sis_modulus_profile(family: akita_types::SisModulusProfileId) -> &'static str {
     match family {
-        SisModulusFamily::Q32 => "SisModulusFamily::Q32",
-        SisModulusFamily::Q64 => "SisModulusFamily::Q64",
-        SisModulusFamily::Q128 => "SisModulusFamily::Q128",
+        akita_types::SisModulusProfileId::Q32Offset99 => "SisModulusProfileId::Q32Offset99",
+        akita_types::SisModulusProfileId::Q64Offset59 => "SisModulusProfileId::Q64Offset59",
+        akita_types::SisModulusProfileId::Q128OffsetA7F7 => "SisModulusProfileId::Q128OffsetA7F7",
     }
 }
 
-fn emit_root_fold_shape(shape: TensorChallengeShape) -> &'static str {
+fn format_bytes(bytes: [u8; 32]) -> String {
+    let values = bytes.iter().map(|byte| format!("0x{byte:02x}"));
+    format!("[{}]", values.collect::<Vec<_>>().join(", "))
+}
+
+fn emit_root_fold_shape(shape: TensorChallengeShape) -> String {
     match shape {
-        TensorChallengeShape::Flat => "TensorChallengeShape::Flat",
-        TensorChallengeShape::Tensor => "TensorChallengeShape::Tensor",
+        TensorChallengeShape::Flat => "TensorChallengeShape::Flat".to_string(),
+        TensorChallengeShape::Tensor { fold_low_len } => {
+            format!("TensorChallengeShape::Tensor {{ fold_low_len: {fold_low_len} }}")
+        }
     }
 }
 
@@ -263,6 +427,19 @@ fn emit_witness_chunk(cfg: akita_types::ChunkedWitnessCfg) -> String {
 }
 
 fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
+    let ring_dimension_candidates = identity
+        .ring_dimension_candidates
+        .iter()
+        .map(|dims| {
+            format!(
+                "CommitmentRingDims {{ inner: {}, outer: {}, opening: {} }}",
+                dims.d_a(),
+                dims.d_b(),
+                dims.d_d()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     let ring_dims: String = identity
         .ring_dimensions
         .iter()
@@ -272,13 +449,21 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
     format!(
         concat!(
             "#[rustfmt::skip]\n",
+            "pub(crate) static CATALOG_RING_DIMENSION_CANDIDATES: &[CommitmentRingDims] = &[{ring_dimension_candidates}];\n",
+            "#[rustfmt::skip]\n",
             "pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[{ring_dims}];\n",
             "#[rustfmt::skip]\n",
             "pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = ",
             "GeneratedScheduleCatalogIdentity {{\n",
             "    family_name: \"{family_name}\",\n",
-            "    sis_family: {sis_family},\n",
-            "    min_sis_security_bits: {min_sis_security_bits},\n",
+            "    protocol_epoch: {protocol_epoch},\n",
+            "    cost_model: PlannerCostModelId::{cost_model},\n",
+            "    selection_policy: SelectionPolicyId::{selection_policy},\n",
+            "    max_setup_envelope_field_elements: {max_setup_envelope_field_elements},\n",
+            "    min_offloaded_witness_contraction: {min_offloaded_witness_contraction},\n",
+            "    sis_modulus_profile: {sis_modulus_profile},\n",
+            "    sis_security_policy: SisSecurityPolicyId::{sis_security_policy},\n",
+            "    sis_table_digest: SisTableDigest({sis_table_digest}),\n",
             "    ring_dimension: {ring_dimension},\n",
             "    decomposition: {decomposition},\n",
             "    ring_subfield_norm_bound: {ring_subfield_norm_bound},\n",
@@ -289,16 +474,24 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    witness_chunk: {witness_chunk},\n",
             "    recursive_setup_planning: {recursive_setup_planning},\n",
             "    root_fold_shape: {root_fold_shape},\n",
+            "    ring_dimension_candidates: CATALOG_RING_DIMENSION_CANDIDATES,\n",
             "    ring_dimensions: CATALOG_RING_DIMENSIONS,\n",
             "    ring_challenge_config_digest: {ring_challenge_config_digest},\n",
             "    key_count: {key_count},\n",
             "    key_digest: {key_digest},\n",
             "}};\n",
         ),
+        ring_dimension_candidates = ring_dimension_candidates,
         ring_dims = ring_dims,
         family_name = identity.family_name,
-        sis_family = emit_sis_family(identity.sis_family),
-        min_sis_security_bits = identity.min_sis_security_bits,
+        protocol_epoch = identity.protocol_epoch,
+        cost_model = identity.cost_model.name(),
+        selection_policy = identity.selection_policy.name(),
+        max_setup_envelope_field_elements = identity.max_setup_envelope_field_elements,
+        min_offloaded_witness_contraction = identity.min_offloaded_witness_contraction,
+        sis_modulus_profile = emit_sis_modulus_profile(identity.sis_modulus_profile),
+        sis_security_policy = identity.sis_security_policy.name(),
+        sis_table_digest = format_bytes(identity.sis_table_digest.0),
         ring_dimension = identity.ring_dimension,
         decomposition = emit_decomposition(identity.decomposition),
         ring_subfield_norm_bound = identity.ring_subfield_norm_bound,
@@ -326,90 +519,129 @@ fn output_const_name(spec: &EmitSpec) -> String {
 
 fn materialized_entries(
     spec: &EmitSpec,
-) -> Result<Vec<(AkitaScheduleLookupKey, Schedule)>, String> {
+) -> Result<Vec<(AkitaScheduleLookupKey, FoldSchedule)>, String> {
+    let mut keys = Vec::with_capacity(spec.keys.len() + spec.group_batch_keys.len());
+    keys.extend(
+        spec.keys
+            .iter()
+            .copied()
+            .map(AkitaScheduleLookupKey::single),
+    );
+    keys.extend(spec.group_batch_keys.iter().cloned());
+
+    let workers = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(keys.len().max(1));
     let mut entries = Vec::new();
-    for key in &spec.keys {
-        let schedule =
-            (spec.regen)(*key).map_err(|e| format!("{}: regen {key:?}: {e}", spec.module_name))?;
-        entries.push((AkitaScheduleLookupKey::single(*key), schedule));
+    if workers > 1 && keys.len() >= 2 * workers {
+        let chunk_size = keys.len().div_ceil(workers);
+        std::thread::scope(|scope| -> Result<(), String> {
+            let handles: Vec<_> = keys
+                .chunks(chunk_size)
+                .map(|chunk| {
+                    scope.spawn(move || {
+                        let mut local = Vec::new();
+                        for key in chunk.iter().cloned() {
+                            if let Some(entry) = materialized_entry(spec, key)? {
+                                local.push(entry);
+                            }
+                        }
+                        Ok::<_, String>(local)
+                    })
+                })
+                .collect();
+            let mut first_error = None;
+            for handle in handles {
+                match handle.join() {
+                    Ok(Ok(local)) if first_error.is_none() => entries.extend(local),
+                    Ok(Ok(_)) => {}
+                    Ok(Err(error)) => {
+                        first_error.get_or_insert(error);
+                    }
+                    Err(_) => {
+                        first_error.get_or_insert_with(|| {
+                            format!("{}: regen worker panicked", spec.module_name)
+                        });
+                    }
+                }
+            }
+            if let Some(error) = first_error {
+                return Err(error);
+            }
+            Ok(())
+        })?;
+    } else {
+        for key in keys {
+            if let Some(entry) = materialized_entry(spec, key)? {
+                entries.push(entry);
+            }
+        }
     }
-    for key in &spec.group_batch_keys {
-        let schedule = (spec.regen_group_batch)(key.clone())
-            .map_err(|e| format!("{}: regen multi-group {key:?}: {e}", spec.module_name))?;
-        entries.push((key.clone(), schedule));
-    }
-    entries
-        .sort_by(|(left, _), (right, _)| crate::generated::runtime_schedule_key_cmp(left, right));
+    entries.sort_by(|(left, _), (right, _)| akita_schedules::runtime_schedule_key_cmp(left, right));
     Ok(entries)
 }
 
-fn schedule_uses_fold_with_setup(schedule: &Schedule) -> bool {
-    schedule.steps.iter().enumerate().any(|(idx, step)| {
-        let Step::Fold(fold) = step else {
-            return false;
-        };
-        let include_setup_prefix_group = idx > 0 && fold.params.setup_prefix.is_some();
-        include_setup_prefix_group
-            || fold.params.setup_contribution_mode != SetupContributionMode::Direct
-    })
+fn materialized_entry(
+    spec: &EmitSpec,
+    key: AkitaScheduleLookupKey,
+) -> Result<Option<(AkitaScheduleLookupKey, FoldSchedule)>, String> {
+    let result = if key.precommitteds.is_empty() {
+        (spec.regen)(key.final_group)
+    } else {
+        (spec.regen_group_batch)(key.clone())
+    };
+    match result {
+        Ok(schedule) => Ok(Some((key, schedule))),
+        Err(akita_error::AkitaError::UnsupportedSchedule(_)) => Ok(None),
+        Err(error) => {
+            let kind = if key.precommitteds.is_empty() {
+                "regen"
+            } else {
+                "regen multi-group"
+            };
+            Err(format!("{}: {kind} {key:?}: {error}", spec.module_name))
+        }
+    }
 }
 
 /// Emit one family module (entries + embedded catalog identity).
 pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     let materialized = materialized_entries(spec)?;
-    let uses_fold_with_setup = materialized
-        .iter()
-        .any(|(_, schedule)| schedule_uses_fold_with_setup(schedule));
 
     let mut out = String::new();
     let const_name = output_const_name(spec);
     writeln!(out, "// Generated by `{}`", spec.generator_command).map_err(|e| e.to_string())?;
     writeln!(out, "#[allow(unused_imports)]").map_err(|e| e.to_string())?;
-    if uses_fold_with_setup {
-        writeln!(
-            out,
-            "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedDirectStep, GeneratedFoldStep, \
-             GeneratedFoldStepWithSetupMetadata, GeneratedScheduleCatalogIdentity, \
-             GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup, GeneratedStep, \
-             PolynomialGroupLayout, PrecommittedGroupParams, SetupContributionMode, \
-             SisModulusFamily, TensorChallengeShape,\n}};"
-        )
-        .map_err(|e| e.to_string())?;
-    } else {
-        writeln!(
-            out,
-            "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedDirectStep, GeneratedFoldStep, \
-             GeneratedScheduleCatalogIdentity, GeneratedScheduleTableEntry, GeneratedStep, \
-             PolynomialGroupLayout, PrecommittedGroupParams, SisModulusFamily, \
-             TensorChallengeShape,\n}};"
-        )
-        .map_err(|e| e.to_string())?;
-    }
+    writeln!(
+        out,
+        "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedBlockGeometry, \
+         GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedInnerCommitMatrix, \
+         GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix, GeneratedRecursiveFold, \
+         GeneratedRootFinalChallenge, GeneratedRootFinalGroup, GeneratedRootFold, \
+         GeneratedRootPrecommittedGroup, GeneratedRootSource, GeneratedScheduleCatalogIdentity, \
+         GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
+         CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, PrecommittedGroupDescriptor, \
+         SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \
+         TensorChallengeShape,\n}};"
+    )
+    .map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;
 
-    let mut memory_entries: Vec<GeneratedScheduleTableEntry> = Vec::new();
-    let mut leaked_steps: Vec<&'static [GeneratedStep]> = Vec::new();
+    let mut memory_entries: Vec<GeneratedFoldScheduleEntry> = Vec::new();
 
     writeln!(out, "#[rustfmt::skip]").map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "pub(crate) static {const_name}: &[GeneratedScheduleTableEntry] = &["
+        "pub(crate) static {const_name}: &[GeneratedFoldScheduleEntry] = &["
     )
     .map_err(|e| e.to_string())?;
 
     for (key, schedule) in materialized {
-        let key_str = emit_entry_fields(&key);
-        emit_schedule_entry(&mut out, &key, &key_str, &schedule)?;
-        let steps = schedule_to_generated_steps(&key, &schedule);
-        let steps_ref = Box::leak(steps.into_boxed_slice());
-        leaked_steps.push(steps_ref);
-        memory_entries.push(GeneratedScheduleTableEntry {
-            final_group: key.final_group,
-            precommitteds: Box::leak(key.precommitteds.into_boxed_slice()),
-            steps: steps_ref,
-        });
+        emit_schedule_entry(&mut out, &key, &schedule)?;
+        memory_entries.push(generated_entry(&key, &schedule));
     }
-    debug_assert!(crate::generated::catalog_entries_sorted_for_lookup(
+    debug_assert!(akita_schedules::catalog_entries_sorted_for_lookup(
         &memory_entries
     ));
 

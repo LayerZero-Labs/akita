@@ -103,6 +103,21 @@ impl<F: Field> RingVec<F> {
         }
     }
 
+    /// Construct owned ring storage with an explicit runtime dimension.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidInput`] when `ring_dim` is zero or the
+    /// coefficient buffer does not contain an integral number of ring values.
+    pub fn from_coeffs_with_ring_dim(coeffs: Vec<F>, ring_dim: usize) -> Result<Self, AkitaError> {
+        if ring_dim == 0 || !coeffs.len().is_multiple_of(ring_dim) {
+            return Err(AkitaError::InvalidInput(
+                "ring coefficient storage does not match its declared dimension".into(),
+            ));
+        }
+        Ok(Self { coeffs, ring_dim })
+    }
+
     /// Wrap a `RingCommitment`.
     pub fn from_commitment<const D: usize>(c: &RingCommitment<F, D>) -> Self {
         Self::from_ring_elems(&c.u)
@@ -129,6 +144,11 @@ impl<F: Field> RingVec<F> {
     /// Number of stored field coefficients.
     pub fn coeff_len(&self) -> usize {
         self.coeffs.len()
+    }
+
+    /// Consume the container and return its coefficient buffer.
+    pub fn into_coeffs(self) -> Vec<F> {
+        self.coeffs
     }
 
     /// Whether these coefficients can be decoded as a single ring element of
@@ -689,21 +709,25 @@ impl DigitBlocks {
         dst.extend_from_slice(&self.digits);
     }
 
-    /// Truncate every block to at most `block_len` digit planes.
-    pub fn truncate_each_block(&mut self, block_len: usize) {
-        if self.block_sizes.iter().all(|&size| size <= block_len) {
+    /// Truncate every block to at most `max_planes_per_block` digit planes.
+    pub fn truncate_each_block(&mut self, max_planes_per_block: usize) {
+        if self
+            .block_sizes
+            .iter()
+            .all(|&size| size <= max_planes_per_block)
+        {
             return;
         }
         let stride = self.digit_stride;
         let total_planes: usize = self
             .block_sizes
             .iter()
-            .map(|&size| size.min(block_len))
+            .map(|&size| size.min(max_planes_per_block))
             .sum();
         let mut new_digits = Vec::with_capacity(total_planes * stride);
         let mut offset_planes = 0usize;
         for size in &mut self.block_sizes {
-            let keep = (*size).min(block_len);
+            let keep = (*size).min(max_planes_per_block);
             let start = offset_planes * stride;
             new_digits.extend_from_slice(&self.digits[start..start + keep * stride]);
             offset_planes += *size;

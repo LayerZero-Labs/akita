@@ -1,5 +1,5 @@
 use akita_sis_estimator::{
-    cost_infinity, scalar_sis_from_ring, AkitaModulusFamily, EstimateConfig, OptimizerConfig,
+    cost_infinity, scalar_sis_from_ring, AkitaModulusProfileId, EstimateConfig, OptimizerConfig,
     ReductionCostModel, ShapeModel,
 };
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
@@ -13,7 +13,7 @@ const CASES_CSV_ENV: &str = "AKITA_SIS_FIXED_INFINITY_BENCH_CSV";
 #[derive(Clone, Debug)]
 struct FixedInfinityCase {
     label: String,
-    family: AkitaModulusFamily,
+    family: AkitaModulusProfileId,
     d: u32,
     rank: u32,
     width: u32,
@@ -70,16 +70,16 @@ fn load_cases() -> Vec<FixedInfinityCase> {
 
 fn default_cases() -> Vec<FixedInfinityCase> {
     vec![
-        case(AkitaModulusFamily::Q32, 32, 1, 2, 2, 63, 0),
-        case(AkitaModulusFamily::Q32, 32, 1, 2, 15, 40, 0),
-        case(AkitaModulusFamily::Q32, 32, 5, 10, 15, 50, 0),
-        case(AkitaModulusFamily::Q64, 32, 1, 2, 15, 63, 0),
-        case(AkitaModulusFamily::Q128, 32, 1, 2, 15, 63, 0),
+        case(AkitaModulusProfileId::Q32Offset99, 32, 1, 2, 2, 63, 0),
+        case(AkitaModulusProfileId::Q32Offset99, 32, 1, 2, 15, 40, 0),
+        case(AkitaModulusProfileId::Q32Offset99, 32, 5, 10, 15, 50, 0),
+        case(AkitaModulusProfileId::Q64Offset59, 32, 1, 2, 15, 63, 0),
+        case(AkitaModulusProfileId::Q128OffsetA7F7, 32, 1, 2, 15, 63, 0),
     ]
 }
 
 fn case(
-    family: AkitaModulusFamily,
+    family: AkitaModulusProfileId,
     d: u32,
     rank: u32,
     width: u32,
@@ -118,7 +118,7 @@ fn load_cases_csv(path: &Path) -> Vec<FixedInfinityCase> {
         if get_optional(&columns, &fields, "trust") == Some("fragile") {
             continue;
         }
-        let family = AkitaModulusFamily::parse(get(&columns, &fields, "family", row)).unwrap();
+        let family = AkitaModulusProfileId::parse(get(&columns, &fields, "family", row)).unwrap();
         let d = parse(get(&columns, &fields, "d", row), "d", row);
         let rank = parse(get(&columns, &fields, "rank", row), "rank", row);
         let width = parse(get(&columns, &fields, "width", row), "width", row);
@@ -187,7 +187,7 @@ where
 }
 
 fn format_case_label(
-    family: AkitaModulusFamily,
+    family: AkitaModulusProfileId,
     d: u32,
     rank: u32,
     width: u32,
@@ -201,11 +201,11 @@ fn format_case_label(
     )
 }
 
-fn family_label(family: AkitaModulusFamily) -> &'static str {
+fn family_label(family: AkitaModulusProfileId) -> &'static str {
     match family {
-        AkitaModulusFamily::Q32 => "q32",
-        AkitaModulusFamily::Q64 => "q64",
-        AkitaModulusFamily::Q128 => "q128",
+        AkitaModulusProfileId::Q32Offset99 => "q32",
+        AkitaModulusProfileId::Q64Offset59 => "q64",
+        AkitaModulusProfileId::Q128OffsetA7F7 => "q128",
     }
 }
 

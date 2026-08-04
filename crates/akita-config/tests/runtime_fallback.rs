@@ -1,87 +1,131 @@
-//! Runtime schedule DP-fallback guards for the `Cfg`-free planner.
+//! Runtime schedule catalog-boundary guards.
 //!
 //! These cover the behaviors the planner refactor introduces:
 //!
-//! - **Table-miss fallback:** `Cfg::runtime_schedule` returns `Some` for a
-//!   key that no shipped table contains, and the schedule it returns is
-//!   exactly what the pure DP `akita_planner::find_group_batch_schedule` produces from
-//!   the `Cfg`-derived policy.
+//! - **Table-miss rejection:** `Cfg::runtime_schedule` rejects a key that no
+//!   generated table contains.
 //! - **Policy-bridge parity:** `policy_of::<Cfg>()` reproduces the values
-//!   the DP reads off the `Cfg` impl (invariant 4, single source of truth).
+//!   embedded in generated catalog identities (single source of truth).
 //! - **No-panic boundary:** adversarial-but-bounded keys through
 //!   `runtime_schedule` return `Result`, never panic.
 
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32};
-use akita_config::{policy_of, CommitmentConfig};
-use akita_planner::{find_group_batch_schedule, PlannerPolicy};
-use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use akita_config::{
+    policy_of, CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig,
+};
+use akita_planner::find_schedule;
+use akita_schedules::{resolve_schedule, PlannerCostModelId, PlannerPolicy, SelectionPolicyId};
+use akita_types::{
+    AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
+    PrecommittedGroupDescriptor, RootSource,
+};
 
-/// A one-point 2-poly key that no shipped table carries (shipped tables only
-/// hold singleton / 4-batched keys), so it forces the DP fallback path on both
-/// prover and verifier.
+/// A one-point 3-poly key that no generated table carries (generated tables only
+/// hold singleton / 2-batched / 4-batched keys), so strict runtime resolution
+/// must reject it.
 fn table_miss_key(num_vars: usize) -> PolynomialGroupLayout {
-    PolynomialGroupLayout::new(num_vars, 2)
+    PolynomialGroupLayout::new(num_vars, 3)
 }
 
-fn assert_schedule_eq(label: &str, lhs: &akita_types::Schedule, rhs: &akita_types::Schedule) {
+fn assert_schedule_eq(
+    label: &str,
+    lhs: &akita_types::FoldSchedule,
+    rhs: &akita_types::FoldSchedule,
+) {
     assert_eq!(
-        lhs.total_bytes, rhs.total_bytes,
-        "{label}: total_bytes diverge"
+        format!("{:?}", lhs.root),
+        format!("{:?}", rhs.root),
+        "{label}: root diverges"
     );
     assert_eq!(
-        format!("{:?}", lhs.steps),
-        format!("{:?}", rhs.steps),
-        "{label}: step sequences diverge"
+        format!("{:?}", lhs.recursive_folds),
+        format!("{:?}", rhs.recursive_folds),
+        "{label}: recursive folds diverge"
+    );
+    assert_eq!(
+        lhs.terminal.input_witness_len, rhs.terminal.input_witness_len,
+        "{label}: terminal witness lengths diverge"
+    );
+    assert_eq!(
+        lhs.terminal.params.response_shape, rhs.terminal.params.response_shape,
+        "{label}: terminal witness shapes diverge"
     );
 }
 
-fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
+fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
     let key = table_miss_key(num_vars);
 
-    // The shipped table must NOT carry this key — otherwise the test is not
-    // exercising the DP fallback path. (Shipped tables only hold
-    // singleton / 4-batched keys; this 2-poly key misses every table.)
+    // The generated table must NOT carry this key — otherwise the test is not
+    // exercising the catalog-miss path. Generated tables only hold singleton /
+    // 2-batched / 4-batched scalar keys; this 3-poly key misses every table.
     let _policy = policy_of::<Cfg>();
     let table_has_key = Cfg::schedule_catalog()
         .and_then(|table| {
-            akita_planner::generated::table_entry(table, &AkitaScheduleLookupKey::single(key))
+            akita_schedules::generated::table_entry(table, &AkitaScheduleLookupKey::single(key))
         })
         .is_some();
     assert!(
         !table_has_key,
-        "expected a table miss for the 2-poly key; the table unexpectedly carries it"
+        "expected a table miss for the 3-poly key; the table unexpectedly carries it"
     );
 
-    let from_runtime = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
-        .expect("runtime_schedule must not error on a valid one-point 2-poly key");
-
-    let from_dp = find_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(key),
-        &policy_of::<Cfg>(),
-        Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
-    )
-    .expect("pure DP must succeed for a valid key");
-
-    assert_schedule_eq("table-miss fallback", &from_runtime, &from_dp);
+    let err = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
+        .expect_err("runtime_schedule must reject uncataloged keys");
+    assert!(
+        matches!(err, akita_error::AkitaError::UnsupportedSchedule(_)),
+        "expected UnsupportedSchedule for catalog miss, got {err:?}"
+    );
 }
 
 #[test]
-fn dp_fallback_fires_for_non_shipped_keys() {
-    check_table_miss_fallback::<fp128::D64OneHot>(14);
-    check_table_miss_fallback::<fp128::D64Full>(16);
-    check_table_miss_fallback::<fp32::D64OneHot>(12);
+fn catalog_miss_rejects_non_shipped_keys() {
+    check_table_miss_rejection::<fp128::D64OneHot>(14);
+    check_table_miss_rejection::<fp128::D64Dense>(16);
+    check_table_miss_rejection::<fp32::D128OneHot>(16);
+}
+
+#[test]
+fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(18));
+    let ordinary = fp128::D64OneHot::runtime_schedule(key.clone())
+        .expect("ordinary scalar schedule must resolve");
+    let recursive = RecursiveCommitmentConfig::<fp128::D64OneHot>::runtime_schedule(key)
+        .expect("recursive adapter scalar schedule must resolve");
+    assert_schedule_eq("recursive scalar delegation", &ordinary, &recursive);
+}
+
+#[test]
+fn adapters_forward_ring_dimension_candidates() {
+    type Base = fp128::MixedDimFp128OneHot;
+    assert_eq!(
+        <RecursiveCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
+        Base::RING_DIMENSION_CANDIDATES,
+    );
+    assert_eq!(
+        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
+        Base::RING_DIMENSION_CANDIDATES,
+    );
 }
 
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
+        cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+        selection_policy: SelectionPolicyId::for_policy(
+            Cfg::recursive_setup_planning(),
+            Cfg::D,
+            Cfg::RING_DIMENSION_CANDIDATES,
+        ),
+        max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+        min_offloaded_witness_contraction: 3,
         ring_dimension: Cfg::D,
+        ring_dimension_candidates: Cfg::RING_DIMENSION_CANDIDATES,
         decomposition: Cfg::decomposition(),
-        sis_family: Cfg::sis_modulus_family(),
-        min_sis_security_bits: akita_types::DEFAULT_SIS_SECURITY_BITS,
+        sis_modulus_profile: Cfg::sis_modulus_profile(),
+        sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
+        sis_table_digest: akita_types::SisTableDigest::CURRENT,
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         claim_ext_degree: Cfg::DEGREE,
         chal_ext_degree: Cfg::DEGREE,
@@ -97,11 +141,103 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
 }
 
 #[test]
+fn runtime_rejects_malformed_extension_geometry_without_panicking() {
+    type Cfg = fp128::D64OneHot;
+    let catalog = Cfg::schedule_catalog();
+    let key = PolynomialGroupLayout::singleton(14);
+    let reject = |mutate: fn(&mut PlannerPolicy)| {
+        let mut policy = policy_of::<Cfg>();
+        mutate(&mut policy);
+        resolve_schedule(
+            key,
+            &policy,
+            Cfg::ring_challenge_config,
+            Cfg::fold_challenge_shape_at_level,
+            catalog,
+        )
+        .expect_err("malformed extension geometry must reject")
+        .to_string()
+    };
+
+    assert!(reject(|policy| policy.claim_ext_degree = 0).contains("nonzero power of two"));
+    assert!(reject(|policy| policy.claim_ext_degree = 3).contains("nonzero power of two"));
+    assert!(reject(|policy| policy.chal_ext_degree = 0).contains("nonzero power of two"));
+    assert!(reject(|policy| policy.chal_ext_degree = 3).contains("nonzero power of two"));
+    assert!(reject(|policy| policy.chal_ext_degree = 1usize << 31)
+        .contains("challenge field bit width overflow"));
+    if usize::BITS > u32::BITS {
+        assert!(
+            reject(|policy| policy.chal_ext_degree = (u32::MAX as usize) + 1)
+                .contains("exceeds u32")
+        );
+    }
+}
+
+#[test]
 fn policy_bridge_matches_cfg_hooks() {
-    assert_policy_matches_cfg::<fp128::D64Full>();
-    assert_policy_matches_cfg::<fp128::D128Full>();
+    assert_policy_matches_cfg::<fp128::D64Dense>();
+    assert_policy_matches_cfg::<fp128::D128Dense>();
     assert_policy_matches_cfg::<fp128::D64OneHot>();
     assert_policy_matches_cfg::<fp32::D64OneHot>();
+}
+
+#[test]
+fn offline_planner_admits_dense_multi_group_roots() {
+    type Cfg = fp128::D64Dense;
+    const PRE_NV: usize = 16;
+    const FINAL_NV: usize = 20;
+
+    let pre_group = PolynomialGroupLayout::singleton(PRE_NV);
+    let pre_layout = OpeningClaimsLayout::new(PRE_NV, 1).expect("precommit opening layout");
+    let pre_params =
+        <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
+            &pre_layout,
+        )
+        .expect("dense precommit params");
+    let key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::singleton(FINAL_NV),
+        precommitteds: vec![PrecommittedGroupDescriptor::from_params(
+            pre_group,
+            &pre_params,
+        )],
+    };
+    let planned = find_schedule(
+        &key,
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )
+    .expect("dense multi-group schedule");
+
+    assert_eq!(
+        planned.schedule.root.params.final_group.source,
+        RootSource::Dense {
+            coefficient_bits: Cfg::decomposition().field_bits(),
+        }
+    );
+    assert_eq!(
+        planned.schedule.root.params.precommitted_groups.len(),
+        key.precommitteds.len()
+    );
+    planned
+        .schedule
+        .validate_structure()
+        .expect("dense grouped schedule structure");
+}
+
+#[test]
+fn root_basis_is_derived_from_existing_policy_inputs() {
+    let fp128 = policy_of::<fp128::D64OneHot>();
+    assert_eq!(fp128.basis_range, (3, 6));
+    assert_eq!(fp128.decomposition.log_basis, 3);
+    assert_eq!(fp128.log_basis_search_range_at_level(0), (3, 3));
+    assert_eq!(fp128.log_basis_search_range_at_level(1), (3, 6));
+
+    let fp32 = policy_of::<fp32::D64OneHot>();
+    assert_eq!(fp32.basis_range, (3, 6));
+    assert_eq!(fp32.decomposition.log_basis, 3);
+    assert_eq!(fp32.log_basis_search_range_at_level(0), (3, 3));
+    assert_eq!(fp32.log_basis_search_range_at_level(1), (3, 6));
 }
 
 #[test]

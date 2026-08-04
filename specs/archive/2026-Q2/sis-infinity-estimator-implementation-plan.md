@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|-------|
 | Status | superseded |
-| Superseded-by | [`specs/sis-linf-table-cutover.md`](../../sis-linf-table-cutover.md) |
+| Superseded-by | [`specs/sis-quantum128-scalar-n-table.md`](../../sis-quantum128-scalar-n-table.md) |
 | Archived | 2026-Q2 |
 
 This plan breaks `specs/sis-infinity-estimator-crate.md` into slices that can be

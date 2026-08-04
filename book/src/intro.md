@@ -23,7 +23,9 @@ This book has four top-level parts:
 ## What is Akita?
 
 A multilinear PCS whose binding and knowledge soundness reduce to Module-SIS,
-configured for a 138-bit SIS security floor in the generated production tables.
+with generated production tables targeting at least 128 bits under a scalar
+infinity-norm LGSA estimate using the ADPS16 quantum cost model. This is an
+attack-cost model, not an unqualified post-quantum security claim.
 It commits to
 base-field (or extension-field) multilinear polynomials, then proves evaluation
 claims by a recursive fold whose witness shrinks roughly from `N` to `N^{1/2}`
@@ -62,7 +64,10 @@ and what is asserted vs proven. The canonical narrative lives in
 - `crates/akita-types/src/sis/` (`mod.rs`, `ajtai_key.rs`, `norm_bound.rs`).
 - `docs/security-posture.md`.
 - Paper §3.12 `sec:batched-soundness`, §3.11 `sec:akita-cwss` (audited soundness).
-- `specs/security-hardening.md`, `specs/sis-linf-table-cutover.md`, `specs/fold-linf-rejection.md`.
+- `specs/security-hardening.md`, `specs/sis-quantum128-scalar-n-table.md`,
+  `specs/fold-linf-rejection.md`.
+- `specs/sis-quantum128-scalar-n-table.md` (implemented policy, role coverage,
+  generated tables, and schedule identity).
 
 ## How to read this book
 

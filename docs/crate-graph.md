@@ -23,7 +23,7 @@ orchestration lives in `akita-pcs`.
 | `akita-sumcheck` | Sumcheck proofs, drivers, folding, batching |
 | `akita-types` | Proof/setup/schedule/layout shapes, SIS floors, proof-size helpers |
 | `akita-planner` | `Cfg`-free schedule engine and offline DP |
-| `akita-schedules` | Shipped schedule table data |
+| `akita-schedules` | Feature-gated generated schedule table wiring |
 | `akita-config` | Presets, `CommitmentConfig`, schedule catalog wiring |
 | `akita-setup` | Setup construction and optional cache |
 | `akita-verifier` | Verifier replay (no prover polynomial backends) |
@@ -140,18 +140,19 @@ graph TD
   the schedule-search DP. It sits **below** `akita-config` and names no
   `CommitmentConfig` type. It depends only on `akita-types`, `akita-challenges`,
   and `jolt-field`.
-- `akita-schedules` owns feature-gated shipped schedule table data. It depends
-  on `akita-planner` for generated table types only.
+- `akita-schedules` owns feature-gated generated schedule table wiring. The
+  large family modules are deterministic output produced during local/CI
+  bootstrap. It depends only on `akita-types`, `akita-challenges`, and
+  `jolt-field`.
 - `akita-config` owns concrete runtime presets and the single `CommitmentConfig`
-  policy trait. It **depends on `akita-planner`**: `CommitmentConfig::runtime_schedule`
-  is a one-line delegation to `akita_planner::resolve_schedule`, which validates
-  an opted-in catalog, expands a table hit, and runs the DP on a miss. There is no opt-in
-  `test-utils` wrapper; runtime DP fallback is the default for every preset.
+  policy trait. It depends on `akita-schedules`: `CommitmentConfig::runtime_schedule`
+  delegates to strict generated-catalog resolution, which validates an opted-in
+  catalog and expands a table hit. Missing catalogs or rows are unsupported.
 - `akita-verifier` stays prover-free (no polynomial backends, no setup
   expansion) and is directly `<Cfg>`-generic: it depends on `akita-config` and
-  therefore reaches `akita-planner` **transitively**. The schedule-search DP is
-  consequently verifier-reachable and must reject malformed input with
-  `AkitaError`, never panic (see [`docs/verifier-contract.md`](verifier-contract.md)).
+  therefore reaches generated schedule expansion transitively. Verifier-reachable
+  schedule resolution must reject malformed input with `AkitaError`, never panic
+  (see [`docs/verifier-contract.md`](verifier-contract.md)).
 - `akita-prover` owns polynomial backends, prover setup artifacts, NTT/matrix
   kernels, the explicit compute-backend operation traits, recursive and
   ring-switch witness construction, proving orchestration, and the

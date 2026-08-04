@@ -14,8 +14,8 @@
 //! - [`ChallengeShape`] / [`Challenges`] — tensor-aware folding
 //!   challenge selection and sampled challenge containers.
 //! - [`TensorChallenges`] — the tensor-only factored representation used when
-//!   a folding round samples left/right challenge vectors instead of one flat
-//!   vector.
+//!   a folding round samples fold-high/fold-low challenge vectors instead of
+//!   one flat vector.
 //!
 //! Sampling uses the signed-sparse path in a private `sampler` submodule. The
 //! SHAKE256-backed XOF cursor is crate-internal and not part of the public API.
@@ -33,11 +33,11 @@ pub use config::{
     SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
     MIN_FOLD_CHALLENGE_ENTROPY_BITS, PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
-pub use fold_draw::{FoldDraw, LiveFoldDraw, PreviewFoldDraw};
+pub use fold_draw::{fold_challenge_sample_label, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
 pub use grind_probe::grind_probe_permutation;
 pub use sampler::sample_sparse_challenges;
 pub use tensor::{
-    fold_sparse_challenge_sample_count, tensor_left_digest, tensor_split,
-    witness_fold_challenge_labels, ChallengeLabels, ChallengeShape,
-    ChallengeShape as TensorChallengeShape, Challenges, TensorChallenges,
+    fold_high_digest, fold_sparse_challenge_sample_count, witness_fold_challenge_labels,
+    ChallengeLabels, ChallengeShape, ChallengeShape as TensorChallengeShape, Challenges,
+    TensorChallenges,
 };

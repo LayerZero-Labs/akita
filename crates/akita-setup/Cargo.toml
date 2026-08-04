@@ -35,5 +35,8 @@ akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"
 
+[dev-dependencies]
+akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
+
 [lints]
 workspace = true

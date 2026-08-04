@@ -9,7 +9,11 @@ use akita_serialization::{
 };
 #[allow(unused_imports)]
 use jolt_field::solinas::parallel::*;
-use jolt_field::Field;
+#[allow(unused_imports)]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
+
+use akita_error::AkitaError;
 use rand_core::{CryptoRng, RngCore};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
@@ -39,6 +43,15 @@ const SHARED_MATRIX_LABEL: &[u8] = b"shared";
 pub struct SetupMatrixEnvelope {
     /// Number of generated ring elements at the setup generation dimension.
     pub max_setup_len: usize,
+}
+
+impl SetupMatrixEnvelope {
+    /// Smallest non-empty shared setup envelope.
+    pub const fn minimum() -> Self {
+        Self {
+            max_setup_len: std::num::NonZeroUsize::MIN.get(),
+        }
+    }
 }
 
 /// Seed-only stage for deterministic setup expansion.
@@ -86,12 +99,69 @@ pub struct AkitaExpandedSetup<F: Field> {
 }
 
 /// Verifier setup artifact derived from prover setup.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct AkitaVerifierSetup<F: Field> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Public setup-prefix commitment metadata for setup-claim offloading.
     pub prefix_slots: SetupPrefixVerifierRegistry<F>,
+    /// Locally derived, negacyclic-only matrix prefixes for direct verifier checks.
+    /// This performance cache is neither serialized nor part of setup identity.
+    verifier_ntt: Arc<crate::ntt_cache::VerifierNttCache>,
+}
+
+impl<F: Field> PartialEq for AkitaVerifierSetup<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.expanded == other.expanded && self.prefix_slots == other.prefix_slots
+    }
+}
+
+impl<F: Field> Eq for AkitaVerifierSetup<F> {}
+
+impl<F: Field> AkitaVerifierSetup<F> {
+    /// Construct verifier setup state from validated expanded setup and prefix metadata.
+    #[must_use]
+    pub fn from_parts(
+        expanded: Arc<AkitaExpandedSetup<F>>,
+        prefix_slots: SetupPrefixVerifierRegistry<F>,
+    ) -> Self {
+        Self {
+            expanded,
+            prefix_slots,
+            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
+        }
+    }
+
+    /// In-memory byte footprint of verifier NTT prefixes materialized so far.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the cache lock was poisoned.
+    pub fn verifier_ntt_cache_bytes(&self) -> Result<usize, AkitaError> {
+        self.verifier_ntt.cache_bytes()
+    }
+}
+
+impl<F: Field + CanonicalEncoding> AkitaVerifierSetup<F> {
+    /// Return an exact or covering negacyclic prefix, preparing it on demand.
+    pub fn prepared_verifier_ntt_prefix<const D: usize>(
+        &self,
+        num_ring_elements: usize,
+        tail_num_ring_elements: usize,
+        width: usize,
+        log_basis: u32,
+    ) -> Result<Arc<crate::PreparedNttCache<D>>, AkitaError> {
+        let key = crate::NttCacheKey {
+            ring_d: D,
+            num_ring_elements,
+        };
+        self.verifier_ntt.prepare::<F, D>(
+            &self.expanded,
+            key,
+            tail_num_ring_elements,
+            crate::NttCacheMode::ExactNegacyclic { width, log_basis },
+        )
+    }
 }
 
 impl<F: Field> AkitaExpandedSetup<F> {
@@ -508,6 +578,7 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for Aki
                 validate,
                 &(),
             )?,
+            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         })
     }
 }
@@ -525,33 +596,42 @@ mod tests {
 
     fn prefix_commitment_params(n_prefix: usize, d_setup: usize) -> crate::PrecommittedLevelParams {
         crate::PrecommittedLevelParams {
-            layout: crate::PrecommittedGroupParams {
+            layout: crate::PrecommittedGroupDescriptor {
                 group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
-                m_vars: 0,
-                r_vars: 0,
-                log_basis: 1,
+                num_live_ring_elements_per_claim: n_prefix / d_setup,
+                num_positions_per_block: 1,
+                num_live_blocks: n_prefix / d_setup,
+                log_basis_inner: 1,
+                log_basis_outer: 1,
+                inner_ring_dimension: d_setup,
+                outer_ring_dimension: d_setup,
                 n_a: 1,
-                conservative_n_b: 1,
+                a_coeff_linf_bound: 1,
+                n_b: 1,
+                b_coeff_linf_bound: 1,
             },
-            a_key: crate::AjtaiKeyParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_BITS,
-                crate::SisModulusFamily::Q128,
+            inner_commit_matrix: crate::InnerCommitMatrixParams::new_unchecked(
+                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                crate::sis::SisTableDigest::CURRENT,
+                crate::sis::SisModulusProfileId::Q128OffsetA7F7,
                 1,
                 1,
                 1,
                 d_setup,
             ),
-            b_key: crate::AjtaiKeyParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_BITS,
-                crate::SisModulusFamily::Q128,
+            outer_commit_matrix: crate::OuterCommitMatrixParams::new_unchecked(
+                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                crate::sis::SisTableDigest::CURRENT,
+                crate::sis::SisModulusProfileId::Q128OffsetA7F7,
                 1,
                 1,
                 1,
                 d_setup,
             ),
-            num_blocks: 1,
-            block_len: n_prefix / d_setup,
-            num_digits_commit: 1,
+            log_basis_open: 1,
+            fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
+            num_digits_inner: 1,
+            num_digits_outer: 1,
             num_digits_open: 1,
             num_digits_fold_one: 1,
         }
@@ -591,6 +671,7 @@ mod tests {
                 ),
             ),
             prefix_slots,
+            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
         let mut bytes = Vec::new();
@@ -615,6 +696,7 @@ mod tests {
                 ),
             ),
             prefix_slots: SetupPrefixVerifierRegistry::new(),
+            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
         let mut bytes = Vec::new();
@@ -638,6 +720,7 @@ mod tests {
                 ),
             ),
             prefix_slots: SetupPrefixVerifierRegistry::new(),
+            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
         let mut bytes = Vec::new();

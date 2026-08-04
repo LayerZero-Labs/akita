@@ -11,7 +11,7 @@
 
 ## Summary
 
-Today, parameter selection and configuration are scattered across three crates with three overlapping traits and several duplicated models. `akita-types` owns wire types but also hosts substantive search/derivation logic (`schedule_plan_from_generated_entry`, `optimal_m_r_split`, the loops in `layout/sis_derivation.rs`) plus a data trait `ScheduleProvider`. `akita-config` defines `CommitmentConfig` (extending `ScheduleProvider`), all preset structs, `WCommitmentConfig`, and runtime adapter modules (`schedule_policy.rs`, `sis_policy.rs`) whose only role is to translate `Cfg` shape into planner shape. `akita-planner` defines a third trait, `PlannerConfig`, whose hooks mirror `CommitmentConfig`, and ships parallel copies of `proof_size` and `sis_security`. `akita-scheme` ties everything together with verbose `_with_policy` closure adapters because `akita-prover`/`akita-verifier` are not allowed to know about config.
+Today, parameter selection and configuration are scattered across three crates with three overlapping traits and several duplicated models. `akita-types` owns wire types but also hosts substantive search/derivation logic (`schedule_plan_from_generated_entry`, `optimal_block_geometry_split`, the loops in `layout/sis_derivation.rs`) plus a data trait `ScheduleProvider`. `akita-config` defines `CommitmentConfig` (extending `ScheduleProvider`), all preset structs, `WCommitmentConfig`, and runtime adapter modules (`schedule_policy.rs`, `sis_policy.rs`) whose only role is to translate `Cfg` shape into planner shape. `akita-planner` defines a third trait, `PlannerConfig`, whose hooks mirror `CommitmentConfig`, and ships parallel copies of `proof_size` and `sis_security`. `akita-scheme` ties everything together with verbose `_with_policy` closure adapters because `akita-prover`/`akita-verifier` are not allowed to know about config.
 
 This refactor collapses the trait sprawl and crate sprawl. There will be exactly one `Cfg` trait, owned by a dedicated `akita-cfg` crate. All parameter computation lives in a single `akita-planner` crate (offline DP, plan-from-table materialization, SIS derivation, optimal `(m,r)` split, the universal benchmark planner, and the generated-table emission binaries). `Cfg` is the only parameter-selection API consumed by `akita-prover`, `akita-verifier`, `akita-scheme`, and `akita-setup`; for the stock presets, `Cfg`'s default method bodies delegate to `akita-planner`. `akita-prover` / `akita-verifier` / `akita-scheme` become generic over `Cfg` directly. They do not call `akita-planner` themselves; they go through `Cfg::...` only.
 
@@ -28,7 +28,7 @@ Restructure planner/config code around two crates and one trait:
 1. **`akita-planner`** computes all params. It owns offline DP, plan-from-table materialization, SIS derivation, optimal `(m,r)` search, the universal benchmark planner, and the binaries that emit generated tables. Its API is free functions taking concrete data structs; it exposes no traits.
 2. **`akita-cfg`** (replacement for `akita-config`) defines the single `Cfg` trait and ships every preset implementation. Stock presets delegate parameter computation to `akita-planner`; this is implemented as default method bodies on `Cfg` (gated by the `planner` feature) so that custom `Cfg` impls can override every method and avoid planner code entirely.
 3. **`akita-prover` / `akita-verifier` / `akita-scheme` / `akita-setup`** become generic over `Cfg` directly. They consume parameters exclusively through `Cfg::...`. They do **not** call `akita-planner` symbols. The verbose `_with_policy` closure adapters in `akita-scheme` collapse into one-line `<Cfg>` generic calls.
-4. **`akita-types`** keeps wire-protocol data only: `LevelParams`, `Schedule`, `AkitaSchedulePlan`, generated schedule table types, generated SIS floor tables, proof shapes, transcript descriptor types, and the proof-size formulas that the verifier needs for shape validation. `ScheduleProvider`, `GeneratedSchedulePlanPolicy`, `schedule_plan_from_generated_entry`, `optimal_m_r_split`, and the search/derivation loops in `layout/sis_derivation.rs` move to `akita-planner`.
+4. **`akita-types`** keeps wire-protocol data only: `LevelParams`, `Schedule`, `AkitaSchedulePlan`, generated schedule table types, generated SIS floor tables, proof shapes, transcript descriptor types, and the proof-size formulas that the verifier needs for shape validation. `ScheduleProvider`, `GeneratedSchedulePlanPolicy`, `schedule_plan_from_generated_entry`, `optimal_block_geometry_split`, and the search/derivation loops in `layout/sis_derivation.rs` move to `akita-planner`.
 
 #### Dependency direction
 
@@ -144,7 +144,7 @@ New tests to add:
 
 - `crates/akita-pcs/tests/no_panic_verifier_cfg.rs`: feeds adversarial `Schedule`/`LevelParams`/incidence to `verify_batched::<Cfg>` and confirms `Result::Err(AkitaError::...)` rather than panic. Run under both `--release` and `--debug`.
 - `crates/akita-cfg/tests/cfg_planner_free_overrides.rs`: defines a minimal `Cfg` impl that hard-codes a tiny `Schedule` and overrides every `Cfg` default. Builds with `--no-default-features` (planner feature off) and runs a round-trip prove/verify against a small claim. This is the contract test for the "planner-free Cfg" path.
-- `crates/akita-cfg/tests/cfg_blanket_presets.rs`: one assertion per preset that `Cfg::sis_modulus_family()`, `Cfg::decomposition()`, and `Cfg::get_params_for_prove(...)` succeed for a small known `CommitmentGroupScheduleKey`.
+- `crates/akita-cfg/tests/cfg_blanket_presets.rs`: one assertion per preset that `Cfg::sis_modulus_profile()`, `Cfg::decomposition()`, and `Cfg::get_params_for_prove(...)` succeed for a small known `CommitmentGroupScheduleKey`.
 - A `LoggingTranscript` golden test, comparing event streams pre/post refactor under the `logging-transcript` feature, to catch any reorderings introduced by collapsing the closure layer.
 
 Required CI matrix:
@@ -192,7 +192,7 @@ If `gen_schedule_tables` produces a non-cosmetic diff, or if `schedule.total_byt
 - Runtime schedule types: `Schedule`, `Step`, `FoldStep`, `DirectStep`, `AkitaSchedulePlan` and the `AkitaPlanned*` sub-structs, `AkitaScheduleInputs`, `CommitmentGroupScheduleKey`.
 - Generated schedule table types: `GeneratedScheduleTable`, `GeneratedScheduleTableEntry`, `GeneratedCommitmentGroupScheduleKey`, `GeneratedStep`, `GeneratedFoldStep`, `GeneratedDirectStep`.
 - **Generated schedule table data** (`crates/akita-types/src/generated/fp*.rs`) stays in `akita-types`. The data is small, pure, and does not bring search code with it. The `gen_schedule_tables` binary in `akita-planner` writes its output back into `crates/akita-types/src/generated/`. We pick this over moving the data files because (a) presets get to keep their `Cfg::schedule_table()` returning a static table without crossing crates, and (b) `akita-types` is already the canonical home for verifier-reachable static data.
-- SIS floor tables: [`SisModulusFamily`](crates/akita-types/src/generated/sis_floor.rs), `sis_max_widths`, `min_rank_for_secure_width`, `ceil_supported_collision`.
+- SIS floor tables: [`SisModulusProfileId`](crates/akita-types/src/generated/sis_floor.rs), `sis_max_widths`, `min_rank_for_secure_width`, `ceil_supported_collision`.
 - Decomposition / envelope: `DecompositionParams`, `CommitmentEnvelope`, `AjtaiRole`.
 - Transcript binding: `AkitaInstanceDescriptor` + all `*Section` types, `digest_effective_schedule`, `digest_level_params`.
 - Plan-translation helpers used at runtime: `schedule_from_plan`, `schedule_root_fold_step`. `scheduled_fold_execution` and `scheduled_next_level_params` stay here too, but their callback signatures change to `Result`-returning (see Invariants).
@@ -209,7 +209,7 @@ If `gen_schedule_tables` produces a non-cosmetic diff, or if `schedule.total_byt
 | `GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams>` | `akita_planner::PlanPolicy` | becomes a plain struct of `fn(...)` pointers, not generic over three callable types |
 | `schedule_plan_from_generated_entry` | `akita_planner::schedule_plan_from_table` | free function |
 | `generated_schedule_plan_from_table` | absorbed into `akita_planner::schedule_plan_from_table` |
-| `optimal_m_r_split` (in `layout/digit_math.rs`) | `akita_planner::digit_math::optimal_m_r_split` | search loop |
+| `optimal_block_geometry_split` (in `layout/digit_math.rs`) | `akita_planner::digit_math::optimal_block_geometry_split` | search loop |
 | `sis_secure_level_params`, `sis_derived_root_params_for_layout`, `sis_derived_recursive_params_for_layout`, `derived_root_commitment_layout_from_params`, `recursive_level_layout_from_params`, `level_layout_from_params` (all in `layout/sis_derivation.rs`) | `akita_planner::derivation::*` | derivation loops |
 
 Note: `GeneratedScheduleTable` *types* stay in `akita-types`. The accessor functions (`fp128_d64_onehot_table()` etc.) currently in `crates/akita-types/src/generated/mod.rs` and family-specific modules also stay in `akita-types` so presets can call them without a planner-feature gate.
@@ -226,7 +226,7 @@ crates/akita-planner/
     ├── baseline.rs       — legacy fixed-(D,na,nb,nd) DP for regression tests
     ├── materialize.rs    — schedule_plan_from_table + PlanPolicy + plan validation
     ├── derivation.rs     — sis_secure_level_params, derive_root_layout, derive_recursive_layout, etc.
-    ├── digit_math.rs     — optimal_m_r_split and helpers moved from akita-types
+    ├── digit_math.rs     — optimal_block_geometry_split and helpers moved from akita-types
     ├── proof_size.rs     — only the benchmark-optimized variants (renamed e.g. optimized_stage1_bytes)
     └── bin/
         ├── akita-planner.rs            — diagnostic CLI
@@ -242,7 +242,7 @@ The production `find_optimal_schedule` takes a value-typed `SearchOptions`:
 pub struct SearchOptions {
     pub key: CommitmentGroupScheduleKey,
     pub decomposition: DecompositionParams,
-    pub sis_modulus_family: SisModulusFamily,
+    pub sis_modulus_profile: SisModulusProfileId,
     pub challenge_field_bits: u32,
     pub extension_opening_width: usize,
     pub recursive_witness_expansion: usize,
@@ -273,7 +273,7 @@ Plan-from-table materialization is similar:
 
 ```rust
 pub struct PlanPolicy {
-    pub sis_family: SisModulusFamily,
+    pub sis_modulus_profile: SisModulusProfileId,
     pub root_decomp: DecompositionParams,
     pub challenge_field_bits: u32,
     pub recursive_public_rows: usize,
@@ -338,7 +338,7 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     AjtaiRole, AkitaScheduleInputs, CommitmentGroupScheduleKey, AkitaSchedulePlan,
     ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, GeneratedScheduleTable,
-    LevelParams, Schedule, SisModulusFamily,
+    LevelParams, Schedule, SisModulusProfileId,
 };
 
 pub trait Cfg: Clone + Send + Sync + 'static {
@@ -353,7 +353,7 @@ pub trait Cfg: Clone + Send + Sync + 'static {
 
     // -------- required config "facts" (no defaults) --------
     fn decomposition() -> DecompositionParams;
-    fn sis_modulus_family() -> SisModulusFamily;
+    fn sis_modulus_profile() -> SisModulusProfileId;
     fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError>;
     fn envelope(max_num_vars: usize) -> CommitmentEnvelope;
     fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize;
@@ -513,7 +513,7 @@ impl<const D: usize, C: Cfg> Cfg for WCfg<D, C> {
         akita_types::recursive_level_decomposition_from_root(C::decomposition())
     }
 
-    fn sis_modulus_family() -> SisModulusFamily { C::sis_modulus_family() }
+    fn sis_modulus_profile() -> SisModulusProfileId { C::sis_modulus_profile() }
     fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
         C::stage1_challenge_config(d)
     }
@@ -584,7 +584,7 @@ impl Cfg for fp128::D64OneHot {
     const D: usize = 64;
 
     fn decomposition() -> DecompositionParams { fp128_decomposition(/* ... */) }
-    fn sis_modulus_family() -> SisModulusFamily { SisModulusFamily::Q128 }
+    fn sis_modulus_profile() -> SisModulusProfileId { SisModulusProfileId::Q128OffsetA7F7 }
     fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
         fp128_stage1_challenge_config(d)
     }
@@ -819,7 +819,7 @@ The 80+ line closure block in today's `AkitaCommitmentScheme::batched_prove` col
 // crates/akita-types/src/generated/mod.rs
 mod sis_floor;
 pub use sis_floor::{
-    SisModulusFamily, ceil_supported_collision, min_rank_for_secure_width, sis_max_widths,
+    SisModulusProfileId, ceil_supported_collision, min_rank_for_secure_width, sis_max_widths,
 };
 
 pub struct GeneratedFoldStep { /* unchanged */ }
@@ -831,7 +831,7 @@ pub struct GeneratedScheduleTable { /* unchanged */ }
 // Static table data — produced by the gen_schedule_tables binary in akita-planner,
 // but the .rs files live here for verifier accessibility and to avoid forcing
 // every Cfg::schedule_table() call to cross the planner-feature gate.
-pub mod fp128_d32_full;
+pub mod fp128_d32_dense;
 pub mod fp128_d32_onehot;
 // ... and so on for every preset family/D, with `_zk` variants behind the zk feature.
 
@@ -874,7 +874,7 @@ pub fn table_entry(
 
 There is no backward-compatibility goal, so the recommended order optimizes for review legibility, not for keeping `cargo test --workspace` green at every commit. CI is expected to be green only at the head of the PR.
 
-1. **Move planner-search and SIS-derivation algorithms out of `akita-types` into `akita-planner`.** This includes `schedule_plan_from_generated_entry` (becomes `schedule_plan_from_table`), `GeneratedSchedulePlanPolicy` (becomes `PlanPolicy`), `optimal_m_r_split`, and the derivation loops in `layout/sis_derivation.rs`. Static schedule table data (`fp*_d*.rs`) **stays** in `akita-types/src/generated/`. The pure layout helpers verifier code uses (`level_layout_from_params`, `recursive_level_layout_from_params`, `recursive_level_decomposition_from_root`) **stay** in `akita-types`.
+1. **Move planner-search and SIS-derivation algorithms out of `akita-types` into `akita-planner`.** This includes `schedule_plan_from_generated_entry` (becomes `schedule_plan_from_table`), `GeneratedSchedulePlanPolicy` (becomes `PlanPolicy`), `optimal_block_geometry_split`, and the derivation loops in `layout/sis_derivation.rs`. Static schedule table data (`fp*_d*.rs`) **stays** in `akita-types/src/generated/`. The pure layout helpers verifier code uses (`level_layout_from_params`, `recursive_level_layout_from_params`, `recursive_level_decomposition_from_root`) **stay** in `akita-types`.
 2. **Drop the `PlannerConfig` trait.** Convert `find_optimal_schedule<Cfg: PlannerConfig>` into `find_optimal_schedule(opts: &SearchOptions)`. Add `direct_level_params_with_log_basis` to `SearchOptions`. Update planner callers (the three binaries) to build `SearchOptions` value-typed.
 3. **Move `schedule_policy.rs` and `sis_policy.rs` from `akita-config` into `akita-planner`** (under whatever final names: `materialize.rs`, `derivation.rs`). Move both binaries (`gen_schedule_tables`, `tune_small_field_schedules`) from `akita-config/src/bin/` to `akita-planner/src/bin/`. The `gen_schedule_tables` binary continues to write its output into `crates/akita-types/src/generated/`.
 4. **Rename `akita-config` to `akita-cfg`.** Replace the three traits (`CommitmentConfig`, `ScheduleProvider`, `PlannerConfig`, `PlannerFallbackConfig`) with one `Cfg`. Migrate every preset and `WCommitmentConfig` → `WCfg`. Convert verifier-reachable hooks to `Result`-returning signatures (`level_params_with_log_basis`, `log_basis_at_level`, `stage1_challenge_config`). Update `scheduled_next_level_params` and `scheduled_fold_execution` in `akita-types` to take `Result`-returning callbacks.

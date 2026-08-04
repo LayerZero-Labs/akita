@@ -1,45 +1,42 @@
 //! Root and suffix fold verifier replay for Akita proofs.
 //!
 //! This module owns the shared per-fold replay engine plus path-specific prep
-//! in `verify`, `root_fold`, and `suffix`. Schedule/config dispatch stays with
+//! in `verify`, `root_fold`, and `suffix`. FoldSchedule/config dispatch stays with
 //! the scheme crate until the verifier-facing config boundary is extracted.
 
 mod extension_opening_reduction;
 mod verify;
+use crate::protocol::evaluation_trace::{prepare_evaluation_trace, PreparedEvaluationTrace};
 use crate::protocol::ring_switch::{
-    ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchReplay, RingSwitchVerifyOutput,
+    ring_switch_verifier, RingSwitchReplay, RingSwitchVerifyOutput,
 };
-use crate::stages::stage1::{
-    derive_multi_group_stage1_challenges, validate_fold_grind_nonce, AkitaStage1Verifier,
-};
-use crate::stages::stage2::{stage2_cleartext_oracle, AkitaStage2Verifier, Stage2WitnessOracle};
+use crate::stages::stage1::{derive_multi_group_stage1_challenges, AkitaStage1Verifier};
+use crate::stages::stage2::AkitaStage2Verifier;
 use crate::stages::SetupSumcheckVerifier;
-use akita_error::AkitaError;
+use akita_challenges::{
+    witness_fold_challenge_labels, FoldDraw, LiveFoldDraw, TensorChallengeShape,
+};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::SumcheckInstanceVerifierExt;
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_STAGE3_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_E_HAT,
-    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+    ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT,
+    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
 use akita_types::{
-    append_claim_values_to_transcript, assemble_relation_rhs, build_trace_claim_multi_group_root,
-    build_trace_claim_root, dispatch_for_field, ensure_trace_stage2_supported,
-    prepare_opening_point, proof::relation::evaluation_trace_row_weight,
-    relation_claim_from_layout_extension, relation_rhs_layout_for, reorder_stage1_coords,
-    ring_subfield_packed_extension_opening_point, root_trace_block_opening,
-    sample_public_row_coefficients, scheduled_next_level_params,
-    tensor_equality_factor_eval_at_point, trace_terms_recursive, trace_weight_layout_from_segment,
-    AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
-    BasisMode, BlockOrder, CleartextWitnessProof, ExecutionSchedule,
-    ExtensionOpeningReductionProof, FoldLinfProtocolBinding, FpExtEncoding, LevelParams,
-    OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
-    PreparedOpeningPoint, RelationMatrixRowLayout, RelationOnlyStage2Inputs,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec, Schedule,
-    SetupContributionMode, SetupSumcheckProof, TerminalWitnessSegmentLayout,
-    TerminalWitnessTranscriptParts, TraceClaim,
+    append_claim_values_to_transcript, assemble_relation_rhs, ensure_trace_stage2_supported,
+    prepare_opening_point, proof::relation::evaluation_trace_row_weight, raw_field_segment_bytes,
+    relation_claim_from_layout_extension, relation_rhs_layout_for,
+    ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
+    sample_public_row_coefficients, tensor_equality_factor_eval_at_point, AkitaStage1Proof,
+    AkitaStage2Proof, AkitaVerifierSetup, BasisMode, CommittedGroupParams, EvaluationTraceInputs,
+    ExtensionOpeningReductionProof, FoldLevelProof, FoldLinfProtocolBinding, FoldSchedule,
+    FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PreparedOpeningPoint,
+    RecursiveFoldParams, RingRelationInstance, RingVec, SetupContributionMode, SetupSumcheckProof,
+    TerminalFoldParams, TerminalLevelProof, TerminalResponse, TerminalResponseShape,
+    TerminalWitnessTranscriptParts,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
@@ -50,31 +47,37 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMer
 mod fold;
 mod root_fold;
 mod suffix;
+mod terminal_direct;
+mod terminal_ntt;
 use root_fold::verify_root;
 
+use akita_error::AkitaError;
 pub use verify::batched_verify;
 
 pub(in crate::protocol::core) type SetupPrefixOpening<E> = (Vec<E>, E);
 pub(in crate::protocol::core) type FoldVerifyOutput<E> = (Vec<E>, Option<SetupPrefixOpening<E>>);
 
 pub(in crate::protocol::core) use fold::{
-    verify_fold, verify_fold_eor, FoldEorReplay, PreparedFoldReplay,
+    absorb_protocol_opening_points, prepare_single_field_suffix_groups,
+    prepare_single_field_terminal_suffix, verify_extension_claim_root_prefix,
+    verify_extension_claim_suffix_prefix, verify_extension_claim_terminal_suffix, verify_fold,
+    verify_single_field_root_prefix, FoldPrefix, PreparedFoldPayload, PreparedFoldReplay,
+    PreparedNextWitness,
 };
 
 fn prepare_terminal_witness_replay<F, T>(
     transcript: &mut T,
-    final_witness: &CleartextWitnessProof<F>,
-    final_w_len: usize,
-    layout: TerminalWitnessSegmentLayout,
+    terminal_response: &TerminalResponse<F>,
+    terminal_response_len: usize,
 ) -> Result<TerminalWitnessTranscriptParts, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
     T: Transcript<F>,
 {
-    if final_witness.num_elems() != final_w_len {
+    if terminal_response.num_elems() != terminal_response_len {
         return Err(AkitaError::InvalidProof);
     }
-    let parts = final_witness.terminal_transcript_parts(layout)?;
-    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
+    let parts = terminal_response.terminal_transcript_parts()?;
+    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_folded);
     Ok(parts)
 }

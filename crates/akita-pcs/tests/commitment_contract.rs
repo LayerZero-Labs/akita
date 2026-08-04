@@ -6,6 +6,7 @@
 //! [`RootCommitKernel`] for a local commit view (orphan-rule-safe: the backend
 //! type is local to this test crate).
 
+#![cfg(feature = "schedules-default")]
 #![allow(missing_docs)]
 
 use akita_algebra::CyclotomicRing;
@@ -13,6 +14,8 @@ use akita_config::proof_optimized::fp64;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_prover::backend::DenseView;
+#[cfg(feature = "compression-diagnostics")]
+use akita_prover::compute::CompressionDiagnosticBackend;
 use akita_prover::compute::{
     CommitInnerPlan, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx, RootCommitKernel,
     RootCommitSource, RootPolyShape,
@@ -22,12 +25,14 @@ use akita_prover::{
     DensePoly,
 };
 use akita_types::{NttCacheKey, OpeningClaimsLayout};
-use jolt_field::Unreduced;
-use jolt_field::{CanonicalEncoding, Field, Ring};
+use jolt_field::{CanonicalEncoding, Field, Ring, Unreduced};
 
-type Cfg = fp64::D64Full;
+type Cfg = fp64::D128Dense;
 type F = <Cfg as CommitmentConfig>::Field;
 const D: usize = Cfg::D;
+// The folded-only protocol requires at least two folds. `nv=8` was a
+// root-direct fixture; `nv=14` is the first supported fp64 D128 singleton.
+const CONTRACT_NUM_VARS: usize = 14;
 
 /// Downstream-like root polynomial: not `DensePoly`, `OneHotPoly`, etc.
 ///
@@ -116,15 +121,6 @@ where
         CpuBackend.ensure_ntt_slot(prepared, key)
     }
 
-    fn with_ntt_slot<R>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        key: NttCacheKey,
-        f: impl FnOnce(&akita_prover::kernels::crt_ntt::NttSlotCacheAny) -> Result<R, AkitaError>,
-    ) -> Result<R, AkitaError> {
-        CpuBackend.with_ntt_slot(prepared, key, f)
-    }
-
     fn prepared_expanded_setup<'a>(
         &self,
         prepared: &'a Self::PreparedSetup,
@@ -145,6 +141,24 @@ where
         log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, RING_D>>, AkitaError> {
         CpuBackend.digit_rows(prepared, row_len, digits, log_basis)
+    }
+}
+
+#[cfg(feature = "compression-diagnostics")]
+impl<F> CompressionDiagnosticBackend<F> for ContractCommitBackend
+where
+    F: Field + CanonicalEncoding,
+{
+    fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {
+        CpuBackend.compression_cache_bytes(prepared)
+    }
+
+    fn compression_rows<const RING_D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        digit_vectors: &[&[[i8; RING_D]]],
+    ) -> Result<Vec<Vec<CyclotomicRing<F, RING_D>>>, AkitaError> {
+        CpuBackend.compression_rows(prepared, digit_vectors)
     }
 }
 
@@ -175,19 +189,21 @@ where
 
 #[test]
 fn custom_commit_source_runs_commit_with_params() {
-    const NUM_VARS: usize = 8;
-    let len = 1usize << NUM_VARS;
+    let len = 1usize << CONTRACT_NUM_VARS;
     let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
-    let contract = ContractRootPoly::from_field_evals(NUM_VARS, &evals).expect("contract poly");
+    let contract =
+        ContractRootPoly::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("contract poly");
     assert_commit_source_only(&contract);
 
-    let dense = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).expect("dense oracle");
-    let opening_batch = OpeningClaimsLayout::new(NUM_VARS, 1).expect("opening batch");
+    let dense =
+        DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, D, &evals).expect("dense oracle");
+    let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
-    let setup_envelope = Cfg::max_setup_matrix_size(NUM_VARS, 1).expect("envelope");
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(NUM_VARS, 1, D, setup_envelope)
-        .expect("setup");
+    let setup_envelope = Cfg::max_setup_matrix_size(CONTRACT_NUM_VARS, 1).expect("envelope");
+    let setup =
+        AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, D, setup_envelope)
+            .expect("setup");
     let prepared = ContractCommitBackend
         .prepare_setup(&setup)
         .expect("prepared");
@@ -217,26 +233,25 @@ fn custom_commit_source_runs_commit_with_params() {
         contract_commitment.rows().count(),
         dense_commitment.rows().count()
     );
-    assert_eq!(
-        contract_hint.decomposed_inner_rows,
-        dense_hint.decomposed_inner_rows
-    );
+    assert_eq!(contract_hint, dense_hint);
 }
 
 #[test]
 fn custom_commit_source_runs_batched_commit_with_params() {
-    const NUM_VARS: usize = 8;
-    let len = 1usize << NUM_VARS;
+    let len = 1usize << CONTRACT_NUM_VARS;
     let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
-    let contract = ContractRootPoly::from_field_evals(NUM_VARS, &evals).expect("contract poly");
+    let contract =
+        ContractRootPoly::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("contract poly");
     assert_commit_source_only(&contract);
-    let dense = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).expect("dense oracle");
-    let opening_batch = OpeningClaimsLayout::new(NUM_VARS, 1).expect("opening batch");
+    let dense =
+        DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, D, &evals).expect("dense oracle");
+    let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
-    let setup_envelope = Cfg::max_setup_matrix_size(NUM_VARS, 1).expect("envelope");
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(NUM_VARS, 1, D, setup_envelope)
-        .expect("setup");
+    let setup_envelope = Cfg::max_setup_matrix_size(CONTRACT_NUM_VARS, 1).expect("envelope");
+    let setup =
+        AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, D, setup_envelope)
+            .expect("setup");
     let prepared = ContractCommitBackend
         .prepare_setup(&setup)
         .expect("prepared");
@@ -267,8 +282,5 @@ fn custom_commit_source_runs_batched_commit_with_params() {
         contract_commitment.rows().count(),
         dense_commitment.rows().count()
     );
-    assert_eq!(
-        contract_hint.decomposed_inner_rows,
-        dense_hint.decomposed_inner_rows
-    );
+    assert_eq!(contract_hint, dense_hint);
 }

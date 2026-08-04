@@ -54,7 +54,7 @@ After the opening-claims cutover, the main schedule-facing projection is
 ```rust
 pub struct AkitaScheduleLookupKey {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: Vec<PrecommittedGroupParams>,
+    pub precommitteds: Vec<PrecommittedGroupDescriptor>,
 }
 ```
 
@@ -220,7 +220,7 @@ Current superseded schedule-key status:
   `OpeningClaimsLayout`; that projection rejects multi-group layouts instead of
   collapsing them.
 - Grouped-root planning uses `AkitaScheduleLookupKey` with `final_group` plus
-  `PrecommittedGroupParams` for earlier groups, as specified in
+  `PrecommittedGroupDescriptor` for earlier groups, as specified in
   [`multi-group-batching.md`](multi-group-batching.md).
 - The older incidence-derived schedule-key plan in this file should not be
   continued directly for production paths.
@@ -301,7 +301,7 @@ Generated rows inline the runtime lookup-key fields:
 ```rust
 pub struct GeneratedScheduleTableEntry {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: &'static [PrecommittedGroupParams],
+    pub precommitteds: &'static [PrecommittedGroupDescriptor],
     pub steps: &'static [GeneratedStep],
 }
 ```
@@ -317,19 +317,17 @@ Each generated fold step stores the chosen layout/search parameters:
 pub struct GeneratedFoldStep {
     pub ring_d: u32,
     pub log_basis: u32,
-    pub m_vars: u32,
-    pub r_vars: u32,
+    pub position_index_bits: u32,
+    pub block_index_bits: u32,
     pub n_a: u32,
     pub n_b: u32,
     pub n_d: u32,
 }
 ```
 
-The terminal direct step is only a marker:
-
-```rust
-pub struct GeneratedDirectStep;
-```
+The generated row stores only fold decisions. Runtime expansion derives the
+single terminal [`TerminalWitnessPlan`](../crates/akita-types/src/schedule.rs)
+from the last fold's checked parameters; there is no generated terminal marker.
 
 Do not store cached materialization results in generated entries. In particular,
 avoid reintroducing:
@@ -471,4 +469,3 @@ cargo test multipoint
 8. Update prover/verifier protocol code so actual root witness layout matches
    the profile formula.
 9. Add incidence-level and e2e tests.
-

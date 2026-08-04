@@ -23,8 +23,8 @@ use akita_types::{
 };
 #[cfg(test)]
 use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
-use jolt_field::Unreduced;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_field::{CanonicalEncoding, Field, Unreduced};
+
 #[cfg(feature = "disk-persistence")]
 use std::fmt::Write as _;
 #[cfg(feature = "disk-persistence")]
@@ -196,8 +196,9 @@ fn cache_file_name<Cfg: CommitmentConfig>(
     // invalidated when the planner's per-level layout (including the
     // SIS-derived `n_a`/`n_b`/`n_d` ranks) changes for the same lookup
     // key — the full per-level params are hashed by
-    // `digest_effective_schedule`. The `planner_v7_` prefix marks the
-    // two-field lookup key cutover; old `planner_v6_*` files are not reused.
+    // `digest_effective_schedule`. Akita is still in development, so the cache
+    // namespace remains v1; the digest prevents incompatible schedules from
+    // aliasing within that namespace.
     let raw_schedule =
         match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_lookup_key)) {
             Ok(schedule) => {
@@ -207,7 +208,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
                     let _ = write!(hex, "{byte:02x}");
                 }
                 format!(
-                    "planner_v7_nv{}_batch{}_{hex}",
+                    "planner_v1_nv{}_batch{}_{hex}",
                     schedule_lookup_key.num_vars(),
                     schedule_lookup_key.num_polynomials(),
                 )
@@ -455,12 +456,12 @@ mod tests {
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
     use std::sync::Arc;
 
-    type Cfg = fp128::D64Full;
+    type Cfg = fp128::D64Dense;
     type TestF = fp128::Field;
 
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
-        let prover_setup = new_prover_setup::<TestF, Cfg>(10, 3).unwrap();
+        let prover_setup = new_prover_setup::<TestF, Cfg>(13, 3).unwrap();
         let verifier_setup = prover_setup.verifier_setup().unwrap();
 
         let mut bytes = Vec::new();
@@ -473,22 +474,20 @@ mod tests {
         assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
         assert_eq!(decoded.seed().max_num_batched_polys, 3);
 
-        let derived_verifier = AkitaVerifierSetup {
-            expanded: Arc::new(decoded.clone()),
-            prefix_slots: SetupPrefixVerifierRegistry::new(),
-        };
+        let derived_verifier = AkitaVerifierSetup::from_parts(
+            Arc::new(decoded.clone()),
+            SetupPrefixVerifierRegistry::new(),
+        );
         assert_eq!(derived_verifier, verifier_setup);
     }
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
-        // D128Full has no schedule table at all, so setup-matrix sizing
-        // falls through to the planner DP via the default `runtime_schedule`
-        // fallback. D64Full has a singleton table but the
-        // (max_num_vars=12, polys=1, points=1) iteration is a table hit.
-        new_prover_setup::<fp128::Field, fp128::D128Full>(12, 1)
+        // Both folded-only catalogs begin at nv=13, the first singleton shape
+        // with the required root and suffix folds.
+        new_prover_setup::<fp128::Field, fp128::D128Dense>(13, 1)
             .expect("default fp128 D=128 preset should accept the fp128 field");
-        new_prover_setup::<fp128::Field, fp128::D64Full>(12, 1)
+        new_prover_setup::<fp128::Field, fp128::D64Dense>(13, 1)
             .expect("small-D fp128 preset should accept the default field");
     }
 
@@ -525,7 +524,7 @@ mod tests {
         #[test]
         fn save_and_load_roundtrips() {
             with_test_cache_dir("roundtrip", || {
-                const MAX_VARS: usize = 12;
+                const MAX_VARS: usize = 13;
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
@@ -549,12 +548,19 @@ mod tests {
         }
 
         #[test]
+        fn cache_file_name_uses_development_v1_namespace() {
+            let name = cache_file_name::<Cfg>(16, 4);
+            assert!(name.contains("planner_v1_"), "cache name: {name}");
+        }
+
+        #[test]
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    setup_prefix_slot_id, AjtaiKeyParams, AkitaCommitmentHint, DigitBlocks,
-                    PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
-                    RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot, SisModulusFamily,
+                    setup_prefix_slot_id, AkitaCommitmentHint, InnerCommitMatrixParams,
+                    OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+                    PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
+                    SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
                 };
 
                 const MAX_VARS: usize = 13;
@@ -563,40 +569,51 @@ mod tests {
 
                 let mut setup = new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
                 let commitment_params = PrecommittedLevelParams {
-                    layout: PrecommittedGroupParams {
+                    layout: PrecommittedGroupDescriptor {
                         group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
-                        m_vars: 0,
-                        r_vars: 0,
-                        log_basis: 1,
+                        num_live_ring_elements_per_claim: 1,
+                        num_positions_per_block: 1,
+                        num_live_blocks: 1,
+                        log_basis_inner: 1,
+                        log_basis_outer: 1,
+                        inner_ring_dimension: TEST_D,
+                        outer_ring_dimension: TEST_D,
                         n_a: 1,
-                        conservative_n_b: 1,
+                        a_coeff_linf_bound: 1,
+                        n_b: 1,
+                        b_coeff_linf_bound: 1,
                     },
-                    a_key: AjtaiKeyParams::new_unchecked(
-                        akita_types::DEFAULT_SIS_SECURITY_BITS,
-                        SisModulusFamily::Q128,
+                    inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
+                        DEFAULT_SIS_SECURITY_POLICY,
+                        SisTableDigest::CURRENT,
+                        SisModulusProfileId::Q128OffsetA7F7,
                         1,
                         1,
                         1,
                         TEST_D,
                     ),
-                    b_key: AjtaiKeyParams::new_unchecked(
-                        akita_types::DEFAULT_SIS_SECURITY_BITS,
-                        SisModulusFamily::Q128,
+                    outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
+                        DEFAULT_SIS_SECURITY_POLICY,
+                        SisTableDigest::CURRENT,
+                        SisModulusProfileId::Q128OffsetA7F7,
                         1,
                         1,
                         1,
                         TEST_D,
                     ),
-                    num_blocks: 1,
-                    block_len: 1,
-                    num_digits_commit: 1,
+                    log_basis_open: 1,
+                    fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
+                    num_digits_inner: 1,
+                    num_digits_outer: 1,
                     num_digits_open: 1,
                     num_digits_fold_one: 1,
                 };
                 let id = setup_prefix_slot_id(TEST_D, 1, commitment_params);
-                // One block of zero planes at the setup ring dimension.
-                let decomposed = DigitBlocks::empty(TEST_D);
-                let hint = AkitaCommitmentHint::singleton(decomposed);
+                let hint = AkitaCommitmentHint::singleton(
+                    RingVec::from_coeffs_with_ring_dim(vec![TestF::zero(); TEST_D], TEST_D)
+                        .expect("inner rows"),
+                )
+                .expect("hint");
                 setup
                     .prefix_slots
                     .insert(SetupPrefixSlot {
@@ -740,7 +757,7 @@ mod tests {
                         .expect("singleton opening batch"),
                 )
                 .unwrap();
-                let num_coeffs = lp.num_blocks * lp.block_len;
+                let num_coeffs = lp.num_live_blocks * lp.num_positions_per_block;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                 let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs);
 
@@ -754,13 +771,23 @@ mod tests {
                         plan,
                     )
                     .unwrap();
-                    let typed_digits = inner.decomposed_inner_rows_trusted::<TEST_D>().unwrap();
+                    let n_a = lp.inner_commit_matrix.output_rank();
+                    let blocks = (0..lp.num_live_blocks)
+                        .map(|block| inner.block_rows::<TEST_D>(block, n_a).unwrap())
+                        .collect::<Vec<_>>();
+                    let digits =
+                        akita_prover::kernels::linear::decompose_commit_blocks_into::<
+                            TestF,
+                            TEST_D,
+                            TEST_D,
+                        >(&blocks, lp.num_digits_outer, lp.log_basis_outer)
+                        .unwrap();
                     CpuBackend
                         .digit_rows::<TEST_D>(
                             &prepared,
-                            lp.b_key.row_len(),
-                            typed_digits.typed_planes::<TEST_D>().unwrap(),
-                            lp.log_basis,
+                            lp.outer_commit_matrix.output_rank(),
+                            digits.typed_planes::<TEST_D>().unwrap(),
+                            lp.log_basis_outer,
                         )
                         .unwrap()
                 };

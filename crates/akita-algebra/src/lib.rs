@@ -35,9 +35,30 @@ pub use module::{Module, VectorModule};
 pub use ntt::tables;
 pub use ntt::{GarnerData, LimbQ, MontCoeff, NttPrime, PrimeWidth, RADIX_BITS};
 pub use ring::{
-    CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing,
-    DigitMontLut, PackedPartialSplitEval16, PackedPartialSplitNtt16, PartialSplitEval16,
-    PartialSplitNtt16,
+    balanced_decompose_coefficients_pow2_i8_into, mat_vec_i16_with_tail, CenteredMontLut,
+    CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
+    I16TailParams,
 };
 pub use split_eq::GruenSplitEq;
 pub use uni_poly::{CompressedUniPoly, UniPoly};
+
+/// Fallible parallel fold-reduce over a range.
+///
+/// With `parallel`: `range.into_par_iter().try_fold(identity, fold_op).try_reduce(identity, reduce_op)`.
+/// Without: `range.into_iter().try_fold(identity(), fold_op)`.
+///
+/// Companion to the `cfg_*` macros re-exported from `jolt-field`, which does
+/// not provide a fallible fold-reduce.
+#[macro_export]
+macro_rules! cfg_try_fold_reduce {
+    ($range:expr, $identity:expr, $fold_op:expr, $reduce_op:expr) => {{
+        #[cfg(feature = "parallel")]
+        let result = $range
+            .into_par_iter()
+            .try_fold($identity, $fold_op)
+            .try_reduce($identity, $reduce_op);
+        #[cfg(not(feature = "parallel"))]
+        let result = $range.into_iter().try_fold(($identity)(), $fold_op);
+        result
+    }};
+}

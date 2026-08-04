@@ -1,14 +1,13 @@
 //! Ring-native opening point for the Akita protocol.
 
-use akita_algebra::CyclotomicRing;
+use akita_algebra::{eq_poly::EqPolynomial, CyclotomicRing};
 use akita_error::AkitaError;
+use jolt_field::{Field, Ring};
+
 use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
-use jolt_field::Field;
-use jolt_field::Ring;
 
 use crate::field_reduction::{embed_ring_subfield_scalar, FpExtEncoding};
-
-const BLOCK_EMBED_ERROR: &str = "block opening weight does not embed in the ring-subfield basis";
+const BLOCK_EMBED_ERROR: &str = "fold opening weight does not embed in the ring-subfield basis";
 
 /// Polynomial basis mode for the evaluation relation.
 ///
@@ -33,19 +32,19 @@ pub enum BasisMode {
 
 /// Ring-native opening point storing field scalars.
 ///
-/// Contains the two vectors used by the §4.2 prover:
-/// - `a`: evaluation vector of length `2^m` (inner-block coordinates).
-/// - `b`: block-select vector of length `2^r` (outer coordinates).
+/// Contains the two exact factors of the physical source opening:
+/// - `position_weights`: position weights of length `M`.
+/// - `live_block_weights`: the live prefix of `B` block weights.
 ///
 /// These are raw field scalars, not ring elements — they originate from
 /// basis weight evaluations (Lagrange or monomial) and are always constant
 /// (scalar) ring elements when embedded into the ring.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingOpeningPoint<F: Field> {
-    /// Evaluation vector of length `2^m` (field scalars).
-    pub a: Vec<F>,
-    /// Block-select vector of length `2^r` (field scalars).
-    pub b: Vec<F>,
+    /// Position weights, with exactly one entry per block position.
+    pub position_weights: Vec<F>,
+    /// Block-select weights, truncated to the exact live block prefix.
+    pub live_block_weights: Vec<F>,
 }
 
 /// Multilinear Lagrange weights: `⊗ᵢ (1 − xᵢ, xᵢ)`.
@@ -55,22 +54,8 @@ pub struct RingOpeningPoint<F: Field> {
 /// Returns an error if the implied weight table would overflow or exceed the
 /// verifier sequence bound.
 pub fn lagrange_weights<F: Field>(point: &[F]) -> Result<Vec<F>, AkitaError> {
-    let len = basis_weight_len(point.len())?;
-    let mut weights = vec![F::zero(); len];
-    if weights.is_empty() {
-        return Ok(weights);
-    }
-    weights[0] = F::one();
-    for (level, &p) in point.iter().enumerate() {
-        let k = 1usize << level;
-        let one_minus_p = F::one() - p;
-        for i in (0..k).rev() {
-            let value = weights[i];
-            weights[i] = value * one_minus_p;
-            weights[i + k] = value * p;
-        }
-    }
-    Ok(weights)
+    basis_weight_len(point.len())?;
+    EqPolynomial::evals(point)
 }
 
 /// Multilinear monomial weights: `⊗ᵢ (1, xᵢ)`.
@@ -102,6 +87,34 @@ pub fn basis_weights<F: Field>(point: &[F], basis: BasisMode) -> Result<Vec<F>, 
     }
 }
 
+/// Return the first `live_len` tensor-product weights without retaining the
+/// padded Boolean suffix.
+pub fn basis_weights_prefix<F: Field>(
+    point: &[F],
+    basis: BasisMode,
+    live_len: usize,
+) -> Result<Vec<F>, AkitaError> {
+    let capacity = basis_weight_len(point.len())?;
+    if live_len == 0 || live_len > capacity {
+        return Err(AkitaError::InvalidSize {
+            expected: capacity,
+            actual: live_len,
+        });
+    }
+    match basis {
+        BasisMode::Lagrange => EqPolynomial::evals_prefix(point, live_len),
+        BasisMode::Monomial => (0..live_len)
+            .map(|index| {
+                Ok(point
+                    .iter()
+                    .enumerate()
+                    .filter(|(bit, _)| index & (1usize << bit) != 0)
+                    .fold(F::one(), |acc, (_, &coordinate)| acc * coordinate))
+            })
+            .collect(),
+    }
+}
+
 fn basis_weight_len(num_vars: usize) -> Result<usize, AkitaError> {
     let shift = u32::try_from(num_vars).map_err(|_| AkitaError::InvalidSize {
         expected: usize::BITS as usize,
@@ -119,45 +132,78 @@ fn basis_weight_len(num_vars: usize) -> Result<usize, AkitaError> {
     Ok(len)
 }
 
-/// Block-order convention used when splitting outer opening coordinates into
-/// in-block weights `a` and block weights `b`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BlockOrder {
-    /// Level-0 polynomial layout: the first `m_vars` coordinates select the
-    /// position within a block, and the remaining `r_vars` select the block.
-    RowMajor,
+/// Boolean opening-domain capacity for an exact compact physical source.
+pub fn opening_domain_len(source_len: usize) -> Result<usize, AkitaError> {
+    if source_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "opening source length must be positive".to_string(),
+        ));
+    }
+    source_len
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("opening domain length overflow".to_string()))
+}
 
-    /// Recursive witness layout: the first `r_vars` coordinates select the
-    /// block, and the remaining `m_vars` coordinates select the position
-    /// within that block.
-    ColumnMajor,
+/// Committed coefficient length for an exact live witness prefix under a
+/// successor commitment ring dimension.
+pub fn witness_commitment_domain_len(
+    live_coeff_len: usize,
+    successor_ring_dim: usize,
+) -> Result<usize, AkitaError> {
+    if successor_ring_dim == 0 || !successor_ring_dim.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "successor commitment ring dimension must be a power of two".to_string(),
+        ));
+    }
+    let live_ring_len = live_coeff_len
+        .checked_add(successor_ring_dim - 1)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness commitment length overflow".into()))?
+        / successor_ring_dim;
+    opening_domain_len(live_ring_len)?
+        .checked_mul(successor_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness commitment domain overflow".into()))
+}
+
+/// Validate and return an index in the exact physical opening source.
+pub fn checked_opening_source_index(
+    source_len: usize,
+    physical_index: usize,
+) -> Result<usize, AkitaError> {
+    if physical_index >= source_len {
+        return Err(AkitaError::InvalidInput(
+            "physical opening index out of range".to_string(),
+        ));
+    }
+    Ok(physical_index)
 }
 
 /// Convert the outer portion of a field opening point into ring-native vectors.
 ///
-/// **Row-major (level 0):** the first `m_vars` coordinates select the
-/// position within each block (`a`), the remaining `r_vars` select the
-/// block (`b`).
-///
-/// **Column-major (recursive levels):** the first `r_vars` coordinates
-/// select the block (`b`), the remaining `m_vars` select the position (`a`).
-/// This corresponds to the column-major block interpretation where the
-/// sequential polynomial index decomposes as
-/// `i = position * 2^r + block`.
+/// The first `log2(num_positions_per_block)` coordinates select a position and the
+/// remaining `log2(next_power_of_two(num_live_blocks))` coordinates select a
+/// block. Only the exact live block prefix is retained.
 ///
 /// # Errors
 ///
-/// Returns an error if `m_vars + r_vars` overflows or if `opening_point` has
-/// the wrong length.
+/// Returns an error if the point dimension does not match `layout`.
 pub fn ring_opening_point_from_field<F: Field>(
     opening_point: &[F],
-    r_vars: usize,
-    m_vars: usize,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
     basis: BasisMode,
-    block_order: BlockOrder,
 ) -> Result<RingOpeningPoint<F>, AkitaError> {
-    let expected_len = r_vars
-        .checked_add(m_vars)
+    if !num_positions_per_block.is_power_of_two() || num_live_blocks == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "opening geometry requires power-of-two M and positive B".to_string(),
+        ));
+    }
+    let position_index_bits = num_positions_per_block.trailing_zeros() as usize;
+    let block_index_domain_size = num_live_blocks
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("block-index domain size overflow".to_string()))?;
+    let block_index_bits = block_index_domain_size.trailing_zeros() as usize;
+    let expected_len = position_index_bits
+        .checked_add(block_index_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     if opening_point.len() != expected_len {
         return Err(AkitaError::InvalidPointDimension {
@@ -166,19 +212,16 @@ pub fn ring_opening_point_from_field<F: Field>(
         });
     }
 
-    let (a, b) = match block_order {
-        BlockOrder::ColumnMajor => {
-            let b = basis_weights(&opening_point[..r_vars], basis)?;
-            let a = basis_weights(&opening_point[r_vars..], basis)?;
-            (a, b)
-        }
-        BlockOrder::RowMajor => {
-            let a = basis_weights(&opening_point[..m_vars], basis)?;
-            let b = basis_weights(&opening_point[m_vars..], basis)?;
-            (a, b)
-        }
-    };
-    Ok(RingOpeningPoint { a, b })
+    let position_weights = basis_weights(&opening_point[..position_index_bits], basis)?;
+    let live_block_weights = basis_weights_prefix(
+        &opening_point[position_index_bits..],
+        basis,
+        num_live_blocks,
+    )?;
+    Ok(RingOpeningPoint {
+        position_weights,
+        live_block_weights,
+    })
 }
 
 /// Reduce the inner `alpha = log2(D)` opening coordinates to one ring element.
@@ -201,15 +244,16 @@ pub fn reduce_inner_opening_to_ring_element<F: Field, const D: usize>(
     Ok(CyclotomicRing::from_slice(&weights))
 }
 
-/// Embed `eq(b_open, j)` as a ring element for each block index `j`.
+/// Embed `eq(block_open, j)` as a ring element for each live block index `j`.
 pub fn block_rings_at_opening<F, E, const D: usize>(
-    b_open: &[E],
+    fold_open: &[E],
+    num_live_blocks: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: Field + Ring,
     E: FpExtEncoding<F> + Field,
 {
-    lagrange_weights(b_open)?
+    basis_weights_prefix(fold_open, BasisMode::Lagrange, num_live_blocks)?
         .into_iter()
         .map(|weight| {
             embed_ring_subfield_scalar::<F, E, D>(
@@ -218,4 +262,67 @@ where
             )
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_algebra::One;
+    use jolt_field::Prime128OffsetA7F7;
+
+    type F = Prime128OffsetA7F7;
+
+    #[test]
+    fn lagrange_weights_match_direct_multilinear_basis() {
+        let x = F::from_u64(2);
+        let y = F::from_u64(3);
+        assert_eq!(lagrange_weights::<F>(&[]).unwrap(), vec![F::one()]);
+        assert_eq!(
+            lagrange_weights(&[x, y]).unwrap(),
+            vec![
+                (F::one() - x) * (F::one() - y),
+                x * (F::one() - y),
+                (F::one() - x) * y,
+                x * y,
+            ]
+        );
+    }
+
+    #[test]
+    fn lagrange_weights_preserve_the_verifier_sequence_bound() {
+        let point = vec![F::one(); DEFAULT_MAX_SEQUENCE_LEN.ilog2() as usize + 1];
+        assert!(matches!(
+            lagrange_weights(&point),
+            Err(AkitaError::InvalidSize {
+                expected: DEFAULT_MAX_SEQUENCE_LEN,
+                actual,
+            }) if actual > DEFAULT_MAX_SEQUENCE_LEN
+        ));
+    }
+
+    #[test]
+    fn opening_point_keeps_exact_live_block_prefix() {
+        let point = [
+            F::from_u64(2),
+            F::from_u64(3),
+            F::from_u64(5),
+            F::from_u64(7),
+        ];
+        let opening = ring_opening_point_from_field(&point, 4, 3, BasisMode::Lagrange).unwrap();
+        assert_eq!(
+            opening.position_weights,
+            lagrange_weights(&point[..2]).unwrap()
+        );
+        assert_eq!(
+            opening.live_block_weights,
+            lagrange_weights(&point[2..]).unwrap()[..3]
+        );
+    }
+
+    #[test]
+    fn monomial_prefix_omits_boolean_capacity_tail() {
+        let point = [F::from_u64(2), F::from_u64(3)];
+        let prefix = basis_weights_prefix(&point, BasisMode::Monomial, 3).unwrap();
+        assert_eq!(prefix, monomial_weights(&point).unwrap()[..3]);
+    }
 }

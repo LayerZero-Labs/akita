@@ -15,23 +15,35 @@ fn fill_opening_digit_table<F, E>(
     gadget_scalars: &[F],
     block_rows: &[E],
     table: &mut [E],
-) where
+) -> Result<(), AkitaError>
+where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + Ring,
 {
     let ring_len = layout.ring_len();
-    debug_assert_eq!(block_rows.len(), layout.num_blocks * ring_len);
+    debug_assert_eq!(block_rows.len(), layout.num_live_blocks * ring_len);
+    let role_subcolumns = layout.source_ring_dim / layout.opening_ring_dim;
     for (plane, gadget_scalar) in gadget_scalars.iter().enumerate() {
         let gadget = E::lift_base(*gadget_scalar);
-        for block in 0..layout.num_blocks {
-            let col = layout.opening_digit_col_index(block, plane);
+        for block in 0..layout.num_live_blocks {
             let row_base = block * ring_len;
-            for ring_coord in 0..ring_len {
-                let idx = layout.witness_index(col, ring_coord);
-                table[idx] = gadget * block_rows[row_base + ring_coord];
+            for role_subcolumn in 0..role_subcolumns {
+                for role_coefficient in 0..layout.opening_ring_dim {
+                    let idx = layout.opening_digit_coefficient_index(
+                        block,
+                        role_subcolumn,
+                        plane,
+                        role_coefficient,
+                    )?;
+                    let source =
+                        row_base + role_subcolumn * layout.opening_ring_dim + role_coefficient;
+                    *table.get_mut(idx).ok_or(AkitaError::InvalidProof)? =
+                        gadget * block_rows[source];
+                }
             }
         }
     }
+    Ok(())
 }
 
 fn compact_table_len(layout: &TraceWeightLayout, live_x_cols: usize) -> Result<usize, AkitaError> {
@@ -53,9 +65,18 @@ fn block_has_live_opening_digit(
     layout: &TraceWeightLayout,
     block: usize,
     live_x_cols: usize,
-) -> bool {
-    (0..layout.num_digits_open)
-        .any(|plane| layout.opening_digit_col_index(block, plane) < live_x_cols)
+) -> Result<bool, AkitaError> {
+    let role_subcolumns = layout.source_ring_dim / layout.opening_ring_dim;
+    for role_subcolumn in 0..role_subcolumns {
+        for plane in 0..layout.num_digits_open {
+            let coefficient =
+                layout.opening_digit_coefficient_index(block, role_subcolumn, plane, 0)?;
+            if coefficient / layout.ring_len() < live_x_cols {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn add_ring_row_to_compact<F, E>(
@@ -66,31 +87,43 @@ fn add_ring_row_to_compact<F, E>(
     live_x_cols: usize,
     output_scale: E,
     compact: &mut [E],
-) where
+) -> Result<(), AkitaError>
+where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + Ring,
 {
     let ring_len = layout.ring_len();
     debug_assert_eq!(row.len(), ring_len);
+    let role_subcolumns = layout.source_ring_dim / layout.opening_ring_dim;
     for (plane, gadget_scalar) in gadget_scalars.iter().enumerate() {
-        let col = layout.opening_digit_col_index(block, plane);
-        if col >= live_x_cols {
-            continue;
-        }
         let gadget = output_scale * E::lift_base(*gadget_scalar);
-        let dst_base = col * ring_len;
-        for (dst, value) in compact[dst_base..dst_base + ring_len].iter_mut().zip(row) {
-            *dst += gadget * *value;
+        for role_subcolumn in 0..role_subcolumns {
+            for role_coefficient in 0..layout.opening_ring_dim {
+                let destination = layout.opening_digit_coefficient_index(
+                    block,
+                    role_subcolumn,
+                    plane,
+                    role_coefficient,
+                )?;
+                if destination / ring_len >= live_x_cols {
+                    continue;
+                }
+                let source = role_subcolumn * layout.opening_ring_dim + role_coefficient;
+                *compact
+                    .get_mut(destination)
+                    .ok_or(AkitaError::InvalidProof)? += gadget * row[source];
+            }
         }
     }
+    Ok(())
 }
 
 /// Build the full Boolean trace-weight table for scalar (`K = 1`) block weights.
 ///
-/// `block_weights` should be `lagrange_weights(b_open)`.
-pub fn build_trace_weight_table_field_block_weights<F, E, const D: usize>(
+/// `live_block_weights` should be `lagrange_weights(b_open)`.
+pub fn build_trace_weight_table_field_live_block_weights<F, E, const D: usize>(
     layout: &TraceWeightLayout,
-    block_weights: &[F],
+    live_block_weights: &[F],
     inner_opening_ring: &CyclotomicRing<F, D>,
 ) -> Result<Vec<E>, AkitaError>
 where
@@ -99,7 +132,7 @@ where
 {
     let term = TraceFieldBlockOpening {
         block_offset: 0,
-        block_weights: block_weights.to_vec(),
+        live_block_weights: live_block_weights.to_vec(),
         inner_opening_ring: *inner_opening_ring,
     };
     build_trace_weight_table_field_terms(layout, &[term])
@@ -122,14 +155,14 @@ where
     layout.validate_ring_dimension::<D>()?;
     layout.validate_opening_digit_segment()?;
 
-    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis_open);
     let ring_len = layout.ring_len();
-    let mut block_rows = vec![E::zero(); layout.num_blocks * ring_len];
+    let mut block_rows = vec![E::zero(); layout.num_live_blocks * ring_len];
 
     for term in terms {
-        layout.validate_trace_term_block_range(term.block_offset, term.block_weights.len())?;
+        layout.validate_trace_term_block_range(term.block_offset, term.live_block_weights.len())?;
         let inner_coeffs = term.inner_opening_ring.coefficients();
-        for (local_block, block_weight) in term.block_weights.iter().enumerate() {
+        for (local_block, block_weight) in term.live_block_weights.iter().enumerate() {
             let block_weight_e = E::lift_base(*block_weight);
             let row_base = (term.block_offset + local_block) * ring_len;
             for (ring_coord, coeff) in inner_coeffs.iter().enumerate().take(ring_len) {
@@ -139,7 +172,7 @@ where
     }
 
     let mut table = vec![E::zero(); layout.table_len()?];
-    fill_opening_digit_table(layout, &gadget_scalars, &block_rows, &mut table);
+    fill_opening_digit_table(layout, &gadget_scalars, &block_rows, &mut table)?;
     Ok(table)
 }
 
@@ -163,28 +196,37 @@ where
     layout.validate_opening_digit_segment()?;
     let _ = compact_table_len(layout, live_x_cols)?;
 
-    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis_open);
     let ring_len = layout.ring_len();
     let mut columns = Vec::new();
 
     for term in terms {
-        layout.validate_trace_term_block_range(term.block_offset, term.block_weights.len())?;
+        layout.validate_trace_term_block_range(term.block_offset, term.live_block_weights.len())?;
         let inner_coeffs = term.inner_opening_ring.coefficients();
-        for (local_block, block_weight) in term.block_weights.iter().enumerate() {
+        for (local_block, block_weight) in term.live_block_weights.iter().enumerate() {
             let block = term.block_offset + local_block;
             let block_weight_e = output_scale * E::lift_base(*block_weight);
+            let role_subcolumns = layout.source_ring_dim / layout.opening_ring_dim;
             for (plane, gadget_scalar) in gadget_scalars.iter().enumerate() {
-                let col = layout.opening_digit_col_index(block, plane);
-                if col >= live_x_cols {
-                    continue;
-                }
                 let scale = block_weight_e * E::lift_base(*gadget_scalar);
-                let values = inner_coeffs
-                    .iter()
-                    .take(ring_len)
-                    .map(|&coeff| scale * E::lift_base(coeff))
-                    .collect();
-                columns.push(TraceSparseColumn { col, values });
+                for role_subcolumn in 0..role_subcolumns {
+                    let start =
+                        layout.opening_digit_coefficient_index(block, role_subcolumn, plane, 0)?;
+                    let col = start / ring_len;
+                    if col >= live_x_cols {
+                        continue;
+                    }
+                    let coordinate = start % ring_len;
+                    let mut values = vec![E::zero(); ring_len];
+                    for role_coefficient in 0..layout.opening_ring_dim {
+                        values[coordinate + role_coefficient] = scale
+                            * E::lift_base(
+                                inner_coeffs
+                                    [role_subcolumn * layout.opening_ring_dim + role_coefficient],
+                            );
+                    }
+                    columns.push(TraceSparseColumn { col, values });
+                }
             }
         }
     }
@@ -195,7 +237,7 @@ where
 /// Build the full Boolean trace-weight table for ring (`K > 1`) block weights.
 ///
 /// `block_rings` should come from [`crate::block_rings_at_opening`].
-pub fn build_trace_weight_table_ring_block_weights<F, E, const D: usize>(
+pub fn build_trace_weight_table_ring_live_block_weights<F, E, const D: usize>(
     layout: &TraceWeightLayout,
     block_rings: &[CyclotomicRing<F, D>],
     packed_inner_point: &CyclotomicRing<F, D>,
@@ -229,9 +271,9 @@ where
     layout.validate_ring_dimension::<D>()?;
     layout.validate_opening_digit_segment()?;
 
-    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis_open);
     let ring_len = layout.ring_len();
-    let mut block_rows = vec![E::zero(); layout.num_blocks * ring_len];
+    let mut block_rows = vec![E::zero(); layout.num_live_blocks * ring_len];
 
     for term in terms {
         layout.validate_trace_term_block_range(term.block_offset, term.block_rings.len())?;
@@ -252,7 +294,7 @@ where
     }
 
     let mut table = vec![E::zero(); layout.table_len()?];
-    fill_opening_digit_table(layout, &gadget_scalars, &block_rows, &mut table);
+    fill_opening_digit_table(layout, &gadget_scalars, &block_rows, &mut table)?;
     Ok(table)
 }
 
@@ -276,14 +318,14 @@ where
     layout.validate_opening_digit_segment()?;
     let out_len = compact_table_len(layout, live_x_cols)?;
 
-    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis_open);
     let mut compact = vec![E::zero(); out_len];
 
     for term in terms {
         layout.validate_trace_term_block_range(term.block_offset, term.block_rings.len())?;
         for (local_block, block_ring) in term.block_rings.iter().enumerate() {
             let block = term.block_offset + local_block;
-            if !block_has_live_opening_digit(layout, block, live_x_cols) {
+            if !block_has_live_opening_digit(layout, block, live_x_cols)? {
                 continue;
             }
             let row = trace_open_ring_row::<F, E, D>(
@@ -299,7 +341,7 @@ where
                 live_x_cols,
                 output_scale,
                 &mut compact,
-            );
+            )?;
         }
     }
 

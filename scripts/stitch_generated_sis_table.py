@@ -135,7 +135,7 @@ def parse_existing_family_arms(content: str, family: str) -> dict[tuple[int, int
         return parse_arms(content[start:end])
 
     enum_name = FAMILY_ENUM[family]
-    marker = f"SisModulusFamily::{enum_name} => match (d, collision_l2_sq) {{"
+    marker = f"SisModulusProfileId::{enum_name} => match (d, collision_l2_sq) {{"
     start = content.index(marker)
     end = content.index("_ => None,", start)
     block = content[start:end]
@@ -190,19 +190,19 @@ def stitch_mod() -> str:
     parts = [
         TABLE_HEADER,
         "\nmod q128;\nmod q32;\nmod q64;\n\n",
-        "use super::SisModulusFamily;\n\n",
+        "use super::SisModulusProfileId;\n\n",
         "/// Generated SIS max-width table: for each `(family, d, collision_l2_sq)` the\n",
         "/// maximum secure ring-element width per module rank (`widths[rank - 1]`).\n",
         "#[rustfmt::skip]\n",
         "pub(crate) fn sis_max_widths(\n",
-        "    family: SisModulusFamily,\n",
+        "    family: SisModulusProfileId,\n",
         "    d: u32,\n",
         "    collision_l2_sq: u128,\n",
         ") -> Option<&'static [u64]> {\n",
         "    match family {\n",
-        "        SisModulusFamily::Q32 => q32::sis_max_widths(d, collision_l2_sq),\n",
-        "        SisModulusFamily::Q64 => q64::sis_max_widths(d, collision_l2_sq),\n",
-        "        SisModulusFamily::Q128 => q128::sis_max_widths(d, collision_l2_sq),\n",
+        "        SisModulusProfileId::Q32Offset99 => q32::sis_max_widths(d, collision_l2_sq),\n",
+        "        SisModulusProfileId::Q64Offset59 => q64::sis_max_widths(d, collision_l2_sq),\n",
+        "        SisModulusProfileId::Q128OffsetA7F7 => q128::sis_max_widths(d, collision_l2_sq),\n",
         "    }\n",
         "}\n",
     ]

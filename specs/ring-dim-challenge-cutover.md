@@ -15,7 +15,8 @@
 One PR on #249. Together these changes mean:
 
 1. **Each commitment matrix keeps its own ring size** — fold/witness work on A
-   at `d_a ≥ 64`; B and D may still use D=32 when nested (`d_d | d_b | d_a`).
+   at `d_a ≥ 64`; B and D may use D=32 independently. A remains at least as
+   large as both; the protocol imposes no ordering between B and D.
 2. **CRT matvec scales to larger rings** — new primes, per-field-size caps, NTT
    cache dispatch through D=2048.
 3. **Ring fold challenges unify** — drop D=32 bounded-L₁ and D=32 production
@@ -54,7 +55,7 @@ derives fold-challenge seeds.
 Runtime `match` on ring degree is cheap. The real cost is **how many const-D
 monomorphizations** each call site pays for at compile time.
 
-Today one macro (`dispatch_ring_dim_result!`) served every role with the same
+Before the cutover one macro served every role with the same
 four arms `{32, 64, 128, 256}`. Role × field-tier dispatch removes unused arms.
 
 ### Design: two axes for fold / ring-switch dispatch
@@ -86,7 +87,7 @@ Outer / opening (`d_b`, `d_d`, tier-specific floor):
 
 | Field tier | B/D arms (this PR) | Notes |
 |------------|-------------------|-------|
-| fp128 | 16, 32, 64, 128, 256 | D=16 for finer nested opening |
+| fp128 | 32, 64, 128, 256 | D=32 protocol floor |
 | fp64 | 32, 64, 128, 256 | legacy small D kept |
 | fp32 | 64, 128, 256 | no D=32 on fp32 tier |
 
@@ -145,7 +146,8 @@ pub const MIN_A_ROLE_FOLD_CHALLENGE_RING_D: usize = 64;
 
 **Remove:** `d_a = 32` presets; `proof_optimized_ring_challenge_config(32)`.
 
-**Keep:** D=32 on outer/opening dispatch and NTT; nested `{128, 64, 32}`.
+**Keep:** D=32 on outer/opening dispatch and NTT. B and D are independent below
+the A-native source; `{128, 32, 64}` and `{128, 64, 32}` are both valid.
 
 ### 5. Unified fold-challenge config (replaces enum families)
 
@@ -206,9 +208,10 @@ Live E2E at `d_a > 256` waits on inner dispatch + backends + preset.
 
 - [x] Protocol + NTT tier dispatch through D=2048 cache variants
 
-### Slice B′ — tier-specific NTT floors + fp128 D=16
+### Slice B′ — tier-specific NTT floors
 
-- [x] Tier floors; `validate_role_dims_for_field`
+- [x] Tier floors; `validate_role_dims_for_field` (protocol B/D floor 32,
+  while the fp128 NTT layer retains D=16 support)
 
 ### Slice C — sampler tiers
 

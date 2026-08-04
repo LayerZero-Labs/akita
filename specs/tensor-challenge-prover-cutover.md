@@ -409,9 +409,9 @@ For the current symmetric factor family:
 ```text
 s2_L = s2_R = challenge_l2_sq_max
 k_L  = k_R  = challenge_nonzero_count_max
-P    = 2^floor(r_vars / 2)
-Q    = 2^ceil(r_vars / 2)
-B    = n * 2^r_vars
+P    = 2^floor(block_index_bits / 2)
+Q    = 2^ceil(block_index_bits / 2)
+B    = n * num_live_blocks
 
 lambda_inner =
   ln(4 * N * n * min(P, Q) * k_L / (1 - p_grind))
@@ -435,7 +435,7 @@ threshold constants than D64. Their ratio against the tensor worst-case beta
 ratio is smaller, but the absolute `t_tensor` for the same `(B, N, s_inf)` is
 lower.
 
-For a concrete balanced-root comparison with `N = 2^16`, `n = 1`, `r_vars = 16`,
+For a concrete balanced-root comparison with `N = 2^16`, `n = 1`, `block_index_bits = 16`,
 `p_grind = 1/8`, and `s_inf = 1`:
 
 | ring dimension | `t_tensor` | tensor beta `B * omega^2` | ratio |
@@ -659,8 +659,8 @@ it no longer overstates prover-side optimization. The Akita Book should state:
 
 1. `specs/tensor-structured-folding-challenges.md`
 2. `crates/akita-config/src/tensor_verifier.rs`
-3. `crates/akita-prover/src/backend/dense/tensor_fold.rs`
-4. `crates/akita-prover/src/backend/sparse_ring/tensor_fold.rs`
+3. `crates/akita-prover/src/backend/dense/tensor_block.rs`
+4. `crates/akita-prover/src/backend/sparse_ring/tensor_block.rs`
 5. `crates/akita-prover/src/backend/onehot/accumulate.rs`
 6. `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`
 7. `crates/akita-prover/src/protocol/fold_grind.rs`

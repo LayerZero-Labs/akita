@@ -96,9 +96,45 @@ impl<E: Field> ExtensionOpeningReductionTerm<E> {
         })
     }
 
+    /// Extend this term over additional high variables without materializing
+    /// repeated witness evaluations.
+    ///
+    /// The added transparent factor is `eq(extra_point, ·)`. Its Boolean sum is
+    /// one, so the input claim is unchanged while the term joins a larger
+    /// sumcheck domain.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the combined virtual table length overflows.
+    pub fn extend_cylindrically(mut self, extra_point: Vec<E>) -> Result<Self, AkitaError> {
+        let native_rounds = num_rounds_from_table_len(self.tables.len())?;
+        let total_rounds = native_rounds
+            .checked_add(extra_point.len())
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "extension-opening cylindrical domain overflow".to_string(),
+                )
+            })?;
+        checked_table_len(total_rounds)?;
+        if !extra_point.is_empty() {
+            self.tables = ExtensionOpeningTables::Cylindrical {
+                inner: Box::new(self.tables),
+                extra_point,
+                extra_round: 0,
+                extra_factor_eval: E::one(),
+            };
+        }
+        Ok(self)
+    }
+
     /// Batching coefficient multiplying this term.
     pub fn coeff(&self) -> E {
         self.coeff
+    }
+
+    /// Current Boolean-domain table length, including virtual high variables.
+    pub(crate) fn domain_len(&self) -> usize {
+        self.tables.len()
     }
 
     /// Return final folded witness/factor evaluations after all challenges.

@@ -3,12 +3,8 @@ use crate::api::commitment::{
     validate_commit_inner_shape, validate_commit_level_params, validate_commit_outer_input_nonempty,
 };
 use crate::protocol::ring_relation::compute_multi_group_relation_quotient;
-use crate::{
-    tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
-    RecursiveWitnessFlat,
-};
-use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
-use akita_algebra::ring::scalar_powers;
+use crate::{tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveWitnessFlat};
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
@@ -17,8 +13,8 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::DigitBlocks;
 use akita_types::RingRelationInstance;
 use akita_types::{
-    r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    RelationMatrixRowLayout, RingVec,
+    r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding,
+    RingVec,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
@@ -26,31 +22,32 @@ mod coeffs;
 mod commit;
 mod evals;
 mod finalize;
+mod relation_weights;
 #[cfg(test)]
 mod tests;
 
+pub use coeffs::ring_switch_build_w;
 pub(crate) use coeffs::PreparedRingSwitchGroup;
-pub use coeffs::RingSwitchTerminalArtifacts;
-pub use coeffs::{ring_switch_build_w, RingSwitchBuildOutput};
-pub use commit::{commit_w, NextWitnessCommitment};
-pub use evals::{build_w_evals_compact, compute_relation_matrix_col_evals};
+pub use commit::{commit_terminal_w, commit_w, NextWitnessState, NextWitnessStateOutput};
+pub use evals::build_w_evals_compact;
 pub use finalize::ring_switch_finalize;
+pub use relation_weights::{
+    build_relation_weight_events, RelationSetupSource, RelationWeightContribution,
+    RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,
+    RelationWeightFactorization,
+};
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
 pub struct RingSwitchOutput<E: Field> {
     /// Compact evaluation table of w, stored as x-outer/y-inner slices.
-    pub w_evals_compact: Vec<i8>,
-    /// Physical x width before zero-extension to the next power of two.
-    pub live_x_cols: usize,
-    /// Evaluation table of M_alpha(x) (tau1-weighted).
-    pub relation_matrix_col_evals: Vec<E>,
-    /// Evaluation table of alpha powers (y dimension).
-    pub alpha_evals_y: Vec<E>,
-    /// Number of upper variable bits.
-    pub col_bits: usize,
-    /// Number of lower variable bits.
-    pub ring_bits: usize,
+    pub w_evals_compact: std::sync::Arc<[i8]>,
+    /// Canonical flat relation-witness domain and coefficient/lane split.
+    pub(crate) relation_address_geometry: akita_types::RelationAddressGeometry,
+    /// Exact common-alpha factorization of the tau1-weighted relation table.
+    pub(crate) relation_weight_factorization: RelationWeightFactorization<E>,
+    /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
+    pub digit_range_equality_low_variable_count: usize,
     /// Challenge tau0 for F_0 sumcheck.
     pub tau0: Vec<E>,
     /// Challenge tau1 for F_alpha sumcheck.

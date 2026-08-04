@@ -6,8 +6,7 @@ use crate::compute::{
     TensorProjectionKernel,
 };
 use crate::{DensePoly, OneHotPoly};
-use jolt_field::One;
-use jolt_field::{CanonicalEncoding, ExtField, FpExt4, Prime24Offset3};
+use jolt_field::{CanonicalEncoding, ExtField, FpExt4, One, Prime24Offset3};
 
 fn sample_dense<const D: usize>() -> DensePoly<Prime24Offset3> {
     let num_vars = 5;
@@ -256,7 +255,7 @@ fn multilinear_mixed_sparse_batch_fold_returns_fallback_per_poly() {
             batch_view,
             DecomposeFoldBatchPlan::Sparse {
                 challenges: &[],
-                block_len: 1,
+                num_positions_per_block: 1,
                 num_digits: 1,
                 log_basis: 1,
             },

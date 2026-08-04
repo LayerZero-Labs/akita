@@ -2,22 +2,34 @@
 
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
+use akita_config::{PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
+use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
-use akita_prover::CpuBackend;
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
 pub(super) use akita_prover::ProverOpeningData;
-pub(super) use akita_types::LevelParams;
+use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
-    BasisMode, BlockOrder, Commitment, OpeningClaims, PointVariableSelection,
-    PolynomialGroupClaims,
+    BasisMode, Commitment, OpeningClaims, PolynomialGroupClaims,
 };
+use akita_types::{
+    AkitaBatchedProof, AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
+    PrecommittedGroupDescriptor, SetupSumcheckProof,
+};
+pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
+use jolt_field::One;
 use jolt_field::Zero;
-pub(super) use jolt_field::{CanonicalEncoding, Field};
+pub(super) use jolt_field::{CanonicalBytes, CanonicalEncoding, Field};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;
+
+pub(crate) use akita_error::AkitaError;
+#[cfg(feature = "logging-transcript")]
+use akita_transcript::TranscriptEvent;
+use akita_transcript::{labels, AkitaTranscript, Transcript};
 
 pub(super) type F = fp128::Field;
 pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
@@ -32,7 +44,7 @@ pub(super) const ONEHOT_D: usize = OneHotCfg::D;
 // per ring element. Must match `OneHotCfg::onehot_chunk_size()`.
 pub(super) const ONEHOT_K: usize = 256;
 
-pub(super) type DenseCfg = fp128::D64Full;
+pub(super) type DenseCfg = fp128::D64Dense;
 pub(super) const DENSE_D: usize = DenseCfg::D;
 
 static INIT_RAYON: Once = Once::new();
@@ -63,6 +75,92 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
+/// Canonical byte encoding of an ordered logging-transcript event stream.
+#[cfg(feature = "logging-transcript")]
+pub(super) fn serialize_transcript_events(events: &[TranscriptEvent]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for event in events {
+        match event {
+            TranscriptEvent::Preamble {
+                bytes_digest,
+                bytes_len,
+            } => {
+                bytes.push(0);
+                bytes.extend_from_slice(bytes_digest);
+                bytes.extend_from_slice(&u64::try_from(*bytes_len).unwrap().to_le_bytes());
+            }
+            TranscriptEvent::Absorb {
+                label,
+                bytes_digest,
+                bytes_len,
+            } => {
+                bytes.push(1);
+                bytes.extend_from_slice(&u64::try_from(label.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(label);
+                bytes.extend_from_slice(bytes_digest);
+                bytes.extend_from_slice(&u64::try_from(*bytes_len).unwrap().to_le_bytes());
+            }
+            TranscriptEvent::Squeeze { label, len } => {
+                bytes.push(2);
+                bytes.extend_from_slice(&u64::try_from(label.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(label);
+                bytes.extend_from_slice(&u64::try_from(*len).unwrap().to_le_bytes());
+            }
+            TranscriptEvent::Wire {
+                label,
+                bytes_digest,
+                bytes_len,
+            } => {
+                bytes.push(3);
+                bytes.extend_from_slice(&u64::try_from(label.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(label);
+                bytes.extend_from_slice(bytes_digest);
+                bytes.extend_from_slice(&u64::try_from(*bytes_len).unwrap().to_le_bytes());
+            }
+        }
+    }
+    bytes
+}
+
+/// Canonical Stage 1 payload bytes in fold-wire order.
+pub(super) fn serialize_stage1_payload<FF>(proof: &akita_types::AkitaStage1Proof<FF>) -> Vec<u8>
+where
+    FF: Field + AkitaSerialize,
+{
+    let mut bytes = Vec::new();
+    for stage in &proof.stages {
+        stage
+            .sumcheck_proof
+            .serialize_with_mode(&mut bytes, Compress::Yes)
+            .expect("serialize Stage 1 sumcheck");
+        for claim in &stage.child_claims {
+            claim
+                .serialize_with_mode(&mut bytes, Compress::Yes)
+                .expect("serialize Stage 1 child claim");
+        }
+    }
+    proof
+        .range_image_evaluation
+        .serialize_with_mode(&mut bytes, Compress::Yes)
+        .expect("serialize Stage 1 range-image claim");
+    bytes
+}
+
+/// Stable digest used by versioned protocol epochs.
+pub(super) fn protocol_epoch_digest<FF>(payload: &[u8]) -> String
+where
+    FF: Field + CanonicalEncoding + CanonicalBytes + CanonicalEncoding + 'static,
+{
+    let mut transcript = AkitaTranscript::<FF>::new(b"akita/protocol-epoch/digest");
+    transcript.append_bytes(labels::ABSORB_PROVER_V, payload);
+    transcript
+        .challenge_scalar(labels::CHALLENGE_SUMCHECK_BATCH)
+        .to_bytes_le_vec()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 pub(super) fn prove_input<'a, FF: Field + Clone, P, CommitF: Field>(
     point: &'a [FF],
     polynomials: &'a [&'a P],
@@ -70,13 +168,12 @@ pub(super) fn prove_input<'a, FF: Field + Clone, P, CommitF: Field>(
     hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningData<'a, FF, P, CommitF> {
     let group = PolynomialGroupClaims::new(
-        PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
+        point.to_vec(),
         vec![FF::zero(); polynomials.len()],
         commitment.clone(),
     )
     .expect("valid prover claims group");
-    let opening_claims =
-        OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("valid prover claims");
+    let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
     ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
         .expect("valid prover opening data")
 }
@@ -86,22 +183,19 @@ pub(super) fn verify_input<'a, FF: Field, C>(
     openings: &'a [FF],
     commitment: &'a C,
 ) -> OpeningClaims<'static, FF, &'a C> {
-    OpeningClaims::from_groups(
+    OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.to_vec(),
-        vec![PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(point.len(), point.len()).expect("full-point group"),
-            openings.to_vec(),
-            commitment,
-        )
-        .expect("valid verifier claims group")],
+        openings.to_vec(),
+        commitment,
     )
+    .expect("valid verifier claims group")])
     .expect("valid verifier input")
 }
 
 pub(super) fn opening_from_poly<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],
-    layout: &LevelParams,
+    layout: &CommittedGroupParams,
 ) -> F
 where
     P: RootOpeningSource<F, D> + RootPolyShape<F, D>,
@@ -113,7 +207,7 @@ where
 pub(super) fn opening_from_poly_with_basis<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],
-    layout: &LevelParams,
+    layout: &CommittedGroupParams,
     basis_mode: BasisMode,
 ) -> F
 where
@@ -121,7 +215,7 @@ where
     CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, F, D>,
 {
     let alpha_bits = D.trailing_zeros() as usize;
-    let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
+    let target_num_vars = alpha_bits + layout.position_index_bits() + layout.block_index_bits();
     assert!(
         point.len() <= target_num_vars,
         "opening point length {} exceeds target root arity {}",
@@ -135,10 +229,9 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.r_vars,
-        layout.m_vars,
+        layout.num_positions_per_block,
+        layout.num_live_blocks,
         basis_mode,
-        BlockOrder::RowMajor,
     )
     .expect("opening point shape should match layout");
 
@@ -147,9 +240,9 @@ where
         None,
         poly.opening_view().expect("opening view"),
         OpeningFoldPlan::Base {
-            eval_outer_scalars: &ring_opening_point.b,
-            fold_scalars: &ring_opening_point.a,
-            block_len: layout.block_len,
+            live_block_weights: &ring_opening_point.live_block_weights,
+            position_weights: &ring_opening_point.position_weights,
+            num_positions_per_block: layout.num_positions_per_block,
         },
     )
     .expect("evaluate_and_fold");
@@ -159,10 +252,10 @@ where
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
-pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, u8> {
-    // `2^nv = (num_blocks · block_len) · D` field elements, grouped into
+pub(super) fn make_onehot_poly(layout: &CommittedGroupParams, seed: u64) -> OneHotPoly<F, u8> {
+    // `2^nv = (num_live_blocks · num_positions_per_block) · D` field elements, grouped into
     // `2^nv / K` one-hot chunks of size `K`.
-    let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
+    let total_field = layout.num_live_blocks * layout.num_positions_per_block * ONEHOT_D;
     let total_chunks = total_field / ONEHOT_K;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_chunks)
@@ -193,6 +286,293 @@ pub(super) fn dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
         out.push(F::from_u128_reduced(v as u128));
     }
     out
+}
+
+fn multi_group_root_params(schedule: &FoldSchedule) -> &CommittedGroupParams {
+    &schedule.root.params.final_group.commitment
+}
+
+fn schedule_uses_setup_prefix(schedule: &FoldSchedule) -> bool {
+    schedule
+        .recursive_folds
+        .iter()
+        .any(|fold| fold.params.incoming_setup_prefix.is_some())
+}
+
+fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
+    proof.root.stage3_sumcheck_proof.is_some()
+        || proof
+            .recursive_folds
+            .iter()
+            .any(|step| step.stage3_sumcheck_proof.is_some())
+}
+
+fn first_stage3_proof_mut(
+    proof: &mut AkitaBatchedProof<F, F>,
+) -> Option<&mut SetupSumcheckProof<F>> {
+    if let Some(stage3) = proof.root.stage3_sumcheck_proof.as_mut() {
+        return Some(stage3);
+    }
+    proof
+        .recursive_folds
+        .iter_mut()
+        .find_map(|fold| fold.stage3_sumcheck_proof.as_mut())
+}
+
+/// Drives the shared recursive setup-offload profile end to end: two precommitted
+/// singleton groups at `nv=16` frozen with exact fixed-root ranks, a two-polynomial
+/// main group at `nv=32`, a recursive proof that offloads the setup contribution,
+/// a serialization round-trip, an honest verify, and a tampered-opening rejection.
+///
+/// `BaseCfg` selects the physical witness layout (single-chunk vs chunked); the
+/// recursion adapter and exact-precommit adapter are derived from it.
+/// `on_schedule` runs profile-specific assertions against the resolved schedule.
+pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
+    transcript_domain: &'static [u8],
+    on_schedule: fn(&FoldSchedule),
+) where
+    BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
+{
+    type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
+    type Precommitted<BaseCfg> = AkitaCommitmentScheme<PrecommittedCommitmentConfig<BaseCfg>>;
+
+    const PRE_NV: usize = 16;
+    const FINAL_NV: usize = 32;
+    const PRE_GROUPS: usize = 2;
+    const PRE_GROUP_SIZE: usize = 1;
+    const FINAL_GROUP_SIZE: usize = 2;
+    const TOTAL_GROUP_SIZE: usize = PRE_GROUPS * PRE_GROUP_SIZE + FINAL_GROUP_SIZE;
+
+    init_rayon_pool();
+    run_on_large_stack(move || {
+        let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
+        let pre_layout =
+            PrecommittedCommitmentConfig::<BaseCfg>::get_params_for_batched_commitment(
+                &OpeningClaimsLayout::new(PRE_NV, PRE_GROUP_SIZE).expect("precommit batch"),
+            )
+            .expect("precommit params");
+        let pre_frozen = PrecommittedGroupDescriptor::from_params(pre_key, &pre_layout);
+        let schedule_key = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
+            precommitteds: vec![pre_frozen, pre_frozen],
+        };
+        let pre_keys = vec![pre_key; PRE_GROUPS];
+
+        let schedule = RecursiveCommitmentConfig::<BaseCfg>::runtime_schedule(schedule_key)
+            .expect("recursive profile schedule resolves");
+        assert!(
+            schedule_uses_setup_prefix(&schedule),
+            "recursive profile must carry setup-prefix metadata"
+        );
+        on_schedule(&schedule);
+        let root_params = multi_group_root_params(&schedule);
+
+        let setup = Recursive::<BaseCfg>::setup_prover(FINAL_NV, TOTAL_GROUP_SIZE)
+            .expect("recursive setup");
+        assert!(
+            !setup.prefix_slots.is_empty(),
+            "recursive setup must precompute setup-prefix slots for the generated profile"
+        );
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+
+        let mut pre_polys_by_group = Vec::new();
+        let mut pre_commitments = Vec::new();
+        let mut pre_hints = Vec::new();
+        for group_idx in 0..PRE_GROUPS {
+            let poly = make_onehot_poly(&pre_layout, 0x0bee_fcaf_2026_0000 + group_idx as u64);
+            let (commitment, hint) = Precommitted::<BaseCfg>::batched_commit(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+            )
+            .expect("precommit group");
+            pre_polys_by_group.push(vec![poly]);
+            pre_commitments.push(commitment);
+            pre_hints.push(hint);
+        }
+
+        let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
+            .map(|poly_idx| make_onehot_poly(root_params, 0x0bee_fcaf_2026_1000 + poly_idx as u64))
+            .collect();
+        let (final_commitment, final_hint) =
+            Recursive::<BaseCfg>::commit_final_group(&setup, &final_polys, &stack, pre_keys)
+                .expect("final generated-profile commitment");
+
+        let point = random_point(FINAL_NV, 0xcafe_2026_0001);
+        let pre_openings: Vec<Vec<F>> = pre_polys_by_group
+            .iter()
+            .map(|polys| {
+                polys
+                    .iter()
+                    .map(|poly| {
+                        opening_from_poly::<ONEHOT_D, _>(poly, &point[..PRE_NV], &pre_layout)
+                    })
+                    .collect()
+            })
+            .collect();
+        let final_openings: Vec<F> = final_polys
+            .iter()
+            .map(|poly| opening_from_poly::<ONEHOT_D, _>(poly, &point, root_params))
+            .collect();
+
+        let pre_refs_by_group: Vec<Vec<&OneHotPoly<F, u8>>> = pre_polys_by_group
+            .iter()
+            .map(|polys| polys.iter().collect())
+            .collect();
+        let final_refs: Vec<&OneHotPoly<F, u8>> = final_polys.iter().collect();
+
+        let mut prover_groups = Vec::new();
+        for (group_idx, openings) in pre_openings.iter().enumerate() {
+            prover_groups.push(
+                PolynomialGroupClaims::new(
+                    point[..PRE_NV].to_vec(),
+                    openings.clone(),
+                    pre_commitments[group_idx].clone(),
+                )
+                .expect("pre prover group"),
+            );
+        }
+        prover_groups.push(
+            PolynomialGroupClaims::new(
+                point.clone(),
+                final_openings.clone(),
+                final_commitment.clone(),
+            )
+            .expect("final prover group"),
+        );
+
+        let mut prover_polys: Vec<&[&OneHotPoly<F, u8>]> = Vec::new();
+        for refs in &pre_refs_by_group {
+            prover_polys.push(&refs[..]);
+        }
+        prover_polys.push(&final_refs[..]);
+        let mut prover_hints = pre_hints;
+        prover_hints.push(final_hint);
+
+        let prover_claims = ProverOpeningData::new(
+            OpeningClaims::from_groups(prover_groups).expect("prover claims"),
+            prover_hints,
+            prover_polys,
+        )
+        .expect("generated-profile prover data");
+
+        let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
+        let proof = Recursive::<BaseCfg>::batched_prove(
+            &setup,
+            prover_claims,
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("generated-profile recursive proof");
+        assert!(
+            proof_has_recursive_setup_sumcheck(&proof),
+            "recursive proof must carry stage-3 setup sumcheck evidence"
+        );
+
+        let shape = proof.shape();
+        let mut bytes = Vec::new();
+        proof
+            .serialize_compressed(&mut bytes)
+            .expect("serialize generated-profile proof");
+        let proof = AkitaBatchedProof::<F, F>::deserialize_compressed(
+            &mut std::io::Cursor::new(bytes),
+            &shape,
+        )
+        .expect("deserialize generated-profile proof");
+
+        let verifier_setup = setup.verifier_setup().expect("verifier setup");
+        let verify_claims = |final_openings: Vec<F>| {
+            let mut verifier_groups = Vec::new();
+            for (group_idx, openings) in pre_openings.iter().enumerate() {
+                verifier_groups.push(
+                    PolynomialGroupClaims::new(
+                        point[..PRE_NV].to_vec(),
+                        openings.clone(),
+                        &pre_commitments[group_idx],
+                    )
+                    .expect("pre verifier group"),
+                );
+            }
+            verifier_groups.push(
+                PolynomialGroupClaims::new(point.clone(), final_openings, &final_commitment)
+                    .expect("final verifier group"),
+            );
+            OpeningClaims::from_groups(verifier_groups).expect("verifier claims")
+        };
+
+        let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
+        Recursive::<BaseCfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_claims(final_openings.clone()),
+            BasisMode::Lagrange,
+        )
+        .expect("generated-profile recursive verify");
+
+        let reject_stage3_tamper = |tampered_proof: AkitaBatchedProof<F, F>, label: &str| {
+            let mut transcript = AkitaTranscript::<F>::new(transcript_domain);
+            let result = Recursive::<BaseCfg>::batched_verify(
+                &tampered_proof,
+                &verifier_setup,
+                &mut transcript,
+                verify_claims(final_openings.clone()),
+                BasisMode::Lagrange,
+            );
+            assert!(
+                matches!(result, Err(AkitaError::InvalidProof)),
+                "{label} must return InvalidProof without panicking, got {result:?}"
+            );
+        };
+
+        let mut tampered_claim = proof.clone();
+        first_stage3_proof_mut(&mut tampered_claim)
+            .expect("recursive profile Stage 3 proof")
+            .claim += F::one();
+        reject_stage3_tamper(tampered_claim, "tampered Stage 3 claim");
+
+        let mut tampered_prefix_eval = proof.clone();
+        first_stage3_proof_mut(&mut tampered_prefix_eval)
+            .expect("recursive profile Stage 3 proof")
+            .setup_prefix_eval += F::one();
+        reject_stage3_tamper(
+            tampered_prefix_eval,
+            "tampered Stage 3 setup-prefix evaluation",
+        );
+
+        let mut tampered_round = proof.clone();
+        let coefficient = first_stage3_proof_mut(&mut tampered_round)
+            .and_then(|stage3| stage3.sumcheck.round_polys.first_mut())
+            .and_then(|round| round.coeffs_except_linear_term.first_mut())
+            .expect("recursive profile Stage 3 round coefficient");
+        *coefficient += F::one();
+        reject_stage3_tamper(
+            tampered_round,
+            "tampered Stage 3 round polynomial and derived point",
+        );
+
+        let mut tampered = final_openings;
+        tampered[0] += F::from_u128_reduced(1);
+        let mut tampered_transcript = AkitaTranscript::<F>::new(transcript_domain);
+        let tampered_result = Recursive::<BaseCfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut tampered_transcript,
+            verify_claims(tampered),
+            BasisMode::Lagrange,
+        );
+        assert!(
+            tampered_result.is_err(),
+            "recursive verify must reject a tampered final opening"
+        );
+    });
 }
 
 #[cfg(feature = "logging-transcript")]
@@ -302,94 +682,29 @@ pub(super) fn assert_terminal_event_order_if_present(
     let remainder =
         first_label_index_after(events, sparse_seed_end, labels::ABSORB_TERMINAL_W_REMAINDER)
             .expect("terminal transcript must absorb final-witness remainder");
-    let (alpha, alpha_end) =
-        first_logical_label_span_after(events, remainder, labels::CHALLENGE_RING_SWITCH)
-            .expect("terminal transcript must squeeze ring-switch alpha");
-    let (tau1, tau1_end) =
-        first_logical_label_span_after(events, alpha_end, labels::CHALLENGE_TAU1)
-            .expect("terminal transcript must squeeze tau1");
-    let (stage2_round, _) =
-        first_logical_label_span_after(events, tau1_end, labels::CHALLENGE_SUMCHECK_ROUND)
-            .expect("terminal transcript must squeeze stage-2 sumcheck after tau1");
-
-    for (range, label, message) in [
+    for (label, message) in [
         (
-            e_hat + 1..remainder,
             labels::CHALLENGE_RING_SWITCH,
-            "terminal alpha must not precede witness remainder",
+            "terminal must not squeeze alpha",
         ),
+        (labels::CHALLENGE_TAU1, "terminal must not squeeze tau1"),
         (
-            e_hat + 1..remainder,
-            labels::CHALLENGE_TAU1,
-            "terminal tau1 must not precede alpha",
-        ),
-        (
-            e_hat + 1..remainder,
             labels::CHALLENGE_SUMCHECK_ROUND,
-            "terminal stage-2 sumcheck must not precede tau1",
+            "terminal must not squeeze stage-2 rounds",
         ),
         (
-            remainder + 1..alpha,
-            labels::CHALLENGE_TAU1,
-            "terminal tau1 must not precede alpha",
-        ),
-        (
-            remainder + 1..alpha,
-            labels::CHALLENGE_SUMCHECK_ROUND,
-            "terminal stage-2 sumcheck must not precede tau1",
-        ),
-        (
-            alpha_end..tau1,
-            labels::CHALLENGE_RING_SWITCH,
-            "terminal alpha limbs must be contiguous before tau1",
-        ),
-        (
-            alpha_end..tau1,
-            labels::CHALLENGE_SUMCHECK_ROUND,
-            "terminal stage-2 sumcheck must not precede tau1",
-        ),
-        (
-            alpha_end..events.len(),
-            labels::CHALLENGE_RING_SWITCH,
-            "terminal alpha limbs must be contiguous before tau1",
-        ),
-        (
-            tau1_end..events.len(),
-            labels::CHALLENGE_TAU1,
-            "terminal tau1 limbs must be contiguous before stage-2 sumcheck",
-        ),
-        (
-            tau1_end..stage2_round,
-            labels::CHALLENGE_SUMCHECK_ROUND,
-            "terminal stage-2 sumcheck must not precede tau1",
-        ),
-        (
-            e_hat..stage2_round,
             labels::CHALLENGE_SUMCHECK_BATCH,
-            "terminal transcript window must not squeeze stage-2 batch challenge",
+            "terminal must not squeeze stage-2 batching",
         ),
+        (labels::CHALLENGE_TAU0, "terminal must not squeeze tau0"),
     ] {
-        assert_no_logical_label(events, range, label, message);
+        assert_no_logical_label(events, e_hat + 1..events.len(), label, message);
     }
 
     assert!(e_hat < sparse_seed, "e_hat must precede sparse seed");
     assert!(
         sparse_seed < remainder,
         "sparse seed must precede witness remainder"
-    );
-    assert!(remainder < alpha, "remainder must precede alpha");
-    assert!(alpha < tau1, "alpha must precede tau1");
-    assert!(
-        tau1 < stage2_round,
-        "tau1 must precede terminal stage-2 sumcheck"
-    );
-    assert!(
-        events[e_hat..]
-            .iter()
-            .all(|event| event_label(event).is_none_or(|candidate| {
-                !is_label_or_extension_limb(candidate, labels::CHALLENGE_TAU0)
-            })),
-        "terminal transcript window must not squeeze tau0"
     );
     Some(e_hat)
 }

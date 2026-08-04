@@ -40,7 +40,7 @@ Several concrete pieces have landed in this PR:
   across prover and verifier, including the all-features `zk` path.
 - The profile example has been split into modules, and small-field profile
   modes now cover explicit fp32/fp64 dense and one-hot candidate dimensions.
-- SIS floors are now selected by `SisModulusFamily::{Q32,Q64,Q128}` and the
+- SIS floors are now selected by `SisModulusProfileId::{Q32,Q64,Q128}` and the
   generated registry covers the larger small-field D ladders.
 - Sparse challenge sampling has stack-backed tiers through D=512; supported
   larger-D profiles no longer route through a heap-backed fallback.
@@ -703,7 +703,7 @@ Remaining TODOs for this branch:
   profiles show this boundary is now the dominant proof-size blocker.
 - **Generated schedules.** Production generated tables are now family-bound by
   SIS modulus and reject mismatches. Small-field generated coverage is baked
-  for separate full-field and one-hot configs: fp32 `D = 64,128,256,512` and
+  for separate dense and one-hot configs: fp32 `D = 64,128,256,512` and
   fp64 `D = 32,64,128,256`, each with non-ZK and ZK variants through
   `num_vars <= 32` for singleton and same-point `np=4` incidence shapes. fp32
   `D=32` remains tuning-only because strict generated-table validation exposed
@@ -1039,7 +1039,7 @@ fields can under-size ranks and overstate binding security.
 Introduce an explicit SIS modulus-family policy:
 
 ```rust
-pub enum SisModulusFamily {
+pub enum SisModulusProfileId {
     Q32,
     Q64,
     Q128,
@@ -1073,7 +1073,7 @@ The family names are security-table names, not CRT implementation details:
 
 Implementation requirements:
 
-- [x] Add a config hook such as `CommitmentConfig::sis_modulus_family()` and mirror
+- [x] Add a config hook such as `CommitmentConfig::sis_modulus_profile()` and mirror
   it through `PlannerConfig`.
 - [x] Change SIS lookup APIs from:
 
@@ -1113,7 +1113,7 @@ Tests:
 ### Phase 6B: Ring-Dimension Family Presets
 
 Status: landed for generated production small-field tables, with separate
-full-field and one-hot config families where the one-hot configs use
+dense and one-hot config families where the one-hot configs use
 `log_commit_bound = 1` and keep the opening bound at the underlying field
 width.
 
@@ -1193,7 +1193,7 @@ Performance validation:
   AKITA_MODE=dense_fp64_d64 AKITA_NUM_VARS=26 cargo run --release --example profile
   ```
 
-- After splitting full-field and one-hot small-field configs, the lower-D
+- After splitting dense and one-hot small-field configs, the lower-D
   one-hot candidates materialize under the generated SIS floor table. The
   profiler confirms the selected schedule byte estimates exactly for the
   measured shapes below.
@@ -1221,7 +1221,7 @@ Performance validation:
 Tests:
 
 - Generated tables cover the declared candidate ladders for Q32/Q64, including
-  Q32 D32/D64 full and one-hot tables.
+  Q32 D32/D64 dense and one-hot tables.
 - Planner selection can compare candidate dimensions without mixing SIS
   modulus families.
 - Regression tests ensure a Q32 schedule never consumes a Q64 or Q128 SIS row,
@@ -1243,7 +1243,7 @@ Cost model requirements:
 
 - Ring, digit, SIS, commitment, and setup material are priced in base-field
   bytes.
-- SIS ranks are selected from the active `SisModulusFamily`, not from a global
+- SIS ranks are selected from the active `SisModulusProfileId`, not from a global
   fp128 table.
 - SIS A-role collision bounds include the `psi` ring-subfield embedding norm
   bound. For `K=1`, `psi` is coefficient packing and the factor is `1`; for

@@ -16,7 +16,8 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::fp128;
-use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::CommitmentConfig;
+use jolt_field::{CanonicalEncoding, PseudoMersenne, Zero};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
@@ -25,13 +26,11 @@ use akita_prover::{
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
-    LevelParams, OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
-    SetupContributionMode,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
+    CommittedGroupParams, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
 };
 use akita_verifier::batched_verify;
-use clap::{Parser, ValueEnum};
-use jolt_field::{CanonicalEncoding, PseudoMersenne, Zero};
+use clap::Parser;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
@@ -40,35 +39,12 @@ use std::path::PathBuf;
 use std::time::Instant;
 use tracing_subscriber::EnvFilter;
 
-/// Setup-contribution mode the proof is generated under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum SetupModeArg {
-    /// Evaluate the setup contribution directly from the expanded matrix.
-    Direct,
-    /// Embed the recursive setup-product sumcheck.
-    Recursive,
-}
-
-impl SetupModeArg {
-    fn into_mode(self) -> SetupContributionMode {
-        match self {
-            SetupModeArg::Direct => SetupContributionMode::Direct,
-            SetupModeArg::Recursive => SetupContributionMode::Recursive,
-        }
-    }
-}
-
 #[derive(Debug, Parser)]
 #[command(
     about = "Generate an Akita verifier-input blob for the Jolt recursion guest",
     long_about = None
 )]
-struct Args {
-    /// Setup-contribution mode the proof is generated under. The blob records
-    /// this so host preflight and guest replay verify under the same mode.
-    #[arg(long, value_enum, default_value_t = SetupModeArg::Direct)]
-    setup_mode: SetupModeArg,
-}
+struct Args {}
 
 type F = fp128::Field;
 const D: usize = 64;
@@ -91,7 +67,7 @@ fn onehot_k_for_num_vars(nv: usize) -> usize {
 fn opening_from_poly<'a, I>(
     poly: &'a OneHotPoly<F, I>,
     point: &[F],
-    layout: &LevelParams,
+    layout: &CommittedGroupParams,
     basis: BasisMode,
 ) -> Result<F, String>
 where
@@ -101,8 +77,8 @@ where
 {
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits
-        .checked_add(layout.m_vars)
-        .and_then(|n| n.checked_add(layout.r_vars))
+        .checked_add(layout.position_index_bits())
+        .and_then(|n| n.checked_add(layout.block_index_bits()))
         .ok_or_else(|| "opening point target arity overflow".to_string())?;
     if point.len() > target_num_vars {
         return Err(format!(
@@ -117,10 +93,9 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.r_vars,
-        layout.m_vars,
+        layout.num_positions_per_block,
+        layout.num_live_blocks,
         basis,
-        BlockOrder::RowMajor,
     )
     .map_err(|err| format!("opening point shape should match layout: {err}"))?;
 
@@ -130,9 +105,9 @@ where
         poly.opening_view()
             .map_err(|err| format!("opening view: {err}"))?,
         OpeningFoldPlan::Base {
-            eval_outer_scalars: &ring_opening_point.b,
-            fold_scalars: &ring_opening_point.a,
-            block_len: layout.block_len,
+            live_block_weights: &ring_opening_point.live_block_weights,
+            position_weights: &ring_opening_point.position_weights,
+            num_positions_per_block: layout.num_positions_per_block,
         },
     )
     .map_err(|err| format!("opening fold: {err}"))?;
@@ -207,12 +182,11 @@ fn publish_blob(output_path: &std::path::Path, blob: &[u8]) -> Result<(), String
     })
 }
 
-fn verify_with_setup_mode(
+fn verify_proof(
     proof: &akita_types::AkitaBatchedProof<F, Challenge>,
     verifier_setup: &akita_types::AkitaVerifierSetup<F>,
     transcript: &mut AkitaTranscript<F>,
     claims: OpeningClaims<'_, Claim, &akita_types::Commitment<F>>,
-    setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), String> {
     batched_verify::<Cfg, _>(
         proof,
@@ -220,14 +194,12 @@ fn verify_with_setup_mode(
         transcript,
         claims,
         BasisMode::Lagrange,
-        setup_contribution_mode,
     )
-    .map_err(|err| format!("{setup_contribution_mode:?}-mode verifier rejected proof: {err}"))
+    .map_err(|err| format!("verifier rejected proof: {err}"))
 }
 
 fn run() -> Result<(), String> {
-    let args = Args::parse();
-    let setup_contribution_mode = args.setup_mode.into_mode();
+    let _args = Args::parse();
 
     #[cfg(feature = "parallel")]
     rayon::ThreadPoolBuilder::new()
@@ -268,12 +240,13 @@ fn run() -> Result<(), String> {
         "generating Akita verifier-input artifact (single-poly OneHot, D=64)"
     );
 
-    let layout: LevelParams = <Cfg as CommitmentConfig>::get_params_for_batched_commitment(
-        &OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
-    )
-    .expect("layout");
+    let layout: CommittedGroupParams =
+        <Cfg as CommitmentConfig>::get_params_for_batched_commitment(
+            &OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
+        )
+        .expect("layout");
     let alpha_bits = D.trailing_zeros() as usize;
-    let required_vars = layout.m_vars + layout.r_vars + alpha_bits;
+    let required_vars = layout.position_index_bits() + layout.block_index_bits() + alpha_bits;
     // Both `main` (`required_vars <= nv`, layout fits in nv) and
     // `opening_from_poly` (`point.len() <= target_num_vars`, i.e.
     // `nv <= required_vars`) need to hold simultaneously, which means
@@ -282,19 +255,16 @@ fn run() -> Result<(), String> {
     if required_vars != nv {
         return Err(format!(
             "OneHot D={D} layout at nv={nv} expects exactly {required_vars} variables \
-             (alpha_bits={alpha_bits} + m_vars={} + r_vars={}); pick an AKITA_NUM_VARS that matches the layout",
-            layout.m_vars, layout.r_vars
+             (alpha_bits={alpha_bits} + position_index_bits={} + block_index_bits={}); pick an AKITA_NUM_VARS that matches the layout",
+            layout.position_index_bits(), layout.block_index_bits()
         ));
     }
 
     // The example reuses the deterministic seed from `examples/profile.rs`
     // for reproducibility.
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
-    let total_ring = layout
-        .num_blocks
-        .checked_mul(layout.block_len)
-        .ok_or_else(|| "total ring size overflow".to_string())?;
-    let total_field = total_ring
+    let total_field = layout
+        .num_live_ring_elements_per_claim
         .checked_mul(D)
         .ok_or_else(|| "total field size overflow".to_string())?;
     let total_chunks = total_field / onehot_k;
@@ -315,13 +285,8 @@ fn run() -> Result<(), String> {
     let opening = opening_from_poly(&onehot_poly, &opening_point, &layout, BasisMode::Lagrange)?;
 
     let t0 = Instant::now();
-    let prover_setup = match setup_contribution_mode {
-        SetupContributionMode::Direct => AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1),
-        SetupContributionMode::Recursive => {
-            AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::setup_prover(nv, 1)
-        }
-    }
-    .map_err(|err| format!("prover setup failed: {err}"))?;
+    let prover_setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1)
+        .map_err(|err| format!("prover setup failed: {err}"))?;
     let prepared = CpuBackend
         .prepare_setup(&prover_setup)
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;
@@ -351,14 +316,13 @@ fn run() -> Result<(), String> {
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
     let prove_group = PolynomialGroupClaims::new(
-        PointVariableSelection::prefix(opening_point.len(), opening_point.len())
-            .map_err(|err| format!("invalid opening point shape: {err}"))?,
+        opening_point.clone(),
         openings.to_vec(),
         commitment.clone(),
     )
     .map_err(|err| format!("invalid prover opening group: {err}"))?;
     let prove_input = ProverOpeningData::new(
-        OpeningClaims::from_groups(opening_point.clone(), vec![prove_group])
+        OpeningClaims::from_groups(vec![prove_group])
             .map_err(|err| format!("invalid prover opening claims: {err}"))?,
         vec![hint],
         vec![&poly_refs[..]],
@@ -370,32 +334,27 @@ fn run() -> Result<(), String> {
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        setup_contribution_mode,
     )
     .map_err(|err| format!("batched_prove failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
 
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&prover_setup);
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&prover_setup)
+        .map_err(|err| format!("setup_verifier failed: {err}"))?;
 
     // Sanity check: the proof should verify with the same domain label.
     let t0 = Instant::now();
     let mut verifier_transcript = AkitaTranscript::<F>::unbound_verifier(TRANSCRIPT_DOMAIN);
-    verify_with_setup_mode(
+    verify_proof(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        OpeningClaims::from_groups(
-            opening_point.clone(),
-            vec![PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(opening_point.len(), opening_point.len())
-                    .map_err(|err| format!("invalid verifier opening point shape: {err}"))?,
+        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                opening_point.clone(),
                 openings.to_vec(),
                 &commitment,
             )
-            .map_err(|err| format!("invalid verifier opening group: {err}"))?],
-        )
+            .map_err(|err| format!("invalid verifier opening group: {err}"))?])
         .map_err(|err| format!("invalid verifier opening batch: {err}"))?,
-        setup_contribution_mode,
     )
     .map_err(|err| format!("host-side sanity verify failed: {err}"))?;
     tracing::info!(
@@ -407,7 +366,6 @@ fn run() -> Result<(), String> {
     let inputs: AkitaJoltInputs<F, D> = AkitaJoltInputs {
         transcript_domain: TRANSCRIPT_DOMAIN.to_vec(),
         num_vars: nv as u64,
-        setup_contribution_mode,
         opening_point,
         opening,
         commitment,
@@ -426,12 +384,11 @@ fn run() -> Result<(), String> {
     let mut roundtrip_transcript =
         AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     let openings_rt = [decoded.opening];
-    verify_with_setup_mode(
+    verify_proof(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut roundtrip_transcript,
         decoded.verifier_opening_batch(&openings_rt),
-        decoded.setup_contribution_mode,
     )
     .map_err(|err| format!("decoded blob verify failed: {err}"))?;
     tracing::info!("decoded-blob verify OK");

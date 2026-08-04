@@ -8,17 +8,18 @@
 //!    - `compute_num_digits` (crate-private): the *symmetric* signed range
 //!      `[-2^(k-1), 2^(k-1) - 1]`, including the sign-bit correction. Reached
 //!      only through the router below.
-//!    - [`compute_num_digits_full_field`]: the *asymmetric* full-field residue,
-//!      plain `ceil(field_bits / log_basis)` with no correction.
-//!    - [`num_digits_for_bound`]: the router. Full-field bounds
+//!    - [`compute_num_digits_field_width`]: an arbitrary field element's
+//!      *asymmetric* residue, using plain `ceil(field_bits / log_basis)` with no
+//!      correction.
+//!    - [`num_digits_for_bound`]: the router. Field-width bounds
 //!      (`log_bound >= field_bits`) use the asymmetric count; smaller bounds use
 //!      the symmetric one. This is the *only* symmetric entry point, so a caller
-//!      cannot accidentally request the symmetric count of a full-field bound
+//!      cannot accidentally request the symmetric count of a field-width bound
 //!      (the historical `compute_num_digits(128, _)` footgun).
 //!
 //! 2. **Per-role selectors** — map a [`DecompositionParams`] to the digit depth
 //!    of a specific witness role, encoding which bound applies to each:
-//!    - [`num_digits_s_commit`]: committed witness `s` (`log_commit_bound` at
+//!    - [`num_digits_inner`]: committed witness `s` (`log_commit_bound` at
 //!      the root, `log_basis` at recursive levels).
 //!    - [`num_digits_open`]: opening witnesses `t̂` / `ŵ` (`log_open_bound`).
 //!    - [`super::norm_bound::fold_witness_digit_plan`]: folded witness `z` — the
@@ -114,8 +115,8 @@ pub fn balanced_digit_abs_max(log_basis: u32, num_digits: usize) -> u128 {
 /// This symmetric count is for *small* bounds (`log_bound < field_bits`):
 /// one-hot `log_commit_bound = 1`, recursive `log_basis`, and fold `log_beta`.
 /// It is crate-private and reached only through [`num_digits_for_bound`], which
-/// routes full-field bounds to the asymmetric [`compute_num_digits_full_field`]
-/// instead — so no caller can ask for the symmetric count of a full-field bound.
+/// routes field-width bounds to the asymmetric [`compute_num_digits_field_width`]
+/// instead — so no caller can ask for the symmetric count of a field-width bound.
 ///
 /// # Panics
 ///
@@ -139,13 +140,13 @@ pub(crate) fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
     num_digits.max(1)
 }
 
-/// Decomposition depth for full-field values using asymmetric centering:
+/// Decomposition depth for arbitrary field elements using asymmetric centering:
 /// `ceil(field_bits / log_basis)` with no +1 correction.
 ///
 /// # Panics
 ///
 /// Panics if `log_basis` is 0 or >= 128.
-pub fn compute_num_digits_full_field(field_bits: u32, log_basis: u32) -> usize {
+pub fn compute_num_digits_field_width(field_bits: u32, log_basis: u32) -> usize {
     assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
     if field_bits == 0 {
         return 1;
@@ -154,7 +155,7 @@ pub fn compute_num_digits_full_field(field_bits: u32, log_basis: u32) -> usize {
 }
 
 /// Choose the correct digit-count function for an explicit field bit width.
-/// Full-field bounds (`log_bound >= field_bits`) use asymmetric centering;
+/// Field-width bounds (`log_bound >= field_bits`) use asymmetric centering;
 /// smaller bounds use symmetric centering.
 ///
 /// # Panics
@@ -163,7 +164,7 @@ pub fn compute_num_digits_full_field(field_bits: u32, log_basis: u32) -> usize {
 /// bound exceeds 128 bits.
 pub fn num_digits_for_bound(log_bound: u32, field_bits: u32, log_basis: u32) -> usize {
     if log_bound >= field_bits {
-        compute_num_digits_full_field(field_bits, log_basis)
+        compute_num_digits_field_width(field_bits, log_basis)
     } else {
         compute_num_digits(log_bound, log_basis)
     }
@@ -175,7 +176,7 @@ pub fn num_digits_for_bound(log_bound: u32, field_bits: u32, log_basis: u32) -> 
 /// The root commits against its configured `log_commit_bound`; a recursive
 /// level commits the balanced-digit witness, whose commit bound collapses to
 /// `log_basis`.
-pub fn num_digits_s_commit(decomposition: DecompositionParams, is_root: bool) -> usize {
+pub fn num_digits_inner(decomposition: DecompositionParams, is_root: bool) -> usize {
     let field_bits = decomposition.field_bits();
     let bound = if is_root {
         decomposition.log_commit_bound
@@ -191,7 +192,7 @@ pub fn num_digits_s_commit(decomposition: DecompositionParams, is_root: bool) ->
 /// recursive witness digits. Their commit-side decomposition must therefore
 /// cover the full configured field width.
 pub fn num_digits_setup_prefix_commit(decomposition: DecompositionParams) -> usize {
-    compute_num_digits_full_field(decomposition.field_bits(), decomposition.log_basis)
+    compute_num_digits_field_width(decomposition.field_bits(), decomposition.log_basis)
 }
 
 /// `δ_open`: digits per coefficient of the opening witnesses `t̂` / `ŵ`,
@@ -204,35 +205,54 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
     num_digits_for_bound(bound, field_bits, decomposition.log_basis)
 }
 
-/// A-matrix committed width (ring columns): `block_len · δ_commit`.
+/// A-matrix committed width (ring columns): `num_positions_per_block · δ_commit`.
 #[inline]
-pub fn decomposed_s_block_ring_count(block_len: usize, num_digits_commit: usize) -> Option<usize> {
-    block_len.checked_mul(num_digits_commit)
+pub fn decomposed_s_block_ring_count(
+    num_positions_per_block: usize,
+    num_digits_inner: usize,
+) -> Option<usize> {
+    num_positions_per_block.checked_mul(num_digits_inner)
 }
 
-/// B-matrix committed width (ring columns): `n_a · δ_open · num_blocks · num_polynomials`.
+/// B-matrix committed width (ring columns): `n_a · δ_open · num_live_blocks · num_polynomials`.
 #[inline]
 pub fn decomposed_t_ring_count(
     n_a: usize,
     num_digits_open: usize,
-    num_blocks: usize,
+    num_live_blocks: usize,
     num_polynomials: usize,
 ) -> Option<usize> {
     n_a.checked_mul(num_digits_open)?
-        .checked_mul(num_blocks)?
+        .checked_mul(num_live_blocks)?
         .checked_mul(num_polynomials)
 }
 
-/// D-matrix committed width (ring columns): `δ_open · num_blocks · num_polynomials`.
+/// D-matrix committed width (ring columns): `δ_open · num_live_blocks · num_polynomials`.
 #[inline]
 pub fn decomposed_w_ring_count(
     num_digits_open: usize,
-    num_blocks: usize,
+    num_live_blocks: usize,
     num_polynomials: usize,
 ) -> Option<usize> {
     num_digits_open
-        .checked_mul(num_blocks)?
+        .checked_mul(num_live_blocks)?
         .checked_mul(num_polynomials)
+}
+
+/// Convert an A-native ring-column count into the physical column count of a
+/// projected B- or D-native role.
+///
+/// The role dimension must divide the source dimension exactly.
+#[inline]
+pub fn projected_role_ring_count(
+    source_dimension: usize,
+    role_dimension: usize,
+    native_ring_count: usize,
+) -> Option<usize> {
+    if role_dimension == 0 || !source_dimension.is_multiple_of(role_dimension) {
+        return None;
+    }
+    native_ring_count.checked_mul(source_dimension / role_dimension)
 }
 
 #[cfg(test)]
@@ -263,8 +283,8 @@ mod tests {
     fn digits_basic() {
         // Production `compute_num_digits` inputs are small symmetric bounds:
         // one-hot `log_commit_bound = 1`, recursive `log_basis`, fold
-        // `log_beta`. Full-field bounds go through `num_digits_for_bound` to
-        // `compute_num_digits_full_field`, not here.
+        // `log_beta`. Field-width bounds go through `num_digits_for_bound` to
+        // `compute_num_digits_field_width`, not here.
         assert_eq!(compute_num_digits(1, 2), 1);
         assert_eq!(compute_num_digits(0, 2), 1);
         // `log_basis` itself (the recursive commit bound): one base-`2^lb`
@@ -301,11 +321,11 @@ mod tests {
     }
 
     #[test]
-    fn full_field_digits() {
-        assert_eq!(compute_num_digits_full_field(128, 2), 64);
-        assert_eq!(compute_num_digits_full_field(128, 3), 43);
-        assert_eq!(compute_num_digits_full_field(128, 4), 32);
-        assert_eq!(compute_num_digits_full_field(128, 8), 16);
+    fn field_element_digits() {
+        assert_eq!(compute_num_digits_field_width(128, 2), 64);
+        assert_eq!(compute_num_digits_field_width(128, 3), 43);
+        assert_eq!(compute_num_digits_field_width(128, 4), 32);
+        assert_eq!(compute_num_digits_field_width(128, 8), 16);
     }
 
     #[test]
@@ -321,6 +341,10 @@ mod tests {
         assert_eq!(decomposed_t_ring_count(2, 3, 4, 5), Some(120));
         assert_eq!(decomposed_w_ring_count(3, 4, 5), Some(60));
         assert_eq!(decomposed_s_block_ring_count(usize::MAX, 2), None);
+        assert_eq!(projected_role_ring_count(256, 64, 7), Some(28));
+        assert_eq!(projected_role_ring_count(256, 128, 7), Some(14));
+        assert_eq!(projected_role_ring_count(128, 256, 7), None);
+        assert_eq!(projected_role_ring_count(256, 0, 7), None);
     }
 
     #[test]
@@ -373,15 +397,15 @@ mod tests {
     }
 
     #[test]
-    fn fold_witness_digit_plan_rejects_high_arity() {
+    fn fold_witness_digit_plan_rejects_zero_live_blocks() {
         let challenge = FoldChallengeNorms {
             infinity_norm: 8,
             l1_norm: 54,
         };
         let witness = FoldWitnessNorms::new(3, 64, 1, false);
-        // r_vars >= 127 is rejected.
+        // A fold must contain at least one live block.
         assert!(fold_witness_digit_plan(
-            127,
+            0,
             1,
             128,
             3,

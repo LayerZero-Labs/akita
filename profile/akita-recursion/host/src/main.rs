@@ -152,7 +152,6 @@ fn strict_host_preflight(blob: &[u8]) -> Result<(), String> {
         &mut transcript,
         decoded.verifier_opening_batch(&openings),
         BasisMode::Lagrange,
-        decoded.setup_contribution_mode,
     )
     .map_err(|err| format!("strict host verifier rejected input blob: {err}"))?;
     info!("strict host preflight OK");

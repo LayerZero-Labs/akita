@@ -10,16 +10,16 @@
 
 #![allow(clippy::missing_errors_doc)]
 
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, Commitment, FlatMatrix, OpeningClaims, PointVariableSelection,
-    PolynomialGroupClaims, SetupContributionMode, SetupPrefixVerifierRegistry,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    AkitaVerifierSetup, Commitment, FlatMatrix, OpeningClaims, PolynomialGroupClaims,
+    SetupPrefixVerifierRegistry, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
-use jolt_field::{CanonicalEncoding, Field};
+
 use std::sync::Arc;
 
 /// Encoding mode used for the verifier-input blob. Held constant on both ends
@@ -41,23 +41,6 @@ const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv1";
 const MAX_TRANSCRIPT_DOMAIN_BYTES: usize = 1024;
 const MAX_BLOB_NUM_VARS: usize = 64;
 
-fn setup_mode_to_u8(mode: SetupContributionMode) -> u8 {
-    match mode {
-        SetupContributionMode::Direct => 0,
-        SetupContributionMode::Recursive => 1,
-    }
-}
-
-fn setup_mode_from_u8(byte: u8) -> Result<SetupContributionMode, SerializationError> {
-    match byte {
-        0 => Ok(SetupContributionMode::Direct),
-        1 => Ok(SetupContributionMode::Recursive),
-        other => Err(SerializationError::InvalidData(format!(
-            "akita-jolt blob has invalid setup-contribution mode byte {other}"
-        ))),
-    }
-}
-
 fn reject_trailing_bytes(rest: &[u8]) -> Result<(), SerializationError> {
     if rest.is_empty() {
         return Ok(());
@@ -78,10 +61,6 @@ pub struct AkitaJoltInputs<F: Field, const D: usize> {
     pub transcript_domain: Vec<u8>,
     /// Number of variables of the public polynomial (informational; sanity).
     pub num_vars: u64,
-    /// Setup-contribution mode the proof was generated under. Held in the blob
-    /// so host preflight and guest replay verify under the same mode without a
-    /// separate flag.
-    pub setup_contribution_mode: SetupContributionMode,
     /// Opening point in the multilinear basis.
     pub opening_point: Vec<F>,
     /// Claimed opening value at `opening_point`.
@@ -108,18 +87,17 @@ impl<F: Field, const D: usize> AkitaJoltInputs<F, D> {
         &'a self,
         openings: &'a [F; 1],
     ) -> OpeningClaims<'static, F, &'a Commitment<F>> {
-        let point_vars = PointVariableSelection::prefix(
+        assert_eq!(
             usize::try_from(self.num_vars).expect("recursion blob num_vars fits usize"),
             self.opening_point.len(),
-        )
-        .expect("singleton recursion opening point covers all variables");
-        OpeningClaims::from_groups(
+            "singleton recursion opening point covers all variables"
+        );
+        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             self.opening_point.clone(),
-            vec![
-                PolynomialGroupClaims::new(point_vars, openings.to_vec(), &self.commitment)
-                    .expect("singleton recursion opening batch has one evaluation"),
-            ],
+            openings.to_vec(),
+            &self.commitment,
         )
+        .expect("singleton recursion opening batch has one evaluation")])
         .expect("singleton recursion opening batch is valid")
     }
 
@@ -181,8 +159,6 @@ where
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.num_vars
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
-        setup_mode_to_u8(self.setup_contribution_mode)
-            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.opening_point
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.opening
@@ -211,7 +187,6 @@ where
             + (D as u64).serialized_size(BLOB_COMPRESS)
             + self.transcript_domain.serialized_size(BLOB_COMPRESS)
             + self.num_vars.serialized_size(BLOB_COMPRESS)
-            + setup_mode_to_u8(self.setup_contribution_mode).serialized_size(BLOB_COMPRESS)
             + self.opening_point.serialized_size(BLOB_COMPRESS)
             + self.opening.serialized_size(BLOB_COMPRESS)
             + (self.commitment.rows().coeff_len() as u64).serialized_size(BLOB_COMPRESS)
@@ -224,7 +199,7 @@ where
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: Field + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: Field + ExtField<F> + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
 {
     fn decode_capped_bytes(
         rest: &mut &[u8],
@@ -403,9 +378,6 @@ where
             "akita-jolt transcript domain",
         )?;
         let num_vars = Self::decode_capped_len(&mut rest, MAX_BLOB_NUM_VARS)?;
-        let setup_mode_byte =
-            u8::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
-        let setup_contribution_mode = setup_mode_from_u8(setup_mode_byte)?;
         let opening_point =
             Self::decode_opening_point(&mut rest, transcript_domain.len(), num_vars)?;
         let opening = F::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
@@ -434,7 +406,6 @@ where
         Ok(Self {
             transcript_domain,
             num_vars: num_vars as u64,
-            setup_contribution_mode,
             opening_point,
             opening,
             commitment,
@@ -447,20 +418,20 @@ where
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: Field + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: Field + ExtField<F> + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
 {
     fn deserialize_strict_host_setup(
         rest: &mut &[u8],
     ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
         let (seed, shared_matrix) = Self::decode_seed_and_matrix(rest)?;
         let prefix_slots = Self::decode_prefix_slots(rest)?;
-        Ok(AkitaVerifierSetup {
-            expanded: Arc::new(AkitaExpandedSetup::from_verified_parts(
+        Ok(AkitaVerifierSetup::from_parts(
+            Arc::new(AkitaExpandedSetup::from_verified_parts(
                 seed,
                 shared_matrix,
             )?),
             prefix_slots,
-        })
+        ))
     }
 
     /// Strictly decode the bundle from bytes produced by [`Self::write_to_bytes`].
@@ -479,19 +450,19 @@ where
 ))]
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: Field + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: Field + ExtField<F> + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
 {
     fn deserialize_trusted_host_setup(
         rest: &mut &[u8],
     ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
         let (seed, shared_matrix) = Self::decode_seed_and_matrix(rest)?;
         let prefix_slots = Self::decode_prefix_slots(rest)?;
-        Ok(AkitaVerifierSetup {
-            expanded: Arc::new(
+        Ok(AkitaVerifierSetup::from_parts(
+            Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix),
             ),
             prefix_slots,
-        })
+        ))
     }
 
     /// Decode a host-produced recursion artifact while trusting the cached
@@ -516,10 +487,13 @@ pub use akita_algebra as _akita_algebra_dep;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_challenges::SparseChallengeConfig;
+    use jolt_field::Prime128Offset275;
     use akita_types::{
-        derive_public_matrix_flat, sample_public_matrix_seed, setup_prefix_slot_id, AjtaiKeyParams,
-        PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams, RingVec,
-        SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisModulusFamily,
+        derive_public_matrix_flat, sample_public_matrix_seed, setup_prefix_slot_id,
+        InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+        PrecommittedGroupDescriptor, PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment,
+        SetupPrefixVerifierSlot, SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
     };
     use jolt_field::Prime128Offset275;
 
@@ -537,33 +511,42 @@ mod tests {
 
     fn prefix_commitment_params() -> PrecommittedLevelParams {
         PrecommittedLevelParams {
-            layout: PrecommittedGroupParams {
+            layout: PrecommittedGroupDescriptor {
                 group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
-                m_vars: 0,
-                r_vars: 0,
-                log_basis: 1,
+                num_live_ring_elements_per_claim: 1,
+                num_positions_per_block: 1,
+                num_live_blocks: 1,
+                log_basis_inner: 1,
+                log_basis_outer: 1,
+                inner_ring_dimension: TEST_D,
+                outer_ring_dimension: TEST_D,
                 n_a: 1,
-                conservative_n_b: 1,
+                a_coeff_linf_bound: 1,
+                n_b: 1,
+                b_coeff_linf_bound: 1,
             },
-            a_key: AjtaiKeyParams::new_unchecked(
-                akita_types::DEFAULT_SIS_SECURITY_BITS,
-                SisModulusFamily::Q128,
+            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
                 1,
                 1,
                 1,
                 TEST_D,
             ),
-            b_key: AjtaiKeyParams::new_unchecked(
-                akita_types::DEFAULT_SIS_SECURITY_BITS,
-                SisModulusFamily::Q128,
+            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
                 1,
                 1,
                 1,
                 TEST_D,
             ),
-            num_blocks: 1,
-            block_len: 1,
-            num_digits_commit: 1,
+            log_basis_open: 1,
+            fold_challenge_config: SparseChallengeConfig::pm1_only(0),
+            num_digits_inner: 1,
+            num_digits_outer: 1,
             num_digits_open: 1,
             num_digits_fold_one: 1,
         }
@@ -608,9 +591,6 @@ mod tests {
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
             .unwrap();
         2u64.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
-        setup_mode_to_u8(SetupContributionMode::Direct)
-            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
-            .unwrap();
         3u64.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
 
         let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes(&bytes).unwrap_err();

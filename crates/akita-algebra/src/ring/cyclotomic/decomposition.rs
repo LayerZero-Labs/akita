@@ -91,9 +91,32 @@ fn balanced_digit_to_field<F: Field + CanonicalEncoding>(digit: i128, q: u128) -
     }
 }
 
-/// Precomputed parameters for balanced power-of-two `i8` decomposition.
+trait BalancedSignedDigit: Copy + Default {
+    const MAX_LOG_BASIS: u32;
+    fn from_i128(value: i128) -> Self;
+}
+
+impl BalancedSignedDigit for i8 {
+    const MAX_LOG_BASIS: u32 = 8;
+
+    #[inline(always)]
+    fn from_i128(value: i128) -> Self {
+        value as Self
+    }
+}
+
+impl BalancedSignedDigit for i16 {
+    const MAX_LOG_BASIS: u32 = 16;
+
+    #[inline(always)]
+    fn from_i128(value: i128) -> Self {
+        value as Self
+    }
+}
+
+/// Precomputed parameters for balanced power-of-two signed decomposition.
 #[derive(Clone, Copy, Debug)]
-pub struct BalancedDecomposePow2I8Params {
+pub struct BalancedDecomposePow2Params {
     levels: usize,
     log_basis: u32,
     q: u128,
@@ -104,17 +127,17 @@ pub struct BalancedDecomposePow2I8Params {
     overflow_possible: bool,
 }
 
-impl BalancedDecomposePow2I8Params {
+impl BalancedDecomposePow2Params {
     /// Build decomposition parameters for `levels` digits in base `2^log_basis`.
     ///
     /// # Panics
     ///
-    /// Panics if `log_basis` is outside `1..=6`, or if the requested digit
+    /// Panics if `log_basis` is outside `1..=16`, or if the requested digit
     /// budget exceeds the supported field-width guard.
     pub fn new(levels: usize, log_basis: u32, q: u128) -> Self {
         assert!(
-            log_basis > 0 && log_basis <= 6,
-            "log_basis must be in 1..=6 for i8 output"
+            log_basis > 0 && log_basis <= 16,
+            "log_basis must be in 1..=16 for signed i16 output"
         );
         assert!(
             (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
@@ -134,6 +157,222 @@ impl BalancedDecomposePow2I8Params {
             b,
             mask: b - 1,
             overflow_possible,
+        }
+    }
+}
+
+/// Decompose flat field coefficients into digit-major signed `i8` values.
+///
+/// The digit for `coefficients[coefficient]` at `level` is written to
+/// `out[level * coefficients.len() + coefficient]`. This is the canonical
+/// coefficient decomposition primitive for callers whose data is not already
+/// grouped into cyclotomic ring elements.
+///
+/// # Panics
+///
+/// Panics if `out.len() != coefficients.len() * params.levels`, or if the
+/// precomputed parameters use a basis wider than signed `i8` digits.
+#[inline]
+pub fn balanced_decompose_coefficients_pow2_i8_into<F: Field + CanonicalEncoding>(
+    coefficients: &[F],
+    out: &mut [i8],
+    params: &BalancedDecomposePow2Params,
+) {
+    let expected_len = coefficients
+        .len()
+        .checked_mul(params.levels)
+        .expect("flat digit output length overflow");
+    assert_eq!(
+        out.len(),
+        expected_len,
+        "flat digit output length must match coefficients * levels",
+    );
+    assert!(
+        params.log_basis <= <i8 as BalancedSignedDigit>::MAX_LOG_BASIS,
+        "log_basis must be in 1..=8 for i8 output"
+    );
+    balanced_decompose_coefficients_pow2_signed_into_with_params(coefficients, out, params);
+}
+
+#[inline]
+fn balanced_decompose_coefficients_pow2_signed_into_with_params<
+    F: Field + CanonicalEncoding,
+    T: BalancedSignedDigit,
+>(
+    coefficients: &[F],
+    out: &mut [T],
+    params: &BalancedDecomposePow2Params,
+) {
+    let width = coefficients.len();
+    debug_assert_eq!(out.len(), width * params.levels);
+    debug_assert!(params.log_basis <= T::MAX_LOG_BASIS);
+    if width == 0 || params.levels == 0 {
+        return;
+    }
+
+    let bulk_end = width - (width % 3);
+    if params.overflow_possible {
+        let (first_plane, remaining) = out.split_at_mut(width);
+        for base in (0..bulk_end).step_by(3) {
+            let (mut c0, d0) = peel_first_balanced_digit(
+                coefficients[base]
+                    .to_u128_checked()
+                    .expect("canonical prime-field value fits in u128"),
+                params.q,
+                params.threshold,
+                params.mask,
+                params.half_b,
+                params.b,
+                params.log_basis,
+            );
+            let (mut c1, d1) = peel_first_balanced_digit(
+                coefficients[base + 1]
+                    .to_u128_checked()
+                    .expect("canonical prime-field value fits in u128"),
+                params.q,
+                params.threshold,
+                params.mask,
+                params.half_b,
+                params.b,
+                params.log_basis,
+            );
+            let (mut c2, d2) = peel_first_balanced_digit(
+                coefficients[base + 2]
+                    .to_u128_checked()
+                    .expect("canonical prime-field value fits in u128"),
+                params.q,
+                params.threshold,
+                params.mask,
+                params.half_b,
+                params.b,
+                params.log_basis,
+            );
+
+            first_plane[base] = T::from_i128(d0);
+            first_plane[base + 1] = T::from_i128(d1);
+            first_plane[base + 2] = T::from_i128(d2);
+            for plane in remaining.chunks_exact_mut(width) {
+                let d0 = c0 & params.mask;
+                let balanced0 = if d0 >= params.half_b {
+                    d0 - params.b
+                } else {
+                    d0
+                };
+                c0 = (c0 - balanced0) >> params.log_basis;
+                plane[base] = T::from_i128(balanced0);
+
+                let d1 = c1 & params.mask;
+                let balanced1 = if d1 >= params.half_b {
+                    d1 - params.b
+                } else {
+                    d1
+                };
+                c1 = (c1 - balanced1) >> params.log_basis;
+                plane[base + 1] = T::from_i128(balanced1);
+
+                let d2 = c2 & params.mask;
+                let balanced2 = if d2 >= params.half_b {
+                    d2 - params.b
+                } else {
+                    d2
+                };
+                c2 = (c2 - balanced2) >> params.log_basis;
+                plane[base + 2] = T::from_i128(balanced2);
+            }
+        }
+
+        for coefficient in bulk_end..width {
+            let (mut c, d0) = peel_first_balanced_digit(
+                coefficients[coefficient]
+                    .to_u128_checked()
+                    .expect("canonical prime-field value fits in u128"),
+                params.q,
+                params.threshold,
+                params.mask,
+                params.half_b,
+                params.b,
+                params.log_basis,
+            );
+            first_plane[coefficient] = T::from_i128(d0);
+            for plane in remaining.chunks_exact_mut(width) {
+                let d = c & params.mask;
+                let balanced = if d >= params.half_b { d - params.b } else { d };
+                c = (c - balanced) >> params.log_basis;
+                plane[coefficient] = T::from_i128(balanced);
+            }
+        }
+    } else {
+        for base in (0..bulk_end).step_by(3) {
+            let canonical0 = coefficients[base]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128");
+            let canonical1 = coefficients[base + 1]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128");
+            let canonical2 = coefficients[base + 2]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128");
+            let mut c0 = if canonical0 > params.threshold {
+                -((params.q - canonical0) as i128)
+            } else {
+                canonical0 as i128
+            };
+            let mut c1 = if canonical1 > params.threshold {
+                -((params.q - canonical1) as i128)
+            } else {
+                canonical1 as i128
+            };
+            let mut c2 = if canonical2 > params.threshold {
+                -((params.q - canonical2) as i128)
+            } else {
+                canonical2 as i128
+            };
+
+            for plane in out.chunks_exact_mut(width) {
+                let d0 = c0 & params.mask;
+                let balanced0 = if d0 >= params.half_b {
+                    d0 - params.b
+                } else {
+                    d0
+                };
+                c0 = (c0 - balanced0) >> params.log_basis;
+                plane[base] = T::from_i128(balanced0);
+
+                let d1 = c1 & params.mask;
+                let balanced1 = if d1 >= params.half_b {
+                    d1 - params.b
+                } else {
+                    d1
+                };
+                c1 = (c1 - balanced1) >> params.log_basis;
+                plane[base + 1] = T::from_i128(balanced1);
+
+                let d2 = c2 & params.mask;
+                let balanced2 = if d2 >= params.half_b {
+                    d2 - params.b
+                } else {
+                    d2
+                };
+                c2 = (c2 - balanced2) >> params.log_basis;
+                plane[base + 2] = T::from_i128(balanced2);
+            }
+        }
+
+        for coefficient in bulk_end..width {
+            let canonical = coefficients[coefficient]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128");
+            let mut c = if canonical > params.threshold {
+                -((params.q - canonical) as i128)
+            } else {
+                canonical as i128
+            };
+            for plane in out.chunks_exact_mut(width) {
+                let d = c & params.mask;
+                let balanced = if d >= params.half_b { d - params.b } else { d };
+                c = (c - balanced) >> params.log_basis;
+                plane[coefficient] = T::from_i128(balanced);
+            }
         }
     }
 }
@@ -334,11 +573,11 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     /// but stores each digit as `i8` instead of a field element, avoiding
     /// the cost of `F::from_u128_reduced`.
     ///
-    /// Requires `log_basis <= 6` so digits fit in `[-32, 31]` (i8 range).
+    /// Requires `log_basis <= 8` so digits fit in `[-128, 127]`.
     ///
     /// # Panics
     ///
-    /// Panics if `log_basis` is 0 or > 6, or if `levels * log_basis > 128 + log_basis`.
+    /// Panics if `log_basis` is 0 or > 8, or if `levels * log_basis > 128 + log_basis`.
     #[inline]
     pub fn balanced_decompose_pow2_i8_into(&self, out: &mut [[i8; D]], log_basis: u32)
     where
@@ -346,8 +585,8 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     {
         let levels = out.len();
         assert!(
-            log_basis > 0 && log_basis <= 6,
-            "log_basis must be in 1..=6 for i8 output"
+            log_basis > 0 && log_basis <= 8,
+            "log_basis must be in 1..=8 for i8 output"
         );
         assert!(
             (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
@@ -372,7 +611,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     ) where
         F: Field + CanonicalEncoding,
     {
-        let params = BalancedDecomposePow2I8Params::new(out.len(), log_basis, q);
+        let params = BalancedDecomposePow2Params::new(out.len(), log_basis, q);
         self.balanced_decompose_pow2_i8_into_with_params(out, &params);
     }
 
@@ -381,213 +620,39 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     pub fn balanced_decompose_pow2_i8_into_with_params(
         &self,
         out: &mut [[i8; D]],
-        params: &BalancedDecomposePow2I8Params,
+        params: &BalancedDecomposePow2Params,
     ) where
         F: Field + CanonicalEncoding,
     {
-        debug_assert_eq!(out.len(), params.levels);
-        if params.overflow_possible {
-            self.balanced_decompose_pow2_i8_overflow(out, params);
-        } else {
-            self.balanced_decompose_pow2_i8_fast(out, params);
-        }
+        assert!(
+            params.log_basis <= <i8 as BalancedSignedDigit>::MAX_LOG_BASIS,
+            "log_basis must be in 1..=8 for i8 output"
+        );
+        balanced_decompose_coefficients_pow2_signed_into_with_params(
+            &self.coeffs,
+            out.as_flattened_mut(),
+            params,
+        );
     }
 
-    /// Fast path: no i128 overflow possible (threshold >= q - i128::MAX).
-    #[inline]
-    fn balanced_decompose_pow2_i8_fast(
-        &self,
-        out: &mut [[i8; D]],
-        params: &BalancedDecomposePow2I8Params,
-    ) where
+    /// Balanced decomposition directly into signed i16 digit planes.
+    ///
+    /// This is the canonical large-basis path. `log_basis` may be in
+    /// `1..=16`; bases 10 and 11 map to `[-512, 511]` and `[-1024, 1023]`.
+    pub fn balanced_decompose_pow2_i16_into(&self, out: &mut [[i16; D]], log_basis: u32)
+    where
         F: Field + CanonicalEncoding,
     {
-        let bulk_end = D - (D % 3);
-
-        for base in (0..bulk_end).step_by(3) {
-            let canonical0 = self.coeffs[base]
-                .to_u128_checked()
-                .expect("canonical prime-field value fits in u128");
-            let canonical1 = self.coeffs[base + 1]
-                .to_u128_checked()
-                .expect("canonical prime-field value fits in u128");
-            let canonical2 = self.coeffs[base + 2]
-                .to_u128_checked()
-                .expect("canonical prime-field value fits in u128");
-
-            let mut c0: i128 = if canonical0 > params.threshold {
-                -((params.q - canonical0) as i128)
-            } else {
-                canonical0 as i128
-            };
-            let mut c1: i128 = if canonical1 > params.threshold {
-                -((params.q - canonical1) as i128)
-            } else {
-                canonical1 as i128
-            };
-            let mut c2: i128 = if canonical2 > params.threshold {
-                -((params.q - canonical2) as i128)
-            } else {
-                canonical2 as i128
-            };
-
-            for plane in out.iter_mut() {
-                let d0 = c0 & params.mask;
-                let balanced0 = if d0 >= params.half_b {
-                    d0 - params.b
-                } else {
-                    d0
-                };
-                c0 = (c0 - balanced0) >> params.log_basis;
-                plane[base] = balanced0 as i8;
-
-                let d1 = c1 & params.mask;
-                let balanced1 = if d1 >= params.half_b {
-                    d1 - params.b
-                } else {
-                    d1
-                };
-                c1 = (c1 - balanced1) >> params.log_basis;
-                plane[base + 1] = balanced1 as i8;
-
-                let d2 = c2 & params.mask;
-                let balanced2 = if d2 >= params.half_b {
-                    d2 - params.b
-                } else {
-                    d2
-                };
-                c2 = (c2 - balanced2) >> params.log_basis;
-                plane[base + 2] = balanced2 as i8;
-            }
-        }
-
-        for i in bulk_end..D {
-            let canonical = self.coeffs[i]
-                .to_u128_checked()
-                .expect("canonical prime-field value fits in u128");
-            let mut c: i128 = if canonical > params.threshold {
-                -((params.q - canonical) as i128)
-            } else {
-                canonical as i128
-            };
-
-            for plane in out.iter_mut() {
-                let d = c & params.mask;
-                let balanced = if d >= params.half_b { d - params.b } else { d };
-                c = (c - balanced) >> params.log_basis;
-                plane[i] = balanced as i8;
-            }
-        }
-    }
-
-    /// Overflow-aware path: peels the first digit per coefficient, then keeps
-    /// the remaining digits in the same 3-at-a-time register loop.
-    fn balanced_decompose_pow2_i8_overflow(
-        &self,
-        out: &mut [[i8; D]],
-        params: &BalancedDecomposePow2I8Params,
-    ) where
-        F: Field + CanonicalEncoding,
-    {
-        let (first_plane, remaining) = out
-            .split_first_mut()
-            .expect("balanced_decompose_pow2_i8_overflow requires at least one plane");
-        let bulk_end = D - (D % 3);
-
-        for base in (0..bulk_end).step_by(3) {
-            let canonical0 = self.coeffs[base]
-                .to_u128_checked()
-                .expect("canonical prime-field value fits in u128");
-            let canonical1 = self.coeffs[base + 1]
-                .to_u128_checked()
-                .expect("canonical prime-field value fits in u128");
-            let canonical2 = self.coeffs[base + 2]
-                .to_u128_checked()
-                .expect("canonical prime-field value fits in u128");
-
-            let (mut c0, d0) = peel_first_balanced_digit(
-                canonical0,
-                params.q,
-                params.threshold,
-                params.mask,
-                params.half_b,
-                params.b,
-                params.log_basis,
-            );
-            let (mut c1, d1) = peel_first_balanced_digit(
-                canonical1,
-                params.q,
-                params.threshold,
-                params.mask,
-                params.half_b,
-                params.b,
-                params.log_basis,
-            );
-            let (mut c2, d2) = peel_first_balanced_digit(
-                canonical2,
-                params.q,
-                params.threshold,
-                params.mask,
-                params.half_b,
-                params.b,
-                params.log_basis,
-            );
-
-            first_plane[base] = d0 as i8;
-            first_plane[base + 1] = d1 as i8;
-            first_plane[base + 2] = d2 as i8;
-
-            for plane in remaining.iter_mut() {
-                let d0 = c0 & params.mask;
-                let balanced0 = if d0 >= params.half_b {
-                    d0 - params.b
-                } else {
-                    d0
-                };
-                c0 = (c0 - balanced0) >> params.log_basis;
-                plane[base] = balanced0 as i8;
-
-                let d1 = c1 & params.mask;
-                let balanced1 = if d1 >= params.half_b {
-                    d1 - params.b
-                } else {
-                    d1
-                };
-                c1 = (c1 - balanced1) >> params.log_basis;
-                plane[base + 1] = balanced1 as i8;
-
-                let d2 = c2 & params.mask;
-                let balanced2 = if d2 >= params.half_b {
-                    d2 - params.b
-                } else {
-                    d2
-                };
-                c2 = (c2 - balanced2) >> params.log_basis;
-                plane[base + 2] = balanced2 as i8;
-            }
-        }
-
-        for i in bulk_end..D {
-            let canonical = self.coeffs[i]
-                .to_u128_checked()
-                .expect("canonical prime-field value fits in u128");
-            let (mut c, d0) = peel_first_balanced_digit(
-                canonical,
-                params.q,
-                params.threshold,
-                params.mask,
-                params.half_b,
-                params.b,
-                params.log_basis,
-            );
-            first_plane[i] = d0 as i8;
-            for plane in remaining.iter_mut() {
-                let d = c & params.mask;
-                let balanced = if d >= params.half_b { d - params.b } else { d };
-                c = (c - balanced) >> params.log_basis;
-                plane[i] = balanced as i8;
-            }
-        }
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
+        let params = BalancedDecomposePow2Params::new(out.len(), log_basis, q);
+        balanced_decompose_coefficients_pow2_signed_into_with_params(
+            &self.coeffs,
+            out.as_flattened_mut(),
+            &params,
+        );
     }
 
     /// Allocating variant of [`balanced_decompose_pow2_i8_into`](Self::balanced_decompose_pow2_i8_into).
@@ -597,6 +662,17 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     {
         let mut digit_planes: Vec<[i8; D]> = vec![[0i8; D]; levels];
         self.balanced_decompose_pow2_i8_into(&mut digit_planes, log_basis);
+        digit_planes
+    }
+
+    /// Allocating signed-i16 balanced decomposition for large bases.
+    #[must_use]
+    pub fn balanced_decompose_pow2_i16(&self, levels: usize, log_basis: u32) -> Vec<[i16; D]>
+    where
+        F: Field + CanonicalEncoding,
+    {
+        let mut digit_planes = vec![[0i16; D]; levels];
+        self.balanced_decompose_pow2_i16_into(&mut digit_planes, log_basis);
         digit_planes
     }
 

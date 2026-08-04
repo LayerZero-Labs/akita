@@ -5,8 +5,6 @@ use crate::compute::{
     RuntimeRootProvePoly, RuntimeTensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
-use akita_types::terminal_golomb_grind_tail_t_vectors;
-use akita_types::CleartextWitnessShape;
 
 fn validate_non_eor_root_opening_shape<F, E>(
     ring_d: usize,
@@ -43,9 +41,7 @@ fn prepare_root<F, E, T, P, C, O, TS, R>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     transcript: &mut T,
     claims: ProverOpeningData<'_, E, P, F>,
-    root_params: &LevelParams,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
-    terminal_tail_t_vectors: Option<usize>,
+    root_params: &CommittedGroupParams,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
@@ -67,7 +63,6 @@ where
     R: DigitRowsComputeBackend<F>,
 {
     let opening_batch = claims.opening_layout::<F>()?;
-    let num_claims = opening_batch.num_total_polynomials();
     let opening_num_vars = opening_batch.max_num_vars();
     // A-role root fold ring dimension (schedule-derived).
     let root_ring_d = root_params.role_dims().d_a();
@@ -75,39 +70,32 @@ where
     let needs_extension_reduction =
         root_tensor_projection_enabled::<F, E>(root_ring_d, opening_num_vars);
 
-    if claims.point().len() > opening_num_vars {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: opening_num_vars,
-            actual: claims.point().len(),
-        });
+    if const { <E as ExtField<F>>::DEGREE == 1 } {
+        prepare_single_field_fold::<F, E, T, P, _, C, O, TS, R>(
+            stack,
+            claims,
+            false,
+            transcript,
+            || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
+            root_params,
+            basis,
+        )
+    } else {
+        let eor_polynomial_groups = (0..opening_batch.num_groups())
+            .map(|group_index| Ok(claims.group_polys(group_index)?.to_vec()))
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        prepare_extension_claim_fold::<F, E, T, P, _, C, O, TS, R>(
+            stack,
+            needs_extension_reduction,
+            claims,
+            eor_polynomial_groups,
+            false,
+            transcript,
+            || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
+            root_params,
+            basis,
+        )
     }
-    let flat_polys = claims.flat_polys();
-    if flat_polys.len() != num_claims {
-        return Err(AkitaError::InvalidInput(
-            "invalid root-level inputs".to_string(),
-        ));
-    }
-
-    let eor_opening_batch =
-        OpeningClaims::with_padded_point(claims.point(), opening_num_vars, num_claims)?;
-    let non_eor_protocol_point = claims.point().to_vec();
-    prepare_fold_inner::<F, E, T, P, _, C, O, TS, R>(
-        stack,
-        needs_extension_reduction,
-        claims,
-        &flat_polys,
-        &eor_opening_batch,
-        false,
-        transcript,
-        non_eor_protocol_point,
-        || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
-        root_params,
-        alpha_bits,
-        basis,
-        BlockOrder::RowMajor,
-        relation_matrix_row_layout,
-        terminal_tail_t_vectors,
-    )
 }
 
 /// Prove the folded-root proof payload for an intermediate root.
@@ -123,7 +111,7 @@ where
 /// ring-relation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg>(
+pub(crate) fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
     stacks: &'stack impl LevelProveStacks<
@@ -136,9 +124,10 @@ pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg>(
     >,
     transcript: &mut T,
     claims: ProverOpeningData<'_, E, P, F>,
-    scheduled: &ExecutionSchedule,
+    scheduled: &akita_types::RootFoldStep,
+    next_params: super::fold::FoldSuccessorParams<'_>,
+    next_witness_binding: akita_types::NextWitnessBindingPolicy,
     basis: BasisMode,
-    setup_contribution_mode: SetupContributionMode,
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
     F: Field
@@ -175,30 +164,16 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
-    let opening_batch = claims.opening_layout::<F>()?;
-    let num_claims = opening_batch.num_total_polynomials();
-    let root_params = &scheduled.params;
-
-    if claims.flat_polys().len() != num_claims {
-        return Err(AkitaError::InvalidInput(
-            "invalid root-level inputs".to_string(),
-        ));
-    }
+    let root_params = &scheduled.params.final_group.commitment;
 
     // Absorb root claims through the D-free flat commitment encoder keyed on the
     // root level's B-role dimension (byte-identical to the verifier's
     // `claims.append_to_transcript` and to the former typed path; S2/S7 parity).
-    claims.append_to_transcript::<T>(root_params.role_dims().d_b(), transcript)?;
+    claims.append_to_transcript::<T>(root_params, transcript)?;
 
-    let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R>(
-        stack,
-        transcript,
-        claims,
-        root_params,
-        RelationMatrixRowLayout::WithDBlock,
-        None,
-        basis,
-    )?;
+    let prepared_fold =
+        prepare_root::<F, E, T, P, C, O, TS, R>(stack, transcript, claims, root_params, basis)
+            .map_err(|err| AkitaError::InvalidInput(format!("prepare root failed: {err:?}")))?;
 
     prove_fold::<F, E, T, C, O, TS, R, Cfg>(
         expanded,
@@ -206,123 +181,11 @@ where
         stack,
         transcript,
         0,
-        scheduled,
-        prepared_fold,
-        setup_contribution_mode,
-        false,
-        None,
-    )?
-    .get_intermediate()
-}
-
-/// Terminal-root analogue of [`prove_root`] used when the
-/// schedule has exactly one fold level (the root is itself the terminal).
-///
-/// Mirrors the intermediate-root path through opening-batch absorbs,
-/// optional extension-opening reduction, and ring-relation setup, then
-/// emits a [`TerminalLevelProof`] through the shared fold prover instead of a
-/// [`ProveLevelOutput`].
-///
-/// # Errors
-///
-/// Returns an error if opening-batch setup, EOR construction, or the inner
-/// terminal-root prover fails.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R>(
-    expanded: &Arc<AkitaExpandedSetup<F>>,
-    stacks: &'stack impl LevelProveStacks<
-        'stack,
-        F,
-        Commit = C,
-        Opening = O,
-        Tensor = TS,
-        RingSwitch = R,
-    >,
-    transcript: &mut T,
-    claims: ProverOpeningData<'_, E, P, F>,
-    scheduled: &ExecutionSchedule,
-    terminal_direct_witness_shape: &CleartextWitnessShape,
-    basis: BasisMode,
-    setup_contribution_mode: SetupContributionMode,
-) -> Result<TerminalLevelProof<F, E>, AkitaError>
-where
-    F: Field
-        + CanonicalEncoding
-        + Unreduced
-        + PseudoMersenne
-        + Ring
-        + akita_serialization::AkitaSerialize
-        + 'static,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + Unreduced
-        + Fold
-        + Ring
-        + MulBaseUnreduced<F>
-        + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RuntimeRootProvePoly<F>,
-    C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
-    O: RuntimeOpeningProveBackendFor<F, P>
-        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
-        + DigitRowsComputeBackend<F>
-        + ComputeBackendSetup<F>
-        + 'stack,
-    TS: RuntimeTensorBackendFor<F, P, E>
-        + RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, E>
-        + ComputeBackendSetup<F>
-        + 'stack,
-    R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,
-    Cfg: CommitmentConfig<Field = F, ExtField = E>,
-    <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
-    <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
-    <TS as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
-    <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
-{
-    let stack = stacks.prove_stack_at_level(0);
-    let opening_batch = claims.opening_layout::<F>()?;
-    let num_claims = opening_batch.num_total_polynomials();
-    let root_params = &scheduled.params;
-
-    if claims.flat_polys().len() != num_claims {
-        return Err(AkitaError::InvalidInput(
-            "invalid root-level inputs".to_string(),
-        ));
-    }
-
-    // Absorb root claims through the D-free flat commitment encoder keyed on the
-    // root level's B-role dimension (S2/S7 byte parity).
-    claims.append_to_transcript::<T>(root_params.role_dims().d_b(), transcript)?;
-
-    let terminal_tail_t_vectors = terminal_golomb_grind_tail_t_vectors(
         root_params,
-        RelationMatrixRowLayout::WithoutDBlock,
-        Some(terminal_direct_witness_shape),
-    )?;
-    let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R>(
-        stack,
-        transcript,
-        claims,
-        root_params,
-        RelationMatrixRowLayout::WithoutDBlock,
-        terminal_tail_t_vectors,
-        basis,
-    )?;
-    let prefix_slots = SetupPrefixProverRegistry::new();
-    let terminal_result = prove_fold::<F, E, T, C, O, TS, R, Cfg>(
-        expanded,
-        &prefix_slots,
-        stack,
-        transcript,
-        0,
-        scheduled,
+        Some(next_params),
+        Some(scheduled.output_witness_len),
+        Some(next_witness_binding),
         prepared_fold,
-        setup_contribution_mode,
-        true,
-        Some(terminal_direct_witness_shape),
-    )?
-    .get_terminal()?;
-
-    Ok(terminal_result)
+    )
+    .map_err(|err| AkitaError::InvalidInput(format!("prove root fold failed: {err:?}")))
 }

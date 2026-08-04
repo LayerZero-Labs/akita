@@ -5,8 +5,10 @@
 //! use the same filter via `AKITA_SIS_INFINITY_BENCH_SET=exhaustive-ci` in
 //! `cargo bench -p akita-sis-estimator --bench infinity_optimizer`.
 
+#[cfg(feature = "parallel")]
+use akita_sis_estimator::width_table::InfinityWidthProfile;
 use akita_sis_estimator::{
-    estimate, scalar_sis_from_ring, AkitaModulusFamily, CostValue, EstimateConfig, NumericConfig,
+    estimate, scalar_sis_from_ring, AkitaModulusProfileId, CostValue, EstimateConfig, NumericConfig,
 };
 
 const GOLDEN_CSV: &str = include_str!("../../../scripts/sis_golden/infinity_golden.csv");
@@ -21,7 +23,7 @@ const EXHAUSTIVE_SLOW_MAX_M: u32 = 1024;
 const EXHAUSTIVE_SLOW_REPRESENTATIVE_BOUND: u64 = 255;
 
 struct SmokeCase {
-    family: AkitaModulusFamily,
+    family: AkitaModulusProfileId,
     d: u32,
     rank: u32,
     width: u32,
@@ -31,42 +33,42 @@ struct SmokeCase {
 /// Representative cells aligned with `benches/infinity_optimizer.rs`.
 const SMOKE_CASES: &[SmokeCase] = &[
     SmokeCase {
-        family: AkitaModulusFamily::Q32,
+        family: AkitaModulusProfileId::Q32Offset99,
         d: 32,
         rank: 1,
         width: 2,
         coeff_linf_bound: 15,
     },
     SmokeCase {
-        family: AkitaModulusFamily::Q128,
+        family: AkitaModulusProfileId::Q128OffsetA7F7,
         d: 32,
         rank: 1,
         width: 8,
         coeff_linf_bound: 4095,
     },
     SmokeCase {
-        family: AkitaModulusFamily::Q64,
+        family: AkitaModulusProfileId::Q64Offset59,
         d: 64,
         rank: 1,
         width: 8,
         coeff_linf_bound: 255,
     },
     SmokeCase {
-        family: AkitaModulusFamily::Q64,
+        family: AkitaModulusProfileId::Q64Offset59,
         d: 128,
         rank: 1,
         width: 8,
         coeff_linf_bound: 15,
     },
     SmokeCase {
-        family: AkitaModulusFamily::Q64,
+        family: AkitaModulusProfileId::Q64Offset59,
         d: 32,
         rank: 5,
         width: 10,
         coeff_linf_bound: 255,
     },
     SmokeCase {
-        family: AkitaModulusFamily::Q128,
+        family: AkitaModulusProfileId::Q128OffsetA7F7,
         d: 32,
         rank: 1,
         width: 2,
@@ -84,13 +86,7 @@ fn exhaustive_config() -> EstimateConfig {
 
 #[cfg(feature = "parallel")]
 fn parallel_exhaustive_config() -> EstimateConfig {
-    EstimateConfig {
-        optimizer: akita_sis_estimator::OptimizerConfig::OptimizeZeta {
-            beta: akita_sis_estimator::SearchMode::ExhaustiveParallel,
-            zeta: akita_sis_estimator::SearchMode::ExhaustiveParallel,
-        },
-        ..EstimateConfig::default()
-    }
+    InfinityWidthProfile::ExhaustiveParallel.config()
 }
 
 #[test]
@@ -230,7 +226,7 @@ fn exhaustive_search_rank20_geometries_manual() {
 
 #[derive(Debug)]
 struct Row {
-    family: AkitaModulusFamily,
+    family: AkitaModulusProfileId,
     d: u32,
     rank: u32,
     width: u32,
@@ -293,7 +289,7 @@ fn parse_trusted_rows() -> Vec<Row> {
                 return None;
             }
             Some(Row {
-                family: AkitaModulusFamily::parse(get("family")).unwrap(),
+                family: AkitaModulusProfileId::parse(get("family")).unwrap(),
                 d: get("d").parse().unwrap(),
                 rank: get("rank").parse().unwrap(),
                 width: get("width").parse().unwrap(),
@@ -313,5 +309,10 @@ fn exhaustive_at_least_as_good(
         (CostValue::Finite(ex), CostValue::Finite(reference)) => ex.log2 <= reference.log2 + tol,
         (CostValue::Finite(_), CostValue::Infinity) => true,
         (CostValue::Infinity, CostValue::Finite(_)) => false,
+        (CostValue::ProvenAboveTarget(_), CostValue::ProvenAboveTarget(_)) => true,
+        (CostValue::ProvenAboveTarget(_), CostValue::Infinity) => true,
+        (CostValue::Infinity, CostValue::ProvenAboveTarget(_)) => true,
+        (CostValue::Finite(_), CostValue::ProvenAboveTarget(_)) => true,
+        (CostValue::ProvenAboveTarget(_), CostValue::Finite(_)) => false,
     }
 }

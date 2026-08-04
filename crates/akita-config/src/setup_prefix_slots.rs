@@ -3,13 +3,12 @@
 use std::collections::BTreeSet;
 
 use akita_error::AkitaError;
-use akita_planner::suffix_opening_layout;
+use akita_schedules::suffix_opening_layout;
 use akita_types::{
-    active_setup_field_len, config::SetupContributionMode, padded_setup_prefix_len, Schedule,
-    SetupPrefixSlotId, Step, SETUP_OFFLOAD_D_SETUP,
+    active_setup_field_len, padded_setup_prefix_len, AkitaScheduleLookupKey, FoldSchedule,
+    SetupPrefixSlotId, SETUP_OFFLOAD_D_SETUP,
 };
 
-use crate::generated_families::recursive_group_batch_candidates_for_capacity;
 use crate::CommitmentConfig;
 
 fn setup_prefix_slot_matches(
@@ -38,81 +37,42 @@ fn setup_prefix_slot_matches(
 }
 
 pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
     root_layout: &akita_types::OpeningClaimsLayout,
 ) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
     schedule.validate_structure()?;
 
     let mut ids = BTreeSet::new();
-    let mut incoming_setup_prefix: Option<usize> = None;
-    let mut is_first_fold = true;
-
-    for (index, step) in schedule.steps.iter().enumerate() {
-        let Step::Fold(fold) = step else {
+    for producer_index in 0..=schedule.recursive_folds.len() {
+        let successor_prefix = schedule
+            .recursive_folds
+            .get(producer_index)
+            .and_then(|fold| fold.params.incoming_setup_prefix.as_ref());
+        let Some(slot_id) = successor_prefix else {
             continue;
         };
-
-        let opening_layout = if is_first_fold {
-            is_first_fold = false;
-            root_layout.clone()
+        let (params, opening_layout) = if producer_index == 0 {
+            (
+                &schedule.root.params.final_group.commitment,
+                root_layout.clone(),
+            )
         } else {
-            suffix_opening_layout(fold.current_w_len, incoming_setup_prefix)?
+            let producer = &schedule.recursive_folds[producer_index - 1];
+            let incoming_len = producer
+                .params
+                .incoming_setup_prefix
+                .as_ref()
+                .map(|slot| slot.natural_len);
+            (
+                &producer.params.witness,
+                suffix_opening_layout(producer.input_witness_len, incoming_len)?,
+            )
         };
-
-        match fold.params.setup_contribution_mode {
-            SetupContributionMode::Recursive => {
-                let natural_len =
-                    active_setup_field_len(&fold.params, &opening_layout, SETUP_OFFLOAD_D_SETUP)?;
-                let n_prefix = padded_setup_prefix_len(natural_len);
-
-                let successor = schedule.steps.get(index + 1).ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "recursive fold must have a nonterminal successor".to_string(),
-                    )
-                })?;
-                let Step::Fold(successor_fold) = successor else {
-                    return Err(AkitaError::InvalidSetup(
-                        "recursive fold successor must be another fold".to_string(),
-                    ));
-                };
-                if successor_fold.params.setup_prefix.is_none() {
-                    return Err(AkitaError::InvalidSetup(
-                        "recursive fold successor must carry a setup prefix".to_string(),
-                    ));
-                }
-                if !successor_fold.params.precommitted_groups.is_empty()
-                    || successor_fold.params.precommitted_group_count() != 1
-                {
-                    return Err(AkitaError::InvalidSetup(
-                        "recursive fold successor must carry only the setup prefix group"
-                            .to_string(),
-                    ));
-                }
-
-                let slot_id = successor_fold.params.setup_prefix.as_ref().ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "recursive fold successor is missing setup-prefix metadata".to_string(),
-                    )
-                })?;
-                setup_prefix_slot_matches(slot_id, natural_len, n_prefix)?;
-                ids.insert(slot_id.clone());
-                incoming_setup_prefix = Some(natural_len);
-            }
-            SetupContributionMode::Direct => {
-                if let Some(slot_id) = &fold.params.setup_prefix {
-                    let expected = incoming_setup_prefix.ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "setup-prefix consumer fold without an incoming delegated prefix"
-                                .to_string(),
-                        )
-                    })?;
-                    let n_prefix = padded_setup_prefix_len(expected);
-                    setup_prefix_slot_matches(slot_id, expected, n_prefix)?;
-                    incoming_setup_prefix = None;
-                } else {
-                    incoming_setup_prefix = None;
-                }
-            }
+        let natural_len = active_setup_field_len(params, &opening_layout)?;
+        let n_prefix = padded_setup_prefix_len(natural_len);
+        setup_prefix_slot_matches(slot_id, natural_len, n_prefix)?;
+        if !ids.insert(slot_id.clone()) {
+            continue;
         }
     }
 
@@ -122,7 +82,7 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
 /// Enumerate every exact setup-prefix slot required by selected recursive schedules.
 ///
 /// Selected keys are the bounded catalog/profile set from
-/// [`crate::generated_families::recursive_group_batch_candidates_for_capacity`],
+/// `recursive_group_batch_candidates_for_capacity`,
 /// not a dense capacity grid.
 pub fn setup_prefix_slot_ids_for_capacity<Cfg: CommitmentConfig>(
     max_num_vars: usize,
@@ -149,22 +109,74 @@ pub fn setup_prefix_slot_ids_for_capacity<Cfg: CommitmentConfig>(
     Ok(ids.into_iter().collect())
 }
 
-#[cfg(test)]
+fn push_unique_schedule_key(
+    keys: &mut Vec<AkitaScheduleLookupKey>,
+    candidate: AkitaScheduleLookupKey,
+) {
+    if !keys.contains(&candidate) {
+        keys.push(candidate);
+    }
+}
+
+pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+    if !Cfg::recursive_setup_planning()
+        || Cfg::decomposition().log_commit_bound != 1
+        || Cfg::D != SETUP_OFFLOAD_D_SETUP
+        || max_num_batched_polys == 0
+    {
+        return Ok(Vec::new());
+    }
+
+    let mut keys = Vec::new();
+    if let Some(catalog) = Cfg::schedule_catalog() {
+        for entry in catalog.entries {
+            if entry.root.precommitted_groups.is_empty() {
+                continue;
+            }
+            let candidate = AkitaScheduleLookupKey {
+                final_group: entry.root.final_group.layout,
+                precommitteds: entry
+                    .root
+                    .precommitted_groups
+                    .iter()
+                    .map(|group| group.descriptor)
+                    .collect(),
+            };
+            if candidate.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
+                push_unique_schedule_key(&mut keys, candidate);
+            }
+        }
+    }
+
+    keys.sort_by(akita_schedules::runtime_schedule_key_cmp);
+    Ok(keys)
+}
+
+#[cfg(all(test, feature = "schedules-fp128-d64-onehot-recursive"))]
 mod tests {
     use super::*;
-    use crate::generated_families::recursive_group_batch_candidates_for_capacity;
     use crate::proof_optimized::fp128;
-    use crate::RecursiveCommitmentConfig;
-    use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout, PrecommittedGroupParams};
+    use crate::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
+    use akita_types::{
+        AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
+        PrecommittedGroupDescriptor,
+    };
 
     type SetupCfg = RecursiveCommitmentConfig<fp128::D64OneHot>;
 
     fn profiling_recursive_key() -> AkitaScheduleLookupKey {
         let pre = PolynomialGroupLayout::new(16, 1);
+        let singleton =
+            OpeningClaimsLayout::new(pre.num_vars(), pre.num_polynomials()).expect("singleton");
         let pre_params =
-            crate::conservative_commitment::conservative_commit_params::<SetupCfg>(&pre)
-                .expect("precommit params");
-        let precommitted = PrecommittedGroupParams::from_params(pre, &pre_params);
+            <PrecommittedCommitmentConfig<SetupCfg> as CommitmentConfig>::get_params_for_batched_commitment(
+                &singleton,
+            )
+            .expect("precommit params");
+        let precommitted = PrecommittedGroupDescriptor::from_params(pre, &pre_params);
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![precommitted, precommitted],
@@ -198,8 +210,7 @@ mod tests {
 
     #[test]
     fn selected_recursive_keys_yield_exact_prefix_slots() {
-        use crate::matrix_envelope::inflate_envelope_for_setup_prefix_slot;
-        use akita_types::SetupMatrixEnvelope;
+        use akita_types::setup_prefix_slot_field_elements;
 
         let slots = setup_prefix_slot_ids_for_capacity::<SetupCfg>(32, 4).expect("slots");
         assert!(
@@ -212,18 +223,43 @@ mod tests {
             slots.len()
         );
 
-        let mut slot_envelope = SetupMatrixEnvelope { max_setup_len: 1 };
+        let mut slot_field_elements = 1usize;
         for slot in &slots {
-            inflate_envelope_for_setup_prefix_slot(&mut slot_envelope, slot).expect("inflate");
-            assert!(slot.n_prefix().expect("n_prefix") >= slot.natural_len);
+            let n_prefix = slot.n_prefix().expect("n_prefix");
+            assert!(n_prefix >= slot.natural_len);
+            let one_slot_field_elements =
+                setup_prefix_slot_field_elements(slot).expect("size one slot");
+            assert!(
+                one_slot_field_elements >= n_prefix,
+                "slot envelope must cover the padded prefix storage"
+            );
+            let a_coeff_len = slot.commitment_params.inner_commit_matrix.output_rank()
+                * slot.commitment_params.inner_width()
+                * slot.commitment_params.inner_commit_matrix.ring_dimension();
+            let b_coeff_len = slot.commitment_params.outer_commit_matrix.output_rank()
+                * slot.commitment_params.outer_width()
+                * slot.commitment_params.outer_commit_matrix.ring_dimension();
+            assert!(one_slot_field_elements >= a_coeff_len);
+            assert!(one_slot_field_elements >= b_coeff_len);
+            slot_field_elements = slot_field_elements.max(one_slot_field_elements);
         }
-        assert!(slot_envelope.max_setup_len > 1);
+        assert!(slot_field_elements > 1);
     }
 
     #[test]
     fn recursive_requirements_match_successor_slot_identity() {
         let key = profiling_recursive_key();
         let schedule = SetupCfg::runtime_schedule(key.clone()).expect("recursive schedule");
+        let envelope = akita_types::setup_matrix_envelope_for_schedule(&schedule, SetupCfg::D)
+            .expect("setup envelope");
+        let envelope_field_elements = envelope
+            .max_setup_len
+            .checked_mul(schedule.root.params.final_group.commitment.d_a())
+            .expect("setup envelope field length");
+        assert!(
+            envelope_field_elements <= akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+            "selected recursive schedule exceeds the supported setup envelope"
+        );
         let ids = extract_setup_prefix_slot_ids_from_schedule(
             &schedule,
             &key.opening_layout().expect("layout"),

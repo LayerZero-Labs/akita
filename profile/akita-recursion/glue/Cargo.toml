@@ -20,6 +20,9 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git
 akita-serialization = { version = "0.1.0", path = "../../../crates/akita-serialization" }
 akita-types = { version = "0.1.0", path = "../../../crates/akita-types" }
 
+[dev-dependencies]
+akita-challenges = { version = "0.1.0", path = "../../../crates/akita-challenges" }
+
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"

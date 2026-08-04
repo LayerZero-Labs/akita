@@ -10,10 +10,9 @@ use crate::backend::{
     RecursiveFoldSource, RecursiveWitnessFlat, RingSwitchQuotientView, RingSwitchRelationView,
 };
 use crate::RootTensorProjectionPoly;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring, Unreduced};
+
 use akita_error::AkitaError;
-use akita_types::CleartextWitnessProof;
-use jolt_field::Unreduced;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// D-free shape metadata every root polynomial exposes.
 ///
@@ -146,40 +145,6 @@ where
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError>;
 }
 
-/// Capability: materialize a direct root witness for zero-fold openings, and
-/// the dense field-element evaluation table derived from it.
-///
-/// This is an explicit opt-in, not a hidden default on every root polynomial:
-/// only proving paths that may select a root-direct schedule (or the
-/// extension-opening reduction's dense-term fallback) require it. Both are
-/// prove-only capabilities, so bundling them does not widen the commit-path
-/// capability bound.
-pub trait DirectRootWitnessSource<F, const D: usize>: RootPolyShape<F, D>
-where
-    F: Field,
-{
-    /// Materialize a direct root witness payload.
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError>;
-
-    /// Dense field-element evaluation table for this polynomial.
-    ///
-    /// Defaults to the field-element payload of [`Self::direct_root_witness`].
-    /// Representations whose direct witness is unavailable, or whose evaluations
-    /// have a cheaper derivation, override this.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the representation cannot materialize its dense
-    /// evaluation table.
-    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        let witness = self.direct_root_witness()?;
-        let field_elems = witness.as_field_elements().ok_or_else(|| {
-            AkitaError::InvalidInput("base evals require field-element witness payload".to_string())
-        })?;
-        Ok(field_elems.coeffs().to_vec())
-    }
-}
-
 /// One opening-point polynomial bundle passed to commit entry points.
 ///
 /// The wrapper pins the polynomial type `P` for inference through generic
@@ -281,10 +246,12 @@ where
 
 /// Ring-switch kernels at every runtime-supported fold ring dimension.
 pub trait RuntimeRingSwitchProveBackend<F>:
-    RingSwitchProveBackend<F, 32>
+    RingSwitchProveBackend<F, 16>
+    + RingSwitchProveBackend<F, 32>
     + RingSwitchProveBackend<F, 64>
     + RingSwitchProveBackend<F, 128>
     + RingSwitchProveBackend<F, 256>
+    + RingSwitchProveBackend<F, 512>
 where
     F: Field + CanonicalEncoding,
 {
@@ -293,10 +260,12 @@ where
 impl<F, B> RuntimeRingSwitchProveBackend<F> for B
 where
     F: Field + CanonicalEncoding,
-    B: RingSwitchProveBackend<F, 32>
+    B: RingSwitchProveBackend<F, 16>
+        + RingSwitchProveBackend<F, 32>
         + RingSwitchProveBackend<F, 64>
         + RingSwitchProveBackend<F, 128>
-        + RingSwitchProveBackend<F, 256>,
+        + RingSwitchProveBackend<F, 256>
+        + RingSwitchProveBackend<F, 512>,
 {
 }
 
@@ -307,10 +276,12 @@ pub trait SuffixOpeningProveBackend<F>:
     + OpeningProveBackendFor<F, RecursiveWitnessFlat, 64>
     + OpeningProveBackendFor<F, RecursiveWitnessFlat, 128>
     + OpeningProveBackendFor<F, RecursiveWitnessFlat, 256>
+    + OpeningProveBackendFor<F, RecursiveWitnessFlat, 512>
     + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 32>
     + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 64>
     + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 128>
     + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 256>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 512>
 where
     F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
 {
@@ -323,10 +294,12 @@ where
         + OpeningProveBackendFor<F, RecursiveWitnessFlat, 64>
         + OpeningProveBackendFor<F, RecursiveWitnessFlat, 128>
         + OpeningProveBackendFor<F, RecursiveWitnessFlat, 256>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 512>
         + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 32>
         + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 64>
         + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 128>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 256>,
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 256>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 512>,
 {
 }
 
@@ -337,10 +310,12 @@ pub trait SuffixTensorProveBackend<F, E>:
     + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
     + TensorBackendFor<F, RecursiveWitnessFlat, E, 128>
     + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>
+    + TensorBackendFor<F, RecursiveWitnessFlat, E, 512>
     + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 32>
     + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 64>
     + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 128>
     + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 256>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 512>
 where
     F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
@@ -355,10 +330,12 @@ where
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 128>
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, 512>
         + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 32>
         + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 64>
         + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 128>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 256>,
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 256>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 512>,
 {
 }
 
@@ -503,7 +480,7 @@ where
 ///
 /// Algorithms live on [`OpeningFoldKernel`] / [`TensorProjectionKernel`], not here.
 pub trait RootProvePoly<F, const D: usize>:
-    RootOpeningSource<F, D> + RootTensorSource<F, D> + DirectRootWitnessSource<F, D>
+    RootOpeningSource<F, D> + RootTensorSource<F, D>
 where
     F: Field,
 {
@@ -512,14 +489,14 @@ where
 impl<F, const D: usize, P> RootProvePoly<F, D> for P
 where
     F: Field,
-    P: RootOpeningSource<F, D> + RootTensorSource<F, D> + DirectRootWitnessSource<F, D>,
+    P: RootOpeningSource<F, D> + RootTensorSource<F, D>,
 {
 }
 
 /// Root polynomial usable at every runtime-supported ring dimension.
 ///
 /// D-free orchestration bounds on this; operation adapters select a concrete
-/// dimension with `dispatch_ring_dim_result!` and use the per-D capability
+/// dimension with `dispatch_for_field!` and use the per-D capability
 /// inside the arm. Blanket-implemented: the D-free storage types
 /// (`DensePoly<F>`, `OneHotPoly<F, I>`, `SparseRingPoly<F>`,
 /// `RootTensorProjectionPoly<F>`, `RecursiveWitnessFlat`) satisfy it through
@@ -530,6 +507,7 @@ pub trait RuntimeRootProvePoly<F>:
     + RootProvePoly<F, 64>
     + RootProvePoly<F, 128>
     + RootProvePoly<F, 256>
+    + RootProvePoly<F, 512>
 where
     F: Field,
 {
@@ -542,7 +520,8 @@ where
         + RootProvePoly<F, 32>
         + RootProvePoly<F, 64>
         + RootProvePoly<F, 128>
-        + RootProvePoly<F, 256>,
+        + RootProvePoly<F, 256>
+        + RootProvePoly<F, 512>,
 {
 }
 
@@ -553,6 +532,7 @@ pub trait RuntimeRootCommitPoly<F>:
     + RootCommitPoly<F, 64>
     + RootCommitPoly<F, 128>
     + RootCommitPoly<F, 256>
+    + RootCommitPoly<F, 512>
 where
     F: Field,
 {
@@ -565,7 +545,8 @@ where
         + RootCommitPoly<F, 32>
         + RootCommitPoly<F, 64>
         + RootCommitPoly<F, 128>
-        + RootCommitPoly<F, 256>,
+        + RootCommitPoly<F, 256>
+        + RootCommitPoly<F, 512>,
 {
 }
 
@@ -576,12 +557,14 @@ pub trait RuntimeOpeningProveBackendFor<F, P>:
     + OpeningProveBackendFor<F, P, 64>
     + OpeningProveBackendFor<F, P, 128>
     + OpeningProveBackendFor<F, P, 256>
+    + OpeningProveBackendFor<F, P, 512>
 where
     F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootOpeningSource<F, 32>
         + RootOpeningSource<F, 64>
         + RootOpeningSource<F, 128>
-        + RootOpeningSource<F, 256>,
+        + RootOpeningSource<F, 256>
+        + RootOpeningSource<F, 512>,
 {
 }
 
@@ -591,11 +574,13 @@ where
     P: RootOpeningSource<F, 32>
         + RootOpeningSource<F, 64>
         + RootOpeningSource<F, 128>
-        + RootOpeningSource<F, 256>,
+        + RootOpeningSource<F, 256>
+        + RootOpeningSource<F, 512>,
     B: OpeningProveBackendFor<F, P, 32>
         + OpeningProveBackendFor<F, P, 64>
         + OpeningProveBackendFor<F, P, 128>
-        + OpeningProveBackendFor<F, P, 256>,
+        + OpeningProveBackendFor<F, P, 256>
+        + OpeningProveBackendFor<F, P, 512>,
 {
 }
 
@@ -606,13 +591,15 @@ pub trait RuntimeTensorBackendFor<F, P, E>:
     + TensorBackendFor<F, P, E, 64>
     + TensorBackendFor<F, P, E, 128>
     + TensorBackendFor<F, P, E, 256>
+    + TensorBackendFor<F, P, E, 512>
 where
     F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootTensorSource<F, 32>
         + RootTensorSource<F, 64>
         + RootTensorSource<F, 128>
-        + RootTensorSource<F, 256>,
+        + RootTensorSource<F, 256>
+        + RootTensorSource<F, 512>,
 {
 }
 
@@ -623,11 +610,13 @@ where
     P: RootTensorSource<F, 32>
         + RootTensorSource<F, 64>
         + RootTensorSource<F, 128>
-        + RootTensorSource<F, 256>,
+        + RootTensorSource<F, 256>
+        + RootTensorSource<F, 512>,
     B: TensorBackendFor<F, P, E, 32>
         + TensorBackendFor<F, P, E, 64>
         + TensorBackendFor<F, P, E, 128>
-        + TensorBackendFor<F, P, E, 256>,
+        + TensorBackendFor<F, P, E, 256>
+        + TensorBackendFor<F, P, E, 512>,
 {
 }
 
@@ -643,12 +632,14 @@ pub trait RuntimeCommitBackendFor<F, P>:
     + for<'a> RootCommitKernel<<P as RootCommitSource<F, 64>>::CommitView<'a>, F, 64>
     + for<'a> RootCommitKernel<<P as RootCommitSource<F, 128>>::CommitView<'a>, F, 128>
     + for<'a> RootCommitKernel<<P as RootCommitSource<F, 256>>::CommitView<'a>, F, 256>
+    + for<'a> RootCommitKernel<<P as RootCommitSource<F, 512>>::CommitView<'a>, F, 512>
 where
     F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
         + RootCommitSource<F, 128>
-        + RootCommitSource<F, 256>,
+        + RootCommitSource<F, 256>
+        + RootCommitSource<F, 512>,
 {
 }
 
@@ -658,12 +649,14 @@ where
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
         + RootCommitSource<F, 128>
-        + RootCommitSource<F, 256>,
+        + RootCommitSource<F, 256>
+        + RootCommitSource<F, 512>,
     B: DigitRowsComputeBackend<F>
         + for<'a> RootCommitKernel<<P as RootCommitSource<F, 32>>::CommitView<'a>, F, 32>
         + for<'a> RootCommitKernel<<P as RootCommitSource<F, 64>>::CommitView<'a>, F, 64>
         + for<'a> RootCommitKernel<<P as RootCommitSource<F, 128>>::CommitView<'a>, F, 128>
-        + for<'a> RootCommitKernel<<P as RootCommitSource<F, 256>>::CommitView<'a>, F, 256>,
+        + for<'a> RootCommitKernel<<P as RootCommitSource<F, 256>>::CommitView<'a>, F, 256>
+        + for<'a> RootCommitKernel<<P as RootCommitSource<F, 512>>::CommitView<'a>, F, 512>,
 {
 }
 
@@ -674,6 +667,7 @@ pub trait RuntimeRootCommitBackend<F, P, E>:
     + RootCommitBackend<F, P, E, 64>
     + RootCommitBackend<F, P, E, 128>
     + RootCommitBackend<F, P, E, 256>
+    + RootCommitBackend<F, P, E, 512>
 where
     F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
@@ -689,7 +683,8 @@ where
     B: RootCommitBackend<F, P, E, 32>
         + RootCommitBackend<F, P, E, 64>
         + RootCommitBackend<F, P, E, 128>
-        + RootCommitBackend<F, P, E, 256>,
+        + RootCommitBackend<F, P, E, 256>
+        + RootCommitBackend<F, P, E, 512>,
 {
 }
 
@@ -700,6 +695,7 @@ pub trait RuntimeProveBackendFor<F, P, E>:
     + ProveBackendFor<F, P, E, 64>
     + ProveBackendFor<F, P, E, 128>
     + ProveBackendFor<F, P, E, 256>
+    + ProveBackendFor<F, P, E, 512>
 where
     F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
@@ -715,7 +711,8 @@ where
     B: ProveBackendFor<F, P, E, 32>
         + ProveBackendFor<F, P, E, 64>
         + ProveBackendFor<F, P, E, 128>
-        + ProveBackendFor<F, P, E, 256>,
+        + ProveBackendFor<F, P, E, 256>
+        + ProveBackendFor<F, P, E, 512>,
 {
 }
 
@@ -760,7 +757,7 @@ where
 }
 
 /// Ring dimensions the recursive suffix may dispatch besides the config ring `D`.
-pub const RECURSIVE_SUFFIX_RING_DIMENSIONS: &[usize] = &[32, 64, 128, 256];
+pub const RECURSIVE_SUFFIX_RING_DIMENSIONS: &[usize] = &[32, 64, 128, 256, 512];
 
 /// Full prove-flow capability at a single root ring dimension `RING_D`:
 /// opening/tensor prove kernels plus commitment rows.
@@ -785,13 +782,14 @@ where
 /// [`ProveFlowBackendFor`] for `P` at every runtime-supported ring dimension.
 ///
 /// Root fold levels take their ring dimension from the schedule
-/// (`LevelParams::role_dims`), so the prove flow must be available at every dimension the
+/// (`CommittedGroupParams::role_dims`), so the prove flow must be available at every dimension the
 /// dispatcher can select.
 pub trait RootProveFlowBackend<F, P, E>:
     ProveFlowBackendFor<F, P, E, 32>
     + ProveFlowBackendFor<F, P, E, 64>
     + ProveFlowBackendFor<F, P, E, 128>
     + ProveFlowBackendFor<F, P, E, 256>
+    + ProveFlowBackendFor<F, P, E, 512>
 where
     F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
@@ -807,7 +805,8 @@ where
     B: ProveFlowBackendFor<F, P, E, 32>
         + ProveFlowBackendFor<F, P, E, 64>
         + ProveFlowBackendFor<F, P, E, 128>
-        + ProveFlowBackendFor<F, P, E, 256>,
+        + ProveFlowBackendFor<F, P, E, 256>
+        + ProveFlowBackendFor<F, P, E, 512>,
 {
 }
 
@@ -818,10 +817,12 @@ pub trait RuntimeRecursiveWitnessProveBackend<F, E>:
     + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 64>
     + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 128>
     + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 256>
+    + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 512>
     + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 32>
     + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 64>
     + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 128>
     + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 256>
+    + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 512>
 where
     F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
@@ -836,16 +837,18 @@ where
         + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 64>
         + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 128>
         + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 256>
+        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 512>
         + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 32>
         + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 64>
         + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 128>
-        + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 256>,
+        + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 256>
+        + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 512>,
 {
 }
 
 /// Backend bundle for a full recursive prove run.
 ///
-/// Fold levels take their ring dimension from the schedule (`LevelParams::role_dims`), so
+/// Fold levels take their ring dimension from the schedule (`CommittedGroupParams::role_dims`), so
 /// prove entry points need [`RootProveFlowBackend`] for the root polynomial
 /// `P`, [`RuntimeRecursiveWitnessProveBackend`] for suffix witness
 /// opening/tensor and commitment rows, and [`RuntimeRingSwitchProveBackend`]

@@ -29,6 +29,10 @@ pub enum AkitaError {
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 
+    /// The requested polynomial layout has no supported folded proof schedule.
+    #[error("Unsupported proof schedule: {0}")]
+    UnsupportedSchedule(String),
+
     /// Setup data is missing or invalid.
     #[error("Invalid or missing setup file: {0}")]
     InvalidSetup(String),

@@ -1,6 +1,6 @@
 use super::*;
-use jolt_field::Field;
-use jolt_field::{FpExt4, Prime24Offset3};
+use jolt_field::{Field, FpExt4, Prime24Offset3};
+
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
@@ -170,4 +170,50 @@ fn fused_term_matches_unfused_reference() {
             "final factor mismatch (log_chunks={log_chunks})"
         );
     }
+}
+
+#[test]
+fn cylindrical_term_matches_materialized_high_variable_extension() {
+    use jolt_field::{FpExt4, Prime32Offset99};
+    type TE = FpExt4<Prime32Offset99>;
+
+    let mut rng = StdRng::seed_from_u64(0xc711_1d3a);
+    let native_witness = (0..8).map(|_| TE::random(&mut rng)).collect::<Vec<_>>();
+    let native_factor = (0..8).map(|_| TE::random(&mut rng)).collect::<Vec<_>>();
+    let coeff = TE::random(&mut rng);
+
+    let mut cylindrical =
+        ExtensionOpeningReductionTerm::new(native_witness.clone(), native_factor.clone(), coeff)
+            .expect("native term")
+            .extend_cylindrically(vec![TE::zero(), TE::zero()])
+            .expect("virtual extension");
+
+    let mut materialized_witness = Vec::with_capacity(32);
+    for _ in 0..4 {
+        materialized_witness.extend_from_slice(&native_witness);
+    }
+    let mut materialized_factor = native_factor;
+    materialized_factor.resize(32, TE::zero());
+    let mut materialized =
+        ExtensionOpeningReductionTerm::new(materialized_witness, materialized_factor, coeff)
+            .expect("materialized extension");
+
+    for round in 0..5 {
+        let (mut cylindrical_constant, mut cylindrical_quadratic) = (TE::zero(), TE::zero());
+        cylindrical.accumulate_into(&mut cylindrical_constant, &mut cylindrical_quadratic);
+        let (mut materialized_constant, mut materialized_quadratic) = (TE::zero(), TE::zero());
+        materialized.accumulate_into(&mut materialized_constant, &mut materialized_quadratic);
+        assert_eq!(
+            (cylindrical_constant, cylindrical_quadratic),
+            (materialized_constant, materialized_quadratic),
+            "round {round}"
+        );
+        let challenge = TE::random(&mut rng);
+        cylindrical.ingest_challenge(challenge);
+        materialized.ingest_challenge(challenge);
+    }
+    assert_eq!(
+        cylindrical.final_witness_and_factor_evals(),
+        materialized.final_witness_and_factor_evals()
+    );
 }

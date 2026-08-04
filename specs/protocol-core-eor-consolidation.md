@@ -186,7 +186,8 @@ The verifier mirrors the same conceptual split:
   witness replay, and submodule wiring.
 - `core/fold.rs` owns shared per-fold replay: EOR verification, stage-1/2/3
   replay, ring-switch replay, `verify_fold`.
-- `core/root_fold.rs` verifies the folded-root or one-fold terminal-root payload.
+- `core/root_fold.rs` verifies the folded root. PR #311 removed one-fold
+  terminal-root proofs; every terminal is reached through a suffix predecessor.
 - `core/suffix.rs` verifies recursive suffix folds after the root handoff.
 - `core/verify.rs` remains the public batched verifier orchestration once the
   schedule is selected.

@@ -1,9 +1,10 @@
 //! Shared commitment-scheme API contracts.
 
-use crate::{BasisMode, OpeningClaims, SetupContributionMode};
-use akita_error::AkitaError;
+use crate::{BasisMode, OpeningClaims};
 use akita_transcript::Transcript;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
+
+use akita_error::AkitaError;
 use std::borrow::Cow;
 
 /// Opening-point coordinates used by batched verification inputs.
@@ -26,7 +27,7 @@ where
     type VerifierSetup: Clone + Send + Sync;
     /// Protocol-facing commitment storage for public claims.
     type Commitment: Clone + PartialEq + Send + Sync;
-    /// Batched single-point evaluation/opening proof object.
+    /// Batched ordered group-local evaluation/opening proof object.
     ///
     /// A "singleton" opening is the 1x1 special case: a single polynomial,
     /// a single commitment, and a single opening point.
@@ -34,22 +35,20 @@ where
     /// Public opening point, claimed-evaluation, and proof scalar field.
     type ExtField: ExtField<F>;
 
-    /// Verify a fused batched opening proof at one shared opening point.
+    /// Verify a fused batched opening proof over ordered commitment groups.
     ///
-    /// The root layout and Fiat-Shamir batching are derived from the normalized
-    /// [`OpeningClaims`] built from `claims` (single shared point, no multipoint).
+    /// The root layout and Fiat-Shamir batching are derived from normalized
+    /// [`OpeningClaims`], with each group carrying its complete opening point.
     ///
     /// # Errors
     ///
     /// Returns an error when verification fails.
-    #[allow(clippy::too_many_arguments)]
     fn batched_verify<T: Transcript<F>>(
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
         claims: OpeningClaims<'_, Self::ExtField, &Self::Commitment>,
         basis: BasisMode,
-        setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError>;
 
     /// Protocol identifier.

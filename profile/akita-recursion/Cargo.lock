@@ -85,7 +85,6 @@ version = "0.1.0"
 dependencies = [
  "akita-challenges",
  "akita-error",
- "akita-planner",
  "akita-schedules",
  "akita-serialization",
  "akita-transcript",
@@ -120,16 +119,6 @@ dependencies = [
  "jolt-field",
  "rayon",
  "tracing",
-]
-
-[[package]]
-name = "akita-planner"
-version = "0.1.0"
-dependencies = [
- "akita-challenges",
- "akita-error",
- "akita-types",
- "jolt-field",
 ]
 
 [[package]]
@@ -177,6 +166,7 @@ name = "akita-recursion-glue"
 version = "0.1.0"
 dependencies = [
  "akita-algebra",
+ "akita-challenges",
  "akita-serialization",
  "akita-types",
  "jolt-field",
@@ -187,6 +177,7 @@ name = "akita-recursion-guest"
 version = "0.1.0"
 dependencies = [
  "akita-config",
+ "akita-error",
  "akita-recursion-glue",
  "akita-transcript",
  "akita-types",
@@ -216,7 +207,10 @@ dependencies = [
 name = "akita-schedules"
 version = "0.1.0"
 dependencies = [
- "akita-planner",
+ "akita-challenges",
+ "akita-error",
+ "akita-types",
+ "jolt-field",
 ]
 
 [[package]]
@@ -295,6 +289,7 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "jolt-field",
+ "rayon",
  "tracing",
 ]
 

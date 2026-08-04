@@ -8,71 +8,46 @@
 //! challenge point, while the direct verifier scans the packed setup with the
 //! same segment partition.
 
-use akita_error::AkitaError;
+use crate::{CommittedGroupParams, OpeningClaimsLayout};
 use jolt_field::{CanonicalEncoding, Field};
 
 mod geometry;
-mod inputs;
 mod plan;
-mod relation;
-mod setup_index_weight_evaluator;
-mod weights;
+#[allow(dead_code)]
+#[cfg(test)]
+mod test_oracle_weights;
 
 #[cfg(test)]
 mod tests;
 
-pub use geometry::{
-    ensure_setup_envelope, setup_active_ring_elems_at, setup_active_ring_elems_for_fold,
-    setup_required_for_inputs, stage3_offload_natural_field_len,
-};
-pub use inputs::SetupContributionPlanInputs;
-pub use plan::{
-    SetupContributionGroupInputs, SetupContributionPlan, SetupContributionStatic,
-    SingleGroupSetupContributionLayout,
-};
-pub use relation::{prepare_setup_contribution_artifact, SetupContributionArtifact};
-pub use setup_index_weight_evaluator::SetupIndexWeightEvaluator;
+use akita_error::AkitaError;
+pub(crate) use geometry::SetupProjectionGroupGeometry;
+pub use geometry::{ensure_setup_envelope, SetupProjectionGeometry};
+#[cfg(test)]
+pub(crate) use plan::validate_setup_inputs;
+pub use plan::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan};
 
 /// Shared fold gadget when every setup-contribution group uses the same basis.
 ///
 /// Groups may have different fold depths: each group uses the prefix
-/// `gadget[..group.depth_fold]`. Return `None` only when the basis differs and
-/// callers must derive per-group gadgets.
+/// `gadget[..group.depth_fold]`. All fresh folded-response digits use the root
+/// opening basis.
 pub fn shared_setup_fold_gadget<F: Field + CanonicalEncoding>(
+    level_params: &CommittedGroupParams,
+    opening_batch: &OpeningClaimsLayout,
     groups: &[SetupContributionGroupInputs],
 ) -> Option<Vec<F>> {
     let first = groups.first()?;
-    if !groups
-        .iter()
-        .all(|group| group.log_basis == first.log_basis)
-    {
-        return None;
-    }
     let max_depth = groups
         .iter()
         .map(|group| group.depth_fold)
         .max()
         .unwrap_or(first.depth_fold);
-    Some(crate::gadget_row_scalars::<F>(max_depth, first.log_basis))
-}
-
-pub(crate) fn push_role_boundaries(
-    endpoints: &mut Vec<usize>,
-    rows: usize,
-    stride: usize,
-    name: &'static str,
-) -> Result<(), AkitaError> {
-    if rows == 0 || stride == 0 {
-        return Ok(());
-    }
-    let mut boundary = 0usize;
-    for _ in 0..rows {
-        boundary = boundary
-            .checked_add(stride)
-            .ok_or_else(|| AkitaError::InvalidSetup(format!("packed {name} boundary overflow")))?;
-        endpoints.push(boundary);
-    }
-    Ok(())
+    let _ = opening_batch;
+    Some(crate::gadget_row_scalars::<F>(
+        max_depth,
+        level_params.log_basis_open,
+    ))
 }
 
 #[inline(always)]

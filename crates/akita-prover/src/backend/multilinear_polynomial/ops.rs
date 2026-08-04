@@ -5,8 +5,7 @@
 
 use akita_error::AkitaError;
 use akita_types::FpExtEncoding;
-use jolt_field::Unreduced;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring, Unreduced};
 
 use crate::backend::{DenseBatchView, DenseView, OneHotBatchView, OneHotView};
 use crate::compute::{

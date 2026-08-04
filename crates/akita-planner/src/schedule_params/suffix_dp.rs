@@ -1,71 +1,88 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use akita_error::AkitaError;
 use akita_types::{
-    active_setup_field_len, direct_witness_bytes, extension_opening_reduction_level_bytes,
-    level_proof_bytes, padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
-    DirectStep, FoldStep, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    RelationMatrixRowLayout, SetupContributionMode, Step, SETUP_OFFLOAD_D_SETUP,
-    SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
+    active_setup_field_len, level_proof_bytes, terminal_response_bytes,
+    try_extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, CommitmentRingDims,
+    CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout, TerminalResponseShape,
 };
 
-use crate::PlannerPolicy;
+use crate::{planner::multi_group_root_level_candidates_for_basis, PlannerPolicy};
 
 use super::{
-    derive_candidate_level_params, suffix_opening_layout,
-    terminal_witness_shape_for_opening_layout, MAX_RECURSION_DEPTH,
+    derive_candidate_level_params, level_setup_field_elements, planned_next_witness_len,
+    scalar_root_fold_level_params_candidate, stage3_payload_bytes_for_successor,
+    suffix_opening_layout, terminal_setup_field_elements, CandidateFoldStep,
+    CandidateTerminalResponse, ScheduleCandidate, MAX_RECURSION_DEPTH,
 };
-
-/// A `Step::Fold`-first suffix schedule.
-///
-/// The parent's proof-size formula needs the child's first fold params
-/// (`first_fold_params`), so the suffix carries it directly instead of
-/// re-matching `steps[0]`.
-#[derive(Clone)]
-pub(crate) struct FoldSuffix {
-    pub(crate) total_bytes: usize,
-    pub(crate) first_fold_params: LevelParams,
-    pub(crate) steps: Vec<Step>,
-}
-
-/// Best direct suffix at one DP state: witness length only. The terminal
-/// `DirectStep` is materialized at stitch time from the predecessor fold's
-/// committed `LevelParams`.
-#[derive(Clone, Copy)]
-pub(crate) struct DirectSuffix {
-    pub(crate) current_w_len: usize,
-}
 
 /// Result of the suffix DP at one state. Both shape options are reported
 /// because the parent's proof-size formula depends on the child's first
 /// step:
 ///
-/// - `best_direct` — best no-outgoing-prefix terminal schedule whose first
-///   step is a `Step::Direct` (parent scores under
-///   `RelationMatrixRowLayout::WithoutDBlock`). Omitted when
-///   `incoming_setup_prefix` is present, because a direct child means the
-///   parent did not offload a new setup prefix into that child.
-/// - `best_fold_per_lb` — best `Step::Fold`-first schedule per first-fold
-///   `log_basis`, consuming `incoming_setup_prefix` when one is present.
+/// - `best_by_first_direct_setup_per_lb` — lexicographically best fold-first
+///   schedule by first direct setup scan and then proof payload, per first-fold
+///   `log_basis`. An entry with no ordinary folds terminates directly on the
+///   current witness; otherwise it consumes `incoming_setup_prefix` when one
+///   is present.
+/// - `best_by_payload_per_lb` — smallest-payload fold-first schedule per
+///   first-fold `log_basis`, used after an earlier direct edge has fixed the
+///   setup-size objective.
 #[derive(Clone)]
 pub(crate) struct SuffixResult {
-    pub(crate) best_direct: Option<DirectSuffix>,
-    pub(crate) best_fold_per_lb: BTreeMap<u32, FoldSuffix>,
+    pub(crate) best_by_first_direct_setup_per_lb: BTreeMap<u32, ScheduleCandidate>,
+    pub(crate) best_by_payload_per_lb: BTreeMap<u32, ScheduleCandidate>,
 }
 
-impl SuffixResult {
-    pub(crate) fn is_empty(&self) -> bool {
-        self.best_direct.is_none() && self.best_fold_per_lb.is_empty()
+/// Like [`terminal_direct_suffix_cost`], but returns `None` when the fold at
+/// `terminal_fold_level` is multi-chunk. The suffix DP uses this to skip the
+/// fold-then-direct branch without aborting fold-then-fold exploration.
+pub(super) fn try_terminal_direct_suffix_cost(
+    input_witness_len: usize,
+    terminal_lp: &CommittedGroupParams,
+    field_bits: u32,
+    key: PolynomialGroupLayout,
+    terminal_fold_level: usize,
+    opening_layout: Option<&OpeningClaimsLayout>,
+) -> Result<Option<(CandidateTerminalResponse, usize)>, AkitaError> {
+    if terminal_lp.witness_chunk.num_chunks > 1 {
+        return Ok(None);
+    }
+    let result = terminal_direct_suffix_cost(
+        input_witness_len,
+        terminal_lp,
+        field_bits,
+        key,
+        terminal_fold_level,
+        opening_layout,
+    );
+    match result {
+        Ok(candidate) => Ok(Some(candidate)),
+        // Candidate construction is an optimization search. A geometry whose
+        // fixed inner matrix cannot admit the directly checked terminal response is
+        // infeasible, not a fatal planner error.
+        Err(AkitaError::InvalidSetup(_)) => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
-fn make_terminal_direct_step(
-    current_w_len: usize,
-    terminal_lp: &LevelParams,
+pub(crate) fn terminal_direct_suffix_cost(
+    input_witness_len: usize,
+    terminal_lp: &CommittedGroupParams,
     field_bits: u32,
-    num_polynomials: usize,
+    key: PolynomialGroupLayout,
+    terminal_fold_level: usize,
     opening_layout: Option<&OpeningClaimsLayout>,
-) -> Result<DirectStep, AkitaError> {
+) -> Result<(CandidateTerminalResponse, usize), AkitaError> {
+    // Scalar same-point root fold: polynomial count at the root, 1 recursively.
+    let num_polynomials = if terminal_fold_level == 0 {
+        key.num_polynomials()
+    } else {
+        1
+    };
     // The terminal-direct (cleartext) witness is single-chunk by construction:
     // the prover emits the global folded response and one shared `r̂` tail, so
     // chunking the cleartext tail is unsupported. The last fold level must be
@@ -76,80 +93,189 @@ fn make_terminal_direct_step(
             "terminal-direct witness does not support a multi-chunk last fold level".to_string(),
         ));
     }
-    let witness_shape = match opening_layout {
-        Some(layout) => terminal_witness_shape_for_opening_layout(terminal_lp, field_bits, layout)?,
-        None => segment_typed_witness_shape_from_groups(
-            terminal_lp,
-            field_bits,
-            [(
-                terminal_lp as &dyn akita_types::LevelParamsLike,
-                num_polynomials,
-                num_polynomials,
-                1,
-            )],
-            1,
-        )?,
+    if opening_layout.is_some() || num_polynomials != 1 || terminal_lp.has_precommitted_groups() {
+        return Err(AkitaError::InvalidSetup(
+            "terminal direct response must be a scalar flat fold".to_string(),
+        ));
+    }
+    let (terminal_params, admission_cap) =
+        akita_types::TerminalCommittedGroupParams::try_from_expanded_group(terminal_lp.clone())?;
+    let witness_shape = TerminalResponseShape::derive(&terminal_params, admission_cap)?;
+    let terminal_bytes = terminal_response_bytes(field_bits, &witness_shape);
+    let direct = CandidateTerminalResponse {
+        params: terminal_params,
+        sparse_challenge_config: terminal_lp.fold_challenge_config,
+        input_witness_len,
+        estimated_direct_payload_bytes: 0,
+        response_shape: witness_shape,
+        estimated_payload_bytes: terminal_bytes,
     };
-    let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-    Ok(DirectStep {
-        current_w_len,
-        witness_shape,
-        direct_bytes,
-        params: None,
-    })
+    Ok((direct, terminal_bytes))
 }
 
-/// Like [`terminal_direct_suffix_cost`], but returns `None` when the fold at
-/// `terminal_fold_level` is multi-chunk. The suffix DP uses this to skip the
-/// fold-then-direct branch without aborting fold-then-fold exploration.
-pub(super) fn try_terminal_direct_suffix_cost(
-    current_w_len: usize,
-    terminal_lp: &LevelParams,
+pub(crate) type ScheduleMemo = HashMap<(usize, usize, u32, usize), Arc<SuffixResult>>;
+
+fn offloaded_witness_contracts(
+    input_witness_len: usize,
+    input_log_basis: u32,
+    setup_prefix_field_len: usize,
     field_bits: u32,
-    key: PolynomialGroupLayout,
-    terminal_fold_level: usize,
-    opening_layout: Option<&OpeningClaimsLayout>,
-) -> Result<Option<(DirectStep, usize)>, AkitaError> {
-    if terminal_lp.witness_chunk.num_chunks > 1 {
+    output_witness_len: usize,
+    output_log_basis: u32,
+    minimum_contraction: usize,
+) -> Result<bool, AkitaError> {
+    let input_bits = input_witness_len
+        .checked_mul(input_log_basis as usize)
+        .and_then(|bits| {
+            setup_prefix_field_len
+                .checked_mul(field_bits as usize)
+                .and_then(|prefix_bits| bits.checked_add(prefix_bits))
+        })
+        .ok_or_else(|| AkitaError::InvalidSetup("input witness bit length overflow".to_string()))?;
+    let minimum_input_bits = output_witness_len
+        .checked_mul(output_log_basis as usize)
+        .and_then(|bits| bits.checked_mul(minimum_contraction))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("offloaded witness contraction overflow".to_string())
+        })?;
+    Ok(input_bits >= minimum_input_bits)
+}
+
+struct ChildEdge<'a> {
+    policy: &'a PlannerPolicy,
+    candidate_params: &'a CommittedGroupParams,
+    current_witness_len: usize,
+    next_witness_len: usize,
+    natural_setup_field_len: usize,
+    level_setup_field_elements: usize,
+    eor_bytes: usize,
+    offloaded: bool,
+    require_child_fold: bool,
+    setup_field_budget: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
+struct ChildObjectives {
+    first_direct_setup_then_payload: bool,
+    payload: bool,
+}
+
+fn consider_child_suffixes(
+    edge: &ChildEdge<'_>,
+    child_candidates: &BTreeMap<u32, ScheduleCandidate>,
+    objectives: ChildObjectives,
+    best_by_setup: &mut Option<ScheduleCandidate>,
+    best_by_payload: &mut Option<ScheduleCandidate>,
+) -> Result<(), AkitaError> {
+    for suffix in child_candidates.values() {
+        let Some(candidate) = child_choice(edge, suffix)? else {
+            continue;
+        };
+        let improves_setup = objectives.first_direct_setup_then_payload
+            && best_by_setup.as_ref().is_none_or(|best| {
+                (
+                    candidate.first_direct_setup_field_len_or_max(),
+                    candidate.total_bytes,
+                ) < (best.first_direct_setup_field_len_or_max(), best.total_bytes)
+            });
+        let improves_payload = objectives.payload
+            && best_by_payload
+                .as_ref()
+                .is_none_or(|best| candidate.total_bytes < best.total_bytes);
+        if !improves_setup && !improves_payload {
+            continue;
+        }
+
+        if improves_setup {
+            *best_by_setup = Some(candidate.clone());
+        }
+        if improves_payload {
+            *best_by_payload = Some(candidate);
+        }
+    }
+    Ok(())
+}
+
+fn child_choice(
+    edge: &ChildEdge<'_>,
+    suffix: &ScheduleCandidate,
+) -> Result<Option<ScheduleCandidate>, AkitaError> {
+    let child_is_terminal = suffix.folds.is_empty();
+    if edge.require_child_fold && child_is_terminal {
         return Ok(None);
     }
-    let (direct, direct_bytes) = terminal_direct_suffix_cost(
-        current_w_len,
-        terminal_lp,
-        field_bits,
-        key,
-        terminal_fold_level,
-        opening_layout,
-    )?;
-    Ok(Some((direct, direct_bytes)))
-}
+    if edge.offloaded {
+        if child_is_terminal || suffix.folds.len() == 1 {
+            return Ok(None);
+        }
+        if suffix.first_direct_setup_field_len_or_max() >= edge.natural_setup_field_len {
+            return Ok(None);
+        }
+    }
 
-pub(crate) fn terminal_direct_suffix_cost(
-    current_w_len: usize,
-    terminal_lp: &LevelParams,
-    field_bits: u32,
-    key: PolynomialGroupLayout,
-    terminal_fold_level: usize,
-    opening_layout: Option<&OpeningClaimsLayout>,
-) -> Result<(DirectStep, usize), AkitaError> {
-    // Scalar same-point root fold: polynomial count at the root, 1 recursively.
-    let num_polynomials = if terminal_fold_level == 0 {
-        key.num_polynomials()
+    let direct_payload_bytes = level_proof_bytes(
+        edge.policy.decomposition.field_bits(),
+        edge.policy.challenge_field_bits()?,
+        edge.candidate_params,
+        suffix.first_fold_params(),
+        edge.next_witness_len,
+        Some(if child_is_terminal {
+            akita_types::NextWitnessBindingPolicy::TerminalInnerState
+        } else {
+            akita_types::NextWitnessBindingPolicy::OuterCommitment
+        }),
+    )?
+    .checked_add(edge.eor_bytes)
+    .ok_or_else(|| AkitaError::InvalidSetup("level proof size overflow".to_string()))?;
+    let stage3_payload_bytes =
+        stage3_payload_bytes_for_successor(edge.policy, suffix.first_fold_params())?;
+    if edge.offloaded != (stage3_payload_bytes != 0) {
+        return Err(AkitaError::InvalidSetup(
+            "setup edge topology disagrees with Stage-3 accounting".to_string(),
+        ));
+    }
+    let total_bytes = direct_payload_bytes
+        .checked_add(stage3_payload_bytes)
+        .and_then(|value| value.checked_add(suffix.total_bytes))
+        .ok_or_else(|| AkitaError::InvalidSetup("suffix proof size overflow".to_string()))?;
+    let setup_field_elements = edge
+        .level_setup_field_elements
+        .max(suffix.setup_field_elements);
+    if edge
+        .setup_field_budget
+        .is_some_and(|budget| setup_field_elements > budget)
+    {
+        return Ok(None);
+    }
+    let first_direct_setup_field_len = if edge.offloaded {
+        suffix.first_direct_setup_field_len
     } else {
-        1
+        Some(edge.natural_setup_field_len)
     };
-    let direct = make_terminal_direct_step(
-        current_w_len,
-        terminal_lp,
-        field_bits,
-        num_polynomials,
-        opening_layout,
-    )?;
-    let direct_bytes = direct.direct_bytes;
-    Ok((direct, direct_bytes))
+    let mut folds = Vec::with_capacity(1 + suffix.folds.len());
+    folds.push(CandidateFoldStep {
+        params: edge.candidate_params.clone(),
+        input_witness_len: edge.current_witness_len,
+        output_witness_len: edge.next_witness_len,
+        estimated_direct_payload_bytes: direct_payload_bytes,
+        estimated_stage3_payload_bytes: stage3_payload_bytes,
+    });
+    folds.extend(suffix.folds.iter().cloned());
+    Ok(Some(ScheduleCandidate {
+        first_direct_setup_field_len,
+        total_bytes,
+        setup_field_elements,
+        folds,
+        terminal: suffix.terminal.clone(),
+    }))
 }
 
-pub(crate) type ScheduleMemo = HashMap<(usize, usize, usize, u32, usize), SuffixResult>;
+fn empty_suffix_result() -> Arc<SuffixResult> {
+    Arc::new(SuffixResult {
+        best_by_first_direct_setup_per_lb: BTreeMap::new(),
+        best_by_payload_per_lb: BTreeMap::new(),
+    })
+}
 
 /// DP-invariant inputs for the suffix search.
 ///
@@ -159,290 +285,495 @@ pub(crate) type ScheduleMemo = HashMap<(usize, usize, usize, u32, usize), Suffix
 #[derive(Clone, Copy)]
 pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
-    pub(crate) ring_challenge_cfg: &'a akita_challenges::SparseChallengeConfig,
+    pub(crate) default_ring_challenge_cfg: &'a akita_challenges::SparseChallengeConfig,
+    pub(crate) ring_challenge_config:
+        &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    pub(crate) fold_challenge_shape_at_level:
+        &'a dyn Fn(akita_types::AkitaScheduleInputs) -> akita_challenges::TensorChallengeShape,
     pub(crate) num_vars: usize,
     pub(crate) key: PolynomialGroupLayout,
+    pub(crate) setup_field_budget: Option<usize>,
+    pub(crate) root_lookup_key: Option<&'a AkitaScheduleLookupKey>,
+    pub(crate) level_zero_is_root: bool,
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct SuffixState {
     pub(crate) level: usize,
     pub(crate) current_witness_len: usize,
-    pub(crate) current_witness_len_terminal: usize,
     pub(crate) current_lb: u32,
     pub(crate) incoming_setup_prefix: Option<usize>,
 }
 
 impl SuffixState {
-    fn memo_key(self) -> (usize, usize, usize, u32, usize) {
+    fn memo_key(self) -> (usize, usize, u32, usize) {
         (
             self.level,
             self.current_witness_len,
-            self.current_witness_len_terminal,
             self.current_lb,
             self.incoming_setup_prefix.unwrap_or(0),
         )
     }
 }
 
-/// Shared inputs for root-level `LevelParams` candidates.
+#[allow(clippy::too_many_arguments)]
+fn price_level_candidate_with_children(
+    ctx: &SuffixCtx<'_>,
+    state: SuffixState,
+    candidate_params: &CommittedGroupParams,
+    next_witness_len: usize,
+    eor_bytes: usize,
+    natural_len: usize,
+    direct_child: &SuffixResult,
+    offloaded_child: Option<&SuffixResult>,
+    require_child_fold: bool,
+    best_for_this_lb: &mut Option<ScheduleCandidate>,
+    best_payload_for_this_lb: &mut Option<ScheduleCandidate>,
+) -> Result<(), AkitaError> {
+    let policy = ctx.policy;
+    // Branch A: terminate directly on the witness entering this state.
+    // There is no alternative terminal-shaped predecessor output: the
+    // predecessor produces one canonical witness, and the terminal inner
+    // commitment consumes that exact witness.
+    if !(ctx.level_zero_is_root && state.level == 0)
+        && state.incoming_setup_prefix.is_none()
+        && !candidate_params.has_precommitted_groups()
+    {
+        let field_bits = policy.decomposition.field_bits();
+        if let Some((mut direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
+            state.current_witness_len,
+            candidate_params,
+            field_bits,
+            ctx.key,
+            state.level,
+            None,
+        )? {
+            let level_proof_size = akita_types::proof_size::FOLD_GRIND_NONCE_BYTES
+                .checked_add(eor_bytes)
+                .ok_or_else(|| AkitaError::InvalidSetup("terminal proof size overflow".into()))?;
+            let total = level_proof_size.checked_add(suffix_cost).ok_or_else(|| {
+                AkitaError::InvalidSetup("terminal proof size overflow".to_string())
+            })?;
+            direct_step.estimated_direct_payload_bytes = level_proof_size;
+            let candidate = ScheduleCandidate {
+                first_direct_setup_field_len: Some(natural_len),
+                total_bytes: total,
+                setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
+                folds: Vec::new(),
+                terminal: direct_step,
+            };
+            if best_for_this_lb
+                .as_ref()
+                .map(|best| {
+                    (natural_len, total)
+                        < (best.first_direct_setup_field_len_or_max(), best.total_bytes)
+                })
+                .unwrap_or(true)
+            {
+                *best_for_this_lb = Some(candidate.clone());
+            }
+            if best_payload_for_this_lb
+                .as_ref()
+                .is_none_or(|best| total < best.total_bytes)
+            {
+                *best_payload_for_this_lb = Some(candidate);
+            }
+        }
+    }
+
+    let level_setup_field_elements = level_setup_field_elements(candidate_params)?;
+    let direct_edge = ChildEdge {
+        policy,
+        candidate_params,
+        current_witness_len: state.current_witness_len,
+        next_witness_len,
+        natural_setup_field_len: natural_len,
+        level_setup_field_elements,
+        eor_bytes,
+        offloaded: false,
+        require_child_fold,
+        setup_field_budget: ctx.setup_field_budget,
+    };
+    consider_child_suffixes(
+        &direct_edge,
+        &direct_child.best_by_payload_per_lb,
+        ChildObjectives {
+            first_direct_setup_then_payload: true,
+            payload: true,
+        },
+        best_for_this_lb,
+        best_payload_for_this_lb,
+    )?;
+    if let Some(offloaded_child) = offloaded_child {
+        let offloaded_edge = ChildEdge {
+            offloaded: true,
+            ..direct_edge
+        };
+        consider_child_suffixes(
+            &offloaded_edge,
+            &offloaded_child.best_by_first_direct_setup_per_lb,
+            ChildObjectives {
+                first_direct_setup_then_payload: true,
+                payload: false,
+            },
+            best_for_this_lb,
+            best_payload_for_this_lb,
+        )?;
+        consider_child_suffixes(
+            &offloaded_edge,
+            &offloaded_child.best_by_payload_per_lb,
+            ChildObjectives {
+                first_direct_setup_then_payload: false,
+                payload: true,
+            },
+            best_for_this_lb,
+            best_payload_for_this_lb,
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Shared inputs for root-level `CommittedGroupParams` candidates.
 /// Suffix DP for the optimal recursive schedule at
-/// `(level, current_witness_len, current_witness_len_terminal, current_lb)`.
+/// `(level, current_witness_len, current_lb)`.
 ///
-/// Two witness lengths are carried because the shape leaving a fold
-/// depends on its successor: `current_witness_len` is the `Intermediate` shape
-/// (used if level `L` folds again) and `current_witness_len_terminal` is the
-/// `Terminal` shape (used if level `L` sends the witness directly — drops
-/// the D-block and zk D-blinding, so it is `<= current_witness_len`).
-///
-/// At each state: `best_direct` ships the witness directly without consuming
-/// or forwarding an incoming prefix; `best_fold` keeps one fold candidate per
-/// `log_basis` (from [`derive_candidate_level_params`]) and consumes
-/// `incoming_setup_prefix` when present. Fold-again edges always plan the child
-/// without an incoming prefix first, then mark the current fold `Recursive` only
-/// when the prefix threshold is met, the child suffix is nonterminal, and a
-/// compatible prefixed child exists.
+/// At each state, `best_by_first_direct_setup_per_lb` keeps one candidate per
+/// `log_basis` (from
+/// [`derive_candidate_level_params`]). A candidate may terminate on the current
+/// witness when there is no incoming setup prefix, or fold again and consume
+/// `incoming_setup_prefix` when present. Fold-again edges plan exactly one child
+/// state: recursive setup edges pass the outgoing setup prefix to the child,
+/// while direct edges plan the ordinary no-prefix child.
 pub(crate) fn derive_optimal_suffix_schedule(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
     state: SuffixState,
     depth: usize,
-) -> Result<SuffixResult, AkitaError> {
+) -> Result<Arc<SuffixResult>, AkitaError> {
     let SuffixCtx {
         policy,
-        ring_challenge_cfg,
+        default_ring_challenge_cfg,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
         num_vars,
         key,
+        setup_field_budget: _,
+        root_lookup_key,
+        level_zero_is_root: _,
     } = *ctx;
     let SuffixState {
         level,
         current_witness_len,
-        current_witness_len_terminal,
         current_lb,
         incoming_setup_prefix,
     } = state;
     let memo_key = state.memo_key();
     if depth <= MAX_RECURSION_DEPTH {
         if let Some(cached) = memo.get(&memo_key) {
-            return Ok(cached.clone());
+            return Ok(Arc::clone(cached));
         }
     }
 
-    let best_direct = if incoming_setup_prefix.is_some() {
-        None
-    } else if derive_candidate_level_params(
-        policy,
-        ring_challenge_cfg,
-        current_witness_len,
-        current_lb,
-        level,
-        None,
-    )?
-    .is_some()
-    {
-        Some(DirectSuffix {
-            current_w_len: current_witness_len_terminal,
-        })
-    } else {
-        None
-    };
-
     if depth > MAX_RECURSION_DEPTH {
-        let result = SuffixResult {
-            best_direct,
-            best_fold_per_lb: BTreeMap::new(),
-        };
-        memo.insert(memo_key, result.clone());
+        let result = empty_suffix_result();
+        memo.insert(memo_key, Arc::clone(&result));
         return Ok(result);
     }
 
-    let mut best_fold_per_lb: BTreeMap<u32, FoldSuffix> = BTreeMap::new();
-    let (min_log_basis, max_log_basis) = policy.basis_range;
+    let mut best_by_first_direct_setup_per_lb: BTreeMap<u32, ScheduleCandidate> = BTreeMap::new();
+    let mut best_by_payload_per_lb: BTreeMap<u32, ScheduleCandidate> = BTreeMap::new();
+    let root_level_key = root_lookup_key.filter(|_| level == 0);
+    if root_level_key.is_some() && incoming_setup_prefix.is_some() {
+        return Err(AkitaError::InvalidSetup(
+            "multi-group root cannot consume an incoming setup prefix".to_string(),
+        ));
+    }
+    let root_opening_layout = root_level_key
+        .map(AkitaScheduleLookupKey::opening_layout)
+        .transpose()?;
+    let root_eor_key = root_level_key
+        .map(|root_key| {
+            root_key
+                .num_polynomials()
+                .map(|total_polys| PolynomialGroupLayout::new(root_key.max_num_vars(), total_polys))
+        })
+        .transpose()?;
+    let eor_key = root_eor_key.unwrap_or_else(|| {
+        if level == 0 {
+            key
+        } else {
+            PolynomialGroupLayout::singleton(num_vars)
+        }
+    });
+    let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
+        policy.challenge_field_bits()?,
+        policy.claim_ext_degree,
+        level,
+        eor_key,
+        current_witness_len,
+        policy.ring_dimension,
+    )?
+    else {
+        let result = empty_suffix_result();
+        memo.insert(memo_key, Arc::clone(&result));
+        return Ok(result);
+    };
+    let scalar_opening_layout = if root_level_key.is_some() {
+        None
+    } else if level == 0 {
+        Some(OpeningClaimsLayout::new(
+            key.num_vars(),
+            key.num_polynomials(),
+        )?)
+    } else {
+        Some(suffix_opening_layout(
+            current_witness_len,
+            incoming_setup_prefix,
+        )?)
+    };
+    let requested_fold_shape = fold_challenge_shape_at_level(akita_types::AkitaScheduleInputs {
+        num_vars,
+        level,
+        input_witness_len: current_witness_len,
+    });
+    let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(level);
     for lb in min_log_basis..=max_log_basis {
         if lb < current_lb {
             continue;
         }
-        let Some((candidate_params, next_witness_len, next_witness_len_terminal)) =
-            derive_candidate_level_params(
+        let mut best_for_this_lb: Option<ScheduleCandidate> = None;
+        let mut best_payload_for_this_lb: Option<ScheduleCandidate> = None;
+
+        let (current_opening_layout, candidates, require_child_fold) = if let Some(root_key) =
+            root_level_key
+        {
+            let current_opening_layout = root_opening_layout.as_ref().ok_or_else(|| {
+                AkitaError::InvalidSetup("multi-group root opening layout is missing".to_string())
+            })?;
+            let candidates = multi_group_root_level_candidates_for_basis(
+                root_key,
                 policy,
-                ring_challenge_cfg,
+                default_ring_challenge_cfg,
+                ring_challenge_config,
+                requested_fold_shape,
+                current_witness_len,
+                lb,
+            )?;
+            (current_opening_layout, candidates, true)
+        } else if level == 0 {
+            let mut candidates = Vec::new();
+            let dimensions = CommitmentRingDims::uniform(policy.ring_dimension);
+            let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
+                continue;
+            };
+            let alpha = dimensions.d_a().trailing_zeros() as usize;
+            let reduced_vars = key.num_vars().saturating_sub(alpha);
+            if reduced_vars == 0 {
+                continue;
+            }
+            let initial_witness_len_bits = current_witness_len
+                .checked_mul(policy.decomposition.field_bits() as usize)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("root witness bit length overflow".into())
+                })?;
+            let min_block_index_bits = if reduced_vars >= 3 { 1 } else { 0 };
+            let max_block_index_bits = (reduced_vars - 1).min(usize::BITS as usize - 1);
+            for block_index_bits in (min_block_index_bits..=max_block_index_bits).rev() {
+                let Some(candidate_params) = scalar_root_fold_level_params_candidate(
+                    policy,
+                    &ring_challenge_cfg,
+                    dimensions,
+                    key.num_vars(),
+                    key.num_polynomials(),
+                    lb,
+                    block_index_bits,
+                    requested_fold_shape,
+                )?
+                else {
+                    continue;
+                };
+                let output_witness_len = planned_next_witness_len(
+                    policy.decomposition.field_bits(),
+                    &candidate_params,
+                    key.num_polynomials(),
+                    policy.chunks_at_level(0),
+                )?;
+                if output_witness_len.checked_mul(lb as usize).ok_or_else(|| {
+                    AkitaError::InvalidSetup("root next witness bit length overflow".into())
+                })? >= initial_witness_len_bits
+                {
+                    continue;
+                }
+                candidates.push((candidate_params, output_witness_len));
+            }
+            if candidates.is_empty() {
+                continue;
+            }
+            (
+                scalar_opening_layout.as_ref().ok_or_else(|| {
+                    AkitaError::InvalidSetup("scalar root opening layout is missing".to_string())
+                })?,
+                candidates,
+                false,
+            )
+        } else {
+            let mut candidates = Vec::new();
+            let dimensions = CommitmentRingDims::uniform(policy.ring_dimension);
+            let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
+                continue;
+            };
+            let Some(candidate) = derive_candidate_level_params(
+                policy,
+                &ring_challenge_cfg,
+                dimensions,
                 current_witness_len,
                 lb,
                 level,
                 incoming_setup_prefix,
+                requested_fold_shape,
             )?
-        else {
-            continue;
-        };
-        let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
-            policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
-            policy.claim_ext_degree,
-            level,
-            PolynomialGroupLayout::singleton(num_vars),
-            current_witness_len,
-        ) else {
-            continue;
-        };
-
-        let mut best_for_this_lb: Option<(usize, Vec<Step>)> = None;
-        let try_update = |total: usize, steps: Vec<Step>, slot: &mut Option<(usize, Vec<Step>)>| {
-            if slot.as_ref().map(|(c, _)| total < *c).unwrap_or(true) {
-                *slot = Some((total, steps));
+            else {
+                continue;
+            };
+            candidates.push(candidate);
+            if candidates.is_empty() {
+                continue;
             }
+            (
+                scalar_opening_layout.as_ref().ok_or_else(|| {
+                    AkitaError::InvalidSetup("scalar suffix opening layout is missing".to_string())
+                })?,
+                candidates,
+                false,
+            )
         };
 
-        let current_opening_layout =
-            suffix_opening_layout(current_witness_len, incoming_setup_prefix)?;
-        let natural_len = active_setup_field_len(
-            &candidate_params,
-            &current_opening_layout,
-            SETUP_OFFLOAD_D_SETUP,
-        )?;
-        let n_prefix = padded_setup_prefix_len(natural_len);
-        let recursion_threshold_met = policy.recursive_setup_planning
-            && level <= 1
-            && n_prefix > SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN;
-
-        let child_suffix_no_prefix = derive_optimal_suffix_schedule(
-            ctx,
-            memo,
-            SuffixState {
-                level: level + 1,
-                current_witness_len: next_witness_len,
-                current_witness_len_terminal: next_witness_len_terminal,
-                current_lb: lb,
-                incoming_setup_prefix: None,
-            },
-            depth + 1,
-        )?;
-
-        // Branch A: suffix is a Direct at level+1. Scalar terminals only: grouped
-        // folds must continue with another fold, and an incoming setup prefix
-        // makes a terminal direct suffix infeasible.
-        if !candidate_params.has_precommitted_groups() {
-            if let Some(direct_suffix) = child_suffix_no_prefix.best_direct {
-                let field_bits = policy.decomposition.field_bits();
-                let terminal_opening_layout = incoming_setup_prefix
-                    .map(|_| suffix_opening_layout(current_witness_len, incoming_setup_prefix))
-                    .transpose()?;
-                if let Some((direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
-                    direct_suffix.current_w_len,
-                    &candidate_params,
-                    field_bits,
-                    key,
-                    level,
-                    terminal_opening_layout.as_ref(),
+        for (candidate_params, next_witness_len) in candidates {
+            if let Some(natural_prefix_len) = incoming_setup_prefix {
+                let padded_prefix_len = akita_types::padded_setup_prefix_len(natural_prefix_len);
+                if !offloaded_witness_contracts(
+                    current_witness_len,
+                    current_lb,
+                    padded_prefix_len,
+                    policy.decomposition.field_bits(),
+                    next_witness_len,
+                    lb,
+                    policy.min_offloaded_witness_contraction,
                 )? {
-                    let level_proof_size = level_proof_bytes(
-                        field_bits,
-                        field_bits * policy.chal_ext_degree as u32,
-                        &candidate_params,
-                        None,
-                        next_witness_len_terminal,
-                        1,
-                        RelationMatrixRowLayout::WithoutDBlock,
-                    ) + eor_bytes;
-                    let total = level_proof_size + suffix_cost;
-                    let steps = vec![
-                        Step::Fold(FoldStep {
-                            params: candidate_params.clone(),
-                            current_w_len: current_witness_len,
-                            next_w_len: next_witness_len_terminal,
-                            level_bytes: level_proof_size,
-                        }),
-                        Step::Direct(direct_step),
-                    ];
-                    try_update(total, steps, &mut best_for_this_lb);
+                    continue;
                 }
             }
-        }
-        // Branch B: suffix is a Fold at level+1. Plan the child without an
-        // incoming prefix first, then classify the edge from the child's
-        // topology: terminal children stay direct; nonterminal children recurse
-        // only when the prefix threshold is met and a compatible prefixed child
-        // exists.
-        for suffix_fold in child_suffix_no_prefix.best_fold_per_lb.values() {
-            let child_is_terminal = matches!(suffix_fold.steps.get(1), Some(Step::Direct(_)));
-            let (fold_mode, suffix_fold) = if child_is_terminal {
-                (SetupContributionMode::Direct, suffix_fold.clone())
-            } else if recursion_threshold_met {
-                let prefixed_child_suffix = derive_optimal_suffix_schedule(
+            let natural_len = active_setup_field_len(&candidate_params, current_opening_layout)?;
+            let direct_child = derive_optimal_suffix_schedule(
+                ctx,
+                memo,
+                SuffixState {
+                    level: level + 1,
+                    current_witness_len: next_witness_len,
+                    current_lb: lb,
+                    incoming_setup_prefix: None,
+                },
+                depth + 1,
+            )?;
+            let offloaded_child = if policy.recursive_setup_planning {
+                Some(derive_optimal_suffix_schedule(
                     ctx,
                     memo,
                     SuffixState {
                         level: level + 1,
                         current_witness_len: next_witness_len,
-                        current_witness_len_terminal: next_witness_len_terminal,
                         current_lb: lb,
                         incoming_setup_prefix: Some(natural_len),
                     },
                     depth + 1,
-                )?;
-                let child_lb = suffix_fold.first_fold_params.log_basis;
-                let Some(prefixed_suffix_fold) =
-                    prefixed_child_suffix.best_fold_per_lb.get(&child_lb)
-                else {
-                    continue;
-                };
-                if matches!(prefixed_suffix_fold.steps.get(1), Some(Step::Direct(_))) {
-                    continue;
-                }
-                (
-                    SetupContributionMode::Recursive,
-                    prefixed_suffix_fold.clone(),
-                )
+                )?)
             } else {
-                (SetupContributionMode::Direct, suffix_fold.clone())
+                None
             };
-
-            let mut fold_candidate_params = candidate_params.clone();
-            fold_candidate_params.setup_contribution_mode = fold_mode;
-            let level_proof_size = level_proof_bytes(
-                policy.decomposition.field_bits(),
-                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
-                &fold_candidate_params,
-                Some(&suffix_fold.first_fold_params),
+            price_level_candidate_with_children(
+                ctx,
+                state,
+                &candidate_params,
                 next_witness_len,
-                1,
-                RelationMatrixRowLayout::WithDBlock,
-            ) + eor_bytes;
-            let total = level_proof_size + suffix_fold.total_bytes;
-            let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
-            steps.push(Step::Fold(FoldStep {
-                params: fold_candidate_params,
-                current_w_len: current_witness_len,
-                next_w_len: next_witness_len,
-                level_bytes: level_proof_size,
-            }));
-            steps.extend(suffix_fold.steps.iter().cloned());
-            try_update(total, steps, &mut best_for_this_lb);
+                eor_bytes,
+                natural_len,
+                &direct_child,
+                offloaded_child.as_deref(),
+                require_child_fold,
+                &mut best_for_this_lb,
+                &mut best_payload_for_this_lb,
+            )?;
         }
 
-        if let Some((total_bytes, steps)) = best_for_this_lb {
-            let first_fold_params = steps
-                .first()
-                .and_then(|step| match step {
-                    Step::Fold(fold) => Some(fold.params.clone()),
-                    Step::Direct(_) => None,
-                })
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("fold suffix missing first fold params".to_string())
-                })?;
-            best_fold_per_lb.insert(
+        if let Some(choice) = best_for_this_lb {
+            let ScheduleCandidate {
+                first_direct_setup_field_len,
+                total_bytes,
+                setup_field_elements,
+                folds,
+                terminal,
+            } = choice;
+            best_by_first_direct_setup_per_lb.insert(
                 lb,
-                FoldSuffix {
+                ScheduleCandidate {
                     total_bytes,
-                    first_fold_params,
-                    steps,
+                    setup_field_elements,
+                    first_direct_setup_field_len,
+                    folds,
+                    terminal,
+                },
+            );
+        }
+        if let Some(choice) = best_payload_for_this_lb {
+            let ScheduleCandidate {
+                first_direct_setup_field_len,
+                total_bytes,
+                setup_field_elements,
+                folds,
+                terminal,
+            } = choice;
+            best_by_payload_per_lb.insert(
+                lb,
+                ScheduleCandidate {
+                    total_bytes,
+                    setup_field_elements,
+                    first_direct_setup_field_len,
+                    folds,
+                    terminal,
                 },
             );
         }
     }
 
-    let result = SuffixResult {
-        best_direct,
-        best_fold_per_lb,
-    };
-    memo.insert(memo_key, result.clone());
+    let result = Arc::new(SuffixResult {
+        best_by_first_direct_setup_per_lb,
+        best_by_payload_per_lb,
+    });
+    memo.insert(memo_key, Arc::clone(&result));
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::offloaded_witness_contracts;
+
+    #[test]
+    fn offloaded_contraction_accepts_exact_threefold_boundary() {
+        assert!(offloaded_witness_contracts(300, 2, 0, 128, 100, 2, 3).unwrap());
+        assert!(!offloaded_witness_contracts(299, 2, 0, 128, 100, 2, 3).unwrap());
+        assert!(!offloaded_witness_contracts(300, 2, 0, 128, 100, 2, 4).unwrap());
+    }
+
+    #[test]
+    fn offloaded_contraction_prices_changed_digit_basis() {
+        assert!(offloaded_witness_contracts(900, 2, 0, 128, 100, 6, 3).unwrap());
+        assert!(!offloaded_witness_contracts(899, 2, 0, 128, 100, 6, 3).unwrap());
+    }
+
+    #[test]
+    fn offloaded_contraction_includes_full_field_setup_prefix() {
+        assert!(offloaded_witness_contracts(100, 2, 100, 128, 1000, 4, 3).unwrap());
+        assert!(!offloaded_witness_contracts(100, 2, 90, 128, 1000, 4, 3).unwrap());
+    }
 }

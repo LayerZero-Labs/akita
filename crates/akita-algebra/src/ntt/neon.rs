@@ -477,12 +477,19 @@ unsafe fn mont_mul_4x_i16(a: int16x4_t, b: int16x4_t, p: int16x4_t, pinv: int16x
     vmovn_s32(vshrq_n_s32::<16>(vsubq_s32(c, tp)))
 }
 
-/// 8-wide Montgomery multiply for i16 primes (two 4-wide chains).
+/// 8-wide Montgomery multiply for i16 primes without widening lanes.
+///
+/// `vqdmulhq_s16(a, b) >> 1` is the exact signed high half of `a * b` for
+/// these primes: saturation is impossible because one factor is always
+/// strictly smaller than `2^14`. This is the NEON analogue of AVX2
+/// `mulhi_epi16` and lets one vector carry eight independent residues.
 #[inline(always)]
-unsafe fn mont_mul_8x_i16(a: int16x8_t, b: int16x8_t, p: int16x4_t, pinv: int16x4_t) -> int16x8_t {
-    let r_lo = mont_mul_4x_i16(vget_low_s16(a), vget_low_s16(b), p, pinv);
-    let r_hi = mont_mul_4x_i16(vget_high_s16(a), vget_high_s16(b), p, pinv);
-    vcombine_s16(r_lo, r_hi)
+unsafe fn mont_mul_8x_i16(a: int16x8_t, b: int16x8_t, p: int16x8_t, pinv: int16x8_t) -> int16x8_t {
+    let c_low = vmulq_s16(a, b);
+    let c_high = vshrq_n_s16::<1>(vqdmulhq_s16(a, b));
+    let t = vmulq_s16(c_low, pinv);
+    let tp_high = vshrq_n_s16::<1>(vqdmulhq_s16(t, p));
+    vsubq_s16(c_high, tp_high)
 }
 
 /// 8-wide range reduction for i16: `(-2p, 2p)` → `(-p, p)`.
@@ -760,12 +767,13 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
     let p_d = vdup_n_s16(p);
     let pinv_d = vdup_n_s16(pinv);
     let p_q = vdupq_n_s16(p);
+    let pinv_q = vdupq_n_s16(pinv);
     let mut i = 0;
     while i + 8 <= d {
         let a = vld1q_s16(acc.add(i));
         let l = vld1q_s16(lhs.add(i));
         let r = vld1q_s16(rhs.add(i));
-        let prod = mont_mul_8x_i16(l, r, p_d, pinv_d);
+        let prod = mont_mul_8x_i16(l, r, p_q, pinv_q);
         let sum = vaddq_s16(a, prod);
         vst1q_s16(acc.add(i), reduce_range_8x_i16(sum, p_q));
         i += 8;

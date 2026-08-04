@@ -8,6 +8,10 @@ The important update is that this is no longer a single linear ladder. The
 layout cutover is the shared foundation, but most of setup offloading should be
 split into parallel lanes with explicit integration points.
 
+The witness and setup role order follows
+[`specs/digit-innermost-layout.md`](specs/digit-innermost-layout.md). Root and
+recursive folds use the same digit-innermost order.
+
 ## Invariants
 
 - `main` is the base for the spec PR and for the first implementation branch.
@@ -71,7 +75,7 @@ not encode one person's ownership.
 | 02B | `setup-prefix-ladder` | 01 | Add preprocessing metadata, prefix-slot policies, and commitment-hint storage for selected power-of-two prefixes of the flat setup coefficient vector. No offloading proof yet. | Setup metadata names available prefix slots; runtime can select the tightest eligible prover-ready slot; below-threshold or unavailable shapes fall back to direct scan or produce a configured missing-slot error. |
 | 02C | `recursive-carried-openings` | 01 for review; can prototype from `main` | Replace singleton recursive carry state with a carried-opening claim list and root-style incidence at the recursive boundary. Use a common padded field domain first. | Existing singleton recursion is the size-one incidence case; a witness-plus-dummy-setup carried batch verifies end to end. |
 | 02D | `setup-offload-gating` | 01 | Add the policy surface for `D_setup`, `N_min`, eligible levels, selected prefix length, and direct fallback. | The prover/verifier agree on eligibility and selected prefix without changing proof semantics yet. |
-| 03A | `setup-weight-evaluator` | 02A | Implement succinct verifier evaluation of `omega_S(rho_lambda, rho_y)`, including root digit-fast A/J carry-DP and recursive block-fast D/B/A views. | Evaluator matches materialized `omega_S` at random points without scanning `S`. |
+| 03A | `setup-weight-evaluator` | 02A | Implement succinct verifier evaluation of `omega_S(rho_lambda, rho_y)` with canonical digit-innermost D/B/A views and compact mixed-ring projection factors. | Evaluator matches materialized `omega_S` at random points without scanning `S`. |
 | 03B | `setup-product-sumcheck` | 02A | Add the setup product-sumcheck skeleton over the selected prefix. First implement it as a post-Stage-2 Stage 3 closed against a local/materialized setup opening oracle. | Product-sumcheck checks `<S_{<=N}, omega_S>` against the materialized oracle and binds `sigma_S`, `rho`, `alpha`, `tau_1`, and `r_x`; no extra witness claim is left unresolved. |
 | 04 | `setup-claim-offloading` | integration of 02B, 02C, 02D, 03A, 03B | Replace the direct setup scan with delegated setup claims when eligible. Carry `(rho_lambda, rho_y, s_rho)` into the next recursive fold and batch it with the folded-witness opening. | Eligible root/L1 proofs verify without local setup scan; ineligible or terminal-without-next-fold cases use direct fallback. |
 | 05 | `setup-offload-tables-tests` | 04 | Regenerate tables if needed, add broad benchmarks/regression tests, and remove temporary comparison or oracle helpers. | End-to-end proof size and verifier-time breakdowns reflect setup offloading under representative batched workloads. |
@@ -100,10 +104,12 @@ The key deliverables are:
 
 - alpha lives in the weight, never in committed setup;
 - overlapping A/B/D raw coordinates add their weights;
-- root A remains digit-fast because one-hot is root-only and requires it;
-- root A/J uses the row-aware carry-DP evaluator;
-- recursive D/B/A can use block-fast views when recursive setup offload is
-  enabled.
+- root and recursive D/B/A use the same digit-innermost order;
+- the A/J evaluator sums the innermost fold digit with `G_fold` over exact
+  group and chunk units;
+- mixed-ring projection powers remain a compact tensor factor and do not
+  change the role order;
+- the q=1 inner kernel omits the identity projection factor.
 
 ### Slice 02B: Prefix Commitment Artifacts
 

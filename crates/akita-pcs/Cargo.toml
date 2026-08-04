@@ -46,20 +46,38 @@ parallel = [
 ]
 schedules-default = ["akita-config/schedules-default"]
 profile-ci = [
+  "akita-config/schedules-fp128-mixed-dim-onehot",
   "akita-config/schedules-fp32-d128-onehot",
   "akita-config/schedules-fp64-d128-onehot",
   "akita-config/schedules-fp128-d64-onehot",
   "akita-config/schedules-fp128-d64-onehot-recursive",
+  "akita-config/schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2",
   "akita-config/schedules-fp128-d64-onehot-tensor",
-  "akita-config/schedules-fp128-d64-full",
+  "akita-config/schedules-fp128-d64-dense",
   "akita-config/schedules-fp128-d64-onehot-multi-chunk",
   "akita-config/schedules-fp128-d64-onehot-multi-chunk-w2r2",
   "akita-config/schedules-fp128-d64-onehot-multi-chunk-w4r2",
+]
+# Compile the profile example with only the singleton fp128 D64 one-hot
+# configuration. Run with `--no-default-features` so unrelated schedule tables
+# and profile-mode monomorphizations stay out of the binary.
+profile-onehot-fp128-d64 = ["akita-config/schedules-fp128-d64-onehot"]
+schedules-fp128-d64-dense-multi-chunk = [
+  "akita-config/schedules-fp128-d64-dense-multi-chunk",
 ]
 disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = [
   "akita-transcript/logging-transcript",
   "akita-prover/logging-transcript",
+]
+compression-diagnostics = ["akita-prover/compression-diagnostics"]
+# Test/example-only mixed ring-dimension schedule builders (relocated from
+# akita-config, which cannot depend on the offline planner without a cycle).
+# Enabled for this crate's own tests/examples via the self dev-dependency below.
+test-support = [
+  "dep:akita-planner",
+  "akita-config/test-support",
+  "akita-planner/test-support",
 ]
 
 [dependencies]
@@ -75,6 +93,9 @@ akita-types = { version = "0.1.0", path = "../akita-types" }
 akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
 akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }
 akita-setup = { version = "0.1.0", path = "../akita-setup", default-features = false }
+# Offline planner, pulled in only by the `test-support` feature for the mixed-D
+# schedule builders (e.g. `plan_optimal_suffix`); normal builds do not link it.
+akita-planner = { version = "0.1.0", path = "../akita-planner", optional = true }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
@@ -90,6 +111,11 @@ akita-config = { version = "0.1.0", path = "../akita-config", default-features =
   "test-support",
 ] }
 akita-planner = { version = "0.1.0", path = "../akita-planner" }
+# Self dev-dependency: turns on `test-support` for this crate's own integration
+# tests and examples so `akita_pcs::test_support` (the mixed-D schedule builders)
+# is available without enabling it for production/library builds.
+akita-pcs = { version = "0.1.0", path = ".", features = ["test-support"] }
+akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -107,11 +133,19 @@ name = "ring_ntt"
 harness = false
 
 [[bench]]
+name = "ntt_matvec"
+harness = false
+
+[[bench]]
 name = "akita_e2e"
 harness = false
 
 [[bench]]
 name = "root_kernels"
+harness = false
+
+[[bench]]
+name = "digit_range"
 harness = false
 
 [[bench]]

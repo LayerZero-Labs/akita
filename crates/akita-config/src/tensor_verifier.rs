@@ -8,7 +8,8 @@ pub mod fp128 {
     use super::CommitmentConfig;
     use akita_challenges::TensorChallengeShape;
     use akita_types::{
-        AkitaScheduleInputs, DecompositionParams, OpeningClaimsLayout, Schedule, SisModulusFamily,
+        AkitaScheduleInputs, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
+        SisModulusProfileId,
     };
     use jolt_field::Prime128OffsetA7F7;
 
@@ -40,20 +41,19 @@ pub mod fp128 {
             crate::proof_optimized::proof_optimized_ring_challenge_config(d)
         }
 
-        /// Tensor at the root level (`level == 0`), flat at every recursive
-        /// level. The schedule materializer reads this hook *before* deriving
-        /// the fold digit count and the `(m_vars, r_vars)` split, so the root
-        /// step's `LevelParams` are dimensioned for `omega^2`.
+        /// Enable tensor pricing at the root (`level == 0`) and stay flat at
+        /// recursive levels. The planner resolves the actual low-factor width;
+        /// the `2` here is only the non-flat policy marker.
         fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
             if inputs.level == 0 {
-                TensorChallengeShape::Tensor
+                TensorChallengeShape::Tensor { fold_low_len: 2 }
             } else {
                 TensorChallengeShape::Flat
             }
         }
 
-        fn sis_modulus_family() -> SisModulusFamily {
-            SisModulusFamily::Q128
+        fn sis_modulus_profile() -> SisModulusProfileId {
+            SisModulusProfileId::Q128OffsetA7F7
         }
 
         fn max_setup_matrix_size(
@@ -77,7 +77,7 @@ pub mod fp128 {
             256
         }
 
-        fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+        fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
             #[cfg(feature = "schedules-fp128-d64-onehot-tensor")]
             {
                 Some(akita_schedules::fp128_d64_onehot_tensor_table())
@@ -90,7 +90,7 @@ pub mod fp128 {
 
         fn get_params_for_prove(
             layout: &OpeningClaimsLayout,
-        ) -> Result<Schedule, akita_error::AkitaError> {
+        ) -> Result<FoldSchedule, akita_error::AkitaError> {
             Self::runtime_schedule(
                 crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
             )

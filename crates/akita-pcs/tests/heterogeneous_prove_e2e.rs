@@ -3,20 +3,18 @@
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_pcs::Ring;
 use akita_prover::{
     batched_prove, CommitCluster, ComputeBackendSetup, CpuBackend, DensePoly, OpeningCluster,
     ProverComputeStack, ProverOpeningData, RingSwitchCluster, TensorCluster, UniformProverStack,
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    lagrange_weights, BasisMode, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims,
+    lagrange_weights, BasisMode, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
 };
-use jolt_field::Zero;
+use jolt_field::{Ring, Zero};
 use std::any::TypeId;
 
-type Cfg = fp128::D64Full;
+type Cfg = fp128::D64Dense;
 type F = fp128::Field;
 const D: usize = Cfg::D;
 type Scheme = AkitaCommitmentScheme<Cfg>;
@@ -43,7 +41,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     let opening_batch = OpeningClaimsLayout::new(NUM_VARS, 1).expect("opening batch");
     let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
     let alpha = D.trailing_zeros() as usize;
-    let full_num_vars = layout.m_vars + layout.r_vars + alpha;
+    let full_num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
 
     let len = 1usize << full_num_vars;
     let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
@@ -73,7 +71,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     assert_eq!(stack.tensor().backend() as *const _, &tensor as *const _);
     assert_eq!(stack.ring_switch().backend() as *const _, &ring as *const _);
 
-    let verifier_setup = Scheme::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let commit_stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
         .expect("commit stack");
     let (commitment, hint) = akita_prover::commit::<Cfg, DensePoly<F>, CpuBackend>(
@@ -101,16 +99,12 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         &setup.prefix_slots,
         &stack,
         ProverOpeningData::new(
-            OpeningClaims::from_groups(
+            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                 opening_point.clone(),
-                vec![PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(opening_point.len(), opening_point.len())
-                        .expect("full-point prover group"),
-                    vec![opening],
-                    commitments[0].clone(),
-                )
-                .expect("valid prover group")],
+                vec![opening],
+                commitments[0].clone(),
             )
+            .expect("valid prover group")])
             .expect("valid prover claims"),
             vec![hint],
             vec![&poly_refs[..]],
@@ -118,33 +112,24 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         .expect("valid prover opening data"),
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("heterogeneous batched prove");
 
-    assert!(
-        !proof.is_root_direct(),
-        "fixture must exercise folded recursive prove, not root-direct"
-    );
+    assert!(proof.num_fold_levels() >= 2);
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/heterogeneous-batched-prove");
     Scheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        OpeningClaims::from_groups(
+        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             opening_point.clone(),
-            vec![PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(opening_point.len(), opening_point.len())
-                    .expect("full-point verifier group"),
-                vec![opening],
-                &commitments[0],
-            )
-            .expect("valid verifier group")],
+            vec![opening],
+            &commitments[0],
         )
+        .expect("valid verifier group")])
         .expect("valid verifier claims"),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("heterogeneous batched verify");
 }

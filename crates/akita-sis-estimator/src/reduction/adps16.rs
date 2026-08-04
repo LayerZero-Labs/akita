@@ -43,7 +43,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn adps16_classical_cost_scales_with_beta() {
+    fn adps16_policy_costs_scale_with_beta() {
         assert!((adps16_log2_cost(500, Adps16Mode::Classical) - 146.0).abs() < 1e-9);
+        assert!((adps16_log2_cost(500, Adps16Mode::Quantum) - 132.5).abs() < 1e-9);
     }
 }

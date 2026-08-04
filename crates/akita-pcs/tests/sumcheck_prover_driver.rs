@@ -3,10 +3,8 @@
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, UniPoly};
 use akita_transcript::labels;
 use akita_transcript::{AkitaTranscript, Transcript};
-use jolt_field::Field;
-use jolt_field::Fp64;
-use jolt_field::One;
-use jolt_field::Zero;
+use jolt_field::{Field, Fp64, One, Zero};
+
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 

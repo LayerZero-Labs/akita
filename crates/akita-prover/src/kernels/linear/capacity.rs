@@ -1,7 +1,8 @@
 use super::*;
-use crate::kernels::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 use crate::validation::MAX_I8_LOG_BASIS;
 use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q64_NUM_PRIMES};
+use akita_types::max_safe_crt_accumulation_width;
+use akita_types::{select_crt_ntt_params, ProtocolCrtNttParams};
 
 pub(super) const BALANCED_DIGIT_RHS_MAX_ABS: u64 = 1 << (MAX_I8_LOG_BASIS - 1);
 pub(super) const I8_RHS_MAX_ABS: u64 = 128;
@@ -10,137 +11,11 @@ pub(super) const I8_RHS_MAX_ABS: u64 = 128;
 pub(crate) struct CrtI8CapacityProfile {
     pub profile_id: &'static str,
     pub num_primes: usize,
+    pub prime_modulus_bits: u32,
     pub limb_bits: u32,
     pub max_i8_log_basis: u32,
     pub balanced_digit_safe_width: usize,
     pub raw_i8_safe_width: usize,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct SmallNat {
-    limbs: Vec<u32>,
-}
-
-impl SmallNat {
-    fn one() -> Self {
-        Self { limbs: vec![1] }
-    }
-
-    fn trim(&mut self) {
-        while self.limbs.len() > 1 && self.limbs.last() == Some(&0) {
-            self.limbs.pop();
-        }
-    }
-
-    fn mul_u128(&mut self, rhs: u128) {
-        if rhs == 0 {
-            self.limbs.clear();
-            self.limbs.push(0);
-            return;
-        }
-
-        let mut rhs_limbs = Vec::new();
-        let mut x = rhs;
-        while x != 0 {
-            rhs_limbs.push(x as u32);
-            x >>= 32;
-        }
-
-        let mut out = vec![0u32; self.limbs.len() + rhs_limbs.len()];
-        for (i, &lhs_limb) in self.limbs.iter().enumerate() {
-            let mut carry = 0u128;
-            for (j, &rhs_limb) in rhs_limbs.iter().enumerate() {
-                let idx = i + j;
-                let accum =
-                    u128::from(out[idx]) + u128::from(lhs_limb) * u128::from(rhs_limb) + carry;
-                out[idx] = accum as u32;
-                carry = accum >> 32;
-            }
-            let mut idx = i + rhs_limbs.len();
-            while carry != 0 {
-                if idx == out.len() {
-                    out.push(0);
-                }
-                let accum = u128::from(out[idx]) + carry;
-                out[idx] = accum as u32;
-                carry = accum >> 32;
-                idx += 1;
-            }
-        }
-
-        self.limbs = out;
-        self.trim();
-    }
-}
-
-impl Ord for SmallNat {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.limbs.len().cmp(&other.limbs.len()) {
-            std::cmp::Ordering::Equal => self.limbs.iter().rev().cmp(other.limbs.iter().rev()),
-            ordering => ordering,
-        }
-    }
-}
-
-impl PartialOrd for SmallNat {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-/// Conservative maximum number of products that may be accumulated in one CRT
-/// accumulator before Garner reconstruction.
-pub(super) fn max_safe_crt_accumulation_width<
-    F: Field + CanonicalEncoding,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    params: &CrtNttParamSet<W, K, D>,
-    rhs_abs_bound: u64,
-) -> Option<usize> {
-    if rhs_abs_bound == 0 {
-        return Some(usize::MAX);
-    }
-
-    let setup_abs_bound = setup_coeff_abs_bound::<F>();
-    if setup_abs_bound == 0 || D == 0 {
-        return None;
-    }
-
-    let mut crt_product = SmallNat::one();
-    for prime in &params.primes {
-        crt_product.mul_u128(prime.p.to_i64() as u128);
-    }
-
-    if !crt_width_is_safe::<F, D>(&crt_product, 1, rhs_abs_bound) {
-        return None;
-    }
-
-    let mut lo = 1usize;
-    let mut hi = 2usize;
-    while crt_width_is_safe::<F, D>(&crt_product, hi, rhs_abs_bound) {
-        lo = hi;
-        let Some(next) = hi.checked_mul(2) else {
-            if crt_width_is_safe::<F, D>(&crt_product, usize::MAX, rhs_abs_bound) {
-                return Some(usize::MAX);
-            }
-            hi = usize::MAX;
-            break;
-        };
-        hi = next;
-    }
-
-    while lo + 1 < hi {
-        let mid = lo + (hi - lo) / 2;
-        if crt_width_is_safe::<F, D>(&crt_product, mid, rhs_abs_bound) {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-
-    Some(lo)
 }
 
 fn require_safe_width<F, W, const K: usize, const D: usize>(
@@ -172,6 +47,12 @@ where
     Ok(CrtI8CapacityProfile {
         profile_id,
         num_primes: K,
+        prime_modulus_bits: params
+            .primes
+            .iter()
+            .map(|prime| u64::BITS - (prime.p.to_i64() as u64).leading_zeros())
+            .max()
+            .unwrap_or(0),
         limb_bits,
         max_i8_log_basis: MAX_I8_LOG_BASIS,
         balanced_digit_safe_width: require_safe_width::<F, W, K, D>(
@@ -194,7 +75,7 @@ where
 ///
 /// The setup artifact stores only an envelope, not the schedule levels that
 /// originally produced it. This boundary therefore checks the worst supported
-/// balanced digit (`log_basis = 6`) and raw signed-i8 roles for the selected
+/// balanced digit (`log_basis = 8`) and raw signed-i8 roles for the selected
 /// profile. Generated-table tests separately prove committed schedules stay
 /// within these universal bounds.
 pub(crate) fn selected_crt_i8_capacity_profile<F: Field + CanonicalEncoding, const D: usize>(
@@ -210,41 +91,6 @@ pub(crate) fn selected_crt_i8_capacity_profile<F: Field + CanonicalEncoding, con
             capacity_profile_from_params::<F, _, Q128_NUM_PRIMES, D>(&params, "Q128/5xi32", 32)
         }
     }
-}
-
-/// Maximum absolute value of a setup (LHS matrix) coefficient once lifted to a
-/// signed integer for CRT accumulation.
-///
-/// The cached NTT matrix is built by `CyclotomicCrtNtt::from_ring_with_params`,
-/// which interprets every coefficient in centered form `(-q/2, q/2]` before
-/// reducing into the CRT primes (so the lift matches the negacyclic subtraction
-/// that produces negative values), and `to_ring_with_params` reconstructs with
-/// signed Garner. The integer magnitude of any matrix coefficient is therefore
-/// bounded by `floor(q/2)`, not the full modulus `q`. Basing the capacity bound
-/// on `q` would double the chunking unnecessarily.
-#[inline(always)]
-fn setup_coeff_abs_bound<F: Field + CanonicalEncoding>() -> u128 {
-    let modulus = (-F::one())
-        .to_u128_checked()
-        .expect("canonical prime-field value fits in u128")
-        + 1;
-    modulus / 2
-}
-
-fn crt_width_is_safe<F: Field + CanonicalEncoding, const D: usize>(
-    crt_product: &SmallNat,
-    width: usize,
-    rhs_abs_bound: u64,
-) -> bool {
-    let setup_abs_bound = setup_coeff_abs_bound::<F>();
-
-    let mut lhs = SmallNat::one();
-    lhs.mul_u128(2);
-    lhs.mul_u128(width as u128);
-    lhs.mul_u128(D as u128);
-    lhs.mul_u128(setup_abs_bound);
-    lhs.mul_u128(u128::from(rhs_abs_bound));
-    lhs < *crt_product
 }
 
 pub(super) fn safe_crt_chunk_width<
@@ -283,11 +129,11 @@ mod tests {
         )
         .expect("one i8 term should fit");
 
-        assert_eq!(width, 2047);
+        assert_eq!(width, 511);
     }
 
     #[test]
-    fn q128_balanced_digit_bound_recovers_chunk_width() {
+    fn q128_l8_balanced_digit_bound_matches_raw_i8_width() {
         const D: usize = 64;
         let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
         let balanced_width =
@@ -303,7 +149,7 @@ mod tests {
             )
             .expect("one full i8 term should fit");
 
-        assert_eq!(balanced_width, 4 * full_i8_width + 3);
+        assert_eq!(balanced_width, full_i8_width);
     }
 
     #[test]
@@ -327,7 +173,7 @@ mod tests {
         )
         .expect("Q32 i8 path should have headroom");
 
-        assert_eq!(width, 131_057);
+        assert_eq!(width, 32_764);
     }
 
     fn assert_profile_widths(
@@ -351,17 +197,17 @@ mod tests {
     fn selected_capacity_profiles_match_golden_safe_widths() {
         assert_profile_widths(
             selected_crt_i8_capacity_profile::<Prime32Offset99, 256>().unwrap(),
-            32_764,
+            8_191,
             8_191,
         );
         assert_profile_widths(
             selected_crt_i8_capacity_profile::<Prime64Offset59, 256>().unwrap(),
-            8_190,
+            2_047,
             2_047,
         );
         assert_profile_widths(
             selected_crt_i8_capacity_profile::<Prime128Offset275, 256>().unwrap(),
-            511,
+            127,
             127,
         );
     }

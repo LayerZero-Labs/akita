@@ -23,15 +23,16 @@ impl<E: Field> SetupContributionPlan<E> {
                     .shared_matrix
                     .ring_view_dyn(self.d_rows, self.d_physical_cols, d_d)?;
             for group in &self.groups {
-                for (row_idx, &row_weight) in group.d_weights.iter().enumerate() {
+                let (e_eq_slice, _, _) = group.require_column_eq_slices()?;
+                for (row_idx, &row_weight) in self.d_weights.iter().enumerate() {
                     if row_weight.is_zero() {
                         continue;
                     }
                     let row = d_view.row_flat(row_idx)?;
                     acc += evaluate_weighted_setup_row::<F, E>(
                         row,
-                        group.e_col_offset,
-                        &group.e_eq_slice,
+                        group.d_col_range.start,
+                        e_eq_slice,
                         row_weight,
                         alpha_pows_d,
                     )?;
@@ -40,6 +41,7 @@ impl<E: Field> SetupContributionPlan<E> {
         }
 
         for group in &self.groups {
+            let (_, t_eq_slice, z_eq_slice) = group.require_column_eq_slices()?;
             let a_view = setup
                 .shared_matrix
                 .ring_view_dyn(group.n_a, group.z_cols, d_a)?;
@@ -51,7 +53,7 @@ impl<E: Field> SetupContributionPlan<E> {
                 acc += evaluate_weighted_setup_row::<F, E>(
                     row,
                     0,
-                    &group.z_eq_slice,
+                    z_eq_slice,
                     row_weight,
                     alpha_pows_a,
                 )?;
@@ -68,7 +70,7 @@ impl<E: Field> SetupContributionPlan<E> {
                 acc += evaluate_weighted_setup_row::<F, E>(
                     row,
                     0,
-                    &group.t_eq_slice,
+                    t_eq_slice,
                     row_weight,
                     alpha_pows_b,
                 )?;

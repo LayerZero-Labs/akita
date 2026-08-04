@@ -2,11 +2,8 @@ use super::poly::DensePoly;
 use crate::backend::test_support::{
     aggregate_witnesses, negacyclic_tensor_product_challenges_i8, tensor_oracle_challenges,
 };
-use crate::compute::DirectRootWitnessSource;
 use akita_algebra::CyclotomicRing;
-use akita_types::{
-    tensor_column_partials_from_base_evals, tensor_packed_witness_evals, CleartextWitnessProof,
-};
+use akita_types::{tensor_column_partials_from_base_evals, tensor_packed_witness_evals};
 use jolt_field::Prime128OffsetA7F7 as F;
 use jolt_field::Ring;
 use jolt_field::{ExtField, FpExt4};
@@ -20,12 +17,17 @@ fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
 #[test]
 fn ring_fold_matches_dense_multiplication_reference() {
     const D: usize = 8;
-    let coeffs = (0..4).map(|idx| ring::<D>(10 * idx)).collect::<Vec<_>>();
+    let coeffs = (0..2).map(|idx| ring::<D>(10 * idx)).collect::<Vec<_>>();
     let poly = DensePoly::<F>::from_ring_coeffs(coeffs.clone());
-    let scalars = vec![ring::<D>(100), ring::<D>(200)];
-    let got = poly.fold_blocks_ring(&scalars, 2);
+    let scalars = vec![
+        ring::<D>(100),
+        ring::<D>(200),
+        ring::<D>(300),
+        ring::<D>(400),
+    ];
+    let got = poly.fold_blocks_ring(&scalars, 4);
     let expected = coeffs
-        .chunks(2)
+        .chunks(4)
         .map(|block| {
             block
                 .iter()
@@ -42,7 +44,7 @@ fn ring_fold_matches_dense_multiplication_reference() {
 #[test]
 fn dense_tensor_decompose_fold_matches_negacyclic_product_reference() {
     const D: usize = 16;
-    let block_len = 2;
+    let num_positions_per_block = 2;
     let num_digits = 2;
     let log_basis = 3;
     let tensor = tensor_oracle_challenges::<D>();
@@ -57,31 +59,22 @@ fn dense_tensor_decompose_fold_matches_negacyclic_product_reference() {
             .iter()
             .zip(product_challenges.chunks(4))
             .map(|(poly, challenges)| {
-                poly.decompose_fold::<D>(challenges, block_len, num_digits, log_basis)
+                poly.decompose_fold::<D>(challenges, num_positions_per_block, num_digits, log_basis)
             })
             .collect::<Vec<_>>(),
     );
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let got = DensePoly::<F>::decompose_fold_tensor_batched::<D>(
-        &poly_refs, &tensor, block_len, num_digits, log_basis,
+        &poly_refs,
+        &tensor,
+        num_positions_per_block,
+        num_digits,
+        log_basis,
     )
     .unwrap()
     .unwrap();
 
     assert_eq!(got, expected);
-}
-
-#[test]
-fn dense_direct_witness_is_field_elements() {
-    const D: usize = 8;
-    let num_vars = 4;
-    let evals = (0..(1usize << num_vars))
-        .map(|idx| F::from_u64(idx as u64 + 1))
-        .collect::<Vec<_>>();
-    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &evals).unwrap();
-    let witness =
-        <DensePoly<F> as DirectRootWitnessSource<F, D>>::direct_root_witness(&poly).unwrap();
-    assert!(matches!(witness, CleartextWitnessProof::FieldElements(_)));
 }
 
 #[test]

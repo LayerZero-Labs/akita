@@ -12,6 +12,7 @@ mod pointwise;
 mod runtime;
 #[cfg(test)]
 mod tests;
+mod transform_i16;
 mod transform_i32;
 mod wide512;
 
@@ -27,6 +28,7 @@ pub(crate) use pointwise::{
 };
 #[cfg(test)]
 use runtime::{select_avx_ntt_mode, AvxCpuFeatures};
+pub(crate) use transform_i16::{forward_ntt_i16, inverse_ntt_i16};
 pub(crate) use transform_i32::{
     forward_ntt_cyclic_i32, forward_ntt_i32, inverse_ntt_cyclic_i32, inverse_ntt_i32,
 };

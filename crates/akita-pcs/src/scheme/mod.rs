@@ -15,10 +15,10 @@ use akita_types::{
     dispatch_for_field, validate_ring_subfield_role, BasisMode, Commitment, FpExtEncoding,
     PolynomialGroupLayout,
 };
-use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, SetupContributionMode};
+use akita_types::{AkitaBatchedProof, AkitaCommitmentHint};
 use akita_types::{AkitaVerifierSetup, OpeningClaims};
-use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
-use jolt_field::{Fold, Unreduced};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, PseudoMersenne, Ring, Unreduced};
+
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -62,11 +62,14 @@ where
     }
 
     /// Derive verifier setup from prover setup.
-    #[must_use]
-    pub fn setup_verifier(setup: &AkitaProverSetup<Cfg::Field>) -> AkitaVerifierSetup<Cfg::Field> {
-        setup
-            .verifier_setup()
-            .expect("prover setup must convert to verifier setup")
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when setup conversion fails.
+    pub fn setup_verifier(
+        setup: &AkitaProverSetup<Cfg::Field>,
+    ) -> Result<AkitaVerifierSetup<Cfg::Field>, AkitaError> {
+        setup.verifier_setup()
     }
 
     /// Validate the field tower against the config schedule policy ring dimension.
@@ -185,7 +188,7 @@ where
         )
     }
 
-    /// Produce a fused batched opening proof for one shared opening point.
+    /// Produce a fused batched opening proof over ordered commitment groups.
     ///
     /// # Errors
     ///
@@ -205,7 +208,6 @@ where
         >,
         transcript: &mut T,
         basis: BasisMode,
-        setup_contribution_mode: SetupContributionMode,
     ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
     where
         T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
@@ -225,11 +227,10 @@ where
             claims,
             transcript,
             basis,
-            setup_contribution_mode,
         )?;
 
         tracing::info!(
-            levels = proof.num_fold_levels() + usize::from(proof.root.as_fold().is_some()),
+            levels = proof.num_fold_levels(),
             elapsed_s = t_prove_total.elapsed().as_secs_f64(),
             "akita batched prove complete"
         );
@@ -237,7 +238,7 @@ where
         Ok(proof)
     }
 
-    /// Verify a fused batched opening proof at one shared opening point.
+    /// Verify a fused batched opening proof over ordered commitment groups.
     ///
     /// # Errors
     ///
@@ -249,17 +250,9 @@ where
         transcript: &mut T,
         claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
         basis: BasisMode,
-        setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError> {
         Self::validate_verifier_policy_ring_dim(setup)?;
-        batched_verify_inner::<Cfg, T>(
-            proof,
-            setup,
-            transcript,
-            claims,
-            basis,
-            setup_contribution_mode,
-        )
+        batched_verify_inner::<Cfg, T>(proof, setup, transcript, claims, basis)
     }
 
     /// Protocol identifier.
@@ -275,28 +268,20 @@ fn batched_verify_inner<Cfg, T>(
     transcript: &mut T,
     claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
     basis: BasisMode,
-    setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field:
         Field + CanonicalEncoding + Unreduced + Ring + PseudoMersenne + Valid + AkitaSerialize,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    Cfg::ExtField: ExtField<Cfg::Field> + Ring + AkitaSerialize,
+    Cfg::ExtField: ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
     T: Transcript<Cfg::Field>,
 {
     let t_verify_akita = Instant::now();
-    akita_verifier::batched_verify::<Cfg, T>(
-        proof,
-        setup,
-        transcript,
-        claims,
-        basis,
-        setup_contribution_mode,
-    )?;
+    akita_verifier::batched_verify::<Cfg, T>(proof, setup, transcript, claims, basis)?;
 
     tracing::info!(
-        levels = proof.num_fold_levels() + 1,
+        levels = proof.num_fold_levels(),
         elapsed_s = t_verify_akita.elapsed().as_secs_f64(),
         "akita batched verify complete"
     );

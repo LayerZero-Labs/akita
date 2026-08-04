@@ -12,7 +12,7 @@ use akita_error::AkitaError;
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaExpandedSetup, AkitaInstanceDescriptor, AlgebraSection, BasisMode, CallSection,
-    FpExtEncoding, OpeningClaimsLayout, PlanSection, Schedule, SetupSection,
+    FoldSchedule, FpExtEncoding, OpeningClaimsLayout, PlanSection, SetupSection,
 };
 use jolt_field::{CanonicalEncoding, Field};
 
@@ -25,8 +25,8 @@ use jolt_field::{CanonicalEncoding, Field};
 /// transcript-determinism invariant holds.
 ///
 /// The per-proof effective `schedule` is digested into `PlanSection` and
-/// binds every expanded `LevelParams` — including the root-direct commit
-/// layout — so there is no separate setup-level digest to compute here.
+/// binds every expanded fold `CommittedGroupParams`, so there is no separate
+/// setup-level digest to compute here.
 ///
 /// # Errors
 ///
@@ -36,7 +36,7 @@ use jolt_field::{CanonicalEncoding, Field};
 pub fn bind_transcript_instance_descriptor<F, T, const D: usize, Cfg>(
     setup: &AkitaExpandedSetup<F>,
     opening_batch: &OpeningClaimsLayout,
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
     basis: BasisMode,
     transcript: &mut T,
 ) -> Result<(), AkitaError>
@@ -50,7 +50,7 @@ where
         AlgebraSection::for_fields::<F, Cfg::ExtField, D>()?,
         SetupSection::from_parts(
             Cfg::decomposition(),
-            Cfg::sis_modulus_family(),
+            Cfg::sis_modulus_profile(),
             setup.seed(),
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,

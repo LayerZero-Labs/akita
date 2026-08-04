@@ -209,9 +209,8 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
     p: i16,
     pinv: i16,
 ) {
-    let p_v = _mm256_set1_epi32(p as i32);
-    let pinv_v = _mm256_set1_epi32(pinv as i32);
-    let p_i16 = _mm256_set1_epi16(p);
+    let p_v = _mm256_set1_epi16(p);
+    let pinv_v = _mm256_set1_epi16(pinv);
     let mut i = 0;
     while i + 16 <= d {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
@@ -223,7 +222,7 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
             let sum = _mm256_add_epi16(a, prod);
             _mm256_storeu_si256(
                 acc.add(i) as *mut __m256i,
-                reduce_range_16x_i16_avx2(sum, p_i16),
+                reduce_range_16x_i16_avx2(sum, p_v),
             );
         }
         i += 16;

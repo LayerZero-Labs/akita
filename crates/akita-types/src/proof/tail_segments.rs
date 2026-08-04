@@ -1,15 +1,13 @@
-//! Segment-typed terminal witness layout, sizing, expansion, and construction.
+//! Segment-typed terminal witness layout, sizing, and construction.
 
 use std::io::Write;
 
-use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
-use akita_algebra::CyclotomicRing;
-use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use jolt_field::{CanonicalEncoding, Field};
 
+use super::{checked_shape_len, checked_shape_sequence_len, reserve_shape_len, DigitBlocks};
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{
     analyze_z_fold_golomb_encoding, golomb_rice_decode_vec, golomb_rice_encode_vec,
@@ -19,23 +17,22 @@ use crate::golomb_rice::{
 };
 use crate::instance_descriptor::FoldLinfProtocolBinding;
 use crate::layout::field_bytes;
-use crate::proof::CleartextWitnessShape;
 use crate::proof::{RingVec, TerminalWitnessTranscriptParts};
-use crate::sis::compute_num_digits_full_field;
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits_from_rule};
-use crate::{LevelParams, LevelParamsLike, RelationMatrixRowLayout};
+use crate::{
+    CommittedGroupParams, LevelParamsLike, TerminalCommittedGroupParams, WitnessLayout,
+    WitnessUnitLayout,
+};
+use akita_error::AkitaError;
 
 /// Public segment geometry for a transparent terminal witness.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TailSegmentLayout {
     pub ring_dimension: usize,
-    pub log_basis: u32,
     /// Per-group terminal segments in witness order. Scalar/single-group tails
     /// are represented as exactly one group.
     pub groups: Vec<TailSegmentGroupLayout>,
-    /// Shared relation quotient tail, after all group-local z/e/t segments.
-    pub r_field_elems: usize,
-    /// Hypercube length after expansion to digit planes (legacy packed layout used the same count).
+    /// Logical digit-plane length used for schedule sizing.
     pub logical_num_elems: usize,
 }
 
@@ -45,33 +42,35 @@ pub struct TailSegmentGroupLayout {
     pub z_coords: usize,
     pub e_field_elems: usize,
     pub t_field_elems: usize,
+    /// Golomb-Rice remainder width selected from the honest response cap.
+    pub z_rice_low_bits: u32,
     /// Scheduled byte budget for this group's Golomb-coded z payload.
     pub z_payload_bytes: usize,
 }
 
-/// Shape for a segment-typed terminal witness payload.
+/// Shape of the clear terminal response payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SegmentTypedWitnessShape {
+pub struct TerminalResponseShape {
     pub layout: TailSegmentLayout,
 }
 
-/// Segment-typed terminal witness carried on the wire.
+/// Clear terminal response carried on the wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SegmentTypedWitness<F: Field> {
+pub struct TerminalResponse<F: Field> {
     pub layout: TailSegmentLayout,
     pub z_payloads: Vec<Vec<u8>>,
     pub e_fields: RingVec<F>,
     pub t_fields: RingVec<F>,
-    pub r_fields: RingVec<F>,
 }
 
-pub struct SegmentTypedWitnessGroupParts<'a, F: Field> {
+pub struct TerminalResponseGroupParts<'a, F: Field> {
     pub params: &'a dyn LevelParamsLike,
     pub num_w_vectors: usize,
     pub num_t_vectors: usize,
     pub num_z_segments: usize,
     pub e_folded: &'a RingVec<F>,
-    pub recomposed_inner_rows: &'a [RingVec<F>],
+    /// Block-major native-A rows: `[block][A row][coefficient]`.
+    pub recomposed_inner_rows: &'a RingVec<F>,
     pub z_folded_centered_flat: &'a [i32],
 }
 
@@ -82,43 +81,48 @@ impl TailSegmentLayout {
     /// schedule digest and [`AkitaSerialize`].
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         push_usize(bytes, self.ring_dimension);
-        push_u32(bytes, self.log_basis);
         push_usize(bytes, self.groups.len());
         for group in &self.groups {
             push_usize(bytes, group.z_coords);
             push_usize(bytes, group.e_field_elems);
             push_usize(bytes, group.t_field_elems);
+            push_u32(bytes, group.z_rice_low_bits);
             push_usize(bytes, group.z_payload_bytes);
         }
-        push_usize(bytes, self.r_field_elems);
         push_usize(bytes, self.logical_num_elems);
     }
 
     #[must_use]
     pub fn z_coords(&self) -> usize {
-        self.groups.iter().map(|group| group.z_coords).sum()
+        self.groups
+            .iter()
+            .fold(0usize, |total, group| total.saturating_add(group.z_coords))
     }
 
     #[must_use]
     pub fn e_field_elems(&self) -> usize {
-        self.groups.iter().map(|group| group.e_field_elems).sum()
+        self.groups.iter().fold(0usize, |total, group| {
+            total.saturating_add(group.e_field_elems)
+        })
     }
 
     #[must_use]
     pub fn t_field_elems(&self) -> usize {
-        self.groups.iter().map(|group| group.t_field_elems).sum()
+        self.groups.iter().fold(0usize, |total, group| {
+            total.saturating_add(group.t_field_elems)
+        })
     }
 
     #[must_use]
     pub fn z_payload_bytes(&self) -> usize {
-        self.groups.iter().map(|group| group.z_payload_bytes).sum()
+        self.groups.iter().fold(0usize, |total, group| {
+            total.saturating_add(group.z_payload_bytes)
+        })
     }
 
     #[must_use]
     pub fn admits_realized(&self, realized: &Self) -> bool {
         self.ring_dimension == realized.ring_dimension
-            && self.log_basis == realized.log_basis
-            && self.r_field_elems == realized.r_field_elems
             && self.logical_num_elems == realized.logical_num_elems
             && self.groups.len() == realized.groups.len()
             && self
@@ -129,6 +133,7 @@ impl TailSegmentLayout {
                     scheduled.z_coords == realized.z_coords
                         && scheduled.e_field_elems == realized.e_field_elems
                         && scheduled.t_field_elems == realized.t_field_elems
+                        && scheduled.z_rice_low_bits == realized.z_rice_low_bits
                         && realized.z_payload_bytes <= scheduled.z_payload_bytes
                 })
     }
@@ -146,13 +151,41 @@ impl Valid for TailSegmentLayout {
                 "tail segment layout has no groups".to_string(),
             ));
         }
+        checked_shape_sequence_len(self.groups.len())?;
+        checked_shape_len(self.logical_num_elems)?;
+        let mut z_coords = 0usize;
+        let mut e_field_elems = 0usize;
+        let mut t_field_elems = 0usize;
+        let mut z_payload_bytes = 0usize;
         for group in &self.groups {
             if group.z_coords == 0 {
                 return Err(SerializationError::InvalidData(
                     "tail segment group has zero z_coords".to_string(),
                 ));
             }
+            z_coords = z_coords.checked_add(group.z_coords).ok_or_else(|| {
+                SerializationError::InvalidData("tail z coordinate count overflow".to_string())
+            })?;
+            e_field_elems = e_field_elems
+                .checked_add(group.e_field_elems)
+                .ok_or_else(|| {
+                    SerializationError::InvalidData("tail e field count overflow".to_string())
+                })?;
+            t_field_elems = t_field_elems
+                .checked_add(group.t_field_elems)
+                .ok_or_else(|| {
+                    SerializationError::InvalidData("tail t field count overflow".to_string())
+                })?;
+            z_payload_bytes = z_payload_bytes
+                .checked_add(group.z_payload_bytes)
+                .ok_or_else(|| {
+                    SerializationError::InvalidData("tail z payload budget overflow".to_string())
+                })?;
         }
+        checked_shape_len(z_coords)?;
+        checked_shape_len(e_field_elems)?;
+        checked_shape_len(t_field_elems)?;
+        checked_shape_len(z_payload_bytes)?;
         Ok(())
     }
 }
@@ -165,10 +198,7 @@ impl AkitaSerialize for TailSegmentLayout {
     ) -> Result<(), SerializationError> {
         self.ring_dimension
             .serialize_with_mode(&mut writer, compress)?;
-        self.log_basis.serialize_with_mode(&mut writer, compress)?;
         self.groups.serialize_with_mode(&mut writer, compress)?;
-        self.r_field_elems
-            .serialize_with_mode(&mut writer, compress)?;
         self.logical_num_elems
             .serialize_with_mode(&mut writer, compress)?;
         Ok(())
@@ -176,9 +206,7 @@ impl AkitaSerialize for TailSegmentLayout {
 
     fn serialized_size(&self, compress: Compress) -> usize {
         self.ring_dimension.serialized_size(compress)
-            + self.log_basis.serialized_size(compress)
             + self.groups.serialized_size(compress)
-            + self.r_field_elems.serialized_size(compress)
             + self.logical_num_elems.serialized_size(compress)
     }
 }
@@ -194,6 +222,8 @@ impl AkitaSerialize for TailSegmentGroupLayout {
             .serialize_with_mode(&mut writer, compress)?;
         self.t_field_elems
             .serialize_with_mode(&mut writer, compress)?;
+        self.z_rice_low_bits
+            .serialize_with_mode(&mut writer, compress)?;
         self.z_payload_bytes
             .serialize_with_mode(&mut writer, compress)?;
         Ok(())
@@ -203,6 +233,7 @@ impl AkitaSerialize for TailSegmentGroupLayout {
         self.z_coords.serialized_size(compress)
             + self.e_field_elems.serialized_size(compress)
             + self.t_field_elems.serialized_size(compress)
+            + self.z_rice_low_bits.serialized_size(compress)
             + self.z_payload_bytes.serialized_size(compress)
     }
 }
@@ -220,6 +251,7 @@ impl AkitaDeserialize for TailSegmentGroupLayout {
             z_coords: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
             e_field_elems: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
             t_field_elems: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            z_rice_low_bits: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
             z_payload_bytes: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         Ok(out)
@@ -236,20 +268,28 @@ impl AkitaDeserialize for TailSegmentLayout {
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let ring_dimension = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let log_basis = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let groups = Vec::<TailSegmentGroupLayout>::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &(),
-        )?;
-        let r_field_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let encoded_group_len = u64::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let group_len = usize::try_from(encoded_group_len).map_err(|_| {
+            SerializationError::LengthLimitExceeded {
+                len: encoded_group_len,
+                max: super::MAX_PROOF_SHAPE_SEQUENCE_LEN,
+            }
+        })?;
+        checked_shape_sequence_len(group_len)?;
+        let mut groups = Vec::new();
+        reserve_shape_len(&mut groups, group_len)?;
+        for _ in 0..group_len {
+            groups.push(TailSegmentGroupLayout::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?);
+        }
         let logical_num_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
             ring_dimension,
-            log_basis,
             groups,
-            r_field_elems,
             logical_num_elems,
         };
         if matches!(validate, Validate::Yes) {
@@ -259,21 +299,69 @@ impl AkitaDeserialize for TailSegmentLayout {
     }
 }
 
-impl SegmentTypedWitnessShape {
+impl TerminalResponseShape {
+    /// Derive the scalar terminal response directly from raw response
+    /// coordinates. No `t`/`e` gadget-plane equivalent is introduced.
+    pub fn derive(
+        params: &TerminalCommittedGroupParams,
+        admission_cap: u128,
+    ) -> Result<Self, AkitaError> {
+        if admission_cap == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "terminal response admission cap must be nonzero".to_string(),
+            ));
+        }
+        let d = params.d_a();
+        let z_coords = params
+            .inner_width()
+            .checked_mul(d)
+            .ok_or_else(|| AkitaError::InvalidSetup("terminal z coordinates overflow".into()))?;
+        let e_field_elems = params
+            .num_live_blocks
+            .checked_mul(d)
+            .ok_or_else(|| AkitaError::InvalidSetup("terminal e coordinates overflow".into()))?;
+        let t_field_elems = params
+            .num_live_blocks
+            .checked_mul(params.inner_commit_matrix.output_rank())
+            .and_then(|value| value.checked_mul(d))
+            .ok_or_else(|| AkitaError::InvalidSetup("terminal t coordinates overflow".into()))?;
+        let z_rice_low_bits = cap_rice_low_bits(admission_cap);
+        let z_payload_bytes = z_payload_budget_from_cap(z_coords, admission_cap);
+        let logical_num_elems = z_coords
+            .checked_add(e_field_elems)
+            .and_then(|value| value.checked_add(t_field_elems))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("terminal response coordinates overflow".into())
+            })?;
+        Ok(Self {
+            layout: TailSegmentLayout {
+                ring_dimension: d,
+                groups: vec![TailSegmentGroupLayout {
+                    z_coords,
+                    e_field_elems,
+                    t_field_elems,
+                    z_rice_low_bits,
+                    z_payload_bytes,
+                }],
+                logical_num_elems,
+            },
+        })
+    }
+
     /// Append canonical Fiat-Shamir descriptor bytes (fixed little-endian).
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         self.layout.append_descriptor_bytes(bytes);
     }
 }
 
-impl Valid for SegmentTypedWitnessShape {
+impl Valid for TerminalResponseShape {
     fn check(&self) -> Result<(), SerializationError> {
         self.layout.check()?;
         Ok(())
     }
 }
 
-impl AkitaSerialize for SegmentTypedWitnessShape {
+impl AkitaSerialize for TerminalResponseShape {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -288,7 +376,7 @@ impl AkitaSerialize for SegmentTypedWitnessShape {
     }
 }
 
-impl AkitaDeserialize for SegmentTypedWitnessShape {
+impl AkitaDeserialize for TerminalResponseShape {
     type Context = ();
 
     fn deserialize_with_mode<R: std::io::Read>(
@@ -307,12 +395,9 @@ impl AkitaDeserialize for SegmentTypedWitnessShape {
     }
 }
 
-impl<F: Field + Valid> Valid for SegmentTypedWitness<F> {
+impl<F: Field + Valid> Valid for TerminalResponse<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        SegmentTypedWitnessShape {
-            layout: self.layout.clone(),
-        }
-        .check()?;
+        self.layout.check()?;
         if self.z_payloads.len() != self.layout.groups.len() {
             return Err(SerializationError::InvalidData(
                 "z payload group count mismatch".to_string(),
@@ -335,16 +420,39 @@ impl<F: Field + Valid> Valid for SegmentTypedWitness<F> {
                 "t segment field length mismatch".to_string(),
             ));
         }
-        if self.r_fields.coeff_len() != self.layout.r_field_elems {
-            return Err(SerializationError::InvalidData(
-                "r segment field length mismatch".to_string(),
-            ));
-        }
         Ok(())
     }
 }
 
-impl<F: Field + CanonicalEncoding + AkitaSerialize> AkitaSerialize for SegmentTypedWitness<F> {
+impl<F: Field> TerminalResponse<F> {
+    /// Shape descriptor for this terminal witness.
+    pub fn shape(&self) -> TerminalResponseShape {
+        TerminalResponseShape {
+            layout: self.layout.clone(),
+        }
+    }
+
+    /// Number of logical field elements carried by this witness.
+    pub fn num_elems(&self) -> usize {
+        self.layout.logical_num_elems
+    }
+}
+
+impl TerminalResponseShape {
+    /// Number of logical field elements represented by this shape.
+    #[must_use]
+    pub fn logical_num_elems(&self) -> usize {
+        self.layout.logical_num_elems
+    }
+
+    /// Whether a realized terminal layout fits this scheduled upper bound.
+    #[must_use]
+    pub fn admits_realized(&self, realized: &Self) -> bool {
+        self.layout.admits_realized(&realized.layout)
+    }
+}
+
+impl<F: Field + CanonicalEncoding + AkitaSerialize> AkitaSerialize for TerminalResponse<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -365,22 +473,22 @@ impl<F: Field + CanonicalEncoding + AkitaSerialize> AkitaSerialize for SegmentTy
             })
             .sum::<usize>();
         z_bytes.saturating_add(
-            (self.layout.e_field_elems() + self.layout.t_field_elems() + self.layout.r_field_elems)
+            self.layout
+                .e_field_elems()
+                .saturating_add(self.layout.t_field_elems())
                 .saturating_mul(field_bytes(F::MODULUS_BITS)),
         )
     }
 }
 
-impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for SegmentTypedWitness<F>
-{
-    type Context = SegmentTypedWitnessShape;
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for TerminalResponse<F> {
+    type Context = TerminalResponseShape;
 
     fn deserialize_with_mode<R: std::io::Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
-        ctx: &SegmentTypedWitnessShape,
+        ctx: &TerminalResponseShape,
     ) -> Result<Self, SerializationError> {
         if matches!(validate, Validate::Yes) {
             ctx.check()?;
@@ -390,7 +498,7 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
             let z_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
             if z_len > group.z_payload_bytes {
                 return Err(SerializationError::InvalidData(format!(
-                    "segment-typed z payload length {z_len} exceeds scheduled budget {}",
+                    "terminal z payload length {z_len} exceeds scheduled budget {}",
                     group.z_payload_bytes
                 )));
             }
@@ -410,18 +518,11 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
             validate,
             &ctx.layout.t_field_elems(),
         )?;
-        let r_fields = RingVec::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &ctx.layout.r_field_elems,
-        )?;
         let out = Self {
             layout: ctx.layout.clone(),
             z_payloads,
             e_fields,
             t_fields,
-            r_fields,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -430,8 +531,8 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     }
 }
 
-impl<F: Field + CanonicalEncoding + AkitaSerialize> SegmentTypedWitness<F> {
-    /// Canonical segment bytes in wire order (`z ‖ e ‖ t ‖ r`).
+impl<F: Field + CanonicalEncoding + AkitaSerialize> TerminalResponse<F> {
+    /// Canonical segment bytes in wire order (`z ‖ e ‖ t`).
     pub fn wire_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         self.append_wire_segments(&mut out, Compress::No)
@@ -450,26 +551,28 @@ impl<F: Field + CanonicalEncoding + AkitaSerialize> SegmentTypedWitness<F> {
         }
         append_field_coeffs(writer, self.e_fields.coeffs(), compress)?;
         append_field_coeffs(writer, self.t_fields.coeffs(), compress)?;
-        append_field_coeffs(writer, self.r_fields.coeffs(), compress)?;
         Ok(())
     }
 
-    /// Split wire bytes into transcript-bound `e` and remainder segments.
+    /// Materialize pre-challenge `e` bytes and the post-challenge `z` response.
+    /// This helper omits `t`: the predecessor binds it as outgoing state and
+    /// terminal current-state replay owns its second transcript binding.
     pub fn terminal_transcript_parts(&self) -> Result<TerminalWitnessTranscriptParts, AkitaError> {
-        let e_hat = field_segment_bytes(&self.e_fields);
-        if e_hat.is_empty() {
+        let e_folded = raw_field_segment_bytes(&self.e_fields)?;
+        if e_folded.is_empty() {
             return Err(AkitaError::InvalidProof);
         }
-        let mut remainder = Vec::new();
+        if self.t_fields.coeffs().is_empty() {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut response = Vec::new();
         for payload in &self.z_payloads {
-            remainder.extend_from_slice(payload);
+            response.extend_from_slice(payload);
         }
-        append_field_coeffs_vec(&mut remainder, self.t_fields.coeffs())?;
-        append_field_coeffs_vec(&mut remainder, self.r_fields.coeffs())?;
-        if remainder.is_empty() {
+        if response.is_empty() {
             return Err(AkitaError::InvalidProof);
         }
-        Ok(TerminalWitnessTranscriptParts { e_hat, remainder })
+        Ok(TerminalWitnessTranscriptParts { e_folded, response })
     }
 }
 
@@ -500,13 +603,7 @@ fn append_field_coeffs_vec<F: Field + AkitaSerialize>(
     Ok(())
 }
 
-fn field_segment_bytes<F: Field + AkitaSerialize>(fields: &RingVec<F>) -> Vec<u8> {
-    let mut out = Vec::new();
-    append_field_coeffs_vec(&mut out, fields.coeffs()).expect("in-memory field serialization");
-    out
-}
-
-/// Canonical transcript bytes for the terminal `e_folded` (`e`) segment.
+/// Canonical transcript bytes for a raw-field terminal segment.
 ///
 /// Both the prover terminal absorb and the verifier's decoded-witness replay
 /// route through this single routine, so the bound `e_hat` bytes are identical
@@ -515,58 +612,28 @@ fn field_segment_bytes<F: Field + AkitaSerialize>(fields: &RingVec<F>) -> Vec<u8
 /// # Errors
 ///
 /// Propagates field serialization failures as [`AkitaError::InvalidProof`].
-pub fn e_folded_segment_bytes<F>(e_folded: &RingVec<F>) -> Result<Vec<u8>, AkitaError>
+pub fn raw_field_segment_bytes<F>(fields: &RingVec<F>) -> Result<Vec<u8>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
 {
-    let fields = e_folded.clone().into_compact();
     let mut out = Vec::new();
     append_field_coeffs_vec(&mut out, fields.coeffs())?;
     Ok(out)
 }
 
-/// `num_t_vectors` for terminal fold grind when Golomb encodability must match witness build.
-///
-/// Returns `None` for non-terminal layouts, non-segment-typed tails, or callers without a
-/// scheduled shape (ZK packed-digit tails, unit tests).
-///
-/// # Errors
-///
-/// Propagates layout multiplicity errors.
-pub fn terminal_golomb_grind_tail_t_vectors(
-    lp: &LevelParams,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
-    witness_shape: Option<&CleartextWitnessShape>,
-) -> Result<Option<usize>, AkitaError> {
-    if !matches!(
-        relation_matrix_row_layout,
-        RelationMatrixRowLayout::WithoutDBlock
-    ) {
-        return Ok(None);
-    }
-    let Some(shape) = witness_shape else {
-        return Ok(None);
-    };
-    let CleartextWitnessShape::SegmentTyped(scheduled) = shape else {
-        return Ok(None);
-    };
-    let (_, num_t_vectors, _) = tail_segment_multiplicities_from_layout(lp, &scheduled.layout, 0)?;
-    Ok(Some(num_t_vectors))
-}
-
 /// Runtime Golomb-Rice **wire** parameters for terminal `z` encode/decode.
 ///
 /// Uses wire low bits ([`crate::wire_rice_low_bits`]); planner byte budgets use
-/// [`crate::cap_rice_low_bits`] via [`segment_typed_z_payload_bytes`].
+/// [`crate::cap_rice_low_bits`] via [`terminal_response_z_payload_bytes`].
 /// Rice `k` and zigzag width `W` are derived from the per-coefficient fold-response
-/// cap [`crate::LevelParams::fold_witness_linf_cap_for_claims`] (`min(β_inf, t*)` or `β_inf`
+/// cap [`crate::CommittedGroupParams::fold_witness_linf_cap_for_claims`] (`min(β_inf, t*)` or `β_inf`
 /// alone), matching [`crate::sis::fold_witness_digit_plan`] and grind acceptance.
 ///
 /// # Errors
 ///
 /// Propagates fold cap setup errors.
 pub fn tail_golomb_rice_z_params(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     num_t_vectors: usize,
 ) -> Result<(u32, u32), AkitaError> {
     let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
@@ -574,36 +641,25 @@ pub fn tail_golomb_rice_z_params(
 }
 
 fn tail_golomb_rice_z_params_from_cap(cap: u128) -> Result<(u32, u32), AkitaError> {
+    tail_golomb_rice_z_params_from_caps(cap, cap)
+}
+
+fn tail_golomb_rice_z_params_from_caps(
+    coding_scale: u128,
+    admissible_cap: u128,
+) -> Result<(u32, u32), AkitaError> {
     let binding = FoldLinfProtocolBinding::CURRENT;
     let rice_low_bits = wire_rice_low_bits_from_rule(
-        cap,
+        coding_scale,
         binding.wire_rice_low_bits_rule_id,
         binding.wire_rice_low_bits_delta,
     )?;
-    let w = golomb_rice_zigzag_width(cap);
+    let w = golomb_rice_zigzag_width(admissible_cap);
     Ok((rice_low_bits, w))
 }
 
-/// Decode terminal `z` Golomb payload and enforce public admissibility.
-///
-/// Rejects coefficients outside the fold `‖z‖_∞` cap, unary quotients above the cap-derived
-/// maximum, non-minimal byte padding, and payloads exceeding the optional schedule byte budget.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidProof`] when the payload is inadmissible.
+/// Decode terminal `z` using its single capacity-based admission and coding cap.
 pub fn decode_terminal_z_golomb_payload(
-    payload: &[u8],
-    z_coords: usize,
-    lp: &LevelParams,
-    num_t_vectors: usize,
-    budget_bytes: Option<usize>,
-) -> Result<Vec<i64>, AkitaError> {
-    let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
-    decode_terminal_z_golomb_payload_with_cap(payload, z_coords, cap, budget_bytes)
-}
-
-fn decode_terminal_z_golomb_payload_with_cap(
     payload: &[u8],
     z_coords: usize,
     cap: u128,
@@ -634,14 +690,14 @@ fn decode_terminal_z_golomb_payload_with_cap(
     Ok(values)
 }
 
-/// Decode centered fold-response `z` coefficients from a segment-typed witness.
+/// Decode centered fold-response `z` coefficients from a terminal response.
 ///
 /// # Errors
 ///
 /// Propagates decode and public-parameter setup errors.
-pub fn z_fold_decoded_from_segment<F: Field>(
-    witness: &SegmentTypedWitness<F>,
-    lp: &LevelParams,
+pub fn z_fold_decoded_from_terminal_response<F: Field>(
+    witness: &TerminalResponse<F>,
+    lp: &CommittedGroupParams,
     num_t_vectors: usize,
 ) -> Result<Vec<i64>, AkitaError> {
     let payload = witness.z_payloads.first().ok_or(AkitaError::InvalidProof)?;
@@ -650,7 +706,8 @@ pub fn z_fold_decoded_from_segment<F: Field>(
         .groups
         .first()
         .ok_or(AkitaError::InvalidProof)?;
-    decode_terminal_z_golomb_payload(payload, group.z_coords, lp, num_t_vectors, None)
+    let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
+    decode_terminal_z_golomb_payload(payload, group.z_coords, cap, None)
 }
 
 fn z_payload_budget_from_cap(z_coords: usize, cap: u128) -> usize {
@@ -659,18 +716,18 @@ fn z_payload_budget_from_cap(z_coords: usize, cap: u128) -> usize {
     z_coords.saturating_mul(bits_per_coord).div_ceil(8)
 }
 
-/// Distribution / Golomb model audit for a realized segment-typed `z` payload.
+/// Distribution / Golomb model audit for a realized terminal `z` payload.
 ///
 /// # Errors
 ///
 /// Propagates decode and public-parameter setup errors.
-pub fn z_fold_encoding_stats_from_segment<F: Field>(
-    witness: &SegmentTypedWitness<F>,
-    lp: &LevelParams,
+pub fn z_fold_encoding_stats_from_terminal_response<F: Field>(
+    witness: &TerminalResponse<F>,
+    lp: &CommittedGroupParams,
     num_t_vectors: usize,
     field_bits: u32,
 ) -> Result<ZFoldEncodingStats, AkitaError> {
-    let z_values = z_fold_decoded_from_segment(witness, lp, num_t_vectors)?;
+    let z_values = z_fold_decoded_from_terminal_response(witness, lp, num_t_vectors)?;
     let (_, zigzag_w) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
     let witness_linf_cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
     let depth_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
@@ -679,18 +736,18 @@ pub fn z_fold_encoding_stats_from_segment<F: Field>(
         witness_linf_cap,
         zigzag_w,
         depth_fold,
-        lp.log_basis,
+        lp.log_basis_open,
         witness.z_payloads.first().map_or(0, Vec::len),
     )
 }
 
-pub fn tail_segment_layout_from_groups<'a>(
-    lp: &LevelParams,
+fn tail_segment_layout_from_groups<'a>(
+    lp: &CommittedGroupParams,
     groups: impl IntoIterator<Item = (&'a dyn LevelParamsLike, usize, usize, usize)>,
-    num_commitment_groups: usize,
+    _num_commitment_groups: usize,
     field_bits: u32,
 ) -> Result<TailSegmentLayout, AkitaError> {
-    let d = lp.ring_dimension;
+    let d = lp.d_a();
     if d == 0 {
         return Err(AkitaError::InvalidSetup(
             "tail segment layout has zero ring dimension".to_string(),
@@ -705,20 +762,21 @@ pub fn tail_segment_layout_from_groups<'a>(
     let mut group_layouts = Vec::with_capacity(groups.len());
     let mut total_plane_rings = 0usize;
     for (params, num_w_vectors, num_t_vectors, num_z_segments) in groups {
+        let depth_witness = params.num_digits_inner();
+        let depth_commit = params.num_digits_outer();
         let depth_open = params.num_digits_open();
-        let depth_commit = params.num_digits_commit();
         let depth_fold = lp.num_digits_fold_for_params(params, num_t_vectors, field_bits)?;
-        if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
+        if depth_witness == 0 || depth_commit == 0 || depth_open == 0 || depth_fold == 0 {
             return Err(AkitaError::InvalidSetup(
                 "tail segment layout has zero digit depth".to_string(),
             ));
         }
         let total_w_blocks = params
-            .num_blocks()
+            .num_live_blocks()
             .checked_mul(num_w_vectors)
             .ok_or_else(|| AkitaError::InvalidSetup("tail e block count overflow".to_string()))?;
         let total_t_blocks = params
-            .num_blocks()
+            .num_live_blocks()
             .checked_mul(num_t_vectors)
             .ok_or_else(|| AkitaError::InvalidSetup("tail t block count overflow".to_string()))?;
         let e_field_elems = total_w_blocks
@@ -729,13 +787,13 @@ pub fn tail_segment_layout_from_groups<'a>(
             .and_then(|n| n.checked_mul(d))
             .ok_or_else(|| AkitaError::InvalidSetup("tail t field count overflow".to_string()))?;
         let z_coords = num_z_segments
-            .checked_mul(params.block_len())
-            .and_then(|n| n.checked_mul(depth_commit))
+            .checked_mul(params.num_positions_per_block())
+            .and_then(|n| n.checked_mul(depth_witness))
             .and_then(|n| n.checked_mul(d))
             .ok_or_else(|| AkitaError::InvalidSetup("tail z coord count overflow".to_string()))?;
         let z_plane_rings = num_z_segments
-            .checked_mul(params.block_len())
-            .and_then(|n| n.checked_mul(depth_commit))
+            .checked_mul(params.num_positions_per_block())
+            .and_then(|n| n.checked_mul(depth_witness))
             .and_then(|n| n.checked_mul(depth_fold))
             .ok_or_else(|| AkitaError::InvalidSetup("tail z plane count overflow".to_string()))?;
         let e_plane_rings = total_w_blocks
@@ -743,14 +801,21 @@ pub fn tail_segment_layout_from_groups<'a>(
             .ok_or_else(|| AkitaError::InvalidSetup("tail e plane count overflow".to_string()))?;
         let t_plane_rings = total_t_blocks
             .checked_mul(params.a_rows_len())
-            .and_then(|n| n.checked_mul(depth_open))
+            .and_then(|n| n.checked_mul(depth_commit))
             .ok_or_else(|| AkitaError::InvalidSetup("tail t plane count overflow".to_string()))?;
         let z_cap = lp.fold_witness_linf_cap_for_params(params, num_t_vectors, field_bits)?;
+        let security_cap = lp.terminal_response_linf_limit_for_params(params)?;
+        if z_cap > security_cap {
+            return Err(AkitaError::InvalidSetup(format!(
+                "terminal honest response cap {z_cap} exceeds inner-matrix SIS capacity {security_cap}"
+            )));
+        }
         let z_payload_bytes = z_payload_budget_from_cap(z_coords, z_cap);
         group_layouts.push(TailSegmentGroupLayout {
             z_coords,
             e_field_elems,
             t_field_elems,
+            z_rice_low_bits: cap_rice_low_bits(z_cap),
             z_payload_bytes,
         });
         total_plane_rings = total_plane_rings
@@ -759,33 +824,32 @@ pub fn tail_segment_layout_from_groups<'a>(
             .and_then(|n| n.checked_add(t_plane_rings))
             .ok_or_else(|| AkitaError::InvalidSetup("tail logical plane overflow".to_string()))?;
     }
-    let r_plane_rings = lp
-        .relation_matrix_row_count_for(
-            num_commitment_groups,
-            RelationMatrixRowLayout::WithoutDBlock,
-        )?
-        .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
-        .ok_or_else(|| AkitaError::InvalidSetup("tail r plane count overflow".to_string()))?;
-    let total_plane_rings = total_plane_rings
-        .checked_add(r_plane_rings)
-        .ok_or_else(|| AkitaError::InvalidSetup("tail logical plane overflow".to_string()))?;
     let logical_num_elems = total_plane_rings
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail logical elem overflow".to_string()))?;
-    let r_field_elems = lp
-        .relation_matrix_row_count_for(
-            num_commitment_groups,
-            RelationMatrixRowLayout::WithoutDBlock,
-        )?
-        .checked_mul(d)
-        .ok_or_else(|| AkitaError::InvalidSetup("tail r field count overflow".to_string()))?;
     Ok(TailSegmentLayout {
         ring_dimension: d,
-        log_basis: lp.log_basis,
         groups: group_layouts,
-        r_field_elems,
         logical_num_elems,
     })
+}
+
+impl TerminalResponseShape {
+    /// Derive the checked terminal witness shape for the scheduled groups.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when dimensions are empty or any
+    /// derived segment size overflows.
+    pub fn from_groups<'a>(
+        lp: &CommittedGroupParams,
+        field_bits: u32,
+        groups: impl IntoIterator<Item = (&'a dyn LevelParamsLike, usize, usize, usize)>,
+    ) -> Result<Self, AkitaError> {
+        Ok(Self {
+            layout: tail_segment_layout_from_groups(lp, groups, 0, field_bits)?,
+        })
+    }
 }
 
 /// Recover tail multiplicities from a committed [`TailSegmentLayout`].
@@ -794,11 +858,11 @@ pub fn tail_segment_layout_from_groups<'a>(
 ///
 /// Returns an error when the layout is inconsistent with `lp`.
 pub fn tail_segment_multiplicities_from_layout(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     layout: &TailSegmentLayout,
     group_index: usize,
 ) -> Result<(usize, usize, usize), AkitaError> {
-    tail_segment_multiplicities_from_layout_for_params(lp, lp.ring_dimension, layout, group_index)
+    tail_segment_multiplicities_from_layout_for_params(lp, lp.d_a(), layout, group_index)
 }
 
 pub fn tail_segment_multiplicities_from_layout_for_params(
@@ -808,7 +872,7 @@ pub fn tail_segment_multiplicities_from_layout_for_params(
     group_index: usize,
 ) -> Result<(usize, usize, usize), AkitaError> {
     let d = layout.ring_dimension;
-    if d == 0 || d != ring_dimension || params.num_blocks() == 0 {
+    if d == 0 || d != ring_dimension || params.num_live_blocks() == 0 {
         return Err(AkitaError::InvalidSetup(
             "tail segment layout has zero ring dimension or block count".to_string(),
         ));
@@ -818,7 +882,7 @@ pub fn tail_segment_multiplicities_from_layout_for_params(
         .get(group_index)
         .ok_or(AkitaError::InvalidProof)?;
     let e_unit = d
-        .checked_mul(params.num_blocks())
+        .checked_mul(params.num_live_blocks())
         .ok_or_else(|| AkitaError::InvalidSetup("tail e unit overflow".to_string()))?;
     if !group.e_field_elems.is_multiple_of(e_unit) {
         return Err(AkitaError::InvalidProof);
@@ -834,8 +898,8 @@ pub fn tail_segment_multiplicities_from_layout_for_params(
     let num_t_vectors = group.t_field_elems / t_unit;
 
     let z_unit = params
-        .block_len()
-        .checked_mul(params.num_digits_commit())
+        .num_positions_per_block()
+        .checked_mul(params.num_digits_inner())
         .and_then(|n| n.checked_mul(d))
         .ok_or_else(|| AkitaError::InvalidSetup("tail z unit overflow".to_string()))?;
     if !group.z_coords.is_multiple_of(z_unit) {
@@ -854,8 +918,8 @@ pub fn tail_segment_multiplicities_from_layout_for_params(
 /// # Errors
 ///
 /// Propagates fold cap setup errors.
-pub fn segment_typed_z_payload_bytes(
-    lp: &LevelParams,
+pub fn terminal_response_z_payload_bytes(
+    lp: &CommittedGroupParams,
     layout: &TailSegmentLayout,
     num_t_vectors: usize,
 ) -> Result<usize, AkitaError> {
@@ -863,149 +927,33 @@ pub fn segment_typed_z_payload_bytes(
     Ok(z_payload_budget_from_cap(layout.z_coords(), cap))
 }
 
-/// Serialized byte size for a segment-typed tail witness at a fixed `z` budget.
+/// Serialized byte size for a terminal response at a fixed `z` budget.
 #[must_use]
-pub fn segment_typed_witness_upper_bound_bytes(
+pub fn terminal_response_upper_bound_bytes(
     field_bits: u32,
     layout: &TailSegmentLayout,
     z_payload_bytes: usize,
 ) -> usize {
     let raw_elems = layout
         .e_field_elems()
-        .saturating_add(layout.t_field_elems())
-        .saturating_add(layout.r_field_elems);
+        .saturating_add(layout.t_field_elems());
     raw_elems
         .saturating_mul(field_bytes(field_bits))
         .saturating_add(z_payload_bytes)
         .saturating_add(8usize.saturating_mul(layout.groups.len()))
 }
 
-/// Recompose balanced digit planes into a signed integer.
-#[cfg(test)]
-#[must_use]
-pub(crate) fn recompose_balanced_i8_digits(digits: &[i8], log_basis: u32) -> i64 {
-    let b = 1i128 << log_basis;
-    let half_b = 1i128 << (log_basis - 1);
-    let mut acc = 0i128;
-    let mut pow = 1i128;
-    for &digit in digits {
-        let mut balanced = i128::from(digit);
-        if balanced >= half_b {
-            balanced -= b;
-        }
-        acc += balanced * pow;
-        pow *= b;
-    }
-    acc as i64
-}
-
-/// Split a recomposed integer into balanced base-`2^log_basis` digits.
-fn balanced_digits_from_i64(value: i64, num_digits: usize, log_basis: u32) -> Vec<i8> {
-    let half_b = 1i128 << (log_basis - 1);
-    let b = half_b << 1;
-    let mask = b - 1;
-    let mut digits = Vec::with_capacity(num_digits);
-    let mut c = i128::from(value);
-    for _ in 0..num_digits {
-        let d = c & mask;
-        let balanced = if d >= half_b { d - b } else { d };
-        c = (c - balanced) >> log_basis;
-        digits.push(balanced as i8);
-    }
-    digits
-}
-
-/// Build Golomb-Rice `z` payload from centered fold-response ring coefficients.
-#[cfg(test)]
-pub(crate) fn encode_z_segment_from_centered<const D: usize>(
-    centered: &[[i32; D]],
-    block_len: usize,
-    depth_commit: usize,
-    rice_low_bits: u32,
-    zigzag_w_z: u32,
-) -> Result<Vec<u8>, AkitaError> {
-    let inner_width = block_len * depth_commit;
-    if !centered.len().is_multiple_of(inner_width) {
-        return Err(AkitaError::InvalidInput(
-            "z_folded length does not match layout".to_string(),
-        ));
-    }
-    let values = centered_rows_to_i64(centered);
-    encode_z_segment_from_centered_flat(&values, rice_low_bits, zigzag_w_z)
-}
-
-#[cfg(test)]
-fn centered_rows_to_i64<const D: usize>(rows: &[[i32; D]]) -> Vec<i64> {
-    rows.iter()
-        .flat_map(|row| row.iter().map(|&n| i64::from(n)))
-        .collect()
-}
-
-/// Build Golomb-Rice `z` payload from a flat centered coefficient stream.
-fn encode_z_segment_from_centered_flat(
-    centered_flat: &[i64],
-    rice_low_bits: u32,
-    zigzag_w_z: u32,
-) -> Result<Vec<u8>, AkitaError> {
-    golomb_rice_encode_vec(centered_flat, rice_low_bits, zigzag_w_z)
-}
-
-/// Construct a segment-typed terminal witness from ring-switch outputs.
-///
-/// # Errors
-///
-/// Returns an error when layout counts do not match the supplied witness parts.
-#[allow(clippy::too_many_arguments)]
-pub fn build_segment_typed_witness<F>(
+pub fn build_terminal_response_from_groups<F>(
     ring_d: usize,
-    e_folded: &RingVec<F>,
-    recomposed_inner_rows: &[RingVec<F>],
-    z_folded_centered_flat: &[i32],
-    r: &RingVec<F>,
-    lp: &LevelParams,
-    num_w_vectors: usize,
-    num_t_vectors: usize,
-    num_z_segments: usize,
-    num_commitment_groups: usize,
-) -> Result<SegmentTypedWitness<F>, AkitaError>
+    groups: &[TerminalResponseGroupParts<'_, F>],
+    lp: &CommittedGroupParams,
+) -> Result<TerminalResponse<F>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
 {
-    build_segment_typed_witness_from_groups(
-        ring_d,
-        &[SegmentTypedWitnessGroupParts {
-            params: lp,
-            num_w_vectors,
-            num_t_vectors,
-            num_z_segments,
-            e_folded,
-            recomposed_inner_rows,
-            z_folded_centered_flat,
-        }],
-        r,
-        lp,
-        num_commitment_groups,
-    )
-}
-
-pub fn build_segment_typed_witness_from_groups<F>(
-    ring_d: usize,
-    groups: &[SegmentTypedWitnessGroupParts<'_, F>],
-    r: &RingVec<F>,
-    lp: &LevelParams,
-    num_commitment_groups: usize,
-) -> Result<SegmentTypedWitness<F>, AkitaError>
-where
-    F: Field + CanonicalEncoding + AkitaSerialize,
-{
-    if ring_d == 0 || lp.ring_dimension != ring_d {
+    if ring_d == 0 || lp.d_a() != ring_d {
         return Err(AkitaError::InvalidInput(
-            "segment-typed witness ring dimension mismatch".to_string(),
-        ));
-    }
-    if !r.can_decode_vec(ring_d) {
-        return Err(AkitaError::InvalidInput(
-            "segment-typed r segment ring layout mismatch".to_string(),
+            "terminal response ring dimension mismatch".to_string(),
         ));
     }
     let group_shapes = groups
@@ -1020,20 +968,19 @@ where
         })
         .collect::<Vec<_>>();
     let field_bits = F::MODULUS_BITS;
-    let layout =
-        tail_segment_layout_from_groups(lp, group_shapes, num_commitment_groups, field_bits)?;
+    let layout = TerminalResponseShape::from_groups(lp, field_bits, group_shapes)?.layout;
     let mut z_payloads = Vec::with_capacity(groups.len());
     let mut e_coeffs = Vec::new();
     let mut t_coeffs = Vec::new();
     for (group_index, group) in groups.iter().enumerate() {
         if !group.e_folded.can_decode_vec(ring_d) {
             return Err(AkitaError::InvalidInput(
-                "segment-typed e segment ring layout mismatch".to_string(),
+                "terminal e segment ring layout mismatch".to_string(),
             ));
         }
         if !group.z_folded_centered_flat.len().is_multiple_of(ring_d) {
             return Err(AkitaError::InvalidInput(
-                "segment-typed z segment ring layout mismatch".to_string(),
+                "terminal z segment ring layout mismatch".to_string(),
             ));
         }
         let z_centered_i64: Vec<i64> = group
@@ -1041,68 +988,122 @@ where
             .iter()
             .map(|&coeff| i64::from(coeff))
             .collect();
-        let cap =
+        let honest_cap =
             lp.fold_witness_linf_cap_for_params(group.params, group.num_t_vectors, field_bits)?;
-        golomb_rice_flat_admit_terminal_wire(&z_centered_i64, cap)?;
-        let depth_commit = group.params.num_digits_commit();
-        let inner_width = group.params.block_len() * depth_commit;
+        let security_cap = lp.terminal_response_linf_limit_for_params(group.params)?;
+        golomb_rice_flat_admit_terminal_wire(&z_centered_i64, honest_cap)?;
+        let depth_witness = group.params.num_digits_inner();
+        let inner_width = group.params.num_positions_per_block() * depth_witness;
         let row_count = group.z_folded_centered_flat.len() / ring_d;
         if inner_width == 0 || !row_count.is_multiple_of(inner_width) {
             return Err(AkitaError::InvalidInput(
                 "z_folded length does not match layout".to_string(),
             ));
         }
-        let (rice_low_bits, zigzag_w_z) = tail_golomb_rice_z_params_from_cap(cap)?;
-        let z_payload =
-            encode_z_segment_from_centered_flat(&z_centered_i64, rice_low_bits, zigzag_w_z)?;
+        let (rice_low_bits, zigzag_w_z) =
+            tail_golomb_rice_z_params_from_caps(honest_cap, security_cap)?;
+        let z_payload = golomb_rice_encode_vec(&z_centered_i64, rice_low_bits, zigzag_w_z)?;
         let group_layout = layout
             .groups
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
         if z_payload.len() > group_layout.z_payload_bytes {
             return Err(AkitaError::InvalidInput(
-                "segment-typed z segment length mismatch".to_string(),
+                "terminal z segment length mismatch".to_string(),
             ));
         }
         z_payloads.push(z_payload);
         let e_fields = group.e_folded.clone().into_compact();
         if e_fields.coeff_len() != group_layout.e_field_elems {
             return Err(AkitaError::InvalidInput(
-                "segment-typed e segment length mismatch".to_string(),
+                "terminal e segment length mismatch".to_string(),
             ));
         }
         e_coeffs.extend_from_slice(e_fields.coeffs());
-        let before_t = t_coeffs.len();
-        for block in group.recomposed_inner_rows {
-            if !block.can_decode_vec(ring_d) {
-                return Err(AkitaError::InvalidInput(
-                    "segment-typed t segment ring layout mismatch".to_string(),
-                ));
-            }
-            t_coeffs.extend_from_slice(block.coeffs());
-        }
-        if t_coeffs.len() - before_t != group_layout.t_field_elems {
+        if !group.recomposed_inner_rows.can_decode_vec(ring_d) {
             return Err(AkitaError::InvalidInput(
-                "segment-typed t segment length mismatch".to_string(),
+                "terminal t segment ring layout mismatch".to_string(),
             ));
         }
+        if group.recomposed_inner_rows.coeff_len() != group_layout.t_field_elems {
+            return Err(AkitaError::InvalidInput(
+                "terminal t segment length mismatch".to_string(),
+            ));
+        }
+        t_coeffs.extend_from_slice(group.recomposed_inner_rows.coeffs());
     }
     let e_fields = RingVec::from_coeffs(e_coeffs);
     let t_fields = RingVec::from_coeffs(t_coeffs);
-    let r_fields = r.clone().into_compact();
-    if r_fields.coeff_len() != layout.r_field_elems {
-        return Err(AkitaError::InvalidInput(
-            "segment-typed r segment length mismatch".to_string(),
-        ));
-    }
-    let witness = SegmentTypedWitness {
+    let witness = TerminalResponse {
         layout: layout.clone(),
         z_payloads,
         e_fields,
         t_fields,
-        r_fields,
     };
     Ok(witness)
+}
+
+/// Build the scalar raw terminal response selected by the typed terminal
+/// schedule. Neither `e` nor `t` is gadget decomposed.
+pub fn build_terminal_response<F>(
+    params: &TerminalCommittedGroupParams,
+    sparse: &akita_challenges::SparseChallengeConfig,
+    scheduled_shape: &TerminalResponseShape,
+    e_folded: &RingVec<F>,
+    t_fields: RingVec<F>,
+    z_folded_centered_flat: &[i32],
+) -> Result<TerminalResponse<F>, AkitaError>
+where
+    F: Field + CanonicalEncoding + Field + AkitaSerialize,
+{
+    let admission_cap = params.response_linf_policy(sparse)?.admission_cap;
+    let expected = TerminalResponseShape::derive(params, admission_cap)?;
+    if !scheduled_shape.admits_realized(&expected) || !expected.admits_realized(scheduled_shape) {
+        return Err(AkitaError::InvalidSetup(
+            "scheduled terminal response shape does not match terminal parameters".into(),
+        ));
+    }
+    let group = scheduled_shape
+        .layout
+        .groups
+        .first()
+        .ok_or(AkitaError::InvalidProof)?;
+    if scheduled_shape.layout.groups.len() != 1
+        || e_folded.coeff_len() != group.e_field_elems
+        || z_folded_centered_flat.len() != group.z_coords
+    {
+        return Err(AkitaError::InvalidInput(
+            "terminal response segment length mismatch".into(),
+        ));
+    }
+    let z_values = z_folded_centered_flat
+        .iter()
+        .map(|value| i64::from(*value))
+        .collect::<Vec<_>>();
+    golomb_rice_flat_admit_terminal_wire(&z_values, admission_cap)?;
+    let (rice_low_bits, zigzag_width) = tail_golomb_rice_z_params_from_cap(admission_cap)?;
+    let z_payload = golomb_rice_encode_vec(&z_values, rice_low_bits, zigzag_width)?;
+    if z_payload.len() > group.z_payload_bytes {
+        return Err(AkitaError::InvalidInput(
+            "terminal response exceeds its scheduled payload budget".into(),
+        ));
+    }
+    if !t_fields.can_decode_vec(params.d_a()) {
+        return Err(AkitaError::InvalidInput(
+            "terminal t state is not inner-ring aligned".into(),
+        ));
+    }
+    if t_fields.coeff_len() != group.t_field_elems {
+        return Err(AkitaError::InvalidInput(
+            "terminal t segment length mismatch".into(),
+        ));
+    }
+    Ok(TerminalResponse {
+        layout: scheduled_shape.layout.clone(),
+        z_payloads: vec![z_payload],
+        e_fields: e_folded.clone().into_compact(),
+        t_fields: t_fields.into_compact(),
+    })
 }
 
 /// Check a segment witness `z` payload against the schedule-bound byte budget and public
@@ -1111,294 +1112,253 @@ where
 /// # Errors
 ///
 /// Returns an error when the encoded `z` payload is inadmissible or exceeds the budget.
-pub fn validate_segment_typed_z_payload<F: Field>(
-    witness: &SegmentTypedWitness<F>,
-    lp: &LevelParams,
+pub fn validate_terminal_response_z_payload<F: Field>(
+    witness: &TerminalResponse<F>,
+    lp: &CommittedGroupParams,
     num_t_vectors: usize,
     budget_bytes: usize,
 ) -> Result<(), AkitaError> {
+    let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
     decode_terminal_z_golomb_payload(
-        witness
-            .z_payloads
-            .first()
-            .ok_or(AkitaError::InvalidProof)?,
+        witness.z_payloads.first().ok_or(AkitaError::InvalidProof)?,
         witness
             .layout
             .groups
             .first()
             .ok_or(AkitaError::InvalidProof)?
             .z_coords,
-        lp,
-        num_t_vectors,
+        cap,
         Some(budget_bytes),
     )
     .map(|_| ())
     .map_err(|err| match err {
         AkitaError::InvalidProof => AkitaError::InvalidInput(format!(
-            "segment-typed z payload {} bytes inadmissible or exceeds schedule budget {budget_bytes}",
+            "terminal z payload {} bytes inadmissible or exceeds schedule budget {budget_bytes}",
             witness.z_payloads.first().map_or(0, Vec::len)
         )),
         other => other,
     })
 }
 
-/// Expand a segment-typed witness into the legacy digit stream consumed by
-/// stage-2 evaluation and packed-digit transcript helpers.
-///
-/// # Errors
-///
-/// Returns an error when decoding or decomposition fails.
-pub fn expand_segment_typed_to_i8_digits<const D: usize, F>(
-    witness: &SegmentTypedWitness<F>,
-    lp: &LevelParams,
-    num_commitment_groups: usize,
-) -> Result<Vec<i8>, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-{
-    if D != witness.layout.ring_dimension {
-        return Err(AkitaError::InvalidProof);
-    }
-    let field_bits = F::MODULUS_BITS;
-    let (num_w_vectors, num_t_vectors, num_z_segments) =
-        tail_segment_multiplicities_from_layout(lp, &witness.layout, 0)?;
-    let expected_layout = tail_segment_layout_from_groups(
-        lp,
-        [(
-            lp as &dyn LevelParamsLike,
-            num_w_vectors,
-            num_t_vectors,
-            num_z_segments,
-        )],
-        num_commitment_groups,
-        field_bits,
-    )?;
-    if !expected_layout.admits_realized(&witness.layout) {
-        return Err(AkitaError::InvalidProof);
-    }
-    expand_segment_typed_to_i8_digits_for_groups::<D, F>(
-        witness,
-        lp,
-        [(
-            lp as &dyn LevelParamsLike,
-            num_w_vectors,
-            num_t_vectors,
-            num_z_segments,
-        )],
-        field_bits,
-    )
-}
-
-pub fn expand_segment_typed_to_i8_digits_for_groups<'a, const D: usize, F>(
-    witness: &SegmentTypedWitness<F>,
-    lp: &LevelParams,
-    groups: impl IntoIterator<Item = (&'a dyn LevelParamsLike, usize, usize, usize)>,
-    field_bits: u32,
-) -> Result<Vec<i8>, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-{
-    if D != witness.layout.ring_dimension {
-        return Err(AkitaError::InvalidProof);
-    }
-    let groups = groups.into_iter().collect::<Vec<_>>();
-    if groups.len() != witness.layout.groups.len() || groups.len() != witness.z_payloads.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let expected_layout =
-        tail_segment_layout_from_groups(lp, groups.iter().copied(), groups.len(), field_bits)?;
-    if !expected_layout.admits_realized(&witness.layout) {
-        return Err(AkitaError::InvalidProof);
-    }
-    let log_basis = lp.log_basis;
-    let levels = compute_num_digits_full_field(field_bits, log_basis);
-    let mut e_offset = 0usize;
-    let mut t_offset = 0usize;
-
-    let r_rings = witness
-        .r_fields
-        .coeffs()
-        .chunks_exact(D)
-        .map(|chunk| {
-            let coeffs: [F; D] = chunk.try_into().map_err(|_| AkitaError::InvalidProof)?;
-            Ok(CyclotomicRing::<F, D>::from_coefficients(coeffs))
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-    let mut r_planes_flat = Vec::with_capacity(r_rings.len() * levels);
-    let q = (-F::one())
-        .to_u128_checked()
-        .expect("canonical prime-field value fits in u128")
-        + 1;
-    let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q);
-    let mut scratch = vec![[0i8; D]; levels];
-    for ring in &r_rings {
-        scratch.fill([0i8; D]);
-        ring.balanced_decompose_pow2_i8_into_with_params(&mut scratch, &decompose_params);
-        r_planes_flat.extend(scratch.iter().copied());
-    }
-
-    let mut out = Vec::with_capacity(witness.layout.logical_num_elems);
-    for (group_index, (params, num_w_vectors, num_t_vectors, _num_z_segments)) in
-        groups.iter().copied().enumerate()
-    {
-        let group_layout = witness
-            .layout
-            .groups
-            .get(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
-        let group_log_basis = params.log_basis();
-        let depth_open = params.num_digits_open();
-        let depth_commit = params.num_digits_commit();
-        let num_digits_fold = lp.num_digits_fold_for_params(params, num_t_vectors, field_bits)?;
-        let z_cap = lp.fold_witness_linf_cap_for_params(params, num_t_vectors, field_bits)?;
-        let z_values = decode_terminal_z_golomb_payload_with_cap(
-            &witness.z_payloads[group_index],
-            group_layout.z_coords,
-            z_cap,
-            Some(group_layout.z_payload_bytes),
-        )?;
-        let inner_width = params.block_len() * depth_commit;
-        let total_z_elems = z_values.len() / D;
-        if total_z_elems * D != z_values.len() || !total_z_elems.is_multiple_of(inner_width) {
-            return Err(AkitaError::InvalidProof);
-        }
-        let mut all_z_planes = vec![[0i8; D]; total_z_elems * num_digits_fold];
-        for (elem_idx, chunk) in z_values.chunks_exact(D).enumerate() {
-            for (coeff_idx, &value) in chunk.iter().enumerate() {
-                let digits = balanced_digits_from_i64(value, num_digits_fold, group_log_basis);
-                for (plane_idx, digit) in digits.into_iter().enumerate() {
-                    all_z_planes[elem_idx * num_digits_fold + plane_idx][coeff_idx] = digit;
-                }
-            }
-        }
-        emit_witness_z_folded_planes_inner::<D>(
-            &mut out,
-            &all_z_planes,
-            params.block_len(),
-            depth_commit,
-            num_digits_fold,
-            total_z_elems,
-        );
-
-        let e_end = e_offset
-            .checked_add(group_layout.e_field_elems)
-            .ok_or(AkitaError::InvalidProof)?;
-        if e_end > witness.e_fields.coeffs().len() {
-            return Err(AkitaError::InvalidProof);
-        }
-        let e_planes = decompose_field_segment_to_planes::<F, D>(
-            &witness.e_fields.coeffs()[e_offset..e_end],
-            num_w_vectors * params.num_blocks(),
-            depth_open,
-            group_log_basis,
-        )?;
-        emit_witness_planes_block_inner::<D>(
-            &mut out,
-            &e_planes,
-            num_w_vectors * params.num_blocks(),
-            depth_open,
-        );
-        e_offset = e_end;
-
-        let t_end = t_offset
-            .checked_add(group_layout.t_field_elems)
-            .ok_or(AkitaError::InvalidProof)?;
-        if t_end > witness.t_fields.coeffs().len() {
-            return Err(AkitaError::InvalidProof);
-        }
-        let t_block_count = num_t_vectors * params.num_blocks();
-        let t_planes_per_block = params.a_rows_len() * depth_open;
-        let t_planes = decompose_field_segment_to_planes::<F, D>(
-            &witness.t_fields.coeffs()[t_offset..t_end],
-            t_block_count * params.a_rows_len(),
-            depth_open,
-            group_log_basis,
-        )?;
-        if t_planes.len() != t_block_count * t_planes_per_block {
-            return Err(AkitaError::InvalidProof);
-        }
-        emit_witness_planes_block_inner::<D>(
-            &mut out,
-            &t_planes,
-            t_block_count,
-            t_planes_per_block,
-        );
-        t_offset = t_end;
-    }
-    for plane in &r_planes_flat {
-        out.extend_from_slice(plane);
-    }
-    if out.len() != witness.layout.logical_num_elems {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(out)
-}
-
-fn decompose_field_segment_to_planes<F, const D: usize>(
-    coeffs: &[F],
-    ring_count: usize,
+/// Emit one group's role-native E planes at canonical witness addresses.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_witness_e_planes<const D_A: usize, const D_ROLE: usize>(
+    out: &mut [i8],
+    layout: &WitnessLayout,
+    group_id: usize,
+    num_claims: usize,
     depth_open: usize,
-    log_basis: u32,
-) -> Result<Vec<[i8; D]>, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-{
-    if coeffs.len() != ring_count.checked_mul(D).ok_or(AkitaError::InvalidProof)? {
-        return Err(AkitaError::InvalidProof);
+    digits: &DigitBlocks,
+    source_num_live_blocks: usize,
+) -> Result<(), AkitaError> {
+    if !D_A.is_multiple_of(D_ROLE) {
+        return Err(AkitaError::InvalidSetup(
+            "witness E dimensions must satisfy D_ROLE | D_A".into(),
+        ));
     }
-    let levels = depth_open;
-    let q = (-F::one())
-        .to_u128_checked()
-        .expect("canonical prime-field value fits in u128")
-        + 1;
-    let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q);
-    let mut out = Vec::with_capacity(ring_count * levels);
-    let mut scratch = vec![[0i8; D]; levels];
-    for chunk in coeffs.chunks_exact(D) {
-        let coeffs_array: [F; D] = chunk.try_into().map_err(|_| AkitaError::InvalidProof)?;
-        let ring = CyclotomicRing::<F, D>::from_coefficients(coeffs_array);
-        scratch.fill([0i8; D]);
-        ring.balanced_decompose_pow2_i8_into_with_params(&mut scratch, &decompose_params);
-        out.extend(scratch.iter().copied());
+    digits.ensure_stride::<D_ROLE>()?;
+    let role_subcolumns = D_A / D_ROLE;
+    let expected = num_claims
+        .checked_mul(source_num_live_blocks)
+        .and_then(|n| n.checked_mul(role_subcolumns))
+        .and_then(|n| n.checked_mul(depth_open))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness E source length overflow".into()))?;
+    if digits.total_planes() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: digits.total_planes(),
+        });
     }
-    Ok(out)
-}
-
-/// Emit digit-major block planes (block index innermost).
-pub fn emit_witness_planes_block_inner<const D: usize>(
-    out: &mut Vec<i8>,
-    flat: &[[i8; D]],
-    total_blocks: usize,
-    planes_per_block: usize,
-) {
-    for compound_dig in 0..planes_per_block {
-        for blk in 0..total_blocks {
-            out.extend_from_slice(&flat[blk * planes_per_block + compound_dig]);
-        }
-    }
-}
-
-/// Emit folded `z` digit planes in `(dc, df, point, block)` order.
-pub fn emit_witness_z_folded_planes_inner<const D: usize>(
-    out: &mut Vec<i8>,
-    all_planes: &[[i8; D]],
-    block_len: usize,
-    depth_commit: usize,
-    num_digits_fold: usize,
-    total_elems: usize,
-) {
-    let inner_width = block_len * depth_commit;
-    let num_points = total_elems / inner_width;
-    for dc in 0..depth_commit {
-        for df in 0..num_digits_fold {
-            for pt in 0..num_points {
-                for blk in 0..block_len {
-                    let k = pt * inner_width + blk * depth_commit + dc;
-                    out.extend_from_slice(&all_planes[k * num_digits_fold + df]);
+    let flat = digits.typed_planes::<D_ROLE>()?;
+    for unit in layout.units_for_group(group_id)? {
+        for claim in 0..num_claims {
+            for global_block in unit.global_block_range() {
+                let semantic = claim * source_num_live_blocks + global_block;
+                for role_subcolumn in 0..role_subcolumns {
+                    for digit in 0..depth_open {
+                        let source =
+                            (semantic * role_subcolumns + role_subcolumn) * depth_open + digit;
+                        let destination = unit.e_coefficient_index(
+                            D_A,
+                            D_ROLE,
+                            num_claims,
+                            depth_open,
+                            claim,
+                            global_block,
+                            role_subcolumn,
+                            digit,
+                            0,
+                        )?;
+                        write_witness_coefficients(out, destination, &flat[source])?;
+                    }
                 }
             }
         }
     }
+    Ok(())
+}
+
+/// Emit one group's role-native T planes at canonical witness addresses.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_witness_t_planes<const D_A: usize, const D_ROLE: usize>(
+    out: &mut [i8],
+    layout: &WitnessLayout,
+    group_id: usize,
+    num_claims: usize,
+    n_a: usize,
+    depth_outer: usize,
+    digits: &DigitBlocks,
+    source_num_live_blocks: usize,
+) -> Result<(), AkitaError> {
+    if !D_A.is_multiple_of(D_ROLE) {
+        return Err(AkitaError::InvalidSetup(
+            "witness T dimensions must satisfy D_ROLE | D_A".into(),
+        ));
+    }
+    digits.ensure_stride::<D_ROLE>()?;
+    let role_subcolumns = D_A / D_ROLE;
+    let expected = num_claims
+        .checked_mul(source_num_live_blocks)
+        .and_then(|n| n.checked_mul(n_a))
+        .and_then(|n| n.checked_mul(role_subcolumns))
+        .and_then(|n| n.checked_mul(depth_outer))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness T source length overflow".into()))?;
+    if digits.total_planes() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: digits.total_planes(),
+        });
+    }
+    let flat = digits.typed_planes::<D_ROLE>()?;
+    let planes_per_block = n_a
+        .checked_mul(role_subcolumns)
+        .and_then(|n| n.checked_mul(depth_outer))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness T source stride overflow".into()))?;
+    for unit in layout.units_for_group(group_id)? {
+        for claim in 0..num_claims {
+            for global_block in unit.global_block_range() {
+                for a_row in 0..n_a {
+                    for role_subcolumn in 0..role_subcolumns {
+                        for digit in 0..depth_outer {
+                            let source = (claim * source_num_live_blocks + global_block)
+                                * planes_per_block
+                                + (a_row * role_subcolumns + role_subcolumn) * depth_outer
+                                + digit;
+                            let destination = unit.t_coefficient_index(
+                                D_A,
+                                D_ROLE,
+                                num_claims,
+                                n_a,
+                                depth_outer,
+                                claim,
+                                global_block,
+                                a_row,
+                                role_subcolumn,
+                                digit,
+                                0,
+                            )?;
+                            write_witness_coefficients(out, destination, &flat[source])?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_witness_coefficients(
+    out: &mut [i8],
+    start: usize,
+    coefficients: &[i8],
+) -> Result<(), AkitaError> {
+    let end = start
+        .checked_add(coefficients.len())
+        .ok_or_else(|| AkitaError::InvalidSetup("witness coefficient end overflow".into()))?;
+    out.get_mut(start..end)
+        .ok_or(AkitaError::InvalidProof)?
+        .copy_from_slice(coefficients);
+    Ok(())
+}
+
+/// Emit one ownership unit's replicated Z planes at canonical addresses.
+pub fn emit_witness_z_planes<const D_SOURCE: usize>(
+    out: &mut [i8],
+    unit: &WitnessUnitLayout,
+    num_positions_per_block: usize,
+    depth_commit: usize,
+    depth_fold: usize,
+    all_planes: &[[i8; D_SOURCE]],
+) -> Result<(), AkitaError> {
+    let expected = num_positions_per_block
+        .checked_mul(depth_commit)
+        .and_then(|n| n.checked_mul(depth_fold))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness Z source length overflow".into()))?;
+    if all_planes.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: all_planes.len(),
+        });
+    }
+    for position in 0..num_positions_per_block {
+        for commit_digit in 0..depth_commit {
+            for fold_digit in 0..depth_fold {
+                let source = (position * depth_commit + commit_digit) * depth_fold + fold_digit;
+                write_witness_coefficients(
+                    out,
+                    unit.z_coefficient_index(
+                        D_SOURCE,
+                        num_positions_per_block,
+                        depth_commit,
+                        depth_fold,
+                        position,
+                        commit_digit,
+                        fold_digit,
+                        0,
+                    )?,
+                    &all_planes[source],
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Emit the shared R planes at canonical witness addresses.
+pub fn emit_witness_r_planes<const D: usize>(
+    out: &mut [i8],
+    layout: &WitnessLayout,
+    quotient_depth: usize,
+    planes: &[[i8; D]],
+) -> Result<(), AkitaError> {
+    if layout.r_rows().iter().any(|row| row.ring_dim() != D)
+        || quotient_depth != layout.quotient_depth()
+    {
+        return Err(AkitaError::InvalidSetup(
+            "witness R source shape is malformed".into(),
+        ));
+    }
+    let expected = layout
+        .r_rows()
+        .len()
+        .checked_mul(quotient_depth)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness R source shape overflow".into()))?;
+    if planes.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: planes.len(),
+        });
+    }
+    for row in 0..layout.r_rows().len() {
+        for digit in 0..quotient_depth {
+            write_witness_coefficients(
+                out,
+                layout.r_coefficient_index(row, digit, 0)?,
+                &planes[row * quotient_depth + digit],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

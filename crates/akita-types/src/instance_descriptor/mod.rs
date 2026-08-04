@@ -7,10 +7,9 @@
 //!
 //! ## Descriptor version policy
 //!
-//! `AKITA_INSTANCE_DESCRIPTOR_VERSION` stays at **`1`** during active protocol
-//! development. Setup-section field changes (for example
-//! `FoldLinfProtocolBinding` extensions) land without bumping this constant;
-//! integrators must pin exact crate revisions.
+//! Akita is under active development, so the descriptor remains version 1
+//! until the protocol is frozen. Integrators must pin an exact revision; there
+//! is no compatibility guarantee between revisions that both identify as v1.
 
 mod fold_linf_binding;
 #[cfg(test)]
@@ -21,23 +20,23 @@ pub use fold_linf_binding::{
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 
-use crate::descriptor_bytes::{push_usize, sis_family_tag};
+use crate::descriptor_bytes::{push_usize, sis_modulus_profile_tag};
 use crate::{
-    detect_field_modulus, AkitaSetupSeed, BasisMode, DecompositionParams, LevelParams,
-    OpeningClaimsLayout, Schedule, SisModulusFamily,
+    detect_field_modulus, AkitaSetupSeed, BasisMode, CommittedGroupParams, DecompositionParams,
+    FoldSchedule, OpeningClaimsLayout, SisModulusProfileId,
 };
 use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
+    DEFAULT_MAX_SEQUENCE_LEN,
 };
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
-use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 1;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 2;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
@@ -161,7 +160,7 @@ pub struct SetupSection {
     /// Gadget decomposition parameters.
     pub decomposition: DecompositionParams,
     /// SIS modulus family used for security sizing.
-    pub sis_modulus_family: SisModulusFamily,
+    pub sis_modulus_profile: SisModulusProfileId,
     /// Digest of the canonical `AkitaSetupSeed` bytes.
     pub setup_seed_digest: DescriptorDigest,
     /// Protocol-affecting feature mode (transparent-only after zk-strip).
@@ -173,9 +172,9 @@ pub struct SetupSection {
 impl SetupSection {
     /// Build setup fields from existing setup/layout data.
     ///
-    /// The per-level `LevelParams` are intentionally *not* digested here: the
+    /// The per-level `CommittedGroupParams` are intentionally *not* digested here: the
     /// per-proof effective schedule (`PlanSection`) already binds every
-    /// expanded `LevelParams` — including the root-direct commit layout — and
+    /// expanded fold `CommittedGroupParams`, and
     /// `setup_seed_digest` pins the shared-matrix capacity, so a separate
     /// setup-level digest would be redundant.
     ///
@@ -184,12 +183,12 @@ impl SetupSection {
     /// Returns a serialization error if the setup seed fails to serialize.
     pub fn from_parts(
         decomposition: DecompositionParams,
-        sis_modulus_family: SisModulusFamily,
+        sis_modulus_profile: SisModulusProfileId,
         setup_seed: &AkitaSetupSeed,
     ) -> Result<Self, SerializationError> {
         Ok(Self {
             decomposition,
-            sis_modulus_family,
+            sis_modulus_profile,
             setup_seed_digest: setup_seed_digest(setup_seed)?,
             protocol_features: ProtocolFeatureSet::current(),
             fold_linf: FoldLinfProtocolBinding::CURRENT,
@@ -206,7 +205,7 @@ pub struct PlanSection {
 
 impl PlanSection {
     /// Build a plan section from the runtime schedule the verifier will replay.
-    pub fn from_schedule(schedule: &Schedule) -> Self {
+    pub fn from_schedule(schedule: &FoldSchedule) -> Self {
         Self {
             effective_schedule_digest: digest_effective_schedule(schedule),
         }
@@ -216,18 +215,14 @@ impl PlanSection {
 /// Per commit-and-open call descriptor fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallSection {
-    /// Total number of opened polynomials addressed by the call.
-    pub num_polys: u32,
     /// Number of commitment groups opened by the call.
     pub num_commitment_groups: u32,
+    /// Per-group opening-point arities in descriptor/transcript order.
+    pub num_vars_per_commitment_group: Vec<u32>,
     /// Per-group polynomial counts in descriptor/transcript order.
     pub num_polys_per_commitment_group: Vec<u32>,
-    /// Per-group ordered coordinate selections into the shared opening point.
-    pub point_variable_selections: Vec<Vec<u32>>,
     /// Public basis mode for opening-point weights.
     pub basis_mode: BasisMode,
-    /// Common opening-point arity.
-    pub opening_point_arity: u32,
     /// Digest of normalized opening layout.
     pub opening_batch_digest: DescriptorDigest,
 }
@@ -244,27 +239,21 @@ impl CallSection {
         basis_mode: BasisMode,
     ) -> Result<Self, AkitaError> {
         layout.check()?;
+        let num_vars_per_commitment_group = layout
+            .groups()
+            .iter()
+            .map(|group| usize_to_u32(group.num_vars(), "num_vars_per_commitment_group"))
+            .collect::<Result<Vec<_>, _>>()?;
         let num_polys_per_commitment_group = layout
             .groups()
             .iter()
             .map(|group| usize_to_u32(group.num_polynomials(), "num_polys_per_commitment_group"))
             .collect::<Result<Vec<_>, _>>()?;
-        let point_variable_selections = layout
-            .groups()
-            .iter()
-            .map(|group| {
-                (0..group.num_vars())
-                    .map(|index| usize_to_u32(index, "point_variable_selection"))
-                    .collect::<Result<Vec<_>, _>>()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
-            num_polys: usize_to_u32(layout.num_total_polynomials(), "num_polys")?,
             num_commitment_groups: usize_to_u32(layout.num_groups(), "num_commitment_groups")?,
+            num_vars_per_commitment_group,
             num_polys_per_commitment_group,
-            point_variable_selections,
             basis_mode,
-            opening_point_arity: usize_to_u32(layout.max_num_vars(), "opening_point_arity")?,
             opening_batch_digest: layout.opening_batch_digest(),
         })
     }
@@ -284,7 +273,7 @@ pub fn digest_serializable<S: AkitaSerialize>(
 }
 
 /// Digest a normalized list of commitment level parameters.
-pub fn digest_level_params(params: &[LevelParams]) -> DescriptorDigest {
+pub fn digest_level_params(params: &[CommittedGroupParams]) -> DescriptorDigest {
     let mut bytes = Vec::new();
     push_usize(&mut bytes, params.len());
     for params in params {
@@ -294,7 +283,7 @@ pub fn digest_level_params(params: &[LevelParams]) -> DescriptorDigest {
 }
 
 /// Digest the final effective runtime verifier schedule.
-pub fn digest_effective_schedule(schedule: &Schedule) -> DescriptorDigest {
+pub fn digest_effective_schedule(schedule: &FoldSchedule) -> DescriptorDigest {
     let mut bytes = Vec::new();
     schedule.append_descriptor_bytes(&mut bytes);
     blake2b_256(&bytes)
@@ -499,7 +488,7 @@ impl AkitaSerialize for SetupSection {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         encode_decomposition(&self.decomposition, &mut writer, compress)?;
-        encode_sis_family(self.sis_modulus_family, &mut writer, compress)?;
+        encode_sis_modulus_profile(self.sis_modulus_profile, &mut writer, compress)?;
         writer.write_all(&self.setup_seed_digest)?;
         self.protocol_features
             .serialize_with_mode(&mut writer, compress)?;
@@ -509,7 +498,7 @@ impl AkitaSerialize for SetupSection {
 
     fn serialized_size(&self, compress: Compress) -> usize {
         decomposition_size(&self.decomposition, compress)
-            + sis_family_size(compress)
+            + sis_modulus_profile_size(compress)
             + 32
             + self.protocol_features.serialized_size(compress)
             + self.fold_linf.serialized_size(compress)
@@ -526,7 +515,7 @@ impl AkitaDeserialize for SetupSection {
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
         let decomposition = decode_decomposition(&mut reader, compress, validate)?;
-        let sis_modulus_family = decode_sis_family(&mut reader, compress, validate)?;
+        let sis_modulus_profile = decode_sis_modulus_profile(&mut reader, compress, validate)?;
         let setup_seed_digest = read_digest(&mut reader)?;
         let protocol_features =
             ProtocolFeatureSet::deserialize_with_mode(&mut reader, compress, validate, &())?;
@@ -534,7 +523,7 @@ impl AkitaDeserialize for SetupSection {
             FoldLinfProtocolBinding::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
             decomposition,
-            sis_modulus_family,
+            sis_modulus_profile,
             setup_seed_digest,
             protocol_features,
             fold_linf,
@@ -588,9 +577,14 @@ impl AkitaDeserialize for PlanSection {
 
 impl Valid for CallSection {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.num_polys == 0 || self.num_commitment_groups == 0 {
+        if self.num_commitment_groups == 0 {
             return Err(SerializationError::InvalidData(
                 "descriptor call counts must be non-zero".to_string(),
+            ));
+        }
+        if self.num_vars_per_commitment_group.len() != self.num_commitment_groups as usize {
+            return Err(SerializationError::InvalidData(
+                "descriptor group arity count mismatch".to_string(),
             ));
         }
         if self.num_polys_per_commitment_group.len() != self.num_commitment_groups as usize {
@@ -598,40 +592,10 @@ impl Valid for CallSection {
                 "descriptor commitment-group count mismatch".to_string(),
             ));
         }
-        if self.point_variable_selections.len() != self.num_commitment_groups as usize {
-            return Err(SerializationError::InvalidData(
-                "descriptor point-variable selection count mismatch".to_string(),
-            ));
-        }
         if self.num_polys_per_commitment_group.contains(&0) {
             return Err(SerializationError::InvalidData(
                 "descriptor commitment groups must be non-empty".to_string(),
             ));
-        }
-        let total_group_polys =
-            self.num_polys_per_commitment_group
-                .iter()
-                .try_fold(0u32, |acc, &group_size| {
-                    acc.checked_add(group_size).ok_or_else(|| {
-                        SerializationError::InvalidData(
-                            "descriptor group polynomial count overflow".to_string(),
-                        )
-                    })
-                })?;
-        if total_group_polys != self.num_polys {
-            return Err(SerializationError::InvalidData(
-                "descriptor group sizes do not match call counts".to_string(),
-            ));
-        }
-        for selection in &self.point_variable_selections {
-            let mut seen = BTreeSet::new();
-            for &index in selection {
-                if index >= self.opening_point_arity || !seen.insert(index) {
-                    return Err(SerializationError::InvalidData(
-                        "descriptor point-variable selection is malformed".to_string(),
-                    ));
-                }
-            }
         }
         Ok(())
     }
@@ -643,9 +607,18 @@ impl AkitaSerialize for CallSection {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.num_polys.serialize_with_mode(&mut writer, compress)?;
         self.num_commitment_groups
             .serialize_with_mode(&mut writer, compress)?;
+        let arity_count =
+            u32::try_from(self.num_vars_per_commitment_group.len()).map_err(|_| {
+                SerializationError::InvalidData(
+                    "descriptor group arity vector length does not fit u32".to_string(),
+                )
+            })?;
+        arity_count.serialize_with_mode(&mut writer, compress)?;
+        for &num_vars in &self.num_vars_per_commitment_group {
+            num_vars.serialize_with_mode(&mut writer, compress)?;
+        }
         let group_count =
             u32::try_from(self.num_polys_per_commitment_group.len()).map_err(|_| {
                 SerializationError::InvalidData(
@@ -656,55 +629,26 @@ impl AkitaSerialize for CallSection {
         for &group_size in &self.num_polys_per_commitment_group {
             group_size.serialize_with_mode(&mut writer, compress)?;
         }
-        let selection_count =
-            u32::try_from(self.point_variable_selections.len()).map_err(|_| {
-                SerializationError::InvalidData(
-                    "descriptor point-variable selection vector length does not fit u32"
-                        .to_string(),
-                )
-            })?;
-        selection_count.serialize_with_mode(&mut writer, compress)?;
-        for selection in &self.point_variable_selections {
-            let selection_len = u32::try_from(selection.len()).map_err(|_| {
-                SerializationError::InvalidData(
-                    "descriptor point-variable selection length does not fit u32".to_string(),
-                )
-            })?;
-            selection_len.serialize_with_mode(&mut writer, compress)?;
-            for &index in selection {
-                index.serialize_with_mode(&mut writer, compress)?;
-            }
-        }
         encode_basis_mode(self.basis_mode, &mut writer, compress)?;
-        self.opening_point_arity
-            .serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.opening_batch_digest)?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.num_polys.serialized_size(compress)
-            + self.num_commitment_groups.serialized_size(compress)
+        self.num_commitment_groups.serialized_size(compress)
+            + 0u32.serialized_size(compress)
+            + self
+                .num_vars_per_commitment_group
+                .iter()
+                .map(|num_vars| num_vars.serialized_size(compress))
+                .sum::<usize>()
             + 0u32.serialized_size(compress)
             + self
                 .num_polys_per_commitment_group
                 .iter()
                 .map(|group_size| group_size.serialized_size(compress))
                 .sum::<usize>()
-            + 0u32.serialized_size(compress)
-            + self
-                .point_variable_selections
-                .iter()
-                .map(|selection| {
-                    0u32.serialized_size(compress)
-                        + selection
-                            .iter()
-                            .map(|index| index.serialized_size(compress))
-                            .sum::<usize>()
-                })
-                .sum::<usize>()
             + basis_mode_size(compress)
-            + self.opening_point_arity.serialized_size(compress)
             + 32
     }
 }
@@ -718,12 +662,55 @@ impl AkitaDeserialize for CallSection {
         validate: Validate,
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
-        let num_polys = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let num_commitment_groups =
             u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let expected_count = usize::try_from(num_commitment_groups).map_err(|_| {
+            SerializationError::InvalidData(
+                "descriptor commitment-group count does not fit usize".to_string(),
+            )
+        })?;
+        if expected_count == 0 || expected_count > DEFAULT_MAX_SEQUENCE_LEN {
+            return Err(SerializationError::InvalidData(format!(
+                "descriptor commitment-group count {expected_count} is outside 1..={DEFAULT_MAX_SEQUENCE_LEN}"
+            )));
+        }
+        let arity_count = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        if arity_count != num_commitment_groups {
+            return Err(SerializationError::InvalidData(
+                "descriptor group arity count mismatch".to_string(),
+            ));
+        }
+        let mut num_vars_per_commitment_group = Vec::new();
+        num_vars_per_commitment_group
+            .try_reserve_exact(expected_count)
+            .map_err(|_| {
+                SerializationError::InvalidData(
+                    "descriptor group arity allocation failed".to_string(),
+                )
+            })?;
+        for _ in 0..expected_count {
+            num_vars_per_commitment_group.push(u32::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?);
+        }
         let group_count = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let mut num_polys_per_commitment_group = Vec::with_capacity(group_count as usize);
-        for _ in 0..group_count {
+        if group_count != num_commitment_groups {
+            return Err(SerializationError::InvalidData(
+                "descriptor commitment-group count mismatch".to_string(),
+            ));
+        }
+        let mut num_polys_per_commitment_group = Vec::new();
+        num_polys_per_commitment_group
+            .try_reserve_exact(expected_count)
+            .map_err(|_| {
+                SerializationError::InvalidData(
+                    "descriptor commitment-group allocation failed".to_string(),
+                )
+            })?;
+        for _ in 0..expected_count {
             num_polys_per_commitment_group.push(u32::deserialize_with_mode(
                 &mut reader,
                 compress,
@@ -731,28 +718,11 @@ impl AkitaDeserialize for CallSection {
                 &(),
             )?);
         }
-        let selection_count = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let mut point_variable_selections = Vec::with_capacity(selection_count as usize);
-        for _ in 0..selection_count {
-            let selection_len = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-            let mut selection = Vec::with_capacity(selection_len as usize);
-            for _ in 0..selection_len {
-                selection.push(u32::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                    &(),
-                )?);
-            }
-            point_variable_selections.push(selection);
-        }
         let out = Self {
-            num_polys,
             num_commitment_groups,
+            num_vars_per_commitment_group,
             num_polys_per_commitment_group,
-            point_variable_selections,
             basis_mode: decode_basis_mode(&mut reader, compress, validate)?,
-            opening_point_arity: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
             opening_batch_digest: read_digest(&mut reader)?,
         };
         if matches!(validate, Validate::Yes) {
@@ -847,30 +817,30 @@ fn decomposition_size(decomp: &DecompositionParams, compress: Compress) -> usize
     size
 }
 
-fn encode_sis_family<W: Write>(
-    family: SisModulusFamily,
+fn encode_sis_modulus_profile<W: Write>(
+    family: SisModulusProfileId,
     writer: W,
     compress: Compress,
 ) -> Result<(), SerializationError> {
-    sis_family_tag(family).serialize_with_mode(writer, compress)
+    sis_modulus_profile_tag(family).serialize_with_mode(writer, compress)
 }
 
-fn decode_sis_family<R: Read>(
+fn decode_sis_modulus_profile<R: Read>(
     reader: R,
     compress: Compress,
     validate: Validate,
-) -> Result<SisModulusFamily, SerializationError> {
+) -> Result<SisModulusProfileId, SerializationError> {
     match u8::deserialize_with_mode(reader, compress, validate, &())? {
-        0 => Ok(SisModulusFamily::Q32),
-        1 => Ok(SisModulusFamily::Q64),
-        2 => Ok(SisModulusFamily::Q128),
+        0 => Ok(SisModulusProfileId::Q32Offset99),
+        1 => Ok(SisModulusProfileId::Q64Offset59),
+        2 => Ok(SisModulusProfileId::Q128OffsetA7F7),
         other => Err(SerializationError::InvalidData(format!(
-            "unknown SisModulusFamily tag {other}"
+            "unknown SisModulusProfileId tag {other}"
         ))),
     }
 }
 
-fn sis_family_size(compress: Compress) -> usize {
+fn sis_modulus_profile_size(compress: Compress) -> usize {
     0u8.serialized_size(compress)
 }
 

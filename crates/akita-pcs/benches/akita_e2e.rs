@@ -9,8 +9,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly, ProverOpeningData};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaCommitmentHint, BasisMode, Commitment, OpeningClaims, PointVariableSelection,
-    PolynomialGroupClaims, SetupContributionMode,
+    AkitaCommitmentHint, BasisMode, Commitment, OpeningClaims, PolynomialGroupClaims,
 };
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
@@ -51,13 +50,12 @@ fn prover_claims<'a, P, CommitF: Field>(
     hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningData<'a, F, P, CommitF> {
     let group = PolynomialGroupClaims::new(
-        PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
+        point.to_vec(),
         vec![F::zero(); polynomials.len()],
         commitment.clone(),
     )
     .expect("valid prover claims group");
-    let opening_claims =
-        OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("valid prover claims");
+    let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
     ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
         .expect("valid prover opening data")
 }
@@ -67,15 +65,12 @@ fn verifier_claims<'a, C>(
     openings: &[F],
     commitment: &'a C,
 ) -> OpeningClaims<'static, F, &'a C> {
-    OpeningClaims::from_groups(
+    OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.to_vec(),
-        vec![PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(point.len(), point.len()).expect("full-point group"),
-            openings.to_vec(),
-            commitment,
-        )
-        .expect("valid verifier claims group")],
+        openings.to_vec(),
+        commitment,
     )
+    .expect("valid verifier claims group")])
     .expect("valid verifier claims")
 }
 
@@ -87,16 +82,8 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>, nv: usize) {
 }
 
 /// Setup-contribution modes benchmarked per phase. Direct scans the expanded
-/// setup matrix inline; Recursive delegates each non-terminal fold to the
-/// stage-3 setup-product sumcheck. Benching both keeps `prove/{mode}`,
-/// `verify/{mode}`, and `e2e/{mode}` regressions independently visible.
-fn setup_contribution_modes() -> [(SetupContributionMode, &'static str); 2] {
-    [
-        (SetupContributionMode::Direct, "direct"),
-        (SetupContributionMode::Recursive, "recursive"),
-    ]
-}
-
+/// These scalar benches instantiate direct-schedule configs. Recursive stage-3
+/// setup contribution is benchmarked by the config-typed multi-group profile.
 fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     c: &mut Criterion,
     label: &str,
@@ -145,95 +132,89 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     let commitments = [commitment];
     let openings = [opening];
 
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup =
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
-    for (mode, mode_label) in setup_contribution_modes() {
-        group.bench_function(format!("prove/{mode_label}"), |b| {
-            b.iter_batched(
-                || vec![hint.clone()],
-                |h| {
-                    let mut transcript = AkitaTranscript::<F>::new(b"bench");
-                    black_box(
-                        AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-                            &setup,
-                            prover_claims(
-                                &pt[..],
-                                &poly_refs[..],
-                                &commitments[0],
-                                h.into_iter().next().unwrap(),
-                            ),
-                            &stack,
-                            &mut transcript,
-                            BasisMode::Lagrange,
-                            mode,
-                        )
-                        .unwrap(),
-                    )
-                },
-                BatchSize::LargeInput,
-            )
-        });
-
-        let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-            &setup,
-            prover_claims(&pt[..], &poly_refs[..], &commitments[0], hint.clone()),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-            mode,
-        )
-        .unwrap();
-
-        group.bench_function(format!("verify/{mode_label}"), |b| {
-            b.iter(|| {
+    let mode_label = "direct";
+    group.bench_function(format!("prove/{mode_label}"), |b| {
+        b.iter_batched(
+            || vec![hint.clone()],
+            |h| {
                 let mut transcript = AkitaTranscript::<F>::new(b"bench");
-                AkitaCommitmentScheme::<Cfg>::batched_verify(
-                    black_box(&proof),
-                    black_box(&verifier_setup),
-                    &mut transcript,
-                    black_box(verifier_claims(&pt[..], &openings[..], &commitments[0])),
-                    BasisMode::Lagrange,
-                    mode,
+                black_box(
+                    AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
+                        &setup,
+                        prover_claims(
+                            &pt[..],
+                            &poly_refs[..],
+                            &commitments[0],
+                            h.into_iter().next().unwrap(),
+                        ),
+                        &stack,
+                        &mut transcript,
+                        BasisMode::Lagrange,
+                    )
+                    .unwrap(),
                 )
-                .unwrap();
-            })
-        });
+            },
+            BatchSize::LargeInput,
+        )
+    });
 
-        group.bench_function(format!("e2e/{mode_label}"), |b| {
-            b.iter(|| {
-                let (cm, h) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
-                    &setup,
-                    std::slice::from_ref(&poly),
-                    &stack,
-                )
-                .unwrap();
-                let cms = [cm];
-                let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
-                let pf = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-                    &setup,
-                    prover_claims(&pt[..], &poly_refs[..], &cms[0], h),
-                    &stack,
-                    &mut pt_tr,
-                    BasisMode::Lagrange,
-                    mode,
-                )
-                .unwrap();
-                let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
-                AkitaCommitmentScheme::<Cfg>::batched_verify(
-                    &pf,
-                    &verifier_setup,
-                    &mut vt_tr,
-                    verifier_claims(&pt[..], &openings[..], &cms[0]),
-                    BasisMode::Lagrange,
-                    mode,
-                )
-                .unwrap();
-                black_box(())
-            })
-        });
-    }
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
+    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
+        &setup,
+        prover_claims(&pt[..], &poly_refs[..], &commitments[0], hint.clone()),
+        &stack,
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
 
+    group.bench_function(format!("verify/{mode_label}"), |b| {
+        b.iter(|| {
+            let mut transcript = AkitaTranscript::<F>::new(b"bench");
+            AkitaCommitmentScheme::<Cfg>::batched_verify(
+                black_box(&proof),
+                black_box(&verifier_setup),
+                &mut transcript,
+                black_box(verifier_claims(&pt[..], &openings[..], &commitments[0])),
+                BasisMode::Lagrange,
+            )
+            .unwrap();
+        })
+    });
+
+    group.bench_function(format!("e2e/{mode_label}"), |b| {
+        b.iter(|| {
+            let (cm, h) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+            )
+            .unwrap();
+            let cms = [cm];
+            let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
+            let pf = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
+                &setup,
+                prover_claims(&pt[..], &poly_refs[..], &cms[0], h),
+                &stack,
+                &mut pt_tr,
+                BasisMode::Lagrange,
+            )
+            .unwrap();
+            let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
+            AkitaCommitmentScheme::<Cfg>::batched_verify(
+                &pf,
+                &verifier_setup,
+                &mut vt_tr,
+                verifier_claims(&pt[..], &openings[..], &cms[0]),
+                BasisMode::Lagrange,
+            )
+            .unwrap();
+            black_box(())
+        })
+    });
     group.finish();
 }
 
@@ -246,7 +227,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
         &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
     )
     .expect("benchmark layout");
-    let total_ring = layout.num_blocks * layout.block_len;
+    let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     let onehot_k = D;
 
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
@@ -301,106 +282,100 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     let commitments = [commitment];
     let openings = [opening];
 
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup =
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
-    for (mode, mode_label) in setup_contribution_modes() {
-        group.bench_function(format!("prove/{mode_label}"), |b| {
-            b.iter_batched(
-                || vec![hint.clone()],
-                |h| {
-                    let mut transcript = AkitaTranscript::<F>::new(b"bench");
-                    black_box(
-                        AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-                            &setup,
-                            prover_claims(
-                                &pt[..],
-                                &poly_refs[..],
-                                &commitments[0],
-                                h.into_iter().next().unwrap(),
-                            ),
-                            &stack,
-                            &mut transcript,
-                            BasisMode::Lagrange,
-                            mode,
-                        )
-                        .unwrap(),
-                    )
-                },
-                BatchSize::LargeInput,
-            )
-        });
-
-        let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-            &setup,
-            prover_claims(&pt[..], &poly_refs[..], &commitments[0], hint.clone()),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-            mode,
-        )
-        .unwrap();
-
-        group.bench_function(format!("verify/{mode_label}"), |b| {
-            b.iter(|| {
+    let mode_label = "direct";
+    group.bench_function(format!("prove/{mode_label}"), |b| {
+        b.iter_batched(
+            || vec![hint.clone()],
+            |h| {
                 let mut transcript = AkitaTranscript::<F>::new(b"bench");
-                AkitaCommitmentScheme::<Cfg>::batched_verify(
-                    black_box(&proof),
-                    black_box(&verifier_setup),
-                    &mut transcript,
-                    black_box(verifier_claims(&pt[..], &openings[..], &commitments[0])),
-                    BasisMode::Lagrange,
-                    mode,
+                black_box(
+                    AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
+                        &setup,
+                        prover_claims(
+                            &pt[..],
+                            &poly_refs[..],
+                            &commitments[0],
+                            h.into_iter().next().unwrap(),
+                        ),
+                        &stack,
+                        &mut transcript,
+                        BasisMode::Lagrange,
+                    )
+                    .unwrap(),
                 )
-                .unwrap();
-            })
-        });
+            },
+            BatchSize::LargeInput,
+        )
+    });
 
-        group.bench_function(format!("e2e/{mode_label}"), |b| {
-            b.iter(|| {
-                let (cm, h) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
-                    &setup,
-                    std::slice::from_ref(&onehot_poly),
-                    &stack,
-                )
-                .unwrap();
-                let cms = [cm];
-                let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
-                let pf = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-                    &setup,
-                    prover_claims(&pt[..], &poly_refs[..], &cms[0], h),
-                    &stack,
-                    &mut pt_tr,
-                    BasisMode::Lagrange,
-                    mode,
-                )
-                .unwrap();
-                let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
-                AkitaCommitmentScheme::<Cfg>::batched_verify(
-                    &pf,
-                    &verifier_setup,
-                    &mut vt_tr,
-                    verifier_claims(&pt[..], &openings[..], &cms[0]),
-                    BasisMode::Lagrange,
-                    mode,
-                )
-                .unwrap();
-                black_box(())
-            })
-        });
-    }
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
+    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
+        &setup,
+        prover_claims(&pt[..], &poly_refs[..], &commitments[0], hint.clone()),
+        &stack,
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
 
+    group.bench_function(format!("verify/{mode_label}"), |b| {
+        b.iter(|| {
+            let mut transcript = AkitaTranscript::<F>::new(b"bench");
+            AkitaCommitmentScheme::<Cfg>::batched_verify(
+                black_box(&proof),
+                black_box(&verifier_setup),
+                &mut transcript,
+                black_box(verifier_claims(&pt[..], &openings[..], &commitments[0])),
+                BasisMode::Lagrange,
+            )
+            .unwrap();
+        })
+    });
+
+    group.bench_function(format!("e2e/{mode_label}"), |b| {
+        b.iter(|| {
+            let (cm, h) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+                &setup,
+                std::slice::from_ref(&onehot_poly),
+                &stack,
+            )
+            .unwrap();
+            let cms = [cm];
+            let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
+            let pf = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
+                &setup,
+                prover_claims(&pt[..], &poly_refs[..], &cms[0], h),
+                &stack,
+                &mut pt_tr,
+                BasisMode::Lagrange,
+            )
+            .unwrap();
+            let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
+            AkitaCommitmentScheme::<Cfg>::batched_verify(
+                &pf,
+                &verifier_setup,
+                &mut vt_tr,
+                verifier_claims(&pt[..], &openings[..], &cms[0]),
+                BasisMode::Lagrange,
+            )
+            .unwrap();
+            black_box(())
+        })
+    });
     group.finish();
 }
 
-fn bench_full_nv15(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::D128Full::D }, fp128::D128Full>(c, "full-d128", 15);
+fn bench_dense_nv15(c: &mut Criterion) {
+    bench_dense_phases::<{ fp128::D128Dense::D }, fp128::D128Dense>(c, "dense-d128", 15);
 }
-fn bench_full_nv20(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::D128Full::D }, fp128::D128Full>(c, "full-d128", 20);
+fn bench_dense_nv20(c: &mut Criterion) {
+    bench_dense_phases::<{ fp128::D128Dense::D }, fp128::D128Dense>(c, "dense-d128", 20);
 }
-fn bench_full_nv25(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::D128Full::D }, fp128::D128Full>(c, "full-d128", 25);
+fn bench_dense_nv25(c: &mut Criterion) {
+    bench_dense_phases::<{ fp128::D128Dense::D }, fp128::D128Dense>(c, "dense-d128", 25);
 }
 
 fn bench_onehot_nv15(c: &mut Criterion) {
@@ -415,9 +390,9 @@ fn bench_onehot_nv25(c: &mut Criterion) {
 
 criterion_group!(
     akita_benches,
-    bench_full_nv15,
-    bench_full_nv20,
-    bench_full_nv25,
+    bench_dense_nv15,
+    bench_dense_nv20,
+    bench_dense_nv25,
     bench_onehot_nv15,
     bench_onehot_nv20,
     bench_onehot_nv25,

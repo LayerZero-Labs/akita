@@ -1,13 +1,13 @@
 use akita_sis_estimator::{
     euclidean_width_table::{generate_euclidean_width_rows, EuclideanWidthTableConfig},
-    AkitaModulusFamily,
+    AkitaModulusProfileId,
 };
 
 const GOLDEN_CSV: &str = include_str!("../../../scripts/sis_golden/golden.csv");
 
 #[derive(Clone, Debug)]
 struct GoldenRow {
-    family: AkitaModulusFamily,
+    family: AkitaModulusProfileId,
     d: u32,
     collision_l2_sq: u128,
     rank: u32,
@@ -78,11 +78,11 @@ fn parse_rows() -> Vec<GoldenRow> {
         .collect()
 }
 
-fn parse_family_from_q(q: &str) -> AkitaModulusFamily {
+fn parse_family_from_q(q: &str) -> AkitaModulusProfileId {
     match q {
-        "4294967197" => AkitaModulusFamily::Q32,
-        "18446744073709551557" => AkitaModulusFamily::Q64,
-        "340282366920938463463374607427473266697" => AkitaModulusFamily::Q128,
+        "4294967197" => AkitaModulusProfileId::Q32Offset99,
+        "18446744073709551557" => AkitaModulusProfileId::Q64Offset59,
+        "340282366920938463463374607427473266697" => AkitaModulusProfileId::Q128OffsetA7F7,
         _ => panic!("unknown q in golden CSV: {q}"),
     }
 }

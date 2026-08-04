@@ -12,7 +12,7 @@ scheduling remain follow-up work.
   It stores runtime `gen_ring_dim` and does not own CPU NTT caches, device
   buffers, command queues, or any backend-prepared state.
 - `ComputeBackendSetup<F>` owns backend preparation. Prepared setup slots are
-  keyed by ring dimension at kernel boundaries via `dispatch_ring_dim_result!`.
+  keyed by field family and ring role at kernel boundaries via `dispatch_for_field!`.
 - `DigitRowsComputeBackend<F>`, `CyclicRowsComputeBackend<F>`,
   `CommitmentComputeBackend<F>`, and `RingSwitchComputeBackend<F>` own the migrated operation families.
 - `CpuBackend` prepares `CpuPreparedSetup<F>` from an `AkitaProverSetup<F>` or
@@ -50,7 +50,7 @@ not as a type parameter on the PCS API.
 - One-hot and sparse-ring plans expose flat entry and offset tables so future
   out-of-crate backends can upload the compact representation without reaching
   into CPU storage.
-- Dynamic ring-dimension code uses `dispatch_ring_dim_result!` and prepares the
+- Dynamic ring-dimension code uses `dispatch_for_field!` and prepares the
   target backend context inside the matched `D` arm.
 
 ## Current Scope

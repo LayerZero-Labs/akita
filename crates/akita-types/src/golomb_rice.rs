@@ -144,7 +144,7 @@ pub fn rice_low_bits_for_cap(scale: u128) -> u32 {
 /// Signed zigzag width for fold-response coefficients bounded by `scale`.
 ///
 /// Mirrors the `[-scale, scale]` envelope priced by
-/// [`crate::LevelParams::fold_witness_linf_cap_for_claims`].
+/// [`crate::CommittedGroupParams::fold_witness_linf_cap_for_claims`].
 #[must_use]
 pub fn golomb_rice_zigzag_width(scale: u128) -> u32 {
     if scale == 0 {
@@ -385,16 +385,6 @@ pub fn golomb_rice_values_within_cap(values: &[i64], cap: u128) -> Result<(), Ak
     Ok(())
 }
 
-fn terminal_z_wire_rice_params(cap: u128) -> Result<(u32, u32), AkitaError> {
-    let binding = FoldLinfProtocolBinding::CURRENT;
-    let rice_low_bits = wire_rice_low_bits_from_rule(
-        cap,
-        binding.wire_rice_low_bits_rule_id,
-        binding.wire_rice_low_bits_delta,
-    )?;
-    Ok((rice_low_bits, golomb_rice_zigzag_width(cap)))
-}
-
 fn centered_rows_to_i64<const D: usize>(rows: &[[i32; D]]) -> Vec<i64> {
     rows.iter()
         .flat_map(|row| row.iter().map(|&n| i64::from(n)))
@@ -472,16 +462,34 @@ pub fn golomb_rice_flat_rows_admit_terminal_wire(
 
 /// Whether every centered coefficient is admissible at wire low bits and fits the planner bit budget.
 pub fn golomb_rice_flat_admit_terminal_wire(values: &[i64], cap: u128) -> Result<(), AkitaError> {
-    if cap == 0 && values.iter().any(|&n| n != 0) {
+    golomb_rice_flat_admit_terminal_wire_with_caps(values, cap, cap)
+}
+
+/// Whether centered coefficients fit a terminal wire whose coding scale and
+/// matrix-certified admission cap differ.
+pub(crate) fn golomb_rice_flat_admit_terminal_wire_with_caps(
+    values: &[i64],
+    coding_scale: u128,
+    admissible_cap: u128,
+) -> Result<(), AkitaError> {
+    if admissible_cap == 0 && values.iter().any(|&n| n != 0) {
         return Err(AkitaError::InvalidInput(
             "golomb-rice encodability check at zero cap".to_string(),
         ));
     }
-    golomb_rice_values_within_cap(values, cap).map_err(|_| {
-        AkitaError::InvalidInput(format!("centered coefficient exceeds fold cap {cap}"))
+    golomb_rice_values_within_cap(values, admissible_cap).map_err(|_| {
+        AkitaError::InvalidInput(format!(
+            "centered coefficient exceeds terminal admission cap {admissible_cap}"
+        ))
     })?;
-    let (rice_low_bits, zigzag_w) = terminal_z_wire_rice_params(cap)?;
-    golomb_rice_values_fit_planner_wire_budget(values, cap, rice_low_bits, zigzag_w)
+    let binding = FoldLinfProtocolBinding::CURRENT;
+    let rice_low_bits = wire_rice_low_bits_from_rule(
+        coding_scale,
+        binding.wire_rice_low_bits_rule_id,
+        binding.wire_rice_low_bits_delta,
+    )?;
+    let zigzag_w = golomb_rice_zigzag_width(admissible_cap);
+    golomb_rice_values_fit_planner_wire_budget(values, coding_scale, rice_low_bits, zigzag_w)
 }
 
 fn golomb_rice_encode_one_into(

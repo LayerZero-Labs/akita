@@ -1,80 +1,45 @@
 use super::*;
 
+/// Target scan-job size. At fp128/D64 this is 2 MiB of contiguous setup data,
+/// large enough to amortize scheduling while exposing hundreds of root jobs.
+pub(super) const SETUP_SCAN_JOB_RINGS: usize = 2048;
+
 impl<E: Field> SetupContributionGroupPlan<E> {
-    #[cfg(test)]
     pub(crate) fn refresh_segments(
         &mut self,
+        d_weights: &[E],
         d_rows: usize,
         d_physical_cols: usize,
+        a_ratio: usize,
+        b_ratio: usize,
+        d_ratio: usize,
     ) -> Result<(), AkitaError> {
+        let (e_eq_slice, _, _) = self.require_column_eq_slices()?;
         let (required, segments) = build_packed_segments(
-            self.e_col_offset,
-            self.e_eq_slice.len(),
+            self.d_col_range.start,
+            e_eq_slice.len(),
             self.t_cols,
             self.z_cols,
             self.n_a,
             self.n_b,
             &self.a_row_weights,
             &self.b_weights,
-            &self.d_weights,
+            d_weights,
             d_rows,
             d_physical_cols,
+            a_ratio,
+            b_ratio,
+            d_ratio,
         )?;
         self.required = required;
         self.segments = segments.into();
         Ok(())
     }
-
-    pub(super) fn packed_segments(
-        &self,
-        d_rows: usize,
-        d_physical_cols: usize,
-    ) -> Result<(usize, &[GroupSetupSegment<E>]), AkitaError> {
-        debug_assert_eq!(self.d_weights.len(), d_rows);
-        debug_assert_eq!(self.a_row_weights.len(), self.n_a);
-        debug_assert_eq!(self.b_weights.len(), self.n_b);
-        debug_assert_eq!(self.t_eq_slice.len(), self.t_cols);
-        debug_assert_eq!(self.z_eq_slice.len(), self.z_cols);
-        debug_assert!(self.e_col_offset.saturating_add(self.e_eq_slice.len()) <= d_physical_cols);
-        debug_assert_eq!(
-            self.required,
-            setup_group_required(
-                d_rows,
-                d_physical_cols,
-                self.n_b,
-                self.t_cols,
-                self.n_a,
-                self.z_cols,
-            )?
-        );
-        Ok((self.required, self.segments.as_ref()))
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn setup_group_required(
-    d_rows: usize,
-    d_physical_cols: usize,
-    n_b: usize,
-    t_cols: usize,
-    n_a: usize,
-    z_cols: usize,
-) -> Result<usize, AkitaError> {
-    let d_required = d_rows
-        .checked_mul(d_physical_cols)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup D footprint overflow".into()))?;
-    let b_required = n_b
-        .checked_mul(t_cols)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup B footprint overflow".into()))?;
-    let a_required = n_a
-        .checked_mul(z_cols)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup A footprint overflow".into()))?;
-    Ok(d_required.max(b_required).max(a_required))
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_packed_segments<E: Field>(
-    e_col_offset: usize,
+    d_col_start: usize,
     e_eq_len: usize,
     t_cols: usize,
     z_cols: usize,
@@ -85,7 +50,18 @@ pub(super) fn build_packed_segments<E: Field>(
     d_weights: &[E],
     d_rows: usize,
     d_physical_cols: usize,
+    a_ratio: usize,
+    b_ratio: usize,
+    d_ratio: usize,
 ) -> Result<(usize, Vec<GroupSetupSegment<E>>), AkitaError> {
+    if [a_ratio, b_ratio, d_ratio]
+        .into_iter()
+        .any(|ratio| !ratio.is_power_of_two())
+    {
+        return Err(AkitaError::InvalidSetup(
+            "setup projection ratios must be powers of two".into(),
+        ));
+    }
     if d_weights.len() != d_rows {
         return Err(AkitaError::InvalidSize {
             expected: d_rows,
@@ -104,7 +80,7 @@ pub(super) fn build_packed_segments<E: Field>(
             actual: b_weights.len(),
         });
     }
-    let e_end = e_col_offset
+    let e_end = d_col_start
         .checked_add(e_eq_len)
         .ok_or_else(|| AkitaError::InvalidSetup("setup D footprint overflow".into()))?;
     if e_end > d_physical_cols {
@@ -115,12 +91,15 @@ pub(super) fn build_packed_segments<E: Field>(
 
     let d_required = d_rows
         .checked_mul(d_physical_cols)
+        .and_then(|len| len.checked_mul(d_ratio))
         .ok_or_else(|| AkitaError::InvalidSetup("setup D footprint overflow".into()))?;
     let b_required = n_b
         .checked_mul(t_cols)
+        .and_then(|len| len.checked_mul(b_ratio))
         .ok_or_else(|| AkitaError::InvalidSetup("setup B footprint overflow".into()))?;
     let a_required = n_a
         .checked_mul(z_cols)
+        .and_then(|len| len.checked_mul(a_ratio))
         .ok_or_else(|| AkitaError::InvalidSetup("setup A footprint overflow".into()))?;
     let required = d_required.max(b_required).max(a_required);
 
@@ -131,11 +110,12 @@ pub(super) fn build_packed_segments<E: Field>(
         &mut endpoints,
         d_rows,
         d_physical_cols,
-        e_col_offset,
+        d_col_start,
         e_eq_len,
+        d_ratio,
     )?;
-    push_role_boundaries(&mut endpoints, n_b, t_cols, "B")?;
-    push_role_boundaries(&mut endpoints, n_a, z_cols, "A")?;
+    push_projected_role_boundaries(&mut endpoints, n_b, t_cols, b_ratio, "B")?;
+    push_projected_role_boundaries(&mut endpoints, n_a, z_cols, a_ratio, "A")?;
     endpoints.sort_unstable();
     endpoints.dedup();
 
@@ -147,27 +127,30 @@ pub(super) fn build_packed_segments<E: Field>(
                 return None;
             }
 
+            let d_idx = lo / d_ratio;
             let has_d = if d_physical_cols == 0 || e_eq_len == 0 || lo >= d_required {
                 false
             } else {
-                let d_col = lo % d_physical_cols;
-                d_col >= e_col_offset && d_col < e_end
+                let d_col = d_idx % d_physical_cols;
+                d_col >= d_col_start && d_col < e_end
             };
-            let d_row = if has_d { lo / d_physical_cols } else { 0 };
+            let d_row = if has_d { d_idx / d_physical_cols } else { 0 };
             let d_start_abs = if has_d {
-                d_row * d_physical_cols + e_col_offset
+                d_row * d_physical_cols + d_col_start
             } else {
                 0
             };
             let d_weight = if has_d { d_weights[d_row] } else { E::zero() };
 
+            let b_idx = lo / b_ratio;
             let has_b = t_cols != 0 && lo < b_required;
-            let b_row = if has_b { lo / t_cols } else { 0 };
+            let b_row = if has_b { b_idx / t_cols } else { 0 };
             let b_start_abs = if has_b { b_row * t_cols } else { 0 };
             let b_weight = if has_b { b_weights[b_row] } else { E::zero() };
 
+            let a_idx = lo / a_ratio;
             let has_a = z_cols != 0 && lo < a_required;
-            let a_row = if has_a { lo / z_cols } else { 0 };
+            let a_row = if has_a { a_idx / z_cols } else { 0 };
             let a_start_abs = if has_a { a_row * z_cols } else { 0 };
             let a_row_weight = if has_a {
                 a_row_weights[a_row]
@@ -183,58 +166,31 @@ pub(super) fn build_packed_segments<E: Field>(
                 lo,
                 hi,
                 has_d,
-                d_row,
                 d_start_abs,
                 d_weight,
                 has_b,
-                b_row,
                 b_start_abs,
                 b_weight,
                 has_a,
-                a_row,
                 a_start_abs,
                 a_row_weight,
             })
         })
-        .collect();
+        .collect::<Vec<_>>();
+    let mut jobs = Vec::new();
+    for segment in segments {
+        let mut lo = segment.lo;
+        while lo < segment.hi {
+            let hi = lo.saturating_add(SETUP_SCAN_JOB_RINGS).min(segment.hi);
+            let mut job = segment.clone();
+            job.lo = lo;
+            job.hi = hi;
+            jobs.push(job);
+            lo = hi;
+        }
+    }
 
-    Ok((required, segments))
-}
-
-pub(super) fn validate_group_chunk_layout(
-    group: &SetupContributionGroupInputs,
-    num_groups: usize,
-) -> Result<(), AkitaError> {
-    if group.chunks.is_empty()
-        || group.blocks_per_chunk == 0
-        || !group.blocks_per_chunk.is_power_of_two()
-    {
-        return Err(AkitaError::InvalidSetup(
-            "malformed setup witness chunk layout".into(),
-        ));
-    }
-    if group
-        .chunks
-        .len()
-        .checked_mul(group.blocks_per_chunk)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup chunk block coverage overflow".into()))?
-        != group.num_blocks
-    {
-        return Err(AkitaError::InvalidSetup(
-            "setup witness chunk windows do not tile num_blocks".into(),
-        ));
-    }
-    if group.chunks.len() > 1 && num_groups != 1 {
-        // This is an intentional product-surface limit, not a verifier panic
-        // guard: multi-chunk witness layouts are currently only enabled for
-        // the singleton recursive suffix. Keep the rejection here so direct
-        // callers cannot build an ambiguous multi-chunk, multi-group setup
-        // plan before the schedule/proof boundary has learned that shape.
-        return Err(AkitaError::InvalidSetup(
-            "multi-chunk setup contribution requires exactly one commitment group".into(),
-        ));
-    }
-    Ok(())
+    Ok((required, jobs))
 }
 
 #[inline(always)]
@@ -244,6 +200,7 @@ fn push_group_d_boundaries(
     stride: usize,
     active_col_start: usize,
     active_cols: usize,
+    ratio: usize,
 ) -> Result<(), AkitaError> {
     if rows == 0 || stride == 0 {
         return Ok(());
@@ -256,16 +213,46 @@ fn push_group_d_boundaries(
         let row_end = row_start
             .checked_add(stride)
             .ok_or_else(|| AkitaError::InvalidSetup("packed D boundary overflow".into()))?;
-        endpoints.push(row_end);
+        endpoints.push(row_end.checked_mul(ratio).ok_or_else(|| {
+            AkitaError::InvalidSetup("packed D base-ring boundary overflow".into())
+        })?);
         if active_cols != 0 {
-            endpoints.push(row_start.checked_add(active_col_start).ok_or_else(|| {
+            let active_start = row_start.checked_add(active_col_start).ok_or_else(|| {
                 AkitaError::InvalidSetup("packed D active boundary overflow".into())
+            })?;
+            let active_end = row_start.checked_add(active_col_end).ok_or_else(|| {
+                AkitaError::InvalidSetup("packed D active boundary overflow".into())
+            })?;
+            endpoints.push(active_start.checked_mul(ratio).ok_or_else(|| {
+                AkitaError::InvalidSetup("packed D active base-ring boundary overflow".into())
             })?);
-            endpoints.push(row_start.checked_add(active_col_end).ok_or_else(|| {
-                AkitaError::InvalidSetup("packed D active boundary overflow".into())
+            endpoints.push(active_end.checked_mul(ratio).ok_or_else(|| {
+                AkitaError::InvalidSetup("packed D active base-ring boundary overflow".into())
             })?);
         }
         row_start = row_end;
+    }
+    Ok(())
+}
+
+fn push_projected_role_boundaries(
+    endpoints: &mut Vec<usize>,
+    rows: usize,
+    stride: usize,
+    ratio: usize,
+    name: &'static str,
+) -> Result<(), AkitaError> {
+    if rows == 0 || stride == 0 {
+        return Ok(());
+    }
+    let mut boundary = 0usize;
+    for _ in 0..rows {
+        boundary = boundary
+            .checked_add(stride)
+            .ok_or_else(|| AkitaError::InvalidSetup(format!("packed {name} boundary overflow")))?;
+        endpoints.push(boundary.checked_mul(ratio).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!("packed {name} base-ring boundary overflow"))
+        })?);
     }
     Ok(())
 }

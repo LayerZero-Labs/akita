@@ -13,8 +13,8 @@ use akita_sumcheck::{
 };
 use akita_transcript::labels;
 use akita_transcript::{AkitaTranscript, Transcript};
-use jolt_field::Field;
-use jolt_field::Fp64;
+use jolt_field::{Field, Fp64};
+
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rand::SeedableRng;

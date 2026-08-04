@@ -75,7 +75,7 @@ This is why the protocol tracks the challenge `L1` mass, not only the maximum
 absolute coefficient. The planner uses this mass in the folded-witness bound:
 
 ```text
-beta = challenge_l1_mass * num_claims * 2^(r_vars + log_basis - 1)
+beta = challenge_l1_mass * num_claims * 2^(block_index_bits + log_basis - 1)
 ```
 
 A smaller worst-case `L1` mass can reduce the number of fold decomposition
@@ -371,5 +371,5 @@ The implementation should keep these checks pinned:
 - `crates/akita-challenges/src/sampler/xof.rs`
 - `crates/akita-challenges/tests/sparse_challenge.rs`
 - `crates/akita-config/src/proof_optimized.rs`
-- `crates/akita-types/src/generated/fp128_d32_full.rs`
+- `crates/akita-types/src/generated/fp128_d32_dense.rs`
 - `crates/akita-types/src/generated/fp128_d32_onehot.rs`
