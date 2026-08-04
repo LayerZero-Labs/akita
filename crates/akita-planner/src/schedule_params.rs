@@ -17,7 +17,7 @@ use akita_types::sis::{
     num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
     rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, BalancedSignedDigitFoldPolicy,
     FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisTableKey,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
 };
 use akita_types::{
     level_proof_bytes, padded_setup_prefix_len, try_extension_opening_reduction_level_bytes,

@@ -1,6 +1,7 @@
 //! Runtime schedule catalogs and strict generated schedule resolution.
 
 mod audit;
+mod candidate;
 pub mod catalog_identity;
 pub mod generated;
 mod group_batch;
@@ -30,6 +31,10 @@ pub use runtime::{
 /// Shared schedule-construction primitives used by offline search and generated-row replay.
 #[doc(hidden)]
 pub mod planner_support {
+    pub use crate::candidate::{
+        projected_collision_role_price, scalar_root_fold_level_params_candidate,
+        sis_key_at_dimension,
+    };
     pub use crate::runtime::{
         checked_power_of_two_vars, grouped_segment_rings, materialize_candidate_schedule,
         optimize_fold_challenge_shape, planned_next_witness_len,

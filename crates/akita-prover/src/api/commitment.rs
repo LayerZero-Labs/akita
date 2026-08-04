@@ -539,8 +539,8 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if the group is unsupported by the setup or no exact
-/// generated row supports it.
+/// Returns an error if the group is unsupported by the setup or no standalone
+/// precommit parameters can be derived for its layout.
 pub fn commit_group<Cfg, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,

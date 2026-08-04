@@ -457,20 +457,19 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
     }
 }
 
-fn cataloged_committed_descriptor<Cfg: CommitmentConfig>(
+fn committed_descriptor<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> CommittedGroupProfile {
     let params = akita_config::committed_group_params::<Cfg>(&group)
-        .expect("cataloged heterogeneous group must resolve");
+        .expect("heterogeneous group must resolve");
     CommittedGroupProfile::from_params(group, &params)
 }
 
 #[test]
 fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order() {
     type Cfg = fp128::D64OneHot;
-    let onehot_16 = cataloged_committed_descriptor::<Cfg>(PolynomialGroupLayout::new(14, 1));
-    let dense =
-        cataloged_committed_descriptor::<fp128::D64Dense>(PolynomialGroupLayout::new(15, 2));
+    let onehot_16 = committed_descriptor::<Cfg>(PolynomialGroupLayout::new(14, 1));
+    let dense = committed_descriptor::<fp128::D64Dense>(PolynomialGroupLayout::new(15, 2));
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(16, 1),
         precommitteds: vec![onehot_16, dense],

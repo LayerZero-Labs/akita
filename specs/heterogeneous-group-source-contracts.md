@@ -164,6 +164,7 @@ pub struct HonestFoldSizingQuery<'a> {
     pub ring_dimension: usize,
     pub num_claims: usize,
     pub num_live_blocks: usize,
+    pub num_chunks: usize,
     pub num_fold_coeffs: usize,
     pub log_basis: u32,
     pub challenge_config: &'a SparseChallengeConfig,
@@ -197,9 +198,20 @@ ring dimension.
 number and structure of fold contributions. They remain separate because a
 tensor policy can use them differently.
 
-`num_fold_coeffs` is REQUIRED because the policy sizes the maximum over the
-actual emitted coefficients. The caller MUST pass the exact coefficient count,
-not a padded allocation width.
+`num_chunks` is REQUIRED because the prover emits and the verifier admits one
+physical response window per chunk. It MUST be positive and no greater than
+`num_live_blocks`.
+
+`num_fold_coeffs` is REQUIRED because the policy sizes the maximum over every
+actual emitted coefficient in every chunk response. The caller MUST pass the
+total physical coefficient count, not a single logical window or a padded
+allocation width. The count MUST divide evenly by `num_chunks` because every
+chunk response has the same physical width.
+
+The preserved balanced signed digit policy MAY reconstruct its historical
+single-window coefficient count by dividing `num_fold_coeffs` by `num_chunks`.
+This is an explicit compatibility rule for frozen balanced schedules, not the
+physical geometry used by new sizing policies.
 
 `log_basis` is REQUIRED because the policy selects a balanced digit depth and
 snap acts on digit boundaries.
@@ -337,15 +349,25 @@ The constants 31 and 10 are specific to `D = 64`. Other ring dimensions MUST
 derive their counts from the selected `SparseChallengeConfig`. They MUST NOT
 reuse the `D = 64` constants.
 
-If `m = num_claims * num_live_blocks` independent unit contributions enter one
-coordinate, then
+At most
+
+\[
+m = \mathtt{num\_claims}\left\lceil
+\frac{\mathtt{num\_live\_blocks}}{\mathtt{num\_chunks}}
+\right\rceil
+\]
+
+independent unit contributions enter one coordinate of a physical chunk
+response. The ceiling prices the largest response window when blocks do not
+divide evenly across chunks. Then
 
 \[
 M_Z(\lambda)=M_X(\lambda)^m.
 \]
 
-For `N = num_fold_coeffs`, the policy computes the smallest integer threshold
-`t` for which the fixed protocol cutoff is met:
+For `N = num_fold_coeffs`, where `N` counts coefficients across every physical
+chunk response, the policy computes the smallest integer threshold `t` for
+which the fixed protocol cutoff is met:
 
 \[
 2N\inf_{\lambda>0}

@@ -20,6 +20,9 @@ pub struct HonestFoldSizingQuery<'a> {
     pub ring_dimension: usize,
     pub num_claims: usize,
     pub num_live_blocks: usize,
+    /// Number of physical response windows emitted for this fold.
+    pub num_chunks: usize,
+    /// Total coefficients emitted across all physical response windows.
     pub num_fold_coeffs: usize,
     pub log_basis: u32,
     pub challenge_config: &'a SparseChallengeConfig,
@@ -102,6 +105,10 @@ impl BalancedSignedDigitFoldPolicy {
         self.witness.validate()?;
         self.snap.validate()?;
         validate_query(query)?;
+        // This policy is the frozen pre-chunking baseline. Preserve its
+        // logical single-fold geometry even though the query reports every
+        // physical response coefficient.
+        let logical_fold_coeffs = query.num_fold_coeffs / query.num_chunks;
         let policy = fold_witness_linf_cap_policy(
             query.challenge_config,
             query.challenge_shape,
@@ -111,7 +118,7 @@ impl BalancedSignedDigitFoldPolicy {
             query.challenge_config,
             query.challenge_shape,
             query.ring_dimension,
-            query.num_fold_coeffs,
+            logical_fold_coeffs,
         )?;
         let (cap, tail_cap) = fold_witness_unsnapped_linf_cap(
             query.num_live_blocks,
@@ -205,7 +212,8 @@ impl UnitOneHotFoldPolicy {
         if cfg.weight() > query.ring_dimension || query.ring_dimension == 0 {
             return None;
         }
-        let contributions = query.num_claims.checked_mul(query.num_live_blocks)?;
+        let live_blocks_per_chunk = query.num_live_blocks.div_ceil(query.num_chunks);
+        let contributions = query.num_claims.checked_mul(live_blocks_per_chunk)?;
         let worst_case = contributions.checked_mul(cfg.infinity_norm() as usize)? as u128;
         const MAX_EXACT_F64_INTEGER: usize = 1usize << 52;
         if contributions > MAX_EXACT_F64_INTEGER || query.num_fold_coeffs > MAX_EXACT_F64_INTEGER {
@@ -252,11 +260,12 @@ impl HonestFoldPolicy for UnitOneHotFoldPolicy {
         let Some(mut cap) = self.exact_threshold(query) else {
             return Ok(legacy);
         };
+        let live_blocks_per_chunk = query.num_live_blocks.div_ceil(query.num_chunks);
         let challenge = FoldChallengeNorms::new(query.challenge_config, query.challenge_shape);
         let worst_case = challenge
             .l1_norm
             .checked_mul(query.num_claims as u128)
-            .and_then(|value| value.checked_mul(query.num_live_blocks as u128))
+            .and_then(|value| value.checked_mul(live_blocks_per_chunk as u128))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("unit one-hot worst-case cap overflow".into())
             })?;
@@ -291,11 +300,18 @@ fn validate_query(query: HonestFoldSizingQuery<'_>) -> Result<(), AkitaError> {
     if query.ring_dimension == 0
         || query.num_claims == 0
         || query.num_live_blocks == 0
+        || query.num_chunks == 0
+        || query.num_chunks > query.num_live_blocks
         || query.num_fold_coeffs == 0
         || query.log_basis == 0
     {
         return Err(AkitaError::InvalidSetup(
             "honest fold sizing requires positive geometry and basis".to_string(),
+        ));
+    }
+    if !query.num_fold_coeffs.is_multiple_of(query.num_chunks) {
+        return Err(AkitaError::InvalidSetup(
+            "honest fold coefficient count must cover equally sized chunk responses".to_string(),
         ));
     }
     query
@@ -358,6 +374,7 @@ mod tests {
             ring_dimension: 64,
             num_claims: 4,
             num_live_blocks: 16,
+            num_chunks: 1,
             num_fold_coeffs: 4_096,
             log_basis: 3,
             challenge_config: challenge,
@@ -490,6 +507,7 @@ mod tests {
                             ring_dimension: 256,
                             num_claims,
                             num_live_blocks,
+                            num_chunks: 1,
                             num_fold_coeffs,
                             log_basis,
                             challenge_config: &challenge,
