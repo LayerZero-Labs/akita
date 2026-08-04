@@ -23,9 +23,7 @@ use crate::{
 };
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
-use akita_types::sis::{
-    BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicySpec, UnitOneHotFoldPolicy,
-};
+use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, CommittedGroupProfile,
     FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
@@ -33,7 +31,8 @@ use akita_types::{
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{
-    honest_fold_policy_of, policy_of, tensor_verifier, CommitmentConfig, RecursiveCommitmentConfig,
+    committed_group_params, honest_fold_policy_of, policy_of, tensor_verifier, CommitmentConfig,
+    RecursiveCommitmentConfig,
 };
 
 type RegenScheduleCacheMap =
@@ -277,11 +276,14 @@ fn supported_group_batch_keys<Cfg: CommitmentConfig + 'static>(
 fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
     family: &GeneratedFamily,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+    let mut direct = direct_profile_group_batch_keys_for_cfg::<Cfg>()?;
     if !family.emit_group_batch {
-        return Ok(Vec::new());
+        direct.sort_by(|left, right| runtime_schedule_key_cmp(&left.0, &right.0));
+        return Ok(direct);
     }
     if Cfg::decomposition().log_commit_bound != 1 {
-        return Ok(Vec::new());
+        direct.sort_by(|left, right| runtime_schedule_key_cmp(&left.0, &right.0));
+        return Ok(direct);
     }
 
     let min_precommitted_num_vars = family
@@ -302,11 +304,7 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
             for &precommitted_num_polynomials in DEFAULT_GROUP_BATCH_PRECOMMIT_NUM_POLYNOMIALS {
                 let precommitted_group =
                     PolynomialGroupLayout::new(pre_num_vars, precommitted_num_polynomials);
-                let Ok(params) = planner_committed_group_params::<Cfg>(
-                    &precommitted_group,
-                    Cfg::decomposition().log_commit_bound,
-                    honest_fold_policy_of::<Cfg>(),
-                ) else {
+                let Ok(params) = committed_group_params::<Cfg>(&precommitted_group) else {
                     continue;
                 };
                 let precommitted = CommittedGroupProfile::from_params(precommitted_group, &params);
@@ -323,7 +321,7 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
             }
         }
     }
-    candidates.extend(direct_profile_group_batch_keys_for_cfg::<Cfg>()?);
+    candidates.extend(direct);
     let mut keys = supported_group_batch_keys::<Cfg>(candidates)?;
     keys.sort_by(|left, right| runtime_schedule_key_cmp(&left.0, &right.0));
     Ok(keys)
@@ -333,7 +331,7 @@ fn direct_profile_group_batch_keys_for_cfg<Cfg: CommitmentConfig + 'static>(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHot>() {
         let mut keys = recursive_d64_onehot_profile_keys::<fp128::D64OneHot>()?;
-        keys.push(heterogeneous_d64_onehot_catalog_key::<fp128::D64OneHot>()?);
+        keys.push(heterogeneous_d64_onehot_catalog_key()?);
         return Ok(keys);
     }
     if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHotMultiChunk>() {
@@ -384,25 +382,14 @@ fn recursive_d64_onehot_profile_keys<BaseCfg: CommitmentConfig>(
     )])
 }
 
-fn heterogeneous_d64_onehot_catalog_key<Cfg: CommitmentConfig>(
+fn heterogeneous_d64_onehot_catalog_key(
 ) -> Result<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>), AkitaError> {
     let onehot_group = PolynomialGroupLayout::new(14, 1);
     let dense_group = PolynomialGroupLayout::new(15, 2);
-    let onehot_norms = FoldWitnessNorms::new(1, 4);
-    let dense_norms = FoldWitnessNorms::bounded(3, Cfg::D);
-    let onehot_policy =
-        HonestFoldPolicySpec::UnitOneHot(UnitOneHotFoldPolicy::preserving_existing_behavior(
-            Cfg::decomposition().field_bits(),
-            onehot_norms,
-        ));
-    let dense_policy = HonestFoldPolicySpec::BalancedSignedDigit(
-        BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
-            Cfg::decomposition().field_bits(),
-            dense_norms,
-        ),
-    );
-    let onehot_params = planner_committed_group_params::<Cfg>(&onehot_group, 1, onehot_policy)?;
-    let dense_params = planner_committed_group_params::<Cfg>(&dense_group, 32, dense_policy)?;
+    let onehot_policy = honest_fold_policy_of::<fp128::D64OneHot>();
+    let dense_policy = honest_fold_policy_of::<fp128::D64Dense>();
+    let onehot_params = committed_group_params::<fp128::D64OneHot>(&onehot_group)?;
+    let dense_params = committed_group_params::<fp128::D64Dense>(&dense_group)?;
     Ok((
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(16, 1),
