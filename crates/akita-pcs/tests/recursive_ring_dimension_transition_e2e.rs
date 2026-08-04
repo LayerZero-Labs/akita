@@ -342,9 +342,9 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
             BasisMode::Lagrange,
         )
         .expect("mixed recursive proof");
-        let requirements =
-            NttExecutionRequirements::from_prove_schedule(&schedule).expect("NTT requirements");
-        let prefix_layout = &schedule.recursive_folds[0]
+        let requirements = NttExecutionRequirements::from_prove_schedule(&selected_schedule)
+            .expect("NTT requirements");
+        let prefix_layout = &selected_schedule.recursive_folds[0]
             .params
             .incoming_setup_prefix
             .as_ref()
@@ -417,9 +417,12 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         )
         .expect("deserialize mixed recursive proof");
 
-        let verifier_setup =
-            Scheme::<ProofCfg>::setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
-                .expect("verifier setup");
+        let verifier_setup = Scheme::<ProofCfg>::setup_verifier_for_schedule(
+            &setup,
+            &selected_schedule,
+            &opening_layout,
+        )
+        .expect("verifier setup");
         let verify_claims = |final_openings: Vec<F>| {
             let mut verifier_groups = Vec::new();
             for (group_idx, openings) in pre_openings.iter().enumerate() {

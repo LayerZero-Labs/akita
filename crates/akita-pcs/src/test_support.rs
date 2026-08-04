@@ -1434,6 +1434,10 @@ where
         Env::root_honest_fold_policy()
     }
 
+    fn selection_policy() -> akita_planner::SelectionPolicyId {
+        akita_planner::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+    }
+
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
         Env::schedule_catalog()
     }
