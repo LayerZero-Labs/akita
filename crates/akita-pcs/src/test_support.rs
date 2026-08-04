@@ -1378,6 +1378,11 @@ where
     type ExtField = Env::ExtField;
 
     const D: usize = Env::D;
+    const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] = &[CommitmentRingDims {
+        inner: Env::D,
+        outer: B_RING_DIM,
+        opening: D_RING_DIM,
+    }];
 
     fn decomposition() -> DecompositionParams {
         Env::decomposition()

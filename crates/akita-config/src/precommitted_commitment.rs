@@ -17,10 +17,9 @@ use akita_types::sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{
-    accumulate_matrix_field_elements_for_level, AkitaScheduleInputs, ChunkedWitnessCfg,
-    CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldSchedule,
-    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope, SisMatrixRole,
-    SisModulusProfileId,
+    accumulate_matrix_field_elements_for_level, AkitaScheduleInputs, CommitmentRingDims,
+    CommittedGroupParams, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
+    PolynomialGroupLayout, SetupMatrixEnvelope, SisMatrixRole, SisModulusProfileId,
 };
 use std::marker::PhantomData;
 
@@ -127,7 +126,6 @@ fn standalone_precommit_params<Cfg: CommitmentConfig>(
     let honest_fold_policy = honest_fold_policy_of::<Cfg>();
     let mut policy = policy_of::<Cfg>().direct_only();
     policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
-    policy.witness_chunk = ChunkedWitnessCfg::default();
 
     let witness_len = 1usize
         .checked_shl(key.num_vars() as u32)

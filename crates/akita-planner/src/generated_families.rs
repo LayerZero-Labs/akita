@@ -25,8 +25,8 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, CommittedGroupProfile,
-    FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule,
+    OpeningClaimsLayout, PolynomialGroupLayout,
 };
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
@@ -364,16 +364,7 @@ fn recursive_profile_group_batch_keys_for_recursive_cfg<Cfg: CommitmentConfig + 
 fn recursive_d64_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted_params =
-        if TypeId::of::<BaseCfg>() == TypeId::of::<fp128::D64OneHotMultiChunk>() {
-            planner_committed_group_params::<BaseCfg>(
-                &precommitted_group,
-                BaseCfg::decomposition().log_commit_bound,
-                honest_fold_policy_of::<BaseCfg>(),
-            )?
-        } else {
-            committed_group_params::<BaseCfg>(&precommitted_group)?
-        };
+    let precommitted_params = committed_group_params::<BaseCfg>(&precommitted_group)?;
     let precommitted = CommittedGroupProfile::from_params(precommitted_group, &precommitted_params);
     Ok(vec![(
         AkitaScheduleLookupKey {
@@ -405,27 +396,6 @@ fn heterogeneous_d64_onehot_catalog_key(
         },
         vec![onehot_policy, dense_policy],
     ))
-}
-
-fn planner_committed_group_params<Cfg: CommitmentConfig>(
-    key: &PolynomialGroupLayout,
-    log_commit_bound: u32,
-    honest_fold_policy: HonestFoldPolicySpec,
-) -> Result<CommittedGroupParams, AkitaError> {
-    key.validate()?;
-    let mut policy = policy_of::<Cfg>().direct_only();
-    policy.decomposition.log_commit_bound = log_commit_bound;
-    policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
-    policy.witness_chunk = akita_types::ChunkedWitnessCfg::default();
-    let planned = find_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(*key),
-        honest_fold_policy,
-        &[],
-        &policy,
-        Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
-    )?;
-    Ok(planned.schedule.root.params.final_group.commitment)
 }
 
 /// Selected multi-group recursive keys for setup-prefix capacity work.
