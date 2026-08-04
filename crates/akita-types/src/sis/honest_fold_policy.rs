@@ -531,6 +531,95 @@ mod tests {
     }
 
     #[test]
+    fn chunked_query_uses_physical_emitted_geometry() {
+        let challenge = d64_challenge();
+        let one_hot =
+            UnitOneHotFoldPolicy::preserving_existing_behavior(128, FoldWitnessNorms::new(1, 4));
+        for (
+            _label,
+            num_chunks,
+            logical_num_live_blocks,
+            logical_num_fold_coeffs,
+            physical_num_fold_coeffs,
+            expected_threshold,
+        ) in [
+            ("W2", 2, 16, 256, 512, 11),
+            ("W4", 4, 32, 256, 1_024, 12),
+            ("W8", 8, 64, 512, 4_096, 13),
+        ] {
+            let physical = HonestFoldSizingQuery {
+                ring_dimension: 64,
+                num_claims: 1,
+                num_live_blocks: logical_num_live_blocks,
+                num_chunks,
+                num_fold_coeffs: physical_num_fold_coeffs,
+                log_basis: 3,
+                challenge_config: &challenge,
+                challenge_shape: TensorChallengeShape::Flat,
+            };
+            assert_eq!(
+                physical.num_fold_coeffs,
+                logical_num_fold_coeffs * num_chunks
+            );
+            assert_eq!(
+                one_hot.exact_threshold(physical).expect("threshold"),
+                expected_threshold
+            );
+            assert_eq!(one_hot.num_digits_fold(physical).expect("digit depth"), 2);
+        }
+
+        let old_w8_logical = HonestFoldSizingQuery {
+            ring_dimension: 64,
+            num_claims: 1,
+            num_live_blocks: 64,
+            num_chunks: 1,
+            num_fold_coeffs: 512,
+            log_basis: 3,
+            challenge_config: &challenge,
+            challenge_shape: TensorChallengeShape::Flat,
+        };
+        assert_eq!(
+            one_hot
+                .exact_threshold(old_w8_logical)
+                .expect("old threshold"),
+            32
+        );
+        assert_eq!(
+            one_hot
+                .num_digits_fold(old_w8_logical)
+                .expect("old digit depth"),
+            3
+        );
+    }
+
+    #[test]
+    fn chunked_query_uses_largest_uneven_window() {
+        let challenge = d64_challenge();
+        let one_hot =
+            UnitOneHotFoldPolicy::preserving_existing_behavior(128, FoldWitnessNorms::new(1, 4));
+        let uneven = HonestFoldSizingQuery {
+            ring_dimension: 64,
+            num_claims: 2,
+            num_live_blocks: 10,
+            num_chunks: 4,
+            num_fold_coeffs: 512,
+            log_basis: 3,
+            challenge_config: &challenge,
+            challenge_shape: TensorChallengeShape::Flat,
+        };
+        let largest_window = HonestFoldSizingQuery {
+            num_live_blocks: 3,
+            num_chunks: 1,
+            ..uneven
+        };
+
+        assert_eq!(
+            one_hot.exact_threshold(uneven),
+            one_hot.exact_threshold(largest_window)
+        );
+    }
+
+    #[test]
     fn shipping_one_hot_policy_has_no_snap() {
         let policy =
             UnitOneHotFoldPolicy::preserving_existing_behavior(128, FoldWitnessNorms::new(1, 4));
