@@ -361,14 +361,19 @@ fn recursive_profile_group_batch_keys_for_recursive_cfg<Cfg: CommitmentConfig + 
     Ok(Vec::new())
 }
 
-fn recursive_d64_onehot_profile_keys<BaseCfg: CommitmentConfig>(
+fn recursive_d64_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted_params = planner_committed_group_params::<BaseCfg>(
-        &precommitted_group,
-        BaseCfg::decomposition().log_commit_bound,
-        honest_fold_policy_of::<BaseCfg>(),
-    )?;
+    let precommitted_params =
+        if TypeId::of::<BaseCfg>() == TypeId::of::<fp128::D64OneHotMultiChunk>() {
+            planner_committed_group_params::<BaseCfg>(
+                &precommitted_group,
+                BaseCfg::decomposition().log_commit_bound,
+                honest_fold_policy_of::<BaseCfg>(),
+            )?
+        } else {
+            committed_group_params::<BaseCfg>(&precommitted_group)?
+        };
     let precommitted = CommittedGroupProfile::from_params(precommitted_group, &precommitted_params);
     Ok(vec![(
         AkitaScheduleLookupKey {
