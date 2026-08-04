@@ -15,7 +15,7 @@ mod validation;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{DigitBlocks, RingVec};
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 pub use api::{
     batched_commit, batched_commit_with_params, commit, commit_final_group, commit_group,
@@ -62,7 +62,7 @@ pub use types::ProverOpeningData;
 /// closures borrow typed ring rows via [`Self::z_folded_rings_trusted`] and
 /// [`Self::centered_coeffs_trusted`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecomposeFoldWitness<F: FieldCore> {
+pub struct DecomposeFoldWitness<F: Field> {
     /// Folded witness rows in flat ring storage.
     pub z_folded_rings: RingVec<F>,
     /// Centered integer coefficients for each [`z_folded_rings`] row, stored row-major flat.
@@ -75,7 +75,7 @@ pub struct DecomposeFoldWitness<F: FieldCore> {
     ring_dim: usize,
 }
 
-impl<F: FieldCore> DecomposeFoldWitness<F> {
+impl<F: Field> DecomposeFoldWitness<F> {
     /// Construct from typed ring rows at a kernel boundary.
     pub fn from_parts<const D: usize>(
         z_folded_rings: Vec<CyclotomicRing<F, D>>,
@@ -169,7 +169,7 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
 /// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
 /// closures borrow typed ring rows via [`Self::recomposed_block_trusted`] and
 /// typed digit planes via [`Self::decomposed_inner_rows_trusted`].
-pub struct CommitInnerWitness<F: FieldCore> {
+pub struct CommitInnerWitness<F: Field> {
     /// Recombined inner `A * s_i` rows per block, each block in flat ring storage.
     pub recomposed_inner_rows: Vec<RingVec<F>>,
     /// Digit decompositions of `A * s_i` in D-free protocol storage.
@@ -178,7 +178,7 @@ pub struct CommitInnerWitness<F: FieldCore> {
     ring_dim: usize,
 }
 
-impl<F: FieldCore> CommitInnerWitness<F> {
+impl<F: Field> CommitInnerWitness<F> {
     /// Construct from typed kernel output at a commit boundary.
     pub fn from_parts<const D: usize>(
         recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,

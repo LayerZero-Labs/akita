@@ -8,7 +8,7 @@ use akita_types::{
     AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, CleartextWitnessShape,
     LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof, ZFoldEncodingStats,
 };
-use jolt_field::{CanonicalField, FieldCore};
+use jolt_field::{CanonicalEncoding, Field};
 
 const TAIL_Z_LENGTH_PREFIX_BYTES: usize = 8;
 
@@ -24,8 +24,8 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
     schedule: &Schedule,
     field_bits: u32,
 ) where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field,
 {
     if proof.is_root_direct() {
         tracing::info!(
@@ -44,7 +44,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
     let num_elems = final_w.num_elems();
 
     if let Some(segment) = final_w.as_segment_typed() {
-        let field_sz = field_bytes(FF::modulus_bits());
+        let field_sz = field_bytes(FF::MODULUS_BITS);
         let ring_dim = segment.layout.ring_dimension;
         let z_golomb_bytes = segment.z_payloads.iter().map(Vec::len).sum::<usize>();
         let z_field_elems = segment.layout.z_coords();
@@ -190,7 +190,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
     );
 }
 
-fn segment_typed_z_fold_stats<FF: FieldCore>(
+fn segment_typed_z_fold_stats<FF: Field>(
     witness: &akita_types::SegmentTypedWitness<FF>,
     schedule: &Schedule,
     field_bits: u32,
@@ -208,7 +208,7 @@ fn segment_typed_z_fold_stats<FF: FieldCore>(
     z_fold_encoding_stats_from_segment(witness, lp, num_t_vectors, field_bits)
 }
 
-fn emit_z_golomb_k_sweep<FF: FieldCore>(
+fn emit_z_golomb_k_sweep<FF: Field>(
     label: &str,
     witness: &akita_types::SegmentTypedWitness<FF>,
     schedule: &Schedule,
@@ -386,7 +386,7 @@ fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
     coeff_len / d
 }
 
-fn extension_opening_reduction_sizes<E: FieldCore + AkitaSerialize>(
+fn extension_opening_reduction_sizes<E: Field + AkitaSerialize>(
     reduction: Option<&akita_types::ExtensionOpeningReductionProof<E>>,
 ) -> (usize, usize) {
     reduction.map_or((0, 0), |reduction| {
@@ -400,9 +400,7 @@ fn extension_opening_reduction_sizes<E: FieldCore + AkitaSerialize>(
     })
 }
 
-fn stage3_sumcheck_size<E: FieldCore + AkitaSerialize>(
-    proof: Option<&SetupSumcheckProof<E>>,
-) -> usize {
+fn stage3_sumcheck_size<E: Field + AkitaSerialize>(proof: Option<&SetupSumcheckProof<E>>) -> usize {
     proof.map_or(0, |proof| {
         proof.claim.serialized_size(Compress::No)
             + proof.setup_prefix_eval.serialized_size(Compress::No)
@@ -419,8 +417,8 @@ fn stage3_sumcheck_size<E: FieldCore + AkitaSerialize>(
 /// stage-3 proof and contribute zero.
 pub(crate) fn observed_stage3_setup_product_bytes<FF, E>(proof: &AkitaBatchedProof<FF, E>) -> usize
 where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     let root_bytes = proof.root.as_fold().map_or(0, |fold| {
         stage3_sumcheck_size(fold.stage3_sumcheck_proof.as_ref())
@@ -448,8 +446,8 @@ fn print_akita_level_breakdown<FF, E, const D: usize>(
     level: &AkitaLevelProof<FF, E>,
 ) -> usize
 where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction());
@@ -542,7 +540,7 @@ where
     total
 }
 
-trait TerminalProofView<FF: FieldCore, E: FieldCore>: AkitaSerialize {
+trait TerminalProofView<FF: Field, E: Field>: AkitaSerialize {
     fn extension_opening_reduction(
         &self,
     ) -> Option<&akita_types::ExtensionOpeningReductionProof<E>>;
@@ -551,7 +549,7 @@ trait TerminalProofView<FF: FieldCore, E: FieldCore>: AkitaSerialize {
     fn fold_grind_nonce_value(&self) -> u32;
 }
 
-impl<FF: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize>
+impl<FF: Field + CanonicalEncoding + AkitaSerialize, E: Field + AkitaSerialize>
     TerminalProofView<FF, E> for TerminalLevelProof<FF, E>
 {
     fn extension_opening_reduction(
@@ -573,7 +571,7 @@ impl<FF: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerial
     }
 }
 
-impl<FF: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize>
+impl<FF: Field + CanonicalEncoding + AkitaSerialize, E: Field + AkitaSerialize>
     TerminalProofView<FF, E> for AkitaLevelProof<FF, E>
 {
     fn extension_opening_reduction(
@@ -604,8 +602,8 @@ fn print_terminal_level_breakdown<FF, E, P, const D: usize>(
     root_variant: &'static str,
 ) -> usize
 where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field + AkitaSerialize,
     P: TerminalProofView<FF, E>,
 {
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
@@ -670,8 +668,8 @@ fn print_batched_root_breakdown<FF, E, const D: usize>(
     root: &AkitaBatchedRootProof<FF, E>,
 ) -> usize
 where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     if let Some(terminal) = root.as_terminal_root() {
         return print_terminal_level_breakdown::<FF, E, _, D>(label, 0, terminal, "terminal");
@@ -788,8 +786,8 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     label: &str,
     proof: &AkitaBatchedProof<FF, E>,
 ) where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     let root_total = proof.root.serialized_size(Compress::No);
     let recursive_steps_total: usize = proof

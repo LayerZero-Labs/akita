@@ -7,7 +7,7 @@ use akita_types::{
     root_tensor_projection_enabled, schedule_is_root_direct, schedule_root_fold_step,
     FpExtEncoding, OpeningClaimsLayout, Schedule,
 };
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 /// Select the effective runtime schedule for a batched opening, including the
 /// root-direct rewrite when the folded-root opening geometry is unsupported.
@@ -25,7 +25,7 @@ pub fn effective_batched_schedule<Cfg>(
 ) -> Result<Schedule, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore,
+    Cfg::Field: Field,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
 {
     let num_vars = opening_batch.max_num_vars();
@@ -59,7 +59,7 @@ where
         let needs_root_direct_rewrite = !supports_opening_shape && !tensor_projection_enabled;
 
         if opening_batch.num_groups() > 1 {
-            if Cfg::EXT_DEGREE != 1 {
+            if Cfg::DEGREE != 1 {
                 return Err(AkitaError::InvalidSetup(
                     "multi-group extension openings cannot use root-direct rewrite".to_string(),
                 ));
@@ -87,6 +87,7 @@ mod tests {
         AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep, LevelParams,
         PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusFamily, Step,
     };
+    use jolt_field::Ring;
     use jolt_field::{ExtField, Fp32, FpExt4};
 
     type Base = Fp32<251>;

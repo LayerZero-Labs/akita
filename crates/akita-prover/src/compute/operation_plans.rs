@@ -1,7 +1,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_types::LevelParams;
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 // ===========================================================================
 // Open, source-typed operation boundary (PO1)
@@ -67,7 +67,7 @@ impl CommitInnerPlan {
 /// multiplier points (scalar folds) and ring multiplier points (sparse
 /// ring-multiplier accumulation).
 #[derive(Debug, Clone, Copy)]
-pub enum OpeningFoldPlan<'a, F: FieldCore, const D: usize> {
+pub enum OpeningFoldPlan<'a, F: Field, const D: usize> {
     /// Base multiplier point: scalar fold weights.
     Base {
         /// Outer evaluation scalars applied to the folded blocks.
@@ -90,7 +90,7 @@ pub enum OpeningFoldPlan<'a, F: FieldCore, const D: usize> {
 
 /// Fused evaluate-and-fold output.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpeningFoldOutput<F: FieldCore, const D: usize> {
+pub struct OpeningFoldOutput<F: Field, const D: usize> {
     /// Evaluation of the polynomial at the opening point.
     pub eval: CyclotomicRing<F, D>,
     /// Folded witness rows in ring form.

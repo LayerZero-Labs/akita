@@ -11,8 +11,8 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_error::AkitaError;
-use jolt_field::parallel::*;
-use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 use crate::backend::poly_helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
@@ -50,7 +50,7 @@ impl RecursiveWitnessFlat {
         self.digits.is_empty()
     }
 
-    pub fn view<F: FieldCore, const D: usize>(
+    pub fn view<F: Field, const D: usize>(
         &self,
     ) -> Result<SuffixWitnessView<'_, F, D>, AkitaError> {
         SuffixWitnessView::from_i8_digits(&self.digits)
@@ -65,13 +65,13 @@ impl AsRef<[i8]> for RecursiveWitnessFlat {
 
 /// D-specific zero-copy view over a flat recursive witness digit buffer.
 #[derive(Debug, Clone, Copy)]
-pub struct SuffixWitnessView<'a, F: FieldCore, const D: usize> {
+pub struct SuffixWitnessView<'a, F: Field, const D: usize> {
     coeffs: &'a [[i8; D]],
     padded_ring_elems: usize,
     _marker: PhantomData<F>,
 }
 
-impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
+impl<'a, F: Field, const D: usize> SuffixWitnessView<'a, F, D> {
     pub fn from_i8_digits(digits: &'a [i8]) -> Result<Self, AkitaError> {
         let (coeffs, remainder) = digits.as_chunks::<D>();
         if !remainder.is_empty() {
@@ -119,7 +119,7 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
 
 impl<'a, F, const D: usize> SuffixWitnessView<'a, F, D>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     pub(crate) fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
         let expected_len = self.padded_ring_elems.checked_mul(D).ok_or_else(|| {
@@ -340,7 +340,10 @@ where
         let inner_width = block_len * num_digits;
         let num_blocks = challenges.len();
 
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
         let coeffs = self.coeffs;
         let coeff_accum = balanced_digit_decompose_fold_partitioned::<D>(
             coeffs,
@@ -420,14 +423,14 @@ fn padded_ring_elems_for_digits<const D: usize>(digits: &[i8]) -> Result<usize, 
 
 /// Same-point batch view over several [`RecursiveWitnessFlat`] suffix witnesses.
 #[derive(Debug, Clone, Copy)]
-pub struct SuffixWitnessBatchView<'a, F: FieldCore, const D: usize> {
+pub struct SuffixWitnessBatchView<'a, F: Field, const D: usize> {
     polys: &'a [&'a RecursiveWitnessFlat],
     _marker: PhantomData<F>,
 }
 
 impl<F, const D: usize> RootPolyShape<F, D> for RecursiveWitnessFlat
 where
-    F: FieldCore,
+    F: Field,
 {
     fn num_ring_elems(&self) -> usize {
         padded_ring_elems_for_digits::<D>(&self.digits).unwrap_or(1)
@@ -458,7 +461,7 @@ where
 /// `num_vars`.
 impl<F> RootPolyMeta<F> for RecursiveWitnessFlat
 where
-    F: FieldCore,
+    F: Field,
 {
     fn num_ring_elems(&self) -> usize {
         self.digits.len().max(1)
@@ -472,7 +475,7 @@ where
 
 impl<F, const D: usize> RootOpeningSource<F, D> for RecursiveWitnessFlat
 where
-    F: FieldCore,
+    F: Field,
 {
     type OpeningView<'v>
         = SuffixWitnessView<'v, F, D>
@@ -498,7 +501,7 @@ where
 
 impl<F, const D: usize> RootTensorSource<F, D> for RecursiveWitnessFlat
 where
-    F: FieldCore,
+    F: Field,
 {
     type TensorView<'v>
         = SuffixWitnessView<'v, F, D>
@@ -524,7 +527,7 @@ where
 
 impl<F, const D: usize> DirectRootWitnessSource<F, D> for RecursiveWitnessFlat
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         SuffixWitnessView::<F, D>::from_i8_digits(&self.digits)?.direct_root_witness()
@@ -537,7 +540,7 @@ where
 
 impl<F, const D: usize> OpeningFoldKernel<SuffixWitnessView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn evaluate_and_fold(
         &self,
@@ -577,7 +580,7 @@ where
 
 impl<F, const D: usize> OpeningBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn decompose_fold_batch(
         &self,
@@ -611,7 +614,7 @@ where
 impl<F, E, const D: usize> TensorProjectionKernel<SuffixWitnessView<'_, F, D>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
     E: ExtField<F>,
 {
     fn column_partials(
@@ -654,7 +657,7 @@ where
 impl<F, E, const D: usize> TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     fn column_partials_batch(

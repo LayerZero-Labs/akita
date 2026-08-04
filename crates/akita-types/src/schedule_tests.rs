@@ -10,12 +10,13 @@ use crate::{
     SisModulusFamily, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
+use akita_algebra::Zero;
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_sumcheck::EqFactoredUniPoly;
 use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
-use jolt_field::{CanonicalField, FieldCore, Prime128OffsetA7F7};
+use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7};
 
 type F = Prime128OffsetA7F7;
 
@@ -87,7 +88,7 @@ fn segment_typed_final_witness(
     lp: &LevelParams,
     num_claims: usize,
 ) -> (CleartextWitnessProof<F>, CleartextWitnessShape) {
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let shape = segment_typed_witness_shape_from_groups(
         lp,
         field_bits,
@@ -610,7 +611,7 @@ fn root_direct_schedule_uses_multi_group_witness_len() {
     );
 }
 
-fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
+fn dummy_sumcheck<F: Field>(rounds: usize, degree: usize) -> SumcheckProof<F> {
     SumcheckProof {
         round_polys: (0..rounds)
             .map(|_| CompressedUniPoly {
@@ -620,7 +621,7 @@ fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F
     }
 }
 
-fn dummy_eq_factored_sumcheck<F: FieldCore>(
+fn dummy_eq_factored_sumcheck<F: Field>(
     rounds: usize,
     degree: usize,
 ) -> EqFactoredSumcheckProof<F> {
@@ -636,7 +637,7 @@ fn dummy_eq_factored_sumcheck<F: FieldCore>(
     }
 }
 
-fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
+fn dummy_stage1_proof<F: Field>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
     AkitaStage1Proof {
         stages: stage1_tree_stage_shapes(rounds, b)
             .into_iter()
@@ -649,7 +650,7 @@ fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof
     }
 }
 
-fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
+fn exact_level_proof_bytes<F: Field + CanonicalEncoding + AkitaSerialize>(
     lp: &LevelParams,
     next_lp: &LevelParams,
     next_w_len: usize,

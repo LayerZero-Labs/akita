@@ -9,7 +9,7 @@ use crate::types::EqFactoredUniPoly;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::uni_poly::UniPoly;
 use akita_error::AkitaError;
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 /// Prover-side sumcheck instance interface.
 ///
@@ -18,7 +18,7 @@ use jolt_field::FieldCore;
 /// after receiving the verifier challenge `r_j`.
 ///
 /// Akita §4.3 will implement concrete instances for `H_0` and `H_α`.
-pub trait SumcheckInstanceProver<E: FieldCore>: Send + Sync {
+pub trait SumcheckInstanceProver<E: Field>: Send + Sync {
     /// Number of rounds (i.e. number of variables bound by sumcheck).
     fn num_rounds(&self) -> usize;
 
@@ -47,7 +47,7 @@ pub trait SumcheckInstanceProver<E: FieldCore>: Send + Sync {
 ///
 /// Implementations provide the initial claim and the oracle evaluation at the
 /// challenge point, enabling the verifier to perform the final consistency check.
-pub trait SumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
+pub trait SumcheckInstanceVerifier<E: Field>: Send + Sync {
     /// Number of rounds (i.e. number of variables bound by sumcheck).
     fn num_rounds(&self) -> usize;
 
@@ -73,7 +73,7 @@ pub trait SumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
 /// prover sends the inner polynomial `q(X)` with its linear term omitted, and
 /// the verifier advances a scaled claim directly from `l(0)`, `l(1)`, `q(0)`,
 /// the higher-degree contribution of `q(1)`, and the sampled challenge.
-pub trait EqFactoredSumcheckInstanceProver<E: FieldCore>: Send + Sync {
+pub trait EqFactoredSumcheckInstanceProver<E: Field>: Send + Sync {
     /// Number of rounds (i.e. number of variables bound by sumcheck).
     fn num_rounds(&self) -> usize;
 
@@ -97,7 +97,7 @@ pub trait EqFactoredSumcheckInstanceProver<E: FieldCore>: Send + Sync {
 }
 
 /// Mutable verifier round state for an eq-factored sumcheck proof.
-pub trait EqFactoredSumcheckRoundState<E: FieldCore>: Send {
+pub trait EqFactoredSumcheckRoundState<E: Field>: Send {
     /// Linear eq-factor evaluations `(l(0), l(1))` for the current round.
     fn current_linear_factor_evals(&self) -> (E, E);
 
@@ -105,7 +105,7 @@ pub trait EqFactoredSumcheckRoundState<E: FieldCore>: Send {
     fn ingest_challenge(&mut self, round: usize, r_round: E);
 }
 
-impl<E: FieldCore> EqFactoredSumcheckRoundState<E> for GruenSplitEq<E> {
+impl<E: Field> EqFactoredSumcheckRoundState<E> for GruenSplitEq<E> {
     fn current_linear_factor_evals(&self) -> (E, E) {
         self.linear_factor_evals()
     }
@@ -120,7 +120,7 @@ impl<E: FieldCore> EqFactoredSumcheckRoundState<E> for GruenSplitEq<E> {
 /// The verifier itself is immutable. Any per-round mutable state needed to
 /// track the evolving eq factor lives in [`Self::RoundState`], which is created
 /// fresh for each proof verification.
-pub trait EqFactoredSumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
+pub trait EqFactoredSumcheckInstanceVerifier<E: Field>: Send + Sync {
     /// Mutable per-proof round state used by the verifier driver.
     type RoundState: EqFactoredSumcheckRoundState<E>;
 

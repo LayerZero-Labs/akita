@@ -1,5 +1,8 @@
 #![allow(missing_docs)]
 
+use akita_algebra::One;
+use akita_algebra::Ring;
+use akita_algebra::Zero;
 use std::time::Instant;
 
 use akita_algebra::poly::multilinear_eval;
@@ -10,8 +13,8 @@ use akita_sumcheck::{
 };
 use akita_transcript::labels;
 use akita_transcript::{AkitaTranscript, Transcript};
+use jolt_field::Field;
 use jolt_field::Fp64;
-use jolt_field::{FieldCore, RandomSampling};
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rand::SeedableRng;
@@ -94,7 +97,7 @@ struct DenseSumcheckProver<E> {
     num_vars: usize,
 }
 
-impl<E: FieldCore> SumcheckInstanceProver<E> for DenseSumcheckProver<E> {
+impl<E: Field> SumcheckInstanceProver<E> for DenseSumcheckProver<E> {
     fn num_rounds(&self) -> usize {
         self.num_vars
     }
@@ -134,7 +137,7 @@ struct DenseSumcheckVerifier<E> {
     claim: E,
 }
 
-impl<E: FieldCore> SumcheckInstanceVerifier<E> for DenseSumcheckVerifier<E> {
+impl<E: Field> SumcheckInstanceVerifier<E> for DenseSumcheckVerifier<E> {
     fn num_rounds(&self) -> usize {
         self.num_vars
     }

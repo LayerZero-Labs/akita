@@ -1,4 +1,6 @@
 use super::*;
+use jolt_field::One;
+use jolt_field::Zero;
 
 #[test]
 fn batched_commit_matches_individual_commits() {

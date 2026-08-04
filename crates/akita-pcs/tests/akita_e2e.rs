@@ -21,11 +21,8 @@ use akita_types::{
     OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
 };
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
-use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
-use jolt_field::{
-    CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, PseudoMersenneField, RandomSampling, TranscriptChallenge,
-};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_field::{Fold, Unreduced};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 #[cfg(feature = "disk-persistence")]
@@ -56,8 +53,8 @@ fn schedule_bytes_with_realized_terminal_z<FF, E>(
     schedule: &Schedule,
 ) -> usize
 where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     let Ok(scheduled_shape) = schedule_terminal_direct_witness_shape(schedule) else {
         return schedule.total_bytes;
@@ -103,23 +100,23 @@ fn init_rayon_pool() {
     });
 }
 
-fn random_point<FField: CanonicalField>(nv: usize) -> Vec<FField> {
+fn random_point<FField: Field + CanonicalEncoding>(nv: usize) -> Vec<FField> {
     let mut rng = StdRng::seed_from_u64(0xcafe_babe);
     (0..nv)
-        .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| FField::from_u128_reduced(rng.gen::<u128>()))
         .collect()
 }
 
 fn random_claim_point<FField, E>(nv: usize) -> Vec<E>
 where
-    FField: CanonicalField,
+    FField: Field + CanonicalEncoding,
     E: ExtField<FField>,
 {
     let mut rng = StdRng::seed_from_u64(0xcafe_babe);
     (0..nv)
         .map(|_| {
-            let limbs = (0..E::EXT_DEGREE)
-                .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
+            let limbs = (0..E::DEGREE)
+                .map(|_| FField::from_u128_reduced(rng.gen::<u128>()))
                 .collect::<Vec<_>>();
             E::from_base_slice(&limbs)
         })
@@ -128,7 +125,7 @@ where
 
 fn dense_lagrange_opening_from_evals<FField, E>(evals: &[FField], point: &[E]) -> E
 where
-    FField: FieldCore,
+    FField: Field,
     E: ExtField<FField>,
 {
     let weights = lagrange_weights(point).expect("valid opening point");
@@ -149,7 +146,7 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore>(
+fn prove_input<'a, FF: Field + Clone, P, CommitF: Field>(
     point: &'a [FF],
     polynomials: &'a [&'a P],
     commitment: &'a Commitment<CommitF>,
@@ -167,7 +164,7 @@ fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore>(
         .expect("valid prover opening data")
 }
 
-fn verify_input<'a, FF: FieldCore, C>(
+fn verify_input<'a, FF: Field, C>(
     point: &[FF],
     openings: &[FF],
     commitment: &'a C,
@@ -205,7 +202,7 @@ fn schedule_terminal_log_basis<Cfg: CommitmentConfig>(schedule: &akita_types::Sc
 /// Count the total number of fold levels (including the batched root and the
 /// terminal step) in a singleton-shaped batched proof, matching the planner's
 /// `num_fold_levels` convention.
-fn batched_total_fold_levels<FF: CanonicalField, E: FieldCore>(
+fn batched_total_fold_levels<FF: Field + CanonicalEncoding, E: Field>(
     proof: &AkitaBatchedProof<FF, E>,
 ) -> usize {
     use akita_types::{AkitaBatchedRootProof, AkitaLevelProof};
@@ -231,26 +228,23 @@ fn make_dense_fixture<FField, const D: usize, Cfg: CommitmentConfig<Field = FFie
     transcript_label: &'static [u8],
 ) -> DenseFixture<FField, Cfg::ExtField, D>
 where
-    FField: CanonicalField
+    FField: Field
+        + CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + HasWide
-        + RandomSampling
-        + FromPrimitiveInt
+        + Unreduced
+        + Ring
         + 'static
-        + HalvingField
-        + PseudoMersenneField
+        + PseudoMersenne
         + AkitaSerialize
         + Valid,
-    Cfg::ExtField: FrobeniusExtField<FField> + HasUnreducedOps + HasOptimizedFold,
-    <FField as HasWide>::Wide: From<FField> + ReduceTo<FField>,
+    Cfg::ExtField: ExtField<FField> + Unreduced + Fold,
     Cfg::ExtField: FpExtEncoding<FField> + AkitaSerialize,
 {
     let layout = singleton_layout::<Cfg>(nv);
 
     let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
     let evals: Vec<FField> = (0..1usize << nv)
-        .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| FField::from_u128_reduced(rng.gen::<u128>()))
         .collect();
 
     let poly = DensePoly::<FField>::from_field_evals(nv, D, &evals).unwrap();
@@ -340,7 +334,7 @@ fn purge_setup_cache(max_num_vars: usize) {
     }
 }
 
-fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::RingVec<FField>) {
+fn bump_flat_ring_vec<FField: Field>(flat: &mut akita_types::RingVec<FField>) {
     let mut coeffs = flat.coeffs().to_vec();
     let first = coeffs
         .first_mut()
@@ -349,7 +343,7 @@ fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::RingVec<FField>
     *flat = akita_types::RingVec::from_coeffs(coeffs);
 }
 
-fn mutate_terminal_e_hat_digit<FField: FieldCore>(
+fn mutate_terminal_e_hat_digit<FField: Field>(
     witness: &mut akita_types::CleartextWitnessProof<FField>,
     _layout: akita_types::TerminalWitnessSegmentLayout,
 ) {
@@ -361,7 +355,7 @@ fn mutate_terminal_e_hat_digit<FField: FieldCore>(
     }
 }
 
-fn terminal_witness_mut<FField: FieldCore, E: FieldCore>(
+fn terminal_witness_mut<FField: Field, E: Field>(
     proof: &mut AkitaBatchedProof<FField, E>,
 ) -> &mut akita_types::CleartextWitnessProof<FField> {
     match &mut proof.root {
@@ -425,7 +419,7 @@ fn chunked_multi_chunk_prove_verify() {
         let layout = singleton_layout::<Cfg>(NV);
         let mut rng = StdRng::seed_from_u64(0x6b1d_c0de);
         let evals: Vec<F> = (0..1usize << NV)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
             .collect();
         let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).unwrap();
         let pt = random_point::<F>(NV);
@@ -511,7 +505,7 @@ fn full_d64_prove_verify() {
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         let evals: Vec<F> = (0..1usize << FULL_TEST_NV)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
             .collect();
 
         let poly = DensePoly::<F>::from_field_evals(FULL_TEST_NV, D, &evals).unwrap();
@@ -768,7 +762,7 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
             .params
             .clone();
         let terminal_layout =
-            akita_types::terminal_witness_segment_layout(&terminal_params, 1, 1, F::modulus_bits())
+            akita_types::terminal_witness_segment_layout(&terminal_params, 1, 1, F::MODULUS_BITS)
                 .expect("terminal layout");
 
         let mut malformed = proof.clone();
@@ -879,7 +873,7 @@ fn full_d64_tiny_root_direct_roundtrip_and_serialization() {
 
         let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
         let evals: Vec<F> = (0..1usize << nv)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
             .collect();
         let poly = DensePoly::<F>::from_field_evals(nv, D, &evals).unwrap();
         let opening_point = random_point::<F>(nv);
@@ -1357,7 +1351,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         // either schedule shape.
         match malformed.root {
             akita_types::AkitaBatchedRootProof::Fold(ref mut fold) => {
-                fold.stage1.s_claim += F::from_canonical_u128_reduced(1);
+                fold.stage1.s_claim += F::from_u128_reduced(1);
             }
             akita_types::AkitaBatchedRootProof::Terminal(ref mut terminal) => {
                 match terminal

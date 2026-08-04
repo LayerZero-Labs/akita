@@ -1,15 +1,15 @@
 //! Prover-side trace table: sparse columns for `K = 1`, dense flat slice for `K > 1`.
 
 use akita_error::AkitaError;
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 #[inline]
-fn fold_pair<E: FieldCore>(a: E, b: E, r: E) -> E {
+fn fold_pair<E: Field>(a: E, b: E, r: E) -> E {
     a + r * (b - a)
 }
 
 #[inline]
-fn fold_quad<E: FieldCore>(v00: E, v10: E, v01: E, v11: E, r0: E, r1: E) -> E {
+fn fold_quad<E: Field>(v00: E, v10: E, v01: E, v11: E, r0: E, r1: E) -> E {
     let x0 = fold_pair(v00, v10, r0);
     let x1 = fold_pair(v01, v11, r0);
     fold_pair(x0, x1, r1)
@@ -17,19 +17,19 @@ fn fold_quad<E: FieldCore>(v00: E, v10: E, v01: E, v11: E, r0: E, r1: E) -> E {
 
 /// One active opening-digit column of a sparse (`K = 1`) trace table.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TraceSparseColumn<E: FieldCore> {
+pub struct TraceSparseColumn<E: Field> {
     pub col: usize,
     pub values: Vec<E>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TraceSparseTable<E: FieldCore> {
+pub struct TraceSparseTable<E: Field> {
     columns: Vec<TraceSparseColumn<E>>,
     live_x_cols: usize,
     y_len: usize,
 }
 
-impl<E: FieldCore> TraceSparseTable<E> {
+impl<E: Field> TraceSparseTable<E> {
     fn new(mut columns: Vec<TraceSparseColumn<E>>, live_x_cols: usize, y_len: usize) -> Self {
         columns.retain(|column| column.col < live_x_cols);
         columns.sort_by_key(|column| column.col);
@@ -136,12 +136,12 @@ impl<E: FieldCore> TraceSparseTable<E> {
 /// `FieldSparse` is the production `K = 1` representation (active opening-digit columns only).
 /// `RingDense` is the flat `live_x_cols · y_len` table used for `K > 1` ring block weights.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TraceTable<E: FieldCore> {
+pub enum TraceTable<E: Field> {
     FieldSparse(TraceSparseTable<E>),
     RingDense(Vec<E>),
 }
 
-impl<E: FieldCore> TraceTable<E> {
+impl<E: Field> TraceTable<E> {
     pub fn field_sparse(
         columns: Vec<TraceSparseColumn<E>>,
         live_x_cols: usize,
@@ -331,6 +331,8 @@ impl<E: FieldCore> TraceTable<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_algebra::Ring;
+    use akita_algebra::Zero;
     use jolt_field::Fp32;
 
     type F = Fp32<251>;

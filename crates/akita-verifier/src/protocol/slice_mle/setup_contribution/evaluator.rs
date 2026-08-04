@@ -1,6 +1,6 @@
 use akita_error::AkitaError;
 use akita_types::{AkitaExpandedSetup, SetupContributionPlan};
-use jolt_field::{CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
 
@@ -17,7 +17,7 @@ pub(crate) fn evaluate_setup_contribution_direct<F, E, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
     if alpha_pows_a.len() != D {
@@ -43,7 +43,7 @@ where
     plan.evaluate_direct::<F>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
 }
 
-fn validate_role_alpha_pows<E: FieldCore>(
+fn validate_role_alpha_pows<E: Field>(
     relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
     alpha_pows_a: &[E],
     alpha_pows_b: &[E],

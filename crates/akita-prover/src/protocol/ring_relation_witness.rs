@@ -4,10 +4,10 @@ use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{AkitaCommitmentHint, CommitmentRingDims, DigitBlocks, RingRole, RingVec};
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 /// Per-group secret witness for the ring relation at one fold level.
-pub struct RingRelationGroupWitness<F: FieldCore> {
+pub struct RingRelationGroupWitness<F: Field> {
     pub z_folded_rings: DecomposeFoldWitness<F>,
     /// Per-window centered fold responses `z_i = Σ_{j∈I_i} c_j s_j` emitted
     /// z-first per chunk by `build_w_coeffs`. Length `num_chunks` (one element
@@ -19,7 +19,7 @@ pub struct RingRelationGroupWitness<F: FieldCore> {
     role_dims: CommitmentRingDims,
 }
 
-impl<F: FieldCore> RingRelationGroupWitness<F> {
+impl<F: Field> RingRelationGroupWitness<F> {
     /// Construct one group witness from D-free carriers.
     pub fn from_parts(
         z_folded_rings: DecomposeFoldWitness<F>,
@@ -139,12 +139,12 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
 }
 
 /// Prover secret for the per-fold ring relation (never built on the verifier).
-pub struct RingRelationWitness<F: FieldCore> {
+pub struct RingRelationWitness<F: Field> {
     pub fold_grind_nonce: u32,
     pub groups: Vec<RingRelationGroupWitness<F>>,
 }
 
-impl<F: FieldCore> RingRelationWitness<F> {
+impl<F: Field> RingRelationWitness<F> {
     /// Construct from D-free fold outputs under schedule-derived role dimensions.
     pub fn from_flat_parts(
         z_folded_rings: DecomposeFoldWitness<F>,

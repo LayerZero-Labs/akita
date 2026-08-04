@@ -45,10 +45,7 @@ use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
 };
 use extension_opening_reduction::verify_extension_opening_reduction_sumcheck;
-use jolt_field::{
-    CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    MulBaseUnreduced, PseudoMersenneField, RandomSampling,
-};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 
 mod fold;
 mod root_fold;
@@ -71,7 +68,7 @@ fn prepare_terminal_witness_replay<F, T>(
     layout: TerminalWitnessSegmentLayout,
 ) -> Result<TerminalWitnessTranscriptParts, AkitaError>
 where
-    F: FieldCore + CanonicalField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     T: Transcript<F>,
 {
     if final_witness.num_elems() != final_w_len {

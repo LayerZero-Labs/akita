@@ -13,8 +13,8 @@ use akita_types::{
     PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
 };
 #[cfg(feature = "parallel")]
-use jolt_field::parallel::*;
-use jolt_field::{CanonicalField, FieldCore, RandomSampling};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Commit one padded flat prefix of the shared setup matrix.
 ///
@@ -36,7 +36,7 @@ pub fn commit_setup_prefix<F, const D: usize, B>(
     natural_len: usize,
 ) -> Result<SetupPrefixSlot<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: Field + CanonicalEncoding,
     B: CommitmentComputeBackend<F>,
 {
     if natural_len == 0 || natural_len > n_prefix {
@@ -176,7 +176,7 @@ fn extract_setup_prefix_ring_elems<F, const D: usize>(
     natural_len: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
 {
     let fields = expanded.shared_matrix().as_field_slice();
     let padded_field_len = padded_ring_slots.checked_mul(D).ok_or_else(|| {
@@ -201,7 +201,7 @@ fn setup_prefix_block_slices<F, const D: usize>(
     block_len: usize,
 ) -> Result<Vec<&[CyclotomicRing<F, D>]>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
 {
     if num_blocks
         .checked_mul(block_len)
@@ -232,6 +232,7 @@ mod tests {
         LevelParams, OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusFamily,
     };
     use jolt_field::Prime128Offset275 as F;
+    use jolt_field::Zero;
 
     fn prefix_level_params(ring_dimension: usize) -> LevelParams {
         LevelParams::params_only(

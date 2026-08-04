@@ -1,3 +1,4 @@
+use jolt_field::One;
 mod trace_prefix;
 
 use super::*;

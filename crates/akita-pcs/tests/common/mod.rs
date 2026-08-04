@@ -13,7 +13,8 @@ pub(super) use akita_types::{
     BasisMode, BlockOrder, Commitment, OpeningClaims, PointVariableSelection,
     PolynomialGroupClaims,
 };
-pub(super) use jolt_field::{CanonicalField, FieldCore};
+use jolt_field::Zero;
+pub(super) use jolt_field::{CanonicalEncoding, Field};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;
@@ -49,7 +50,7 @@ pub(super) fn init_rayon_pool() {
 pub(super) fn random_point(nv: usize, seed: u64) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(seed);
     (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
         .collect()
 }
 
@@ -62,7 +63,7 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore>(
+pub(super) fn prove_input<'a, FF: Field + Clone, P, CommitF: Field>(
     point: &'a [FF],
     polynomials: &'a [&'a P],
     commitment: &'a Commitment<CommitF>,
@@ -80,7 +81,7 @@ pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore>(
         .expect("valid prover opening data")
 }
 
-pub(super) fn verify_input<'a, FF: FieldCore, C>(
+pub(super) fn verify_input<'a, FF: Field, C>(
     point: &'a [FF],
     openings: &'a [FF],
     commitment: &'a C,
@@ -189,7 +190,7 @@ pub(super) fn dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
     let mut state = seed;
     for _ in 0..n {
         let v = splitmix64_next(&mut state);
-        out.push(F::from_canonical_u128_reduced(v as u128));
+        out.push(F::from_u128_reduced(v as u128));
     }
     out
 }

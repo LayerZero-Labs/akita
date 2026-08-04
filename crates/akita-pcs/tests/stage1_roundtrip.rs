@@ -5,6 +5,7 @@ use akita_transcript::{labels, AkitaTranscript};
 use akita_types::reorder_stage1_coords;
 use akita_verifier::AkitaStage1Verifier;
 use jolt_field::Prime128Offset275;
+use jolt_field::Ring;
 
 type F = Prime128Offset275;
 

@@ -1,7 +1,7 @@
 //! Helpers for transcript-binding terminal cleartext witnesses.
 
 use akita_error::AkitaError;
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 use super::DigitBlocks;
 use crate::LevelParams;
@@ -30,7 +30,7 @@ pub struct TerminalWitnessTranscriptParts {
 /// `batching_coeff = 0` removes the virtual norm contribution from every
 /// stage-2 round, so `s_claim` and `stage1_point` are structural zeros.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RelationOnlyStage2Inputs<E: FieldCore> {
+pub struct RelationOnlyStage2Inputs<E: Field> {
     /// Zero coefficient for the omitted virtual norm-check oracle.
     pub batching_coeff: E,
     /// Zero claim for the omitted stage-1 sumcheck.
@@ -39,7 +39,7 @@ pub struct RelationOnlyStage2Inputs<E: FieldCore> {
     pub stage1_point: Vec<E>,
 }
 
-impl<E: FieldCore> RelationOnlyStage2Inputs<E> {
+impl<E: Field> RelationOnlyStage2Inputs<E> {
     /// Build the terminal relation-only stage-2 input bundle.
     #[must_use]
     pub fn new(num_stage1_vars: usize) -> Self {

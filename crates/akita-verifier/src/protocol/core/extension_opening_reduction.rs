@@ -11,7 +11,7 @@ use akita_sumcheck::SumcheckProof;
 use akita_transcript::labels::ABSORB_SUMCHECK_CLAIM;
 use akita_transcript::Transcript;
 use akita_types::EXTENSION_OPENING_REDUCTION_DEGREE;
-use jolt_field::{CanonicalField, FieldCore};
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Verify the non-zk EOR sumcheck rounds and return the final running claim
 /// together with the sampled sumcheck point.
@@ -23,9 +23,9 @@ pub(crate) fn verify_extension_opening_reduction_sumcheck<F, T, E, S>(
     sample_challenge: S,
 ) -> Result<(E, Vec<E>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
-    E: FieldCore + AkitaSerialize,
+    E: Field + AkitaSerialize,
     S: FnMut(&mut T) -> E,
 {
     transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &input_claim);

@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
+impl<E: Field + Ring + Unreduced> AkitaStage1Prover<E> {
     pub(super) fn compute_current_round_eq_poly_from_state(&mut self) -> EqFactoredUniPoly<E> {
         let use_two_round_prefix = self.using_two_round_prefix();
         let use_prefix_x_round = !use_two_round_prefix && self.use_prefix_x_round();
@@ -70,8 +70,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
-    EqFactoredSumcheckInstanceProver<E> for AkitaStage1Prover<E>
+impl<E: Field + Ring + Unreduced + Fold> EqFactoredSumcheckInstanceProver<E>
+    for AkitaStage1Prover<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_vars
@@ -249,7 +249,7 @@ pub(crate) fn pad_compact_witness(
 
 #[cfg(test)]
 pub(crate) fn advance_stage1_claim<
-    F: FieldCore + FromPrimitiveInt + jolt_field::CanonicalField + HasUnreducedOps + HasOptimizedFold,
+    F: Field + Ring + jolt_field::CanonicalEncoding + Unreduced + Fold,
 >(
     prover: &AkitaStage1Prover<F>,
     scaled_claim: F,

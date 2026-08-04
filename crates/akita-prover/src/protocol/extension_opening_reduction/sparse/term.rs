@@ -5,7 +5,7 @@ use super::*;
 /// A single dense term is the degenerate `1`-term case; the prover treats the
 /// dense and batched paths uniformly.
 #[derive(Debug, Clone)]
-pub struct ExtensionOpeningReductionTerm<E: FieldCore> {
+pub struct ExtensionOpeningReductionTerm<E: Field> {
     pub(in crate::protocol::extension_opening_reduction) tables: ExtensionOpeningTables<E>,
     pub(in crate::protocol::extension_opening_reduction) coeff: E,
     /// `coeff`-scaled `(constant, quadratic)` for the next round, pre-computed
@@ -13,7 +13,7 @@ pub struct ExtensionOpeningReductionTerm<E: FieldCore> {
     pub(in crate::protocol::extension_opening_reduction) cached_accumulate: Option<(E, E)>,
 }
 
-impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
+impl<E: Field> ExtensionOpeningReductionTerm<E> {
     /// Construct one term `coeff * sum_x witness(x) * factor(x)`.
     ///
     /// # Errors
@@ -71,7 +71,7 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
         materialize_at: usize,
     ) -> Result<Self, AkitaError>
     where
-        F: FieldCore,
+        F: Field,
         E: ExtField<F>,
     {
         let factor = TensorEqualityFactor::new::<F>(tail_point, eta, materialize_at)?;
@@ -107,7 +107,7 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningReductionTerm<E> {
+impl<E: Field + Unreduced + Fold> ExtensionOpeningReductionTerm<E> {
     /// Add this term's `coeff`-scaled `(constant, quadratic)` round
     /// contribution into the shared accumulators.
     ///

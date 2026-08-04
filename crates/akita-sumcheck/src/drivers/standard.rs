@@ -6,12 +6,12 @@ use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels;
 use akita_transcript::Transcript;
-use jolt_field::{CanonicalField, FieldCore};
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Plain extension for standard sumcheck provers.
 pub trait SumcheckInstanceProverExt<E>: SumcheckInstanceProver<E> + Sized
 where
-    E: FieldCore,
+    E: Field,
 {
     /// Produce a sumcheck proof for a single instance.
     ///
@@ -29,7 +29,7 @@ where
         mut sample_challenge: S,
     ) -> Result<(SumcheckProof<E>, Vec<E>, E), AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         T: Transcript<F>,
         E: AkitaSerialize,
         S: FnMut(&mut T) -> E,
@@ -92,7 +92,7 @@ where
 
 impl<E, Inst> SumcheckInstanceProverExt<E> for Inst
 where
-    E: FieldCore,
+    E: Field,
     Inst: SumcheckInstanceProver<E>,
 {
 }
@@ -100,7 +100,7 @@ where
 /// Plain extension for standard sumcheck verifiers.
 pub trait SumcheckInstanceVerifierExt<E>: SumcheckInstanceVerifier<E> + Sized
 where
-    E: FieldCore,
+    E: Field,
 {
     /// Verify a single-instance sumcheck proof.
     ///
@@ -120,7 +120,7 @@ where
         mut sample_challenge: S,
     ) -> Result<Vec<E>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         T: Transcript<F>,
         E: AkitaSerialize,
         S: FnMut(&mut T) -> E,
@@ -166,7 +166,7 @@ where
 
 impl<E, Inst> SumcheckInstanceVerifierExt<E> for Inst
 where
-    E: FieldCore,
+    E: Field,
     Inst: SumcheckInstanceVerifier<E>,
 {
 }
@@ -188,7 +188,7 @@ pub fn check_sumcheck_output_claim<E, V>(
     challenges: &[E],
 ) -> Result<(), AkitaError>
 where
-    E: FieldCore + AkitaSerialize,
+    E: Field + AkitaSerialize,
     V: SumcheckInstanceVerifier<E>,
 {
     let expected = verifier.expected_output_claim(challenges)?;

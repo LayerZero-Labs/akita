@@ -17,7 +17,6 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
-use jolt_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
@@ -32,6 +31,7 @@ use akita_types::{
 };
 use akita_verifier::batched_verify;
 use clap::{Parser, ValueEnum};
+use jolt_field::{CanonicalEncoding, PseudoMersenne, Zero};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
@@ -143,7 +143,7 @@ where
 }
 
 fn fp128_prime_label() -> String {
-    match <F as PseudoMersenneField>::MODULUS_OFFSET {
+    match <F as PseudoMersenne>::OFFSET {
         2355 => "q=2^128-2355".to_string(),
         0xFFFFA7F7 => "q=2^128-2^32+22537".to_string(),
         offset => format!("q=2^128-{offset:#x}"),
@@ -310,7 +310,7 @@ fn run() -> Result<(), String> {
     let onehot_poly = OneHotPoly::<F, u8>::new(onehot_k, D, indices)
         .map_err(|err| format!("failed to build onehot polynomial: {err}"))?;
     let opening_point: Vec<F> = (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
         .collect();
     let opening = opening_from_poly(&onehot_poly, &opening_point, &layout, BasisMode::Lagrange)?;
 

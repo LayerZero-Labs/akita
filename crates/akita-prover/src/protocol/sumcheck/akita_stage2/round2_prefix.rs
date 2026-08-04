@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+impl<E: Field + Ring + Unreduced> AkitaStage2Prover<E> {
     #[inline]
     pub(super) fn direct_fold_w_quad_to_round2(
         w00: i8,

@@ -2,7 +2,7 @@ mod group;
 
 use super::*;
 
-impl<E: FieldCore> SetupContributionPlan<E> {
+impl<E: Field> SetupContributionPlan<E> {
     pub fn evaluate_direct<F>(
         &self,
         setup: &AkitaExpandedSetup<F>,
@@ -11,7 +11,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         alpha_pows_d: &[E],
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         self.evaluate_role_dims_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
@@ -25,7 +25,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         alpha_pows_d: &[E],
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let d_a = alpha_pows_a.len();
@@ -74,7 +74,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         d_projection: &RoleProjection<E>,
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore,
+        F: Field,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         if base_pows.len() != BASE_D {

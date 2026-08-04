@@ -11,6 +11,7 @@ use akita_types::{
     CleartextWitnessShape, DirectStep, FoldStep, LevelParams, OpeningClaimsLayout, RingRole,
     Schedule, Step,
 };
+use jolt_field::Zero;
 
 fn real_schedule<Cfg: CommitmentConfig>(num_vars: usize) -> Schedule {
     Cfg::runtime_schedule(AkitaScheduleLookupKey::single(

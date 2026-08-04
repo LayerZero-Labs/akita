@@ -17,8 +17,8 @@ use crate::kernels::linear::try_centered_i8;
 use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use jolt_field::parallel::*;
-use jolt_field::{CanonicalField, FieldCore};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 use std::array::from_fn;
 
 #[cfg(target_arch = "aarch64")]
@@ -69,7 +69,7 @@ pub struct DecomposeParams {
 ///
 /// `digit_buf` is `[num_digits][D]` in i8, OVERWRITTEN (not accumulated).
 #[inline(never)]
-pub fn decompose_ring_interleaved<F: CanonicalField, const D: usize>(
+pub fn decompose_ring_interleaved<F: Field + CanonicalEncoding, const D: usize>(
     ring: &CyclotomicRing<F, D>,
     digit_buf: &mut [[i8; D]],
     num_digits: usize,
@@ -82,7 +82,7 @@ pub fn decompose_ring_interleaved<F: CanonicalField, const D: usize>(
     }
 }
 
-fn decompose_ring_interleaved_fast<F: CanonicalField, const D: usize>(
+fn decompose_ring_interleaved_fast<F: Field + CanonicalEncoding, const D: usize>(
     ring: &CyclotomicRing<F, D>,
     digit_buf: &mut [[i8; D]],
     num_digits: usize,
@@ -91,9 +91,24 @@ fn decompose_ring_interleaved_fast<F: CanonicalField, const D: usize>(
     let bulk_end = D - (D % 3);
 
     for base in (0..bulk_end).step_by(3) {
-        let mut c0 = to_signed(ring.coeffs[base].to_canonical_u128(), p);
-        let mut c1 = to_signed(ring.coeffs[base + 1].to_canonical_u128(), p);
-        let mut c2 = to_signed(ring.coeffs[base + 2].to_canonical_u128(), p);
+        let mut c0 = to_signed(
+            ring.coeffs[base]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128"),
+            p,
+        );
+        let mut c1 = to_signed(
+            ring.coeffs[base + 1]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128"),
+            p,
+        );
+        let mut c2 = to_signed(
+            ring.coeffs[base + 2]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128"),
+            p,
+        );
 
         for plane in digit_buf.iter_mut().take(num_digits) {
             let d0 = extract_balanced_digit(&mut c0, p);
@@ -106,14 +121,19 @@ fn decompose_ring_interleaved_fast<F: CanonicalField, const D: usize>(
     }
 
     for idx in bulk_end..D {
-        let mut c = to_signed(ring.coeffs[idx].to_canonical_u128(), p);
+        let mut c = to_signed(
+            ring.coeffs[idx]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128"),
+            p,
+        );
         for plane in digit_buf.iter_mut().take(num_digits) {
             plane[idx] = extract_balanced_digit(&mut c, p) as i8;
         }
     }
 }
 
-fn decompose_ring_interleaved_overflow<F: CanonicalField, const D: usize>(
+fn decompose_ring_interleaved_overflow<F: Field + CanonicalEncoding, const D: usize>(
     ring: &CyclotomicRing<F, D>,
     digit_buf: &mut [[i8; D]],
     num_digits: usize,
@@ -125,9 +145,15 @@ fn decompose_ring_interleaved_overflow<F: CanonicalField, const D: usize>(
     let bulk_end = D - (D % 3);
 
     for base in (0..bulk_end).step_by(3) {
-        let canonical0 = ring.coeffs[base].to_canonical_u128();
-        let canonical1 = ring.coeffs[base + 1].to_canonical_u128();
-        let canonical2 = ring.coeffs[base + 2].to_canonical_u128();
+        let canonical0 = ring.coeffs[base]
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128");
+        let canonical1 = ring.coeffs[base + 1]
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128");
+        let canonical2 = ring.coeffs[base + 2]
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128");
 
         let (mut c0, d0) = peel_first_balanced_digit_i32(canonical0, p);
         let (mut c1, d1) = peel_first_balanced_digit_i32(canonical1, p);
@@ -148,7 +174,9 @@ fn decompose_ring_interleaved_overflow<F: CanonicalField, const D: usize>(
     }
 
     for idx in bulk_end..D {
-        let canonical = ring.coeffs[idx].to_canonical_u128();
+        let canonical = ring.coeffs[idx]
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128");
         let (mut c, d0) = peel_first_balanced_digit_i32(canonical, p);
         first_plane[idx] = d0 as i8;
         for plane in remaining.iter_mut().take(num_digits - 1) {
@@ -158,13 +186,18 @@ fn decompose_ring_interleaved_overflow<F: CanonicalField, const D: usize>(
 }
 
 #[inline(never)]
-pub fn decompose_ring_single_digit<F: CanonicalField, const D: usize>(
+pub fn decompose_ring_single_digit<F: Field + CanonicalEncoding, const D: usize>(
     ring: &CyclotomicRing<F, D>,
     digit_plane: &mut [i8; D],
     p: &DecomposeParams,
 ) {
     for (dst, coeff) in digit_plane.iter_mut().zip(ring.coeffs.iter()) {
-        let centered = to_signed(coeff.to_canonical_u128(), p);
+        let centered = to_signed(
+            coeff
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128"),
+            p,
+        );
         debug_assert!(
             centered >= -(1i128 << (p.log_basis - 1)) && centered < (1i128 << (p.log_basis - 1))
         );
@@ -181,10 +214,13 @@ pub(crate) fn to_signed(canonical: u128, p: &DecomposeParams) -> i128 {
     }
 }
 
-pub fn try_small_i8_cache_from_ring_coeffs<F: CanonicalField, const D: usize>(
+pub fn try_small_i8_cache_from_ring_coeffs<F: Field + CanonicalEncoding, const D: usize>(
     coeffs: &[CyclotomicRing<F, D>],
 ) -> Option<Vec<[i8; D]>> {
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1;
     let half_q = q / 2;
     let mut out = Vec::with_capacity(coeffs.len());
 
@@ -381,22 +417,22 @@ pub fn fill_rotated_challenge<const D: usize>(table: &mut [[i16; D]], challenge:
     }
 }
 
-pub fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
+pub fn signed_accum_to_ring<F: Field + CanonicalEncoding, const D: usize>(
     coeff_accum: [i32; D],
     modulus: u128,
 ) -> CyclotomicRing<F, D> {
     let coeffs = from_fn(|k| {
         let v = coeff_accum[k];
         if v >= 0 {
-            F::from_canonical_u128_reduced(v as u128)
+            F::from_u128_reduced(v as u128)
         } else {
-            F::from_canonical_u128_reduced(modulus - ((-v) as u128))
+            F::from_u128_reduced(modulus - ((-v) as u128))
         }
     });
     CyclotomicRing::from_coefficients(coeffs)
 }
 
-pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
+pub fn build_decompose_fold_witness<F: Field + CanonicalEncoding, const D: usize>(
     centered_coeffs: Vec<[i32; D]>,
     modulus: u128,
 ) -> DecomposeFoldWitness<F> {
@@ -418,7 +454,7 @@ pub(crate) fn fused_evaluate_and_fold_base<F, const D: usize>(
     eval_outer_scalars: &[F],
 ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>)
 where
-    F: CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     let eval = folded
         .iter()
@@ -435,7 +471,7 @@ pub(crate) fn fused_evaluate_and_fold_ring<F, const D: usize>(
     eval_outer_scalars: &[CyclotomicRing<F, D>],
 ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>)
 where
-    F: FieldCore,
+    F: Field,
 {
     let eval = folded
         .iter()
@@ -458,7 +494,9 @@ mod tests {
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallenge;
     use akita_types::sis::compute_num_digits_full_field;
-    use jolt_field::CanonicalField;
+    use jolt_field::CanonicalEncoding;
+    use jolt_field::One;
+    use jolt_field::Ring;
     use jolt_field::{Fp64, Prime128Offset275};
 
     /// SIMD-vs-scalar parity for the sparse-multiply-accumulate decompose-fold
@@ -557,7 +595,10 @@ mod tests {
                 })
                 .collect(),
         };
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
         let log_basis = 3u32;
         let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
             num_digits, log_basis, q,
@@ -626,7 +667,10 @@ mod tests {
                     .collect(),
             },
         ];
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
         let log_basis = 3u32;
         let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
             num_digits, log_basis, q,
@@ -697,7 +741,10 @@ mod tests {
         assert!(should_use_rotated_challenge::<D>(&high_density));
         assert!(!should_use_rotated_challenge::<D>(&sparse));
         let challenges = vec![high_density, sparse];
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
         let log_basis = 3u32;
         let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
             num_digits, log_basis, q,
@@ -769,7 +816,10 @@ mod tests {
         assert!(should_use_rotated_challenge::<D>(&high_density));
         assert!(!should_use_rotated_challenge::<D>(&sparse));
         let challenges = vec![high_density, sparse];
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
         let log_basis = 4u32;
         let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
             num_digits, log_basis, q,
@@ -830,7 +880,7 @@ mod tests {
             q - 1,
         ];
         let ring = CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
-            F::from_canonical_u128_reduced(boundary_values[k % boundary_values.len()])
+            F::from_u128_reduced(boundary_values[k % boundary_values.len()])
         }));
         let challenge = SparseChallenge {
             positions: (0..D as u32).collect(),

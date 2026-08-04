@@ -8,7 +8,7 @@ use super::*;
 /// materialization of the non-tiled path.
 /// Tile width is auto-computed from ring parameters and target L2 cache size.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_single_i8")]
-pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
+pub fn mat_vec_mul_ntt_single_i8<F: Field + CanonicalEncoding, const D: usize>(
     slot: &NttSlotCache<D>,
     num_rows: usize,
     num_cols: usize,
@@ -46,7 +46,7 @@ pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
 
 /// Cyclic-domain variant of [`mat_vec_mul_ntt_single_i8`].
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_single_i8_cyclic")]
-pub fn mat_vec_mul_ntt_single_i8_cyclic<F: FieldCore + CanonicalField, const D: usize>(
+pub fn mat_vec_mul_ntt_single_i8_cyclic<F: Field + CanonicalEncoding, const D: usize>(
     slot: &NttSlotCache<D>,
     num_rows: usize,
     num_cols: usize,
@@ -83,7 +83,7 @@ pub fn mat_vec_mul_ntt_single_i8_cyclic<F: FieldCore + CanonicalField, const D: 
 }
 
 pub(super) fn mat_vec_mul_single_i8_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -134,7 +134,7 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
 }
 
 pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,

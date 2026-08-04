@@ -19,19 +19,15 @@ use akita_types::{
     LevelParams, OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
     PolynomialGroupLayout, PrecommittedGroupParams, Schedule, SetupContributionMode, Step,
 };
-use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
-use jolt_field::{
-    AdditiveGroup, CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField,
-    FromPrimitiveInt, HalvingField, LiftBase, PseudoMersenneField, RandomSampling,
-    TranscriptChallenge,
-};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_field::{Fold, Unreduced};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Instant;
 
 pub(crate) const ONEHOT_K: usize = 256;
 
-fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
+fn prover_claims<'a, E: Field, P, CommitF: Field>(
     point: &'a [E],
     polynomials: &'a [&'a P],
     commitment: &'a Commitment<CommitF>,
@@ -49,7 +45,7 @@ fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
         .expect("valid prover opening data")
 }
 
-fn verifier_claims<'a, E: FieldCore, C>(
+fn verifier_claims<'a, E: Field, C>(
     point: &[E],
     openings: &[E],
     commitment: &'a C,
@@ -71,7 +67,7 @@ fn make_profile_onehot_poly<FF, const D: usize>(
     seed: u64,
 ) -> OneHotPoly<FF, u8>
 where
-    FF: CanonicalField + FromPrimitiveInt,
+    FF: Field + CanonicalEncoding + Ring,
 {
     let total_field = layout
         .num_blocks
@@ -106,8 +102,8 @@ pub(crate) fn onehot_k_for_num_vars(nv: usize) -> usize {
 
 fn assert_observed_proof_size<FF, E>(label: &str, proof: &AkitaBatchedProof<FF, E>)
 where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     let mut encoded = Vec::with_capacity(proof.size());
     proof
@@ -152,8 +148,8 @@ fn segment_typed_z_planner_slack<FF, E>(
     schedule: &Schedule,
 ) -> usize
 where
-    FF: FieldCore,
-    E: FieldCore,
+    FF: Field,
+    E: Field,
 {
     let Ok(scheduled_shape) = schedule_terminal_direct_witness_shape(schedule) else {
         return 0;
@@ -243,8 +239,8 @@ fn report_proof_size_against_planner<FF, E>(
     mode: SetupContributionMode,
     schedule: &Schedule,
 ) where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     let z_slack = segment_typed_z_planner_slack(proof, schedule);
     match mode {
@@ -292,13 +288,13 @@ fn report_proof_size_against_planner<FF, E>(
 
 fn random_claim_point<FF, E>(nv: usize, rng: &mut StdRng) -> Vec<E>
 where
-    FF: CanonicalField,
+    FF: Field + CanonicalEncoding,
     E: ExtField<FF>,
 {
     (0..nv)
         .map(|_| {
-            let limbs = (0..E::EXT_DEGREE)
-                .map(|_| FF::from_canonical_u128_reduced(rng.gen::<u128>()))
+            let limbs = (0..E::DEGREE)
+                .map(|_| FF::from_u128_reduced(rng.gen::<u128>()))
                 .collect::<Vec<_>>();
             E::from_base_slice(&limbs)
         })
@@ -307,10 +303,10 @@ where
 
 fn degree_one_claim_point_to_base<FF, E>(point: &[E]) -> Option<Vec<FF>>
 where
-    FF: FieldCore,
+    FF: Field,
     E: ExtField<FF>,
 {
-    (E::EXT_DEGREE == 1).then(|| {
+    (E::DEGREE == 1).then(|| {
         point
             .iter()
             .map(|coord| coord.to_base_vec()[0])
@@ -320,7 +316,7 @@ where
 
 fn dense_lagrange_opening_from_evals<FF, E>(evals: &[FF], point: &[E]) -> E
 where
-    FF: FieldCore,
+    FF: Field,
     E: ExtField<FF>,
 {
     assert_eq!(evals.len(), 1usize << point.len());
@@ -338,7 +334,7 @@ where
 
 fn onehot_lagrange_opening<FF, E, I>(poly: &OneHotPoly<FF, I>, point: &[E]) -> E
 where
-    FF: FieldCore,
+    FF: Field,
     E: ExtField<FF>,
     I: OneHotIndex,
 {
@@ -365,7 +361,7 @@ fn opening_from_poly<'a, FF, const D: usize, P>(
     basis: BasisMode,
 ) -> FF
 where
-    FF: CanonicalField,
+    FF: Field + CanonicalEncoding,
     P: RootProvePoly<FF, D>,
     CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, FF, D>,
 {
@@ -422,23 +418,16 @@ fn run_prove<
     opening: Cfg::ExtField,
     plan: Option<&Schedule>,
 ) where
-    FF: CanonicalField
+    FF: Field
+        + CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
+        + Ring
+        + PseudoMersenne
+        + Unreduced
         + Valid
         + AkitaSerialize
         + 'static,
-    <FF as HasWide>::Wide: From<FF> + ReduceTo<FF> + AdditiveGroup,
-    Cfg::ExtField: FpExtEncoding<FF>
-        + FrobeniusExtField<FF>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FF> + ExtField<FF> + Unreduced + Fold + AkitaSerialize,
     CpuBackend: RuntimeRootCommitBackend<FF, P, Cfg::ExtField>
         + RecursiveProveBackend<FF, P, Cfg::ExtField>,
 {
@@ -472,13 +461,9 @@ fn run_prove<
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
     print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof);
-    tracing::info!(
-        label,
-        ext_degree = Cfg::EXT_DEGREE,
-        "profile extension field"
-    );
-    eprintln!("[{label}] ext_field: ext_degree={}", Cfg::EXT_DEGREE);
-    if proof.is_root_direct() && Cfg::EXT_DEGREE > 1 {
+    tracing::info!(label, ext_degree = Cfg::DEGREE, "profile extension field");
+    eprintln!("[{label}] ext_field: ext_degree={}", Cfg::DEGREE);
+    if proof.is_root_direct() && Cfg::DEGREE > 1 {
         tracing::warn!(
             label,
             "extension opening used root-direct fallback; folded planner byte estimates do not apply"
@@ -551,22 +536,16 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     layout: &LevelParams,
     plan: Option<&Schedule>,
 ) where
-    FF: CanonicalField
+    FF: Field
+        + CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
+        + Ring
+        + PseudoMersenne
+        + Unreduced
         + Valid
         + AkitaSerialize
         + 'static,
-    Cfg::ExtField: FrobeniusExtField<FF>
-        + FpExtEncoding<FF>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize,
+    Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize,
 {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let original_pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
@@ -575,7 +554,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
     let evals: Vec<FF> = if decomp.log_commit_bound >= 128 {
         (0..len)
-            .map(|_| FF::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| FF::from_u128_reduced(rng.gen::<u128>()))
             .collect()
     } else {
         (0..len)
@@ -647,22 +626,16 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     layout: &LevelParams,
     plan: Option<&Schedule>,
 ) where
-    FF: CanonicalField
+    FF: Field
+        + CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
+        + Ring
+        + PseudoMersenne
+        + Unreduced
         + Valid
         + AkitaSerialize
         + 'static,
-    Cfg::ExtField: FrobeniusExtField<FF>
-        + FpExtEncoding<FF>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize,
+    Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize,
 {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_field = (layout.num_blocks * layout.block_len)
@@ -740,22 +713,16 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     layout: &LevelParams,
     plan: Option<&Schedule>,
 ) where
-    FF: CanonicalField
+    FF: Field
+        + CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
+        + Ring
+        + PseudoMersenne
+        + Unreduced
         + Valid
         + AkitaSerialize
         + 'static,
-    Cfg::ExtField: FrobeniusExtField<FF>
-        + FpExtEncoding<FF>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize,
+    Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize,
 {
     let polys: Vec<OneHotPoly<FF, u8>> = (0..num_polys)
         .map(|poly_idx| {
@@ -889,13 +856,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             Cfg::decomposition().field_bits(),
         );
     }
-    tracing::info!(
-        label,
-        ext_degree = Cfg::EXT_DEGREE,
-        "profile extension field"
-    );
-    eprintln!("[{label}] ext_field: ext_degree={}", Cfg::EXT_DEGREE);
-    if proof.is_root_direct() && Cfg::EXT_DEGREE > 1 {
+    tracing::info!(label, ext_degree = Cfg::DEGREE, "profile extension field");
+    eprintln!("[{label}] ext_field: ext_degree={}", Cfg::DEGREE);
+    if proof.is_root_direct() && Cfg::DEGREE > 1 {
         tracing::warn!(
             label,
             "extension opening used root-direct fallback; folded planner byte estimates do not apply"
@@ -948,22 +911,16 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
     final_num_polys: usize,
 ) where
     Cfg: CommitmentConfig<Field = FF>,
-    FF: CanonicalField
+    FF: Field
+        + CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
+        + Ring
+        + PseudoMersenne
+        + Unreduced
         + Valid
         + AkitaSerialize
         + 'static,
-    Cfg::ExtField: FrobeniusExtField<FF>
-        + FpExtEncoding<FF>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize,
+    Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize,
 {
     type ProofCfg<C> = RecursiveCommitmentConfig<C>;
 
@@ -1150,12 +1107,8 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         &schedule,
         Cfg::decomposition().field_bits(),
     );
-    tracing::info!(
-        label,
-        ext_degree = Cfg::EXT_DEGREE,
-        "profile extension field"
-    );
-    eprintln!("[{label}] ext_field: ext_degree={}", Cfg::EXT_DEGREE);
+    tracing::info!(label, ext_degree = Cfg::DEGREE, "profile extension field");
+    eprintln!("[{label}] ext_field: ext_degree={}", Cfg::DEGREE);
 
     let mut verifier_groups = Vec::with_capacity(PRE_GROUPS + 1);
     for (group_idx, openings) in pre_openings.iter().enumerate() {

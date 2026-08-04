@@ -1,11 +1,11 @@
 //! Scalar evaluation helpers for cyclotomic ring elements.
 
 use super::CyclotomicRing;
-use jolt_field::unreduced::HasUnreducedOps;
-use jolt_field::{FieldCore, MulBase, MulBaseUnreduced, Zero};
+use jolt_field::Unreduced;
+use jolt_field::{ExtField, Field, MulBaseUnreduced, Zero};
 
 /// Return the first `len` powers of `alpha`, starting with one.
-pub fn scalar_powers<F: FieldCore>(alpha: F, len: usize) -> Vec<F> {
+pub fn scalar_powers<F: Field>(alpha: F, len: usize) -> Vec<F> {
     let mut out = vec![F::zero(); len];
     let mut power = F::one();
     for val in out.iter_mut() {
@@ -16,7 +16,7 @@ pub fn scalar_powers<F: FieldCore>(alpha: F, len: usize) -> Vec<F> {
 }
 
 /// Evaluate a cyclotomic ring element at the scalar `alpha`.
-pub fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D>, alpha: &F) -> F {
+pub fn eval_ring_at<F: Field, const D: usize>(r: &CyclotomicRing<F, D>, alpha: &F) -> F {
     let mut acc = F::zero();
     let mut power = F::one();
     for coeff in r.coefficients() {
@@ -37,8 +37,8 @@ pub fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D>, alph
 #[inline]
 pub fn eval_ring_at_pows<F, E, const D: usize>(r: &CyclotomicRing<F, D>, alpha_pows: &[E]) -> E
 where
-    F: FieldCore,
-    E: FieldCore + MulBase<F>,
+    F: Field,
+    E: Field + ExtField<F>,
 {
     debug_assert_eq!(alpha_pows.len(), D);
     eval_flat_ring_at_pows(r.coefficients(), alpha_pows)
@@ -57,8 +57,8 @@ where
 #[inline]
 pub fn eval_flat_ring_at_pows<F, E>(coeffs: &[F], alpha_pows: &[E]) -> E
 where
-    F: FieldCore,
-    E: FieldCore + MulBase<F>,
+    F: Field,
+    E: Field + ExtField<F>,
 {
     debug_assert_eq!(alpha_pows.len(), coeffs.len());
     coeffs
@@ -79,21 +79,21 @@ where
 #[inline]
 pub fn eval_flat_ring_at_pows_fast<F, E>(coeffs: &[F], alpha_pows: &[E]) -> E
 where
-    F: FieldCore,
+    F: Field,
     E: MulBaseUnreduced<F>,
 {
     debug_assert_eq!(alpha_pows.len(), coeffs.len());
     let accum = coeffs.iter().zip(alpha_pows.iter()).fold(
-        <E as HasUnreducedOps>::ProductAccum::zero(),
-        |acc, (coeff, alpha_pow)| acc + alpha_pow.mul_base_to_product_accum(*coeff),
+        <E as Unreduced>::Product::zero(),
+        |acc, (coeff, alpha_pow)| acc + alpha_pow.mul_base_unreduced(*coeff),
     );
-    <E as HasUnreducedOps>::reduce_product_accum(accum)
+    <E as Unreduced>::reduce_product(accum)
 }
 
 /// Fast (deferred-reduction) counterpart of [`eval_ring_at_pows`].
 ///
 /// Same signature and result as [`eval_ring_at_pows`], but accumulates all `D`
-/// widening `E × F` products into a single [`HasUnreducedOps::ProductAccum`] and
+/// widening `E × F` products into a single [`Unreduced::Product`] and
 /// reduces **once** instead of reducing after every coefficient. On a 128-bit
 /// prime the modular reduction is a large fraction of each multiply, so this
 /// turns ~`D` reductions into one.
@@ -103,7 +103,7 @@ where
 /// accumulator limb holds a 64-bit product word, so the sum of up to ~`2^64`
 /// products is exact — `D ≈ 64` is trivially within bounds (validated by
 /// `deferred_matches_per_term_fp128_d64`). This is why callers can use it even
-/// though `Fp128` keeps `DELAYED_PRODUCT_SUM_IS_EXACT` at its conservative
+/// though `Fp128` keeps `SUM_IS_EXACT` at its conservative
 /// `false` default.
 ///
 /// # Panics
@@ -112,20 +112,21 @@ where
 #[inline]
 pub fn eval_ring_at_pows_fast<F, E, const D: usize>(r: &CyclotomicRing<F, D>, alpha_pows: &[E]) -> E
 where
-    F: FieldCore,
+    F: Field,
     E: MulBaseUnreduced<F>,
 {
     debug_assert_eq!(alpha_pows.len(), D);
     let accum = r.coefficients().iter().zip(alpha_pows.iter()).fold(
-        <E as HasUnreducedOps>::ProductAccum::zero(),
-        |acc, (coeff, alpha_pow)| acc + alpha_pow.mul_base_to_product_accum(*coeff),
+        <E as Unreduced>::Product::zero(),
+        |acc, (coeff, alpha_pow)| acc + alpha_pow.mul_base_unreduced(*coeff),
     );
-    <E as HasUnreducedOps>::reduce_product_accum(accum)
+    <E as Unreduced>::reduce_product(accum)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_field::One;
     use jolt_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
@@ -142,7 +143,7 @@ mod tests {
 
     /// The deferred-reduction dot product must equal the per-term reduce path
     /// bit-for-bit at `D = 64` (validates the `Fp128` accumulator headroom that
-    /// `DELAYED_PRODUCT_SUM_IS_EXACT = false` leaves formally unblessed).
+    /// `SUM_IS_EXACT = false` leaves formally unblessed).
     #[test]
     fn deferred_matches_per_term_fp128_d64() {
         for seed in 0..128u128 {

@@ -2,11 +2,11 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::summarize_pow2_block_carries;
 use akita_challenges::TensorChallenges as TensorChallengeSet;
 use akita_error::AkitaError;
-use jolt_field::{FieldCore, FromPrimitiveInt, MulBase};
+use jolt_field::{ExtField, Field, Ring};
 
 /// Challenge evaluations used by relation-matrix challenge replay.
 #[derive(Clone)]
-pub(crate) enum PreparedChallengeEvals<F: FieldCore> {
+pub(crate) enum PreparedChallengeEvals<F: Field> {
     Flat(Vec<F>),
     Tensor {
         challenges: TensorChallengeSet,
@@ -14,7 +14,7 @@ pub(crate) enum PreparedChallengeEvals<F: FieldCore> {
     },
 }
 
-impl<F: FieldCore> PreparedChallengeEvals<F> {
+impl<F: Field> PreparedChallengeEvals<F> {
     pub(crate) fn as_flat(&self) -> Option<&[F]> {
         match self {
             Self::Flat(c_alphas) => Some(c_alphas),
@@ -31,8 +31,8 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
         num_blocks: usize,
     ) -> Result<Vec<[F; 2]>, AkitaError>
     where
-        Base: FieldCore + FromPrimitiveInt,
-        F: MulBase<Base>,
+        Base: Field + Ring,
+        F: ExtField<Base>,
     {
         match self {
             Self::Flat(c_alphas) => (0..num_claims)
@@ -93,8 +93,8 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
         num_blocks: usize,
     ) -> Result<Vec<[F; 2]>, AkitaError>
     where
-        Base: FieldCore + FromPrimitiveInt,
-        F: MulBase<Base>,
+        Base: Field + Ring,
+        F: ExtField<Base>,
     {
         match self {
             Self::Flat(c_alphas) => (0..num_claims)
@@ -146,8 +146,8 @@ fn summarize_tensor_all_block_carries<Base, F, const D: usize>(
     alpha_pows: &[F],
 ) -> Result<Vec<[F; 2]>, AkitaError>
 where
-    Base: FieldCore + FromPrimitiveInt,
-    F: FieldCore + MulBase<Base>,
+    Base: Field + Ring,
+    F: Field + ExtField<Base>,
 {
     if num_claims > challenges.num_claims {
         return Err(AkitaError::InvalidSize {
@@ -236,6 +236,8 @@ mod tests {
     use akita_algebra::ring::scalar_powers;
     use akita_challenges::{Challenges, SparseChallenge};
     use jolt_field::Fp32;
+    use jolt_field::One;
+    use jolt_field::Zero;
 
     #[test]
     fn factored_carry_summary_matches_flat_for_tensor_challenges() {

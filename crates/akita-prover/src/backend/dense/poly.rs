@@ -6,8 +6,8 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{tensor_opening_split, RingVec, TensorColumnSource};
-use jolt_field::parallel::*;
-use jolt_field::{CanonicalField, ExtField, FieldCore};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::mem::size_of;
 use std::sync::OnceLock;
 
@@ -40,7 +40,7 @@ pub(super) struct DenseDigitCache {
 /// ring dimension is a view selected at kernel entry (each ring-shaped method
 /// takes it as a const generic).
 #[derive(Debug)]
-pub struct DensePoly<F: FieldCore> {
+pub struct DensePoly<F: Field> {
     /// Actual multilinear variable count of the source witness.
     pub(super) num_vars: usize,
     /// Ring-element count at the CONSTRUCTION dimension; metadata, not
@@ -55,7 +55,7 @@ pub struct DensePoly<F: FieldCore> {
     digit_cache: OnceLock<DenseDigitCache>,
 }
 
-impl<F: FieldCore + Clone> Clone for DensePoly<F> {
+impl<F: Field + Clone> Clone for DensePoly<F> {
     fn clone(&self) -> Self {
         Self {
             num_vars: self.num_vars,
@@ -67,7 +67,7 @@ impl<F: FieldCore + Clone> Clone for DensePoly<F> {
     }
 }
 
-impl<F: FieldCore + PartialEq> PartialEq for DensePoly<F> {
+impl<F: Field + PartialEq> PartialEq for DensePoly<F> {
     fn eq(&self, other: &Self) -> bool {
         self.num_vars == other.num_vars
             && self.coeffs == other.coeffs
@@ -75,7 +75,7 @@ impl<F: FieldCore + PartialEq> PartialEq for DensePoly<F> {
     }
 }
 
-impl<F: FieldCore + Eq> Eq for DensePoly<F> {}
+impl<F: Field + Eq> Eq for DensePoly<F> {}
 
 /// Reinterpret a flat coefficient slice as ring elements of dimension `D`.
 ///
@@ -83,7 +83,7 @@ impl<F: FieldCore + Eq> Eq for DensePoly<F> {}
 /// callers slice the live prefix for their view dimension first, then
 /// reinterpret.
 #[inline]
-fn as_ring_view<F: FieldCore, const D: usize>(flat: &[F]) -> &[CyclotomicRing<F, D>] {
+fn as_ring_view<F: Field, const D: usize>(flat: &[F]) -> &[CyclotomicRing<F, D>] {
     debug_assert!(D > 0);
     debug_assert!(flat.len().is_multiple_of(D));
     // SAFETY: `CyclotomicRing<F, D>` is `#[repr(transparent)]` over `[F; D]`,
@@ -93,7 +93,7 @@ fn as_ring_view<F: FieldCore, const D: usize>(flat: &[F]) -> &[CyclotomicRing<F,
     }
 }
 
-impl<F: FieldCore> DensePoly<F> {
+impl<F: Field> DensePoly<F> {
     /// Full physical (zero-padded) flat coefficient buffer.
     pub fn field_coeffs(&self) -> &[F] {
         self.coeffs.coeffs()
@@ -187,7 +187,7 @@ impl<F: FieldCore> DensePoly<F> {
     }
 }
 
-impl<F: FieldCore + CanonicalField> DensePoly<F> {
+impl<F: Field + CanonicalEncoding> DensePoly<F> {
     /// Pack field-element evaluations into flat dense storage.
     ///
     /// `ring_d` is the caller's configured ring dimension. It is recorded as
@@ -229,7 +229,10 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
         // Padding zeros are centered-0 (trivially small-i8), so a poly whose
         // live coefficients are all small stays all-small — identical to the
         // old per-ring check over the zero-padded last ring.
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
         let half_q = q / 2;
         let mut small_i8_coeffs = Vec::with_capacity(physical_len);
         let mut all_small_i8 = true;
@@ -318,7 +321,10 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
         }
 
         let rings = self.ring_coeffs::<D>().ok()?;
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
         let params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
         let mut planes = vec![0i8; num_rings * num_digits * D];
         cfg_chunks_mut!(planes, num_digits * D)
@@ -353,12 +359,12 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
 /// run never crossed a ring boundary and flat indexing reads the identical
 /// coefficients. `flat` is bounded to the LIVE length (`1 << num_vars`); the
 /// tensor fold's tails cover exactly that range.
-pub(super) struct DenseColumnSource<'a, F: FieldCore> {
+pub(super) struct DenseColumnSource<'a, F: Field> {
     pub(super) flat: &'a [F],
     pub(super) width: usize,
 }
 
-impl<F: FieldCore> TensorColumnSource<F> for DenseColumnSource<'_, F> {
+impl<F: Field> TensorColumnSource<F> for DenseColumnSource<'_, F> {
     #[inline]
     fn row(&self, tail: usize) -> &[F] {
         &self.flat[tail * self.width..][..self.width]

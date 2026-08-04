@@ -3,7 +3,7 @@ use crate::{
     RelationMatrixRowLayout, SetupContributionPlanInputs, WitnessChunkLayout, WitnessLayout,
 };
 use akita_error::AkitaError;
-use jolt_field::FieldCore;
+use jolt_field::Field;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -39,7 +39,7 @@ impl SetupContributionGroupInputs {
     /// still go through [`SetupContributionPlan::prepare_static`] and
     /// [`SetupContributionPlan::finish_plan`] so single- and multi-group setup
     /// contributions share the same planning pipeline.
-    pub fn single_group_layout<E: FieldCore>(
+    pub fn single_group_layout<E: Field>(
         inputs: &SetupContributionPlanInputs<E>,
         chunk_layout: &WitnessLayout,
         fold_log_basis: u32,

@@ -10,6 +10,8 @@ use super::TraceWeightLayout;
 use super::{eval_trace_terms_closed, TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm};
 use crate::{lagrange_weights, reduce_inner_opening_to_ring_element, BasisMode};
 use akita_algebra::CyclotomicRing;
+use akita_algebra::One;
+use akita_algebra::Ring;
 use jolt_field::{Ext2, Prime128OffsetA7F7};
 
 type F = Prime128OffsetA7F7;

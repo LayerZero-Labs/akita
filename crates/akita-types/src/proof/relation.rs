@@ -10,7 +10,7 @@ use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::{eval_ring_at, eval_ring_at_pows_fast, scalar_powers};
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalField, FieldCore, MulBaseUnreduced};
+use jolt_field::{CanonicalEncoding, Field, MulBaseUnreduced};
 use std::iter::repeat_n;
 
 /// Per-group row-count inputs for assembling the relation rhs vector.
@@ -153,7 +153,7 @@ pub fn relation_rhs_coeff_len(
 }
 
 /// Number of ring rows decodable at role dimension `d` (compact or tagged storage).
-fn ring_row_count_at<F: FieldCore>(vec: &RingVec<F>, d: usize) -> Result<usize, AkitaError> {
+fn ring_row_count_at<F: Field>(vec: &RingVec<F>, d: usize) -> Result<usize, AkitaError> {
     if vec.coeff_len() == 0 {
         return Ok(0);
     }
@@ -187,7 +187,7 @@ pub fn generate_relation_rhs<F, const D: usize>(
     n_a: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
 {
     if v.len() != n_d {
         return Err(AkitaError::InvalidSize {
@@ -221,7 +221,7 @@ where
 /// # Errors
 ///
 /// Returns an error if segment lengths or role dimensions do not match `layout`.
-pub fn assemble_relation_rhs<F: FieldCore>(
+pub fn assemble_relation_rhs<F: Field>(
     dims: CommitmentRingDims,
     layout: &RelationRhsLayout,
     v: &RingVec<F>,
@@ -278,8 +278,8 @@ fn accumulate_extension_rows<F, E, const D: usize>(
     acc: &mut E,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + MulBaseUnreduced<F>,
 {
     let alpha_pows = scalar_powers(alpha, D);
     for r in rows {
@@ -303,7 +303,7 @@ where
 /// Returns an error if the equality table implied by `tau1` would overflow or
 /// exceed the verifier sequence bound.
 #[tracing::instrument(skip_all, name = "relation_claim_from_rows")]
-pub fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
+pub fn relation_claim_from_rows<F: Field + CanonicalEncoding, const D: usize>(
     tau1: &[F],
     alpha: F,
     n_a: usize,
@@ -344,8 +344,8 @@ pub fn relation_claim_from_rows_extension<F, E, const D: usize>(
     u: &[CyclotomicRing<F, D>],
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + MulBaseUnreduced<F>,
 {
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     let alpha_pows = scalar_powers(alpha, D);
@@ -383,8 +383,8 @@ pub fn relation_claim_from_layout_extension<F, E>(
     u: &RingVec<F>,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + MulBaseUnreduced<F>,
 {
     if !v.can_decode_vec(dims.d_d()) {
         return Err(AkitaError::InvalidSize {
@@ -468,7 +468,7 @@ where
 /// Fold paths combine this with `relation_claim_from_layout_extension` as
 /// `relation_claim + weight * trace_eval_target` (and reuse `weight` for
 /// Stage-2 `TraceClaim::trace_coeff`).
-pub fn evaluation_trace_row_weight<E: FieldCore>(
+pub fn evaluation_trace_row_weight<E: Field>(
     evaluation_trace_row: usize,
     tau1: &[E],
 ) -> Result<E, AkitaError> {
@@ -494,7 +494,9 @@ pub fn evaluation_trace_row_weight<E: FieldCore>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fp32, FpExt2, LiftBase, NegOneNr};
+    use akita_algebra::Ring;
+    use akita_algebra::Zero;
+    use jolt_field::{ExtField, Fp32, FpExt2, NegOneNr};
 
     type F = Fp32<251>;
     type E = FpExt2<F, NegOneNr>;

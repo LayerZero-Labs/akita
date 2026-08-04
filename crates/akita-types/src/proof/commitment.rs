@@ -8,7 +8,7 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_transcript::Transcript;
-use jolt_field::{CanonicalField, FieldCore};
+use jolt_field::{CanonicalEncoding, Field};
 use std::io::{Read, Write};
 
 /// Minimal commitment wrapper used by protocol traits/tests.
@@ -87,7 +87,7 @@ impl AkitaDeserialize for DummyProof {
 
 impl<F> AppendToTranscript<F> for AkitaCommitment
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn append_to_transcript<T: Transcript<F>>(&self, label: &[u8], transcript: &mut T) {
         transcript.append_serde(label, self);
@@ -103,9 +103,9 @@ where
 /// Transcript absorption goes through the flat coefficient encoder; the bytes
 /// are identical to the former typed path (proven by the S2 byte-identity test).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Commitment<F: FieldCore>(pub RingVec<F>);
+pub struct Commitment<F: Field>(pub RingVec<F>);
 
-impl<F: FieldCore> Commitment<F> {
+impl<F: Field> Commitment<F> {
     /// Wrap a flat ring-coefficient buffer.
     pub fn new(rows: RingVec<F>) -> Self {
         Self(rows)
@@ -140,20 +140,20 @@ impl<F: FieldCore> Commitment<F> {
         transcript: &mut T,
     ) -> Result<(), AkitaError>
     where
-        F: CanonicalField + AkitaSerialize,
+        F: Field + CanonicalEncoding + AkitaSerialize,
     {
         self.0
             .append_flat_to_transcript(label, ring_dim, transcript)
     }
 }
 
-impl<F: FieldCore + Valid> Valid for Commitment<F> {
+impl<F: Field + Valid> Valid for Commitment<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.0.check()
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for Commitment<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for Commitment<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         writer: W,
@@ -167,7 +167,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for Commitment<F> {
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for Commitment<F> {
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for Commitment<F> {
     /// Number of field-element coefficients to read (same as [`RingVec`]).
     type Context = usize;
     fn deserialize_with_mode<R: Read>(
@@ -189,17 +189,17 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for
 /// belongs to the D-free [`Commitment`] / [`RingVec`]. It is kept solely as a
 /// typed arithmetic carrier inside kernels.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RingCommitment<F: FieldCore, const D: usize> {
+pub struct RingCommitment<F: Field, const D: usize> {
     /// Outer commitment vector.
     pub u: Vec<CyclotomicRing<F, D>>,
 }
 
 /// Borrow ring rows from commitment-like prover inputs.
-pub trait ProverCommitmentRows<CommitF: FieldCore, const D: usize> {
+pub trait ProverCommitmentRows<CommitF: Field, const D: usize> {
     fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>];
 }
 
-impl<CommitF: FieldCore, const D: usize> ProverCommitmentRows<CommitF, D>
+impl<CommitF: Field, const D: usize> ProverCommitmentRows<CommitF, D>
     for RingCommitment<CommitF, D>
 {
     fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>] {
@@ -207,7 +207,7 @@ impl<CommitF: FieldCore, const D: usize> ProverCommitmentRows<CommitF, D>
     }
 }
 
-impl<CommitF: FieldCore, const D: usize> ProverCommitmentRows<CommitF, D>
+impl<CommitF: Field, const D: usize> ProverCommitmentRows<CommitF, D>
     for [CyclotomicRing<CommitF, D>]
 {
     fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>] {
@@ -215,13 +215,13 @@ impl<CommitF: FieldCore, const D: usize> ProverCommitmentRows<CommitF, D>
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> Valid for RingCommitment<F, D> {
+impl<F: Field + Valid, const D: usize> Valid for RingCommitment<F, D> {
     fn check(&self) -> Result<(), SerializationError> {
         self.u.check()
     }
 }
 
-impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize for RingCommitment<F, D> {
+impl<F: Field + AkitaSerialize, const D: usize> AkitaSerialize for RingCommitment<F, D> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -235,7 +235,7 @@ impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize for RingCommi
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, const D: usize> AkitaDeserialize
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>, const D: usize> AkitaDeserialize
     for RingCommitment<F, D>
 {
     type Context = ();

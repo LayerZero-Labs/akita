@@ -16,9 +16,9 @@ use akita_types::{
     OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams,
     MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
 };
-use jolt_field::parallel::*;
-use jolt_field::unreduced::{HasWide, ReduceTo};
-use jolt_field::{CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
+use jolt_field::solinas::parallel::*;
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, Field, Ring};
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
 ///
@@ -73,7 +73,7 @@ pub(crate) fn validate_commit_inner_shape<F, const D: usize>(
     log_basis: u32,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     let expected_block_digits = commit_inner_block_digit_count(n_a, num_digits_open)?;
     let expected_flat_digits = commit_inner_flat_digit_count(num_blocks, n_a, num_digits_open)?;
@@ -131,7 +131,7 @@ pub(crate) fn validate_commit_level_params<F>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     if params.num_blocks == 0 || params.block_len == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -223,7 +223,7 @@ pub fn prepare_commit_inputs<F, P>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<OpeningClaimsLayout, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyMeta<F>,
 {
     if polys.is_empty() {
@@ -259,7 +259,7 @@ pub(crate) fn validate_onehot_chunk_size_for_params<F, P>(
     params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyMeta<F>,
 {
     let expected = params.onehot_chunk_size;
@@ -284,7 +284,7 @@ pub(crate) fn validate_batched_onehot_chunk_size_for_params<F, P>(
     params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyMeta<F>,
 {
     let expected = params.onehot_chunk_size;
@@ -326,8 +326,7 @@ fn tensor_project_roots<F, P, E, B>(
     polys: &[P],
 ) -> Result<Vec<RootTensorProjectionPoly<F>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: FpExtEncoding<F>,
     P: RuntimeRootCommitPoly<F>,
     B: RuntimeRootCommitBackend<F, P, E>,
@@ -353,8 +352,7 @@ fn commit_with_validated_params<F, P, B>(
     params: &LevelParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
         + RootCommitSource<F, 128>
@@ -464,8 +462,7 @@ pub fn commit_with_params<F, P, B>(
     params: &LevelParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
         + RootCommitSource<F, 128>
@@ -498,7 +495,7 @@ fn root_transform_ring_dim<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    if Cfg::EXT_DEGREE == 1 {
+    if Cfg::DEGREE == 1 {
         return Ok(None);
     }
     let schedule = Cfg::get_params_for_prove(opening_batch)?;
@@ -546,8 +543,7 @@ pub fn commit<Cfg, P, B>(
 ) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    Cfg::Field: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
     B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
@@ -591,7 +587,7 @@ pub fn prepare_batched_commit_inputs<F, P>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<OpeningClaimsLayout, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyMeta<F>,
 {
     if polys.is_empty() {
@@ -629,7 +625,7 @@ fn validate_group_commit_inputs<F, P>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<PolynomialGroupLayout, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyMeta<F>,
 {
     let opening_batch = prepare_commit_inputs::<F, P>(polys, setup)?;
@@ -661,8 +657,7 @@ pub fn commit_group<Cfg, P, B>(
 ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    Cfg::Field: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
     B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
@@ -780,8 +775,7 @@ pub fn commit_final_group<Cfg, P, B>(
 ) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    Cfg::Field: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
     B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
@@ -829,8 +823,7 @@ pub fn batched_commit<Cfg, P, B>(
 ) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    Cfg::Field: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
     B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
@@ -876,8 +869,7 @@ pub fn batched_commit_with_params<F, P, B>(
     params: &LevelParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
         + RootCommitSource<F, 128>

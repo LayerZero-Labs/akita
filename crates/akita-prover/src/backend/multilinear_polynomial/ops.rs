@@ -5,8 +5,8 @@
 
 use akita_error::AkitaError;
 use akita_types::FpExtEncoding;
-use jolt_field::unreduced::HasWide;
-use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced};
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 use crate::backend::{DenseBatchView, DenseView, OneHotBatchView, OneHotView};
 use crate::compute::{
@@ -28,7 +28,7 @@ use super::poly::{
 impl<F, const D: usize, I> RootCommitKernel<MultilinearPolynomialView<'_, F, D, I>, F, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
     fn commit_inner(
@@ -61,7 +61,7 @@ where
 impl<F, const D: usize, I> OpeningFoldKernel<MultilinearPolynomialView<'_, F, D, I>, F, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
     fn evaluate_and_fold(
@@ -120,7 +120,7 @@ where
 impl<F, const D: usize, I> OpeningBatchKernel<MultilinearPolynomialBatchView<'_, F, D, I>, F, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
     fn decompose_fold_batch(
@@ -180,7 +180,7 @@ where
 impl<F, E, const D: usize, I>
     TensorProjectionKernel<MultilinearPolynomialView<'_, F, D, I>, F, E, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
     E: ExtField<F>,
     I: OneHotIndex,
 {
@@ -266,7 +266,7 @@ where
 impl<F, E, const D: usize, I>
     TensorProjectionBatchKernel<MultilinearPolynomialBatchView<'_, F, D, I>, F, E, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
     E: ExtField<F>,
     I: OneHotIndex,
 {

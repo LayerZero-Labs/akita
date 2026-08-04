@@ -10,9 +10,7 @@ use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::FpExtEncoding;
-use jolt_field::{
-    CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, MulBaseUnreduced,
-};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Tensor-packed root witness alternatives produced by a tensor kernel.
 ///
@@ -20,7 +18,7 @@ use jolt_field::{
 /// alternatives is fixed, so an enum is the right model here. It is not a
 /// closed *input-source* enum, which is the pattern the open boundary forbids.
 #[derive(Debug, Clone)]
-pub enum TensorPackedWitness<E: FieldCore> {
+pub enum TensorPackedWitness<E: Field> {
     /// Dense tensor-packed evaluations (universal fallback).
     Dense(Vec<E>),
     /// Sparse tensor-packed witness preserved when the source/backend can.
@@ -29,7 +27,7 @@ pub enum TensorPackedWitness<E: FieldCore> {
 
 /// Outcome of a batched decompose-fold kernel invocation.
 #[derive(Debug)]
-pub enum BatchDecomposeFoldOutcome<F: FieldCore, const D: usize> {
+pub enum BatchDecomposeFoldOutcome<F: Field, const D: usize> {
     /// Fused batched witness produced by the kernel.
     Fused(DecomposeFoldWitness<F>),
     /// No fused path; caller should decompose-fold each polynomial and aggregate.
@@ -46,7 +44,7 @@ pub enum BatchDecomposeFoldOutcome<F: FieldCore, const D: usize> {
 /// Akita views reduce to the standard `*_commit_rows` helpers above.
 pub trait RootCommitKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Inner commitment that preserves the recomposed inner rows.
     fn commit_inner(
@@ -60,7 +58,7 @@ where
 /// Fused ring-switch relation-rows kernel over a borrowed relation view `S`.
 pub trait RingSwitchRelationKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Fused D/B cyclic rows plus A-side quotient rows.
     fn relation_rows(
@@ -70,13 +68,13 @@ where
         plan: RingSwitchRelationPlan,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
     where
-        F: HalvingField;
+        F: Field;
 }
 
 /// Additional public-row quotient kernel over a borrowed quotient view `S`.
 pub trait RingSwitchQuotientKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// A-side quotient rows for one additional public-row segment.
     fn quotient_rows(
@@ -86,7 +84,7 @@ where
         plan: RingSwitchQuotientPlan,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
     where
-        F: HalvingField;
+        F: Field;
 }
 
 /// Opening fold / decompose-fold kernel over a borrowed opening view `S`.
@@ -95,7 +93,7 @@ where
 /// state; setup-dependent work stays explicitly tied to the backend context.
 pub trait OpeningFoldKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Fused fold + evaluation in one pass over the source.
     fn evaluate_and_fold(
@@ -117,7 +115,7 @@ where
 /// Batched decompose-fold kernel over a borrowed opening-batch view `S`.
 pub trait OpeningBatchKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Fused batched decompose-fold at one opening point.
     fn decompose_fold_batch(
@@ -132,7 +130,7 @@ where
 /// extension-field point of type `E`.
 pub trait TensorProjectionKernel<S, F, E, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     /// Tensor-column partials at one logical point.
@@ -159,14 +157,14 @@ where
         source: S,
     ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
-        F: FromPrimitiveInt,
+        F: Ring,
         E: FpExtEncoding<F>;
 }
 
 /// Batched tensor projection kernel over a borrowed tensor-batch view `S`.
 pub trait TensorProjectionBatchKernel<S, F, E, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     /// Tensor-column partials for a same-point batch.

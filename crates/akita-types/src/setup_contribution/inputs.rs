@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::AkitaError;
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 use crate::layout::{LevelParams, RelationMatrixRowLayout};
 
 /// Minimal setup-contribution data needed to derive setup-index weights.
 #[derive(Clone)]
-pub struct SetupContributionPlanInputs<E: FieldCore> {
+pub struct SetupContributionPlanInputs<E: Field> {
     pub relation_matrix_row_layout: RelationMatrixRowLayout,
     pub rows: usize,
     pub n_a: usize,
@@ -29,7 +29,7 @@ pub struct SetupContributionPlanInputs<E: FieldCore> {
     pub eq_tau1: Arc<[E]>,
 }
 
-impl<E: FieldCore> SetupContributionPlanInputs<E> {
+impl<E: Field> SetupContributionPlanInputs<E> {
     /// Build challenge-free setup-contribution inputs from per-level params.
     ///
     /// Mirrors the prover's `create_setup_contribution_inputs` field derivation

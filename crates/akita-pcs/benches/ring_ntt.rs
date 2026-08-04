@@ -4,13 +4,14 @@ use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
 use akita_algebra::tables::{
     q128_primes, q32_garner, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES,
 };
+use akita_algebra::Ring;
 use akita_algebra::{
     CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, MontCoeff, PackedPartialSplitEval16,
     PartialSplitEval16, PartialSplitNtt16,
 };
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use jolt_field::packed::HasPacking;
-use jolt_field::{Fp64, HalvingField, Prime128Offset159};
+use jolt_field::WithPacking;
+use jolt_field::{Field, Fp64, Prime128Offset159};
 
 type F = Fp64<{ Q32_MODULUS }>;
 type R = CyclotomicRing<F, 64>;
@@ -18,7 +19,7 @@ type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
 type F128 = Prime128Offset159;
 type R128 = CyclotomicRing<F128, 32>;
 type N128 = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 32>;
-type PF128 = <F128 as HasPacking>::Packing;
+type PF128 = <F128 as WithPacking>::Packing;
 const CACHE_MAT_ROWS: usize = 8;
 const CACHE_MAT_COLS: usize = 16;
 const MUL_BATCH_FACTORS: [usize; 3] = [1, 4, 16];

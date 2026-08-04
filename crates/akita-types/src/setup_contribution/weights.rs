@@ -1,8 +1,8 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{eq_eval_at_index, high_eq_window};
 use akita_error::AkitaError;
-use jolt_field::parallel::*;
-use jolt_field::{FieldCore, MulBase};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{ExtField, Field};
 
 const POSSIBLE_CARRIES: usize = 2;
 
@@ -12,7 +12,7 @@ const POSSIBLE_CARRIES: usize = 2;
 /// setup-shared across commitment groups, so callers pass the same scalars
 /// regardless of group layout.
 #[inline(always)]
-pub(crate) fn setup_e_col_weights<E: FieldCore>(
+pub(crate) fn setup_e_col_weights<E: Field>(
     chunks: &[crate::WitnessChunkLayout],
     blocks_per_chunk: usize,
     num_blocks: usize,
@@ -86,7 +86,7 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
 /// group's t-vector count).
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
-pub(crate) fn setup_t_col_weights<E: FieldCore>(
+pub(crate) fn setup_t_col_weights<E: Field>(
     chunks: &[crate::WitnessChunkLayout],
     blocks_per_chunk: usize,
     depth_open: usize,
@@ -188,8 +188,8 @@ pub(crate) fn setup_z_col_weights<F, E>(
     z_weights: &mut [E],
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
-    E: MulBase<F>,
+    F: Field,
+    E: ExtField<F>,
 {
     if chunks.is_empty() {
         return Err(AkitaError::InvalidSetup(

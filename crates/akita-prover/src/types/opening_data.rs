@@ -8,11 +8,11 @@ use akita_types::{
     OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
     RelationMatrixRowLayout, RingVec, SetupPrefixSlot,
 };
-use jolt_field::{CanonicalField, ExtField, FieldCore};
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.
 #[derive(Debug, Clone)]
-pub struct ProverOpeningData<'a, PointF: Clone, P, CommitF: FieldCore> {
+pub struct ProverOpeningData<'a, PointF: Clone, P, CommitF: Field> {
     opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
     hints: Vec<AkitaCommitmentHint<CommitF>>,
     polynomials: Vec<&'a [&'a P]>,
@@ -20,7 +20,7 @@ pub struct ProverOpeningData<'a, PointF: Clone, P, CommitF: FieldCore> {
 
 impl<'a, PointF: Clone, P, CommitF> ProverOpeningData<'a, PointF, P, CommitF>
 where
-    CommitF: FieldCore,
+    CommitF: Field,
 {
     /// Bundle public claims with matching prover hints and polynomial groups.
     pub fn new(
@@ -64,7 +64,7 @@ where
     /// Validate alignment and root polynomial shape.
     pub fn validate<PolyF>(&self) -> Result<(), AkitaError>
     where
-        PolyF: FieldCore,
+        PolyF: Field,
         P: RootPolyMeta<PolyF>,
     {
         self.check_alignment()?;
@@ -82,7 +82,7 @@ where
     /// Largest natural root arity across all polynomial groups.
     pub fn num_vars<PolyF>(&self) -> Result<usize, AkitaError>
     where
-        PolyF: FieldCore,
+        PolyF: Field,
         P: RootPolyMeta<PolyF>,
     {
         self.polynomials
@@ -109,7 +109,7 @@ where
     /// Layout-only opening geometry derived from prover polynomials.
     pub fn opening_layout<PolyF>(&self) -> Result<OpeningClaimsLayout, AkitaError>
     where
-        PolyF: FieldCore,
+        PolyF: Field,
         P: RootPolyMeta<PolyF>,
     {
         let mut groups = Vec::with_capacity(self.polynomials.len());
@@ -177,7 +177,7 @@ where
         transcript: &mut T,
     ) -> Result<(), AkitaError>
     where
-        CommitF: CanonicalField + akita_serialization::AkitaSerialize,
+        CommitF: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
         PointF: ExtField<CommitF>,
         P: RootPolyMeta<CommitF>,
         T: Transcript<CommitF>,
@@ -295,8 +295,8 @@ where
 
 impl<'a, PointF, CommitF> ProverOpeningData<'a, PointF, RecursiveFoldSource<CommitF>, CommitF>
 where
-    PointF: FieldCore,
-    CommitF: FieldCore,
+    PointF: Field,
+    CommitF: Field,
 {
     pub(crate) fn recursive_suffix_eor_claims(
         shared_point: Vec<PointF>,
@@ -450,6 +450,7 @@ mod tests {
     use akita_transcript::labels::ABSORB_COMMITMENT;
     use akita_transcript::AkitaTranscript;
     use jolt_field::Fp32;
+    use jolt_field::Zero;
 
     type F = Fp32<251>;
 

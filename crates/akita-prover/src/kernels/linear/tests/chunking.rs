@@ -1,4 +1,6 @@
 use super::*;
+use jolt_field::One;
+use jolt_field::Ring;
 
 #[test]
 fn mat_vec_mul_ntt_i8_dense_single_row_chunks_q128() {
@@ -8,7 +10,7 @@ fn mat_vec_mul_ntt_i8_dense_single_row_chunks_q128() {
     let log_basis = 6;
     let num_digits = 1;
     let modulus = (-F::one()).to_canonical_u128() + 1;
-    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let half = F::from_u128_reduced(modulus / 2);
     let row = CyclotomicRing::from_coefficients([half; D]);
     let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
     let flat_rows = vec![row; cols];
@@ -42,7 +44,7 @@ fn q128_many_blocks_digits_chunk_instead_of_unsafe_block_parallel() {
     let num_blocks = 16;
     let log_basis = 6;
     let modulus = (-F::one()).to_canonical_u128() + 1;
-    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let half = F::from_u128_reduced(modulus / 2);
     let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..3)
         .map(|_| vec![CyclotomicRing::from_coefficients([half; D]); cols])
         .collect();

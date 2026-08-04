@@ -314,10 +314,9 @@ dependencies = [
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d#09b2f7b6ddd9427c756b781c39530a6c005e332d"
+source = "git+https://github.com/Acentelles/jolt.git?rev=46e2ce8f7525364c69b5534d2d3918bdcf0684d3#46e2ce8f7525364c69b5534d2d3918bdcf0684d3"
 dependencies = [
  "num-traits",
- "rand 0.8.6",
  "rand_core 0.6.4",
  "serde",
  "thiserror",

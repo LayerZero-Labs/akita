@@ -6,12 +6,13 @@ use crate::compute::{
     TensorProjectionKernel,
 };
 use crate::{DensePoly, OneHotPoly};
-use jolt_field::{CanonicalField, ExtField, FpExt4, Prime24Offset3};
+use jolt_field::One;
+use jolt_field::{CanonicalEncoding, ExtField, FpExt4, Prime24Offset3};
 
 fn sample_dense<const D: usize>() -> DensePoly<Prime24Offset3> {
     let num_vars = 5;
     let evals = (0..(1usize << num_vars))
-        .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
+        .map(|idx| Prime24Offset3::from_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
     DensePoly::from_field_evals(num_vars, D, &evals).unwrap()
 }
@@ -38,10 +39,10 @@ fn sample_point<E: ExtField<Prime24Offset3>>(num_vars: usize) -> Vec<E> {
     (0..num_vars)
         .map(|idx| {
             E::from_base_slice(&[
-                Prime24Offset3::from_canonical_u128_reduced(5 * idx as u128 + 2),
-                Prime24Offset3::from_canonical_u128_reduced(5 * idx as u128 + 3),
-                Prime24Offset3::from_canonical_u128_reduced(5 * idx as u128 + 5),
-                Prime24Offset3::from_canonical_u128_reduced(5 * idx as u128 + 7),
+                Prime24Offset3::from_u128_reduced(5 * idx as u128 + 2),
+                Prime24Offset3::from_u128_reduced(5 * idx as u128 + 3),
+                Prime24Offset3::from_u128_reduced(5 * idx as u128 + 5),
+                Prime24Offset3::from_u128_reduced(5 * idx as u128 + 7),
             ])
         })
         .collect()
@@ -164,7 +165,7 @@ fn multilinear_kernel_mixed_batch_column_partials_falls_back_per_poly() {
     let onehot = sample_onehot::<D>();
     let num_vars = RootPolyShape::<F, D>::num_vars(&onehot);
     let evals = (0..(1usize << num_vars))
-        .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
+        .map(|idx| Prime24Offset3::from_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
     let dense = DensePoly::from_field_evals(num_vars, D, &evals).unwrap();
     let wrapped = [
@@ -206,7 +207,7 @@ fn multilinear_kernel_mixed_batch_sparse_linear_combination_returns_none() {
     let onehot = sample_onehot::<D>();
     let num_vars = RootPolyShape::<F, D>::num_vars(&onehot);
     let evals = (0..(1usize << num_vars))
-        .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
+        .map(|idx| Prime24Offset3::from_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
     let dense = DensePoly::from_field_evals(num_vars, D, &evals).unwrap();
     let wrapped = [
@@ -237,7 +238,7 @@ fn multilinear_mixed_sparse_batch_fold_returns_fallback_per_poly() {
     let onehot = sample_onehot::<D>();
     let num_vars = RootPolyShape::<F, D>::num_vars(&onehot);
     let evals = (0..(1usize << num_vars))
-        .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
+        .map(|idx| Prime24Offset3::from_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
     let dense = DensePoly::from_field_evals(num_vars, D, &evals).unwrap();
     let wrapped = [

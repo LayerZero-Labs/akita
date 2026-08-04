@@ -1,6 +1,9 @@
 #![allow(missing_docs)]
 
 use akita_algebra::split_eq::GruenSplitEq;
+use akita_algebra::One;
+use akita_algebra::Ring;
+use akita_algebra::Zero;
 use akita_error::AkitaError;
 use akita_sumcheck::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceProverExt,

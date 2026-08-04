@@ -7,7 +7,7 @@ use akita_types::{
     AkitaSetupSeed, AkitaVerifierSetup, SetupMatrixEnvelope, SetupPrefixProverRegistry,
     SetupPrefixVerifierRegistry,
 };
-use jolt_field::{CanonicalField, FieldCore, RandomSampling};
+use jolt_field::{CanonicalEncoding, Field};
 use std::sync::Arc;
 
 /// Prover setup artifact.
@@ -15,7 +15,7 @@ use std::sync::Arc;
 /// Backend-prepared compute state is intentionally not stored here. Host code
 /// prepares a compute backend from the expanded setup when it wants to prove.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaProverSetup<F: FieldCore> {
+pub struct AkitaProverSetup<F: Field> {
     /// Expanded matrix stage used by both prover and verifier.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Preprocessed setup-prefix commitment slots for setup-claim offloading.
@@ -26,7 +26,7 @@ pub struct AkitaProverSetup<F: FieldCore> {
     pub prefix_slots: SetupPrefixProverRegistry<F>,
 }
 
-impl<F: FieldCore> AkitaProverSetup<F> {
+impl<F: Field> AkitaProverSetup<F> {
     /// Setup envelope ring degree.
     #[must_use]
     pub fn gen_ring_dim(&self) -> usize {
@@ -69,7 +69,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
         setup_envelope: SetupMatrixEnvelope,
     ) -> Result<Self, AkitaError>
     where
-        F: CanonicalField + RandomSampling + AkitaSerialize,
+        F: Field + CanonicalEncoding + AkitaSerialize,
     {
         let public_matrix_seed = sample_public_matrix_seed();
         let seed = AkitaSetupSeed {
@@ -131,7 +131,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     /// Returns an error if the expanded setup does not match its seed.
     pub fn from_validated_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
     where
-        F: CanonicalField + RandomSampling + Valid,
+        F: Field + CanonicalEncoding + Valid,
     {
         expanded.check().map_err(|err| {
             AkitaError::InvalidSetup(format!("expanded setup validation failed: {err}"))
@@ -152,7 +152,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     /// seed and matrix disagree, or its internal shape metadata is malformed.
     pub fn from_seed_validated_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
     where
-        F: CanonicalField + Valid,
+        F: Field + CanonicalEncoding + Valid,
     {
         expanded.seed().check().map_err(|err| {
             AkitaError::InvalidSetup(format!("expanded setup seed validation failed: {err}"))
@@ -217,7 +217,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid + AkitaSerialize> Valid for AkitaProverSetup<F> {
+impl<F: Field + Valid + AkitaSerialize> Valid for AkitaProverSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
         self.prefix_slots.check()

@@ -5,7 +5,7 @@
 //! do not depend on `tau1`.
 
 use akita_error::AkitaError;
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 use crate::layout::RelationMatrixRowLayout;
 use crate::proof::AkitaExpandedSetup;
@@ -19,7 +19,7 @@ use super::SetupContributionPlanInputs;
 ///
 /// Returns an error when layout parameters are inconsistent with the canonical
 /// M-row packing used by setup sumcheck.
-pub fn setup_required_for_inputs<E: FieldCore>(
+pub fn setup_required_for_inputs<E: Field>(
     inputs: &SetupContributionPlanInputs<E>,
 ) -> Result<usize, AkitaError> {
     if inputs.num_blocks == 0 || !inputs.num_blocks.is_power_of_two() {
@@ -131,7 +131,7 @@ pub fn setup_required_for_inputs<E: FieldCore>(
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when `required` exceeds the envelope.
-pub fn ensure_setup_envelope<F: FieldCore>(
+pub fn ensure_setup_envelope<F: Field>(
     expanded: &AkitaExpandedSetup<F>,
     required: usize,
     fold_ring_d: usize,
@@ -167,7 +167,7 @@ pub fn stage3_offload_natural_field_len(
 ///
 /// Returns [`AkitaError::InvalidSetup`] when `required` exceeds the shared matrix
 /// prefix available at `fold_ring_d`.
-pub fn setup_active_ring_elems_for_fold<F: FieldCore, E: FieldCore>(
+pub fn setup_active_ring_elems_for_fold<F: Field, E: Field>(
     expanded: &AkitaExpandedSetup<F>,
     inputs: &SetupContributionPlanInputs<E>,
     fold_ring_d: usize,
@@ -183,7 +183,7 @@ pub fn setup_active_ring_elems_for_fold<F: FieldCore, E: FieldCore>(
 ///
 /// Returns [`AkitaError::InvalidSetup`] when `required` exceeds the shared matrix
 /// prefix available at the fold ring dimension.
-pub fn setup_active_ring_elems_at<F: FieldCore, E: FieldCore>(
+pub fn setup_active_ring_elems_at<F: Field, E: Field>(
     level: usize,
     schedule: &Schedule,
     expanded: &AkitaExpandedSetup<F>,

@@ -6,7 +6,7 @@ use super::poly::RootTensorSource;
 use crate::RootTensorProjectionPoly;
 use akita_error::AkitaError;
 use akita_types::FpExtEncoding;
-use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 pub(crate) fn tensor_root_projection<F, P, E, B, const D: usize>(
     backend: &B,
@@ -14,7 +14,7 @@ pub(crate) fn tensor_root_projection<F, P, E, B, const D: usize>(
     poly: &P,
 ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
     E: ExtField<F> + FpExtEncoding<F>,
     P: RootTensorSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,

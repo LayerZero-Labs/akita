@@ -3,7 +3,7 @@ use super::*;
 #[cfg(feature = "parallel")]
 const DENSE_PARALLEL_PAIR_THRESHOLD: usize = 1 << 14;
 
-pub(crate) fn accumulate_dense_round<E: FieldCore + HasUnreducedOps>(
+pub(crate) fn accumulate_dense_round<E: Field + Unreduced>(
     witness_evals: &[E],
     factor_evals: &[E],
     coeff: E,
@@ -18,11 +18,11 @@ pub(crate) fn accumulate_dense_round<E: FieldCore + HasUnreducedOps>(
         return (E::zero(), E::zero());
     }
 
-    // Sum the wide products in `E::ProductAccum` only when the field has proven
+    // Sum the wide products in `E::Product` only when the field has proven
     // that delayed reduction is exact for these batch sizes; otherwise reduce
     // each product immediately so the coefficients stay byte-identical to
-    // per-term `Mul` (the `DELAYED_PRODUCT_SUM_IS_EXACT` contract).
-    let (constant, quadratic) = if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+    // per-term `Mul` (the `SUM_IS_EXACT` contract).
+    let (constant, quadratic) = if E::SUM_IS_EXACT {
         accumulate_dense_round_with::<E, DelayedDeg2<E>>(witness_evals, factor_evals)
     } else {
         accumulate_dense_round_with::<E, DirectDeg2<E>>(witness_evals, factor_evals)
@@ -32,7 +32,7 @@ pub(crate) fn accumulate_dense_round<E: FieldCore + HasUnreducedOps>(
 
 fn accumulate_dense_round_with<E, A>(witness_evals: &[E], factor_evals: &[E]) -> (E, E)
 where
-    E: FieldCore + HasUnreducedOps,
+    E: Field + Unreduced,
     A: Deg2RoundAccum<E>,
 {
     let half = witness_evals.len() / 2;
@@ -70,7 +70,7 @@ where
     acc.finish()
 }
 
-pub(crate) fn fold_dense_reduction_tables_in_place<E: HasUnreducedOps + HasOptimizedFold>(
+pub(crate) fn fold_dense_reduction_tables_in_place<E: Unreduced + Fold>(
     witness_evals: &mut Vec<E>,
     factor_evals: &mut Vec<E>,
     r_round: E,
@@ -87,7 +87,7 @@ pub(crate) fn fold_dense_reduction_tables_in_place<E: HasUnreducedOps + HasOptim
 
 /// Fold both tables by one variable AND pre-compute the next round's
 /// `(constant, quadratic)` accumulation in a single pass over the data.
-pub(crate) fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
+pub(crate) fn fused_fold_and_accumulate<E: Unreduced + Fold>(
     witness_evals: &mut Vec<E>,
     factor_evals: &mut Vec<E>,
     r_round: E,
@@ -99,9 +99,9 @@ pub(crate) fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
     debug_assert!(witness_evals.len() >= 4);
 
     // The fold itself (`E::fold_one`) is always exact; only the product
-    // accumulation respects `DELAYED_PRODUCT_SUM_IS_EXACT`, matching
+    // accumulation respects `SUM_IS_EXACT`, matching
     // `accumulate_dense_round`.
-    if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+    if E::SUM_IS_EXACT {
         fused_fold_and_accumulate_with::<E, DelayedDeg2<E>>(witness_evals, factor_evals, r_round)
     } else {
         fused_fold_and_accumulate_with::<E, DirectDeg2<E>>(witness_evals, factor_evals, r_round)
@@ -114,12 +114,12 @@ fn fused_fold_and_accumulate_with<E, A>(
     r_round: E,
 ) -> (E, E)
 where
-    E: FieldCore + HasUnreducedOps + HasOptimizedFold,
+    E: Field + Unreduced + Fold,
     A: Deg2RoundAccum<E>,
 {
     let half = witness_evals.len() / 2;
     let quarter = half / 2;
-    let ctx = E::precompute_fold(r_round);
+    let ctx = E::precompute(r_round);
 
     #[cfg(feature = "parallel")]
     {
@@ -130,7 +130,7 @@ where
             // even (table length is a power of two >= 4), so the `par_chunks_mut(2)`
             // loop below yields exactly `quarter` chunks of length 2 and writes all
             // `half` slots before the first read (`*witness_evals = folded_w`).
-            // `E: FieldCore` is `Copy` with a trivial drop, so overwriting the
+            // `E: Field` is `Copy` with a trivial drop, so overwriting the
             // uninitialized slots is sound.
             unsafe {
                 folded_w.set_len(half);

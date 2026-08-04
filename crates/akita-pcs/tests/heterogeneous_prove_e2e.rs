@@ -3,6 +3,7 @@
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
+use akita_pcs::Ring;
 use akita_prover::{
     batched_prove, CommitCluster, ComputeBackendSetup, CpuBackend, DensePoly, OpeningCluster,
     ProverComputeStack, ProverOpeningData, RingSwitchCluster, TensorCluster, UniformProverStack,
@@ -12,6 +13,7 @@ use akita_types::{
     lagrange_weights, BasisMode, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
     PolynomialGroupClaims,
 };
+use jolt_field::Zero;
 use std::any::TypeId;
 
 type Cfg = fp128::D64Full;

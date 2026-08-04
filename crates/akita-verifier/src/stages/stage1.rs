@@ -20,7 +20,7 @@ use akita_types::{
     stage1_tree_product_stage_arities, validate_stage1_tree_basis, AkitaStage1Proof, LevelParams,
     OpeningClaimsLayout, RelationMatrixRowLayout,
 };
-use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 type Stage1VerifyOutput<E> = Vec<E>;
 
@@ -64,7 +64,7 @@ pub(crate) fn derive_multi_group_stage1_challenges<F, T>(
     grind_nonce: u32,
 ) -> Result<Vec<Challenges>, AkitaError>
 where
-    F: FieldCore + CanonicalField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     T: Transcript<F>,
 {
     if matches!(
@@ -93,7 +93,7 @@ where
     Ok(group_challenges)
 }
 
-struct ProductStageVerifier<E: FieldCore> {
+struct ProductStageVerifier<E: Field> {
     tau: Vec<E>,
     input_claim: E,
     child_claims: Vec<E>,
@@ -101,7 +101,7 @@ struct ProductStageVerifier<E: FieldCore> {
     arity: usize,
 }
 
-impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductStageVerifier<E> {
+impl<E: Field> EqFactoredSumcheckInstanceVerifier<E> for ProductStageVerifier<E> {
     type RoundState = GruenSplitEq<E>;
 
     fn num_rounds(&self) -> usize {
@@ -140,14 +140,14 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductStageVerifie
     }
 }
 
-struct PolynomialStageVerifier<E: FieldCore> {
+struct PolynomialStageVerifier<E: Field> {
     tau: Vec<E>,
     input_claim: E,
     poly_coeffs: Vec<E>,
     s_claim: E,
 }
 
-impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for PolynomialStageVerifier<E> {
+impl<E: Field> EqFactoredSumcheckInstanceVerifier<E> for PolynomialStageVerifier<E> {
     type RoundState = GruenSplitEq<E>;
 
     fn num_rounds(&self) -> usize {
@@ -176,19 +176,19 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for PolynomialStageVeri
 }
 
 /// Stage-1 range-check verifier, including the root/leaf tree choreography.
-pub struct AkitaStage1Verifier<E: FieldCore> {
+pub struct AkitaStage1Verifier<E: Field> {
     tau0: Vec<E>,
     b: usize,
 }
 
-impl<E: FieldCore> AkitaStage1Verifier<E> {
+impl<E: Field> AkitaStage1Verifier<E> {
     /// Construct the stage-1 verifier from `tau0` and `b`.
     pub fn new(tau0: Vec<E>, b: usize) -> Self {
         Self { tau0, b }
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
+impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
     /// Verify the full stage-1 tree proof and return the final `stage1_point`.
     ///
     /// # Errors
@@ -201,7 +201,7 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
         transcript: &mut T,
     ) -> Result<Stage1VerifyOutput<E>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         E: ExtField<F>,
         T: Transcript<F>,
     {

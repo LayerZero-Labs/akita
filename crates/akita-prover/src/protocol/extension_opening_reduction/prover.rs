@@ -6,13 +6,13 @@ use super::*;
 /// a common Boolean domain and a single round challenge sequence. A single
 /// dense opening is the degenerate one-term case.
 #[derive(Debug, Clone)]
-pub struct ExtensionOpeningReductionProver<E: FieldCore> {
+pub struct ExtensionOpeningReductionProver<E: Field> {
     terms: Vec<ExtensionOpeningReductionTerm<E>>,
     input_claim: E,
     num_rounds: usize,
 }
 
-impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
+impl<E: Field> ExtensionOpeningReductionProver<E> {
     /// Construct a prover from terms sharing one Boolean domain.
     ///
     /// The caller supplies the claimed input sum. This avoids recomputing it
@@ -116,9 +116,7 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E>
-    for ExtensionOpeningReductionProver<E>
-{
+impl<E: Field + Unreduced + Fold> SumcheckInstanceProver<E> for ExtensionOpeningReductionProver<E> {
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }

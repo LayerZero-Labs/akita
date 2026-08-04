@@ -16,7 +16,7 @@ use akita_types::{
     TerminalWitnessSegmentLayout,
 };
 use common::*;
-use jolt_field::CanonicalField;
+use jolt_field::CanonicalEncoding;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 
@@ -315,7 +315,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
             akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
-        let terminal_layout = terminal_witness_segment_layout(&layout, 1, 1, F::modulus_bits())
+        let terminal_layout = terminal_witness_segment_layout(&layout, 1, 1, F::MODULUS_BITS)
             .expect("terminal layout");
 
         tamper.apply(final_witness_mut(&mut proof), terminal_layout);

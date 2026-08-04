@@ -15,8 +15,8 @@ use akita_types::{
     FoldLinfProtocolBinding, LevelParams, LevelParamsLike, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
-use jolt_field::unreduced::{HasWide, ReduceTo};
-use jolt_field::{CanonicalField, FieldCore, FromPrimitiveInt};
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, Field, Ring};
 
 use super::ring_relation::{
     aggregate_decompose_fold_witnesses, build_point_decompose_fold_witness,
@@ -31,19 +31,19 @@ use akita_types::dispatch_for_field;
 /// to this module instead of infecting the public [`Transcript`] trait surface.
 pub trait ProverTranscriptGrind<F>: Transcript<F> + FoldChallengeSeedPreview
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
 }
 
 impl<F> ProverTranscriptGrind<F> for AkitaTranscript<F, TranscriptSponge> where
-    F: FieldCore + CanonicalField + jolt_field::CanonicalBytes + jolt_field::TranscriptChallenge
+    F: Field + CanonicalEncoding + jolt_field::CanonicalBytes + jolt_field::CanonicalEncoding
 {
 }
 
 #[cfg(feature = "logging-transcript")]
 impl<F, T> ProverTranscriptGrind<F> for akita_transcript::LoggingTranscript<T>
 where
-    F: FieldCore + CanonicalField + jolt_field::CanonicalBytes + jolt_field::TranscriptChallenge,
+    F: Field + CanonicalEncoding + jolt_field::CanonicalBytes + jolt_field::CanonicalEncoding,
     T: ProverTranscriptGrind<F>,
 {
 }
@@ -80,7 +80,7 @@ fn coeff_within_digit_bounds(coeff: i32, ctx: &FoldGrindAcceptanceCtx) -> bool {
     }
 }
 
-fn accepts_fold_witness<F: CanonicalField, const D: usize>(
+fn accepts_fold_witness<F: Field + CanonicalEncoding, const D: usize>(
     contract: &FoldWitnessGrindContract,
     witness: &DecomposeFoldWitness<F>,
     z_folded_centered_per_chunk: &[Vec<[i32; D]>],
@@ -190,7 +190,7 @@ fn fold_probe_witness_kernel<F, P, B, const D: usize>(
     params: &(impl LevelParamsLike + ?Sized),
 ) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<[i32; D]>>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     P: RootOpeningSource<F, D>,
     B: crate::compute::ComputeBackendSetup<F>
         + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
@@ -250,8 +250,7 @@ fn sample_fold_decompose_witness_at_dim<F, P, B, T, const D: usize>(
     probe_nonces: &[u32],
 ) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<Vec<i32>>>, Challenges, u32), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootOpeningSource<F, D>,
     B: crate::compute::ComputeBackendSetup<F>
         + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
@@ -334,8 +333,7 @@ pub(crate) fn sample_fold_decompose_witness<F, P, B, T>(
     tail_t_vectors: Option<usize>,
 ) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<Vec<i32>>>, Challenges, u32), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootOpeningSource<F, 32>
         + RootOpeningSource<F, 64>
         + RootOpeningSource<F, 128>

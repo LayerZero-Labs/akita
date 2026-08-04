@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::unreduced::{Fp128x8i32, Fp64x4i32};
+use jolt_field::{Fp128x8i32, Fp64x4i32};
 use jolt_field::{Fp64, Prime128Offset275};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -10,7 +10,7 @@ const D: usize = 64;
 
 #[test]
 fn cyclotomic_ring_satisfies_jolt_ring_core() {
-    fn assert_ring_core<R: RingCore>() {}
+    fn assert_ring_core<R: Ring>() {}
     assert_ring_core::<CyclotomicRing<F64, D>>();
 
     let x = CyclotomicRing::<F64, D>::x();
@@ -202,7 +202,7 @@ fn asymmetric_centering_boundary_roundtrip_fp128() {
             q - 1,
         ];
         let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|i| {
-            F128::from_canonical_u128_reduced(boundary_values[i % boundary_values.len()])
+            F128::from_u128_reduced(boundary_values[i % boundary_values.len()])
         }));
 
         let mut digits = vec![CyclotomicRing::<F128, D>::zero(); levels];

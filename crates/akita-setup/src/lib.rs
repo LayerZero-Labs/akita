@@ -23,8 +23,8 @@ use akita_types::{
 };
 #[cfg(test)]
 use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
-use jolt_field::unreduced::HasWide;
-use jolt_field::{CanonicalField, FieldCore, RandomSampling};
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, Field};
 #[cfg(feature = "disk-persistence")]
 use std::fmt::Write as _;
 #[cfg(feature = "disk-persistence")]
@@ -56,7 +56,7 @@ fn validate_loaded_prefix_registry<F, Cfg>(
     max_num_batched_polys: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     Cfg: CommitmentConfig<Field = F>,
 {
     if !Cfg::recursive_setup_planning() {
@@ -88,12 +88,7 @@ pub fn new_prover_setup<F, Cfg>(
     max_num_batched_polys: usize,
 ) -> Result<AkitaProverSetup<F>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + Valid
-        + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + Unreduced + Valid + akita_serialization::AkitaSerialize,
     Cfg: CommitmentConfig<Field = F>,
 {
     if max_num_batched_polys == 0 {
@@ -269,7 +264,7 @@ pub(crate) fn get_storage_path<Cfg: CommitmentConfig>(
 
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn save_prover_setup<
-    F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     Cfg: CommitmentConfig<Field = F>,
 >(
     setup: &AkitaProverSetup<F>,
@@ -325,7 +320,7 @@ pub(crate) fn save_prover_setup<
 
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn load_prover_setup<
-    F: FieldCore + Valid + CanonicalField + RandomSampling,
+    F: Field + Valid + CanonicalEncoding,
     Cfg: CommitmentConfig<Field = F>,
 >(
     max_num_vars: usize,
@@ -387,7 +382,7 @@ pub(crate) fn load_prover_setup<
 
 #[cfg(feature = "disk-persistence")]
 fn deserialize_cached_setup<
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
     Cfg: CommitmentConfig<Field = F>,
 >(
     reader: &mut impl Read,
@@ -435,7 +430,7 @@ fn deserialize_cached_setup<
 
 #[cfg(feature = "disk-persistence")]
 fn validate_cached_matrix<
-    F: FieldCore + CanonicalField + RandomSampling + Valid,
+    F: Field + CanonicalEncoding + Valid,
     Cfg: CommitmentConfig<Field = F>,
 >(
     setup: &AkitaExpandedSetup<F>,

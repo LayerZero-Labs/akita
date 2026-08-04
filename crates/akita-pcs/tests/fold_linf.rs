@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 
+use jolt_field::One;
 mod common;
 
 use akita_error::AkitaError;

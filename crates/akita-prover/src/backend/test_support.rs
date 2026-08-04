@@ -1,7 +1,7 @@
 use crate::DecomposeFoldWitness;
 use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_error::AkitaError;
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 pub(crate) fn tensor_oracle_challenges<const D: usize>() -> TensorChallenges {
     TensorChallenges {
@@ -47,7 +47,7 @@ pub(crate) fn tensor_oracle_challenges<const D: usize>() -> TensorChallenges {
     }
 }
 
-pub(crate) fn aggregate_witnesses<F: FieldCore, const D: usize>(
+pub(crate) fn aggregate_witnesses<F: Field, const D: usize>(
     witnesses: &[DecomposeFoldWitness<F>],
 ) -> DecomposeFoldWitness<F> {
     let Some((first, rest)) = witnesses.split_first() else {

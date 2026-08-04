@@ -6,11 +6,10 @@ mod tests;
 mod traits;
 mod wide;
 
-use crate::{AdditiveGroup, CanonicalField, FieldCore, One, RandomSampling, RingCore, Zero};
+use crate::{AdditiveGroup, CanonicalEncoding, Field, One, Ring, Zero};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use jolt_field::unreduced::ReduceTo;
 use rand_core::RngCore;
 use std::array::from_fn;
 use std::fmt;
@@ -34,12 +33,12 @@ pub use wide::WideCyclotomicRing;
 /// term at index `i + j >= D` wraps to index `(i + j) - D` with a sign flip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct CyclotomicRing<F: FieldCore, const D: usize> {
+pub struct CyclotomicRing<F: Field, const D: usize> {
     /// Coefficients in ascending degree order.
     pub coeffs: [F; D],
 }
 
-impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
+impl<F: Field, const D: usize> CyclotomicRing<F, D> {
     /// Construct from a coefficient array.
     #[inline]
     pub fn from_coefficients(coeffs: [F; D]) -> Self {
@@ -278,7 +277,7 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     /// `O(hw(rhs) * D)` instead of `O(D^2)`.
     pub fn mul_accumulate_sparse_rhs_into(&self, rhs: &Self, dst: &mut Self)
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         for (pos, coeff) in rhs.coeffs.iter().copied().enumerate() {
             if coeff.is_zero() {

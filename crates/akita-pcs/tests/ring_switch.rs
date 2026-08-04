@@ -2,12 +2,12 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_pcs::{CanonicalField, FieldCore};
+use akita_pcs::{CanonicalEncoding, Field};
 #[cfg(all(test, feature = "parallel"))]
-use jolt_field::parallel::*;
+use jolt_field::solinas::parallel::*;
 use std::array::from_fn;
 
-fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D: usize>(
+fn compute_r_via_poly_division<F: Field + CanonicalEncoding, const D: usize>(
     m: &[Vec<CyclotomicRing<F, D>>],
     z: &[CyclotomicRing<F, D>],
     y: &[CyclotomicRing<F, D>],
@@ -87,10 +87,12 @@ mod tests {
     use super::compute_r_via_poly_division;
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
+    use akita_algebra::One;
+    use akita_algebra::Zero;
     use akita_config::proof_optimized::fp128;
     use akita_config::CommitmentConfig;
     use akita_pcs::AkitaCommitmentScheme;
-    use akita_pcs::{CanonicalField, Transcript};
+    use akita_pcs::{CanonicalEncoding, Transcript};
     use akita_prover::backend::DenseView;
     use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
@@ -113,9 +115,9 @@ mod tests {
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;
 
-    use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
+    use akita_pcs::{Field, Ring};
 
-    fn prover_fold_claims<'a, F: FieldCore + Clone, P>(
+    fn prover_fold_claims<'a, F: Field + Clone, P>(
         point: &'a [F],
         polynomials: &'a [&'a P],
         commitment: &'a Commitment<F>,
@@ -134,7 +136,7 @@ mod tests {
             .expect("valid prover opening data")
     }
 
-    fn compute_r_schoolbook<F: FieldCore, const D: usize>(
+    fn compute_r_schoolbook<F: Field, const D: usize>(
         m: &[Vec<CyclotomicRing<F, D>>],
         z: &[CyclotomicRing<F, D>],
         y: &[CyclotomicRing<F, D>],
@@ -222,7 +224,7 @@ mod tests {
         assert_eq!(got, expected);
     }
 
-    fn direct_relation_claim<F: FieldCore + FromPrimitiveInt>(
+    fn direct_relation_claim<F: Field + Ring>(
         w_compact: &[i8],
         alpha_evals_y: &[F],
         relation_matrix_col_evals: &[F],
@@ -245,7 +247,7 @@ mod tests {
         num_blocks: usize,
     ) -> RingMultiplierOpeningPoint<F>
     where
-        F: FieldCore + FromPrimitiveInt,
+        F: Field + Ring,
     {
         let a = (0..block_len)
             .map(|idx| {
@@ -285,7 +287,7 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(0x5151_5eed);
         let evals: Vec<F> = (0..(1usize << NV))
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
             .collect();
         let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).expect("dense poly");
         let point = vec![F::zero(); NV];
@@ -439,11 +441,11 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(0x5eed_cafe);
         let evals: Vec<F> = (0..(1usize << NV))
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
             .collect();
         let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).expect("dense poly");
         let point: Vec<F> = (0..NV)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
             .collect();
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
@@ -589,7 +591,7 @@ mod tests {
             let field_bits = 128u32;
             let num_digits = compute_num_digits_full_field(field_bits, log_basis);
 
-            let ring: CyclotomicRing<F, D> = RandomSampling::random(&mut rng);
+            let ring: CyclotomicRing<F, D> = CyclotomicRing::random(&mut rng);
 
             let mut digits = vec![CyclotomicRing::<F, D>::zero(); num_digits];
             ring.balanced_decompose_pow2_into(&mut digits, log_basis);
@@ -625,11 +627,11 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         let evals: Vec<F> = (0..(1usize << NV))
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
             .collect();
         let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).expect("dense poly");
         let point: Vec<F> = (0..NV)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
             .collect();
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
@@ -714,7 +716,7 @@ mod tests {
             )
             .expect("tau1 vars");
         let tau1: Vec<F> = (0..num_i)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
             .collect();
 
         let relation_matrix_col_evals = compute_relation_matrix_col_evals::<F, F>(
@@ -731,7 +733,7 @@ mod tests {
         .expect("m evals (materialized)");
 
         let x_challenges: Vec<F> = (0..relation_matrix_col_evals.len().trailing_zeros() as usize)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
             .collect();
 
         let expected =
@@ -766,7 +768,7 @@ mod tests {
         let depth_open = level_params.num_digits_open;
         let depth_commit = level_params.num_digits_commit;
         let depth_fold = level_params
-            .num_digits_fold(1, <F as jolt_field::CanonicalField>::modulus_bits())
+            .num_digits_fold(1, <F as jolt_field::CanonicalEncoding>::MODULUS_BITS)
             .unwrap();
         let n_a = level_params.a_key.row_len();
         let num_claims = 1usize;
@@ -830,7 +832,7 @@ mod tests {
             chunked.resize(x_len_w, F::zero());
 
             let x_challenges_w: Vec<F> = (0..x_len_w.trailing_zeros() as usize)
-                .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+                .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
                 .collect();
             let expected_w = multilinear_eval(&chunked, &x_challenges_w).expect("multilinear_eval");
 
@@ -902,11 +904,11 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(0x5E6E_7E8E);
         let evals: Vec<F> = (0..(1usize << NV))
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
             .collect();
         let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).expect("dense poly");
         let point: Vec<F> = (0..NV)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
             .collect();
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();

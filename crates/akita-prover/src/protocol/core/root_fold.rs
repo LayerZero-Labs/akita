@@ -7,18 +7,16 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_types::terminal_golomb_grind_tail_t_vectors;
 use akita_types::CleartextWitnessShape;
-use jolt_field::unreduced::ReduceTo;
-use jolt_field::AdditiveGroup;
 
 fn validate_non_eor_root_opening_shape<F, E>(
     ring_d: usize,
     alpha_bits: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: FpExtEncoding<F>,
 {
-    let ext_degree = <E as ExtField<F>>::EXT_DEGREE;
+    let ext_degree = <E as ExtField<F>>::DEGREE;
     if ext_degree == 0
         || !ring_d.is_multiple_of(ext_degree)
         || !(ring_d / ext_degree).is_power_of_two()
@@ -51,20 +49,12 @@ fn prepare_root<F, E, T, P, C, O, TS, R>(
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + FromPrimitiveInt
-        + akita_serialization::AkitaSerialize
-        + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    F: Field + CanonicalEncoding + Unreduced + Ring + akita_serialization::AkitaSerialize + 'static,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
@@ -151,21 +141,18 @@ pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg>(
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + PseudoMersenneField
-        + FromPrimitiveInt
+    F: Field
+        + CanonicalEncoding
+        + Unreduced
+        + PseudoMersenne
+        + Ring
         + akita_serialization::AkitaSerialize
         + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
@@ -260,21 +247,18 @@ pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<TerminalLevelProof<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + PseudoMersenneField
-        + FromPrimitiveInt
+    F: Field
+        + CanonicalEncoding
+        + Unreduced
+        + PseudoMersenne
+        + Ring
         + akita_serialization::AkitaSerialize
         + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,

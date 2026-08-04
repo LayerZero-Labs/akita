@@ -32,7 +32,7 @@ use akita_serialization::{
 };
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
-use jolt_field::{CanonicalField, ExtField};
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
@@ -125,14 +125,14 @@ impl AlgebraSection {
     /// descriptor's fixed-width integer fields.
     pub fn for_fields<F, E, const D: usize>() -> Result<Self, AkitaError>
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
         Ok(Self {
             prime_modulus_be: modulus_be_32::<F>(),
             ring_dimension_d: usize_to_u32(D, "ring dimension")?,
             field_extension_degree: usize_to_u8(1, "field extension degree")?,
-            extension_degree: usize_to_u8(E::EXT_DEGREE, "extension degree")?,
+            extension_degree: usize_to_u8(E::DEGREE, "extension degree")?,
         })
     }
 }
@@ -762,7 +762,7 @@ impl AkitaDeserialize for CallSection {
     }
 }
 
-fn modulus_be_32<F: CanonicalField>() -> [u8; 32] {
+fn modulus_be_32<F: Field + CanonicalEncoding>() -> [u8; 32] {
     let modulus = detect_field_modulus::<F>();
     let mut out = [0u8; 32];
     out[16..].copy_from_slice(&modulus.to_be_bytes());

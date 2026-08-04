@@ -8,8 +8,8 @@ use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey};
-use jolt_field::unreduced::{HasWide, ReduceTo};
-use jolt_field::{AdditiveGroup, CanonicalField, FieldCore, HalvingField};
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, Field};
 use std::sync::Arc;
 
 /// Shared prepared-setup contract for prover compute backends.
@@ -23,7 +23,7 @@ use std::sync::Arc;
 /// diagnostic warning (see warm-cache policy in `specs/runtime-ring-cutover.md`).
 pub trait ComputeBackendSetup<F>: Send + Sync
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Backend-prepared setup (ring dimension is a runtime cache key, not a type param).
     type PreparedSetup: Send + Sync;
@@ -130,7 +130,7 @@ where
 /// Negacyclic digit mat-vec operations shared by commitment and protocol code.
 pub trait DigitRowsComputeBackend<F>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Negacyclic single-input digit mat-vec rows.
     fn digit_rows<const D: usize>(
@@ -145,7 +145,7 @@ where
 /// Cyclic digit mat-vec operations needed by ring-switch relation code.
 pub trait CyclicRowsComputeBackend<F>: DigitRowsComputeBackend<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Cyclic single-input digit mat-vec rows.
     fn cyclic_digit_rows<const D: usize>(
@@ -160,7 +160,7 @@ where
 /// Commitment row operations for migrated root/ring commitment work.
 pub trait CommitmentComputeBackend<F>: DigitRowsComputeBackend<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Dense A-side commit rows.
     fn dense_commit_rows<const D: usize>(
@@ -176,8 +176,7 @@ where
         plan: OneHotCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>;
+        F: Unreduced;
 
     /// Sparse signed-ring A-side commit rows.
     fn sparse_ring_commit_rows<const D: usize>(
@@ -186,8 +185,7 @@ where
         plan: SparseRingCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>;
+        F: Unreduced;
 
     /// Recursive witness A-side commit rows.
     fn recursive_witness_commit_rows<const D: usize>(
@@ -200,7 +198,7 @@ where
 /// Ring-switch relation operations for migrated proving work.
 pub trait RingSwitchComputeBackend<F>: CyclicRowsComputeBackend<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Fused cyclic/quotient rows used by ring-switch finalization.
     fn ring_switch_relation_rows<const D: usize>(
@@ -209,7 +207,7 @@ where
         plan: RingSwitchRelationRowsPlan<'_, D>,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
     where
-        F: HalvingField;
+        F: Field;
 
     /// A-side quotient rows for an additional public-row segment.
     fn ring_switch_quotient_rows<const D: usize>(
@@ -218,20 +216,20 @@ where
         plan: RingSwitchQuotientRowsPlan<'_, D>,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
     where
-        F: HalvingField;
+        F: Field;
 }
 
 /// Full first-PR prover compute surface.
 pub trait ProverComputeBackend<F>:
     CommitmentComputeBackend<F> + RingSwitchComputeBackend<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
 }
 
 impl<F, B> ProverComputeBackend<F> for B
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     B: CommitmentComputeBackend<F> + RingSwitchComputeBackend<F>,
 {
 }

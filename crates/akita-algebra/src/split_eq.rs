@@ -25,7 +25,7 @@ use super::eq_poly::EqPolynomial;
 use super::uni_poly::UniPoly;
 use akita_error::AkitaError;
 
-use crate::{FieldCore, FromPrimitiveInt};
+use crate::{Field, Ring};
 
 /// Split equality polynomial with Gruen scalar accumulation.
 ///
@@ -43,7 +43,7 @@ use crate::{FieldCore, FromPrimitiveInt};
 /// and the full round polynomial is `l(X) · q(X)` where `l(X)` is the linear
 /// eq factor for the current variable.
 #[allow(non_snake_case)]
-pub struct GruenSplitEq<E: FieldCore> {
+pub struct GruenSplitEq<E: Field> {
     tau: Vec<E>,
     current_round: usize,
     current_scalar: E,
@@ -58,7 +58,7 @@ pub struct GruenSplitEq<E: FieldCore> {
 }
 
 #[allow(non_snake_case)]
-impl<E: FieldCore> GruenSplitEq<E> {
+impl<E: Field> GruenSplitEq<E> {
     /// Create a new split-eq from the full challenge vector `τ`.
     ///
     /// Precomputes suffix-cached eq tables for two halves of `τ[1..n]`.
@@ -218,7 +218,7 @@ impl<E: FieldCore> GruenSplitEq<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt> GruenSplitEq<E> {
+impl<E: Field + Ring> GruenSplitEq<E> {
     /// Recover the middle coefficient of a quadratic inner polynomial
     /// `q(X) = c + dX + eX^2` from `s(0) + s(1)` and return
     /// `s(X) = l(X) · q(X)`.
@@ -263,8 +263,10 @@ impl<E: FieldCore + FromPrimitiveInt> GruenSplitEq<E> {
 mod tests {
     use super::*;
     use crate::poly::fold_evals_in_place;
-    use crate::RandomSampling;
+    use crate::Field;
+    use jolt_field::One;
     use jolt_field::Prime128Offset275;
+    use jolt_field::Zero;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

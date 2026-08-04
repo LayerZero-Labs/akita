@@ -7,6 +7,7 @@ use crate::{
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
+use akita_algebra::Zero;
 use jolt_field::Prime128OffsetA7F7;
 
 type F = Prime128OffsetA7F7;

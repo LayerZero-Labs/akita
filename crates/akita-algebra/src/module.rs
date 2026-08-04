@@ -1,6 +1,6 @@
 //! Simple module implementations.
 
-use crate::{CanonicalField, FieldCore, RandomSampling};
+use crate::{CanonicalEncoding, Field};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -29,7 +29,7 @@ pub trait Module:
     + for<'a> std::ops::Sub<&'a Self, Output = Self>
 {
     /// Scalar type.
-    type Scalar: FieldCore + CanonicalField + RandomSampling;
+    type Scalar: Field + CanonicalEncoding;
 
     /// Zero element.
     fn zero() -> Self;
@@ -43,9 +43,9 @@ pub trait Module:
 
 /// Fixed-length vector module over a scalar type `F`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VectorModule<F: FieldCore, const N: usize>(pub [F; N]);
+pub struct VectorModule<F: Field, const N: usize>(pub [F; N]);
 
-impl<F: FieldCore, const N: usize> VectorModule<F, N> {
+impl<F: Field, const N: usize> VectorModule<F, N> {
     /// Construct the zero vector.
     #[inline]
     pub fn zero_vec() -> Self {
@@ -53,7 +53,7 @@ impl<F: FieldCore, const N: usize> VectorModule<F, N> {
     }
 }
 
-impl<F: FieldCore, const N: usize> Add for VectorModule<F, N> {
+impl<F: Field, const N: usize> Add for VectorModule<F, N> {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
         let mut out = self.0;
@@ -64,7 +64,7 @@ impl<F: FieldCore, const N: usize> Add for VectorModule<F, N> {
     }
 }
 
-impl<F: FieldCore, const N: usize> Sub for VectorModule<F, N> {
+impl<F: Field, const N: usize> Sub for VectorModule<F, N> {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
         let mut out = self.0;
@@ -75,7 +75,7 @@ impl<F: FieldCore, const N: usize> Sub for VectorModule<F, N> {
     }
 }
 
-impl<F: FieldCore, const N: usize> Neg for VectorModule<F, N> {
+impl<F: Field, const N: usize> Neg for VectorModule<F, N> {
     type Output = Self;
     fn neg(self) -> Self::Output {
         let mut out = self.0;
@@ -86,21 +86,21 @@ impl<F: FieldCore, const N: usize> Neg for VectorModule<F, N> {
     }
 }
 
-impl<'a, F: FieldCore, const N: usize> Add<&'a Self> for VectorModule<F, N> {
+impl<'a, F: Field, const N: usize> Add<&'a Self> for VectorModule<F, N> {
     type Output = Self;
     fn add(self, rhs: &'a Self) -> Self::Output {
         self + *rhs
     }
 }
 
-impl<'a, F: FieldCore, const N: usize> Sub<&'a Self> for VectorModule<F, N> {
+impl<'a, F: Field, const N: usize> Sub<&'a Self> for VectorModule<F, N> {
     type Output = Self;
     fn sub(self, rhs: &'a Self) -> Self::Output {
         self - *rhs
     }
 }
 
-impl<F: FieldCore + Valid, const N: usize> Valid for VectorModule<F, N> {
+impl<F: Field + Valid, const N: usize> Valid for VectorModule<F, N> {
     fn check(&self) -> Result<(), SerializationError> {
         for x in self.0.iter() {
             x.check()?;
@@ -109,7 +109,7 @@ impl<F: FieldCore + Valid, const N: usize> Valid for VectorModule<F, N> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize, const N: usize> AkitaSerialize for VectorModule<F, N> {
+impl<F: Field + AkitaSerialize, const N: usize> AkitaSerialize for VectorModule<F, N> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -126,7 +126,7 @@ impl<F: FieldCore + AkitaSerialize, const N: usize> AkitaSerialize for VectorMod
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, const N: usize> AkitaDeserialize
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>, const N: usize> AkitaDeserialize
     for VectorModule<F, N>
 {
     type Context = ();
@@ -151,12 +151,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, const N: usize> Akit
 
 impl<F, const N: usize> Module for VectorModule<F, N>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + Valid
-        + AkitaSerialize
-        + AkitaDeserialize<Context = ()>,
+    F: Field + CanonicalEncoding + Valid + AkitaSerialize + AkitaDeserialize<Context = ()>,
 {
     type Scalar = F;
 

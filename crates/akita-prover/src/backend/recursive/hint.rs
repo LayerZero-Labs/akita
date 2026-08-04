@@ -15,15 +15,15 @@
 //! named place to carry its hint.
 
 use akita_types::AkitaCommitmentHint;
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 /// D-erased prover cache for a recursive commitment hint.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecursiveCommitmentHintCache<F: FieldCore> {
+pub struct RecursiveCommitmentHintCache<F: Field> {
     hint: AkitaCommitmentHint<F>,
 }
 
-impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
+impl<F: Field> RecursiveCommitmentHintCache<F> {
     /// Wrap a D-free commitment hint for carry across a recursive level.
     pub fn from_hint(hint: AkitaCommitmentHint<F>) -> Self {
         Self { hint }

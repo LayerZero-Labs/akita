@@ -1,4 +1,5 @@
 use super::*;
+use jolt_field::One;
 
 type ConservativeCommitter = ConservativeOneHotScheme;
 type RegularCommitter = OneHotScheme;

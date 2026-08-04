@@ -10,7 +10,7 @@ use akita_types::{
 };
 
 /// Per-group prover-side ring artifacts retained for segment-typed terminal encoding.
-pub struct RingSwitchTerminalGroupArtifacts<F: FieldCore> {
+pub struct RingSwitchTerminalGroupArtifacts<F: Field> {
     pub group_index: usize,
     pub e_folded: RingVec<F>,
     pub recomposed_inner_rows: Vec<RingVec<F>>,
@@ -18,7 +18,7 @@ pub struct RingSwitchTerminalGroupArtifacts<F: FieldCore> {
     ring_dim: usize,
 }
 
-impl<F: FieldCore> RingSwitchTerminalGroupArtifacts<F> {
+impl<F: Field> RingSwitchTerminalGroupArtifacts<F> {
     /// Construct from typed ring-switch output at a kernel boundary.
     pub fn from_parts<const D: usize>(
         group_index: usize,
@@ -119,13 +119,13 @@ impl<F: FieldCore> RingSwitchTerminalGroupArtifacts<F> {
 ///
 /// Ring dimension is stored at runtime. Scalar tails use one group; grouped
 /// roots retain every group in root witness order plus one shared quotient tail.
-pub struct RingSwitchTerminalArtifacts<F: FieldCore> {
+pub struct RingSwitchTerminalArtifacts<F: Field> {
     pub groups: Vec<RingSwitchTerminalGroupArtifacts<F>>,
     pub r: RingVec<F>,
     ring_dim: usize,
 }
 
-impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
+impl<F: Field> RingSwitchTerminalArtifacts<F> {
     pub fn from_parts<const D: usize>(
         groups: Vec<RingSwitchTerminalGroupArtifacts<F>>,
         r: Vec<CyclotomicRing<F, D>>,
@@ -172,12 +172,12 @@ impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
 }
 
 /// Output of [`ring_switch_build_w`].
-pub struct RingSwitchBuildOutput<F: FieldCore> {
+pub struct RingSwitchBuildOutput<F: Field> {
     pub w: RecursiveWitnessFlat,
     pub terminal_artifacts: Option<RingSwitchTerminalArtifacts<F>>,
 }
 
-pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore, const D: usize> {
+pub(crate) struct PreparedRingSwitchGroup<'a, F: Field, const D: usize> {
     pub(crate) params: &'a dyn LevelParamsLike,
     pub(crate) e_hat: DigitBlocks,
     pub(crate) t_hat: DigitBlocks,
@@ -233,7 +233,7 @@ fn typed_z_folded_centered_per_chunk<const D: usize>(
 /// Append one group's contiguous `[z_g ‖ e_g ‖ t_g]` stride to the group-major
 /// witness. `build_w_coeffs_for_params` already emits a group's segments in
 /// `z ‖ e ‖ t` order (with an empty `r`), so the whole run is appended verbatim.
-fn append_group_witness_segments<F: CanonicalField, const D: usize>(
+fn append_group_witness_segments<F: Field + CanonicalEncoding, const D: usize>(
     out: &mut Vec<i8>,
     group: &PreparedRingSwitchGroup<'_, F, D>,
     root_lp: &LevelParams,
@@ -295,12 +295,7 @@ pub fn ring_switch_build_w<F, B>(
     retain_terminal_artifacts: bool,
 ) -> Result<RingSwitchBuildOutput<F>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + AkitaSerialize,
+    F: Field + CanonicalEncoding + Ring + AkitaSerialize,
     B: RuntimeRingSwitchProveBackend<F>,
 {
     let dims = instance.role_dims();
@@ -566,14 +561,17 @@ fn emit_z_folded_block_inner<const D: usize>(
     );
 }
 
-fn emit_r_decomposition_tail<F: CanonicalField, const D: usize>(
+fn emit_r_decomposition_tail<F: Field + CanonicalEncoding, const D: usize>(
     out: &mut Vec<i8>,
     r: &[CyclotomicRing<F, D>],
     levels: usize,
     log_basis: u32,
 ) {
     let mut r_planes = vec![[0i8; D]; levels];
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q);
     for ri in r {
         r_planes.fill([0i8; D]);
@@ -602,7 +600,7 @@ fn emit_r_decomposition_tail<F: CanonicalField, const D: usize>(
 /// Panics if the caller supplies digit blocks whose plane counts do not match
 /// the fold layout in `lp`.
 #[allow(clippy::too_many_arguments)]
-fn build_w_coeffs_for_params<F: CanonicalField, const D: usize>(
+fn build_w_coeffs_for_params<F: Field + CanonicalEncoding, const D: usize>(
     e_hat: &DigitBlocks,
     t_hat: &DigitBlocks,
     z_folded_centered_per_chunk: &[Vec<[i32; D]>],

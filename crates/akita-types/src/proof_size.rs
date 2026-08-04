@@ -140,13 +140,14 @@ mod tests {
     //! [`level_proof_bytes`] formula at every supported log_basis.
 
     use super::*;
+    use akita_algebra::Zero;
 
     use akita_challenges::SparseChallengeConfig;
     use akita_error::AkitaError;
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::EqFactoredUniPoly;
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
-    use jolt_field::{CanonicalField, FieldCore, Prime128OffsetA7F7};
+    use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7};
 
     use crate::golomb_rice::golomb_rice_encode_vec;
     use crate::proof::{segment_typed_witness_shape_from_groups, SegmentTypedWitness};
@@ -163,7 +164,7 @@ mod tests {
         lp: &LevelParams,
         num_claims: usize,
     ) -> (CleartextWitnessProof<F>, CleartextWitnessShape) {
-        let field_bits = F::modulus_bits();
+        let field_bits = F::MODULUS_BITS;
         let shape = segment_typed_witness_shape_from_groups(
             lp,
             field_bits,
@@ -191,7 +192,7 @@ mod tests {
         (CleartextWitnessProof::SegmentTyped(witness), shape)
     }
 
-    fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
+    fn dummy_sumcheck<F: Field>(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
             round_polys: (0..rounds)
                 .map(|_| CompressedUniPoly {
@@ -201,7 +202,7 @@ mod tests {
         }
     }
 
-    fn dummy_eq_factored_sumcheck<F: FieldCore>(
+    fn dummy_eq_factored_sumcheck<F: Field>(
         rounds: usize,
         degree: usize,
     ) -> EqFactoredSumcheckProof<F> {
@@ -217,7 +218,7 @@ mod tests {
         }
     }
 
-    fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
+    fn dummy_stage1_proof<F: Field>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
         AkitaStage1Proof {
             stages: stage1_tree_stage_shapes(rounds, b)
                 .into_iter()
@@ -232,7 +233,7 @@ mod tests {
 
     /// Build a degree-[`SETUP_SUMCHECK_DEGREE`] stage-3 setup-product proof
     /// whose round count matches the fused setup/carry verifier rounds.
-    fn dummy_stage3_proof<F: FieldCore>(
+    fn dummy_stage3_proof<F: Field>(
         d: usize,
         setup_ring_len: usize,
         next_w_len: usize,
@@ -256,7 +257,7 @@ mod tests {
         }
     }
 
-    fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
+    fn exact_level_proof_bytes<F: Field + CanonicalEncoding + AkitaSerialize>(
         lp: &LevelParams,
         next_lp: &LevelParams,
         next_w_len: usize,

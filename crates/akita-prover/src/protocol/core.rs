@@ -47,15 +47,12 @@ use akita_types::{
     RingVec, RingView, Schedule, SetupContributionMode, SetupPrefixProverRegistry,
     SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
 };
-use jolt_field::parallel::*;
-use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide};
-use jolt_field::{
-    CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    Invertible, LiftBase, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
-};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
+use jolt_field::{Fold, Unreduced};
 use std::sync::Arc;
 
-pub(in crate::protocol::core) struct ExtensionOpeningReduction<E: FieldCore> {
+pub(in crate::protocol::core) struct ExtensionOpeningReduction<E: Field> {
     pub(in crate::protocol::core) proof: ExtensionOpeningReductionProof<E>,
     /// EOR final sumcheck claim and transparent-factor evaluation. Retained so
     /// the prepare step can fail-fast cross-check the folded opening against
@@ -81,7 +78,7 @@ pub use root_fold::{prove_root, prove_terminal_root_fold_with_params};
 pub use suffix::{prove_suffix, SuffixProverState};
 
 /// Output from a single prove level, used to extend proof wire data and state.
-pub struct ProveLevelOutput<F: FieldCore, E: FieldCore> {
+pub struct ProveLevelOutput<F: Field, E: Field> {
     /// Fold proof produced at this level.
     pub level_proof: AkitaLevelProof<F, E>,
     /// Suffix prover state for the next level.
@@ -89,7 +86,7 @@ pub struct ProveLevelOutput<F: FieldCore, E: FieldCore> {
 }
 
 /// Outcome of the recursive fold suffix after the root level.
-pub struct RecursiveSuffixOutcome<F: FieldCore, E: FieldCore> {
+pub struct RecursiveSuffixOutcome<F: Field, E: Field> {
     /// Recursive suffix proof steps: intermediate folds followed by terminal.
     pub steps: Vec<AkitaLevelProof<F, E>>,
     /// Total fold-level count reached, including the root level and the
@@ -100,7 +97,7 @@ pub struct RecursiveSuffixOutcome<F: FieldCore, E: FieldCore> {
 pub(in crate::protocol::core) type Stage2ProveResult<E> =
     (SumcheckProof<E>, Vec<E>, AkitaStage2Prover<E>);
 
-pub(in crate::protocol::core) struct Stage3ProveOutput<E: FieldCore> {
+pub(in crate::protocol::core) struct Stage3ProveOutput<E: Field> {
     pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,
     pub(in crate::protocol::core) next_w_point: Vec<E>,
     pub(in crate::protocol::core) setup_prefix_point: Vec<E>,

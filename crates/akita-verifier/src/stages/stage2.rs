@@ -8,9 +8,7 @@ use akita_types::{
     dispatch_for_field, eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup,
     CleartextWitnessProof, FpExtEncoding, OpeningClaimsLayout, TraceClaim,
 };
-use jolt_field::{
-    CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, MulBaseUnreduced,
-};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::borrow::Cow;
 use std::marker::PhantomData;
 
@@ -22,7 +20,7 @@ fn witness_eval_by_index<E, V>(
     mut value_at: V,
 ) -> Result<E, AkitaError>
 where
-    E: FieldCore,
+    E: Field,
     V: FnMut(usize) -> Result<E, AkitaError>,
 {
     if !witness_len.is_multiple_of(y_len) {
@@ -51,7 +49,7 @@ where
 }
 
 /// Stage-2 sumcheck operates on the logical witness hypercube, not the wire encoding.
-pub(crate) enum Stage2CleartextSource<'a, F: FieldCore> {
+pub(crate) enum Stage2CleartextSource<'a, F: Field> {
     /// Expanded balanced digit planes (segment-typed terminal after decode).
     LogicalDigits(Cow<'a, [i8]>),
     /// Root-direct cleartext field coefficients.
@@ -66,7 +64,7 @@ fn cleartext_source_eval<F, E, const D: usize>(
     ring_bits: usize,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
@@ -106,7 +104,7 @@ where
     }
 }
 
-pub(crate) enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
+pub(crate) enum Stage2WitnessOracle<'a, F: Field, E: Field> {
     Cleartext {
         physical_w_len: usize,
         source: Stage2CleartextSource<'a, F>,
@@ -128,8 +126,8 @@ pub(crate) fn stage2_cleartext_oracle<'a, F, E>(
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<Stage2WitnessOracle<'a, F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField,
-    E: FieldCore,
+    F: Field + CanonicalEncoding,
+    E: Field,
 {
     let d_a = lp.role_dims().d_a();
     let source = match witness {
@@ -168,7 +166,7 @@ where
                             witness.as_segment_typed().ok_or(AkitaError::InvalidProof)?,
                             lp,
                             groups,
-                            F::modulus_bits(),
+                            F::MODULUS_BITS,
                         )
                     } else {
                         witness.logical_i8_digits::<D>(lp, num_segments)
@@ -194,7 +192,7 @@ where
 }
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
-pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
+pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field, const D: usize> {
     batching_coeff: E,
     s_claim: E,
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
@@ -213,8 +211,8 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
 
 impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
 where
-    F: FieldCore + CanonicalField + HalvingField,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
 {
     /// Construct a verifier from the shared stage-2 context and the witness
     /// oracle selected by the current proof level.
@@ -304,8 +302,8 @@ where
 
 impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
 where
-    F: FieldCore + CanonicalField + HalvingField,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
 {
     fn num_rounds(&self) -> usize {
         self.col_bits + self.ring_bits
@@ -387,17 +385,16 @@ mod tests {
     use super::{cleartext_source_eval, Stage2CleartextSource};
     use akita_error::AkitaError;
     use akita_sumcheck::multilinear_eval;
-    use jolt_field::FieldCore;
+    use jolt_field::Field;
+    use jolt_field::Ring;
+    use jolt_field::Zero;
     use jolt_field::{FpExt2, NegOneNr, Prime128Offset275};
 
     type F = Prime128Offset275;
     type E = FpExt2<F, NegOneNr>;
     const D: usize = 4;
 
-    fn build_w_evals<F: FieldCore>(
-        w: &[F],
-        d: usize,
-    ) -> Result<(Vec<F>, usize, usize), AkitaError> {
+    fn build_w_evals<F: Field>(w: &[F], d: usize) -> Result<(Vec<F>, usize, usize), AkitaError> {
         if !w.len().is_multiple_of(d) {
             return Err(AkitaError::InvalidSize {
                 expected: d,

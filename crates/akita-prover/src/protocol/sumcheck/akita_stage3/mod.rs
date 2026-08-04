@@ -21,13 +21,13 @@ use akita_types::{
     BatchedStage3Geometry, FpExtEncoding, LevelParams, RingRelationInstance, SetupContributionPlan,
     SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
-use jolt_field::parallel::*;
-use jolt_field::{CanonicalField, FieldCore, FromPrimitiveInt, LiftBase};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
 
 /// Output of the batched stage-3 prover.
-pub struct AkitaStage3ProverOutput<E: FieldCore> {
+pub struct AkitaStage3ProverOutput<E: Field> {
     /// Unbatched setup-product claim carried in the serialized stage-3 proof.
     pub setup_product_claim: E,
     /// Setup-prefix MLE value at the stage-3 setup suffix challenge.
@@ -42,19 +42,19 @@ pub struct AkitaStage3ProverOutput<E: FieldCore> {
     pub sumcheck: SumcheckProof<E>,
 }
 
-struct BatchedStage3Term<E: FieldCore> {
+struct BatchedStage3Term<E: Field> {
     term: FactoredProductTerm<E>,
     current_claim: E,
     native_rounds: usize,
 }
 
-struct PendingRound<E: FieldCore> {
+struct PendingRound<E: Field> {
     setup_poly: UniPoly<E>,
     witness_poly: UniPoly<E>,
 }
 
 /// Batched Stage-3 setup-product + carried-witness sumcheck prover.
-pub struct AkitaStage3Prover<E: FieldCore> {
+pub struct AkitaStage3Prover<E: Field> {
     setup: BatchedStage3Term<E>,
     witness: BatchedStage3Term<E>,
     eta: E,
@@ -63,7 +63,7 @@ pub struct AkitaStage3Prover<E: FieldCore> {
     pending_round: Option<PendingRound<E>>,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
+impl<E: Field + Ring> AkitaStage3Prover<E> {
     /// Construct a batched recursive stage-3 sumcheck prover.
     ///
     /// This carries the stage-2 next-witness opening `W(stage2_point)` to a new
@@ -89,8 +89,8 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         transcript: &mut T,
     ) -> Result<Self, AkitaError>
     where
-        F: FieldCore + CanonicalField,
-        E: FpExtEncoding<F> + LiftBase<F> + AkitaSerialize,
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + ExtField<F> + AkitaSerialize,
         T: Transcript<F>,
     {
         let ring_d = relation.role_dims().d_a();
@@ -144,7 +144,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         sample_round: SampleRound,
     ) -> Result<AkitaStage3ProverOutput<E>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         E: AkitaSerialize,
         T: Transcript<F>,
         SampleRound: FnMut(&mut T) -> E,
@@ -210,7 +210,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for AkitaStage3Prover<E> {
+impl<E: Field + Ring> SumcheckInstanceProver<E> for AkitaStage3Prover<E> {
     fn num_rounds(&self) -> usize {
         self.geometry.batched_rounds()
     }
@@ -259,7 +259,7 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for AkitaStage3P
 }
 
 #[inline]
-fn half<E: FieldCore + FromPrimitiveInt>(value: E) -> E {
+fn half<E: Field + Ring>(value: E) -> E {
     let inv_two = E::from_u64(2)
         .inverse()
         .expect("two must be invertible in Akita fields");
@@ -280,8 +280,8 @@ fn build_setup_product_term<F, E, T>(
     transcript: &mut T,
 ) -> Result<FactoredProductTerm<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F> + AkitaSerialize,
     T: Transcript<F>,
 {
     let (required, mut setup_index_weight, alpha_pows) =
@@ -366,7 +366,7 @@ fn build_witness_carry_term<E>(
     stage2_next_w_eval: E,
 ) -> Result<FactoredProductTerm<E>, AkitaError>
 where
-    E: FieldCore + FromPrimitiveInt,
+    E: Field + Ring,
 {
     let num_vars = col_bits
         .checked_add(ring_bits)
@@ -432,8 +432,8 @@ fn prepare_setup_sumcheck_terms<F, E>(
     x_challenges: &[E],
 ) -> Result<(usize, Vec<E>, Vec<E>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F>,
 {
     let alpha_pows = scalar_powers(alpha, ring_d);
     let setup_artifact = prepare_setup_contribution_artifact::<F, E>(relation, lp, tau1, None)?;

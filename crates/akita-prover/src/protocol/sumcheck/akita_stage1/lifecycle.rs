@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
+impl<E: Field + Ring + Unreduced> AkitaStage1Prover<E> {
     /// Build the stage-1 prover from the compact witness table.
     #[tracing::instrument(skip_all, name = "AkitaStage1Prover::new")]
     pub fn new(

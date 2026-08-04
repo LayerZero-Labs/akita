@@ -15,8 +15,9 @@ use akita_schedules::{
 };
 #[cfg(feature = "schedules-default")]
 use akita_types::SisModulusFamily;
+use jolt_field::Zero;
 #[cfg(feature = "schedules-default")]
-use jolt_field::{CanonicalField, One};
+use jolt_field::{CanonicalEncoding, One};
 
 #[cfg(feature = "schedules-default")]
 const MAX_I8_LOG_BASIS: u32 = 6;
@@ -819,7 +820,10 @@ fn small_field_single_term_safe_width<Cfg: CommitmentConfig>(
         return None;
     }
     let (_profile_id, crt_product) = crt_product_for_small_field_cfg::<Cfg>();
-    let modulus = (-Cfg::Field::one()).to_canonical_u128() + 1;
+    let modulus = (-Cfg::Field::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1;
     let setup_abs_bound = modulus / 2;
     let denom = 2u128
         .checked_mul(ring_dimension as u128)?

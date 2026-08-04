@@ -44,9 +44,9 @@ use akita_error::AkitaError;
 use akita_sumcheck::{
     fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly,
 };
-use jolt_field::parallel::*;
-use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use jolt_field::{FieldCore, FromPrimitiveInt, Zero};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Ring, Zero};
+use jolt_field::{Fold, Unreduced};
 use std::time::Instant;
 
 const MAX_AFFINE_COEFFS: usize = 17;
@@ -73,7 +73,7 @@ fn poly_coeffs_from_roots_int(roots: &[i128]) -> Vec<i128> {
 }
 
 #[derive(Clone)]
-struct RangeAffineFromSPrecomp<E: FieldCore> {
+struct RangeAffineFromSPrecomp<E: Field> {
     dense_coeffs: Vec<E>,
     dense_row_offsets: Vec<usize>,
     degree_q: usize,
@@ -90,7 +90,7 @@ struct RangeAffineFromSPrecomp<E: FieldCore> {
     min_s: i16,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> RangeAffineFromSPrecomp<E> {
+impl<E: Field + Ring> RangeAffineFromSPrecomp<E> {
     fn new(b: usize) -> Self {
         assert!(b >= 2, "b must be at least 2");
         let half = (b / 2) as i128;
@@ -210,7 +210,7 @@ impl<E: FieldCore + FromPrimitiveInt> RangeAffineFromSPrecomp<E> {
     }
 }
 
-impl<E: FieldCore> RangeAffineFromSPrecomp<E> {
+impl<E: Field> RangeAffineFromSPrecomp<E> {
     #[inline]
     fn compact_index(&self, s_int: i16) -> usize {
         let raw = (s_int - self.min_s) as usize;
@@ -259,9 +259,9 @@ impl<E: FieldCore> RangeAffineFromSPrecomp<E> {
 }
 
 #[inline]
-fn accumulate_compact_coeff_slot<E: FieldCore + HasUnreducedOps>(
-    pos_accum: &mut [E::MulU64Accum],
-    neg_accum: &mut [E::MulU64Accum],
+fn accumulate_compact_coeff_slot<E: Field + Unreduced>(
+    pos_accum: &mut [E::SmallProduct],
+    neg_accum: &mut [E::SmallProduct],
     slot: usize,
     e_in: E,
     coeff: &CompactCoeffEntry,
@@ -278,9 +278,9 @@ fn accumulate_compact_coeff_slot<E: FieldCore + HasUnreducedOps>(
 }
 
 #[inline]
-fn accumulate_compact_coeffs<E: FieldCore + HasUnreducedOps>(
-    pos_accum: &mut [E::MulU64Accum],
-    neg_accum: &mut [E::MulU64Accum],
+fn accumulate_compact_coeffs<E: Field + Unreduced>(
+    pos_accum: &mut [E::SmallProduct],
+    neg_accum: &mut [E::SmallProduct],
     e_in: E,
     coeffs: &[CompactCoeffEntry],
 ) {
@@ -293,16 +293,13 @@ fn accumulate_compact_coeffs<E: FieldCore + HasUnreducedOps>(
 }
 
 #[inline]
-fn reduce_small_coeff_accum<E: FieldCore + HasUnreducedOps>(
-    pos: E::MulU64Accum,
-    neg: E::MulU64Accum,
-) -> E {
-    E::reduce_mul_u64_accum(pos) - E::reduce_mul_u64_accum(neg)
+fn reduce_small_coeff_accum<E: Field + Unreduced>(pos: E::SmallProduct, neg: E::SmallProduct) -> E {
+    E::reduce_small_product(pos) - E::reduce_small_product(neg)
 }
 
 #[inline]
-fn accumulate_dense_entry_coeffs<E: FieldCore + HasUnreducedOps>(
-    accum: &mut [E::ProductAccum],
+fn accumulate_dense_entry_coeffs<E: Field + Unreduced>(
+    accum: &mut [E::Product],
     entry_coeffs: &[E],
     e_in: E,
 ) {
@@ -311,12 +308,12 @@ fn accumulate_dense_entry_coeffs<E: FieldCore + HasUnreducedOps>(
     }
 
     for (acc, &entry) in accum.iter_mut().zip(entry_coeffs.iter()) {
-        *acc += e_in.mul_to_product_accum(entry);
+        *acc += e_in.mul_unreduced(entry);
     }
 }
 
 #[inline]
-fn compute_entry_coeffs_from_s<E: FieldCore + HasUnreducedOps>(
+fn compute_entry_coeffs_from_s<E: Field + Unreduced>(
     out: &mut [E],
     _s_pows: &mut [E],
     precomp: &RangeAffineFromSPrecomp<E>,
@@ -338,7 +335,7 @@ fn compute_entry_coeffs_from_s<E: FieldCore + HasUnreducedOps>(
 }
 
 #[inline]
-fn compute_entry_coeffs_from_s_x4<E: FieldCore + HasUnreducedOps>(
+fn compute_entry_coeffs_from_s_x4<E: Field + Unreduced>(
     out: &mut [[E; MAX_AFFINE_COEFFS]; 4],
     precomp: &RangeAffineFromSPrecomp<E>,
     s_0: [E; 4],
@@ -379,7 +376,7 @@ fn compute_entry_coeffs_from_s_x4<E: FieldCore + HasUnreducedOps>(
     }
 }
 
-fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromPrimitiveInt + HasUnreducedOps>(
+fn compute_norm_round_eq_poly_from_s<E: Field + Ring + Unreduced>(
     split_eq: &GruenSplitEq<E>,
     range_precomp: &RangeAffineFromSPrecomp<E>,
     s_pair: impl Fn(usize) -> (E, E) + Sync,
@@ -392,10 +389,10 @@ fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromPrimitiveInt + HasUnredu
 
     let q_coeffs = cfg_fold_reduce!(
         0..e_second.len(),
-        || vec![E::ProductAccum::zero(); num_coeffs_q],
+        || vec![E::Product::zero(); num_coeffs_q],
         |mut outer_accum, j_high| {
             debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
-            let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
+            let mut inner_accum = [E::Product::zero(); MAX_AFFINE_COEFFS];
             let base_j = j_high * num_first;
             let full_chunks = e_first.len() / 4;
             let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
@@ -444,8 +441,8 @@ fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromPrimitiveInt + HasUnredu
 
             let e_out = e_second[j_high];
             for k in 0..num_coeffs_q {
-                let inner_reduced = E::reduce_product_accum(inner_accum[k]);
-                outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                let inner_reduced = E::reduce_product(inner_accum[k]);
+                outer_accum[k] += e_out.mul_unreduced(inner_reduced);
             }
             outer_accum
         },
@@ -457,16 +454,14 @@ fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromPrimitiveInt + HasUnredu
         }
     )
     .into_iter()
-    .map(E::reduce_product_accum)
+    .map(E::reduce_product)
     .collect::<Vec<_>>();
 
     let _ = split_eq;
     EqFactoredUniPoly::from_q_coeffs(q_coeffs)
 }
 
-fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
-    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
->(
+fn compute_norm_round_eq_poly_from_s_compact_with_pairs<E: Field + Ring + Unreduced>(
     split_eq: &GruenSplitEq<E>,
     range_precomp: &RangeAffineFromSPrecomp<E>,
     s_pair: impl Fn(usize) -> (i16, i16) + Sync,
@@ -481,11 +476,11 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
     let q_coeffs = if rp.compact_coeffs_lut(0, 0).is_some() {
         cfg_fold_reduce!(
             0..e_second.len(),
-            || vec![E::ProductAccum::zero(); num_coeffs_q],
+            || vec![E::Product::zero(); num_coeffs_q],
             |mut outer_accum, j_high| {
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
-                let mut inner_pos = [E::MulU64Accum::zero(); MAX_AFFINE_COEFFS];
-                let mut inner_neg = [E::MulU64Accum::zero(); MAX_AFFINE_COEFFS];
+                let mut inner_pos = [E::SmallProduct::zero(); MAX_AFFINE_COEFFS];
+                let mut inner_neg = [E::SmallProduct::zero(); MAX_AFFINE_COEFFS];
                 for (j_low, &e_in) in e_first.iter().enumerate() {
                     let j = j_high * num_first + j_low;
                     let (s_0_int, s_1_int) = s_pair(j);
@@ -502,7 +497,7 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
                 let e_out = e_second[j_high];
                 for k in 0..num_coeffs_q {
                     let inner_reduced = reduce_small_coeff_accum(inner_pos[k], inner_neg[k]);
-                    outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                    outer_accum[k] += e_out.mul_unreduced(inner_reduced);
                 }
                 outer_accum
             },
@@ -514,15 +509,15 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
             }
         )
         .into_iter()
-        .map(E::reduce_product_accum)
+        .map(E::reduce_product)
         .collect::<Vec<_>>()
     } else if rp.field_coeffs_lut(0, 0).is_some() {
         cfg_fold_reduce!(
             0..e_second.len(),
-            || vec![E::ProductAccum::zero(); num_coeffs_q],
+            || vec![E::Product::zero(); num_coeffs_q],
             |mut outer_accum, j_high| {
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
-                let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
+                let mut inner_accum = [E::Product::zero(); MAX_AFFINE_COEFFS];
                 for (j_low, &e_in) in e_first.iter().enumerate() {
                     let j = j_high * num_first + j_low;
                     let (s_0_int, s_1_int) = s_pair(j);
@@ -533,8 +528,8 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
                 }
                 let e_out = e_second[j_high];
                 for k in 0..num_coeffs_q {
-                    let inner_reduced = E::reduce_product_accum(inner_accum[k]);
-                    outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                    let inner_reduced = E::reduce_product(inner_accum[k]);
+                    outer_accum[k] += e_out.mul_unreduced(inner_reduced);
                 }
                 outer_accum
             },
@@ -546,15 +541,15 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
             }
         )
         .into_iter()
-        .map(E::reduce_product_accum)
+        .map(E::reduce_product)
         .collect::<Vec<_>>()
     } else {
         cfg_fold_reduce!(
             0..e_second.len(),
-            || vec![E::ProductAccum::zero(); num_coeffs_q],
+            || vec![E::Product::zero(); num_coeffs_q],
             |mut outer_accum, j_high| {
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
-                let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
+                let mut inner_accum = [E::Product::zero(); MAX_AFFINE_COEFFS];
                 for (j_low, &e_in) in e_first.iter().enumerate() {
                     let j = j_high * num_first + j_low;
                     let (s_0_int, s_1_int) = s_pair(j);
@@ -566,14 +561,14 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
                     {
                         let h_i_s0 = rp.h_i_lut(s_0_int, coeff_idx);
                         let val = a_pow * h_i_s0;
-                        *coeff_accum += e_in.mul_to_product_accum(val);
+                        *coeff_accum += e_in.mul_unreduced(val);
                         a_pow *= a;
                     }
                 }
                 let e_out = e_second[j_high];
                 for k in 0..num_coeffs_q {
-                    let inner_reduced = E::reduce_product_accum(inner_accum[k]);
-                    outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                    let inner_reduced = E::reduce_product(inner_accum[k]);
+                    outer_accum[k] += e_out.mul_unreduced(inner_reduced);
                 }
                 outer_accum
             },
@@ -585,7 +580,7 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
             }
         )
         .into_iter()
-        .map(E::reduce_product_accum)
+        .map(E::reduce_product)
         .collect::<Vec<_>>()
     };
 
@@ -593,7 +588,7 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
     EqFactoredUniPoly::from_q_coeffs(q_coeffs)
 }
 
-fn compute_norm_round_eq_poly_from_s_compact<E: FieldCore + FromPrimitiveInt + HasUnreducedOps>(
+fn compute_norm_round_eq_poly_from_s_compact<E: Field + Ring + Unreduced>(
     split_eq: &GruenSplitEq<E>,
     s_compact: &[i16],
     range_precomp: &RangeAffineFromSPrecomp<E>,
@@ -603,7 +598,7 @@ fn compute_norm_round_eq_poly_from_s_compact<E: FieldCore + FromPrimitiveInt + H
     })
 }
 
-enum STable<E: FieldCore> {
+enum STable<E: Field> {
     Compact(Vec<i16>),
     Full(Vec<E>),
 }
@@ -624,13 +619,13 @@ fn build_compact_s_table(w_evals_compact: &[i8]) -> Vec<i16> {
         .collect()
 }
 
-struct Stage1TwoRoundPrefix<E: FieldCore> {
+struct Stage1TwoRoundPrefix<E: Field> {
     skip_state: Stage1BivariateSkipState<E>,
     first_challenge: Option<E>,
 }
 
 /// Stage-1 norm sumcheck prover over the virtual table `S(x) = w(x)(w(x)+1)`.
-pub struct AkitaStage1Prover<E: FieldCore> {
+pub struct AkitaStage1Prover<E: Field> {
     s_table: STable<E>,
     split_eq: GruenSplitEq<E>,
     range_precomp: RangeAffineFromSPrecomp<E>,

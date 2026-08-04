@@ -25,7 +25,8 @@ use akita_types::{
     PolynomialGroupClaims,
 };
 use akita_verifier::cleartext_witness_opening_matches;
-use jolt_field::LiftBase;
+use jolt_field::ExtField;
+use jolt_field::Zero;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 type Cfg = fp128::D64Full;
@@ -226,7 +227,7 @@ fn expected_same_point_batched_shape(
     shape
 }
 
-fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
+fn prover_claims<'a, E: Field, P, CommitF: Field>(
     point: &'a [E],
     polynomials: &'a [&'a P],
     commitment: &'a Commitment<CommitF>,
@@ -244,7 +245,7 @@ fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
         .expect("valid prover opening data")
 }
 
-fn verifier_claims<'a, E: FieldCore, C>(
+fn verifier_claims<'a, E: Field, C>(
     point: &[E],
     openings: &[E],
     commitment: &'a C,
@@ -342,7 +343,7 @@ fn dense_opening(evals: &[F], point: &[F]) -> F {
 fn debug_random_point(nv: usize) -> Vec<OneHotF> {
     let mut rng = StdRng::seed_from_u64(0xcafe_babe);
     (0..nv)
-        .map(|_| OneHotF::from_canonical_u128_reduced(rng.r#gen::<u128>()))
+        .map(|_| OneHotF::from_u128_reduced(rng.r#gen::<u128>()))
         .collect()
 }
 

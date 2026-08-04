@@ -27,17 +27,8 @@ pub(super) fn verify_root<F, E, T>(
     terminal_final_w_len: usize,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HalvingField
-        + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let relation_matrix_row_layout = proof
@@ -146,17 +137,8 @@ fn verify_root_inner<F, E, T>(
     terminal_final_w_len: usize,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HalvingField
-        + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let role_dims = root_lp.role_dims();
@@ -235,7 +217,7 @@ where
             // Chunked levels commit a wider (replicated-ẑ) next witness; size it
             // with the per-level chunk count (`num_chunks = 1` is unchanged).
             akita_types::w_ring_element_count_for_chunks(
-                F::modulus_bits(),
+                F::MODULUS_BITS,
                 root_lp,
                 opening_batch.num_total_polynomials(),
                 akita_types::RelationMatrixRowLayout::WithDBlock,
@@ -252,8 +234,7 @@ where
                 .stage2
                 .final_witness()
                 .ok_or(AkitaError::InvalidProof)?;
-            let layout =
-                terminal_witness_segment_layout(root_lp, num_claims, 1, F::modulus_bits())?;
+            let layout = terminal_witness_segment_layout(root_lp, num_claims, 1, F::MODULUS_BITS)?;
             Some(prepare_terminal_witness_replay::<F, T>(
                 transcript,
                 final_witness,
@@ -335,17 +316,8 @@ fn verify_multi_group_root_inner<F, E, T>(
     terminal_final_w_len: usize,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HalvingField
-        + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + jolt_field::MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     // Grouped roots are degree-one one-hot same-point folds: extension-opening
@@ -428,8 +400,7 @@ where
                 .stage2
                 .final_witness()
                 .ok_or(AkitaError::InvalidProof)?;
-            let layout =
-                terminal_witness_segment_layout(root_lp, num_claims, 1, F::modulus_bits())?;
+            let layout = terminal_witness_segment_layout(root_lp, num_claims, 1, F::MODULUS_BITS)?;
             Some(prepare_terminal_witness_replay::<F, T>(
                 transcript,
                 final_witness,

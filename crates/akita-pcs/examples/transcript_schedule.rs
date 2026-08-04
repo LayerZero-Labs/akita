@@ -8,7 +8,7 @@ fn main() {
     use akita_config::proof_optimized::fp128;
     use akita_config::CommitmentConfig;
     use akita_transcript::{labels, AkitaTranscript, LoggingTranscript, Transcript};
-    use jolt_field::{CanonicalField, Fp64};
+    use jolt_field::{CanonicalEncoding, Fp64};
 
     type F = Fp64<4294967197>;
 
@@ -16,10 +16,7 @@ fn main() {
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL));
     transcript.bind_instance_bytes(b"transcript-schedule/example-descriptor");
     transcript.append_bytes(labels::ABSORB_COMMITMENT, b"commitment");
-    transcript.append_field(
-        labels::ABSORB_EVALUATION_CLAIMS,
-        &F::from_canonical_u128_reduced(42),
-    );
+    transcript.append_field(labels::ABSORB_EVALUATION_CLAIMS, &F::from_u128_reduced(42));
     let _ = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
     transcript.append_bytes(labels::ABSORB_TERMINAL_E_HAT, b"terminal-e-hat");
     let _ = transcript.challenge_scalar(labels::CHALLENGE_SPARSE_CHALLENGE);

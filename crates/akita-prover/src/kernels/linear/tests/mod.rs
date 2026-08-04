@@ -15,15 +15,15 @@ use akita_algebra::ntt::{
 };
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
 use akita_types::layout::FlatMatrix;
-use jolt_field::{CanonicalField, FieldCore, Fp64, Prime128Offset275, Prime64Offset59};
+use jolt_field::{CanonicalEncoding, Field, Fp64, Prime128Offset275, Prime64Offset59};
 
-fn centered_i32_ring<F: jolt_field::CanonicalField, const D: usize>(
+fn centered_i32_ring<F: jolt_field::Field + jolt_field::CanonicalEncoding, const D: usize>(
     coeffs: &[i32; D],
 ) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| F::from_i64(coeffs[idx] as i64)))
 }
 
-fn cyclic_product<F: jolt_field::FieldCore, const D: usize>(
+fn cyclic_product<F: jolt_field::Field, const D: usize>(
     lhs: &CyclotomicRing<F, D>,
     rhs: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {
@@ -42,7 +42,7 @@ fn cyclic_product<F: jolt_field::FieldCore, const D: usize>(
 }
 
 fn mat_vec_mul_i8_with_params_for_log_basis<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -57,7 +57,7 @@ fn mat_vec_mul_i8_with_params_for_log_basis<
 }
 
 fn mat_vec_mul_i8_dense_with_params_for_log_basis<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -72,7 +72,7 @@ fn mat_vec_mul_i8_dense_with_params_for_log_basis<
 }
 
 fn mat_vec_mul_i8_strided_with_params_for_log_basis<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -91,7 +91,7 @@ fn mat_vec_mul_i8_strided_with_params_for_log_basis<
 }
 
 fn mat_vec_mul_digits_i8_with_params_for_log_basis<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -105,7 +105,7 @@ fn mat_vec_mul_digits_i8_with_params_for_log_basis<
 }
 
 fn mat_vec_mul_digits_i8_strided_with_params_for_log_basis<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -122,10 +122,7 @@ fn mat_vec_mul_digits_i8_strided_with_params_for_log_basis<
     )
 }
 
-fn quotient_from_cyclic_and_negacyclic<
-    F: jolt_field::FieldCore + jolt_field::HalvingField,
-    const D: usize,
->(
+fn quotient_from_cyclic_and_negacyclic<F: jolt_field::Field, const D: usize>(
     cyclic: &CyclotomicRing<F, D>,
     negacyclic: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {
@@ -134,7 +131,7 @@ fn quotient_from_cyclic_and_negacyclic<
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| (cyc[idx] - neg[idx]).half()))
 }
 
-fn schoolbook_digit_mat_vec<F: FieldCore + CanonicalField, const D: usize>(
+fn schoolbook_digit_mat_vec<F: Field + CanonicalEncoding, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     blocks: &[Vec<[i8; D]>],
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {

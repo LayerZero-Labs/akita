@@ -22,8 +22,8 @@ use akita_prover::{
     DensePoly,
 };
 use akita_types::{NttCacheKey, OpeningClaimsLayout};
-use jolt_field::unreduced::{HasWide, ReduceTo};
-use jolt_field::{CanonicalField, FieldCore, FromPrimitiveInt};
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, Field, Ring};
 
 type Cfg = fp64::D64Full;
 type F = <Cfg as CommitmentConfig>::Field;
@@ -97,7 +97,7 @@ struct ContractCommitBackend;
 
 impl<F> ComputeBackendSetup<F> for ContractCommitBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     type PreparedSetup = CpuPreparedSetup<F>;
 
@@ -135,7 +135,7 @@ where
 
 impl<F> DigitRowsComputeBackend<F> for ContractCommitBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn digit_rows<const RING_D: usize>(
         &self,
@@ -150,8 +150,7 @@ where
 
 impl<const DD: usize> RootCommitKernel<ContractCommitView<'_>, F, DD> for ContractCommitBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
 {
     fn commit_inner(
         &self,

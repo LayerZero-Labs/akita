@@ -107,7 +107,7 @@ fn run_single_dense_tensor(nv: usize) {
 
         let mut rng = StdRng::seed_from_u64(0xd3e5_7000 + nv as u64);
         let evals: Vec<F> = (0..1usize << nv)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen_range(0..=1)))
+            .map(|_| F::from_u128_reduced(rng.gen_range(0..=1)))
             .collect();
         let poly = DensePoly::<F>::from_field_evals(nv, TENSOR_D, &evals).expect("dense poly");
 

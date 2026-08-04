@@ -7,7 +7,7 @@ pub(super) fn fold_onehot_block<E, F, const D: usize>(
 ) -> CyclotomicRing<F, D>
 where
     E: OneHotEntry,
-    F: FieldCore,
+    F: Field,
 {
     let mut coeffs_acc = [F::zero(); D];
 
@@ -31,7 +31,7 @@ pub(super) fn fold_onehot_block_ring<E, F, const D: usize>(
 ) -> CyclotomicRing<F, D>
 where
     E: OneHotEntry,
-    F: FieldCore,
+    F: Field,
 {
     let mut acc = CyclotomicRing::<F, D>::zero();
 

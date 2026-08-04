@@ -15,7 +15,7 @@
 
 use akita_error::AkitaError;
 
-use crate::FieldCore;
+use crate::Field;
 use std::marker::PhantomData;
 use std::mem;
 use std::panic::Location;
@@ -28,9 +28,9 @@ use std::panic::Location;
 pub const MAX_MATERIALIZED_EQ_TABLE_BYTES: usize = 1 << 30;
 
 /// Utilities for the equality polynomial `eq(x, y) = Πᵢ (xᵢ yᵢ + (1 − xᵢ)(1 − yᵢ))`.
-pub struct EqPolynomial<E: FieldCore>(PhantomData<E>);
+pub struct EqPolynomial<E: Field>(PhantomData<E>);
 
-impl<E: FieldCore> EqPolynomial<E> {
+impl<E: Field> EqPolynomial<E> {
     fn table_len(num_vars: usize) -> Result<usize, AkitaError> {
         let shift = u32::try_from(num_vars).map_err(|_| AkitaError::InvalidSize {
             expected: usize::BITS as usize,
@@ -244,14 +244,14 @@ impl<E: FieldCore> EqPolynomial<E> {
 /// (parallelizable) wrapping an inner loop over `x_in` that can defer reduction
 /// via [`jolt_field::MulBaseUnreduced`].
 #[derive(Debug, Clone)]
-pub struct SplitEqEvals<E: FieldCore> {
+pub struct SplitEqEvals<E: Field> {
     /// Equality table over the high (outer) `n - m` variables, size `2^{n-m}`.
     pub e_out: Vec<E>,
     /// Equality table over the low (inner) `m` variables, size `2^m`.
     pub e_in: Vec<E>,
 }
 
-impl<E: FieldCore> SplitEqEvals<E> {
+impl<E: Field> SplitEqEvals<E> {
     /// Build the split tables for `eq(point, ·)`. The low `point.len() / 2`
     /// coordinates form the inner table; the rest form the outer table.
     ///
@@ -279,8 +279,11 @@ impl<E: FieldCore> SplitEqEvals<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RandomSampling;
+    use crate::Field;
     use jolt_field::Fp64;
+    use jolt_field::One;
+    use jolt_field::Ring;
+    use jolt_field::Zero;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

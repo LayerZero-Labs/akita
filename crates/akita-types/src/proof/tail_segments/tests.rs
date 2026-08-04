@@ -1,7 +1,8 @@
 use super::*;
 use crate::SisModulusFamily;
+use akita_algebra::Zero;
 use akita_challenges::SparseChallengeConfig;
-use jolt_field::CanonicalField;
+use jolt_field::CanonicalEncoding;
 use jolt_field::Prime128OffsetA7F7;
 
 type F = Prime128OffsetA7F7;
@@ -52,7 +53,7 @@ fn recompose_and_split_digits_round_trip() {
 #[test]
 fn segment_typed_z_budget_uses_golomb_rate_not_packed_digit_width() {
     let lp = test_lp();
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let layout = scalar_group_layout(&lp, 1, 1, 1, 1, field_bits).unwrap();
     let z_bytes = segment_typed_z_payload_bytes(&lp, &layout, 1).unwrap();
     let group = layout.groups[0];
@@ -67,10 +68,10 @@ fn segment_typed_z_budget_uses_golomb_rate_not_packed_digit_width() {
 #[test]
 fn segment_typed_wire_round_trip_with_scheduled_z_budget() {
     use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
-    use jolt_field::CanonicalField;
+    use jolt_field::CanonicalEncoding;
 
     let lp = test_lp();
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let layout = scalar_group_layout(&lp, 1, 1, 1, 1, field_bits).unwrap();
     let scheduled_z_bytes = segment_typed_z_payload_bytes(&lp, &layout, 1).unwrap();
     assert!(
@@ -140,7 +141,7 @@ fn expand_segment_typed_rejects_inadmissible_z_payload() {
     use crate::golomb_rice::golomb_rice_encode_vec;
 
     let lp = test_lp();
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let layout = scalar_group_layout(&lp, 1, 1, 1, 1, field_bits).unwrap();
     let (rice_low_bits, zigzag_w) = tail_golomb_rice_z_params(&lp, 1).unwrap();
     let cap = lp.fold_witness_linf_cap_for_claims(1).unwrap();

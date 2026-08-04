@@ -4,8 +4,8 @@ use akita_algebra::ring::eval_ring_at_pows_fast;
 use akita_algebra::CyclotomicRing;
 #[cfg(test)]
 use akita_error::AkitaError;
-use jolt_field::parallel::*;
-use jolt_field::{ExtField, FieldCore, MulBaseUnreduced};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{ExtField, Field, MulBaseUnreduced};
 
 #[derive(Clone)]
 pub(crate) struct GroupSetupSegment<E> {
@@ -77,7 +77,7 @@ macro_rules! dispatch_segment_roles {
 
 pub(super) use dispatch_segment_roles;
 
-impl<E: FieldCore> GroupSetupSegment<E> {
+impl<E: Field> GroupSetupSegment<E> {
     #[inline(always)]
     pub(super) fn weight_at(&self, setup_idx: usize, e_eq: &[E], t_eq: &[E], z_eq: &[E]) -> E {
         let mut weight = E::zero();
@@ -136,7 +136,7 @@ pub(super) struct RoleProjection<E> {
     pub(super) mask: usize,
 }
 
-impl<E: FieldCore> RoleProjection<E> {
+impl<E: Field> RoleProjection<E> {
     #[inline(always)]
     pub(super) fn identity() -> Self {
         Self {
@@ -157,7 +157,7 @@ impl<E: FieldCore> RoleProjection<E> {
     }
 }
 
-pub(super) fn role_projection<E: FieldCore>(
+pub(super) fn role_projection<E: Field>(
     alpha_pows: &[E],
     base_pows: &[E],
 ) -> Option<RoleProjection<E>> {
@@ -195,7 +195,7 @@ pub(super) struct ProjectedRoleWeights<E> {
     ratio: usize,
 }
 
-impl<E: FieldCore> ProjectedRoleWeights<E> {
+impl<E: Field> ProjectedRoleWeights<E> {
     pub(super) fn new(row_weights: &[E], projection: &RoleProjection<E>) -> Self {
         if projection.is_identity() {
             return Self {
@@ -245,7 +245,7 @@ pub(super) fn base_ring_segment_inner_sum_typed<
     a_row_weights: &ProjectedRoleWeights<E>,
 ) -> E
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
     cfg_fold_reduce!(
@@ -293,7 +293,7 @@ pub(super) fn identity_base_ring_segment_inner_sum_typed<
     z_eq: &[E],
 ) -> E
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
     cfg_fold_reduce!(
@@ -327,7 +327,7 @@ fn base_ring_segment_weight_at<E, const HAS_D: bool, const HAS_B: bool, const HA
     a_row_weights: &ProjectedRoleWeights<E>,
 ) -> E
 where
-    E: FieldCore,
+    E: Field,
 {
     let mut weight = E::zero();
     if HAS_D {
@@ -367,7 +367,7 @@ where
 }
 
 #[inline(always)]
-fn projected_role_weight_at<E: FieldCore>(
+fn projected_role_weight_at<E: Field>(
     base_idx: usize,
     row: usize,
     start_abs: usize,
@@ -399,7 +399,7 @@ pub(super) fn evaluate_weighted_setup_row<Base, E>(
     alpha_pows: &[E],
 ) -> Result<E, AkitaError>
 where
-    Base: FieldCore,
+    Base: Field,
     E: ExtField<Base> + MulBaseUnreduced<Base>,
 {
     use super::super::checked_slice;

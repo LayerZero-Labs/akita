@@ -11,11 +11,8 @@ use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{FpExtEncoding, OpeningClaimsLayout};
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode};
-use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
-use jolt_field::{
-    AdditiveGroup, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
-};
+use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_field::{Fold, Unreduced};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::{Duration, Instant};
@@ -72,7 +69,7 @@ fn build_onehot_polys<F, const D: usize>(
     indices: &[Vec<Option<u8>>],
 ) -> Vec<OneHotPoly<F, u8>>
 where
-    F: FieldCore,
+    F: Field,
 {
     let onehot_k = onehot_k_for_num_vars(num_vars);
     indices
@@ -86,24 +83,17 @@ where
 
 fn bench_case<F, Cfg, const D: usize>(c: &mut Criterion, label: &str)
 where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + PseudoMersenneField
+    F: Field
+        + CanonicalEncoding
+        + Ring
+        + Unreduced
+        + PseudoMersenne
         + AkitaSerialize
         + Valid
         + 'static,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     Cfg: CommitmentConfig<Field = F>,
-    Cfg::ExtField: FrobeniusExtField<F> + FpExtEncoding<F> + AkitaSerialize,
-    Cfg::ExtField: FrobeniusExtField<F>
-        + FpExtEncoding<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize,
+    Cfg::ExtField: ExtField<F> + FpExtEncoding<F> + AkitaSerialize,
+    Cfg::ExtField: ExtField<F> + FpExtEncoding<F> + Unreduced + Fold + AkitaSerialize,
 {
     assert_eq!(D, Cfg::D);
 

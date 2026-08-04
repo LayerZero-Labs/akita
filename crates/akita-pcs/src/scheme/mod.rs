@@ -17,11 +17,8 @@ use akita_types::{
 };
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, SetupContributionMode};
 use akita_types::{AkitaVerifierSetup, OpeningClaims};
-use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
-use jolt_field::{
-    AdditiveGroup, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
-};
+use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_field::{Fold, Unreduced};
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -40,21 +37,10 @@ pub struct AkitaCommitmentScheme<Cfg: CommitmentConfig> {
 impl<Cfg> AkitaCommitmentScheme<Cfg>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + Valid
-        + AkitaSerialize,
+    Cfg::Field:
+        Field + CanonicalEncoding + Unreduced + Ring + PseudoMersenne + Valid + AkitaSerialize,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    Cfg::ExtField: FrobeniusExtField<Cfg::Field>
-        + FromPrimitiveInt
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize,
+    Cfg::ExtField: ExtField<Cfg::Field> + Ring + Unreduced + Fold + AkitaSerialize,
 {
     /// Build prover setup for the config's generation ring dimension.
     ///
@@ -123,8 +109,7 @@ where
         stack: &UniformProverStack<'_, Cfg::Field, B>,
     ) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
     where
-        Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+        Cfg::Field: Ring + Unreduced + Field + 'static,
         P: RuntimeRootCommitPoly<Cfg::Field>,
         B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
     {
@@ -144,8 +129,7 @@ where
         stack: &UniformProverStack<'_, Cfg::Field, B>,
     ) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
     where
-        Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+        Cfg::Field: Ring + Unreduced + Field + 'static,
         P: RuntimeRootCommitPoly<Cfg::Field>,
         B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
     {
@@ -166,8 +150,7 @@ where
         stack: &UniformProverStack<'_, Cfg::Field, B>,
     ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
     where
-        Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+        Cfg::Field: Ring + Unreduced + Field + 'static,
         P: RuntimeRootCommitPoly<Cfg::Field>,
         B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
     {
@@ -189,8 +172,7 @@ where
         precommitteds: Vec<PolynomialGroupLayout>,
     ) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
     where
-        Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+        Cfg::Field: Ring + Unreduced + Field + 'static,
         P: RuntimeRootCommitPoly<Cfg::Field>,
         B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
     {
@@ -227,8 +209,7 @@ where
     ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
     where
         T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-        Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+        Cfg::Field: Ring + Unreduced + Field + 'static,
         P: RuntimeRootProvePoly<Cfg::Field>,
         B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField>
             + ComputeBackendSetup<Cfg::Field>
@@ -298,17 +279,10 @@ fn batched_verify_inner<Cfg, T>(
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + Valid
-        + AkitaSerialize,
+    Cfg::Field:
+        Field + CanonicalEncoding + Unreduced + Ring + PseudoMersenne + Valid + AkitaSerialize,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    Cfg::ExtField: FrobeniusExtField<Cfg::Field> + FromPrimitiveInt + AkitaSerialize,
+    Cfg::ExtField: ExtField<Cfg::Field> + Ring + AkitaSerialize,
     T: Transcript<Cfg::Field>,
 {
     let t_verify_akita = Instant::now();

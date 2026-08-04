@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalField, FieldCore};
+use jolt_field::{CanonicalEncoding, Field};
 
 use crate::{
     LevelParams, RelationMatrixRowLayout, RingRelationInstance, SetupContributionGroupInputs,
@@ -12,7 +12,7 @@ use crate::{
 /// Setup-contribution planning artifact shared by direct replay and recursive
 /// stage-3 setup-product proving.
 #[derive(Clone)]
-pub struct SetupContributionArtifact<E: FieldCore> {
+pub struct SetupContributionArtifact<E: Field> {
     /// Resolved witness chunk layout used by the setup weight formulas.
     pub chunk_layout: WitnessLayout,
     /// Challenge-free setup-contribution inputs with expanded tau1 row weights.
@@ -36,8 +36,8 @@ pub fn prepare_setup_contribution_artifact<F, E>(
     witness_ring_len: Option<usize>,
 ) -> Result<SetupContributionArtifact<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore,
+    F: Field + CanonicalEncoding,
+    E: Field,
 {
     let opening_batch = relation.opening_batch();
     let relation_matrix_row_layout = relation.relation_matrix_row_layout();
@@ -98,7 +98,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_single_group_setup_artifact_inputs<E: FieldCore>(
+fn prepare_single_group_setup_artifact_inputs<E: Field>(
     lp: &LevelParams,
     relation_matrix_row_layout: RelationMatrixRowLayout,
     chunk_layout: &WitnessLayout,
@@ -134,7 +134,7 @@ fn prepare_single_group_setup_artifact_inputs<E: FieldCore>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_multi_group_setup_artifact_inputs<E: FieldCore>(
+fn prepare_multi_group_setup_artifact_inputs<E: Field>(
     lp: &LevelParams,
     opening_batch: &crate::OpeningClaimsLayout,
     relation_matrix_row_layout: RelationMatrixRowLayout,

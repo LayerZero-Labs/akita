@@ -16,10 +16,8 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
-use jolt_field::parallel::*;
-use jolt_field::{
-    CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
-};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Unified relation matrix column evaluation for singleton and multi-group root relations.
 ///
@@ -44,8 +42,8 @@ pub fn compute_relation_matrix_col_evals<F, E>(
     relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
 {
     let opening_batch = instance.opening_batch();
     lp.witness_chunk.validate()?;

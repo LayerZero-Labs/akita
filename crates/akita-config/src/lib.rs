@@ -19,7 +19,7 @@ use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
     LevelParams, OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
-use jolt_field::{CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
 /// parameter to a base `Cfg` and overrides only the multi-chunk witness config
@@ -35,7 +35,7 @@ macro_rules! impl_multi_chunk_companion {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
             const D: usize = <$base as $crate::CommitmentConfig>::D;
-            const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
+            const DEGREE: usize = <$base as $crate::CommitmentConfig>::DEGREE;
 
             fn decomposition() -> akita_types::DecompositionParams {
                 <$base as $crate::CommitmentConfig>::decomposition()
@@ -129,8 +129,8 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         sis_family: Cfg::sis_modulus_family(),
         min_sis_security_bits: akita_types::DEFAULT_SIS_SECURITY_BITS,
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
-        claim_ext_degree: Cfg::EXT_DEGREE,
-        chal_ext_degree: Cfg::EXT_DEGREE,
+        claim_ext_degree: Cfg::DEGREE,
+        chal_ext_degree: Cfg::DEGREE,
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         witness_chunk: Cfg::chunked_witness_cfg(),
@@ -150,7 +150,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
 /// extension opening with base-field committed witnesses internally.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by ring commitments, setup matrices, and SIS bounds.
-    type Field: CanonicalField + FieldCore + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid;
+    type Field: Field + CanonicalEncoding + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid;
 
     /// Field used by public openings and all proof scalars.
     type ExtField: ExtField<Self::Field>
@@ -164,12 +164,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// This is the `K` consumed by [`field_reduction::psi_embed`] and
     /// [`field_reduction::embed_subfield`] in `akita-types`, and the `K` that
     /// validates `SubfieldParams<D, K>`. Default body delegates to
-    /// `<ExtField as ExtField<Field>>::EXT_DEGREE`; presets should not
+    /// `<ExtField as ExtField<Field>>::DEGREE`; presets should not
     /// override unless they have a reason to disagree with that.
     ///
     /// [`field_reduction::psi_embed`]: akita_types::field_reduction::psi_embed
     /// [`field_reduction::embed_subfield`]: akita_types::field_reduction::embed_subfield
-    const EXT_DEGREE: usize = <Self::ExtField as ExtField<Self::Field>>::EXT_DEGREE;
+    const DEGREE: usize = <Self::ExtField as ExtField<Self::Field>>::DEGREE;
 
     /// Absorb an extension-field element into a base-field transcript.
     fn append_extension_field<T: Transcript<Self::Field>>(
@@ -230,7 +230,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// coefficient can contribute through paired ring lanes, so SIS A-role
     /// collision pricing uses a conservative factor of two.
     fn ring_subfield_embedding_norm_bound() -> u32 {
-        if Self::EXT_DEGREE == 1 {
+        if Self::DEGREE == 1 {
             1
         } else {
             2
@@ -381,6 +381,7 @@ mod tests {
     use akita_transcript::{
         append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript,
     };
+    use jolt_field::Ring;
     use jolt_field::{Fp32, FpExt4};
 
     type Base = Fp32<251>;
@@ -449,10 +450,10 @@ mod tests {
     #[test]
     fn ext_degree_default_matches_ext_field_degree() {
         assert_eq!(
-            SingleExtensionConfig::EXT_DEGREE,
-            <BaseExt as ExtField<Base>>::EXT_DEGREE
+            SingleExtensionConfig::DEGREE,
+            <BaseExt as ExtField<Base>>::DEGREE
         );
-        assert_eq!(SingleExtensionConfig::EXT_DEGREE, 4);
+        assert_eq!(SingleExtensionConfig::DEGREE, 4);
     }
 
     #[test]

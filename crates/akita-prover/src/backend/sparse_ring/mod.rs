@@ -9,9 +9,9 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_error::AkitaError;
 use akita_types::embed_ring_subfield_vector;
-use jolt_field::parallel::*;
-use jolt_field::unreduced::{HasWide, ReduceTo};
-use jolt_field::{AdditiveGroup, CanonicalField, FieldCore, FromPrimitiveInt};
+use jolt_field::solinas::parallel::*;
+use jolt_field::Unreduced;
+use jolt_field::{AdditiveGroup, CanonicalEncoding, Field, Ring};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -210,7 +210,7 @@ impl SparseRingBlocks {
 /// and the ring dimension is a view selected at kernel entry (each ring-shaped
 /// method takes it as a const generic).
 #[derive(Debug, Clone)]
-pub struct SparseRingPoly<F: FieldCore> {
+pub struct SparseRingPoly<F: Field> {
     num_vars: usize,
     /// Ring-element count at the CONSTRUCTION dimension; metadata, not
     /// authority — kernels validate at their own dimension.
@@ -221,7 +221,7 @@ pub struct SparseRingPoly<F: FieldCore> {
     _marker: core::marker::PhantomData<F>,
 }
 
-impl<F: FieldCore> SparseRingPoly<F> {
+impl<F: Field> SparseRingPoly<F> {
     /// Build from `(ring_idx, coeff_idx, value)` triples interpreted at ring
     /// dimension `ring_d`.
     ///
@@ -406,7 +406,7 @@ impl<F: FieldCore> SparseRingPoly<F> {
 
 impl<F> SparseRingPoly<F>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
 {
     /// Materialize the dense field-evaluation table directly from the flat
     /// coefficient positions.
@@ -435,8 +435,7 @@ where
 
 impl<F> SparseRingPoly<F>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
 {
     pub(crate) fn fold_blocks<const D: usize>(
         &self,
@@ -509,7 +508,10 @@ where
         let inner_width = block_len * num_digits;
         let coeff_accum =
             sparse_accumulate::<D>(&blocks, challenges, num_blocks, inner_width, num_digits);
-        let modulus = (-F::one()).to_canonical_u128() + 1;
+        let modulus = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
         build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
     }
 
@@ -596,11 +598,11 @@ where
         &self,
     ) -> Result<crate::backend::dense::DensePoly<F>, AkitaError>
     where
-        F: CanonicalField + FromPrimitiveInt,
+        F: Field + CanonicalEncoding + Ring,
         E: akita_types::FpExtEncoding<F>,
     {
         let evals = self.tensor_packed_extension_evals::<E>()?;
-        let packed_len = D / E::EXT_DEGREE;
+        let packed_len = D / E::DEGREE;
         if packed_len == 0 {
             return Err(AkitaError::InvalidInput(
                 "extension degree exceeds root ring dimension".to_string(),
@@ -653,7 +655,7 @@ fn fold_sparse_block<F, const D: usize>(
     block_len: usize,
 ) -> CyclotomicRing<F, D>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
 {
     let mut coeffs = [F::zero(); D];
     for entry in entries {
@@ -671,7 +673,7 @@ fn fold_sparse_block_ring<F, const D: usize>(
     block_len: usize,
 ) -> CyclotomicRing<F, D>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
 {
     let mut acc = CyclotomicRing::<F, D>::zero();
     for entry in entries {
@@ -767,8 +769,7 @@ pub(crate) fn column_sweep_sparse<F, const D: usize>(
     num_digits_commit: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Unreduced,
 {
     let num_blocks = blocks.len();
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
@@ -910,6 +911,7 @@ mod tests {
         aggregate_witnesses, negacyclic_tensor_product_challenges_i8, tensor_oracle_challenges,
     };
     use crate::DensePoly;
+    use jolt_field::One;
     use jolt_field::Prime128OffsetA7F7 as F;
 
     #[test]

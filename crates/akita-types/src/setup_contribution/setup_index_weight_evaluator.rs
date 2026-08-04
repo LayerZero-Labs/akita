@@ -2,7 +2,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::scalar_powers;
 use akita_error::AkitaError;
-use jolt_field::{FieldCore, MulBase};
+use jolt_field::{ExtField, Field};
 
 use crate::layout::CommitmentRingDims;
 use crate::{
@@ -53,7 +53,7 @@ struct SetupRoleProjection<E> {
     scales: Vec<E>,
 }
 
-impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
+impl<E: Field> SetupIndexWeightEvaluator<E> {
     /// Build a succinct evaluator for `setup_index_weight~`.
     ///
     /// `setup_ring_dim` is the base ring dimension used by the setup prefix
@@ -73,8 +73,8 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         alpha: E,
     ) -> Result<Self, AkitaError>
     where
-        F: FieldCore,
-        E: MulBase<F>,
+        F: Field,
+        E: ExtField<F>,
     {
         if groups.is_empty() {
             return Err(AkitaError::InvalidSetup(
@@ -519,7 +519,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
     }
 }
 
-impl<E: FieldCore> SetupRoleProjection<E> {
+impl<E: Field> SetupRoleProjection<E> {
     fn lane_factor(&self, lane_point: &[E]) -> E {
         self.scales
             .iter()
@@ -529,7 +529,7 @@ impl<E: FieldCore> SetupRoleProjection<E> {
     }
 }
 
-fn setup_role_projection<E: FieldCore>(
+fn setup_role_projection<E: Field>(
     alpha: E,
     setup_ring_dim: usize,
     role_dim: usize,
@@ -612,7 +612,7 @@ fn evaluator_required(
     Ok(required)
 }
 
-fn validate_tau_domain<E: FieldCore>(tau1: &[E], rows: usize) -> Result<(), AkitaError> {
+fn validate_tau_domain<E: Field>(tau1: &[E], rows: usize) -> Result<(), AkitaError> {
     if tau1.len() < usize::BITS as usize && rows > (1usize << tau1.len()) {
         return Err(AkitaError::InvalidSize {
             expected: rows,
@@ -672,7 +672,7 @@ fn take_axis_point<'a, E>(
     Ok(Some(axis))
 }
 
-fn eq_axis_table<E: FieldCore>(point: &[E], len: usize) -> Result<Vec<E>, AkitaError> {
+fn eq_axis_table<E: Field>(point: &[E], len: usize) -> Result<Vec<E>, AkitaError> {
     if len == 0 || !len.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
             "setup-index weight axis length must be a non-zero power of two".into(),
@@ -689,7 +689,7 @@ fn eq_axis_table<E: FieldCore>(point: &[E], len: usize) -> Result<Vec<E>, AkitaE
     Ok(table)
 }
 
-fn shifted_eq_carry_sums<E: FieldCore>(
+fn shifted_eq_carry_sums<E: Field>(
     r_low: &[E],
     x_low: &[E],
     offset_low: usize,

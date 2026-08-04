@@ -21,7 +21,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{AkitaCommitmentHint, DigitBlocks};
-use jolt_field::{CanonicalField, FieldCore};
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Recompose one D-free [`DigitBlocks`] digit stream into typed inner rows,
 /// grouped by block (`Vec<block> of Vec<CyclotomicRing<F, D>>`).
@@ -39,7 +39,7 @@ pub fn recompose_inner_rows<F, const D: usize>(
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     if num_digits_open == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -74,7 +74,7 @@ pub fn recompose_hint_inner_rows<F, const D: usize>(
     log_basis: u32,
 ) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     hint.decomposed_inner_rows()
         .iter()
@@ -97,7 +97,7 @@ pub fn recompose_flat_hint_inner_rows<F, const D: usize>(
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     let flat = hint.clone().into_flat_parts()?;
     recompose_inner_rows::<F, D>(&flat, num_digits_open, log_basis)
@@ -109,7 +109,7 @@ fn recompose_block<F, const D: usize>(
     log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     if !block.len().is_multiple_of(D) {
         return Err(AkitaError::InvalidSize {

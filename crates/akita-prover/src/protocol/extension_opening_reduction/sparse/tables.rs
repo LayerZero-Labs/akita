@@ -7,7 +7,7 @@ use super::*;
 /// - [`Sparse`](Self::Sparse): sparse witness paired with a (dense or lazy
 ///   tensor) [`SparseFactor`]. The initial shape for onehot terms.
 #[derive(Debug, Clone)]
-pub(in crate::protocol::extension_opening_reduction) enum ExtensionOpeningTables<E: FieldCore> {
+pub(in crate::protocol::extension_opening_reduction) enum ExtensionOpeningTables<E: Field> {
     Dense {
         witness: Vec<E>,
         factor: Vec<E>,
@@ -18,7 +18,7 @@ pub(in crate::protocol::extension_opening_reduction) enum ExtensionOpeningTables
     },
 }
 
-impl<E: FieldCore> ExtensionOpeningTables<E> {
+impl<E: Field> ExtensionOpeningTables<E> {
     pub(in crate::protocol::extension_opening_reduction) fn len(&self) -> usize {
         match self {
             Self::Dense { witness, .. } => witness.len(),
@@ -62,7 +62,7 @@ impl<E: FieldCore> ExtensionOpeningTables<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps> ExtensionOpeningTables<E> {
+impl<E: Field + Unreduced> ExtensionOpeningTables<E> {
     pub(in crate::protocol::extension_opening_reduction) fn accumulate_round(
         &self,
         coeff: E,
@@ -90,7 +90,7 @@ impl<E: FieldCore + HasUnreducedOps> ExtensionOpeningTables<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SparseFactor<E> {
+impl<E: Field + Unreduced + Fold> SparseFactor<E> {
     /// Fold the transparent factor by one sumcheck challenge, materializing the
     /// lazy tensor factor into a dense table once it reaches its split depth.
     pub(in crate::protocol::extension_opening_reduction) fn fold_in_place(&mut self, r_round: E) {
@@ -109,7 +109,7 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SparseFactor<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningTables<E> {
+impl<E: Field + Unreduced + Fold> ExtensionOpeningTables<E> {
     pub(in crate::protocol::extension_opening_reduction) fn fold_in_place(&mut self, r_round: E) {
         match self {
             Self::Dense { witness, factor } => {
@@ -136,7 +136,7 @@ pub(in crate::protocol::extension_opening_reduction) fn fused_fold_and_accumulat
     r_round: E,
 ) -> (E, E)
 where
-    E: FieldCore + HasUnreducedOps + HasOptimizedFold,
+    E: Field + Unreduced + Fold,
 {
     factor.fold_in_place(r_round);
     match factor {

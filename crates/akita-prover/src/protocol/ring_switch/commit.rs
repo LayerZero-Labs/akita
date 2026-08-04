@@ -3,7 +3,7 @@ use crate::compute::{CommitInnerPlan, OperationCtx};
 use akita_types::dispatch_for_field;
 
 /// Result of committing the next logical recursive witness.
-pub struct NextWitnessCommitment<F: FieldCore> {
+pub struct NextWitnessCommitment<F: Field> {
     /// Physical witness representation when extension packing changes the logical witness.
     pub witness: Option<RecursiveWitnessFlat>,
     /// Commitment to the physical next-level witness.
@@ -32,7 +32,7 @@ pub fn commit_w<Cfg, B>(
 ) -> Result<NextWitnessCommitment<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling,
+    Cfg::Field: Field + CanonicalEncoding,
     B: CommitmentComputeBackend<Cfg::Field>,
 {
     let commit_d = commit_params.role_dims().d_b();
@@ -42,7 +42,7 @@ where
         Cfg::Field,
         commit_d,
         |D| {
-            let packed_witness = if <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
+            let packed_witness = if <Cfg::ExtField as ExtField<Cfg::Field>>::DEGREE == 1 {
                 None
             } else {
                 Some(tensor_pack_recursive_witness::<Cfg::Field, Cfg::ExtField, D>(logical_w)?)

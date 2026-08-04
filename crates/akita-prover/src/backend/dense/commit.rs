@@ -4,11 +4,11 @@ use super::poly::DensePoly;
 use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalField, FieldCore};
+use jolt_field::{CanonicalEncoding, Field};
 
 impl<F> DensePoly<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     pub(super) fn commit_rows<B, const D: usize>(
         &self,

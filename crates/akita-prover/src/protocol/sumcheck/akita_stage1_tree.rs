@@ -26,9 +26,9 @@ use akita_types::{
     stage1_leaf_coeffs, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
     AkitaStage1Proof, AkitaStage1StageProof,
 };
-use jolt_field::parallel::*;
-use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_field::{Fold, Unreduced};
 
 type Stage1ProveOutput<E> = (AkitaStage1Proof<E>, Vec<E>);
 
@@ -39,7 +39,7 @@ fn compact_s_from_w(w: i8) -> i64 {
 
 const MAX_TREE_STAGE_Q_DEGREE: usize = 4;
 
-fn padded_s_table<E: FieldCore + FromPrimitiveInt>(
+fn padded_s_table<E: Field + Ring>(
     w_evals_compact: &[i8],
     live_x_cols: usize,
     col_bits: usize,
@@ -78,7 +78,7 @@ fn padded_s_table<E: FieldCore + FromPrimitiveInt>(
     Ok(out)
 }
 
-fn compose_small_poly_with_affine<E: FieldCore>(coeffs: &[E], offset: E, slope: E) -> [E; 5] {
+fn compose_small_poly_with_affine<E: Field>(coeffs: &[E], offset: E, slope: E) -> [E; 5] {
     debug_assert!(coeffs.len() <= MAX_TREE_STAGE_Q_DEGREE + 1);
 
     let mut out = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
@@ -100,7 +100,7 @@ fn compose_small_poly_with_affine<E: FieldCore>(coeffs: &[E], offset: E, slope: 
     out
 }
 
-fn build_leaf_tables<E: FieldCore>(leaf_coeffs: &[Vec<E>], s_table: &[E]) -> Vec<Vec<E>> {
+fn build_leaf_tables<E: Field>(leaf_coeffs: &[Vec<E>], s_table: &[E]) -> Vec<Vec<E>> {
     cfg_iter!(leaf_coeffs)
         .map(|coeffs| {
             s_table
@@ -112,7 +112,7 @@ fn build_leaf_tables<E: FieldCore>(leaf_coeffs: &[Vec<E>], s_table: &[E]) -> Vec
         .collect()
 }
 
-fn pointwise_product<E: FieldCore>(tables: &[Vec<E>]) -> Vec<E> {
+fn pointwise_product<E: Field>(tables: &[Vec<E>]) -> Vec<E> {
     debug_assert!(!tables.is_empty());
     let len = tables[0].len();
     let mut out = vec![E::one(); len];
@@ -125,11 +125,11 @@ fn pointwise_product<E: FieldCore>(tables: &[Vec<E>]) -> Vec<E> {
     out
 }
 
-struct ProductStageLayer<E: FieldCore> {
+struct ProductStageLayer<E: Field> {
     child_tables_by_parent: Vec<Vec<Vec<E>>>,
 }
 
-fn build_product_stage_layers<E: FieldCore>(
+fn build_product_stage_layers<E: Field>(
     leaf_tables: Vec<Vec<E>>,
     product_stage_arities: &[usize],
 ) -> Vec<ProductStageLayer<E>> {
@@ -172,7 +172,7 @@ fn build_product_stage_layers<E: FieldCore>(
     bottom_up_layers
 }
 
-struct ProductStageProver<E: FieldCore> {
+struct ProductStageProver<E: Field> {
     child_tables_by_parent: Vec<Vec<Vec<E>>>,
     batch_weights: Vec<E>,
     split_eq: GruenSplitEq<E>,
@@ -180,7 +180,7 @@ struct ProductStageProver<E: FieldCore> {
     num_rounds: usize,
 }
 
-impl<E: FieldCore> ProductStageProver<E> {
+impl<E: Field> ProductStageProver<E> {
     fn new(
         child_tables_by_parent: Vec<Vec<Vec<E>>>,
         batch_weights: Vec<E>,
@@ -215,9 +215,7 @@ impl<E: FieldCore> ProductStageProver<E> {
     }
 }
 
-impl<E: FieldCore + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E>
-    for ProductStageProver<E>
-{
+impl<E: Field + Fold> EqFactoredSumcheckInstanceProver<E> for ProductStageProver<E> {
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }
@@ -303,7 +301,7 @@ impl<E: FieldCore + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E>
     }
 }
 
-struct PolynomialStageProver<E: FieldCore> {
+struct PolynomialStageProver<E: Field> {
     s_table: Vec<E>,
     split_eq: GruenSplitEq<E>,
     input_claim: E,
@@ -311,7 +309,7 @@ struct PolynomialStageProver<E: FieldCore> {
     num_rounds: usize,
 }
 
-impl<E: FieldCore> PolynomialStageProver<E> {
+impl<E: Field> PolynomialStageProver<E> {
     fn new(
         s_table: Vec<E>,
         tau: &[E],
@@ -333,9 +331,7 @@ impl<E: FieldCore> PolynomialStageProver<E> {
     }
 }
 
-impl<E: FieldCore + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E>
-    for PolynomialStageProver<E>
-{
+impl<E: Field + Fold> EqFactoredSumcheckInstanceProver<E> for PolynomialStageProver<E> {
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }
@@ -405,13 +401,13 @@ impl<E: FieldCore + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E>
 }
 
 /// Backend-specific Stage 1 witness representation.
-enum Stage1Witness<E: FieldCore> {
+enum Stage1Witness<E: Field> {
     Compact(Vec<i8>),
     PaddedS(Vec<E>),
 }
 
 /// Stage-1 range-check prover, including the root/leaf tree choreography.
-pub struct AkitaStage1Prover<E: FieldCore> {
+pub struct AkitaStage1Prover<E: Field> {
     witness: Stage1Witness<E>,
     tau0: Vec<E>,
     b: usize,
@@ -420,7 +416,7 @@ pub struct AkitaStage1Prover<E: FieldCore> {
     ring_bits: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> AkitaStage1Prover<E> {
+impl<E: Field + Ring> AkitaStage1Prover<E> {
     /// Build the stage-1 prover from the compact witness table.
     ///
     /// # Errors
@@ -490,9 +486,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage1Prover<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + AkitaSerialize>
-    AkitaStage1Prover<E>
-{
+impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> AkitaStage1Prover<E> {
     /// Produce the full stage-1 tree proof and return the final `stage1_point`.
     ///
     /// # Errors
@@ -501,13 +495,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
     /// and leaf-stage proofs.
     pub fn prove<F, T>(self, transcript: &mut T) -> Result<Stage1ProveOutput<E>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         E: ExtField<F>,
         T: Transcript<F>,
     {
         fn absorb_child_claims<F, E, T>(claims: &[E], transcript: &mut T)
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
             E: ExtField<F>,
             T: Transcript<F>,
         {

@@ -1,7 +1,7 @@
-use jolt_field::parallel::*;
-use jolt_field::{FieldCore, FromPrimitiveInt};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Ring};
 
-pub(super) fn product_claim<E: FieldCore>(table: &[E], left_factor: &[E], right_factor: &[E]) -> E {
+pub(super) fn product_claim<E: Field>(table: &[E], left_factor: &[E], right_factor: &[E]) -> E {
     let right_len = right_factor.len();
     cfg_fold_reduce!(
         0..left_factor.len(),
@@ -18,7 +18,7 @@ pub(super) fn product_claim<E: FieldCore>(table: &[E], left_factor: &[E], right_
     )
 }
 
-pub(super) fn product_claim_from_m_compact<E: FieldCore + FromPrimitiveInt>(
+pub(super) fn product_claim_from_m_compact<E: Field + Ring>(
     digits: &[i8],
     padded_len: usize,
     left_factor: &[E],
@@ -46,14 +46,14 @@ pub(super) fn product_claim_from_m_compact<E: FieldCore + FromPrimitiveInt>(
     )
 }
 
-pub(super) fn compact_value_at<E: FieldCore + FromPrimitiveInt>(digits: &[i8], idx: usize) -> E {
+pub(super) fn compact_value_at<E: Field + Ring>(digits: &[i8], idx: usize) -> E {
     digits
         .get(idx)
         .copied()
         .map_or_else(E::zero, |digit| E::from_i64(i64::from(digit)))
 }
 
-pub(super) fn accumulate_right_round<E: FieldCore>(
+pub(super) fn accumulate_right_round<E: Field>(
     table: &[E],
     left_factor: &[E],
     right_factor: &[E],
@@ -83,7 +83,7 @@ pub(super) fn accumulate_right_round<E: FieldCore>(
     )
 }
 
-pub(super) fn accumulate_right_round_compact<E: FieldCore + FromPrimitiveInt>(
+pub(super) fn accumulate_right_round_compact<E: Field + Ring>(
     digits: &[i8],
     padded_len: usize,
     left_factor: &[E],
@@ -115,7 +115,7 @@ pub(super) fn accumulate_right_round_compact<E: FieldCore + FromPrimitiveInt>(
     )
 }
 
-pub(super) fn accumulate_second_right_round_compact<E: FieldCore + FromPrimitiveInt>(
+pub(super) fn accumulate_second_right_round_compact<E: Field + Ring>(
     digits: &[i8],
     padded_len: usize,
     left_factor: &[E],
@@ -158,7 +158,7 @@ pub(super) fn accumulate_second_right_round_compact<E: FieldCore + FromPrimitive
     )
 }
 
-pub(super) fn accumulate_left_round<E: FieldCore>(
+pub(super) fn accumulate_left_round<E: Field>(
     table: &[E],
     left_factor: &[E],
     right_weight: E,
@@ -183,7 +183,7 @@ pub(super) fn accumulate_left_round<E: FieldCore>(
     )
 }
 
-pub(super) fn accumulate_left_round_compact<E: FieldCore + FromPrimitiveInt>(
+pub(super) fn accumulate_left_round_compact<E: Field + Ring>(
     digits: &[i8],
     padded_len: usize,
     left_factor: &[E],
@@ -210,11 +210,11 @@ pub(super) fn accumulate_left_round_compact<E: FieldCore + FromPrimitiveInt>(
     )
 }
 
-pub(super) fn fold_pair<E: FieldCore>(left: E, right: E, r: E) -> E {
+pub(super) fn fold_pair<E: Field>(left: E, right: E, r: E) -> E {
     left + r * (right - left)
 }
 
-pub(super) fn fold_factor_in_place<E: FieldCore>(factor: &mut Vec<E>, r: E) {
+pub(super) fn fold_factor_in_place<E: Field>(factor: &mut Vec<E>, r: E) {
     let half = factor.len() / 2;
     let folded = cfg_into_iter!(0..half)
         .map(|idx| fold_pair(factor[2 * idx], factor[2 * idx + 1], r))
@@ -222,7 +222,7 @@ pub(super) fn fold_factor_in_place<E: FieldCore>(factor: &mut Vec<E>, r: E) {
     *factor = folded;
 }
 
-pub(super) fn fold_right_round<E: FieldCore>(table: &mut Vec<E>, right_factor: &mut Vec<E>, r: E) {
+pub(super) fn fold_right_round<E: Field>(table: &mut Vec<E>, right_factor: &mut Vec<E>, r: E) {
     let right_len = right_factor.len();
     let half = right_len / 2;
     let left_len = table.len() / right_len;
@@ -243,7 +243,7 @@ pub(super) fn fold_right_round<E: FieldCore>(table: &mut Vec<E>, right_factor: &
     *table = folded;
 }
 
-pub(super) fn fold_compact_right_round<E: FieldCore + FromPrimitiveInt>(
+pub(super) fn fold_compact_right_round<E: Field + Ring>(
     digits: &[i8],
     padded_len: usize,
     right_factor: &mut Vec<E>,
@@ -269,7 +269,7 @@ pub(super) fn fold_compact_right_round<E: FieldCore + FromPrimitiveInt>(
     folded
 }
 
-pub(super) fn fold_compact_right_two_rounds<E: FieldCore + FromPrimitiveInt>(
+pub(super) fn fold_compact_right_two_rounds<E: Field + Ring>(
     digits: &[i8],
     padded_len: usize,
     right_factor: &mut Vec<E>,
@@ -304,7 +304,7 @@ pub(super) fn fold_compact_right_two_rounds<E: FieldCore + FromPrimitiveInt>(
     folded
 }
 
-pub(super) fn fold_left_round<E: FieldCore>(table: &mut Vec<E>, left_factor: &mut Vec<E>, r: E) {
+pub(super) fn fold_left_round<E: Field>(table: &mut Vec<E>, left_factor: &mut Vec<E>, r: E) {
     let half = left_factor.len() / 2;
     let folded_table = cfg_into_iter!(0..half)
         .map(|idx| fold_pair(table[2 * idx], table[2 * idx + 1], r))
@@ -313,7 +313,7 @@ pub(super) fn fold_left_round<E: FieldCore>(table: &mut Vec<E>, left_factor: &mu
     *table = folded_table;
 }
 
-pub(super) fn fold_compact_left_round<E: FieldCore + FromPrimitiveInt>(
+pub(super) fn fold_compact_left_round<E: Field + Ring>(
     digits: &[i8],
     padded_len: usize,
     left_factor: &mut Vec<E>,

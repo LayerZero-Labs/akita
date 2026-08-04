@@ -16,7 +16,7 @@ impl<'a, E> BaseRingSegments<'a, E> {
     }
 }
 
-impl<E: FieldCore> SetupContributionGroupPlan<E> {
+impl<E: Field> SetupContributionGroupPlan<E> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn evaluate_base_ring_direct<F, const BASE_D: usize>(
         &self,
@@ -29,7 +29,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         d_physical_cols: usize,
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore,
+        F: Field,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let required = self.required_base_ring_rows_for_group(

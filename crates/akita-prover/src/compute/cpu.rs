@@ -19,8 +19,8 @@ use crate::kernels::linear::{
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey};
-use jolt_field::unreduced::{HasWide, ReduceTo};
-use jolt_field::{AdditiveGroup, CanonicalField, FieldCore, HalvingField};
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, Field};
 use std::array::from_fn;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -35,7 +35,7 @@ pub struct CpuBackend;
 /// registers the minimum envelope slot on the setup contract; additional slots may
 /// be built lazily via [`ComputeBackendSetup::ensure_ntt_slot`].
 #[derive(Debug)]
-pub struct CpuPreparedSetup<F: FieldCore> {
+pub struct CpuPreparedSetup<F: Field> {
     expanded: Arc<AkitaExpandedSetup<F>>,
     shared_ntt: Mutex<NttCacheMap>,
     ntt_i8_capacity_by_ring_d: Mutex<HashMap<usize, CrtI8CapacityProfile>>,
@@ -74,7 +74,7 @@ impl From<CrtI8CapacityProfile> for PreparedCrtNttProfile {
     }
 }
 
-impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
+impl<F: Field + CanonicalEncoding> CpuPreparedSetup<F> {
     fn envelope_ntt_key<const D: usize>(&self) -> Result<NttCacheKey, AkitaError> {
         NttCacheKey::from_envelope(&self.expanded, D)
     }
@@ -125,7 +125,7 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
     }
 }
 
-fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
+fn build_ntt_slot_for_key<F: Field + CanonicalEncoding>(
     expanded: &AkitaExpandedSetup<F>,
     key: NttCacheKey,
 ) -> Result<crate::kernels::crt_ntt::NttSlotCacheAny, AkitaError> {
@@ -137,7 +137,7 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     })
 }
 
-fn record_ntt_profile_on_prepared<F: FieldCore>(
+fn record_ntt_profile_on_prepared<F: Field>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
     profile: CrtI8CapacityProfile,
@@ -151,7 +151,7 @@ fn record_ntt_profile_on_prepared<F: FieldCore>(
     Ok(())
 }
 
-fn insert_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
+fn insert_ntt_slot_on_prepared<F: Field + CanonicalEncoding>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
@@ -180,7 +180,7 @@ fn insert_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     record_ntt_profile_on_prepared(prepared, key, profile)
 }
 
-fn register_setup_contract_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
+fn register_setup_contract_ntt_slot_on_prepared<F: Field + CanonicalEncoding>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
@@ -200,7 +200,7 @@ fn register_setup_contract_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     Ok(())
 }
 
-fn ensure_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
+fn ensure_ntt_slot_on_prepared<F: Field + CanonicalEncoding>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
@@ -259,7 +259,7 @@ fn validate_digit_row_request(
 
 impl<F> ComputeBackendSetup<F> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     type PreparedSetup = CpuPreparedSetup<F>;
 
@@ -322,7 +322,7 @@ where
 
 impl<F> CommitmentComputeBackend<F> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn dense_commit_rows<const D: usize>(
         &self,
@@ -390,8 +390,7 @@ where
         plan: OneHotCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+        F: Unreduced,
     {
         let active_a_cols = plan
             .block_len
@@ -429,8 +428,7 @@ where
         plan: SparseRingCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+        F: Unreduced,
     {
         let active_a_cols = plan
             .block_len
@@ -499,7 +497,7 @@ where
 
 impl<F> DigitRowsComputeBackend<F> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn digit_rows<const D: usize>(
         &self,
@@ -524,7 +522,7 @@ where
 
 impl<F> CyclicRowsComputeBackend<F> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn cyclic_digit_rows<const D: usize>(
         &self,
@@ -549,7 +547,7 @@ where
 
 impl<F> RingSwitchComputeBackend<F> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn ring_switch_relation_rows<const D: usize>(
         &self,
@@ -557,7 +555,7 @@ where
         plan: RingSwitchRelationRowsPlan<'_, D>,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
     where
-        F: HalvingField,
+        F: Field,
     {
         prepared.with_shared_ntt::<D, _>(|ntt| {
             let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
@@ -585,7 +583,7 @@ where
         plan: RingSwitchQuotientRowsPlan<'_, D>,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
     where
-        F: HalvingField,
+        F: Field,
     {
         prepared.with_shared_ntt::<D, _>(|ntt| {
             let (_d_cyclic, _b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(

@@ -9,7 +9,7 @@ use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
-use jolt_field::{CanonicalField, ExtField, FieldCore};
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::collections::BTreeSet;
 
 /// Dense polynomials cannot open multi-group root batches yet.
@@ -346,7 +346,7 @@ impl OpeningClaimsLayout {
         transcript: &mut T,
     ) -> Result<(), AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         T: Transcript<F>,
     {
         self.check()?;
@@ -371,7 +371,7 @@ impl OpeningClaimsLayout {
         openings: &[E],
     ) -> Result<E, AkitaError>
     where
-        E: FieldCore,
+        E: Field,
     {
         if row_coefficients.len() != self.num_total_polynomials() {
             return Err(AkitaError::InvalidSize {
@@ -636,7 +636,7 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     }
 }
 
-impl<'a, F: FieldCore> OpeningClaims<'a, F, ()> {
+impl<'a, F: Field> OpeningClaims<'a, F, ()> {
     /// Commitment-less, full-point claims used by internal extension-opening replay.
     pub fn with_padded_point(
         point: &[F],
@@ -676,7 +676,7 @@ pub fn sample_public_row_coefficients<F, L, T>(
     transcript: &mut T,
 ) -> Result<Vec<L>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     L: ExtField<F>,
     T: Transcript<F>,
 {
@@ -700,6 +700,7 @@ fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_algebra::Zero;
     use jolt_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;

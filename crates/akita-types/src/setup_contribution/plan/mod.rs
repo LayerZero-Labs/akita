@@ -39,8 +39,8 @@ use crate::dispatch_for_field;
 use crate::layout::RingMatrixView;
 use crate::proof::AkitaExpandedSetup;
 use akita_error::AkitaError;
-use jolt_field::parallel::*;
-use jolt_field::{CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 #[cfg(test)]
 use kernels::evaluate_weighted_setup_row;

@@ -1,4 +1,5 @@
 use super::*;
+use jolt_field::Ring;
 
 #[test]
 fn dense_mat_vec_matches_schoolbook_q32_d64() {

@@ -8,7 +8,7 @@ use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use jolt_field::{CanonicalField, FieldCore, HalvingField};
+use jolt_field::{CanonicalEncoding, Field};
 
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{
@@ -57,7 +57,7 @@ pub struct SegmentTypedWitnessShape {
 
 /// Segment-typed terminal witness carried on the wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SegmentTypedWitness<F: FieldCore> {
+pub struct SegmentTypedWitness<F: Field> {
     pub layout: TailSegmentLayout,
     pub z_payloads: Vec<Vec<u8>>,
     pub e_fields: RingVec<F>,
@@ -65,7 +65,7 @@ pub struct SegmentTypedWitness<F: FieldCore> {
     pub r_fields: RingVec<F>,
 }
 
-pub struct SegmentTypedWitnessGroupParts<'a, F: FieldCore> {
+pub struct SegmentTypedWitnessGroupParts<'a, F: Field> {
     pub params: &'a dyn LevelParamsLike,
     pub num_w_vectors: usize,
     pub num_t_vectors: usize,
@@ -307,7 +307,7 @@ impl AkitaDeserialize for SegmentTypedWitnessShape {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for SegmentTypedWitness<F> {
+impl<F: Field + Valid> Valid for SegmentTypedWitness<F> {
     fn check(&self) -> Result<(), SerializationError> {
         SegmentTypedWitnessShape {
             layout: self.layout.clone(),
@@ -344,7 +344,7 @@ impl<F: FieldCore + Valid> Valid for SegmentTypedWitness<F> {
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize> AkitaSerialize for SegmentTypedWitness<F> {
+impl<F: Field + CanonicalEncoding + AkitaSerialize> AkitaSerialize for SegmentTypedWitness<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -366,12 +366,12 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> AkitaSerialize for SegmentT
             .sum::<usize>();
         z_bytes.saturating_add(
             (self.layout.e_field_elems() + self.layout.t_field_elems() + self.layout.r_field_elems)
-                .saturating_mul(field_bytes(F::modulus_bits())),
+                .saturating_mul(field_bytes(F::MODULUS_BITS)),
         )
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     for SegmentTypedWitness<F>
 {
     type Context = SegmentTypedWitnessShape;
@@ -430,7 +430,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize> SegmentTypedWitness<F> {
+impl<F: Field + CanonicalEncoding + AkitaSerialize> SegmentTypedWitness<F> {
     /// Canonical segment bytes in wire order (`z ‖ e ‖ t ‖ r`).
     pub fn wire_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -473,7 +473,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> SegmentTypedWitness<F> {
     }
 }
 
-fn append_field_coeffs<F: FieldCore + AkitaSerialize, W: Write>(
+fn append_field_coeffs<F: Field + AkitaSerialize, W: Write>(
     writer: &mut W,
     coeffs: &[F],
     compress: Compress,
@@ -488,7 +488,7 @@ fn append_field_coeffs<F: FieldCore + AkitaSerialize, W: Write>(
     Ok(())
 }
 
-fn append_field_coeffs_vec<F: FieldCore + AkitaSerialize>(
+fn append_field_coeffs_vec<F: Field + AkitaSerialize>(
     out: &mut Vec<u8>,
     coeffs: &[F],
 ) -> Result<(), AkitaError> {
@@ -500,7 +500,7 @@ fn append_field_coeffs_vec<F: FieldCore + AkitaSerialize>(
     Ok(())
 }
 
-fn field_segment_bytes<F: FieldCore + AkitaSerialize>(fields: &RingVec<F>) -> Vec<u8> {
+fn field_segment_bytes<F: Field + AkitaSerialize>(fields: &RingVec<F>) -> Vec<u8> {
     let mut out = Vec::new();
     append_field_coeffs_vec(&mut out, fields.coeffs()).expect("in-memory field serialization");
     out
@@ -517,7 +517,7 @@ fn field_segment_bytes<F: FieldCore + AkitaSerialize>(fields: &RingVec<F>) -> Ve
 /// Propagates field serialization failures as [`AkitaError::InvalidProof`].
 pub fn e_folded_segment_bytes<F>(e_folded: &RingVec<F>) -> Result<Vec<u8>, AkitaError>
 where
-    F: FieldCore + CanonicalField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
 {
     let fields = e_folded.clone().into_compact();
     let mut out = Vec::new();
@@ -639,7 +639,7 @@ fn decode_terminal_z_golomb_payload_with_cap(
 /// # Errors
 ///
 /// Propagates decode and public-parameter setup errors.
-pub fn z_fold_decoded_from_segment<F: FieldCore>(
+pub fn z_fold_decoded_from_segment<F: Field>(
     witness: &SegmentTypedWitness<F>,
     lp: &LevelParams,
     num_t_vectors: usize,
@@ -664,7 +664,7 @@ fn z_payload_budget_from_cap(z_coords: usize, cap: u128) -> usize {
 /// # Errors
 ///
 /// Propagates decode and public-parameter setup errors.
-pub fn z_fold_encoding_stats_from_segment<F: FieldCore>(
+pub fn z_fold_encoding_stats_from_segment<F: Field>(
     witness: &SegmentTypedWitness<F>,
     lp: &LevelParams,
     num_t_vectors: usize,
@@ -969,7 +969,7 @@ pub fn build_segment_typed_witness<F>(
     num_commitment_groups: usize,
 ) -> Result<SegmentTypedWitness<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
 {
     build_segment_typed_witness_from_groups(
         ring_d,
@@ -996,7 +996,7 @@ pub fn build_segment_typed_witness_from_groups<F>(
     num_commitment_groups: usize,
 ) -> Result<SegmentTypedWitness<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
 {
     if ring_d == 0 || lp.ring_dimension != ring_d {
         return Err(AkitaError::InvalidInput(
@@ -1019,7 +1019,7 @@ where
             )
         })
         .collect::<Vec<_>>();
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let layout =
         tail_segment_layout_from_groups(lp, group_shapes, num_commitment_groups, field_bits)?;
     let mut z_payloads = Vec::with_capacity(groups.len());
@@ -1111,7 +1111,7 @@ where
 /// # Errors
 ///
 /// Returns an error when the encoded `z` payload is inadmissible or exceeds the budget.
-pub fn validate_segment_typed_z_payload<F: FieldCore>(
+pub fn validate_segment_typed_z_payload<F: Field>(
     witness: &SegmentTypedWitness<F>,
     lp: &LevelParams,
     num_t_vectors: usize,
@@ -1154,12 +1154,12 @@ pub fn expand_segment_typed_to_i8_digits<const D: usize, F>(
     num_commitment_groups: usize,
 ) -> Result<Vec<i8>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
 {
     if D != witness.layout.ring_dimension {
         return Err(AkitaError::InvalidProof);
     }
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let (num_w_vectors, num_t_vectors, num_z_segments) =
         tail_segment_multiplicities_from_layout(lp, &witness.layout, 0)?;
     let expected_layout = tail_segment_layout_from_groups(
@@ -1196,7 +1196,7 @@ pub fn expand_segment_typed_to_i8_digits_for_groups<'a, const D: usize, F>(
     field_bits: u32,
 ) -> Result<Vec<i8>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
 {
     if D != witness.layout.ring_dimension {
         return Err(AkitaError::InvalidProof);
@@ -1225,7 +1225,10 @@ where
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
     let mut r_planes_flat = Vec::with_capacity(r_rings.len() * levels);
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q);
     let mut scratch = vec![[0i8; D]; levels];
     for ring in &r_rings {
@@ -1338,13 +1341,16 @@ fn decompose_field_segment_to_planes<F, const D: usize>(
     log_basis: u32,
 ) -> Result<Vec<[i8; D]>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
 {
     if coeffs.len() != ring_count.checked_mul(D).ok_or(AkitaError::InvalidProof)? {
         return Err(AkitaError::InvalidProof);
     }
     let levels = depth_open;
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q);
     let mut out = Vec::with_capacity(ring_count * levels);
     let mut scratch = vec![[0i8; D]; levels];

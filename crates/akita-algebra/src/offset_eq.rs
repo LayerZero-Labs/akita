@@ -19,7 +19,7 @@
 
 use akita_error::AkitaError;
 
-use crate::FieldCore;
+use crate::Field;
 
 /// Sparse/pruned partial multilinear evaluation of a single materialized
 /// factor over the contiguous global interval `[offset, offset + factor.len())`.
@@ -44,7 +44,7 @@ use crate::FieldCore;
 ///
 /// Returns [`AkitaError::InvalidInput`] if `offset + factor.len()` overflows
 /// `usize`.
-pub fn eval_offset_eq_interval<F: FieldCore>(
+pub fn eval_offset_eq_interval<F: Field>(
     x_challenges: &[F],
     offset: usize,
     scale: F,
@@ -107,7 +107,7 @@ pub fn eval_offset_eq_interval<F: FieldCore>(
 }
 
 /// Build `table[k] = eq(high_challenges, offset_high + k)` for `k ∈ [0, hi_len]`.
-pub fn high_eq_window<F: FieldCore>(
+pub fn high_eq_window<F: Field>(
     high_challenges: &[F],
     offset_high: usize,
     hi_len: usize,
@@ -118,7 +118,7 @@ pub fn high_eq_window<F: FieldCore>(
 }
 
 /// Evaluate `eq(r, index)` for a single hypercube index in little-endian order.
-pub fn eq_eval_at_index<F: FieldCore>(x_challenges: &[F], index: usize) -> F {
+pub fn eq_eval_at_index<F: Field>(x_challenges: &[F], index: usize) -> F {
     if x_challenges.len() < usize::BITS as usize && index >= (1usize << x_challenges.len()) {
         return F::zero();
     }
@@ -145,7 +145,7 @@ pub fn eq_eval_at_index<F: FieldCore>(x_challenges: &[F], index: usize) -> F {
 ///
 /// Returns an error if `values` is not power-of-two sized, if `eq_low` has the
 /// wrong length, or if `offset_low` does not lie inside the peeled block.
-pub fn summarize_pow2_block_carries<F: FieldCore>(
+pub fn summarize_pow2_block_carries<F: Field>(
     eq_low: &[F],
     offset_low: usize,
     values: &[F],
@@ -189,8 +189,10 @@ pub fn summarize_pow2_block_carries<F: FieldCore>(
 mod tests {
     use super::*;
     use crate::eq_poly::EqPolynomial;
-    use crate::RandomSampling;
+    use crate::Field;
     use jolt_field::Fp64;
+    use jolt_field::One;
+    use jolt_field::Zero;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

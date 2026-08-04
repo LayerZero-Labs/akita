@@ -2,7 +2,7 @@ use super::*;
 use akita_types::{BatchedStage3Geometry, OpeningClaimsLayout, RingView};
 
 /// Verifier state carried between suffix fold levels.
-pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
+pub(super) struct SuffixVerifierState<'a, F: Field, E: Field> {
     /// Current opening point for the committed suffix witness.
     pub opening_point: Vec<E>,
     /// Claimed opening value for the current commitment.
@@ -27,8 +27,8 @@ fn prepare_suffix_group_points<F, E>(
     block_order: BlockOrder,
 ) -> Result<Vec<PreparedOpeningPoint<F, E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
 {
     dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -78,7 +78,7 @@ where
     )
 }
 
-fn suffix_commitment_rows<F: FieldCore>(
+fn suffix_commitment_rows<F: Field>(
     setup: &AkitaVerifierSetup<F>,
     lp: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
@@ -154,18 +154,8 @@ fn prepare_fold_replay<'a, F, E, T>(
     _setup_contribution_mode: SetupContributionMode,
 ) -> Result<PreparedFoldReplay<'a, F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + PseudoMersenneField
-        + HalvingField
-        + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + PseudoMersenne + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let lp = &scheduled.params;
@@ -241,8 +231,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
-    let requires_extension_reduction =
-        <E as ExtField<F>>::EXT_DEGREE != 1 && lp.setup_prefix.is_none();
+    let requires_extension_reduction = <E as ExtField<F>>::DEGREE != 1 && lp.setup_prefix.is_none();
     let FoldEorReplay {
         prepared_points,
         reduction_challenges: _,
@@ -382,18 +371,8 @@ pub(super) fn verify_suffix<'a, F, E, T>(
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + PseudoMersenneField
-        + HalvingField
-        + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + PseudoMersenne + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     for (offset, step) in steps.iter().enumerate() {

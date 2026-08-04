@@ -13,8 +13,7 @@ use akita_types::{
     dispatch_for_field, schedule_terminal_direct_witness_shape, should_reject_multi_group_root,
     validate_schedule_ring_dims,
 };
-use jolt_field::unreduced::ReduceTo;
-use jolt_field::{AdditiveGroup, CanonicalField};
+use jolt_field::CanonicalEncoding;
 
 /// Build a root-direct batched proof from flattened polynomial references and
 /// their commitment-group hints.
@@ -31,7 +30,7 @@ pub fn prove_root_direct<F, E, P>(
     ring_d: usize,
 ) -> Result<AkitaBatchedProof<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
     P: DirectRootWitnessSource<F, 32>
         + DirectRootWitnessSource<F, 64>
@@ -87,24 +86,12 @@ pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R>(
 ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField,
+    Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne,
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>
-        + ExtField<Cfg::Field>
-        + FrobeniusExtField<Cfg::Field>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    Cfg::ExtField:
+        FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Unreduced + Fold + Ring + AkitaSerialize,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    Cfg::Field: FromPrimitiveInt + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+    Cfg::Field: Ring + 'static,
     P: RuntimeRootProvePoly<Cfg::Field>,
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
@@ -242,24 +229,12 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R>(
 ) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, usize), AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField,
+    Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne,
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>
-        + ExtField<Cfg::Field>
-        + FrobeniusExtField<Cfg::Field>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    Cfg::ExtField:
+        FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Unreduced + Fold + Ring + AkitaSerialize,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    Cfg::Field: FromPrimitiveInt + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+    Cfg::Field: Ring + 'static,
     P: RuntimeRootProvePoly<Cfg::Field>,
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>

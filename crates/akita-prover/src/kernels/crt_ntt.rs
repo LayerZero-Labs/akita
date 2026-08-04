@@ -10,8 +10,8 @@ use akita_algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
 use akita_error::AkitaError;
 use akita_types::ntt_ring_degree_supported_for_field;
 #[allow(unused_imports)]
-use jolt_field::parallel::*;
-use jolt_field::{cfg_iter, CanonicalField, FieldCore, PseudoMersenneField};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{cfg_iter, CanonicalEncoding, Field, PseudoMersenne};
 use jolt_field::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
 
 use akita_types::{NttCacheKey, RingMatrixView};
@@ -37,7 +37,7 @@ pub enum ProtocolCrtNttParams<const D: usize> {
 ///
 /// Returns an error if `D` is unsupported or no CRT/NTT parameter family
 /// matches the field modulus.
-pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
+pub fn select_crt_ntt_params<F: Field + CanonicalEncoding, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
     if !ntt_ring_degree_supported_for_field::<F>(D) {
         let tier = akita_types::protocol_dispatch_tier::<F>();
@@ -49,12 +49,9 @@ pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     }
 
     let modulus = akita_types::field_modulus::<F>();
-    let split_only_q128_modulus =
-        u128::MAX - (<Prime128Offset159 as PseudoMersenneField>::MODULUS_OFFSET - 1);
-    let ntt_q128_modulus =
-        u128::MAX - (<Prime128Offset2355 as PseudoMersenneField>::MODULUS_OFFSET - 1);
-    let a7f7_q128_modulus =
-        u128::MAX - (<Prime128OffsetA7F7 as PseudoMersenneField>::MODULUS_OFFSET - 1);
+    let split_only_q128_modulus = u128::MAX - (<Prime128Offset159 as PseudoMersenne>::OFFSET - 1);
+    let ntt_q128_modulus = u128::MAX - (<Prime128Offset2355 as PseudoMersenne>::OFFSET - 1);
+    let a7f7_q128_modulus = u128::MAX - (<Prime128OffsetA7F7 as PseudoMersenne>::OFFSET - 1);
 
     if modulus <= Q32_MODULUS as u128 {
         if D >= 64 {
@@ -125,7 +122,7 @@ fn convert_flat_pair<F, W, const K: usize, const D: usize>(
     Vec<CyclotomicCrtNtt<W, K, D>>,
 )
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
 {
     cfg_iter!(mat.as_slice())
@@ -139,14 +136,14 @@ where
 ///
 /// Returns an error if no CRT+NTT parameter set matches the field modulus and ring degree.
 #[tracing::instrument(skip_all, name = "build_ntt_slot")]
-pub fn build_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
+pub fn build_ntt_slot<F: Field + CanonicalEncoding, const D: usize>(
     mat: RingMatrixView<'_, F, D>,
 ) -> Result<NttSlotCache<D>, AkitaError> {
     let params = select_crt_ntt_params::<F, D>()?;
     Ok(build_ntt_slot_from_params(mat, params))
 }
 
-fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
+fn build_ntt_slot_from_params<F: Field + CanonicalEncoding, const D: usize>(
     mat: RingMatrixView<'_, F, D>,
     params: ProtocolCrtNttParams<D>,
 ) -> NttSlotCache<D> {
@@ -289,21 +286,21 @@ mod tests {
         Prime32Offset99, Prime64Offset59,
     };
 
-    fn assert_selects_q32_params<F: CanonicalField, const D: usize>() {
+    fn assert_selects_q32_params<F: Field + CanonicalEncoding, const D: usize>() {
         assert!(matches!(
             select_crt_ntt_params::<F, D>(),
             Ok(ProtocolCrtNttParams::Q32(_))
         ));
     }
 
-    fn assert_selects_q64_params<F: CanonicalField, const D: usize>() {
+    fn assert_selects_q64_params<F: Field + CanonicalEncoding, const D: usize>() {
         assert!(matches!(
             select_crt_ntt_params::<F, D>(),
             Ok(ProtocolCrtNttParams::Q64(_))
         ));
     }
 
-    fn assert_selects_q128_params<F: CanonicalField, const D: usize>() {
+    fn assert_selects_q128_params<F: Field + CanonicalEncoding, const D: usize>() {
         assert!(matches!(
             select_crt_ntt_params::<F, D>(),
             Ok(ProtocolCrtNttParams::Q128(_))
@@ -385,7 +382,7 @@ mod ntt_slot_cache_any {
     use akita_types::FlatMatrix;
     use jolt_field::{Prime128OffsetA7F7, Prime32Offset99};
 
-    fn sample_cache<F: FieldCore + CanonicalField, const D: usize>() -> NttSlotCache<D> {
+    fn sample_cache<F: Field + CanonicalEncoding, const D: usize>() -> NttSlotCache<D> {
         let ring = akita_algebra::CyclotomicRing::<F, D>::zero();
         let flat = FlatMatrix::from_ring_slice(&[ring]);
         build_ntt_slot(flat.ring_view::<D>(1, 1).expect("view")).expect("ntt slot")

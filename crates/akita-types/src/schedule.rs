@@ -4,7 +4,7 @@ use crate::config::SetupContributionMode;
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::{CleartextWitnessShape, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout};
 use akita_error::AkitaError;
-use jolt_field::CanonicalField;
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Public inputs that deterministically select one level's active Akita params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -247,7 +247,7 @@ impl AkitaScheduleLookupKey {
 }
 
 /// Number of gadget decomposition levels needed for `r` over field `F`.
-pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
+pub fn r_decomp_levels<F: Field + CanonicalEncoding>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
     let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
     crate::sis::compute_num_digits_full_field(field_bits, log_basis)
@@ -257,7 +257,7 @@ pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
 ///
 /// Uses the identity: the canonical form of `-1` in `Z_q` is `q - 1`.
 #[inline]
-pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
+pub fn detect_field_modulus<F: Field + CanonicalEncoding>() -> u128 {
     crate::dispatch::field_modulus::<F>()
 }
 
@@ -265,7 +265,7 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 /// relation-matrix row layout. The terminal layout drops the D-block from the M-matrix,
 /// which shrinks the per-row `r` quotients by `n_d * r_decomp_levels` ring
 /// elements relative to the intermediate layout.
-pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
+pub fn w_ring_element_count_with_counts_for_layout<F: Field + CanonicalEncoding>(
     lp: &LevelParams,
     num_polynomials: usize,
     num_z_segments: usize,

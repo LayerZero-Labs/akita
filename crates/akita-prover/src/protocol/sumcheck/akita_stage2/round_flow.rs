@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+impl<E: Field + Ring + Unreduced> AkitaStage2Prover<E> {
     pub(super) fn compute_current_round_poly_from_state(&mut self) -> UniPoly<E> {
         let t_scan = Instant::now();
         let use_two_round_prefix = self.using_two_round_prefix();
@@ -93,9 +93,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E>
-    for AkitaStage2Prover<E>
-{
+impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for AkitaStage2Prover<E> {
     fn num_rounds(&self) -> usize {
         self.num_vars
     }

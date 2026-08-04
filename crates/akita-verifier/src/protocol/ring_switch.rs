@@ -17,9 +17,7 @@ use akita_types::{
     SetupContributionArtifact, SetupContributionGroupInputs, SetupContributionPlanInputs,
     SetupContributionStatic, TerminalWitnessTranscriptParts, WitnessChunkLayout, WitnessLayout,
 };
-use jolt_field::{
-    CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced, RandomSampling,
-};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::ops::Range;
 
 use super::slice_mle::{
@@ -37,7 +35,7 @@ mod tests;
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
-pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
+pub(crate) struct RingSwitchVerifyOutput<E: Field> {
     /// Prepared data for prepared relation-matrix MLE evaluation.
     pub relation_matrix_evaluator: RelationMatrixEvaluator<E>,
     /// Evaluation table of alpha powers over the ring-coordinate dimension.
@@ -58,7 +56,7 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     pub alpha: E,
 }
 
-struct RingSwitchVerifyCoreOutput<E: FieldCore> {
+struct RingSwitchVerifyCoreOutput<E: Field> {
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
     alpha_evals_y: Vec<E>,
     col_bits: usize,
@@ -70,7 +68,7 @@ struct RingSwitchVerifyCoreOutput<E: FieldCore> {
     alpha: E,
 }
 
-impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
+impl<E: Field> RingSwitchVerifyCoreOutput<E> {
     fn into_intermediate(self) -> Result<RingSwitchVerifyOutput<E>, AkitaError> {
         let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
         Ok(RingSwitchVerifyOutput {
@@ -111,7 +109,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
 /// Everything else is passed by reference at evaluation time to avoid
 /// duplicating setup matrix views, opening points, and gadget vectors.
 #[derive(Clone)]
-pub struct RelationMatrixEvaluator<F: FieldCore> {
+pub struct RelationMatrixEvaluator<F: Field> {
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) groups: Vec<RelationMatrixGroupEvaluator<F>>,
     /// Batch-wide basis used by the shared r-tail.
@@ -125,7 +123,7 @@ pub struct RelationMatrixEvaluator<F: FieldCore> {
 }
 
 #[derive(Clone)]
-pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
+pub(crate) struct RelationMatrixGroupEvaluator<F: Field> {
     pub(crate) c_alphas: PreparedChallengeEvals<F>,
     pub(crate) opening_a_evals: Vec<F>,
     pub(crate) chunk_range: Range<usize>,
@@ -149,7 +147,7 @@ pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
 }
 
 /// Fixed public relation inputs for verifier ring-switch replay.
-pub struct RingSwitchReplay<'a, F: FieldCore, E> {
+pub struct RingSwitchReplay<'a, F: Field, E> {
     pub relation: &'a RingRelationInstance<F>,
     pub row_coefficients: &'a [E],
     pub lp: &'a LevelParams,
@@ -175,8 +173,8 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     transcript: &mut T,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
@@ -216,8 +214,8 @@ pub(crate) fn ring_switch_verifier_terminal<F, E, T, const D: usize>(
     terminal_parts: &TerminalWitnessTranscriptParts,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
@@ -239,8 +237,8 @@ fn ring_switch_verifier_core<F, E, T, const D: usize>(
     relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingSwitchVerifyCoreOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let relation = replay.relation;
@@ -336,8 +334,8 @@ pub fn prepare_relation_matrix_evaluator<F, E, const D: usize>(
     witness_ring_len: Option<usize>,
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
 {
     let relation = replay.relation;
     let lp = replay.lp;
@@ -381,8 +379,8 @@ fn prepare_relation_matrix_evaluator_multi_group<F, E, const D: usize>(
     setup_artifact: SetupContributionArtifact<E>,
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
 {
     let relation = replay.relation;
     let lp = replay.lp;
@@ -520,8 +518,8 @@ fn prepare_challenge_evals<F, E, const D: usize>(
     num_blocks: usize,
 ) -> Result<PreparedChallengeEvals<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
 {
     match challenges {
         Challenges::Sparse {
@@ -571,8 +569,8 @@ fn prepare_relation_matrix_evaluator_inner<F, E, const D: usize>(
     setup_artifact: SetupContributionArtifact<E>,
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
 {
     validate_role_dispatch::<D>(lp.role_dims, RingRole::Inner)?;
     reject_mixed_d_multi_chunk::<D>(
@@ -663,7 +661,7 @@ fn reject_mixed_d_multi_chunk<const D: usize>(
 }
 
 #[cfg(test)]
-pub(crate) fn build_setup_contribution_groups<F: FieldCore>(
+pub(crate) fn build_setup_contribution_groups<F: Field>(
     chunk_layout: &WitnessLayout,
     groups: &[RelationMatrixGroupEvaluator<F>],
 ) -> Result<Vec<SetupContributionGroupInputs>, AkitaError> {
@@ -712,8 +710,8 @@ fn precompute_setup_contribution_eq_cache<E, F>(
     x_challenges: &[E],
 ) -> Result<SetupContributionEqCache<E, F>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore,
+    F: Field + CanonicalEncoding,
+    E: Field,
 {
     let mut cache = SetupContributionEqCache {
         eq_low: None,
@@ -762,7 +760,7 @@ where
     Ok(cache)
 }
 
-impl<E: FieldCore> RelationMatrixEvaluator<E> {
+impl<E: Field> RelationMatrixEvaluator<E> {
     fn group_chunks(
         &self,
         group: &RelationMatrixGroupEvaluator<E>,
@@ -788,8 +786,8 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         setup_claim: Option<E>,
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + CanonicalField,
-        E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
     {
         let _ring_bits = validate_ring_dispatch::<D>()?;
         validate_role_dispatch::<D>(self.role_dims, RingRole::Inner)?;

@@ -20,9 +20,9 @@ use akita_types::{assemble_relation_rhs, relation_rhs_layout_for, RingVec, RingV
 use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, RelationMatrixRowLayout};
 use akita_types::{LevelParams, LevelParamsLike, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
-use jolt_field::parallel::*;
-use jolt_field::unreduced::{HasWide, ReduceTo};
-use jolt_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
+use jolt_field::solinas::parallel::*;
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, Field, Ring};
 
 use super::fold_grind::{self, ProverTranscriptGrind};
 use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
@@ -36,7 +36,7 @@ fn absorb_terminal_e_folded_fields<F, T>(
     e_folded: &RingVec<F>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     T: Transcript<F>,
 {
     let bytes = akita_types::e_folded_segment_bytes::<F>(e_folded)?;
@@ -49,12 +49,15 @@ where
     Ok(())
 }
 
-fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
+fn decompose_e_hat<F: Field + CanonicalEncoding, const D: usize>(
     pre_folded_e: &[&[CyclotomicRing<F, D>]],
     depth_open: usize,
     log_basis: u32,
 ) -> Result<DigitBlocks, AkitaError> {
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
     let total_rows: usize = pre_folded_e.iter().map(|rows| rows.len()).sum();
     let mut e_hat = DigitBlocks::zeroed(vec![depth_open; total_rows], D)?;
@@ -82,7 +85,7 @@ fn flatten_commitment_hints_for_ring_relation<F>(
     group_sizes: &[usize],
 ) -> Result<AkitaCommitmentHint<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
 {
     if hints.len() != group_sizes.len() {
         return Err(AkitaError::InvalidInput(
@@ -125,7 +128,7 @@ fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError
     DigitBlocks::new(digits, block_sizes, stride)
 }
 
-pub(super) fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
+pub(super) fn aggregate_decompose_fold_witnesses<F: Field, const D: usize>(
     witnesses: Vec<DecomposeFoldWitness<F>>,
 ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
     let Some((first, rest)) = witnesses.split_first() else {
@@ -188,7 +191,7 @@ pub(super) fn build_point_decompose_fold_witness<F, P, B, const D: usize>(
     params: &(impl LevelParamsLike + ?Sized),
 ) -> Result<DecomposeFoldWitness<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     P: RootOpeningSource<F, D>,
     B: crate::compute::ComputeBackendSetup<F>
         + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
@@ -289,34 +292,34 @@ where
 }
 
 /// Convert scalar or multi-group opening-point carriers into the multi-group internal form.
-pub trait IntoRingOpeningPointVec<F: FieldCore> {
+pub trait IntoRingOpeningPointVec<F: Field> {
     fn into_vec(self) -> Vec<RingOpeningPoint<F>>;
 }
 
-impl<F: FieldCore> IntoRingOpeningPointVec<F> for RingOpeningPoint<F> {
+impl<F: Field> IntoRingOpeningPointVec<F> for RingOpeningPoint<F> {
     fn into_vec(self) -> Vec<RingOpeningPoint<F>> {
         vec![self]
     }
 }
 
-impl<F: FieldCore> IntoRingOpeningPointVec<F> for Vec<RingOpeningPoint<F>> {
+impl<F: Field> IntoRingOpeningPointVec<F> for Vec<RingOpeningPoint<F>> {
     fn into_vec(self) -> Vec<RingOpeningPoint<F>> {
         self
     }
 }
 
 /// Convert scalar or multi-group multiplier-point carriers into the multi-group internal form.
-pub trait IntoRingMultiplierOpeningPointVec<F: FieldCore> {
+pub trait IntoRingMultiplierOpeningPointVec<F: Field> {
     fn into_vec(self) -> Vec<RingMultiplierOpeningPoint<F>>;
 }
 
-impl<F: FieldCore> IntoRingMultiplierOpeningPointVec<F> for RingMultiplierOpeningPoint<F> {
+impl<F: Field> IntoRingMultiplierOpeningPointVec<F> for RingMultiplierOpeningPoint<F> {
     fn into_vec(self) -> Vec<RingMultiplierOpeningPoint<F>> {
         vec![self]
     }
 }
 
-impl<F: FieldCore> IntoRingMultiplierOpeningPointVec<F> for Vec<RingMultiplierOpeningPoint<F>> {
+impl<F: Field> IntoRingMultiplierOpeningPointVec<F> for Vec<RingMultiplierOpeningPoint<F>> {
     fn into_vec(self) -> Vec<RingMultiplierOpeningPoint<F>> {
         self
     }
@@ -330,7 +333,7 @@ fn compute_v_rows<F, B, const D: usize>(
     log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     B: DigitRowsComputeBackend<F>,
 {
     let rows = backend.digit_rows::<D>(prepared, row_len, e_hat.typed_planes::<D>()?, log_basis)?;
@@ -354,7 +357,7 @@ fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
     relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     T: Transcript<F>,
     RB: DigitRowsComputeBackend<F>,
 {
@@ -484,13 +487,12 @@ impl RingRelationProver {
         terminal_tail_t_vectors: Option<usize>,
     ) -> Result<(RingRelationInstance<F>, RingRelationWitness<F>), AkitaError>
     where
-        F: FieldCore
-            + CanonicalField
-            + FromPrimitiveInt
-            + HasWide
+        F: Field
+            + CanonicalEncoding
+            + Ring
+            + Unreduced
             + akita_serialization::AkitaSerialize
             + 'static,
-        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
         PointF: Clone,
         T: Transcript<F> + ProverTranscriptGrind<F>,
         P: RootOpeningSource<F, 32>

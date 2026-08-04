@@ -3,8 +3,14 @@ use akita_types::DigitBlocks;
 
 /// Convert a field element to a centered signed byte when it fits.
 #[inline(always)]
-pub fn try_centered_i8<F: CanonicalField>(coeff: F, q: u128, half_q: u128) -> Option<i8> {
-    let canonical = coeff.to_canonical_u128();
+pub fn try_centered_i8<F: Field + CanonicalEncoding>(
+    coeff: F,
+    q: u128,
+    half_q: u128,
+) -> Option<i8> {
+    let canonical = coeff
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128");
     let centered = if canonical > half_q {
         -((q - canonical) as i128)
     } else {
@@ -18,7 +24,7 @@ pub fn try_centered_i8<F: CanonicalField>(coeff: F, q: u128, half_q: u128) -> Op
 }
 
 /// Basis-decompose a block of ring elements into `block.len() * num_digits` gadget components.
-pub fn decompose_block<F: FieldCore + CanonicalField, const D: usize>(
+pub fn decompose_block<F: Field + CanonicalEncoding, const D: usize>(
     block: &[CyclotomicRing<F, D>],
     num_digits: usize,
     log_basis: u32,
@@ -34,7 +40,7 @@ pub fn decompose_block<F: FieldCore + CanonicalField, const D: usize>(
 }
 
 /// Like [`decompose_block`] but outputs `[i8; D]` digit planes instead of ring elements.
-pub fn decompose_block_i8<F: FieldCore + CanonicalField, const D: usize>(
+pub fn decompose_block_i8<F: Field + CanonicalEncoding, const D: usize>(
     block: &[CyclotomicRing<F, D>],
     num_digits: usize,
     log_basis: u32,
@@ -45,7 +51,7 @@ pub fn decompose_block_i8<F: FieldCore + CanonicalField, const D: usize>(
 }
 
 /// Decompose each ring element in `rows` into `[i8; D]` digit planes.
-pub fn decompose_rows_i8<F: FieldCore + CanonicalField, const D: usize>(
+pub fn decompose_rows_i8<F: Field + CanonicalEncoding, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     num_digits: usize,
     log_basis: u32,
@@ -60,7 +66,7 @@ pub fn decompose_rows_i8<F: FieldCore + CanonicalField, const D: usize>(
 /// # Panics
 ///
 /// Panics if `out.len() != rows.len() * num_digits`.
-pub fn decompose_rows_i8_into<F: FieldCore + CanonicalField, const D: usize>(
+pub fn decompose_rows_i8_into<F: Field + CanonicalEncoding, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     out: &mut [[i8; D]],
     num_digits: usize,
@@ -74,7 +80,10 @@ pub fn decompose_rows_i8_into<F: FieldCore + CanonicalField, const D: usize>(
     if num_digits == 0 {
         return;
     }
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
     #[cfg(feature = "parallel")]
@@ -101,7 +110,7 @@ pub fn decompose_commit_blocks_into<F, const D: usize>(
     log_basis: u32,
 ) -> Result<DigitBlocks, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     let block_sizes: Vec<usize> = rows
         .iter()
@@ -140,7 +149,7 @@ fn decompose_commit_block_rows_into<F, const D: usize>(
     num_digits_open: usize,
     log_basis: u32,
 ) where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     if block_rows.iter().all(CyclotomicRing::is_zero) {
         debug_assert!(dst.iter().all(|plane| plane.iter().all(|&d| d == 0)));
@@ -153,7 +162,7 @@ fn decompose_commit_block_rows_into<F, const D: usize>(
 ///
 /// Debug builds round-trip check digits against `rows`; other callers should use
 /// [`decompose_rows_i8_into`] directly.
-pub fn decompose_commit_rows_i8_into<F: FieldCore + CanonicalField, const D: usize>(
+pub fn decompose_commit_rows_i8_into<F: Field + CanonicalEncoding, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     out: &mut [[i8; D]],
     num_digits: usize,
@@ -169,7 +178,7 @@ pub fn decompose_commit_rows_i8_into<F: FieldCore + CanonicalField, const D: usi
 }
 
 #[cfg(any(test, debug_assertions))]
-fn check_rows_i8_digit_planes<F: FieldCore + CanonicalField, const D: usize>(
+fn check_rows_i8_digit_planes<F: Field + CanonicalEncoding, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     digits: &[[i8; D]],
     num_digits: usize,
@@ -205,7 +214,7 @@ fn check_rows_i8_digit_planes<F: FieldCore + CanonicalField, const D: usize>(
 
 /// Test helper for inner-commitment digit round-trip checks.
 #[cfg(test)]
-pub fn check_decomposed_rows_i8_match<F: FieldCore + CanonicalField, const D: usize>(
+pub fn check_decomposed_rows_i8_match<F: Field + CanonicalEncoding, const D: usize>(
     inner: &crate::CommitInnerWitness<F>,
     n_a: usize,
     num_digits_open: usize,

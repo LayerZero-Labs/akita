@@ -16,8 +16,8 @@ use akita_types::{
     BatchedStage3Geometry, LevelParams, SetupContributionPlan, SetupIndexWeightEvaluator,
     SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
-use jolt_field::parallel::*;
-use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
 /// sumcheck for the setup contribution at `x_challenges`.
@@ -26,7 +26,7 @@ use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 /// evaluation plan and sumcheck round count from the ring-switch row
 /// evaluation, then call [`verify_batched_stage3`](Self::verify_batched_stage3)
 /// with the proof and transcript.
-pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
+pub(crate) struct SetupSumcheckVerifier<E: Field> {
     plan: SetupContributionPlan<E>,
     setup_index_weight_evaluator: Option<SetupIndexWeightEvaluator<E>>,
     alpha_pows: Vec<E>,
@@ -34,7 +34,7 @@ pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
     rounds: usize,
 }
 
-impl<E: FieldCore> SetupSumcheckVerifier<E> {
+impl<E: Field> SetupSumcheckVerifier<E> {
     /// Prepare the setup-product sumcheck verifier for the setup contribution
     /// at `x_challenges`.
     ///
@@ -49,7 +49,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         alpha: E,
     ) -> Result<Self, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
         let alpha_pows = scalar_powers(alpha, D);
@@ -123,8 +123,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         transcript: &mut T,
     ) -> Result<(Vec<E>, Vec<E>), AkitaError>
     where
-        F: FieldCore + CanonicalField,
-        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
+        F: Field + CanonicalEncoding,
+        E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
         if stage2_challenges.len() != witness_rounds {
@@ -177,7 +177,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         transcript: &mut T,
     ) -> Result<usize, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         T: Transcript<F>,
     {
         if ring_d == SETUP_OFFLOAD_D_SETUP {
@@ -226,8 +226,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         transcript: &mut T,
     ) -> Result<(Vec<E>, Vec<E>), AkitaError>
     where
-        F: FieldCore + CanonicalField,
-        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
+        F: Field + CanonicalEncoding,
+        E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
         let required = self.plan.required()?;
@@ -286,7 +286,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     }
 }
 
-fn setup_idx_eq_table<E: FieldCore>(
+fn setup_idx_eq_table<E: Field>(
     required: usize,
     rho_setup_idx: &[E],
 ) -> Result<Vec<E>, AkitaError> {
@@ -299,7 +299,7 @@ fn setup_idx_eq_table<E: FieldCore>(
     EqPolynomial::evals(rho_setup_idx)
 }
 
-fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, AkitaError> {
+fn ring_eq_table<E: Field, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, AkitaError> {
     if rho_y.len() != D.trailing_zeros() as usize {
         return Err(AkitaError::InvalidProof);
     }
@@ -313,7 +313,7 @@ fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, Ak
     Ok(eq_y)
 }
 
-fn eval_dense_table_with_eq<E: FieldCore>(evals: &[E], eq: &[E]) -> Result<E, AkitaError> {
+fn eval_dense_table_with_eq<E: Field>(evals: &[E], eq: &[E]) -> Result<E, AkitaError> {
     if evals.len() != eq.len() {
         return Err(AkitaError::InvalidSize {
             expected: evals.len(),
@@ -339,7 +339,7 @@ fn setup_mle_at_eq_tables<F, E, const D: usize>(
     eq_y: &[E],
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F> + jolt_field::MulBaseUnreduced<F>,
 {
     if required > setup_eval_len {

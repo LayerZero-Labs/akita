@@ -1,7 +1,7 @@
 use super::*;
 use akita_algebra::offset_eq::eval_offset_eq_interval;
 
-impl<E: FieldCore> SetupContributionPlan<E> {
+impl<E: Field> SetupContributionPlan<E> {
     /// Dense setup weight vector `setup_index_weight[i]`.
     ///
     /// For one commitment group, a packed setup position `i` receives
@@ -105,7 +105,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     }
 }
 
-impl<E: FieldCore> SetupContributionGroupPlan<E> {
+impl<E: Field> SetupContributionGroupPlan<E> {
     fn evaluate_setup_index_weight_mle_factored(
         &self,
         rho_setup_idx: &[E],
@@ -152,7 +152,7 @@ fn role_width_is_factored(rows: usize, width: usize) -> bool {
     rows == 0 || width.is_power_of_two()
 }
 
-fn role_setup_index_weight_mle<E: FieldCore>(
+fn role_setup_index_weight_mle<E: Field>(
     rho_setup_idx: &[E],
     row_weights: &[E],
     rows: usize,
@@ -185,7 +185,7 @@ fn role_setup_index_weight_mle<E: FieldCore>(
     Ok(row_eval * col_eval)
 }
 
-fn setup_index_weight_segment_mle<E: FieldCore>(
+fn setup_index_weight_segment_mle<E: Field>(
     rho_setup_idx: &[E],
     segment: &GroupSetupSegment<E>,
     e_eq: &[E],

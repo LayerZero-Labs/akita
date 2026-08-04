@@ -14,7 +14,7 @@ use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use jolt_field::FieldCore;
+use jolt_field::Field;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -374,12 +374,12 @@ impl AkitaDeserialize for SetupPrefixSlotId {
 
 /// Public commitment half of a setup-prefix slot, stored without `D` const generics.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupPrefixPublicCommitment<F: FieldCore> {
+pub struct SetupPrefixPublicCommitment<F: Field> {
     /// Commitment rows in flattened ring-coefficient form.
     pub rows: Vec<RingVec<F>>,
 }
 
-impl<F: FieldCore + Valid> Valid for SetupPrefixPublicCommitment<F> {
+impl<F: Field + Valid> Valid for SetupPrefixPublicCommitment<F> {
     fn check(&self) -> Result<(), SerializationError> {
         if self.rows.is_empty() {
             return Err(SerializationError::InvalidData(
@@ -410,7 +410,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixPublicCommitment<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixPublicCommitment<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for SetupPrefixPublicCommitment<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -438,7 +438,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixPublicCommitme
 
 impl<F> AkitaDeserialize for SetupPrefixPublicCommitment<F>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
 {
     type Context = ();
 
@@ -497,14 +497,14 @@ where
 
 /// Verifier-visible metadata for one setup-prefix slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupPrefixVerifierSlot<F: FieldCore> {
+pub struct SetupPrefixVerifierSlot<F: Field> {
     pub id: SetupPrefixSlotId,
     pub natural_len: usize,
     pub padded_len: usize,
     pub commitment: SetupPrefixPublicCommitment<F>,
 }
 
-impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierSlot<F> {
+impl<F: Field + Valid> Valid for SetupPrefixVerifierSlot<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.id.check()?;
         let id_n_prefix = n_prefix_from_commitment_params(&self.id.commitment_params)?;
@@ -537,7 +537,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierSlot<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierSlot<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierSlot<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -560,7 +560,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierSlot<F
 
 impl<F> AkitaDeserialize for SetupPrefixVerifierSlot<F>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
 {
     type Context = ();
 
@@ -601,7 +601,7 @@ where
 /// is re-asserted at runtime against `id.d_setup` and the per-row coefficient
 /// width (see [`Valid::check`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupPrefixSlot<F: FieldCore> {
+pub struct SetupPrefixSlot<F: Field> {
     pub id: SetupPrefixSlotId,
     pub natural_len: usize,
     pub padded_len: usize,
@@ -609,7 +609,7 @@ pub struct SetupPrefixSlot<F: FieldCore> {
     pub hint: AkitaCommitmentHint<F>,
 }
 
-impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
+impl<F: Field + Valid> Valid for SetupPrefixSlot<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.id.check()?;
         let id_n_prefix = n_prefix_from_commitment_params(&self.id.commitment_params)?;
@@ -645,7 +645,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixSlot<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for SetupPrefixSlot<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -670,7 +670,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixSlot<F> {
 
 impl<F> AkitaDeserialize for SetupPrefixSlot<F>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
 {
     type Context = ();
 
@@ -705,7 +705,7 @@ where
     }
 }
 
-impl<F: FieldCore> SetupPrefixSlot<F> {
+impl<F: Field> SetupPrefixSlot<F> {
     /// Strip prover-only hint material for verifier metadata.
     #[must_use]
     pub fn verifier_slot(&self) -> SetupPrefixVerifierSlot<F> {
@@ -720,11 +720,11 @@ impl<F: FieldCore> SetupPrefixSlot<F> {
 
 /// In-memory registry of prover-ready setup-prefix slots.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SetupPrefixProverRegistry<F: FieldCore> {
+pub struct SetupPrefixProverRegistry<F: Field> {
     slots: BTreeMap<SetupPrefixSlotId, SetupPrefixSlot<F>>,
 }
 
-impl<F: FieldCore> SetupPrefixProverRegistry<F> {
+impl<F: Field> SetupPrefixProverRegistry<F> {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -772,7 +772,7 @@ impl<F: FieldCore> SetupPrefixProverRegistry<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for SetupPrefixProverRegistry<F> {
+impl<F: Field + Valid> Valid for SetupPrefixProverRegistry<F> {
     fn check(&self) -> Result<(), SerializationError> {
         if self.slots.len() > MAX_SETUP_PREFIX_SLOTS {
             return Err(SerializationError::LengthLimitExceeded {
@@ -792,7 +792,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixProverRegistry<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixProverRegistry<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for SetupPrefixProverRegistry<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -819,7 +819,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixProverRegistry
 
 impl<F> AkitaDeserialize for SetupPrefixProverRegistry<F>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
 {
     type Context = ();
 
@@ -847,11 +847,11 @@ where
 
 /// In-memory registry of verifier-visible setup-prefix slots.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SetupPrefixVerifierRegistry<F: FieldCore> {
+pub struct SetupPrefixVerifierRegistry<F: Field> {
     slots: BTreeMap<SetupPrefixSlotId, SetupPrefixVerifierSlot<F>>,
 }
 
-impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
+impl<F: Field> SetupPrefixVerifierRegistry<F> {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -898,7 +898,7 @@ impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierRegistry<F> {
+impl<F: Field + Valid> Valid for SetupPrefixVerifierRegistry<F> {
     fn check(&self) -> Result<(), SerializationError> {
         if self.slots.len() > MAX_SETUP_PREFIX_SLOTS {
             return Err(SerializationError::LengthLimitExceeded {
@@ -918,7 +918,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierRegistry<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierRegistry<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierRegistry<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -945,7 +945,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierRegist
 
 impl<F> AkitaDeserialize for SetupPrefixVerifierRegistry<F>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
 {
     type Context = ();
 
@@ -1163,6 +1163,7 @@ fn read_limited_usize<R: Read>(
 mod tests {
     use super::*;
     use crate::{LevelParams, OpeningClaimsLayout, SisModulusFamily};
+    use akita_algebra::Zero;
     use akita_challenges::SparseChallengeConfig;
 
     fn sample_level_params() -> LevelParams {

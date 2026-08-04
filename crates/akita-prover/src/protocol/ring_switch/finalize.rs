@@ -28,8 +28,8 @@ pub fn ring_switch_finalize<F, E, T>(
     relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let dims = instance.role_dims();

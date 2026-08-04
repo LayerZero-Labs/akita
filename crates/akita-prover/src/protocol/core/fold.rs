@@ -5,8 +5,6 @@ use crate::compute::{
     RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
-use jolt_field::unreduced::ReduceTo;
-use jolt_field::AdditiveGroup;
 
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
 use akita_types::build_segment_typed_witness_from_groups;
@@ -15,7 +13,7 @@ use akita_types::CleartextWitnessShape;
 use akita_types::OpeningClaimsLayout;
 use akita_types::SegmentTypedWitnessGroupParts;
 
-fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
+fn trace_layout_for_instance<F: Field + CanonicalEncoding>(
     lp: &LevelParams,
     instance: &RingRelationInstance<F>,
     col_bits: usize,
@@ -43,7 +41,7 @@ fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
     Ok((segment, layout))
 }
 
-pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
+pub(in crate::protocol::core) struct PreparedFold<F: Field, E: Field> {
     pub(in crate::protocol::core) commitment: RingVec<F>,
     pub(in crate::protocol::core) instance: RingRelationInstance<F>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F>,
@@ -75,17 +73,16 @@ pub(in crate::protocol::core) fn prepare_fold_inner<'a, F, E, T, P, V, C, O, TS,
     terminal_tail_t_vectors: Option<usize>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + AkitaSerialize,
+    F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    F: RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    F: Field + 'static,
     P: RuntimeRootProvePoly<F>,
     V: FnOnce() -> Result<(), AkitaError>,
     TS: RuntimeTensorBackendFor<F, P, E>,
@@ -217,8 +214,8 @@ where
 /// Borrowed/owned argument bundle for [`finish_prepared_fold`].
 struct FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore,
+    F: Field + CanonicalEncoding,
+    E: Field,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
@@ -247,19 +244,12 @@ fn finish_prepared_fold<'a, 'p, F, E, T, Q, C, O, TS, R>(
     args: FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
-        + HasWide
-        + RandomSampling
-        + AkitaSerialize
-        + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize + 'static,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
@@ -448,12 +438,12 @@ where
 
 pub(in crate::protocol::core) type TerminalFoldResult<F, E> = TerminalLevelProof<F, E>;
 
-pub(in crate::protocol::core) enum FoldProveOutput<F: FieldCore, E: FieldCore> {
+pub(in crate::protocol::core) enum FoldProveOutput<F: Field, E: Field> {
     Intermediate(Box<ProveLevelOutput<F, E>>),
     Terminal(Box<TerminalFoldResult<F, E>>),
 }
 
-impl<F: FieldCore, E: FieldCore> FoldProveOutput<F, E> {
+impl<F: Field, E: Field> FoldProveOutput<F, E> {
     pub(in crate::protocol::core) fn get_intermediate(
         self,
     ) -> Result<ProveLevelOutput<F, E>, AkitaError> {
@@ -506,19 +496,12 @@ pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, Cfg>(
     terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<FoldProveOutput<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField
-        + AkitaSerialize,
+    F: Field + CanonicalEncoding + Unreduced + PseudoMersenne + AkitaSerialize,
     E: ExtField<F>
         + FpExtEncoding<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
@@ -614,7 +597,7 @@ where
         lp.evaluation_trace_row_index_for_layout(relation_matrix_row_layout, opening_batch)?;
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     let trace_opening_claim = evaluation_trace_weight * prepared_fold.trace_eval_target;
-    ensure_trace_stage2_supported(E::EXT_DEGREE)?;
+    ensure_trace_stage2_supported(E::DEGREE)?;
     let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
         if lp.has_precommitted_groups() {
             Some(akita_types::build_multi_group_root_stage2_trace_table::<
@@ -808,7 +791,7 @@ pub(in crate::protocol::core) fn bind_next_witness_for_ring_switch<F, T>(
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<BoundNextWitness<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     T: Transcript<F>,
 {
     if is_terminal_fold {
@@ -888,8 +871,8 @@ pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
     rs: &RingSwitchOutput<E>,
 ) -> Result<(AkitaStage1Proof<E>, Vec<E>, E), AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -920,8 +903,8 @@ fn prove_stage2<F, E, T>(
     trace_opening_claim: E,
 ) -> Result<Stage2ProveResult<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
@@ -972,8 +955,8 @@ pub(in crate::protocol::core) fn prove_stage3<F, E, T>(
     transcript: &mut T,
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F> + AkitaSerialize,
     T: Transcript<F>,
 {
     match setup_contribution_mode {

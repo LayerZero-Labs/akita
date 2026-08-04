@@ -91,7 +91,7 @@ impl PartialOrd for SmallNat {
 /// Conservative maximum number of products that may be accumulated in one CRT
 /// accumulator before Garner reconstruction.
 pub(super) fn max_safe_crt_accumulation_width<
-    F: CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -150,7 +150,7 @@ fn require_safe_width<F, W, const K: usize, const D: usize>(
     role: &str,
 ) -> Result<usize, AkitaError>
 where
-    F: CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
 {
     max_safe_crt_accumulation_width::<F, W, K, D>(params, rhs_abs_bound).ok_or_else(|| {
@@ -166,7 +166,7 @@ fn capacity_profile_from_params<F, W, const K: usize, const D: usize>(
     limb_bits: u32,
 ) -> Result<CrtI8CapacityProfile, AkitaError>
 where
-    F: CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
 {
     Ok(CrtI8CapacityProfile {
@@ -197,7 +197,7 @@ where
 /// balanced digit (`log_basis = 6`) and raw signed-i8 roles for the selected
 /// profile. Generated-table tests separately prove committed schedules stay
 /// within these universal bounds.
-pub(crate) fn selected_crt_i8_capacity_profile<F: CanonicalField, const D: usize>(
+pub(crate) fn selected_crt_i8_capacity_profile<F: Field + CanonicalEncoding, const D: usize>(
 ) -> Result<CrtI8CapacityProfile, AkitaError> {
     match select_crt_ntt_params::<F, D>()? {
         ProtocolCrtNttParams::Q32(params) => {
@@ -223,12 +223,15 @@ pub(crate) fn selected_crt_i8_capacity_profile<F: CanonicalField, const D: usize
 /// bounded by `floor(q/2)`, not the full modulus `q`. Basing the capacity bound
 /// on `q` would double the chunking unnecessarily.
 #[inline(always)]
-fn setup_coeff_abs_bound<F: CanonicalField>() -> u128 {
-    let modulus = (-F::one()).to_canonical_u128() + 1;
+fn setup_coeff_abs_bound<F: Field + CanonicalEncoding>() -> u128 {
+    let modulus = (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1;
     modulus / 2
 }
 
-fn crt_width_is_safe<F: CanonicalField, const D: usize>(
+fn crt_width_is_safe<F: Field + CanonicalEncoding, const D: usize>(
     crt_product: &SmallNat,
     width: usize,
     rhs_abs_bound: u64,
@@ -245,7 +248,7 @@ fn crt_width_is_safe<F: CanonicalField, const D: usize>(
 }
 
 pub(super) fn safe_crt_chunk_width<
-    F: CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,

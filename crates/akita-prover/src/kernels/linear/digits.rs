@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn mat_vec_mul_digits_i8_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -15,7 +15,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params<
 }
 
 pub(super) fn mat_vec_mul_dense_digits_i8_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -29,7 +29,7 @@ pub(super) fn mat_vec_mul_dense_digits_i8_with_params<
 }
 
 pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -137,7 +137,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
 }
 
 pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -215,7 +215,7 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
     )
 }
 pub(super) fn mat_vec_mul_raw_i8_strided_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,

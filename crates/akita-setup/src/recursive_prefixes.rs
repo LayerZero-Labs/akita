@@ -5,7 +5,7 @@ use akita_prover::{
     CpuBackend,
 };
 use akita_types::{dispatch_for_field, SetupPrefixSlotId, SETUP_OFFLOAD_D_SETUP};
-use jolt_field::{CanonicalField, FieldCore, RandomSampling};
+use jolt_field::{CanonicalEncoding, Field};
 use std::collections::BTreeSet;
 
 fn commit_setup_prefix_slot<F, B>(
@@ -15,7 +15,7 @@ fn commit_setup_prefix_slot<F, B>(
     id: &SetupPrefixSlotId,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: Field + CanonicalEncoding,
     B: CommitmentComputeBackend<F>,
 {
     if id.d_setup != SETUP_OFFLOAD_D_SETUP {
@@ -53,7 +53,7 @@ pub(crate) fn materialize_setup_prefix_slots<F, B>(
     slot_ids: &[SetupPrefixSlotId],
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: Field + CanonicalEncoding,
     B: CommitmentComputeBackend<F>,
 {
     for slot_id in slot_ids {
@@ -62,7 +62,7 @@ where
     Ok(())
 }
 
-pub(crate) fn validate_prefix_registry_complete<F: FieldCore>(
+pub(crate) fn validate_prefix_registry_complete<F: Field>(
     registry: &akita_types::SetupPrefixProverRegistry<F>,
     required_ids: &[SetupPrefixSlotId],
 ) -> Result<(), AkitaError> {
@@ -84,7 +84,7 @@ pub(crate) fn populate_required_setup_prefix_slots<F, Cfg>(
     max_num_batched_polys: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: Field + CanonicalEncoding,
     Cfg: CommitmentConfig<Field = F>,
 {
     if !Cfg::recursive_setup_planning() {

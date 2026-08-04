@@ -12,9 +12,8 @@ use crate::backend::{
 use crate::RootTensorProjectionPoly;
 use akita_error::AkitaError;
 use akita_types::CleartextWitnessProof;
-use jolt_field::unreduced::{HasWide, ReduceTo};
-use jolt_field::RandomSampling;
-use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// D-free shape metadata every root polynomial exposes.
 ///
@@ -30,7 +29,7 @@ use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 /// to commit it.
 pub trait RootPolyMeta<F>: Clone + Send + Sync
 where
-    F: FieldCore,
+    F: Field,
 {
     /// Total number of ring elements in the polynomial.
     fn num_ring_elems(&self) -> usize;
@@ -55,7 +54,7 @@ where
 /// PCS/batch-facing code should prefer the D-free [`RootPolyMeta`] instead.
 pub trait RootPolyShape<F, const D: usize>: Clone + Send + Sync
 where
-    F: FieldCore,
+    F: Field,
 {
     /// Total number of ring elements in the polynomial.
     fn num_ring_elems(&self) -> usize;
@@ -89,7 +88,7 @@ where
 /// Capability: expose a borrowed commit source view for a `RootCommitKernel`.
 pub trait RootCommitSource<F, const D: usize>: RootPolyShape<F, D>
 where
-    F: FieldCore,
+    F: Field,
 {
     /// Borrowed commit view consumed by `RootCommitKernel`.
     type CommitView<'a>
@@ -103,7 +102,7 @@ where
 /// Capability: expose borrowed opening views for the opening fold kernels.
 pub trait RootOpeningSource<F, const D: usize>: RootPolyShape<F, D>
 where
-    F: FieldCore,
+    F: Field,
 {
     /// Borrowed single-poly opening view consumed by `OpeningFoldKernel`.
     type OpeningView<'a>
@@ -125,7 +124,7 @@ where
 /// Capability: expose borrowed tensor views for the tensor projection kernels.
 pub trait RootTensorSource<F, const D: usize>: RootPolyShape<F, D>
 where
-    F: FieldCore,
+    F: Field,
 {
     /// Borrowed single-poly tensor view consumed by `TensorProjectionKernel`.
     type TensorView<'a>
@@ -157,7 +156,7 @@ where
 /// capability bound.
 pub trait DirectRootWitnessSource<F, const D: usize>: RootPolyShape<F, D>
 where
-    F: FieldCore,
+    F: Field,
 {
     /// Materialize a direct root witness payload.
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError>;
@@ -222,13 +221,13 @@ impl<'a, P> RootCommitPolys<'a, P> {
 pub trait RootCommitPoly<F, const D: usize>:
     RootPolyShape<F, D> + RootCommitSource<F, D> + RootTensorSource<F, D>
 where
-    F: FieldCore,
+    F: Field,
 {
 }
 
 impl<F, const D: usize, P> RootCommitPoly<F, D> for P
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyShape<F, D> + RootCommitSource<F, D> + RootTensorSource<F, D>,
 {
 }
@@ -246,8 +245,7 @@ where
 /// source types are expressed through one symmetric concept.
 pub trait CommitBackendFor<F, P, const D: usize>: CommitmentComputeBackend<F>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootCommitSource<F, D>,
     Self: for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
 {
@@ -255,8 +253,7 @@ where
 
 impl<F, P, const D: usize, B> CommitBackendFor<F, P, D> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootCommitSource<F, D>,
     B: CommitmentComputeBackend<F>
         + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
@@ -269,13 +266,13 @@ pub trait RingSwitchProveBackend<F, const D: usize>:
     + for<'a> RingSwitchRelationKernel<RingSwitchRelationView<'a, D>, F, D>
     + for<'a> RingSwitchQuotientKernel<RingSwitchQuotientView<'a, D>, F, D>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
 }
 
 impl<F, const D: usize, B> RingSwitchProveBackend<F, D> for B
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     B: RingSwitchComputeBackend<F>
         + for<'a> RingSwitchRelationKernel<RingSwitchRelationView<'a, D>, F, D>
         + for<'a> RingSwitchQuotientKernel<RingSwitchQuotientView<'a, D>, F, D>,
@@ -289,13 +286,13 @@ pub trait RuntimeRingSwitchProveBackend<F>:
     + RingSwitchProveBackend<F, 128>
     + RingSwitchProveBackend<F, 256>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
 }
 
 impl<F, B> RuntimeRingSwitchProveBackend<F> for B
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     B: RingSwitchProveBackend<F, 32>
         + RingSwitchProveBackend<F, 64>
         + RingSwitchProveBackend<F, 128>
@@ -315,15 +312,13 @@ pub trait SuffixOpeningProveBackend<F>:
     + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 128>
     + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 256>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
 {
 }
 
 impl<F, B> SuffixOpeningProveBackend<F> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     B: OpeningProveBackendFor<F, RecursiveWitnessFlat, 32>
         + OpeningProveBackendFor<F, RecursiveWitnessFlat, 64>
         + OpeningProveBackendFor<F, RecursiveWitnessFlat, 128>
@@ -347,16 +342,14 @@ pub trait SuffixTensorProveBackend<F, E>:
     + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 128>
     + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 256>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
 {
 }
 
 impl<F, E, B> SuffixTensorProveBackend<F, E> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     B: TensorBackendFor<F, RecursiveWitnessFlat, E, 32>
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
@@ -373,8 +366,7 @@ where
 /// source `P` (evaluate/fold and batched decompose-fold).
 pub trait OpeningProveBackendFor<F, P, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootOpeningSource<F, D>,
     Self: for<'a> OpeningFoldKernel<<P as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>
         + for<'a> OpeningBatchKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>,
@@ -383,8 +375,7 @@ where
 
 impl<F, P, const D: usize, B> OpeningProveBackendFor<F, P, D> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F>
         + for<'a> OpeningFoldKernel<<P as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>
@@ -396,8 +387,7 @@ where
 /// batched) over a single source `P` at extension-field opening point `E`.
 pub trait TensorBackendFor<F, P, E, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootTensorSource<F, D>,
     Self: for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>
@@ -412,8 +402,7 @@ where
 
 impl<F, P, E, const D: usize, B> TensorBackendFor<F, P, E, D> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootTensorSource<F, D>,
     B: ComputeBackendSetup<F>
@@ -434,8 +423,7 @@ where
 /// the full [`TensorBackendFor`] bundle (single + batch).
 pub trait ProjectBackendFor<F, P, E, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootTensorSource<F, D>,
     Self: for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>,
@@ -444,8 +432,7 @@ where
 
 impl<F, P, E, const D: usize, B> ProjectBackendFor<F, P, E, D> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootTensorSource<F, D>,
     B: ComputeBackendSetup<F>
@@ -462,8 +449,7 @@ where
 pub trait ProveBackendFor<F, P, E, const D: usize>:
     OpeningProveBackendFor<F, P, D> + TensorBackendFor<F, P, E, D>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootOpeningSource<F, D> + RootTensorSource<F, D>,
 {
@@ -471,8 +457,7 @@ where
 
 impl<F, P, E, const D: usize, B> ProveBackendFor<F, P, E, D> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootOpeningSource<F, D> + RootTensorSource<F, D>,
     B: OpeningProveBackendFor<F, P, D> + TensorBackendFor<F, P, E, D>,
@@ -494,8 +479,7 @@ where
 /// [`RootProveBackend`]. `E` (tensor extension field) is not bounded `'static` here.
 pub trait RootCommitBackend<F, P, E, const D: usize>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootCommitPoly<F, D>,
     Self: CommitBackendFor<F, P, D>
@@ -506,8 +490,7 @@ where
 
 impl<F, P, E, const D: usize, B> RootCommitBackend<F, P, E, D> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootCommitPoly<F, D>,
     B: CommitBackendFor<F, P, D>
@@ -522,13 +505,13 @@ where
 pub trait RootProvePoly<F, const D: usize>:
     RootOpeningSource<F, D> + RootTensorSource<F, D> + DirectRootWitnessSource<F, D>
 where
-    F: FieldCore,
+    F: Field,
 {
 }
 
 impl<F, const D: usize, P> RootProvePoly<F, D> for P
 where
-    F: FieldCore,
+    F: Field,
     P: RootOpeningSource<F, D> + RootTensorSource<F, D> + DirectRootWitnessSource<F, D>,
 {
 }
@@ -548,13 +531,13 @@ pub trait RuntimeRootProvePoly<F>:
     + RootProvePoly<F, 128>
     + RootProvePoly<F, 256>
 where
-    F: FieldCore,
+    F: Field,
 {
 }
 
 impl<F, P> RuntimeRootProvePoly<F> for P
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyMeta<F>
         + RootProvePoly<F, 32>
         + RootProvePoly<F, 64>
@@ -571,13 +554,13 @@ pub trait RuntimeRootCommitPoly<F>:
     + RootCommitPoly<F, 128>
     + RootCommitPoly<F, 256>
 where
-    F: FieldCore,
+    F: Field,
 {
 }
 
 impl<F, P> RuntimeRootCommitPoly<F> for P
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyMeta<F>
         + RootCommitPoly<F, 32>
         + RootCommitPoly<F, 64>
@@ -594,8 +577,7 @@ pub trait RuntimeOpeningProveBackendFor<F, P>:
     + OpeningProveBackendFor<F, P, 128>
     + OpeningProveBackendFor<F, P, 256>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootOpeningSource<F, 32>
         + RootOpeningSource<F, 64>
         + RootOpeningSource<F, 128>
@@ -605,8 +587,7 @@ where
 
 impl<F, P, B> RuntimeOpeningProveBackendFor<F, P> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootOpeningSource<F, 32>
         + RootOpeningSource<F, 64>
         + RootOpeningSource<F, 128>
@@ -626,8 +607,7 @@ pub trait RuntimeTensorBackendFor<F, P, E>:
     + TensorBackendFor<F, P, E, 128>
     + TensorBackendFor<F, P, E, 256>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootTensorSource<F, 32>
         + RootTensorSource<F, 64>
@@ -638,8 +618,7 @@ where
 
 impl<F, P, E, B> RuntimeTensorBackendFor<F, P, E> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootTensorSource<F, 32>
         + RootTensorSource<F, 64>
@@ -665,8 +644,7 @@ pub trait RuntimeCommitBackendFor<F, P>:
     + for<'a> RootCommitKernel<<P as RootCommitSource<F, 128>>::CommitView<'a>, F, 128>
     + for<'a> RootCommitKernel<<P as RootCommitSource<F, 256>>::CommitView<'a>, F, 256>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
         + RootCommitSource<F, 128>
@@ -676,8 +654,7 @@ where
 
 impl<F, P, B> RuntimeCommitBackendFor<F, P> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
         + RootCommitSource<F, 128>
@@ -698,8 +675,7 @@ pub trait RuntimeRootCommitBackend<F, P, E>:
     + RootCommitBackend<F, P, E, 128>
     + RootCommitBackend<F, P, E, 256>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RuntimeRootCommitPoly<F>,
 {
@@ -707,8 +683,7 @@ where
 
 impl<F, P, E, B> RuntimeRootCommitBackend<F, P, E> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RuntimeRootCommitPoly<F>,
     B: RootCommitBackend<F, P, E, 32>
@@ -726,8 +701,7 @@ pub trait RuntimeProveBackendFor<F, P, E>:
     + ProveBackendFor<F, P, E, 128>
     + ProveBackendFor<F, P, E, 256>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RuntimeRootProvePoly<F>,
 {
@@ -735,8 +709,7 @@ where
 
 impl<F, P, E, B> RuntimeProveBackendFor<F, P, E> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RuntimeRootProvePoly<F>,
     B: ProveBackendFor<F, P, E, 32>
@@ -768,8 +741,7 @@ where
 /// projection), so both source types are expressed through one symmetric concept.
 pub trait RootProveBackend<F, P, E, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootProvePoly<F, D>,
     Self: ProveBackendFor<F, P, E, D> + ProveBackendFor<F, RootTensorProjectionPoly<F>, E, D>,
@@ -778,8 +750,7 @@ where
 
 impl<F, P, E, const D: usize, B> RootProveBackend<F, P, E, D> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootProvePoly<F, D>,
     B: ComputeBackendSetup<F>
@@ -796,8 +767,7 @@ pub const RECURSIVE_SUFFIX_RING_DIMENSIONS: &[usize] = &[32, 64, 128, 256];
 pub trait ProveFlowBackendFor<F, P, E, const RING_D: usize>:
     RootProveBackend<F, P, E, RING_D> + CommitmentComputeBackend<F>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootProvePoly<F, RING_D>,
 {
@@ -805,8 +775,7 @@ where
 
 impl<F, P, E, const RING_D: usize, B> ProveFlowBackendFor<F, P, E, RING_D> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RootProvePoly<F, RING_D>,
     B: RootProveBackend<F, P, E, RING_D> + CommitmentComputeBackend<F>,
@@ -824,8 +793,7 @@ pub trait RootProveFlowBackend<F, P, E>:
     + ProveFlowBackendFor<F, P, E, 128>
     + ProveFlowBackendFor<F, P, E, 256>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RuntimeRootProvePoly<F>,
 {
@@ -833,8 +801,7 @@ where
 
 impl<F, P, E, B> RootProveFlowBackend<F, P, E> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RuntimeRootProvePoly<F>,
     B: ProveFlowBackendFor<F, P, E, 32>
@@ -856,16 +823,14 @@ pub trait RuntimeRecursiveWitnessProveBackend<F, E>:
     + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 128>
     + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 256>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
 {
 }
 
 impl<F, E, B> RuntimeRecursiveWitnessProveBackend<F, E> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     B: ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 32>
         + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 64>
@@ -890,8 +855,7 @@ pub trait RecursiveProveBackend<F, P, E>:
     + RuntimeRecursiveWitnessProveBackend<F, E>
     + RuntimeRingSwitchProveBackend<F>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RuntimeRootProvePoly<F>,
 {
@@ -899,8 +863,7 @@ where
 
 impl<F, P, E, B> RecursiveProveBackend<F, P, E> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RuntimeRootProvePoly<F>,
     B: RootProveFlowBackend<F, P, E>
@@ -916,8 +879,7 @@ where
 /// `B: RecursiveProveBackend<F, P, E>`.
 pub trait ProveStackFor<F, P, E, C, O, TS, R>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RuntimeRootProvePoly<F>,
     C: ComputeBackendSetup<F>,
@@ -929,8 +891,7 @@ where
 
 impl<F, P, E, C, O, TS, R> ProveStackFor<F, P, E, C, O, TS, R> for ()
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: ExtField<F>,
     P: RuntimeRootProvePoly<F>,
     C: ComputeBackendSetup<F> + CommitmentComputeBackend<F>,
@@ -949,7 +910,7 @@ where
 
 impl<F, const D: usize, P> RootPolyShape<F, D> for &P
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyShape<F, D>,
 {
     fn num_ring_elems(&self) -> usize {
@@ -967,7 +928,7 @@ where
 
 impl<F, P> RootPolyMeta<F> for &P
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyMeta<F>,
 {
     fn num_ring_elems(&self) -> usize {

@@ -11,8 +11,8 @@ use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
 };
 use akita_error::AkitaError;
-use jolt_field::parallel::*;
-use jolt_field::{CanonicalField, FieldCore, HalvingField};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 use std::array::from_fn;
 use std::mem::size_of;
 

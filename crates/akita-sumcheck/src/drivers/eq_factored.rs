@@ -9,12 +9,12 @@ use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels;
 use akita_transcript::Transcript;
-use jolt_field::{CanonicalField, FieldCore};
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Advance the scaled claim state for one eq-factored sumcheck round.
 #[doc(hidden)]
 #[inline]
-pub fn advance_eq_factored_claim<E: FieldCore>(
+pub fn advance_eq_factored_claim<E: Field>(
     scaled_claim: E,
     claim_scale: E,
     l_at_0: E,
@@ -39,7 +39,7 @@ pub fn advance_eq_factored_claim<E: FieldCore>(
 pub trait EqFactoredSumcheckInstanceProverExt<E>:
     EqFactoredSumcheckInstanceProver<E> + Sized
 where
-    E: FieldCore,
+    E: Field,
 {
     /// Produce an eq-factored sumcheck proof.
     ///
@@ -59,7 +59,7 @@ where
         mut sample_challenge: S,
     ) -> Result<(EqFactoredSumcheckProof<E>, Vec<E>, E), AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         T: Transcript<F>,
         E: AkitaSerialize,
         S: FnMut(&mut T) -> E,
@@ -104,7 +104,7 @@ where
 
 impl<E, Inst> EqFactoredSumcheckInstanceProverExt<E> for Inst
 where
-    E: FieldCore,
+    E: Field,
     Inst: EqFactoredSumcheckInstanceProver<E>,
 {
 }
@@ -113,7 +113,7 @@ where
 pub trait EqFactoredSumcheckInstanceVerifierExt<E>:
     EqFactoredSumcheckInstanceVerifier<E> + Sized
 where
-    E: FieldCore,
+    E: Field,
 {
     /// Verify an eq-factored sumcheck proof.
     ///
@@ -138,7 +138,7 @@ where
         mut sample_challenge: S,
     ) -> Result<Vec<E>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         T: Transcript<F>,
         E: AkitaSerialize,
         S: FnMut(&mut T) -> E,
@@ -187,7 +187,7 @@ where
 
 impl<E, Inst> EqFactoredSumcheckInstanceVerifierExt<E> for Inst
 where
-    E: FieldCore,
+    E: Field,
     Inst: EqFactoredSumcheckInstanceVerifier<E>,
 {
 }

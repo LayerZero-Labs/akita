@@ -1,4 +1,6 @@
 use super::*;
+use jolt_field::One;
+use jolt_field::Zero;
 
 /// Scale a per-polynomial root layout to a batched root layout without
 /// SIS-floor audit on the scaled B/D keys (synthetic fixture only).
@@ -56,8 +58,8 @@ fn fp32_ext4_ring_subfield_extension_point<E>(
 where
     E: jolt_field::AdditiveGroup + Copy,
 {
-    const EXT_DEGREE: usize = 4;
-    let trace_inner = (ring_d / EXT_DEGREE).trailing_zeros() as usize;
+    const DEGREE: usize = 4;
+    let trace_inner = (ring_d / DEGREE).trailing_zeros() as usize;
     let alpha_bits = ring_d.trailing_zeros() as usize;
     let mut point: Vec<E> = (0..num_vars).map(coord_at).collect();
     for idx in trace_inner..alpha_bits {
@@ -68,7 +70,7 @@ where
     point
 }
 
-fn prover_claims_at_vars<'a, E: FieldCore, P, CommitF: FieldCore>(
+fn prover_claims_at_vars<'a, E: Field, P, CommitF: Field>(
     point: &'a [E],
     group_num_vars: usize,
     polynomials: &'a [&'a P],
@@ -87,7 +89,7 @@ fn prover_claims_at_vars<'a, E: FieldCore, P, CommitF: FieldCore>(
         .expect("valid prover opening data")
 }
 
-fn verifier_claims_at_vars<'a, E: FieldCore, C>(
+fn verifier_claims_at_vars<'a, E: Field, C>(
     point: &[E],
     group_num_vars: usize,
     openings: &[E],
@@ -157,7 +159,7 @@ fn fp32_ext4_setup_matrix_size<F>(
     max_num_polynomials: usize,
 ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError>
 where
-    F: jolt_field::CanonicalField,
+    F: jolt_field::CanonicalEncoding,
 {
     let _field_marker = core::marker::PhantomData::<F>;
     let outer_width = lp
@@ -253,7 +255,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         let next_w_len = w_ring * Self::D;
         let witness_shape = akita_types::segment_typed_witness_shape_from_groups(
             &lp,
-            Self::Field::modulus_bits(),
+            Self::Field::MODULUS_BITS,
             [(
                 &lp as &dyn akita_types::LevelParamsLike,
                 opening_batch.num_total_polynomials(),
@@ -263,7 +265,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
             1,
         )?;
         let direct_bytes =
-            akita_types::direct_witness_bytes(Self::Field::modulus_bits(), &witness_shape);
+            akita_types::direct_witness_bytes(Self::Field::MODULUS_BITS, &witness_shape);
         Ok(akita_types::Schedule {
             steps: vec![
                 Step::Fold(akita_types::FoldStep {
@@ -352,7 +354,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         let next_w_len = w_ring * Self::D;
         let witness_shape = akita_types::segment_typed_witness_shape_from_groups(
             &lp,
-            Self::Field::modulus_bits(),
+            Self::Field::MODULUS_BITS,
             [(
                 &lp as &dyn akita_types::LevelParamsLike,
                 opening_batch.num_total_polynomials(),
@@ -362,7 +364,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
             1,
         )?;
         let direct_bytes =
-            akita_types::direct_witness_bytes(Self::Field::modulus_bits(), &witness_shape);
+            akita_types::direct_witness_bytes(Self::Field::MODULUS_BITS, &witness_shape);
         Ok(akita_types::Schedule {
             steps: vec![
                 Step::Fold(akita_types::FoldStep {

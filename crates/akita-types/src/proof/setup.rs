@@ -8,8 +8,8 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 #[allow(unused_imports)]
-use jolt_field::parallel::*;
-use jolt_field::{FieldCore, RandomSampling};
+use jolt_field::solinas::parallel::*;
+use jolt_field::Field;
 use rand_core::{CryptoRng, RngCore};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
@@ -78,7 +78,7 @@ impl AkitaSetupSeed {
 /// Base role matrices (A, B, D) are packed row/column prefix views of
 /// `shared_matrix`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaExpandedSetup<F: FieldCore> {
+pub struct AkitaExpandedSetup<F: Field> {
     /// Setup seed and runtime layout metadata.
     pub seed: AkitaSetupSeed,
     /// Shared 1D flat backing vector.
@@ -87,14 +87,14 @@ pub struct AkitaExpandedSetup<F: FieldCore> {
 
 /// Verifier setup artifact derived from prover setup.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaVerifierSetup<F: FieldCore> {
+pub struct AkitaVerifierSetup<F: Field> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Public setup-prefix commitment metadata for setup-claim offloading.
     pub prefix_slots: SetupPrefixVerifierRegistry<F>,
 }
 
-impl<F: FieldCore> AkitaExpandedSetup<F> {
+impl<F: Field> AkitaExpandedSetup<F> {
     /// Build an expanded setup from a trusted matrix the caller has already
     /// derived from `seed.public_matrix_seed`.
     ///
@@ -126,7 +126,7 @@ impl<F: FieldCore> AkitaExpandedSetup<F> {
 
 impl<F> AkitaExpandedSetup<F>
 where
-    F: FieldCore + RandomSampling + Valid,
+    F: Field + Valid,
 {
     /// Build an expanded setup from untrusted parts and verify the materialized
     /// matrix against the public seed.
@@ -166,7 +166,7 @@ pub fn sample_public_matrix_seed() -> PublicMatrixSeed {
 /// a prefix of any vector of length M > N derived from the same seed.
 #[tracing::instrument(skip_all, name = "derive_public_matrix_flat")]
 #[must_use]
-pub fn derive_public_matrix_flat<F: FieldCore + RandomSampling, const D: usize>(
+pub fn derive_public_matrix_flat<F: Field, const D: usize>(
     total_ring_elements: usize,
     seed: &PublicMatrixSeed,
 ) -> FlatMatrix<F> {
@@ -191,7 +191,7 @@ pub fn derive_public_matrix_flat<F: FieldCore + RandomSampling, const D: usize>(
 ///
 /// Returns an error if either side is structurally malformed or if the matrix
 /// generation dimension / length differs from the seed.
-pub fn validate_public_matrix_shape_matches_seed<F: FieldCore + Valid>(
+pub fn validate_public_matrix_shape_matches_seed<F: Field + Valid>(
     shared_matrix: &FlatMatrix<F>,
     seed: &AkitaSetupSeed,
 ) -> Result<(), SerializationError> {
@@ -218,7 +218,7 @@ pub fn validate_public_matrix_shape_matches_seed<F: FieldCore + Valid>(
 ///
 /// Returns an error if the matrix shape is malformed or if any coefficient
 /// differs from the seed-derived public matrix.
-pub fn validate_public_matrix_matches_seed<F: FieldCore + RandomSampling + Valid>(
+pub fn validate_public_matrix_matches_seed<F: Field + Valid>(
     shared_matrix: &FlatMatrix<F>,
     seed: &AkitaSetupSeed,
 ) -> Result<(), SerializationError> {
@@ -408,7 +408,7 @@ impl AkitaDeserialize for AkitaSetupSeed {
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid> Valid for AkitaExpandedSetup<F> {
+impl<F: Field + Valid> Valid for AkitaExpandedSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.seed.check()?;
         self.shared_matrix.check()?;
@@ -417,7 +417,7 @@ impl<F: FieldCore + RandomSampling + Valid> Valid for AkitaExpandedSetup<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaExpandedSetup<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for AkitaExpandedSetup<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -434,9 +434,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaExpandedSetup<F> {
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for AkitaExpandedSetup<F>
-{
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for AkitaExpandedSetup<F> {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -465,14 +463,14 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> Aki
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid> Valid for AkitaVerifierSetup<F> {
+impl<F: Field + Valid> Valid for AkitaVerifierSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
         self.prefix_slots.check()
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaVerifierSetup<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for AkitaVerifierSetup<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         writer: W,
@@ -488,9 +486,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaVerifierSetup<F> {
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for AkitaVerifierSetup<F>
-{
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for AkitaVerifierSetup<F> {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
         reader: R,
@@ -519,6 +515,7 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> Aki
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_algebra::Zero;
     use jolt_field::{Fp64, Prime128Offset275};
 
     type F = Prime128Offset275;

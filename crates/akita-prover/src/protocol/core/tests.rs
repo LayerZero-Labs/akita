@@ -6,6 +6,7 @@ use akita_types::{
     OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
     PolynomialGroupLayout,
 };
+use jolt_field::Zero;
 use jolt_field::{Fp32, FpExt2, NegOneNr};
 
 type F = Fp32<251>;
@@ -46,7 +47,7 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 
     assert_eq!(
         proved.reduction.proof.partials.len(),
-        <E as ExtField<F>>::EXT_DEGREE
+        <E as ExtField<F>>::DEGREE
     );
     assert_eq!(proved.reduction.proof.num_rounds(), point.len() - 1);
 }

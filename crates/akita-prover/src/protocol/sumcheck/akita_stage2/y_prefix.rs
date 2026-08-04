@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+impl<E: Field + Ring + Unreduced> AkitaStage2Prover<E> {
     #[tracing::instrument(
         skip_all,
         name = "AkitaStage2Prover::compute_round_compact_prefix_y_terms"
@@ -27,7 +27,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..self.live_x_cols,
-                || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
+                || ([E::zero(); 2], [E::SmallProduct::zero(); 6]),
                 |(mut virt, mut rel), x| {
                     let column_start = x * alpha_compact.len();
                     let column = &w_compact[column_start..column_start + alpha_compact.len()];
@@ -44,7 +44,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             block_size,
                             current_y_half,
                         );
-                        let mut inner_virt = [E::MulU64Accum::zero(); 2];
+                        let mut inner_virt = [E::SmallProduct::zero(); 2];
 
                         for pair_y in blk..blk_end {
                             let j_low = (j_base + pair_y) & (num_first - 1);
@@ -105,7 +105,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         } else {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..self.live_x_cols,
-                || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
+                || ([E::zero(); 3], [E::SmallProduct::zero(); 6]),
                 |(mut virt, mut rel), x| {
                     let column_start = x * alpha_compact.len();
                     let column = &w_compact[column_start..column_start + alpha_compact.len()];
@@ -122,7 +122,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             block_size,
                             current_y_half,
                         );
-                        let mut inner_virt = [E::MulU64Accum::zero(); 4];
+                        let mut inner_virt = [E::SmallProduct::zero(); 4];
 
                         for pair_y in blk..blk_end {
                             let j_low = (j_base + pair_y) & (num_first - 1);

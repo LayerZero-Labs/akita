@@ -25,9 +25,9 @@ pub struct RingVec<F> {
 /// matches the bytes the deleted typed `RingSliceSerializer` produced.
 ///
 /// Used by [`append_flat_coefficients`] and [`RingVec::append_flat_to_transcript`].
-pub struct FlatCoeffSerializer<'a, F: FieldCore>(pub &'a [F]);
+pub struct FlatCoeffSerializer<'a, F: Field>(pub &'a [F]);
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for FlatCoeffSerializer<'_, F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for FlatCoeffSerializer<'_, F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -64,7 +64,7 @@ pub fn append_flat_coefficients<F, T>(
     transcript: &mut T,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + AkitaSerialize + CanonicalField,
+    F: Field + AkitaSerialize + CanonicalEncoding,
     T: Transcript<F>,
 {
     if ring_dim == 0 || !coeffs.len().is_multiple_of(ring_dim) {
@@ -74,7 +74,7 @@ where
     Ok(())
 }
 
-impl<F: FieldCore> RingVec<F> {
+impl<F: Field> RingVec<F> {
     /// Wrap a single ring element.
     pub fn from_single<const D: usize>(r: &CyclotomicRing<F, D>) -> Self {
         Self {
@@ -308,7 +308,7 @@ impl<F: FieldCore> RingVec<F> {
         transcript: &mut T,
     ) -> Result<(), AkitaError>
     where
-        F: AkitaSerialize + CanonicalField,
+        F: AkitaSerialize + CanonicalEncoding,
     {
         if self.ring_dim > 0 && self.ring_dim != ring_dim {
             return Err(AkitaError::InvalidProof);
@@ -317,7 +317,7 @@ impl<F: FieldCore> RingVec<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for RingVec<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for RingVec<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -337,13 +337,13 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for RingVec<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for RingVec<F> {
+impl<F: Field + Valid> Valid for RingVec<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.coeffs.check()
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for RingVec<F> {
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for RingVec<F> {
     /// Number of field-element coefficients to read.
     type Context = usize;
     fn deserialize_with_mode<R: Read>(
@@ -444,14 +444,14 @@ impl<'a, F> RingView<'a, F> {
         transcript: &mut T,
     ) -> Result<(), AkitaError>
     where
-        F: FieldCore + AkitaSerialize + CanonicalField,
+        F: Field + AkitaSerialize + CanonicalEncoding,
         T: Transcript<F>,
     {
         append_flat_coefficients(label, self.coeffs, self.ring_dim, transcript)
     }
 }
 
-impl<F: FieldCore> RingVec<F> {
+impl<F: Field> RingVec<F> {
     /// Borrow this `RingVec` as a [`RingView`] using the stored `ring_dim`.
     ///
     /// # Errors

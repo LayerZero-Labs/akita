@@ -1,16 +1,14 @@
 use std::io::{Read, Write};
 
-use jolt_field::{
-    CanonicalField, FieldCore, Fp128, Fp32, Fp64, FpExt2, FpExt2Config, FpExt4, FpExt8,
-};
+use jolt_field::{CanonicalEncoding, Ext2Config, Field, Fp128, Fp32, Fp64, FpExt2, FpExt4, FpExt8};
 
 use crate::{AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate};
 
 macro_rules! impl_prime_serialization {
-    ($field:ident, $modulus:ty, $bytes:expr, $canonical:ident) => {
+    ($field:ident, $modulus:ty, $bytes:expr, $canonical:ident, $to_canonical:ident) => {
         impl<const P: $modulus> Valid for $field<P> {
             fn check(&self) -> Result<(), SerializationError> {
-                if self.to_canonical_u128() < P as u128 {
+                if (self.$to_canonical() as u128) < P as u128 {
                     Ok(())
                 } else {
                     Err(SerializationError::InvalidData(
@@ -26,7 +24,7 @@ macro_rules! impl_prime_serialization {
                 mut writer: W,
                 _compress: Compress,
             ) -> Result<(), SerializationError> {
-                let value: $modulus = self.to_canonical_u128() as $modulus;
+                let value: $modulus = self.$to_canonical();
                 value.serialize_with_mode(&mut writer, Compress::No)
             }
 
@@ -54,21 +52,21 @@ macro_rules! impl_prime_serialization {
                 Ok(if validate == Validate::Yes {
                     $field::<P>::$canonical(value)
                 } else {
-                    <$field<P> as CanonicalField>::from_canonical_u128_reduced(value as u128)
+                    <$field<P> as CanonicalEncoding>::from_u128_reduced(value as u128)
                 })
             }
         }
     };
 }
 
-impl_prime_serialization!(Fp32, u32, 4, from_canonical_u32);
-impl_prime_serialization!(Fp64, u64, 8, from_canonical_u64);
-impl_prime_serialization!(Fp128, u128, 16, from_canonical_u128);
+impl_prime_serialization!(Fp32, u32, 4, from_canonical_u32, to_canonical_u32);
+impl_prime_serialization!(Fp64, u64, 8, from_canonical_u64, to_canonical_u64);
+impl_prime_serialization!(Fp128, u128, 16, from_canonical_u128, to_canonical_u128);
 
 impl<F, C> Valid for FpExt2<F, C>
 where
-    F: FieldCore + Valid,
-    C: FpExt2Config<F>,
+    F: Field + Valid,
+    C: Ext2Config<F>,
 {
     fn check(&self) -> Result<(), SerializationError> {
         self.coeffs[0].check()?;
@@ -78,8 +76,8 @@ where
 
 impl<F, C> AkitaSerialize for FpExt2<F, C>
 where
-    F: FieldCore + AkitaSerialize,
-    C: FpExt2Config<F>,
+    F: Field + AkitaSerialize,
+    C: Ext2Config<F>,
 {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -97,8 +95,8 @@ where
 
 impl<F, C> AkitaDeserialize for FpExt2<F, C>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-    C: FpExt2Config<F>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
+    C: Ext2Config<F>,
 {
     type Context = ();
 
@@ -120,7 +118,7 @@ where
 
 macro_rules! impl_extension_serialization {
     ($extension:ident, $degree:expr) => {
-        impl<F: FieldCore + Valid> Valid for $extension<F> {
+        impl<F: Field + Valid> Valid for $extension<F> {
             fn check(&self) -> Result<(), SerializationError> {
                 for coefficient in &self.coeffs {
                     coefficient.check()?;
@@ -129,7 +127,7 @@ macro_rules! impl_extension_serialization {
             }
         }
 
-        impl<F: FieldCore + AkitaSerialize> AkitaSerialize for $extension<F> {
+        impl<F: Field + AkitaSerialize> AkitaSerialize for $extension<F> {
             fn serialize_with_mode<W: Write>(
                 &self,
                 mut writer: W,
@@ -151,7 +149,7 @@ macro_rules! impl_extension_serialization {
 
         impl<F> AkitaDeserialize for $extension<F>
         where
-            F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+            F: Field + Valid + AkitaDeserialize<Context = ()>,
         {
             type Context = ();
 
@@ -188,6 +186,7 @@ impl_extension_serialization!(FpExt8, 8);
 
 #[cfg(test)]
 mod tests {
+    use jolt_field::Ring;
     use jolt_field::{Fp64, FpExt8, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
     use crate::{AkitaDeserialize, AkitaSerialize, Compress, Validate};

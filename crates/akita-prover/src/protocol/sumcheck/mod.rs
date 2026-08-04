@@ -16,12 +16,12 @@ pub use akita_stage3::AkitaStage3Prover;
 
 // --- Shared helpers ------------------------------------------------------
 
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 /// Fold a pair of adjacent evaluations in a full-width row at a challenge `r`,
 /// with implicit zero-padding when the index falls past the end.
 #[inline]
-pub(crate) fn fold_full_prefix_pair<E: FieldCore>(row: &[E], left: usize, r: E) -> E {
+pub(crate) fn fold_full_prefix_pair<E: Field>(row: &[E], left: usize, r: E) -> E {
     let v0 = row.get(left).copied().unwrap_or_else(E::zero);
     let v1 = row.get(left + 1).copied().unwrap_or_else(E::zero);
     v0 + r * (v1 - v0)

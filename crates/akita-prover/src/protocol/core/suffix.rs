@@ -8,12 +8,10 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::terminal_golomb_grind_tail_t_vectors;
-use jolt_field::unreduced::ReduceTo;
-use jolt_field::AdditiveGroup;
 use std::sync::Arc;
 
 /// Prover state carried between suffix fold levels.
-pub struct SuffixProverState<F: FieldCore, E: FieldCore> {
+pub struct SuffixProverState<F: Field, E: Field> {
     /// Current committed suffix witness representation.
     pub w: RecursiveWitnessFlat,
     /// Logical suffix witness when it differs from the committed representation.
@@ -32,7 +30,7 @@ pub struct SuffixProverState<F: FieldCore, E: FieldCore> {
     pub setup_prefix_opening: Option<(Vec<E>, E)>,
 }
 
-impl<F: FieldCore, E: FieldCore> SuffixProverState<F, E> {
+impl<F: Field, E: Field> SuffixProverState<F, E> {
     /// Logical witness represented by the carried opening claim.
     #[inline]
     pub fn logical_w(&self) -> &RecursiveWitnessFlat {
@@ -72,22 +70,18 @@ pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R>(
 ) -> Result<RecursiveSuffixOutcome<Cfg::Field, Cfg::ExtField>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField
-        + FromPrimitiveInt
+    Cfg::Field: Field
+        + CanonicalEncoding
+        + Unreduced
+        + PseudoMersenne
+        + Ring
         + akita_serialization::AkitaSerialize
         + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
-        + FrobeniusExtField<Cfg::Field>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + ExtField<Cfg::Field>
+        + Unreduced
+        + Fold
+        + Ring
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
@@ -237,22 +231,18 @@ pub(in crate::protocol::core) fn prepare_suffix<F, E, T, C, O, TS, R>(
     terminal_tail_t_vectors: Option<usize>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField
-        + FromPrimitiveInt
+    F: Field
+        + CanonicalEncoding
+        + Unreduced
+        + PseudoMersenne
+        + Ring
         + akita_serialization::AkitaSerialize
         + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
-        + FrobeniusExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + ExtField<F>
+        + Unreduced
+        + Fold
+        + Ring
         + AkitaSerialize
         + MulBaseUnreduced<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
@@ -302,7 +292,7 @@ where
 
     let alpha = role_dims.d_a().trailing_zeros() as usize;
     let needs_extension_reduction =
-        <E as ExtField<F>>::EXT_DEGREE != 1 && level_params.setup_prefix.is_none();
+        <E as ExtField<F>>::DEGREE != 1 && level_params.setup_prefix.is_none();
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
     let witness_source = RecursiveFoldSource::witness(Arc::clone(&witness));
     let logical_witness_source = RecursiveFoldSource::witness(logical_witness);
@@ -365,6 +355,7 @@ mod tests {
     use akita_transcript::AkitaTranscript;
     use akita_types::RingOpeningPoint;
     use jolt_field::Fp32;
+    use jolt_field::One;
 
     type TestF = Fp32<251>;
     const D: usize = 4;

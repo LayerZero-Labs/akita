@@ -13,7 +13,7 @@ use akita_types::{LevelParams, RelationMatrixRowLayout};
 /// Skips the first `D - pos` coefficients per challenge term that cannot
 /// contribute (degree < D), cutting iteration count roughly in half.
 #[inline(always)]
-fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
+fn add_sparse_ring_product_high_half<F: Field + CanonicalEncoding, const D: usize>(
     quotient: &mut [F],
     challenge: &SparseChallenge,
     ring: &CyclotomicRing<F, D>,
@@ -29,7 +29,7 @@ fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usi
 }
 
 #[inline(always)]
-fn add_tensor_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
+fn add_tensor_ring_product_high_half<F: Field + CanonicalEncoding, const D: usize>(
     quotient: &mut [F],
     left: &SparseChallenge,
     right: &SparseChallenge,
@@ -58,7 +58,7 @@ fn parallel_high_half_accumulate<F, R, const D: usize>(
     ring_fn: R,
 ) -> Result<Vec<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + Send + Sync,
+    F: Field + CanonicalEncoding + Send + Sync,
     R: Fn(usize) -> Option<CyclotomicRing<F, D>> + Sync,
 {
     let tensor_blocks_per_claim = match challenges {
@@ -113,7 +113,7 @@ where
 /// Relation quotient `r` returned by [`compute_multi_group_relation_quotient`].
 pub(crate) type RelationQuotientOutput<F, const D: usize> = Vec<CyclotomicRing<F, D>>;
 
-fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>(
+fn quotient_from_cyclic_and_reduced<F: Field, const D: usize>(
     cyclic: &CyclotomicRing<F, D>,
     reduced: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {
@@ -123,7 +123,7 @@ fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>
     CyclotomicRing::from_coefficients(quotient)
 }
 
-fn add_cyclic_ring_product<F: FieldCore, const D: usize>(
+fn add_cyclic_ring_product<F: Field, const D: usize>(
     acc: &mut [F; D],
     lhs: &CyclotomicRing<F, D>,
     rhs: &CyclotomicRing<F, D>,
@@ -142,7 +142,7 @@ fn add_cyclic_ring_product<F: FieldCore, const D: usize>(
     }
 }
 
-fn add_cyclic_scalar_ring_product<F: FieldCore, const D: usize>(
+fn add_cyclic_scalar_ring_product<F: Field, const D: usize>(
     acc: &mut [F; D],
     scalar: F,
     rhs: &CyclotomicRing<F, D>,
@@ -154,9 +154,7 @@ fn add_cyclic_scalar_ring_product<F: FieldCore, const D: usize>(
     }
 }
 
-fn centered_i32_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
-    coeffs: &[i32; D],
-) -> CyclotomicRing<F, D> {
+fn centered_i32_ring<F: Field + Ring, const D: usize>(coeffs: &[i32; D]) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| F::from_i64(coeffs[idx] as i64)))
 }
 
@@ -168,7 +166,7 @@ fn cyclic_consistency_z_product<F, const D: usize>(
     log_basis: u32,
 ) -> Result<(CyclotomicRing<F, D>, CyclotomicRing<F, D>), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
 {
     let inner_width = block_len
         .checked_mul(depth_commit)
@@ -230,7 +228,7 @@ pub(crate) fn compute_multi_group_relation_quotient<F, B, const D: usize>(
     relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RelationQuotientOutput<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
+    F: Field + CanonicalEncoding + Ring,
     B: RingSwitchProveBackend<F, D>,
 {
     lp.reject_multi_group_multi_chunk("multi-group relation quotient")?;
@@ -429,6 +427,7 @@ mod tests {
     use crate::backend::test_support::tensor_oracle_challenges;
     use akita_challenges::SparseChallenge;
     use jolt_field::Prime128OffsetA7F7 as F;
+    use jolt_field::Zero;
 
     fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
         CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {

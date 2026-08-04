@@ -1,6 +1,6 @@
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 use crate::field_reduction::trace_open_ring_row;
 use crate::{gadget_row_scalars, FpExtEncoding};
@@ -16,8 +16,8 @@ fn fill_opening_digit_table<F, E>(
     block_rows: &[E],
     table: &mut [E],
 ) where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + FromPrimitiveInt,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + Ring,
 {
     let ring_len = layout.ring_len();
     debug_assert_eq!(block_rows.len(), layout.num_blocks * ring_len);
@@ -67,8 +67,8 @@ fn add_ring_row_to_compact<F, E>(
     output_scale: E,
     compact: &mut [E],
 ) where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + FromPrimitiveInt,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + Ring,
 {
     let ring_len = layout.ring_len();
     debug_assert_eq!(row.len(), ring_len);
@@ -94,8 +94,8 @@ pub fn build_trace_weight_table_field_block_weights<F, E, const D: usize>(
     inner_opening_ring: &CyclotomicRing<F, D>,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: ExtField<F> + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
+    E: ExtField<F> + Ring,
 {
     let term = TraceFieldBlockOpening {
         block_offset: 0,
@@ -111,8 +111,8 @@ pub fn build_trace_weight_table_field_terms<F, E, const D: usize>(
     terms: &[TraceFieldBlockOpening<F, D>],
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: ExtField<F> + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
+    E: ExtField<F> + Ring,
 {
     if terms.is_empty() {
         return Err(AkitaError::InvalidInput(
@@ -151,8 +151,8 @@ pub(crate) fn build_trace_weight_compact_field_sparse_scaled<F, E, const D: usiz
     output_scale: E,
 ) -> Result<Vec<TraceSparseColumn<E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: ExtField<F> + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
+    E: ExtField<F> + Ring,
 {
     if terms.is_empty() {
         return Err(AkitaError::InvalidInput(
@@ -201,8 +201,8 @@ pub fn build_trace_weight_table_ring_block_weights<F, E, const D: usize>(
     packed_inner_point: &CyclotomicRing<F, D>,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
+    E: FpExtEncoding<F> + ExtField<F> + Ring,
 {
     let term = TraceRingBlockOpening {
         block_offset: 0,
@@ -218,8 +218,8 @@ pub fn build_trace_weight_table_ring_terms<F, E, const D: usize>(
     terms: &[TraceRingBlockOpening<F, D>],
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
+    E: FpExtEncoding<F> + ExtField<F> + Ring,
 {
     if terms.is_empty() {
         return Err(AkitaError::InvalidInput(
@@ -264,8 +264,8 @@ pub(crate) fn build_trace_weight_compact_ring_terms_scaled<F, E, const D: usize>
     output_scale: E,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
+    E: FpExtEncoding<F> + ExtField<F> + Ring,
 {
     if terms.is_empty() {
         return Err(AkitaError::InvalidInput(

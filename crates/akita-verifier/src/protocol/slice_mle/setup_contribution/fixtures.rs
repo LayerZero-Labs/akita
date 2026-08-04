@@ -10,7 +10,8 @@ use akita_types::{
     RelationMatrixRowLayout, SetupContributionPlan, SetupContributionPlanInputs,
     WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
 };
-use jolt_field::{CanonicalField, Prime128OffsetA7F7};
+use jolt_field::One;
+use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7};
 
 use super::evaluate_setup_contribution_direct;
 use crate::protocol::ring_switch::{
@@ -22,7 +23,7 @@ pub(crate) type TestField = Prime128OffsetA7F7;
 pub(crate) const TEST_RING_DIM: usize = 64;
 
 pub(crate) fn test_scalar(value: u128) -> TestField {
-    TestField::from_canonical_u128_reduced(value)
+    TestField::from_u128_reduced(value)
 }
 
 pub(crate) struct SetupContributionFixture {

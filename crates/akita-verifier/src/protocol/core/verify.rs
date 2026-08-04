@@ -20,17 +20,14 @@ use akita_types::{
     Commitment, FpExtEncoding, LevelParams, LevelParamsLike, OpeningClaims, RingCommitment,
     RingVec, RingView, Schedule, SetupContributionMode, Step,
 };
-use jolt_field::{
-    CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
-};
+use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use std::array::from_fn;
 
 pub(crate) fn field_evals_to_rings<F, const D: usize>(
     evals: &[F],
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
 {
     if D == 0 || !D.is_power_of_two() || !evals.len().is_power_of_two() {
         return Err(AkitaError::InvalidProof);
@@ -52,8 +49,8 @@ where
 
 fn check_batched_proof_step_shape<F, E>(proof: &AkitaBatchedProof<F, E>) -> Result<(), AkitaError>
 where
-    F: FieldCore,
-    E: FieldCore,
+    F: Field,
+    E: Field,
 {
     match &proof.root {
         AkitaBatchedRootProof::Fold(_) => {
@@ -85,7 +82,7 @@ fn validate_direct_group_shape<F>(
     ring_d: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     validate_log_basis(params.log_basis())?;
     if params.num_blocks() == 0 || params.block_len() == 0 {
@@ -157,7 +154,7 @@ fn validate_root_direct_recommitment_shape<F>(
     ring_d: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     if opening_batch.num_total_polynomials() != witnesses.len() {
         return Err(AkitaError::InvalidProof);
@@ -176,7 +173,7 @@ pub(crate) fn mat_vec_mul_i8_plain<F, const D: usize>(
     digits: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     matrix_rows
         .iter()
@@ -200,7 +197,7 @@ fn decompose_rows_i8<F, const D: usize>(
     log_basis: u32,
 ) -> Vec<[i8; D]>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     let mut out = vec![[0i8; D]; rows.len() * num_digits];
     for (dst_chunk, row) in out.chunks_mut(num_digits).zip(rows.iter()) {
@@ -215,7 +212,7 @@ fn direct_decomposed_inner_rows<F, const D: usize>(
     params: &impl LevelParamsLike,
 ) -> Result<Vec<[i8; D]>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     let a_row_len = params.a_rows_len();
     let a_matrix = setup
@@ -265,7 +262,7 @@ fn recommit_direct_witness_group<F, const D: usize>(
     params: &impl LevelParamsLike,
 ) -> Result<RingCommitment<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     let mut outer_input = Vec::new();
     for witness in group_witnesses {
@@ -301,8 +298,8 @@ pub(crate) fn verify_root_direct_commitments_with_params<F, E>(
     params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    E: FieldCore,
+    F: Field + CanonicalEncoding + PseudoMersenne,
+    E: Field,
 {
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     params.validate_opening_batch(&opening_batch)?;
@@ -415,12 +412,9 @@ pub fn batched_verify<Cfg, T>(
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    Cfg::Field: Field + CanonicalEncoding + PseudoMersenne,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>
-        + FrobeniusExtField<Cfg::Field>
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize,
     T: Transcript<Cfg::Field>,
 {
     // Reject malformed step shapes that the downstream `fold_levels()` filter
@@ -495,12 +489,9 @@ pub(crate) fn verify<Cfg, T>(
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    Cfg::Field: Field + CanonicalEncoding + PseudoMersenne,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>
-        + FrobeniusExtField<Cfg::Field>
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize,
     T: Transcript<Cfg::Field>,
 {
     match &proof.root {
@@ -554,18 +545,8 @@ pub(crate) fn verify_folded_batched_proof<F, E, T>(
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + PseudoMersenneField
-        + HalvingField
-        + AkitaSerialize,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + PseudoMersenne + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
@@ -695,6 +676,7 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_types::{AjtaiKeyParams, RingVec, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS};
     use jolt_field::Fp32;
+    use jolt_field::Zero;
 
     type F = Fp32<251>;
     const D: usize = 32;

@@ -2,10 +2,8 @@
 
 use akita_error::AkitaError;
 use akita_types::{CleartextWitnessProof, FpExtEncoding, RingVec};
-use jolt_field::unreduced::{HasWide, ReduceTo};
-use jolt_field::{
-    AdditiveGroup, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
-};
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 use super::SparseRingPoly;
 use crate::backend::RootTensorProjectionPoly;
@@ -26,7 +24,7 @@ use crate::{CommitInnerWitness, DecomposeFoldWitness};
 /// dispatch dimension: the underlying polynomial stores flat field data, and
 /// the view fixes the ring dimension the kernels operate at.
 #[derive(Debug, Clone, Copy)]
-pub struct SparseRingView<'a, F: FieldCore, const D: usize> {
+pub struct SparseRingView<'a, F: Field, const D: usize> {
     pub(super) poly: &'a SparseRingPoly<F>,
 }
 
@@ -34,13 +32,13 @@ pub struct SparseRingView<'a, F: FieldCore, const D: usize> {
 ///
 /// `D` is the kernel dispatch dimension, as in [`SparseRingView`].
 #[derive(Debug, Clone, Copy)]
-pub struct SparseRingBatchView<'a, F: FieldCore, const D: usize> {
+pub struct SparseRingBatchView<'a, F: Field, const D: usize> {
     pub(super) polys: &'a [&'a SparseRingPoly<F>],
 }
 
 impl<F> RootPolyMeta<F> for SparseRingPoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     fn num_ring_elems(&self) -> usize {
         self.total_ring_elems
@@ -53,7 +51,7 @@ where
 
 impl<F, const D: usize> RootPolyShape<F, D> for SparseRingPoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     fn num_ring_elems(&self) -> usize {
         (1usize << self.num_vars) / D
@@ -66,7 +64,7 @@ where
 
 impl<F, const D: usize> RootCommitSource<F, D> for SparseRingPoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     type CommitView<'a>
         = SparseRingView<'a, F, D>
@@ -80,7 +78,7 @@ where
 
 impl<F, const D: usize> RootOpeningSource<F, D> for SparseRingPoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     type OpeningView<'a>
         = SparseRingView<'a, F, D>
@@ -103,7 +101,7 @@ where
 
 impl<F, const D: usize> RootTensorSource<F, D> for SparseRingPoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     type TensorView<'a>
         = SparseRingView<'a, F, D>
@@ -126,7 +124,7 @@ where
 
 impl<F, const D: usize> DirectRootWitnessSource<F, D> for SparseRingPoly<F>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
 {
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         Ok(CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
@@ -137,8 +135,7 @@ where
 
 impl<F, const D: usize> RootCommitKernel<SparseRingView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
 {
     fn commit_inner(
         &self,
@@ -152,8 +149,7 @@ where
 
 impl<F, const D: usize> OpeningFoldKernel<SparseRingView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
 {
     fn evaluate_and_fold(
         &self,
@@ -199,8 +195,7 @@ where
 
 impl<F, const D: usize> OpeningBatchKernel<SparseRingBatchView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
 {
     fn decompose_fold_batch(
         &self,
@@ -231,8 +226,7 @@ where
 
 impl<F, E, const D: usize> TensorProjectionKernel<SparseRingView<'_, F, D>, F, E, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
     E: ExtField<F>,
 {
     fn column_partials(
@@ -275,8 +269,7 @@ where
 impl<F, E, const D: usize> TensorProjectionBatchKernel<SparseRingBatchView<'_, F, D>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
     E: ExtField<F>,
 {
     fn column_partials_batch(

@@ -3,7 +3,7 @@
 use crate::AkitaStage1StageShape;
 use akita_error::AkitaError;
 use akita_transcript::{labels, Transcript};
-use jolt_field::{CanonicalField, FieldCore, FromPrimitiveInt};
+use jolt_field::{CanonicalEncoding, Field, Ring};
 
 /// Validate the stage-1 range basis.
 ///
@@ -19,7 +19,7 @@ pub fn validate_stage1_tree_basis(b: usize) -> Result<(), AkitaError> {
     Ok(())
 }
 
-fn stage1_root_values<E: FieldCore + FromPrimitiveInt>(b: usize) -> Vec<E> {
+fn stage1_root_values<E: Field + Ring>(b: usize) -> Vec<E> {
     let half = b / 2;
     (0..half)
         .map(|k| {
@@ -29,7 +29,7 @@ fn stage1_root_values<E: FieldCore + FromPrimitiveInt>(b: usize) -> Vec<E> {
         .collect()
 }
 
-fn poly_coeffs_from_roots<E: FieldCore>(roots: &[E]) -> Vec<E> {
+fn poly_coeffs_from_roots<E: Field>(roots: &[E]) -> Vec<E> {
     let mut coeffs = vec![E::one()];
     for &root in roots {
         let mut next = vec![E::zero(); coeffs.len() + 1];
@@ -43,7 +43,7 @@ fn poly_coeffs_from_roots<E: FieldCore>(roots: &[E]) -> Vec<E> {
 }
 
 /// Evaluate a small polynomial stored as coefficient slices.
-pub fn eval_poly<E: FieldCore>(coeffs: &[E], x: E) -> E {
+pub fn eval_poly<E: Field>(coeffs: &[E], x: E) -> E {
     coeffs
         .iter()
         .rev()
@@ -52,7 +52,7 @@ pub fn eval_poly<E: FieldCore>(coeffs: &[E], x: E) -> E {
 }
 
 /// Evaluate the full stage-1 range-check polynomial at `s`.
-pub fn range_check_eval_from_s<E: FieldCore + FromPrimitiveInt>(s: E, b: usize) -> E {
+pub fn range_check_eval_from_s<E: Field + Ring>(s: E, b: usize) -> E {
     let half = (b / 2) as i64;
     let mut acc = E::one();
     for k in 0..half {
@@ -69,11 +69,7 @@ pub fn range_check_eval_from_s<E: FieldCore + FromPrimitiveInt>(s: E, b: usize) 
 /// # Panics
 ///
 /// Panics if `coords.len() != col_bits + ring_bits`.
-pub fn reorder_stage1_coords<F: FieldCore>(
-    coords: &[F],
-    col_bits: usize,
-    ring_bits: usize,
-) -> Vec<F> {
+pub fn reorder_stage1_coords<F: Field>(coords: &[F], col_bits: usize, ring_bits: usize) -> Vec<F> {
     assert_eq!(coords.len(), col_bits + ring_bits);
     let mut reordered = Vec::with_capacity(coords.len());
     reordered.extend_from_slice(&coords[col_bits..]);
@@ -81,7 +77,7 @@ pub fn reorder_stage1_coords<F: FieldCore>(
     reordered
 }
 
-fn stage1_leaf_groups<E: FieldCore + FromPrimitiveInt>(b: usize) -> Vec<Vec<E>> {
+fn stage1_leaf_groups<E: Field + Ring>(b: usize) -> Vec<Vec<E>> {
     stage1_root_values::<E>(b)
         .chunks(4)
         .map(|chunk| chunk.to_vec())
@@ -89,7 +85,7 @@ fn stage1_leaf_groups<E: FieldCore + FromPrimitiveInt>(b: usize) -> Vec<Vec<E>> 
 }
 
 /// Return the quartic leaf polynomial coefficients for the stage-1 tree.
-pub fn stage1_leaf_coeffs<E: FieldCore + FromPrimitiveInt>(b: usize) -> Vec<Vec<E>> {
+pub fn stage1_leaf_coeffs<E: Field + Ring>(b: usize) -> Vec<Vec<E>> {
     stage1_leaf_groups::<E>(b)
         .into_iter()
         .map(|roots| poly_coeffs_from_roots(&roots))
@@ -158,7 +154,7 @@ pub fn stage1_stage_count(b: usize) -> usize {
 }
 
 /// Return powers of an interstage batching challenge.
-pub fn stage1_interstage_batch_weights<E: FieldCore>(gamma: E, count: usize) -> Vec<E> {
+pub fn stage1_interstage_batch_weights<E: Field>(gamma: E, count: usize) -> Vec<E> {
     let mut out = Vec::with_capacity(count);
     let mut weight = E::one();
     for _ in 0..count {
@@ -169,7 +165,7 @@ pub fn stage1_interstage_batch_weights<E: FieldCore>(gamma: E, count: usize) -> 
 }
 
 /// Form a weighted linear combination of polynomial coefficient vectors.
-pub fn combine_polys<E: FieldCore>(weights: &[E], polys: &[Vec<E>]) -> Vec<E> {
+pub fn combine_polys<E: Field>(weights: &[E], polys: &[Vec<E>]) -> Vec<E> {
     debug_assert_eq!(weights.len(), polys.len());
     let max_len = polys.iter().map(Vec::len).max().unwrap_or(0);
     let mut out = vec![E::zero(); max_len];
@@ -182,7 +178,7 @@ pub fn combine_polys<E: FieldCore>(weights: &[E], polys: &[Vec<E>]) -> Vec<E> {
 }
 
 /// Form a weighted linear combination of scalar claims.
-pub fn linear_combination<E: FieldCore>(weights: &[E], values: &[E]) -> E {
+pub fn linear_combination<E: Field>(weights: &[E], values: &[E]) -> E {
     debug_assert_eq!(weights.len(), values.len());
     weights
         .iter()
@@ -191,7 +187,7 @@ pub fn linear_combination<E: FieldCore>(weights: &[E], values: &[E]) -> E {
 }
 
 /// Absorb stage-1 interstage child claims into the transcript.
-pub fn absorb_interstage_claims<F: FieldCore + CanonicalField, T: Transcript<F>>(
+pub fn absorb_interstage_claims<F: Field + CanonicalEncoding, T: Transcript<F>>(
     claims: &[F],
     transcript: &mut T,
 ) {

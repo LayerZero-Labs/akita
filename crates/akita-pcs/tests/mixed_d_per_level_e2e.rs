@@ -15,6 +15,7 @@
 
 #![allow(missing_docs)]
 
+use jolt_field::Zero;
 mod common;
 #[path = "mixed_d_per_level/fixture.rs"]
 mod mixed_d_per_level_fixture;

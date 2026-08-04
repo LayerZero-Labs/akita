@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore> SetupContributionGroupPlan<E> {
+impl<E: Field> SetupContributionGroupPlan<E> {
     #[cfg(test)]
     pub(crate) fn refresh_segments(
         &mut self,
@@ -73,7 +73,7 @@ fn setup_group_required(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn build_packed_segments<E: FieldCore>(
+pub(super) fn build_packed_segments<E: Field>(
     e_col_offset: usize,
     e_eq_len: usize,
     t_cols: usize,

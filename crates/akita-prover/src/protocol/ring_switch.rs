@@ -20,9 +20,7 @@ use akita_types::{
     r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, FpExtEncoding, LevelParams,
     RelationMatrixRowLayout, RingVec,
 };
-use jolt_field::{
-    CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
-};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 mod coeffs;
 mod commit;
@@ -40,7 +38,7 @@ pub use finalize::ring_switch_finalize;
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
-pub struct RingSwitchOutput<E: FieldCore> {
+pub struct RingSwitchOutput<E: Field> {
     /// Compact evaluation table of w, stored as x-outer/y-inner slices.
     pub w_evals_compact: Vec<i8>,
     /// Physical x width before zero-extension to the next power of two.

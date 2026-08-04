@@ -7,7 +7,7 @@ mod logging;
 mod sponge;
 
 use akita_serialization::AkitaSerialize;
-use jolt_field::{CanonicalField, ExtField, FieldCore};
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 pub use label::Label;
 #[cfg(feature = "logging-transcript")]
@@ -20,7 +20,7 @@ pub use sponge::{AkitaTranscript, TranscriptSponge, PROTOCOL_TAG};
 /// all absorbed values.
 pub trait Transcript<F>: Send
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Construct a new transcript under a domain label.
     fn new(domain_label: &[u8]) -> Self;
@@ -90,12 +90,12 @@ pub trait FoldChallengeSeedPreview {
 /// Append an extension-field element by absorbing its base-field coordinates.
 pub fn append_ext_field<F, E, T>(transcript: &mut T, label: &[u8], x: &E)
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
     T: Transcript<F>,
 {
     let coeffs = x.to_base_vec();
-    if E::EXT_DEGREE == 1 {
+    if E::DEGREE == 1 {
         for coeff in coeffs.iter().take(1) {
             transcript.append_field(label, coeff);
         }
@@ -109,20 +109,20 @@ where
 
 /// Sample an extension-field challenge from base-field transcript limbs.
 ///
-/// This draws `E::EXT_DEGREE` base-field challenges under distinct limb labels
+/// This draws `E::DEGREE` base-field challenges under distinct limb labels
 /// and assembles the extension element with [`ExtField::from_base_slice`].
 pub fn sample_ext_challenge<F, E, T>(transcript: &mut T, label: &[u8]) -> E
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
     T: Transcript<F>,
 {
-    if E::EXT_DEGREE == 1 {
+    if E::DEGREE == 1 {
         let coeff = transcript.challenge_scalar(label);
         return E::from_base_slice(&[coeff]);
     }
 
-    let coeffs = (0..E::EXT_DEGREE)
+    let coeffs = (0..E::DEGREE)
         .map(|limb| transcript.challenge_scalar(&ext_limb_label(label, limb)))
         .collect::<Vec<_>>();
     E::from_base_slice(&coeffs)

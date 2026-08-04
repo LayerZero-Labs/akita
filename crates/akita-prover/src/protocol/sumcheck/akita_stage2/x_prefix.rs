@@ -2,7 +2,7 @@ use super::*;
 
 #[inline]
 #[allow(clippy::too_many_arguments)]
-fn accumulate_fused_prefix_x_relation<E: FieldCore>(
+fn accumulate_fused_prefix_x_relation<E: Field>(
     trace_table: Option<&TraceTable<E>>,
     table_y_len: usize,
     rel: &mut [E; 3],
@@ -27,10 +27,10 @@ fn accumulate_fused_prefix_x_relation<E: FieldCore>(
 
 #[inline]
 #[allow(clippy::too_many_arguments)]
-fn accumulate_fused_prefix_x_relation_signed<E: FieldCore + HasUnreducedOps>(
+fn accumulate_fused_prefix_x_relation_signed<E: Field + Unreduced>(
     trace_table: Option<&TraceTable<E>>,
     table_y_len: usize,
-    rel: &mut [E::MulU64Accum; 6],
+    rel: &mut [E::SmallProduct; 6],
     w0: i64,
     dw: i64,
     p0: E,
@@ -50,7 +50,7 @@ fn accumulate_fused_prefix_x_relation_signed<E: FieldCore + HasUnreducedOps>(
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+impl<E: Field + Ring + Unreduced> AkitaStage2Prover<E> {
     #[tracing::instrument(
         skip_all,
         name = "AkitaStage2Prover::fuse_full_prefix_x_and_compute_round"
@@ -405,7 +405,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..alpha_compact.len(),
-                || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
+                || ([E::zero(); 2], [E::SmallProduct::zero(); 6]),
                 |(mut virt, mut rel), y| {
                     let row_start = y * self.live_x_cols;
                     let row = &w_compact[row_start..row_start + self.live_x_cols];
@@ -417,7 +417,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         let (j_high, blk_end) = stage2_eq_block(
                             j_base, blk, num_first, first_bits, block_size, live_pairs,
                         );
-                        let mut inner_virt = [E::MulU64Accum::zero(); 2];
+                        let mut inner_virt = [E::SmallProduct::zero(); 2];
 
                         for pair_x in blk..blk_end {
                             let j_low = (j_base + pair_x) & (num_first - 1);
@@ -487,7 +487,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         } else {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..alpha_compact.len(),
-                || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
+                || ([E::zero(); 3], [E::SmallProduct::zero(); 6]),
                 |(mut virt, mut rel), y| {
                     let row_start = y * self.live_x_cols;
                     let row = &w_compact[row_start..row_start + self.live_x_cols];
@@ -499,7 +499,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         let (j_high, blk_end) = stage2_eq_block(
                             j_base, blk, num_first, first_bits, block_size, live_pairs,
                         );
-                        let mut inner_virt = [E::MulU64Accum::zero(); 4];
+                        let mut inner_virt = [E::SmallProduct::zero(); 4];
 
                         for pair_x in blk..blk_end {
                             let j_low = (j_base + pair_x) & (num_first - 1);

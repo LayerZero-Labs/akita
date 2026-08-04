@@ -14,7 +14,7 @@ use akita_types::{
     AkitaExpandedSetup, AkitaInstanceDescriptor, AlgebraSection, BasisMode, CallSection,
     FpExtEncoding, OpeningClaimsLayout, PlanSection, Schedule, SetupSection,
 };
-use jolt_field::{CanonicalField, FieldCore};
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Bind the canonical [`AkitaInstanceDescriptor`] bytes into a transcript.
 ///
@@ -41,7 +41,7 @@ pub fn bind_transcript_instance_descriptor<F, T, const D: usize, Cfg>(
     transcript: &mut T,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ExtField: FpExtEncoding<F>,

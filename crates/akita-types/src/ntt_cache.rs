@@ -1,7 +1,7 @@
 //! Key type for runtime ring-dimension NTT prepared-setup caches.
 
 use akita_error::AkitaError;
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 use crate::proof::AkitaExpandedSetup;
 
@@ -21,7 +21,7 @@ impl NttCacheKey {
     ///
     /// Returns an error when `ring_d` does not divide the setup envelope or the
     /// matrix view length cannot be computed.
-    pub fn from_envelope<F: FieldCore>(
+    pub fn from_envelope<F: Field>(
         expanded: &AkitaExpandedSetup<F>,
         ring_d: usize,
     ) -> Result<Self, AkitaError> {

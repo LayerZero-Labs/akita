@@ -1,5 +1,7 @@
 use super::*;
 use crate::{reduce_inner_opening_to_ring_element, BasisMode};
+use akita_algebra::One;
+use akita_algebra::Zero;
 use jolt_field::{Fp32, FpExt4, FpExt8};
 
 type F = Fp32<251>;
@@ -13,7 +15,7 @@ fn ring_from_index<const D: usize>() -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 1) as u64)))
 }
 
-fn ring_subfield_basis<Fq: FieldCore, const D: usize, const K: usize>(
+fn ring_subfield_basis<Fq: Field, const D: usize, const K: usize>(
     _params: SubfieldParams<D, K>,
 ) -> Vec<CyclotomicRing<Fq, D>> {
     let step = D / (2 * K);
@@ -29,7 +31,7 @@ fn ring_subfield_basis<Fq: FieldCore, const D: usize, const K: usize>(
     basis
 }
 
-fn ring_subfield_coords<Fq: FieldCore, const D: usize, const K: usize>(
+fn ring_subfield_coords<Fq: Field, const D: usize, const K: usize>(
     _params: SubfieldParams<D, K>,
     x: &CyclotomicRing<Fq, D>,
 ) -> Vec<Fq> {

@@ -6,11 +6,13 @@ use akita_algebra::tables::{
     Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, Q64_PRIMES,
 };
 use akita_algebra::NttPrime;
+use akita_algebra::Ring;
+use akita_algebra::Zero;
 use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, LimbQ,
     MontCoeff, PackedPartialSplitEval16, PartialSplitEval16, PartialSplitNtt16, ScalarBackend,
 };
-use jolt_field::packed::HasPacking;
+use jolt_field::WithPacking;
 use jolt_field::{Fp128, Fp32, Fp64, Prime128Offset159, Prime128Offset275};
 
 #[test]
@@ -977,7 +979,7 @@ fn partial_split_cached_matvec_matches_schoolbook_q128m159() {
 #[test]
 fn partial_split_packed_cached_matvec_matches_scalar_q128m159() {
     type F = Prime128Offset159;
-    type PF = <F as HasPacking>::Packing;
+    type PF = <F as WithPacking>::Packing;
     type R = CyclotomicRing<F, 32>;
 
     let rows = PackedPartialSplitEval16::<PF>::WIDTH + 3;

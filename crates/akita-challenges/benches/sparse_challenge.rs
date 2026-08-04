@@ -22,6 +22,7 @@ use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{AkitaTranscript, Transcript};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_field::Prime128OffsetA7F7;
+use jolt_field::Ring;
 
 type F = Prime128OffsetA7F7;
 

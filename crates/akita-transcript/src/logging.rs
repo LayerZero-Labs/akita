@@ -4,7 +4,7 @@ use crate::{labels, Transcript};
 use akita_serialization::AkitaSerialize;
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
-use jolt_field::{CanonicalBytes, CanonicalField, FieldCore};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Field};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 
@@ -238,7 +238,7 @@ impl<T> LoggingTranscript<T> {
 
 impl<F, T> Transcript<F> for LoggingTranscript<T>
 where
-    F: FieldCore + CanonicalField + CanonicalBytes,
+    F: Field + CanonicalEncoding + CanonicalBytes,
     T: Transcript<F>,
 {
     fn new(domain_label: &[u8]) -> Self {

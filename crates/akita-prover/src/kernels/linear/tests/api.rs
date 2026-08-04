@@ -1,4 +1,5 @@
 use super::*;
+use jolt_field::Ring;
 
 #[test]
 fn aligned_i8_tile_width_keeps_full_tiles_on_digit_boundaries() {

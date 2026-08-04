@@ -14,7 +14,7 @@
 //! the transcript layer or the sampler.
 
 use akita_error::AkitaError;
-use jolt_field::{FieldCore, FromPrimitiveInt, MulBase};
+use jolt_field::{ExtField, Field, Ring};
 
 /// Sparse polynomial in `F[X]/(X^D+1)` represented by its non-zero terms.
 ///
@@ -95,8 +95,8 @@ impl SparseChallenge {
     /// does not re-check uniqueness of positions on the hot path.
     pub fn eval_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
     where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + MulBase<F>,
+        F: Field + Ring,
+        E: Field + ExtField<F>,
     {
         let ring_d = alpha_pows.len();
         if self.positions.len() != self.coeffs.len() {

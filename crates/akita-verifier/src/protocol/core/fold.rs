@@ -3,7 +3,7 @@
 use super::*;
 use akita_types::dispatch_for_field;
 
-pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
+pub(in crate::protocol::core) struct FoldEorReplay<F: Field, E: Field> {
     pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
     pub(in crate::protocol::core) reduction_challenges: Option<Vec<E>>,
     pub(in crate::protocol::core) final_relation: Option<(E, Vec<E>)>,
@@ -22,7 +22,7 @@ fn eor_reduction_shape<F, E>(
     num_claims: usize,
 ) -> Result<EorReductionShape, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     let (split_bits, width) =
@@ -50,7 +50,7 @@ fn eor_input_claim_from_partials<F, E>(
     row_coefficients: &[E],
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     if shape.width == 0
@@ -85,8 +85,8 @@ pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let d_a = lp.role_dims().d_a();
@@ -124,8 +124,8 @@ fn verify_fold_eor_kernel<F, E, T, const D: usize>(
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let num_claims = opening_batch.num_total_polynomials();
@@ -135,7 +135,7 @@ where
 
     let mut eor_trace_final: Option<(E, Vec<E>)> = None;
     let reduction_check = if let Some(reduction) = extension_opening_reduction {
-        if <E as ExtField<F>>::EXT_DEGREE == 1 {
+        if <E as ExtField<F>>::DEGREE == 1 {
             return Err(AkitaError::InvalidProof);
         }
         let shape = eor_reduction_shape::<F, E>(
@@ -184,7 +184,7 @@ where
         )?;
         eor_trace_final = Some((final_claim, vec![final_factor]));
         Some(rho)
-    } else if requires_reduction && <E as ExtField<F>>::EXT_DEGREE != 1 {
+    } else if requires_reduction && <E as ExtField<F>>::DEGREE != 1 {
         return Err(AkitaError::InvalidProof);
     } else {
         None
@@ -219,7 +219,7 @@ where
     })
 }
 
-pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore> {
+pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: Field, E: Field> {
     pub(in crate::protocol::core) lp: &'a LevelParams,
     pub(in crate::protocol::core) relation_matrix_row_layout: RelationMatrixRowLayout,
     pub(in crate::protocol::core) fold_grind_nonce: u32,
@@ -260,7 +260,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     pub(in crate::protocol::core) block_order: BlockOrder,
 }
 
-struct Stage1Replay<E: FieldCore> {
+struct Stage1Replay<E: Field> {
     batching_coeff: E,
     s_claim: E,
     stage1_point: Vec<E>,
@@ -272,8 +272,8 @@ fn verify_stage1<F, E, T>(
     transcript: &mut T,
 ) -> Result<Stage1Replay<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let num_rounds = rs
@@ -337,8 +337,8 @@ fn verify_stage2<F, E, T>(
     trace: Option<TraceWireAtRoleA<'_, F, E>>,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let witness_oracle = match stage2 {
@@ -375,7 +375,7 @@ where
     })
 }
 
-enum TraceWireAtRoleA<'a, F: FieldCore, E: FieldCore> {
+enum TraceWireAtRoleA<'a, F: Field, E: Field> {
     Recursive {
         lp: &'a LevelParams,
         layout: akita_types::TraceWeightLayout,
@@ -414,8 +414,8 @@ enum TraceWireAtRoleA<'a, F: FieldCore, E: FieldCore> {
 
 impl<'a, F, E> TraceWireAtRoleA<'a, F, E>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
+    E: FpExtEncoding<F> + ExtField<F> + Field + Ring,
 {
     fn into_claim<const D: usize>(self) -> Result<TraceClaim<F, E, D>, AkitaError> {
         match self {
@@ -505,8 +505,8 @@ fn verify_stage2_kernel<F, E, T, const D: usize>(
     trace: Option<TraceClaim<F, E, D>>,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let stage2_verifier = AkitaStage2Verifier::new(
@@ -547,8 +547,8 @@ fn verify_stage3<F, E, T>(
     role_d_a: usize,
 ) -> Result<Option<FoldVerifyOutput<E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     if let Some((proof, next_fold_level_params)) = stage3 {
@@ -608,13 +608,8 @@ pub(in crate::protocol::core) fn verify_fold<F, E, T>(
     prepared: PreparedFoldReplay<'_, F, E>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HalvingField
-        + FromPrimitiveInt
-        + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + Ring + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let opening_shape = prepared.opening_shape.clone();
@@ -745,7 +740,7 @@ where
         opening_batch,
     )?;
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
-    ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
+    ensure_trace_stage2_supported(<E as ExtField<F>>::DEGREE)?;
     let trace_wire = if prepared.trace_prepared_points.is_none() {
         None
     } else if prepared.trace_block_opening.is_none() && !prepared.lp.has_precommitted_groups() {

@@ -7,7 +7,7 @@ use crate::{LevelParams, LevelParamsLike};
 
 /// Terminal direct witness payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CleartextWitnessProof<F: FieldCore> {
+pub enum CleartextWitnessProof<F: Field> {
     /// Raw field elements, for direct witnesses that are not naturally digit
     /// bounded.
     FieldElements(RingVec<F>),
@@ -15,7 +15,7 @@ pub enum CleartextWitnessProof<F: FieldCore> {
     SegmentTyped(SegmentTypedWitness<F>),
 }
 
-impl<F: FieldCore> CleartextWitnessProof<F> {
+impl<F: Field> CleartextWitnessProof<F> {
     /// Borrow the segment-typed payload, if present.
     pub fn as_segment_typed(&self) -> Option<&SegmentTypedWitness<F>> {
         match self {
@@ -65,7 +65,7 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
         num_segments: usize,
     ) -> Result<Vec<i8>, AkitaError>
     where
-        F: CanonicalField + HalvingField,
+        F: Field + CanonicalEncoding,
     {
         match self {
             Self::SegmentTyped(witness) => {
@@ -86,7 +86,7 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
         _layout: TerminalWitnessSegmentLayout,
     ) -> Result<TerminalWitnessTranscriptParts, AkitaError>
     where
-        F: CanonicalField + AkitaSerialize,
+        F: Field + CanonicalEncoding + AkitaSerialize,
     {
         match self {
             Self::SegmentTyped(witness) => witness.terminal_transcript_parts(),
@@ -134,7 +134,7 @@ pub fn segment_typed_witness_shape_from_groups<'a>(
     ))
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize> AkitaSerialize for CleartextWitnessProof<F> {
+impl<F: Field + CanonicalEncoding + AkitaSerialize> AkitaSerialize for CleartextWitnessProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -156,7 +156,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> AkitaSerialize for Cleartex
     }
 }
 
-impl<F: FieldCore + Valid> Valid for CleartextWitnessProof<F> {
+impl<F: Field + Valid> Valid for CleartextWitnessProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             Self::FieldElements(field_elems) => field_elems.check(),
@@ -165,7 +165,7 @@ impl<F: FieldCore + Valid> Valid for CleartextWitnessProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     for CleartextWitnessProof<F>
 {
     type Context = CleartextWitnessShape;

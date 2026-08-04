@@ -12,8 +12,8 @@ use crate::{
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
-use jolt_field::FieldCore;
-use jolt_field::{CanonicalField, ExtField, FromPrimitiveInt};
+use jolt_field::Field;
+use jolt_field::{CanonicalEncoding, ExtField, Ring};
 
 /// Ring-column counts per witness segment in emission order (`z ‖ e ‖ t ‖ …`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +39,7 @@ pub struct MultiGroupRingRelationSegmentLengths {
 }
 
 /// Witness segment lengths shared by prover emission, layout offsets, and M-table sizing.
-pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
+pub fn ring_relation_segment_lengths<F: Field + CanonicalEncoding>(
     lp: &LevelParams,
     opening_counts: RingRelationOpeningCounts,
     _relation_matrix_row_layout: RelationMatrixRowLayout,
@@ -89,7 +89,7 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
 }
 
 /// Per-group `z ‖ e ‖ t` widths for multi-group roots in final-first witness order.
-pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
+pub fn multi_group_ring_relation_segment_lengths<F: Field + CanonicalEncoding>(
     lp: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<MultiGroupRingRelationSegmentLengths, AkitaError> {
@@ -166,7 +166,7 @@ pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
 /// closures borrow typed ring rows via [`Self::rhs_trusted`], [`Self::v_trusted`],
 /// and [`Self::row_coefficient_rings_trusted`].
 #[derive(Debug, Clone)]
-pub struct RingRelationInstance<F: FieldCore> {
+pub struct RingRelationInstance<F: Field> {
     relation_matrix_row_layout: RelationMatrixRowLayout,
     group_challenges: Vec<Challenges>,
     group_opening_points: Vec<RingOpeningPoint<F>>,
@@ -179,7 +179,7 @@ pub struct RingRelationInstance<F: FieldCore> {
     role_dims: CommitmentRingDims,
 }
 
-impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
+impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
     /// Construct a validated ring-relation statement from D-free ring storage.
     ///
     /// Does not sample from the transcript; callers must absorb/sample before calling.
@@ -462,7 +462,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         row_coefficients: &[E],
     ) -> Result<(Vec<F>, RingVec<F>), AkitaError>
     where
-        F: FromPrimitiveInt,
+        F: Ring,
         E: FpExtEncoding<F> + ExtField<F>,
     {
         let mut gamma = Vec::with_capacity(row_coefficients.len());
@@ -712,6 +712,8 @@ mod tests {
     use super::*;
     use crate::layout::PrecommittedLevelParams;
     use crate::PolynomialGroupLayout;
+    use akita_algebra::One;
+    use akita_algebra::Zero;
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
     use jolt_field::Fp32;
 

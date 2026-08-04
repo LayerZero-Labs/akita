@@ -4,7 +4,7 @@ use crate::compute::{
     TensorProjectionKernel,
 };
 
-pub(in crate::protocol::core) struct PreparedExtensionOpeningReduction<E: FieldCore> {
+pub(in crate::protocol::core) struct PreparedExtensionOpeningReduction<E: Field> {
     pub(in crate::protocol::core) proof_partials: Vec<E>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
     pub(in crate::protocol::core) terms: Vec<ExtensionOpeningReductionTerm<E>>,
@@ -14,7 +14,7 @@ pub(in crate::protocol::core) struct PreparedExtensionOpeningReduction<E: FieldC
     pub(in crate::protocol::core) true_input_claim: E,
 }
 
-pub(in crate::protocol::core) struct ProvedExtensionOpeningReduction<E: FieldCore> {
+pub(in crate::protocol::core) struct ProvedExtensionOpeningReduction<E: Field> {
     pub(in crate::protocol::core) reduction: ExtensionOpeningReduction<E>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
     pub(in crate::protocol::core) protocol_point: Vec<E>,
@@ -35,7 +35,7 @@ pub(in crate::protocol::core) fn build_extension_opening_reduction_terms<
     eta: &[E],
 ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     E: ExtField<F> + MulBaseUnreduced<F>,
     P: RootTensorSource<F, D>,
     B: ComputeBackendSetup<F>
@@ -81,7 +81,7 @@ fn try_sparse_extension_opening_reduction_terms<F, E, P, B, const D: usize>(
     eta: &[E],
 ) -> Result<Option<Vec<ExtensionOpeningReductionTerm<E>>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
     P: RootTensorSource<F, D>,
     B: ComputeBackendSetup<F>
@@ -134,7 +134,7 @@ fn extension_opening_term_from_packed_witness<F, E>(
     coeff: E,
 ) -> Result<ExtensionOpeningReductionTerm<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
@@ -157,7 +157,7 @@ fn build_dense_extension_opening_reduction_terms<F, E, P, B, const D: usize>(
     eta: &[E],
 ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F> + MulBaseUnreduced<F>,
     P: RootTensorSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
@@ -194,7 +194,7 @@ pub(in crate::protocol::core) fn prepare_extension_opening_reduction<
     transcript: &mut T,
 ) -> Result<PreparedExtensionOpeningReduction<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     E: ExtField<F> + MulBaseUnreduced<F>,
     T: Transcript<F>,
     P: RootTensorSource<F, D>,
@@ -342,8 +342,8 @@ pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, P, B
     path: &'static str,
 ) -> Result<ProvedExtensionOpeningReduction<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + AkitaSerialize,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + MulBaseUnreduced<F> + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: ExtField<F> + Unreduced + Fold + MulBaseUnreduced<F> + AkitaSerialize,
     T: Transcript<F>,
     P: RootTensorSource<F, D>,
     B: ComputeBackendSetup<F>

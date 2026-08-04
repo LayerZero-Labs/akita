@@ -21,8 +21,7 @@ pub(crate) fn inner_ajtai_wide_onehot<E, F, const D: usize>(
 ) -> Vec<CyclotomicRing<F, D>>
 where
     E: OneHotEntry,
-    F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Unreduced,
 {
     let n_a = a_view.num_rows();
     let mut t_wide = vec![WideCyclotomicRing::<F::Wide, D>::zero(); n_a];
@@ -48,8 +47,7 @@ pub(crate) fn inner_ajtai_wide_single_chunk_tiled<F, const D: usize>(
     num_digits: usize,
 ) -> Vec<CyclotomicRing<F, D>>
 where
-    F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Unreduced,
 {
     let n_a = a_view.num_rows();
     let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
@@ -74,8 +72,7 @@ pub(crate) fn inner_ajtai_wide_onehot_safe<E, F, const D: usize>(
 ) -> Vec<CyclotomicRing<F, D>>
 where
     E: OneHotEntry,
-    F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Unreduced,
 {
     let n_a = a_view.num_rows();
     let mut t_wide = vec![WideCyclotomicRing::<F::Wide, D>::zero(); n_a];

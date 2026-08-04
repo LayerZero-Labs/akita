@@ -6,7 +6,7 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_error::AkitaError;
-use jolt_field::CanonicalField;
+use jolt_field::{CanonicalEncoding, Field};
 
 use crate::config::SetupContributionMode;
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
@@ -1034,7 +1034,7 @@ impl LevelParams {
     }
 
     /// Next-witness length in field elements for scalar or multi-group folds.
-    pub fn next_w_len<F: CanonicalField>(
+    pub fn next_w_len<F: Field + CanonicalEncoding>(
         &self,
         opening_batch: &OpeningClaimsLayout,
         layout: RelationMatrixRowLayout,

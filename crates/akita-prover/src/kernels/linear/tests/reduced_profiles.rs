@@ -5,14 +5,17 @@ use crate::kernels::linear::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_types::layout::FlatMatrix;
-use jolt_field::{
-    CanonicalField, FieldCore, HalvingField, Prime128Offset275, Prime32Offset99, Prime64Offset59,
-};
+use jolt_field::One;
+use jolt_field::Ring;
+use jolt_field::{CanonicalEncoding, Field, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
-fn assert_single_i8_chunk_paths<F: FieldCore + CanonicalField, const D: usize>(cols: usize) {
+fn assert_single_i8_chunk_paths<F: Field + CanonicalEncoding, const D: usize>(cols: usize) {
     let log_basis = 6;
-    let modulus = (-F::one()).to_canonical_u128() + 1;
-    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let modulus = (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1;
+    let half = F::from_u128_reduced(modulus / 2);
     let row = CyclotomicRing::from_coefficients([half; D]);
     let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
     let flat_rows = vec![row; cols];
@@ -44,14 +47,12 @@ fn assert_single_i8_chunk_paths<F: FieldCore + CanonicalField, const D: usize>(c
     assert_eq!(cyclic, vec![expected_cyclic]);
 }
 
-fn assert_fused_split_eq_zpre_chunks<
-    F: FieldCore + CanonicalField + HalvingField,
-    const D: usize,
->(
-    cols: usize,
-) {
-    let modulus = (-F::one()).to_canonical_u128() + 1;
-    let half = F::from_canonical_u128_reduced(modulus / 2);
+fn assert_fused_split_eq_zpre_chunks<F: Field + CanonicalEncoding, const D: usize>(cols: usize) {
+    let modulus = (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1;
+    let half = F::from_u128_reduced(modulus / 2);
     let row = CyclotomicRing::from_coefficients([half; D]);
     let flat_rows = vec![row; cols];
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
@@ -89,7 +90,7 @@ fn mat_vec_mul_ntt_single_i8_chunks_q128() {
     let cols = 2_050;
     let log_basis = 6;
     let modulus = (-F::one()).to_canonical_u128() + 1;
-    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let half = F::from_u128_reduced(modulus / 2);
     let row = CyclotomicRing::from_coefficients([half; D]);
     let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
     let flat_rows = vec![row; cols];
@@ -120,7 +121,7 @@ fn mat_vec_mul_ntt_single_i8_cyclic_chunks_q128() {
     let cols = 2_050;
     let log_basis = 6;
     let modulus = (-F::one()).to_canonical_u128() + 1;
-    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let half = F::from_u128_reduced(modulus / 2);
     let row = CyclotomicRing::from_coefficients([half; D]);
     let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
     let flat_rows = vec![row; cols];

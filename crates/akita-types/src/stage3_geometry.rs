@@ -5,7 +5,7 @@
 //! points into the next recursive suffix opening batch.
 
 use akita_error::AkitaError;
-use jolt_field::{FieldCore, FromPrimitiveInt};
+use jolt_field::{Field, Ring};
 
 use crate::{PointVariableSelection, SetupPrefixSlotId};
 
@@ -85,12 +85,12 @@ impl BatchedStage3Geometry {
     }
 
     /// Lifting scale for the witness term embedded into the common cube.
-    pub fn witness_lift_scale<E: FieldCore + FromPrimitiveInt>(&self) -> Result<E, AkitaError> {
+    pub fn witness_lift_scale<E: Field + Ring>(&self) -> Result<E, AkitaError> {
         lift_scale(self.batched_rounds - self.witness_rounds)
     }
 
     /// Lifting scale for the setup term embedded into the common cube.
-    pub fn setup_lift_scale<E: FieldCore + FromPrimitiveInt>(&self) -> Result<E, AkitaError> {
+    pub fn setup_lift_scale<E: Field + Ring>(&self) -> Result<E, AkitaError> {
         lift_scale(self.batched_rounds - self.setup_rounds)
     }
 
@@ -99,7 +99,7 @@ impl BatchedStage3Geometry {
     ///
     /// Returns `(shared_point, setup_offset)`, where `setup_offset` is the first
     /// coordinate of `setup_prefix_point` inside `shared_point`.
-    pub fn shared_suffix_point<E: FieldCore>(
+    pub fn shared_suffix_point<E: Field>(
         setup_prefix_point: &[E],
         witness_point: &[E],
     ) -> Result<(Vec<E>, usize), AkitaError> {
@@ -176,7 +176,7 @@ impl BatchedStage3Geometry {
     }
 }
 
-fn lift_scale<E: FieldCore + FromPrimitiveInt>(extra_rounds: usize) -> Result<E, AkitaError> {
+fn lift_scale<E: Field + Ring>(extra_rounds: usize) -> Result<E, AkitaError> {
     let inv_two = E::from_u64(2)
         .inverse()
         .ok_or_else(|| AkitaError::InvalidSetup("two is not invertible in Akita fields".into()))?;
@@ -190,6 +190,7 @@ mod tests {
         AjtaiKeyParams, PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
         SisModulusFamily,
     };
+    use akita_algebra::One;
     use jolt_field::Prime32Offset99 as F;
 
     fn test_prefix_id() -> SetupPrefixSlotId {

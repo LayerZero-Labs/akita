@@ -14,8 +14,8 @@ use akita_types::{
     project_tensor_factor_value, tensor_opening_split, validate_reduction_tables,
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
-use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use jolt_field::{ExtField, FieldCore, Zero};
+use jolt_field::{ExtField, Field, Zero};
+use jolt_field::{Fold, Unreduced};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -26,27 +26,27 @@ use rayon::prelude::*;
 pub const SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS: usize = 12;
 
 /// Degree-two round-message accumulator that honors a field's delayed-reduction
-/// exactness contract (`HasUnreducedOps::DELAYED_PRODUCT_SUM_IS_EXACT`).
+/// exactness contract (`Unreduced::SUM_IS_EXACT`).
 ///
 /// Every extension-opening reduction round needs two batch sums: the constant
 /// coefficient `Σ c0·c1` and the quadratic coefficient `Σ q0·q1`. This trait
 /// abstracts how those products are summed so the dense, fused-fold, and sparse
 /// accumulation paths can all pick the right policy from one place:
 ///
-/// - [`DelayedDeg2`] sums the wide `E::ProductAccum` products and reduces once
-///   per round. This is only sound when `DELAYED_PRODUCT_SUM_IS_EXACT` is set,
+/// - [`DelayedDeg2`] sums the wide `E::Product` products and reduces once
+///   per round. This is only sound when `SUM_IS_EXACT` is set,
 ///   i.e. the field's accumulator has been proven not to wrap for these batch
 ///   sizes (e.g. `FpExt4<Fp32>`, `FpExt2<Fp64>`).
 /// - [`DirectDeg2`] reduces every product immediately via `Mul`, so the summed
 ///   coefficient is byte-identical to per-term reduction. This is the
-///   contract-safe path for fields that leave `DELAYED_PRODUCT_SUM_IS_EXACT` at
+///   contract-safe path for fields that leave `SUM_IS_EXACT` at
 ///   its conservative `false` default.
 ///
 /// Mirrors the same flag check already performed in
 /// [`sparse::TensorEqualityFactor::factor_pair`], so the entire EOR prover
 /// stays byte-identical to per-term `Mul` for any field whose delayed product
 /// sum is not exact.
-trait Deg2RoundAccum<E: FieldCore + HasUnreducedOps>: Sized + Send {
+trait Deg2RoundAccum<E: Field + Unreduced>: Sized + Send {
     /// Empty accumulator (both coefficients zero).
     fn zero() -> Self;
     /// Accumulate `lhs·rhs` into the constant coefficient.
@@ -61,27 +61,27 @@ trait Deg2RoundAccum<E: FieldCore + HasUnreducedOps>: Sized + Send {
 }
 
 /// Delayed-reduction accumulator. Sound only when the field's
-/// `DELAYED_PRODUCT_SUM_IS_EXACT` is `true`.
-struct DelayedDeg2<E: HasUnreducedOps> {
-    constant: E::ProductAccum,
-    quadratic: E::ProductAccum,
+/// `SUM_IS_EXACT` is `true`.
+struct DelayedDeg2<E: Unreduced> {
+    constant: E::Product,
+    quadratic: E::Product,
 }
 
-impl<E: FieldCore + HasUnreducedOps> Deg2RoundAccum<E> for DelayedDeg2<E> {
+impl<E: Field + Unreduced> Deg2RoundAccum<E> for DelayedDeg2<E> {
     #[inline]
     fn zero() -> Self {
         Self {
-            constant: E::ProductAccum::zero(),
-            quadratic: E::ProductAccum::zero(),
+            constant: E::Product::zero(),
+            quadratic: E::Product::zero(),
         }
     }
     #[inline]
     fn add_constant_product(&mut self, lhs: E, rhs: E) {
-        self.constant += lhs.mul_to_product_accum(rhs);
+        self.constant += lhs.mul_unreduced(rhs);
     }
     #[inline]
     fn add_quadratic_product(&mut self, lhs: E, rhs: E) {
-        self.quadratic += lhs.mul_to_product_accum(rhs);
+        self.quadratic += lhs.mul_unreduced(rhs);
     }
     #[cfg(feature = "parallel")]
     #[inline]
@@ -94,21 +94,21 @@ impl<E: FieldCore + HasUnreducedOps> Deg2RoundAccum<E> for DelayedDeg2<E> {
     #[inline]
     fn finish(self) -> (E, E) {
         (
-            E::reduce_product_accum(self.constant),
-            E::reduce_product_accum(self.quadratic),
+            E::reduce_product(self.constant),
+            E::reduce_product(self.quadratic),
         )
     }
 }
 
 /// Per-term reduction accumulator: every product is reduced immediately, so the
 /// summed coefficient is byte-identical to per-term `Mul`. Contract-safe
-/// fallback for fields with `DELAYED_PRODUCT_SUM_IS_EXACT == false`.
+/// fallback for fields with `SUM_IS_EXACT == false`.
 struct DirectDeg2<E> {
     constant: E,
     quadratic: E,
 }
 
-impl<E: FieldCore + HasUnreducedOps> Deg2RoundAccum<E> for DirectDeg2<E> {
+impl<E: Field + Unreduced> Deg2RoundAccum<E> for DirectDeg2<E> {
     #[inline]
     fn zero() -> Self {
         Self {

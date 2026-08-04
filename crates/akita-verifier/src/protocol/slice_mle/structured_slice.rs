@@ -4,8 +4,8 @@ use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{eval_offset_eq_interval, summarize_pow2_block_carries};
 use akita_error::AkitaError;
-use jolt_field::parallel::*;
-use jolt_field::{CanonicalField, ExtField, FieldCore};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 /// Number of carry buckets per outer index produced by
 /// [`StructuredSliceMleEvaluator::compute_inner_sum`].
@@ -23,7 +23,7 @@ pub(super) const CARRY1: usize = 1;
 
 /// Peeled-block MLE evaluator for one structured slice of `M`. See
 /// `book/src/how/verifying/matrix_evaluation.md` for the full derivation.
-pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
+pub(crate) trait StructuredSliceMleEvaluator<F: Field>: Sync {
     /// Number of outer-loop indices.
     fn num_outer_indices(&self) -> usize;
 
@@ -110,7 +110,7 @@ pub(crate) struct EStructuredSlicesEvaluator<'a, F, E> {
 
 impl<F, E> StructuredSliceMleEvaluator<E> for EStructuredSlicesEvaluator<'_, F, E>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     #[inline]
@@ -157,7 +157,7 @@ pub(crate) struct TStructuredSlicesEvaluator<'a, F, E> {
 
 impl<F, E> StructuredSliceMleEvaluator<E> for TStructuredSlicesEvaluator<'_, F, E>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     #[inline]
@@ -190,7 +190,7 @@ where
 }
 
 /// Pow2 Z-segment slice evaluator.
-pub(crate) struct ZStructuredPow2SlicesEvaluator<'a, F: FieldCore, E> {
+pub(crate) struct ZStructuredPow2SlicesEvaluator<'a, F: Field, E> {
     /// Commit-side gadget. Length = `depth_commit`.
     pub commit_gadget: &'a [F],
     /// Fold-side gadget. Length = `depth_fold`.
@@ -206,7 +206,7 @@ pub(crate) struct ZStructuredPow2SlicesEvaluator<'a, F: FieldCore, E> {
 
 impl<F, E> StructuredSliceMleEvaluator<E> for ZStructuredPow2SlicesEvaluator<'_, F, E>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     #[inline]
@@ -235,7 +235,7 @@ where
 
 /// Dense fallback for non-pow2 Z segments. This path materializes the Z slice
 /// and binds it over its live global interval with [`eval_offset_eq_interval`].
-pub(crate) struct ZDenseSlicesEvaluator<'a, F: FieldCore, E> {
+pub(crate) struct ZDenseSlicesEvaluator<'a, F: Field, E> {
     /// Commit-side gadget. Length = `depth_commit`.
     pub commit_gadget: &'a [F],
     /// Fold-side gadget. Length = `depth_fold`.
@@ -255,7 +255,7 @@ pub(crate) struct ZDenseSlicesEvaluator<'a, F: FieldCore, E> {
 
 impl<F, E> ZDenseSlicesEvaluator<'_, F, E>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     /// Evaluate the dense materialized Z segment.
@@ -296,7 +296,7 @@ pub(crate) fn compute_r_contribution<F, E>(
     r_gadget: &[F],
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     let levels = r_gadget.len();
@@ -333,6 +333,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_field::One;
+    use jolt_field::Zero;
 
     use akita_algebra::eq_poly::EqPolynomial;
     use akita_algebra::offset_eq::{eq_eval_at_index, summarize_pow2_block_carries};
@@ -369,7 +371,7 @@ mod tests {
     }
 
     fn f(value: u128) -> F {
-        F::from_canonical_u128_reduced(value)
+        F::from_u128_reduced(value)
     }
 
     fn fixture_lp() -> LevelParams {

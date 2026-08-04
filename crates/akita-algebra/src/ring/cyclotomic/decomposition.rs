@@ -83,11 +83,11 @@ pub fn peel_first_balanced_digit(
 }
 
 #[inline(always)]
-fn balanced_digit_to_field<F: CanonicalField>(digit: i128, q: u128) -> F {
+fn balanced_digit_to_field<F: Field + CanonicalEncoding>(digit: i128, q: u128) -> F {
     if digit >= 0 {
-        F::from_canonical_u128_reduced(digit as u128)
+        F::from_u128_reduced(digit as u128)
     } else {
-        F::from_canonical_u128_reduced(q - ((-digit) as u128))
+        F::from_u128_reduced(q - ((-digit) as u128))
     }
 }
 
@@ -138,7 +138,7 @@ impl BalancedDecomposePow2I8Params {
     }
 }
 
-impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
+impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     /// Balanced decomposition writing directly into a pre-allocated output slice.
     ///
     /// `out` must have length exactly `levels`. Each element receives one digit plane.
@@ -157,7 +157,10 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         let half_b = 1i128 << (log_basis - 1);
         let b = half_b << 1;
         let mask = b - 1;
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
         let threshold = decompose_centering_threshold(levels, log_basis, q);
         let overflow_possible = q.saturating_sub(threshold) > i128::MAX as u128;
 
@@ -170,7 +173,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                 .split_first_mut()
                 .expect("balanced_decompose_pow2_into requires at least one plane");
             for i in 0..D {
-                let canonical = self.coeffs[i].to_canonical_u128();
+                let canonical = self.coeffs[i]
+                    .to_u128_checked()
+                    .expect("canonical prime-field value fits in u128");
                 let (mut c, d0) =
                     peel_first_balanced_digit(canonical, q, threshold, mask, half_b, b, log_basis);
                 first_plane.coeffs[i] = balanced_digit_to_field::<F>(d0, q);
@@ -184,7 +189,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             }
         } else {
             for i in 0..D {
-                let canonical = self.coeffs[i].to_canonical_u128();
+                let canonical = self.coeffs[i]
+                    .to_u128_checked()
+                    .expect("canonical prime-field value fits in u128");
                 let mut c: i128 = if canonical > threshold {
                     -((q - canonical) as i128)
                 } else {
@@ -208,12 +215,17 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     #[inline]
     pub fn coeff_norm_sq(&self) -> u128
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
         let half_q = q / 2;
         self.coeffs.iter().fold(0u128, |acc, &coeff| {
-            let canonical = coeff.to_canonical_u128();
+            let canonical = coeff
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128");
             let centered: i128 = if canonical > half_q {
                 -((q - canonical) as i128)
             } else {
@@ -246,7 +258,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             return parts[0];
         }
 
-        let b = F::from_canonical_u128_reduced(1u128 << log_basis);
+        let b = F::from_u128_reduced(1u128 << log_basis);
         let coeffs = from_fn(|i| {
             let mut acc = F::zero();
             let mut power = F::one();
@@ -266,7 +278,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     /// Panics if `log_basis` is zero or >= 128.
     pub fn gadget_recompose_pow2_i8(digits: &[[i8; D]], log_basis: u32) -> Self
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         if digits.is_empty() {
             return Self::zero();
@@ -281,7 +293,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             return Self { coeffs };
         }
 
-        let b = F::from_canonical_u128_reduced(1u128 << log_basis);
+        let b = F::from_u128_reduced(1u128 << log_basis);
         let coeffs = from_fn(|i| {
             let mut acc = F::zero();
             let mut power = F::one();
@@ -320,7 +332,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     ///
     /// Same semantics as [`balanced_decompose_pow2`](Self::balanced_decompose_pow2)
     /// but stores each digit as `i8` instead of a field element, avoiding
-    /// the cost of `F::from_canonical_u128_reduced`.
+    /// the cost of `F::from_u128_reduced`.
     ///
     /// Requires `log_basis <= 6` so digits fit in `[-32, 31]` (i8 range).
     ///
@@ -330,7 +342,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     #[inline]
     pub fn balanced_decompose_pow2_i8_into(&self, out: &mut [[i8; D]], log_basis: u32)
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let levels = out.len();
         assert!(
@@ -342,7 +354,10 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             "levels * log_basis must be <= 128 + log_basis"
         );
 
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
         self.balanced_decompose_pow2_i8_into_with_modulus(out, log_basis, q);
     }
 
@@ -355,7 +370,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         log_basis: u32,
         q: u128,
     ) where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let params = BalancedDecomposePow2I8Params::new(out.len(), log_basis, q);
         self.balanced_decompose_pow2_i8_into_with_params(out, &params);
@@ -368,7 +383,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         out: &mut [[i8; D]],
         params: &BalancedDecomposePow2I8Params,
     ) where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         debug_assert_eq!(out.len(), params.levels);
         if params.overflow_possible {
@@ -385,14 +400,20 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         out: &mut [[i8; D]],
         params: &BalancedDecomposePow2I8Params,
     ) where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let bulk_end = D - (D % 3);
 
         for base in (0..bulk_end).step_by(3) {
-            let canonical0 = self.coeffs[base].to_canonical_u128();
-            let canonical1 = self.coeffs[base + 1].to_canonical_u128();
-            let canonical2 = self.coeffs[base + 2].to_canonical_u128();
+            let canonical0 = self.coeffs[base]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128");
+            let canonical1 = self.coeffs[base + 1]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128");
+            let canonical2 = self.coeffs[base + 2]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128");
 
             let mut c0: i128 = if canonical0 > params.threshold {
                 -((params.q - canonical0) as i128)
@@ -441,7 +462,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         }
 
         for i in bulk_end..D {
-            let canonical = self.coeffs[i].to_canonical_u128();
+            let canonical = self.coeffs[i]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128");
             let mut c: i128 = if canonical > params.threshold {
                 -((params.q - canonical) as i128)
             } else {
@@ -464,7 +487,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         out: &mut [[i8; D]],
         params: &BalancedDecomposePow2I8Params,
     ) where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let (first_plane, remaining) = out
             .split_first_mut()
@@ -472,9 +495,15 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         let bulk_end = D - (D % 3);
 
         for base in (0..bulk_end).step_by(3) {
-            let canonical0 = self.coeffs[base].to_canonical_u128();
-            let canonical1 = self.coeffs[base + 1].to_canonical_u128();
-            let canonical2 = self.coeffs[base + 2].to_canonical_u128();
+            let canonical0 = self.coeffs[base]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128");
+            let canonical1 = self.coeffs[base + 1]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128");
+            let canonical2 = self.coeffs[base + 2]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128");
 
             let (mut c0, d0) = peel_first_balanced_digit(
                 canonical0,
@@ -539,7 +568,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         }
 
         for i in bulk_end..D {
-            let canonical = self.coeffs[i].to_canonical_u128();
+            let canonical = self.coeffs[i]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128");
             let (mut c, d0) = peel_first_balanced_digit(
                 canonical,
                 params.q,
@@ -562,7 +593,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     /// Allocating variant of [`balanced_decompose_pow2_i8_into`](Self::balanced_decompose_pow2_i8_into).
     pub fn balanced_decompose_pow2_i8(&self, levels: usize, log_basis: u32) -> Vec<[i8; D]>
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let mut digit_planes: Vec<[i8; D]> = vec![[0i8; D]; levels];
         self.balanced_decompose_pow2_i8_into(&mut digit_planes, log_basis);
@@ -580,7 +611,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     /// `(levels - 1) * log_basis >= 128`.
     pub fn balanced_decompose_pow2_with_carry_into(&self, out: &mut [Self], log_basis: u32)
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let levels = out.len();
         assert!(levels > 0, "levels must be positive");
@@ -601,11 +632,16 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             let b = 1i128 << log_basis;
             (b, b / 2)
         };
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
         let half_q = q / 2;
 
         for i in 0..D {
-            let canonical = self.coeffs[i].to_canonical_u128();
+            let canonical = self.coeffs[i]
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128");
             let mut c: i128 = if canonical > half_q {
                 -((q - canonical) as i128)
             } else {
@@ -623,9 +659,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                 };
 
                 plane.coeffs[i] = if balanced >= 0 {
-                    F::from_canonical_u128_reduced(balanced as u128)
+                    F::from_u128_reduced(balanced as u128)
                 } else {
-                    F::from_canonical_u128_reduced(q - ((-balanced) as u128))
+                    F::from_u128_reduced(q - ((-balanced) as u128))
                 };
             }
         }
@@ -635,7 +671,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     /// [`balanced_decompose_pow2_with_carry_into`](Self::balanced_decompose_pow2_with_carry_into).
     pub fn balanced_decompose_pow2_with_carry(&self, levels: usize, log_basis: u32) -> Vec<Self>
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let mut out = vec![Self::zero(); levels];
         self.balanced_decompose_pow2_with_carry_into(&mut out, log_basis);

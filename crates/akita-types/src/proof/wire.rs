@@ -6,7 +6,7 @@ fn serialize_extension_opening_reduction<E, W>(
     compress: Compress,
 ) -> Result<(), SerializationError>
 where
-    E: FieldCore + AkitaSerialize,
+    E: Field + AkitaSerialize,
     W: Write,
 {
     if let Some(reduction) = reduction {
@@ -25,7 +25,7 @@ pub(super) fn extension_opening_reduction_serialized_size<E>(
     compress: Compress,
 ) -> usize
 where
-    E: FieldCore + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     reduction.map_or(0, |reduction| {
         reduction
@@ -44,7 +44,7 @@ fn deserialize_extension_opening_reduction<E, R>(
     shape: Option<&ExtensionOpeningReductionShape>,
 ) -> Result<Option<ExtensionOpeningReductionProof<E>>, SerializationError>
 where
-    E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    E: Field + Valid + AkitaDeserialize<Context = ()>,
     R: Read,
 {
     let Some(shape) = shape else {
@@ -86,8 +86,8 @@ fn serialize_intermediate_fold_wire_prefix<F, E, W>(
     compress: Compress,
 ) -> Result<(), SerializationError>
 where
-    F: FieldCore + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    F: Field + AkitaSerialize,
+    E: Field + AkitaSerialize,
     W: Write,
 {
     serialize_extension_opening_reduction(extension_opening_reduction, &mut writer, compress)?;
@@ -101,8 +101,8 @@ fn intermediate_fold_wire_prefix_serialized_size<F, E>(
     compress: Compress,
 ) -> usize
 where
-    F: FieldCore + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    F: Field + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     extension_opening_reduction_serialized_size(extension_opening_reduction, compress)
         + v.serialized_size(compress)
@@ -120,8 +120,8 @@ fn deserialize_intermediate_fold_wire_prefix<F, E, R>(
     v_shape: &<RingVec<F> as AkitaDeserialize>::Context,
 ) -> Result<IntermediateFoldWirePrefix<F, E>, SerializationError>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-    E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
+    E: Field + Valid + AkitaDeserialize<Context = ()>,
     R: Read,
 {
     let extension_opening_reduction =
@@ -138,7 +138,7 @@ fn serialize_terminal_fold_wire_prefix<E, W>(
     compress: Compress,
 ) -> Result<(), SerializationError>
 where
-    E: FieldCore + AkitaSerialize,
+    E: Field + AkitaSerialize,
     W: Write,
 {
     serialize_extension_opening_reduction(extension_opening_reduction, &mut writer, compress)?;
@@ -150,7 +150,7 @@ fn terminal_fold_wire_prefix_serialized_size<E>(
     compress: Compress,
 ) -> usize
 where
-    E: FieldCore + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     extension_opening_reduction_serialized_size(extension_opening_reduction, compress)
         + fold_grind_nonce_serialized_size(compress)
@@ -163,7 +163,7 @@ fn deserialize_terminal_fold_wire_prefix<E, R>(
     extension_shape: Option<&ExtensionOpeningReductionShape>,
 ) -> Result<(Option<ExtensionOpeningReductionProof<E>>, u32), SerializationError>
 where
-    E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    E: Field + Valid + AkitaDeserialize<Context = ()>,
     R: Read,
 {
     let extension_opening_reduction =
@@ -178,7 +178,7 @@ fn serialize_stage3_sumcheck<E, W>(
     compress: Compress,
 ) -> Result<(), SerializationError>
 where
-    E: FieldCore + AkitaSerialize,
+    E: Field + AkitaSerialize,
     W: Write,
 {
     if let Some(stage3_sumcheck) = stage3_sumcheck {
@@ -203,7 +203,7 @@ fn stage3_sumcheck_serialized_size<E>(
     compress: Compress,
 ) -> usize
 where
-    E: FieldCore + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     stage3_sumcheck.map_or(0, |stage3_sumcheck| {
         stage3_sumcheck.claim.serialized_size(compress)
@@ -220,7 +220,7 @@ fn deserialize_stage3_sumcheck<E, R>(
     shape: Option<&SetupProductSumcheckShape>,
 ) -> Result<Option<SetupSumcheckProof<E>>, SerializationError>
 where
-    E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    E: Field + Valid + AkitaDeserialize<Context = ()>,
     R: Read,
 {
     let Some(shape) = shape else {
@@ -240,7 +240,7 @@ where
     }))
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
+impl<F: Field + CanonicalEncoding + AkitaSerialize, E: Field + AkitaSerialize> AkitaSerialize
     for AkitaLevelProof<F, E>
 {
     fn serialize_with_mode<W: Write>(
@@ -370,7 +370,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
     }
 }
 
-impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaLevelProof<F, E> {
+impl<F: Field + Valid, E: Field + Valid> Valid for AkitaLevelProof<F, E> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             AkitaLevelProof::Intermediate {
@@ -428,8 +428,8 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaLevelProof<F, E>
 }
 
 impl<
-        F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-        E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+        F: Field + Valid + AkitaDeserialize<Context = ()>,
+        E: Field + Valid + AkitaDeserialize<Context = ()>,
     > AkitaDeserialize for AkitaLevelProof<F, E>
 {
     type Context = LevelProofShape;
@@ -513,7 +513,7 @@ impl<
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
+impl<F: Field + CanonicalEncoding + AkitaSerialize, E: Field + AkitaSerialize> AkitaSerialize
     for TerminalLevelProof<F, E>
 {
     fn serialize_with_mode<W: Write>(
@@ -553,7 +553,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
     }
 }
 
-impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for TerminalLevelProof<F, E> {
+impl<F: Field + Valid, E: Field + Valid> Valid for TerminalLevelProof<F, E> {
     fn check(&self) -> Result<(), SerializationError> {
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.partials.check()?;
@@ -570,8 +570,8 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for TerminalLevelProof<F,
 }
 
 impl<
-        F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-        E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+        F: Field + Valid + AkitaDeserialize<Context = ()>,
+        E: Field + Valid + AkitaDeserialize<Context = ()>,
     > AkitaDeserialize for TerminalLevelProof<F, E>
 {
     type Context = TerminalLevelProofShape;
@@ -616,7 +616,7 @@ impl<
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
+impl<F: Field + CanonicalEncoding + AkitaSerialize, E: Field + AkitaSerialize> AkitaSerialize
     for AkitaBatchedFoldRoot<F, E>
 {
     fn serialize_with_mode<W: Write>(
@@ -689,7 +689,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
     }
 }
 
-impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<F, E> {
+impl<F: Field + Valid, E: Field + Valid> Valid for AkitaBatchedFoldRoot<F, E> {
     fn check(&self) -> Result<(), SerializationError> {
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.partials.check()?;
@@ -718,8 +718,8 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<
 }
 
 impl<
-        F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-        E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+        F: Field + Valid + AkitaDeserialize<Context = ()>,
+        E: Field + Valid + AkitaDeserialize<Context = ()>,
     > AkitaDeserialize for AkitaBatchedFoldRoot<F, E>
 {
     type Context = LevelProofShape;
@@ -803,7 +803,7 @@ impl<
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
+impl<F: Field + CanonicalEncoding + AkitaSerialize, E: Field + AkitaSerialize> AkitaSerialize
     for AkitaBatchedRootProof<F, E>
 {
     fn serialize_with_mode<W: Write>(
@@ -839,7 +839,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
     }
 }
 
-impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedRootProof<F, E> {
+impl<F: Field + Valid, E: Field + Valid> Valid for AkitaBatchedRootProof<F, E> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             Self::Fold(fold) => fold.check(),
@@ -854,7 +854,7 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedRootProof
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
+impl<F: Field + CanonicalEncoding + AkitaSerialize, E: Field + AkitaSerialize> AkitaSerialize
     for AkitaBatchedProof<F, E>
 {
     fn serialize_with_mode<W: Write>(
@@ -879,7 +879,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
     }
 }
 
-impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedProof<F, E> {
+impl<F: Field + Valid, E: Field + Valid> Valid for AkitaBatchedProof<F, E> {
     fn check(&self) -> Result<(), SerializationError> {
         self.root.check()?;
         for step in &self.steps {
@@ -928,8 +928,8 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedProof<F, 
 }
 
 impl<
-        F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-        E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+        F: Field + Valid + AkitaDeserialize<Context = ()>,
+        E: Field + Valid + AkitaDeserialize<Context = ()>,
     > AkitaDeserialize for AkitaBatchedProof<F, E>
 {
     type Context = AkitaBatchedProofShape;

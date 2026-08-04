@@ -2,7 +2,7 @@ use crate::backend::onehot::{MultiChunkEntry, SingleChunkEntry};
 use crate::backend::sparse_ring::SparseRingBlockEntry;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 /// Flat block table handed to a compute backend.
 ///
@@ -64,7 +64,7 @@ impl<'a, E> FlatBlockTable<'a, E> {
 }
 
 /// Dense polynomial commit representation handed to the compute backend.
-pub enum DenseCommitInput<'a, F: FieldCore, const D: usize> {
+pub enum DenseCommitInput<'a, F: Field, const D: usize> {
     /// Balanced digit planes are already cached by the polynomial.
     CachedDigits {
         /// Per-block digit slices.
@@ -84,7 +84,7 @@ pub enum DenseCommitInput<'a, F: FieldCore, const D: usize> {
 }
 
 /// Dense commit operation plan.
-pub struct DenseCommitRowsPlan<'a, F: FieldCore, const D: usize> {
+pub struct DenseCommitRowsPlan<'a, F: Field, const D: usize> {
     /// Number of A rows to produce.
     pub n_a: usize,
     /// Dense polynomial input representation.
@@ -192,7 +192,7 @@ pub struct RingSwitchQuotientRowsPlan<'a, const D: usize> {
 
 /// Named ring-switch relation rows returned by a backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RingSwitchRelationRows<F: FieldCore, const D: usize> {
+pub struct RingSwitchRelationRows<F: Field, const D: usize> {
     /// D-side cyclic rows.
     pub d_cyclic: Vec<CyclotomicRing<F, D>>,
     /// B-side cyclic rows.

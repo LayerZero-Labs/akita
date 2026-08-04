@@ -15,13 +15,13 @@ use super::*;
 /// prover-side home for recomposed rows (recomposition can be redone from the
 /// decomposed digit stream via `CyclotomicRing::gadget_recompose_pow2_i8`).
 #[derive(Debug, Clone)]
-pub struct AkitaCommitmentHint<F: FieldCore> {
+pub struct AkitaCommitmentHint<F: Field> {
     /// Per-polynomial digit decompositions of the inner `A * s_i` rows.
     pub decomposed_inner_rows: Vec<DigitBlocks>,
     _marker: PhantomData<F>,
 }
 
-impl<F: FieldCore> AkitaCommitmentHint<F> {
+impl<F: Field> AkitaCommitmentHint<F> {
     /// Construct a new batched hint from per-polynomial digit streams.
     pub fn new(decomposed_inner_rows: Vec<DigitBlocks>) -> Self {
         Self {
@@ -85,21 +85,21 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
     }
 }
 
-impl<F: FieldCore> PartialEq for AkitaCommitmentHint<F> {
+impl<F: Field> PartialEq for AkitaCommitmentHint<F> {
     fn eq(&self, other: &Self) -> bool {
         self.decomposed_inner_rows == other.decomposed_inner_rows
     }
 }
 
-impl<F: FieldCore> Eq for AkitaCommitmentHint<F> {}
+impl<F: Field> Eq for AkitaCommitmentHint<F> {}
 
-impl<F: FieldCore + Valid> Valid for AkitaCommitmentHint<F> {
+impl<F: Field + Valid> Valid for AkitaCommitmentHint<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.decomposed_inner_rows.check()
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaCommitmentHint<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for AkitaCommitmentHint<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -116,7 +116,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaCommitmentHint<F> {
 
 impl<F> AkitaDeserialize for AkitaCommitmentHint<F>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
 {
     type Context = ();
 

@@ -57,9 +57,9 @@ pub struct PlannerPolicy {
     /// `psi`-embedding infinity-norm expansion
     /// (`Cfg::ring_subfield_embedding_norm_bound()`).
     pub ring_subfield_norm_bound: u32,
-    /// Opening-reduction extension width (`Cfg::EXT_DEGREE`).
+    /// Opening-reduction extension width (`Cfg::DEGREE`).
     pub claim_ext_degree: usize,
-    /// Fiat-Shamir scalar extension width (`Cfg::EXT_DEGREE`).
+    /// Fiat-Shamir scalar extension width (`Cfg::DEGREE`).
     pub chal_ext_degree: usize,
     /// Inclusive `(min, max)` log-basis search range (`Cfg::basis_range()`).
     pub basis_range: (u32, u32),

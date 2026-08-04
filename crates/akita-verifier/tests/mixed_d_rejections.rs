@@ -10,6 +10,7 @@ use akita_types::{
     RingView, Schedule, Step,
 };
 use jolt_field::Prime128OffsetA7F7 as F;
+use jolt_field::Zero;
 
 const NUM_VARS: usize = 16;
 

@@ -6,11 +6,11 @@ use super::utils::{
 };
 use akita_algebra::uni_poly::UniPoly;
 use akita_error::AkitaError;
-use jolt_field::{FieldCore, FromPrimitiveInt};
+use jolt_field::{Field, Ring};
 use std::sync::Arc;
 
 /// One factored product term `sum_{l,r} table[l,r] * left[l] * right[r]`.
-pub(super) struct FactoredProductTerm<E: FieldCore> {
+pub(super) struct FactoredProductTerm<E: Field> {
     table: ProductTable<E>,
     left_factor: Vec<E>,
     right_factor: Vec<E>,
@@ -19,7 +19,7 @@ pub(super) struct FactoredProductTerm<E: FieldCore> {
     total_rounds: usize,
 }
 
-enum ProductTable<E: FieldCore> {
+enum ProductTable<E: Field> {
     Dense(Vec<E>),
     CompactWitness {
         digits: Arc<[i8]>,
@@ -28,7 +28,7 @@ enum ProductTable<E: FieldCore> {
     },
 }
 
-impl<E: FieldCore + FromPrimitiveInt> FactoredProductTerm<E> {
+impl<E: Field + Ring> FactoredProductTerm<E> {
     /// Construct a dense factored product-sumcheck term.
     ///
     /// Returns an error if factor lengths are not powers of two, are empty, or if
@@ -138,7 +138,7 @@ impl<E: FieldCore + FromPrimitiveInt> FactoredProductTerm<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt> ProductTable<E> {
+impl<E: Field + Ring> ProductTable<E> {
     fn len(&self) -> usize {
         match self {
             Self::Dense(table) => table.len(),

@@ -21,7 +21,7 @@
 use crate::{SparseChallenge, SparseChallengeConfig};
 use akita_error::AkitaError;
 use akita_transcript::labels;
-use jolt_field::{FieldCore, FromPrimitiveInt, MulBase};
+use jolt_field::{ExtField, Field, Ring};
 use sha3::{Digest, Sha3_256};
 
 const TENSOR_LEFT_DIGEST_DOMAIN: &[u8] = b"akita/tensor-left-digest/v1";
@@ -265,8 +265,8 @@ impl Challenges {
     /// per-challenge evaluation rejects its input.
     pub fn evals_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<Vec<E>, AkitaError>
     where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + MulBase<F>,
+        F: Field + Ring,
+        E: Field + ExtField<F>,
     {
         match self {
             Self::Sparse { challenges, .. } => challenges
@@ -460,8 +460,8 @@ impl TensorChallenges {
     /// Returns an error if challenge shape validation or evaluation fails.
     pub fn evals_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<Vec<E>, AkitaError>
     where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + MulBase<F>,
+        F: Field + Ring,
+        E: Field + ExtField<F>,
     {
         let ring_d = alpha_pows.len();
         if ring_d < 2 {
@@ -532,8 +532,8 @@ impl TensorChallenges {
         alpha_pows: &[E],
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + MulBase<F>,
+        F: Field + Ring,
+        E: Field + ExtField<F>,
     {
         let ring_d = alpha_pows.len();
         if ring_d < 2 {
@@ -649,8 +649,8 @@ fn tensor_product_quotient_eval<F, E>(
     alpha_pows: &[E],
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
-    E: FieldCore + MulBase<F>,
+    F: Field + Ring,
+    E: Field + ExtField<F>,
 {
     let ring_d = alpha_pows.len();
     left.validate_dyn(ring_d)?;
@@ -678,8 +678,8 @@ fn accumulate_sparse_scaled<F, E, const D: usize>(
     scale: E,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
-    E: FieldCore + MulBase<F>,
+    F: Field + Ring,
+    E: Field + ExtField<F>,
 {
     if out.len() != D {
         return Err(AkitaError::InvalidSize {
@@ -696,7 +696,7 @@ where
     Ok(())
 }
 
-fn eval_dense_at_pows<E: FieldCore>(coeffs: &[E], alpha_pows: &[E]) -> E {
+fn eval_dense_at_pows<E: Field>(coeffs: &[E], alpha_pows: &[E]) -> E {
     coeffs
         .iter()
         .zip(alpha_pows.iter())

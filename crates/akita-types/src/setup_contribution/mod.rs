@@ -9,7 +9,7 @@
 //! same segment partition.
 
 use akita_error::AkitaError;
-use jolt_field::{CanonicalField, FieldCore};
+use jolt_field::{CanonicalEncoding, Field};
 
 mod geometry;
 mod inputs;
@@ -38,7 +38,7 @@ pub use setup_index_weight_evaluator::SetupIndexWeightEvaluator;
 /// Groups may have different fold depths: each group uses the prefix
 /// `gadget[..group.depth_fold]`. Return `None` only when the basis differs and
 /// callers must derive per-group gadgets.
-pub fn shared_setup_fold_gadget<F: FieldCore + CanonicalField>(
+pub fn shared_setup_fold_gadget<F: Field + CanonicalEncoding>(
     groups: &[SetupContributionGroupInputs],
 ) -> Option<Vec<F>> {
     let first = groups.first()?;

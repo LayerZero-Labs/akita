@@ -19,9 +19,9 @@
 //! split-native path against the existing multi-CRT NTT implementation.
 
 use super::CyclotomicRing;
-use crate::{CanonicalField, FieldCore, HalvingField};
+use crate::{CanonicalEncoding, Field};
 use core::ops::{Add, Mul, Sub};
-use jolt_field::packed::PackedField;
+use jolt_field::Packed;
 use jolt_field::Zero;
 use std::array::from_fn;
 
@@ -32,12 +32,12 @@ const CENTERED_I8_LUT_OFFSET: i16 = 128;
 
 /// Cached `k=16` split-domain representation of a `D=32` ring element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PartialSplitEval16<F: CanonicalField> {
+pub struct PartialSplitEval16<F: Field + CanonicalEncoding> {
     even: [F; CLASS_D],
     odd: [F; CLASS_D],
 }
 
-impl<F: CanonicalField> PartialSplitEval16<F> {
+impl<F: Field + CanonicalEncoding> PartialSplitEval16<F> {
     /// The additive identity in split-evaluation form.
     #[inline(always)]
     pub fn zero() -> Self {
@@ -107,12 +107,12 @@ impl<F: CanonicalField> PartialSplitEval16<F> {
 /// Packed cached `k=16` split-domain representation of one or more `D=32`
 /// ring elements, grouped across SIMD lanes.
 #[derive(Clone, Copy)]
-pub struct PackedPartialSplitEval16<PF: PackedField> {
+pub struct PackedPartialSplitEval16<PF: Packed> {
     even: [PF; CLASS_D],
     odd: [PF; CLASS_D],
 }
 
-impl<PF: PackedField> PackedPartialSplitEval16<PF> {
+impl<PF: Packed> PackedPartialSplitEval16<PF> {
     /// Number of scalar lanes grouped into this packed value.
     pub const WIDTH: usize = PF::WIDTH;
 
@@ -130,7 +130,7 @@ impl<PF: PackedField> PackedPartialSplitEval16<PF> {
     #[inline(always)]
     pub fn from_fn<FN>(mut f: FN) -> Self
     where
-        PF::Scalar: CanonicalField,
+        PF::Scalar: Field + CanonicalEncoding,
         FN: FnMut(usize) -> PartialSplitEval16<PF::Scalar>,
     {
         let lanes: Vec<PartialSplitEval16<PF::Scalar>> = (0..PF::WIDTH).map(&mut f).collect();
@@ -141,7 +141,7 @@ impl<PF: PackedField> PackedPartialSplitEval16<PF> {
     #[inline(always)]
     pub fn broadcast(value: &PartialSplitEval16<PF::Scalar>) -> Self
     where
-        PF::Scalar: CanonicalField,
+        PF::Scalar: Field + CanonicalEncoding,
     {
         Self {
             even: from_fn(|i| PF::broadcast(value.even[i])),
@@ -152,7 +152,7 @@ impl<PF: PackedField> PackedPartialSplitEval16<PF> {
     #[inline(always)]
     fn from_chunk(chunk: &[PartialSplitEval16<PF::Scalar>]) -> Self
     where
-        PF::Scalar: CanonicalField,
+        PF::Scalar: Field + CanonicalEncoding,
     {
         assert_eq!(
             chunk.len(),
@@ -170,13 +170,13 @@ impl<PF: PackedField> PackedPartialSplitEval16<PF> {
 
 /// Pre-broadcast split-NTT tables for packed SIMD execution.
 #[derive(Clone, Copy)]
-pub struct PackedPartialSplitNtt16<PF: PackedField> {
+pub struct PackedPartialSplitNtt16<PF: Packed> {
     eval_roots: [PF; CLASS_D],
     inv_twiddles: [PF; CLASS_D],
     d_inv_psi_inv: [PF; CLASS_D],
 }
 
-impl<PF: PackedField> PackedPartialSplitNtt16<PF> {
+impl<PF: Packed> PackedPartialSplitNtt16<PF> {
     /// Multiply two packed split-domain values lane-wise.
     #[inline(always)]
     pub fn pointwise_mul(
@@ -185,7 +185,7 @@ impl<PF: PackedField> PackedPartialSplitNtt16<PF> {
         rhs: &PackedPartialSplitEval16<PF>,
     ) -> PackedPartialSplitEval16<PF>
     where
-        PF::Scalar: CanonicalField,
+        PF::Scalar: Field + CanonicalEncoding,
     {
         let zero = PF::broadcast(PF::Scalar::zero());
         let mut even = [zero; CLASS_D];
@@ -210,7 +210,7 @@ impl<PF: PackedField> PackedPartialSplitNtt16<PF> {
         lhs: &PackedPartialSplitEval16<PF>,
         rhs: &PackedPartialSplitEval16<PF>,
     ) where
-        PF::Scalar: CanonicalField,
+        PF::Scalar: Field + CanonicalEncoding,
     {
         add_mul_quadratic_pairs(
             &mut acc.even,
@@ -230,7 +230,7 @@ impl<PF: PackedField> PackedPartialSplitNtt16<PF> {
         eval: &PackedPartialSplitEval16<PF>,
         out: &mut Vec<CyclotomicRing<PF::Scalar, RING_D>>,
     ) where
-        PF::Scalar: CanonicalField,
+        PF::Scalar: Field + CanonicalEncoding,
     {
         let mut even = eval.even;
         let mut odd = eval.odd;
@@ -247,7 +247,7 @@ impl<PF: PackedField> PackedPartialSplitNtt16<PF> {
 
 /// Precomputed `k=16` split-NTT data for `F_p[X]/(X^32 + 1)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PartialSplitNtt16<F: CanonicalField> {
+pub struct PartialSplitNtt16<F: Field + CanonicalEncoding> {
     fwd_twiddles: [F; CLASS_D],
     inv_twiddles: [F; CLASS_D],
     psi_pows: [F; CLASS_D],
@@ -259,7 +259,7 @@ pub struct PartialSplitNtt16<F: CanonicalField> {
     centered_i8_lut: [F; 256],
 }
 
-impl<F: CanonicalField> PartialSplitNtt16<F> {
+impl<F: Field + CanonicalEncoding> PartialSplitNtt16<F> {
     /// Build the size-16 negacyclic transform tables from the field modulus.
     ///
     /// # Panics
@@ -348,7 +348,7 @@ impl<F: CanonicalField> PartialSplitNtt16<F> {
 
     /// Broadcast the split-domain tables into a packed SIMD representation.
     #[inline(always)]
-    pub fn packed<PF: PackedField<Scalar = F>>(&self) -> PackedPartialSplitNtt16<PF> {
+    pub fn packed<PF: Packed<Scalar = F>>(&self) -> PackedPartialSplitNtt16<PF> {
         PackedPartialSplitNtt16 {
             eval_roots: from_fn(|i| PF::broadcast(self.eval_roots[i])),
             inv_twiddles: from_fn(|i| PF::broadcast(self.inv_twiddles[i])),
@@ -494,7 +494,7 @@ impl<F: CanonicalField> PartialSplitNtt16<F> {
         rhs: &CyclotomicRing<F, RING_D>,
     ) -> CyclotomicRing<F, RING_D>
     where
-        F: HalvingField,
+        F: Field,
     {
         let neg = self.multiply_d32(lhs, rhs);
         let cyc = self.multiply_cyclic_d32(lhs, rhs);
@@ -509,11 +509,14 @@ impl<F: CanonicalField> PartialSplitNtt16<F> {
     }
 }
 
-fn modulus<F: CanonicalField>() -> u128 {
-    (-F::one()).to_canonical_u128() + 1
+fn modulus<F: Field + CanonicalEncoding>() -> u128 {
+    (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1
 }
 
-fn powers<F: CanonicalField>(base: F) -> [F; CLASS_D] {
+fn powers<F: Field + CanonicalEncoding>(base: F) -> [F; CLASS_D] {
     let mut out = [F::zero(); CLASS_D];
     let mut cur = F::one();
     for value in &mut out {
@@ -523,7 +526,9 @@ fn powers<F: CanonicalField>(base: F) -> [F; CLASS_D] {
     out
 }
 
-fn expand_stage_roots<F: CanonicalField, const N: usize>(stage_roots: &[F; N]) -> [F; N] {
+fn expand_stage_roots<F: Field + CanonicalEncoding, const N: usize>(
+    stage_roots: &[F; N],
+) -> [F; N] {
     let mut twiddles = [F::zero(); N];
     let mut len = 1usize;
     while len < N {
@@ -539,7 +544,7 @@ fn expand_stage_roots<F: CanonicalField, const N: usize>(stage_roots: &[F; N]) -
     twiddles
 }
 
-fn pow_field<F: FieldCore>(mut base: F, mut exp: u128) -> F {
+fn pow_field<F: Field>(mut base: F, mut exp: u128) -> F {
     let mut acc = F::one();
     while exp > 0 {
         if exp & 1 == 1 {
@@ -553,7 +558,7 @@ fn pow_field<F: FieldCore>(mut base: F, mut exp: u128) -> F {
     acc
 }
 
-fn find_primitive_root_2d<F: CanonicalField>(q: u128, d: usize) -> F {
+fn find_primitive_root_2d<F: Field + CanonicalEncoding>(q: u128, d: usize) -> F {
     let half = (q - 1) / 2;
     let exp = (q - 1) / (2 * d as u128);
     let minus_one = -F::one();
@@ -572,7 +577,9 @@ fn find_primitive_root_2d<F: CanonicalField>(q: u128, d: usize) -> F {
 }
 
 #[inline(always)]
-fn split_even_odd<F: CanonicalField>(coeffs: &[F; RING_D]) -> ([F; CLASS_D], [F; CLASS_D]) {
+fn split_even_odd<F: Field + CanonicalEncoding>(
+    coeffs: &[F; RING_D],
+) -> ([F; CLASS_D], [F; CLASS_D]) {
     let even = from_fn(|i| coeffs[2 * i]);
     let odd = from_fn(|i| coeffs[2 * i + 1]);
     (even, odd)
@@ -648,7 +655,7 @@ where
 }
 
 #[inline(always)]
-fn merge_even_odd<F: CanonicalField>(
+fn merge_even_odd<F: Field + CanonicalEncoding>(
     even: [F; CLASS_D],
     odd: [F; CLASS_D],
 ) -> CyclotomicRing<F, RING_D> {
@@ -661,7 +668,7 @@ fn merge_even_odd<F: CanonicalField>(
 }
 
 #[inline(always)]
-fn forward_cyclic_dif<F: CanonicalField>(a: &mut [F; CLASS_D], twiddles: &[F; CLASS_D]) {
+fn forward_cyclic_dif<F: Field + CanonicalEncoding>(a: &mut [F; CLASS_D], twiddles: &[F; CLASS_D]) {
     let mut len = CLASS_D / 2;
     while len > 0 {
         let twiddle_base = len - 1;
@@ -681,7 +688,7 @@ fn forward_cyclic_dif<F: CanonicalField>(a: &mut [F; CLASS_D], twiddles: &[F; CL
 }
 
 #[inline(always)]
-fn forward_cyclic_dif_pair<F: CanonicalField>(
+fn forward_cyclic_dif_pair<F: Field + CanonicalEncoding>(
     lhs: &mut [F; CLASS_D],
     rhs: &mut [F; CLASS_D],
     twiddles: &[F; CLASS_D],
@@ -710,7 +717,7 @@ fn forward_cyclic_dif_pair<F: CanonicalField>(
 }
 
 #[inline(always)]
-fn inverse_cyclic_dit_pair<F: CanonicalField>(
+fn inverse_cyclic_dit_pair<F: Field + CanonicalEncoding>(
     lhs: &mut [F; CLASS_D],
     rhs: &mut [F; CLASS_D],
     twiddles: &[F; CLASS_D],
@@ -739,12 +746,12 @@ fn inverse_cyclic_dit_pair<F: CanonicalField>(
 }
 
 #[inline(always)]
-fn inverse_cyclic_dit_pair_prebroadcast<PF: PackedField>(
+fn inverse_cyclic_dit_pair_prebroadcast<PF: Packed>(
     lhs: &mut [PF; CLASS_D],
     rhs: &mut [PF; CLASS_D],
     twiddles: &[PF; CLASS_D],
 ) where
-    PF::Scalar: CanonicalField,
+    PF::Scalar: Field + CanonicalEncoding,
 {
     let mut len = 1usize;
     while len < CLASS_D {
@@ -770,7 +777,10 @@ fn inverse_cyclic_dit_pair_prebroadcast<PF: PackedField>(
 }
 
 #[inline(always)]
-fn forward_cyclic_dif_ring<F: CanonicalField>(a: &mut [F; RING_D], twiddles: &[F; RING_D]) {
+fn forward_cyclic_dif_ring<F: Field + CanonicalEncoding>(
+    a: &mut [F; RING_D],
+    twiddles: &[F; RING_D],
+) {
     let mut len = RING_D / 2;
     while len > 0 {
         let twiddle_base = len - 1;
@@ -790,7 +800,10 @@ fn forward_cyclic_dif_ring<F: CanonicalField>(a: &mut [F; RING_D], twiddles: &[F
 }
 
 #[inline(always)]
-fn inverse_cyclic_dit_ring<F: CanonicalField>(a: &mut [F; RING_D], twiddles: &[F; RING_D]) {
+fn inverse_cyclic_dit_ring<F: Field + CanonicalEncoding>(
+    a: &mut [F; RING_D],
+    twiddles: &[F; RING_D],
+) {
     let mut len = 1usize;
     while len < RING_D {
         let twiddle_base = len - 1;

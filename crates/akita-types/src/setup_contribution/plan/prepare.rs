@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore> SetupContributionPlan<E> {
+impl<E: Field> SetupContributionPlan<E> {
     pub fn prepare_static(
         inputs: &SetupContributionPlanInputs<E>,
         groups: &[SetupContributionGroupInputs],
@@ -94,8 +94,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         groups: &[SetupContributionGroupInputs],
     ) -> Result<SetupContributionPlan<E>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
-        E: MulBase<F>,
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
     {
         let _span = tracing::info_span!("setup_prepare_plan").entered();
         if static_plan.groups.len() != groups.len() {

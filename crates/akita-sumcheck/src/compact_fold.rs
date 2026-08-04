@@ -2,8 +2,8 @@
 //!
 //! Used by Akita stage sumchecks for compact-witness folding.
 
-use jolt_field::unreduced::HasUnreducedOps;
-use jolt_field::{FieldCore, FromPrimitiveInt};
+use jolt_field::Unreduced;
+use jolt_field::{Field, Ring};
 
 /// Precomputed lookup table for folding pairs of small integer values at a
 /// fixed challenge `r`.
@@ -12,14 +12,14 @@ use jolt_field::{FieldCore, FromPrimitiveInt};
 /// stage-2 sumchecks: the table entries are small integers, the fold formula is
 /// always `left + r * (right - left)`, and the set of possible `(left, right)`
 /// pairs is tiny.
-pub struct CompactPairFoldLut<E: FieldCore> {
+pub struct CompactPairFoldLut<E: Field> {
     min_value: i16,
     value_to_index: Vec<usize>,
     pair_values: Vec<E>,
     num_values: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> CompactPairFoldLut<E> {
+impl<E: Field + Ring + Unreduced> CompactPairFoldLut<E> {
     /// Build a lookup table from an explicit set of allowed small integer
     /// values.
     ///
@@ -51,7 +51,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> CompactPairFoldLut<E> {
             for &right in allowed_values {
                 let delta = i64::from(right) - i64::from(left);
                 let delta_abs = delta.unsigned_abs();
-                let r_delta = E::reduce_mul_u64_accum(r.mul_u64_unreduced(delta_abs));
+                let r_delta = E::reduce_small_product(r.mul_u64_unreduced(delta_abs));
                 pair_values.push(if delta < 0 {
                     left_field - r_delta
                 } else {
@@ -80,7 +80,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> CompactPairFoldLut<E> {
     }
 }
 
-impl<E: FieldCore> CompactPairFoldLut<E> {
+impl<E: Field> CompactPairFoldLut<E> {
     #[inline]
     fn index_of(&self, value: i16) -> usize {
         let offset = (value - self.min_value) as usize;

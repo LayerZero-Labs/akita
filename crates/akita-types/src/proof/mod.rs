@@ -120,7 +120,7 @@ use akita_sumcheck::{
     uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
 };
 use akita_transcript::Transcript;
-use jolt_field::{CanonicalField, FieldCore, HalvingField};
+use jolt_field::{CanonicalEncoding, Field};
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 
