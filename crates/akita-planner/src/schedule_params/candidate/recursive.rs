@@ -44,7 +44,10 @@ pub(crate) fn recursive_fold_level_params_candidate(
     let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, delta_commit) else {
         return Ok(None);
     };
-    let Some(num_fold_coeffs) = width_s.checked_mul(dimensions.d_a()) else {
+    let Some(num_fold_coeffs) = width_s
+        .checked_mul(dimensions.d_a())
+        .and_then(|count| count.checked_mul(num_chunks))
+    else {
         return Ok(None);
     };
     let fold_policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
@@ -55,6 +58,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         ring_dimension: dimensions.d_a(),
         num_claims: 1,
         num_live_blocks,
+        num_chunks,
         num_fold_coeffs,
         log_basis: decomp.log_basis,
         challenge_config: ring_challenge_cfg,

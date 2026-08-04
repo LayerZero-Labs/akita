@@ -1076,6 +1076,7 @@ where
                         ring_dimension: Root::D,
                         num_claims: num_polynomials,
                         num_live_blocks: commitment.num_live_blocks,
+                        num_chunks: 1,
                         num_fold_coeffs,
                         log_basis: commitment.log_basis_open,
                         challenge_config: &ring_challenge,

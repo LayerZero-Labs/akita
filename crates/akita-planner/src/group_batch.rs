@@ -136,10 +136,12 @@ fn materialize_precommitted_group_for_open_basis(
     let num_digits_open = num_digits_open(open_decomp);
     let challenge_shape = TensorChallengeShape::Flat;
     let ring_dimension = group.layout.inner_commit_matrix.ring_dimension();
+    let num_chunks = policy.chunks_at_level(0);
     let num_fold_coeffs = group
         .inner_commit_matrix
         .input_width()
         .checked_mul(ring_dimension)
+        .and_then(|count| count.checked_mul(num_chunks))
         .ok_or_else(|| AkitaError::InvalidSetup("precommitted fold width overflow".into()))?;
     let group_claims = group.layout.group.num_polynomials();
     let num_digits_fold = group
@@ -148,6 +150,7 @@ fn materialize_precommitted_group_for_open_basis(
             ring_dimension,
             num_claims: group_claims,
             num_live_blocks: group.layout.num_live_blocks,
+            num_chunks,
             num_fold_coeffs,
             log_basis: log_basis_open,
             challenge_config: ring_challenge_cfg,
@@ -403,7 +406,11 @@ fn multi_group_root_main_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Some(num_fold_coeffs) = width_s.checked_mul(d) else {
+    let num_chunks = policy.chunks_at_level(0);
+    let Some(num_fold_coeffs) = width_s
+        .checked_mul(d)
+        .and_then(|count| count.checked_mul(num_chunks))
+    else {
         return Ok(None);
     };
     let Ok(num_digits_fold) = ctx
@@ -412,6 +419,7 @@ fn multi_group_root_main_level_params_candidate(
             ring_dimension: d,
             num_claims: main_num_polys,
             num_live_blocks,
+            num_chunks,
             num_fold_coeffs,
             log_basis,
             challenge_config: ctx.ring_challenge_cfg,

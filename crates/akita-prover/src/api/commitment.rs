@@ -15,8 +15,9 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, Rando
 use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    Commitment, CommittedGroup, CommittedGroupParams, CommittedGroupProfile, DigitBlocks,
-    FpExtEncoding, OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout, RingVec,
+    Commitment, CommitmentRingDims, CommittedGroup, CommittedGroupParams, CommittedGroupProfile,
+    DigitBlocks, FpExtEncoding, OpeningClaimsLayout, OpeningScheduleSelection,
+    PolynomialGroupLayout, RingVec,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -154,6 +155,56 @@ where
     Ok(())
 }
 
+fn validate_commit_profile<F>(
+    profile: &CommittedGroupProfile,
+    setup: &AkitaExpandedSetup<F>,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    profile.validate_frozen_precommit(F::modulus_bits())?;
+    validate_i8_setup_log_basis(
+        profile.log_basis_inner,
+        "for i8 witness commitment decomposition",
+    )?;
+    validate_i8_setup_log_basis(
+        profile.log_basis_outer,
+        "for i8 outer commitment decomposition",
+    )?;
+    let dims = CommitmentRingDims {
+        inner: profile.inner_commit_matrix.ring_dimension(),
+        outer: profile.outer_commit_matrix.ring_dimension(),
+        opening: profile.outer_commit_matrix.ring_dimension(),
+    };
+    validate_role_dims(dims)?;
+    validate_role_dims_for_field::<F>(dims)?;
+    let a_required = profile
+        .inner_commit_matrix
+        .output_rank()
+        .checked_mul(profile.inner_commit_matrix.input_width())
+        .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
+    let a_available = setup.shared_matrix.num_field_elements() / dims.d_a();
+    if a_required > a_available {
+        return Err(AkitaError::InvalidSetup(format!(
+            "A-role precommit profile requires {a_required} setup ring elements at d={}, but setup has {a_available}",
+            dims.d_a()
+        )));
+    }
+    let b_required = profile
+        .outer_commit_matrix
+        .output_rank()
+        .checked_mul(profile.outer_commit_matrix.input_width())
+        .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
+    let b_available = setup.shared_matrix.num_field_elements() / dims.d_b();
+    if b_required > b_available {
+        return Err(AkitaError::InvalidSetup(format!(
+            "B-role precommit profile requires {b_required} setup ring elements at d={}, but setup has {b_available}",
+            dims.d_b()
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_commit_outer_input_nonempty(active_len: usize) -> Result<(), AkitaError> {
     if active_len == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -270,6 +321,100 @@ where
     let num_digits_open = params.num_digits_outer;
     let log_basis = params.log_basis_outer;
     let n_b = params.outer_commit_matrix.output_rank();
+    let (commitment, inner_rows) = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        dims.d_a(),
+        |D_A| {
+            dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Outer),
+                F,
+                dims.d_b(),
+                |D_B| {
+                    let prepared_polynomials = cfg_iter!(polys)
+                        .map(|poly| -> Result<(RingVec<F>, DigitBlocks), AkitaError> {
+                            let view = RootCommitSource::<F, D_A>::commit_view(poly)?;
+                            let inner = RootCommitKernel::<_, F, D_A>::commit_inner(
+                                backend, prepared, view, plan,
+                            )?;
+                            validate_commit_inner_shape::<F, D_A>(&inner, num_live_blocks, n_a)?;
+                            let blocks = (0..num_live_blocks)
+                                .map(|block| inner.block_rows::<D_A>(block, n_a))
+                                .collect::<Result<Vec<_>, _>>()?;
+                            let digits = decompose_commit_blocks_into::<F, D_A, D_B>(
+                                &blocks,
+                                num_digits_open,
+                                log_basis,
+                            )?;
+                            Ok((inner.into_inner_rows(), digits))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let total_planes =
+                        prepared_polynomials
+                            .iter()
+                            .try_fold(0usize, |total, (_, digits)| {
+                                total.checked_add(digits.total_planes()).ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "commit B input plane count overflow".to_string(),
+                                    )
+                                })
+                            })?;
+                    validate_commit_outer_input_nonempty(total_planes)?;
+                    let mut b_input_digits = Vec::with_capacity(total_planes);
+                    for (_, digits) in &prepared_polynomials {
+                        b_input_digits.extend_from_slice(digits.typed_planes::<D_B>()?);
+                    }
+                    let u = backend.digit_rows::<D_B>(prepared, n_b, &b_input_digits, log_basis)?;
+                    if u.len() != n_b {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "backend returned {} B commitment rows, expected {n_b}",
+                            u.len(),
+                        )));
+                    }
+                    Ok::<_, AkitaError>((
+                        Commitment::from_ring_elems(&u),
+                        prepared_polynomials
+                            .into_iter()
+                            .map(|(rows, _)| rows)
+                            .collect::<Vec<_>>(),
+                    ))
+                }
+            )
+        }
+    )?;
+    let hint = AkitaCommitmentHint::new(dims.d_a(), inner_rows)?;
+    Ok((commitment, hint))
+}
+
+fn commit_with_validated_profile<F, P, B>(
+    polys: &[P],
+    ctx: &OperationCtx<'_, F, B>,
+    profile: &CommittedGroupProfile,
+) -> Result<CommitmentWithHint<F>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    P: RootCommitSource<F, 32>
+        + RootCommitSource<F, 64>
+        + RootCommitSource<F, 128>
+        + RootCommitSource<F, 256>
+        + RootCommitSource<F, 512>
+        + RootPolyMeta<F>,
+    B: RuntimeCommitBackendFor<F, P>,
+{
+    let backend = ctx.backend();
+    let prepared = ctx.prepared();
+    let dims = CommitmentRingDims {
+        inner: profile.inner_commit_matrix.ring_dimension(),
+        outer: profile.outer_commit_matrix.ring_dimension(),
+        opening: profile.outer_commit_matrix.ring_dimension(),
+    };
+    let plan = CommitInnerPlan::from_profile(profile);
+    let num_live_blocks = profile.num_live_blocks;
+    let n_a = profile.inner_commit_matrix.output_rank();
+    let num_digits_open = profile.num_digits_outer;
+    let log_basis = profile.log_basis_outer;
+    let n_b = profile.outer_commit_matrix.output_rank();
     let (commitment, inner_rows) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
@@ -528,8 +673,8 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if the group is unsupported by the setup or no exact
-/// generated row supports it.
+/// Returns an error if the group is unsupported by the setup or no standalone
+/// precommit parameters can be derived for its layout.
 pub fn commit_group<Cfg, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
@@ -546,28 +691,29 @@ where
     let commit_ctx = stack.commit();
     let tensor_ctx = stack.tensor();
     let key = validate_group_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
-    let params = akita_config::committed_group_params::<Cfg>(&key)?;
-    validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
-    let (commitment, hint) =
-        if should_transform_group_commitment::<Cfg>(&key, params.role_dims().d_a()) {
-            // A-role tensor-projection operation at the group layout's ring
-            // dimension.
-            let transform_d = params.role_dims().d_a();
-            let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
-                transform_d,
-                tensor_ctx,
-                polys,
-            )?;
-            commit_with_validated_params::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
-                &transformed,
-                commit_ctx,
-                &params,
-            )?
-        } else {
-            commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)?
-        };
-    let descriptor = CommittedGroupProfile::from_params(key, &params);
-    Ok((CommittedGroup::new(descriptor, commitment), hint))
+    let profile = akita_config::committed_group_profile::<Cfg>(&key)?;
+    validate_commit_profile::<Cfg::Field>(&profile, expanded)?;
+    let (commitment, hint) = if should_transform_group_commitment::<Cfg>(
+        &key,
+        profile.inner_commit_matrix.ring_dimension(),
+    ) {
+        // A-role tensor-projection operation at the group layout's ring
+        // dimension.
+        let transform_d = profile.inner_commit_matrix.ring_dimension();
+        let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
+            transform_d,
+            tensor_ctx,
+            polys,
+        )?;
+        commit_with_validated_profile::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
+            &transformed,
+            commit_ctx,
+            &profile,
+        )?
+    } else {
+        commit_with_validated_profile::<Cfg::Field, P, B>(polys, commit_ctx, &profile)?
+    };
+    Ok((CommittedGroup::new(profile, commitment), hint))
 }
 
 fn final_group_key_from_polys<Cfg, P>(

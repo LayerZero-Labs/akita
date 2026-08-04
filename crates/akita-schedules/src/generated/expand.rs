@@ -15,7 +15,7 @@ use akita_field::AkitaError;
 
 use crate::generated::{
     GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix,
-    GeneratedSetupPrefixInput, GeneratedTerminalFold,
+    GeneratedPrecommittedProfile, GeneratedSetupPrefixInput, GeneratedTerminalFold,
 };
 use crate::runtime::optimize_fold_challenge_shape;
 use crate::PlannerPolicy;
@@ -239,6 +239,98 @@ impl GeneratedSetupPrefixInput {
             num_digits_open: num_digits_open_val,
             num_digits_fold,
         })
+    }
+}
+
+impl GeneratedPrecommittedProfile {
+    /// Expand this compact generated standalone precommit descriptor into its
+    /// canonical runtime profile.
+    pub fn expand_to_committed_profile(
+        self,
+        policy: &PlannerPolicy,
+    ) -> Result<CommittedGroupProfile, AkitaError> {
+        self.group.validate()?;
+        let geometry = self.commitment.geometry;
+        let num_live_ring_elements_per_claim = generated_count(
+            geometry.live_ring_elements_per_claim,
+            "live ring-element count",
+        )?;
+        let num_positions_per_block =
+            generated_count(geometry.positions_per_block, "positions per block")?;
+        let num_live_blocks = generated_count(geometry.live_blocks, "live block count")?;
+        let d_a = self.commitment.inner_commit_matrix.ring_dimension as usize;
+        let d_b = self.commitment.outer_commit_matrix.ring_dimension as usize;
+        validate_role_dims(CommitmentRingDims {
+            inner: d_a,
+            outer: d_b,
+            opening: d_b,
+        })?;
+        if self.commitment.outer_commit_matrix.slice_count != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "generated precommit B matrix must use one slice".to_string(),
+            ));
+        }
+        let num_digits_inner = generated_count(self.num_digits_inner as u64, "inner digit depth")?;
+        let num_digits_outer = generated_count(self.num_digits_outer as u64, "outer digit depth")?;
+        if num_digits_inner == 0 || num_digits_outer == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated precommit digit depths must be nonzero".to_string(),
+            ));
+        }
+        let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("generated precommit A width overflow".to_string())
+            })?;
+        let n_a = generated_count(self.inner_output_rank as u64, "A output rank")?;
+        let inner_commit_matrix = InnerCommitMatrixParams::try_new(
+            policy.sis_security_policy,
+            policy.sis_table_digest,
+            policy.sis_modulus_profile,
+            n_a,
+            inner_width,
+            self.inner_coeff_linf_bound,
+            d_a,
+        )?;
+        let native_outer_width = decomposed_t_ring_count(
+            n_a,
+            num_digits_outer,
+            num_live_blocks,
+            self.group.num_polynomials(),
+        )
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("generated precommit native B width overflow".to_string())
+        })?;
+        let outer_width =
+            projected_role_ring_count(d_a, d_b, native_outer_width).ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated precommit projected B width overflow".to_string(),
+                )
+            })?;
+        let n_b = generated_count(self.outer_output_rank as u64, "B output rank")?;
+        let outer_commit_matrix = OuterCommitMatrixParams::try_new(
+            policy.sis_security_policy,
+            policy.sis_table_digest,
+            policy.sis_modulus_profile,
+            n_b,
+            outer_width,
+            self.outer_coeff_linf_bound,
+            d_b,
+        )?;
+        let profile = CommittedGroupProfile {
+            version: CommittedGroupProfile::VERSION,
+            group: self.group,
+            num_live_ring_elements_per_claim,
+            num_positions_per_block,
+            num_live_blocks,
+            log_basis_inner: self.commitment.inner_commit_matrix.log_basis,
+            num_digits_inner,
+            inner_commit_matrix,
+            log_basis_outer: self.commitment.outer_commit_matrix.log_basis,
+            num_digits_outer,
+            outer_commit_matrix,
+        };
+        profile.validate_frozen_precommit(policy.decomposition.field_bits())?;
+        Ok(profile)
     }
 }
 
