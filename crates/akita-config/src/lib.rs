@@ -108,7 +108,9 @@ pub mod tensor_verifier;
 pub mod test_support;
 mod transcript_binding;
 pub use akita_schedules::ResolvedScheduleRow;
-pub use precommitted_commitment::{committed_group_params, PrecommittedCommitmentConfig};
+pub use precommitted_commitment::{
+    committed_group_params, committed_group_profile, PrecommittedCommitmentConfig,
+};
 pub use proof_optimized::{ensure_schedule_fits_setup, setup_level_params_from_schedule};
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;

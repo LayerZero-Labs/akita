@@ -125,9 +125,10 @@ fn assert_table_hit(
 
 #[cfg(feature = "all-schedules")]
 fn prepare_family_catalog<Cfg: CommitmentConfig>(
-    module_name: &str,
+    family: &GeneratedFamily,
     keys: &[PolynomialGroupLayout],
 ) -> akita_schedules::GeneratedScheduleTable {
+    let module_name = family.module_name;
     let catalog = Cfg::schedule_catalog().unwrap_or_else(|| {
         panic!("family {module_name} must expose schedule_catalog() under all-schedules")
     });
@@ -143,7 +144,76 @@ fn prepare_family_catalog<Cfg: CommitmentConfig>(
         "family {module_name} catalog entries must be sorted for binary lookup"
     );
     assert_table_hit(module_name, &catalog, keys);
+    assert_precommit_registry::<Cfg>(family, &catalog);
     catalog
+}
+
+#[cfg(feature = "all-schedules")]
+fn assert_precommit_registry<Cfg: CommitmentConfig>(
+    family: &GeneratedFamily,
+    catalog: &akita_schedules::GeneratedScheduleTable,
+) {
+    let expected = (family.precommitted_profiles)().unwrap_or_else(|e| {
+        panic!(
+            "{} precommit registry regen failed: {e}",
+            family.module_name
+        )
+    });
+    for expected_profile in expected {
+        let found = catalog
+            .precommitted_profiles
+            .iter()
+            .copied()
+            .map(|row| row.expand_to_committed_profile(&policy_of::<Cfg>()))
+            .any(|profile| {
+                profile.unwrap_or_else(|e| {
+                    panic!("{} generated precommit row failed: {e}", family.module_name)
+                }) == expected_profile
+            });
+        assert!(
+            found,
+            "family {} generated precommit registry is missing {:?}",
+            family.module_name, expected_profile.group
+        );
+    }
+    for &row in catalog.precommitted_profiles {
+        let profile = row
+            .expand_to_committed_profile(&policy_of::<Cfg>())
+            .unwrap_or_else(|e| {
+                panic!("{} generated precommit row failed: {e}", family.module_name)
+            });
+        let runtime =
+            akita_config::committed_group_profile::<Cfg>(&profile.group).unwrap_or_else(|e| {
+                panic!(
+                    "{} runtime precommit lookup failed: {e}",
+                    family.module_name
+                )
+            });
+        assert_eq!(
+            runtime, profile,
+            "family {} runtime precommit profile must match generated registry exactly",
+            family.module_name
+        );
+    }
+    for entry in catalog.entries {
+        for group in entry.root.precommitted_groups {
+            let found = catalog
+                .precommitted_profiles
+                .iter()
+                .copied()
+                .map(|row| row.expand_to_committed_profile(&policy_of::<Cfg>()))
+                .any(|profile| {
+                    profile.unwrap_or_else(|e| {
+                        panic!("{} generated precommit row failed: {e}", family.module_name)
+                    }) == group.descriptor
+                });
+            assert!(
+                found,
+                "family {} schedule row references a precommit descriptor absent from the registry",
+                family.module_name
+            );
+        }
+    }
 }
 
 #[cfg(feature = "all-schedules")]
@@ -202,6 +272,7 @@ fn equal_lookup_keys_form_one_contiguous_candidate_range() {
     let entries = Box::leak(vec![entry, entry].into_boxed_slice());
     let duplicate_table = akita_schedules::GeneratedScheduleTable {
         entries,
+        precommitted_profiles: catalog.precommitted_profiles,
         identity: catalog.identity,
     };
     let key = entry.to_runtime_lookup_key();
@@ -275,41 +346,39 @@ fn family_catalog(
     keys: &[PolynomialGroupLayout],
 ) -> akita_schedules::GeneratedScheduleTable {
     match family.module_name {
-        "fp128_d128_dense" => prepare_family_catalog::<fp128::D128Dense>(family.module_name, keys),
-        "fp128_d128_onehot" => {
-            prepare_family_catalog::<fp128::D128OneHot>(family.module_name, keys)
-        }
+        "fp128_d128_dense" => prepare_family_catalog::<fp128::D128Dense>(family, keys),
+        "fp128_d128_onehot" => prepare_family_catalog::<fp128::D128OneHot>(family, keys),
         "fp128_mixed_dim_onehot" => {
-            prepare_family_catalog::<fp128::MixedDimFp128OneHot>(family.module_name, keys)
+            prepare_family_catalog::<fp128::MixedDimFp128OneHot>(family, keys)
         }
-        "fp128_d64_onehot" => prepare_family_catalog::<fp128::D64OneHot>(family.module_name, keys),
+        "fp128_d64_onehot" => prepare_family_catalog::<fp128::D64OneHot>(family, keys),
         "fp128_d64_onehot_recursive" => prepare_family_catalog::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
-        >(family.module_name, keys),
+        >(family, keys),
         "fp128_d64_onehot_recursive_multi_chunk_w8r2" => prepare_family_catalog::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
-        >(family.module_name, keys),
-        "fp128_d64_dense" => prepare_family_catalog::<fp128::D64Dense>(family.module_name, keys),
-        "fp128_d64_onehot_tensor" => prepare_family_catalog::<
-            tensor_verifier::fp128::D64OneHotTensor,
-        >(family.module_name, keys),
+        >(family, keys),
+        "fp128_d64_dense" => prepare_family_catalog::<fp128::D64Dense>(family, keys),
+        "fp128_d64_onehot_tensor" => {
+            prepare_family_catalog::<tensor_verifier::fp128::D64OneHotTensor>(family, keys)
+        }
         "fp128_d64_onehot_multi_chunk" => {
-            prepare_family_catalog::<fp128::D64OneHotMultiChunk>(family.module_name, keys)
+            prepare_family_catalog::<fp128::D64OneHotMultiChunk>(family, keys)
         }
         "fp128_d64_onehot_multi_chunk_w2r2" => {
-            prepare_family_catalog::<fp128::D64OneHotMultiChunkW2R2>(family.module_name, keys)
+            prepare_family_catalog::<fp128::D64OneHotMultiChunkW2R2>(family, keys)
         }
         "fp128_d64_onehot_multi_chunk_w4r2" => {
-            prepare_family_catalog::<fp128::D64OneHotMultiChunkW4R2>(family.module_name, keys)
+            prepare_family_catalog::<fp128::D64OneHotMultiChunkW4R2>(family, keys)
         }
         "fp128_d64_dense_multi_chunk" => {
-            prepare_family_catalog::<fp128::D64DenseMultiChunk>(family.module_name, keys)
+            prepare_family_catalog::<fp128::D64DenseMultiChunk>(family, keys)
         }
-        "fp64_d128_dense" => prepare_family_catalog::<fp64::D128Dense>(family.module_name, keys),
-        "fp64_d128_onehot" => prepare_family_catalog::<fp64::D128OneHot>(family.module_name, keys),
-        "fp64_d256_onehot" => prepare_family_catalog::<fp64::D256OneHot>(family.module_name, keys),
-        "fp32_d128_onehot" => prepare_family_catalog::<fp32::D128OneHot>(family.module_name, keys),
-        "fp32_d256_onehot" => prepare_family_catalog::<fp32::D256OneHot>(family.module_name, keys),
+        "fp64_d128_dense" => prepare_family_catalog::<fp64::D128Dense>(family, keys),
+        "fp64_d128_onehot" => prepare_family_catalog::<fp64::D128OneHot>(family, keys),
+        "fp64_d256_onehot" => prepare_family_catalog::<fp64::D256OneHot>(family, keys),
+        "fp32_d128_onehot" => prepare_family_catalog::<fp32::D128OneHot>(family, keys),
+        "fp32_d256_onehot" => prepare_family_catalog::<fp32::D256OneHot>(family, keys),
         other => panic!("unknown generated family for catalog guard: {other}"),
     }
 }

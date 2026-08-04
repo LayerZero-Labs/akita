@@ -6,16 +6,14 @@
 //! catalog policy, so precommitments use the exact root layout rather than a
 //! worst-case envelope over every supported basis.
 
-use crate::{honest_fold_policy_of, policy_of, CommitmentConfig};
+use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
-use akita_schedules::planner_support::{
-    planned_next_witness_len, scalar_root_fold_level_params_candidate,
-};
 use akita_types::{
     accumulate_matrix_field_elements_for_level, AkitaScheduleInputs, CommitmentRingDims,
-    CommittedGroupParams, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
-    PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusProfileId,
+    CommittedGroupParams, CommittedGroupProfile, DecompositionParams, FoldSchedule,
+    OpenCommitMatrixParams, OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope,
+    SisModulusProfileId,
 };
 use std::marker::PhantomData;
 
@@ -108,78 +106,68 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
 }
 
 /// Resolve standalone A/B commitment parameters for one group using the base
-/// config's native root source policy.
+/// config's generated precommit profile.
+///
+/// This legacy adapter exists for callers still shaped around
+/// [`CommittedGroupParams`]. The generated source of truth is the
+/// descriptor-only [`committed_group_profile`]; final grouped-root expansion
+/// derives opening metadata later from the selected schedule row.
 pub fn committed_group_params<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
 ) -> Result<CommittedGroupParams, AkitaError> {
-    key.validate()?;
-    standalone_precommit_params::<Cfg>(key)
+    let profile = committed_group_profile::<Cfg>(key)?;
+    precommit_profile_as_commit_params::<Cfg>(profile)
 }
 
-fn standalone_precommit_params<Cfg: CommitmentConfig>(
+/// Resolve the generated standalone precommit profile for one group.
+pub fn committed_group_profile<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
+) -> Result<CommittedGroupProfile, AkitaError> {
+    Cfg::validate_sis_modulus_profile()?;
+    akita_schedules::resolve_generated_precommitted_group_profile(
+        key,
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+        Cfg::schedule_catalog(),
+    )
+}
+
+fn precommit_profile_as_commit_params<Cfg: CommitmentConfig>(
+    profile: CommittedGroupProfile,
 ) -> Result<CommittedGroupParams, AkitaError> {
-    let honest_fold_policy = honest_fold_policy_of::<Cfg>();
-    let mut policy = policy_of::<Cfg>().direct_only();
-    policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
-
-    let witness_len = 1usize
-        .checked_shl(key.num_vars() as u32)
-        .ok_or_else(|| AkitaError::InvalidSetup("precommit witness too large".into()))?;
-    let fold_challenge_shape = Cfg::fold_challenge_shape_at_level(AkitaScheduleInputs {
-        num_vars: key.num_vars(),
-        level: 0,
-        input_witness_len: witness_len,
-    });
-    let field_bits = policy.decomposition.field_bits();
-    let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(0);
-    let mut best: Option<(usize, CommittedGroupParams)> = None;
-
-    for candidate_log_basis in min_log_basis..=max_log_basis {
-        for dimensions in Cfg::RING_DIMENSION_CANDIDATES.iter().copied() {
-            let Ok(ring_challenge_cfg) = Cfg::ring_challenge_config(dimensions.d_a()) else {
-                continue;
-            };
-            let alpha = (dimensions.d_a() as u32).trailing_zeros() as usize;
-            let reduced_vars = key.num_vars().saturating_sub(alpha);
-            if reduced_vars == 0 {
-                continue;
-            }
-            let min_block_index_bits = if reduced_vars >= 3 { 1 } else { 0 };
-            let max_block_index_bits = (reduced_vars - 1).min(usize::BITS as usize - 1);
-            for block_index_bits in (min_block_index_bits..=max_block_index_bits).rev() {
-                let Some(candidate_params) = scalar_root_fold_level_params_candidate(
-                    &policy,
-                    &ring_challenge_cfg,
-                    dimensions,
-                    key.num_vars(),
-                    key.num_polynomials(),
-                    candidate_log_basis,
-                    block_index_bits,
-                    fold_challenge_shape,
-                    honest_fold_policy,
-                )?
-                else {
-                    continue;
-                };
-                let next_witness_len = planned_next_witness_len(
-                    field_bits,
-                    &candidate_params,
-                    key.num_polynomials(),
-                    policy.chunks_at_level(0),
-                )?;
-                match &best {
-                    Some((best_len, _)) if *best_len <= next_witness_len => {}
-                    _ => best = Some((next_witness_len, candidate_params)),
-                }
-            }
-        }
-    }
-
-    best.map(|(_, params)| params).ok_or_else(|| {
-        AkitaError::InvalidSetup(format!(
-            "no standalone precommit parameters found for layout {key:?} under this commitment config"
-        ))
+    let policy = policy_of::<Cfg>();
+    let d_open = profile.outer_commit_matrix.ring_dimension();
+    let open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+        policy.sis_security_policy,
+        policy.sis_table_digest,
+        policy.sis_modulus_profile,
+        1,
+        1,
+        profile.outer_commit_matrix.coeff_linf_bound(),
+        d_open,
+    );
+    Ok(CommittedGroupParams {
+        log_basis_inner: profile.log_basis_inner,
+        log_basis_outer: profile.log_basis_outer,
+        log_basis_open: profile.log_basis_outer,
+        inner_commit_matrix: profile.inner_commit_matrix,
+        outer_commit_matrix: profile.outer_commit_matrix,
+        open_commit_matrix,
+        num_live_ring_elements_per_claim: profile.num_live_ring_elements_per_claim,
+        num_positions_per_block: profile.num_positions_per_block,
+        num_live_blocks: profile.num_live_blocks,
+        fold_challenge_config: Cfg::ring_challenge_config(
+            profile.inner_commit_matrix.ring_dimension(),
+        )?,
+        fold_challenge_shape: TensorChallengeShape::Flat,
+        num_digits_inner: profile.num_digits_inner,
+        num_digits_outer: profile.num_digits_outer,
+        num_digits_open: profile.num_digits_outer,
+        num_digits_fold: 1,
+        witness_chunk: policy.witness_chunk_for_level(0),
+        precommitted_groups: Vec::new(),
+        setup_prefix: None,
     })
 }
 

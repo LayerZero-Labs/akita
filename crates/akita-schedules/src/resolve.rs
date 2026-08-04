@@ -380,6 +380,54 @@ pub fn select_generated_schedule_row_for_profiles(
     )
 }
 
+/// Resolve a generated standalone precommit descriptor for one group.
+///
+/// This is intentionally descriptor-only: final grouped schedule resolution is
+/// responsible for expanding frozen profiles into per-root opening metadata.
+pub fn resolve_generated_precommitted_group_profile(
+    key: &PolynomialGroupLayout,
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    catalog: Option<GeneratedScheduleTable>,
+) -> Result<CommittedGroupProfile, AkitaError> {
+    key.validate()?;
+    validate_policy(policy)?;
+    let table = catalog.ok_or_else(|| {
+        AkitaError::UnsupportedSchedule(format!(
+            "precommit profile catalog is not enabled for request {:?}",
+            key
+        ))
+    })?;
+    validate_catalog_identity(
+        &table,
+        policy,
+        &ring_challenge_config,
+        &fold_challenge_shape_at_level,
+    )?;
+
+    let mut selected = None;
+    for &row in table.precommitted_profiles {
+        let profile = row.expand_to_committed_profile(policy)?;
+        if profile.group != *key {
+            continue;
+        }
+        if selected.is_some_and(|existing| existing != profile) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "precommit profile catalog contains multiple descriptors for {:?}",
+                key
+            )));
+        }
+        selected = Some(profile);
+    }
+    selected.ok_or_else(|| {
+        AkitaError::UnsupportedSchedule(format!(
+            "no generated precommit profile for request {:?}",
+            key
+        ))
+    })
+}
+
 /// Resolve a runtime schedule using only the enabled generated catalog.
 ///
 /// A missing catalog or missing row is unsupported input. This function never

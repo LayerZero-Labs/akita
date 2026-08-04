@@ -473,6 +473,85 @@ pub(crate) fn layout_candidate_score(
     Ok((combined, physical_width, chunk_work, imbalance))
 }
 
+/// Offline canonical standalone precommit descriptor for one group.
+///
+/// Runtime config code consumes generated [`CommittedGroupProfile`] rows
+/// instead of running this search. The returned profile freezes only group-local
+/// A/B commitment geometry; grouped-root schedule expansion later derives D/open
+/// metadata when the final group is known.
+pub fn derive_standalone_precommit_profile(
+    key: PolynomialGroupLayout,
+    policy: &PlannerPolicy,
+    honest_fold_policy: HonestFoldPolicySpec,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<CommittedGroupProfile, AkitaError> {
+    key.validate()?;
+    let mut direct_policy = policy.direct_only();
+    direct_policy.basis_range = (direct_policy.basis_range.0, direct_policy.basis_range.0);
+    validate_policy(&direct_policy)?;
+
+    let witness_len = 1usize
+        .checked_shl(key.num_vars() as u32)
+        .ok_or_else(|| AkitaError::InvalidSetup("precommit witness too large".into()))?;
+    let requested_fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
+        num_vars: key.num_vars(),
+        level: 0,
+        input_witness_len: witness_len,
+    });
+    let field_bits = direct_policy.decomposition.field_bits();
+    let (min_log_basis, max_log_basis) = direct_policy.log_basis_search_range_at_level(0);
+    let mut best: Option<(usize, CommittedGroupParams)> = None;
+
+    for candidate_log_basis in min_log_basis..=max_log_basis {
+        for dimensions in direct_policy.ring_dimension_candidates.iter().copied() {
+            let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
+                continue;
+            };
+            let alpha = (dimensions.d_a() as u32).trailing_zeros() as usize;
+            let reduced_vars = key.num_vars().saturating_sub(alpha);
+            if reduced_vars == 0 {
+                continue;
+            }
+            let min_block_index_bits = if reduced_vars >= 3 { 1 } else { 0 };
+            let max_block_index_bits = (reduced_vars - 1).min(usize::BITS as usize - 1);
+            for block_index_bits in (min_block_index_bits..=max_block_index_bits).rev() {
+                let Some(candidate_params) = scalar_root_fold_level_params_candidate(
+                    &direct_policy,
+                    &ring_challenge_cfg,
+                    dimensions,
+                    key.num_vars(),
+                    key.num_polynomials(),
+                    candidate_log_basis,
+                    block_index_bits,
+                    requested_fold_shape,
+                    honest_fold_policy,
+                )?
+                else {
+                    continue;
+                };
+                let next_witness_len = planned_next_witness_len(
+                    field_bits,
+                    &candidate_params,
+                    key.num_polynomials(),
+                    direct_policy.chunks_at_level(0),
+                )?;
+                match &best {
+                    Some((best_len, _)) if *best_len <= next_witness_len => {}
+                    _ => best = Some((next_witness_len, candidate_params)),
+                }
+            }
+        }
+    }
+
+    best.map(|(_, params)| CommittedGroupProfile::from_params(key, &params))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "no standalone precommit profile found for layout {key:?} under this policy"
+            ))
+        })
+}
+
 // Suffix-DP depth cap. Schedules in our working parameter range never need
 // more than this many recursive fold levels; deeper search only blows up
 // memo state without changing emitted tables.
