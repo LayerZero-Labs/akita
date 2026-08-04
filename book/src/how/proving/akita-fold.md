@@ -1,4 +1,4 @@
-# Ring relation in an Akita fold
+# Basic relations in an Akita fold
 
 This page describes the ring-valued relations proved by one non-terminal
 Akita fold. The presentation starts with one polynomial group, one opening
@@ -8,11 +8,10 @@ $$
 R=F[X]/(X^D+1).
 $$
 
-The current implementation also supports more elaborate physical layouts, but
-those extensions do not change the four core relations developed below. After
-establishing the basic case, [Advanced relation
-layouts](./advanced-relation-layouts.md) adds commitment groups, witness chunks,
-and different ring dimensions one axis at a time.
+The current implementation also supports more elaborate physical layouts —
+commitment groups, witness chunks, and different ring dimensions — but those
+extensions do not change the four core relations developed below. This page
+establishes only the basic case; advanced layouts are outside its scope.
 
 The Akita paper presents a more general matrix with additional compression
 relations. Its basic Greyhound relation motivates the four row families here;
@@ -572,7 +571,9 @@ evaluation row, and the range-image binding into one Stage-2 sumcheck.
 
 ## Code reference
 
-The current prover follows the construction above:
+The current prover uses canonical entry points that also support more general
+layouts. With one group, one chunk, and one common ring dimension, they reduce
+to the construction above:
 
 1. **Build the partial-evaluation and fold witnesses.**
    [`RingRelationProver::new`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation.rs#L433-L760)
@@ -592,8 +593,9 @@ The current prover follows the construction above:
 4. **Compute the row quotients.**
    [`compute_multi_group_relation_quotient`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs#L412-L690)
    computes one quotient for each `consistency`, $\mathbf A$, $\mathbf B$, and
-   $\mathbf D$ row. `ring_switch_build_w` decomposes them and appends
-   $\hat r$.
+   $\mathbf D$ row. Despite its general name, this is also the canonical
+   single-group path. `ring_switch_build_w` decomposes the quotients and
+   appends $\hat r$.
 5. **Evaluate the extended relation.**
    [`build_relation_weight_events`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs#L398-L870)
    emits the contributions of all four row families and the quotient columns
@@ -614,10 +616,10 @@ RingRelationProver::new
                   |
                   v
 ring_switch_build_w
-|-- compute_multi_group_relation_quotient --> r
-|-- decompose z ----------------------------> z_hat
-|-- decompose r ----------------------------> r_hat
-`-- emit [z_hat | e_hat | t_hat | r_hat] ---> committed witness w
+|-- compute relation quotients ----------> r
+|-- decompose z -------------------------> z_hat
+|-- decompose r -------------------------> r_hat
+`-- emit [z_hat | e_hat | t_hat | r_hat] --> committed witness w
                   |
                   v
 build_relation_weight_events
@@ -632,24 +634,22 @@ verifier can reconstruct:
 
 | Field | Mathematical meaning |
 |---|---|
-| `group_challenges()` | fold challenges $c_b$ |
-| `group_opening_point()` | ordinary opening weights, including $Q_p$ and $B_b$ |
-| `group_ring_multiplier_point()` | ring multipliers used by the physical consistency row |
+| `group_challenges()[0]` | fold challenges $c_b$ |
+| `group_opening_point(0)` | ordinary opening weights, including $Q_p$ and $B_b$ |
+| `group_ring_multiplier_point(0)` | ring multipliers used by the physical consistency row |
 | `rhs()` | $\mathbf y=[0\mid\mathbf 0_A\mid\mathbf u\mid\mathbf v_D]$ in the basic setting |
 | `v()` | $\mathbf v_D=\mathbf D\hat{\mathbf e}$ |
-| `role_dims()` | the $\mathbf A$-, $\mathbf B$-, and $\mathbf D$-row ring dimensions |
 
 ### Prover witness: `RingRelationWitness`
 
 [`RingRelationWitness`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation_witness.rs#L141-L220)
-is the prover-only aggregate witness. It holds the fold-grinding nonce and one
-[`RingRelationGroupWitness`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation_witness.rs#L8-L140)
-per polynomial group. In the basic setting, the vector contains one group:
+is the prover-only aggregate witness. In the basic setting, its `groups`
+vector contains one
+[`RingRelationGroupWitness`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation_witness.rs#L8-L140):
 
 | Field | Mathematical meaning |
 |---|---|
 | `z_folded_rings` | folded response $\mathbf z$, before decomposition into $\hat z$ |
-| `z_folded_centered_per_chunk` | chunk-local folded responses $\mathbf z_k$ |
 | `e_folded` | recomposed position-folded rings $E_b$ |
 | `e_hat` | opening digits $\hat{\mathbf e}$ |
 | `hint` | commitment hint containing $\hat{\mathbf t}$ |
@@ -668,7 +668,7 @@ it reconstructs the public instance from the transcript and public proof data:
 public commitment rows, opening points, v_D, and transcript
                             |
                             v
-rederive the per-group fold challenges
+rederive the fold challenges
                             |
                             v
 assemble_relation_rhs
@@ -681,10 +681,6 @@ ring_switch_verifier --------------------------------------> Stage 2 verifier
 ```
 
 Only the public instance is reconstructed on the verifier. The
-`RingRelationWitness` and its group witnesses remain prover-only.
-
-The basic case on this page extends to multiple commitment groups, witness
-chunks, and mixed ring dimensions in [Advanced relation
-layouts](./advanced-relation-layouts.md). [Opening points and digit-innermost
-layout](./opening-points-layout.md#witness-order) then specifies the canonical
-physical source and digit order.
+`RingRelationWitness` remains prover-only. [Opening points and digit-innermost
+layout](./opening-points-layout.md#witness-order) specifies the canonical
+physical source and digit order used by the implementation.
