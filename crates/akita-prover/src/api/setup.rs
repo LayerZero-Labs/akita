@@ -3,7 +3,7 @@
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
-    derive_public_matrix_prefix, sample_public_matrix_id, AkitaExpandedSetup, AkitaSetupSeed,
+    derive_public_matrix_prefix, sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor,
     AkitaVerifierSetup, FlatMatrix, SetupMatrixCapacity, SetupPrefixProverRegistry,
     SetupPrefixVerifierRegistry,
 };
@@ -45,26 +45,26 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     where
         F: CanonicalField + RandomSampling + AkitaSerialize,
     {
-        let public_matrix_id = sample_public_matrix_id();
-        let seed = AkitaSetupSeed {
+        let setup_seed = sample_akita_setup_seed();
+        let seed = AkitaSetupDescriptor {
             max_num_vars,
             max_num_batched_polys,
             num_field_elements: setup_capacity.num_field_elements,
-            public_matrix_id: public_matrix_id.clone(),
+            setup_seed: setup_seed.clone(),
         };
         seed.check().map_err(|err| {
             AkitaError::InvalidSetup(format!("setup seed validation failed: {err}"))
         })?;
 
         let shared_flat =
-            derive_public_matrix_prefix::<F>(setup_capacity.num_field_elements, &public_matrix_id);
+            derive_public_matrix_prefix::<F>(setup_capacity.num_field_elements, &setup_seed);
         let expanded = Arc::new(
             AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_flat),
         );
 
         Ok(Self {
             expanded,
-            prefix_slots: SetupPrefixProverRegistry::new(public_matrix_id),
+            prefix_slots: SetupPrefixProverRegistry::new(setup_seed),
         })
     }
 
@@ -113,7 +113,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
             )
         };
         let mut prefix_slots =
-            SetupPrefixVerifierRegistry::new(self.expanded.seed().public_matrix_id.clone());
+            SetupPrefixVerifierRegistry::new(self.expanded.seed().setup_seed.clone());
         prefix_slots.replace_from_prover_registry(&self.prefix_slots)?;
         AkitaVerifierSetup::from_parts(expanded, prefix_slots)
     }
@@ -163,11 +163,11 @@ impl<F: FieldCore> AkitaProverSetup<F> {
                 "expanded setup matrix field count does not match setup seed".to_string(),
             ));
         }
-        let public_matrix_id = expanded.seed().public_matrix_id.clone();
+        let setup_seed = expanded.seed().setup_seed.clone();
         let expanded = Arc::new(expanded);
         Ok(Self {
             expanded,
-            prefix_slots: SetupPrefixProverRegistry::new(public_matrix_id),
+            prefix_slots: SetupPrefixProverRegistry::new(setup_seed),
         })
     }
 }
@@ -177,7 +177,7 @@ impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaSerialize> Va
 {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
-        if self.prefix_slots.public_matrix_id() != &self.expanded.seed().public_matrix_id {
+        if self.prefix_slots.setup_seed() != &self.expanded.seed().setup_seed {
             return Err(SerializationError::InvalidData(
                 "setup-prefix registry belongs to a different public matrix".to_string(),
             ));

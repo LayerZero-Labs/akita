@@ -15,7 +15,7 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
+    AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupDescriptor,
     AkitaVerifierSetup, CommittedGroup, FlatMatrix, GroupBatchStatement, OpeningClaims,
     OpeningScheduleSelection, PolynomialGroupClaims, SetupPrefixVerifierRegistry,
     MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
@@ -302,9 +302,9 @@ where
 
     fn decode_seed_and_matrix(
         rest: &mut &[u8],
-    ) -> Result<(AkitaSetupSeed, FlatMatrix<F>), SerializationError> {
+    ) -> Result<(AkitaSetupDescriptor, FlatMatrix<F>), SerializationError> {
         let seed =
-            AkitaSetupSeed::deserialize_with_mode(&mut *rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+            AkitaSetupDescriptor::deserialize_with_mode(&mut *rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
         let matrix_fields = seed.num_field_elements;
         if matrix_fields > MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS {
             return Err(SerializationError::LengthLimitExceeded {
@@ -497,7 +497,7 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275;
     use akita_types::{
-        derive_public_matrix_prefix, sample_public_matrix_id, setup_prefix_slot_id,
+        derive_public_matrix_prefix, sample_akita_setup_seed, setup_prefix_slot_id,
         CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
         PolynomialGroupLayout, PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment,
         SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
@@ -619,18 +619,18 @@ mod tests {
 
     #[test]
     fn strict_setup_decoder_preserves_prefix_slots() {
-        let public_matrix_id = sample_public_matrix_id();
-        let seed = AkitaSetupSeed {
+        let setup_seed = sample_akita_setup_seed();
+        let seed = AkitaSetupDescriptor {
             max_num_vars: 8,
             max_num_batched_polys: 1,
             num_field_elements: 2 * TEST_D,
-            public_matrix_id: public_matrix_id.clone(),
+            setup_seed: setup_seed.clone(),
         };
-        let shared_matrix = derive_public_matrix_prefix::<TestF>(2 * TEST_D, &public_matrix_id);
+        let shared_matrix = derive_public_matrix_prefix::<TestF>(2 * TEST_D, &setup_seed);
         let commitment_params = prefix_commitment_params();
         let commitment_rows = commitment_params.layout.outer_commit_matrix.output_rank();
         let id = setup_prefix_slot_id(1, commitment_params);
-        let mut prefix_slots = SetupPrefixVerifierRegistry::new(public_matrix_id.clone());
+        let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed.clone());
         prefix_slots
             .insert(SetupPrefixVerifierSlot {
                 id: id.clone(),

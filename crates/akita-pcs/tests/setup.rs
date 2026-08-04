@@ -131,8 +131,8 @@ where
         AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv + 1, setup_polys + 1)
             .expect("larger verifier materialization");
     assert_eq!(
-        setup.expanded.seed().public_matrix_id,
-        verifier_setup_source.expanded.seed().public_matrix_id
+        setup.expanded.seed().setup_seed,
+        verifier_setup_source.expanded.seed().setup_seed
     );
     assert!(
         verifier_setup_source

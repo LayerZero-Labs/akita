@@ -63,7 +63,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
                 log_open_bound: Some(32),
             },
             sis_modulus_profile: SisModulusProfileId::Q32Offset99,
-            public_matrix_id_digest: [1; 32],
+            setup_seed_digest: [1; 32],
             protocol_features: ProtocolFeatureSet::current(),
             fold_linf: FoldLinfProtocolBinding::CURRENT,
         },

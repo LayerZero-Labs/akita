@@ -372,13 +372,13 @@ mod tests {
 
     #[test]
     fn ensure_setup_envelope_rejects_undersized_matrix() {
-        let seed = crate::AkitaSetupSeed {
+        let seed = crate::AkitaSetupDescriptor {
             max_num_vars: 32,
             max_num_batched_polys: 1,
             num_field_elements: 32,
-            public_matrix_id: [1u8; 32].into(),
+            setup_seed: [1u8; 32].into(),
         };
-        let shared = crate::derive_public_matrix_prefix::<F>(32, &seed.public_matrix_id);
+        let shared = crate::derive_public_matrix_prefix::<F>(32, &seed.setup_seed);
         let expanded =
             crate::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared);
         let err = ensure_setup_envelope(&expanded, 2, 32).expect_err("undersized");
