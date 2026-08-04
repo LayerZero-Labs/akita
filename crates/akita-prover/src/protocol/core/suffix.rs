@@ -294,7 +294,6 @@ where
             stack.tensor().backend(),
             Some(stack.tensor().prepared()),
             &eor_inputs,
-            true,
             transcript,
             "terminal",
         )?;

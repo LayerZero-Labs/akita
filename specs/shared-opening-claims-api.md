@@ -387,7 +387,7 @@ Custom per-group counts: `OpeningClaimsLayout::from_groups(vec![PolynomialGroupL
 | Public point / evaluations / commitments | `OpeningClaims` accessors |
 | Batch poly count | `opening_claims.num_total_polynomials()` (accessor; do not spread into call args) |
 | Transcript (shape header + values) | `opening_claims.append_to_transcript(transcript)` (pass the claims object) |
-| Fiat–Shamir gamma rows | `sample_public_row_coefficients(&layout, t)` where `let layout = opening_claims.layout()` |
+| Fiat–Shamir gamma rows | `derive_public_row_coefficients(&layout, &openings, t)` where `let layout = opening_claims.layout()` |
 | Batched eval sum | `batched_eval_target_from_layout(&layout, &row_coefficients, &openings)` |
 
 #### 9. Schedule lookup key unification
@@ -590,9 +590,10 @@ its fields:
   commitments) — e.g. `validate_batched_inputs(&expanded, &opening_claims, true)`,
   `opening_claims.append_to_transcript(transcript)`.
 - `&OpeningClaimsLayout` when the helper needs only **counts** — e.g.
-  `sample_public_row_coefficients(&layout, t)`,
   `batched_eval_target_from_layout(&layout, …)`,
   `Cfg::get_params_for_prove(&layout)`.
+- `&OpeningClaimsLayout` and the flat evaluations when binding public claims —
+  e.g. `derive_public_row_coefficients(&layout, &openings, t)`.
 
 `OpeningClaimsLayout` is itself one of the five first-class objects, so passing
 `&layout` is "pass the object," not field decomposition; it is the field-free view that
@@ -915,7 +916,7 @@ fn batched_prove<'a, T, P, B>(
 | ------------------------------------------- | ------------------------------------------------------------------- |
 | `shape.num_claims()` | `opening_claims.num_total_polynomials()` |
 | `claims.num_claims()` | `opening_claims.num_total_polynomials()` |
-| `sample_public_row_coefficients(&shape, t)` | `sample_public_row_coefficients(&layout, t)` (`let layout = opening_claims.layout()`) |
+| `sample_public_row_coefficients(&shape, t)` | `derive_public_row_coefficients(&layout, &openings, t)` (`let layout = opening_claims.layout()`) |
 | `batched_eval_target_from_opening_batch(&shape, …)` | `batched_eval_target_from_layout(&layout, …)` |
 | `validate_batched_inputs(setup, point, &group_sizes, p)` | `validate_batched_inputs(setup, &opening_claims, p)` |
 | `claims.validate(OpeningBatchLimits { … })` | `opening_claims.validate(setup.expanded.seed())` |
@@ -955,7 +956,8 @@ let prover = ProverOpeningData::new(opening_claims, vec![hint], vec![group_polys
 let layout = opening_claims.layout();
 let openings = opening_claims.flat_evaluations();
 opening_claims.append_to_transcript::<F, T>(transcript)?;
-let row_coefficients = sample_public_row_coefficients::<F, E, T>(&layout, transcript)?;
+let row_coefficients =
+    derive_public_row_coefficients::<F, E, T>(&layout, &openings, transcript)?;
 let target = batched_eval_target_from_layout(&layout, &row_coefficients, &openings)?;
 ```
 

@@ -34,7 +34,6 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         &crate::compute::CpuBackend,
         None,
         &groups,
-        true,
         &mut transcript,
         "recursive",
     )
@@ -77,7 +76,6 @@ fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
         &crate::compute::CpuBackend,
         None,
         &groups,
-        true,
         &mut transcript,
         "recursive",
     )
@@ -85,7 +83,7 @@ fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
 
     assert_eq!(proved.protocol_points.len(), 2);
     assert_eq!(proved.reduction.final_factors.len(), 2);
-    assert_eq!(proved.row_coefficients, vec![E::one(); 2]);
+    assert_ne!(proved.row_coefficients, vec![E::one(); 2]);
     assert_eq!(proved.reduction.proof.num_rounds(), long_point.len() - 1);
 }
 

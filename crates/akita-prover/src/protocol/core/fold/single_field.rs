@@ -50,18 +50,13 @@ where
         .opening_claims()
         .layout()
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
-    let (protocol_points, row_coefficients) = prepare_non_eor_opening(
-        &block_claims,
-        &opening_batch,
-        pad_base_evals,
-        validate_non_eor,
-    )?;
+    let protocol_points = prepare_non_eor_opening(&block_claims, &opening_batch, validate_non_eor)?;
     finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
         stack,
         block_claims,
         protocol_points: &protocol_points,
         reduction: None,
-        row_coefficients,
+        row_coefficients: None,
         trace_opening_batch: &opening_batch,
         level_params,
         basis,

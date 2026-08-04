@@ -33,16 +33,11 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) row_coefficients: Option<Vec<E>>,
 }
 
-/// Shared non-EOR opening preparation used by single-field and extension-claim
-/// skip-EOR paths.
-type NonEorOpeningPrep<E> = (Vec<Vec<E>>, Option<Vec<E>>);
-
 pub(super) fn prepare_non_eor_opening<'a, F, E, P, V>(
     block_claims: &ProverOpeningData<'a, E, P, F>,
     opening_batch: &OpeningClaimsLayout,
-    pad_base_evals: bool,
     validate_non_eor: V,
-) -> Result<NonEorOpeningPrep<E>, AkitaError>
+) -> Result<Vec<Vec<E>>, AkitaError>
 where
     F: FieldCore,
     E: ExtField<F>,
@@ -50,20 +45,14 @@ where
     V: FnOnce() -> Result<(), AkitaError>,
 {
     validate_non_eor()?;
-    let row_coefficients = if pad_base_evals {
-        Some(vec![E::one(); opening_batch.num_total_polynomials()])
-    } else {
-        None
-    };
-    let protocol_points = (0..opening_batch.num_groups())
+    (0..opening_batch.num_groups())
         .map(|group_index| {
             block_claims
                 .opening_claims()
                 .group_point(group_index)
                 .map(<[E]>::to_vec)
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((protocol_points, row_coefficients))
+        .collect()
 }
 
 /// Borrowed/owned argument bundle for [`finish_prepared_fold`].
