@@ -475,7 +475,8 @@ fn cataloged_committed_descriptor<Cfg: CommitmentConfig>(
 fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order() {
     type Cfg = fp128::D64OneHot;
     let onehot_16 = cataloged_committed_descriptor::<Cfg>(PolynomialGroupLayout::new(14, 1));
-    let dense = cataloged_committed_descriptor::<Cfg>(PolynomialGroupLayout::new(15, 2));
+    let dense =
+        cataloged_committed_descriptor::<fp128::D64Dense>(PolynomialGroupLayout::new(15, 2));
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(16, 1),
         precommitteds: vec![onehot_16, dense],

@@ -18,9 +18,10 @@
 mod common;
 
 use akita_config::proof_optimized::fp128;
-use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig};
+use akita_config::CommitmentConfig;
 use akita_pcs::test_support::{
-    materialize_schedule_setup_prefix_slots, RecursiveRingDimensionTransitionConfig,
+    materialize_schedule_setup_prefix_slots, per_matrix_ring_dims_root_schedule,
+    PerMatrixRingDimsRootConfig, RecursiveRingDimensionTransitionConfig,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
@@ -32,8 +33,8 @@ use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
     active_setup_field_len, dispatch_for_field, lagrange_weights, padded_setup_prefix_len,
     AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, CommitmentRingDims,
-    CommittedGroupProfile, FoldSchedule, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims, PolynomialGroupLayout, WitnessPartition,
+    CommittedGroupProfile, FoldSchedule, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
+    PolynomialGroupLayout, WitnessPartition,
 };
 use common::*;
 use rand::rngs::StdRng;
@@ -46,6 +47,7 @@ type Suffix = fp128::D64OneHot;
 type PlainCfg = RecursiveRingDimensionTransitionConfig<Root, Mid, Suffix, Suffix, 128, 64>;
 type W8R2Cfg =
     RecursiveRingDimensionTransitionConfig<Root, Mid, Suffix, fp128::D64OneHotMultiChunk, 128, 64>;
+type PrecommitCfg = PerMatrixRingDimsRootConfig<Root, 128, 128>;
 
 const PRE_NV: usize = 14;
 const FINAL_NV: usize = 24;
@@ -55,6 +57,12 @@ const FINAL_GROUP_SIZE: usize = 1;
 const TOTAL_GROUP_SIZE: usize = PRE_GROUPS * PRE_GROUP_SIZE + FINAL_GROUP_SIZE;
 const ONEHOT_K: usize = 256;
 static RECURSIVE_E2E_LOCK: Mutex<()> = Mutex::new(());
+
+fn root_band_precommit_layout() -> akita_types::CommittedGroupParams {
+    let pre_schedule = per_matrix_ring_dims_root_schedule::<Root>(PRE_NV, PRE_GROUP_SIZE, 128, 128)
+        .expect("root-band precommit schedule");
+    pre_schedule.root.params.final_group.commitment
+}
 
 fn make_layout_onehot_poly(
     layout: &akita_types::CommittedGroupParams,
@@ -158,16 +166,12 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
     ProofCfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     type Scheme<ProofCfg> = AkitaCommitmentScheme<ProofCfg>;
-    type Precommitted<ProofCfg> = AkitaCommitmentScheme<PrecommittedCommitmentConfig<ProofCfg>>;
+    type Precommitted = AkitaCommitmentScheme<PrecommitCfg>;
 
     init_rayon_pool();
     run_on_large_stack(move || {
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
-        let pre_layout =
-            PrecommittedCommitmentConfig::<ProofCfg>::get_params_for_batched_commitment(
-                &OpeningClaimsLayout::new(PRE_NV, PRE_GROUP_SIZE).expect("precommit batch"),
-            )
-            .expect("precommit params");
+        let pre_layout = root_band_precommit_layout();
         let pre_frozen = CommittedGroupProfile::from_params(pre_key, &pre_layout);
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
@@ -230,7 +234,7 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         for group_idx in 0..PRE_GROUPS {
             let poly =
                 make_layout_onehot_poly(&pre_layout, 0x0bee_fcaf_3340_0000 + group_idx as u64);
-            let (commitment, hint) = Precommitted::<ProofCfg>::batched_commit(
+            let (commitment, hint) = Precommitted::commit_group(
                 &setup,
                 std::slice::from_ref(&poly),
                 &preprocessing_stack,
@@ -246,13 +250,23 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
                 make_layout_onehot_poly(root_params, 0x0bee_fcaf_3340_1000 + poly_idx as u64)
             })
             .collect();
-        let (final_commitment, final_hint, _selection) = Scheme::<ProofCfg>::commit_final_group(
+        let (final_commitment, final_hint, selection) = Scheme::<ProofCfg>::commit_final_group(
             &setup,
             &final_polys,
             &preprocessing_stack,
             pre_commitments.iter().map(|group| group.profile).collect(),
         )
         .expect("final mixed commitment");
+        let selected_schedule = ProofCfg::resolve_schedule_selection(selection)
+            .expect("selected mixed recursive schedule")
+            .into_schedule();
+        materialize_schedule_setup_prefix_slots(
+            &mut setup,
+            &CpuBackend,
+            &preprocessing_prepared,
+            &selected_schedule,
+        )
+        .expect("materialize selected mixed setup-prefix slots");
 
         let point = random_point(FINAL_NV, 0xcafe_3340_0001);
         let pre_openings: Vec<Vec<F>> = pre_polys_by_group
@@ -464,11 +478,7 @@ fn recursive_mixed_d_prefix_commit_lazily_builds_exact_ntt_slots() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
-        let pre_layout =
-            PrecommittedCommitmentConfig::<PlainCfg>::get_params_for_batched_commitment(
-                &OpeningClaimsLayout::new(PRE_NV, PRE_GROUP_SIZE).expect("precommit batch"),
-            )
-            .expect("precommit params");
+        let pre_layout = root_band_precommit_layout();
         let descriptor = CommittedGroupProfile::from_params(pre_key, &pre_layout);
         let schedule = PlainCfg::runtime_schedule(AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),

@@ -140,7 +140,7 @@ ring_view::<D>(num_rows, num_cols)
 The global stride is imposed by setup metadata and call sites:
 
 ```text
-AkitaSetupSeed {
+AkitaSetupDescriptor {
     max_stride,
     ...
 }
@@ -241,7 +241,7 @@ Do not add ZK blinding tail widths to `max_setup_len`. Under
 Change:
 
 ```text
-AkitaSetupSeed {
+AkitaSetupDescriptor {
     max_stride,
     ...
 }
@@ -250,7 +250,7 @@ AkitaSetupSeed {
 to:
 
 ```text
-AkitaSetupSeed {
+AkitaSetupDescriptor {
     max_setup_len,
     max_zk_b_len,            // feature = "zk"
     max_zk_d_len,            // feature = "zk"

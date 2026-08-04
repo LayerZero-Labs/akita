@@ -3,7 +3,7 @@
 use crate::descriptor_bytes::push_usize;
 use crate::instance_descriptor::DescriptorDigest;
 use crate::proof::scheme::OpeningPoints;
-use crate::proof::setup::AkitaSetupSeed;
+use crate::proof::setup::AkitaSetupDescriptor;
 use crate::{CommittedGroup, OpeningScheduleSelection};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
@@ -100,7 +100,7 @@ impl OpeningClaimsLayout {
     }
 
     /// Worst-case setup-capacity request as a one-group layout.
-    pub fn from_setup_seed(seed: &AkitaSetupSeed) -> Result<Self, AkitaError> {
+    pub fn from_setup_seed(seed: &AkitaSetupDescriptor) -> Result<Self, AkitaError> {
         Self::new(seed.max_num_vars, seed.max_num_batched_polys)
     }
 
@@ -438,7 +438,7 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     }
 
     /// Validate consistency plus public capacity against the setup limits.
-    pub fn validate(&self, seed: &AkitaSetupSeed) -> Result<(), AkitaError> {
+    pub fn validate(&self, seed: &AkitaSetupDescriptor) -> Result<(), AkitaError> {
         self.check()?;
         let max_num_vars = self.layout()?.max_num_vars();
         if max_num_vars > seed.max_num_vars {

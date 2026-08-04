@@ -33,14 +33,14 @@ impl PublicMatrixDerivation {
 
 /// Semantic identity of the infinite public field stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublicMatrixId {
+pub struct AkitaSetupSeed {
     /// Coefficient derivation algorithm.
     pub derivation: PublicMatrixDerivation,
     /// Public entropy absorbed by the derivation algorithm.
     pub seed: [u8; 32],
 }
 
-impl PublicMatrixId {
+impl AkitaSetupSeed {
     /// Construct a v1 paged SHAKE256 public-matrix identity.
     #[must_use]
     pub const fn shake256_paged_v1(seed: [u8; 32]) -> Self {
@@ -51,7 +51,7 @@ impl PublicMatrixId {
     }
 }
 
-impl From<[u8; 32]> for PublicMatrixId {
+impl From<[u8; 32]> for AkitaSetupSeed {
     fn from(seed: [u8; 32]) -> Self {
         Self::shake256_paged_v1(seed)
     }
@@ -91,7 +91,7 @@ impl SetupMatrixCapacity {
 
 /// Seed-only stage for deterministic setup expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaSetupSeed {
+pub struct AkitaSetupDescriptor {
     /// Provisioning variable bound inherited from setup construction.
     pub max_num_vars: usize,
     /// Provisioning polynomial-count bound inherited from setup construction.
@@ -99,7 +99,7 @@ pub struct AkitaSetupSeed {
     /// Number of materialized public-matrix field elements.
     pub num_field_elements: usize,
     /// Semantic identity of the infinite public field stream.
-    pub public_matrix_id: PublicMatrixId,
+    pub setup_seed: AkitaSetupSeed,
 }
 
 /// Expanded setup stage containing materialized public matrices.
@@ -109,7 +109,7 @@ pub struct AkitaSetupSeed {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaExpandedSetup<F: FieldCore> {
     /// Setup seed and runtime layout metadata.
-    pub seed: AkitaSetupSeed,
+    pub seed: AkitaSetupDescriptor,
     /// Shared 1D flat backing vector.
     pub shared_matrix: FlatMatrix<F>,
 }
@@ -145,7 +145,7 @@ impl<F: FieldCore> AkitaVerifierSetup<F> {
         expanded: Arc<AkitaExpandedSetup<F>>,
         prefix_slots: SetupPrefixVerifierRegistry<F>,
     ) -> Result<Self, AkitaError> {
-        if prefix_slots.public_matrix_id() != &expanded.seed.public_matrix_id {
+        if prefix_slots.setup_seed() != &expanded.seed.setup_seed {
             return Err(AkitaError::InvalidSetup(
                 "setup-prefix registry belongs to a different public matrix".to_string(),
             ));
@@ -192,13 +192,13 @@ impl<F: FieldCore + CanonicalField> AkitaVerifierSetup<F> {
 
 impl<F: FieldCore> AkitaExpandedSetup<F> {
     /// Build an expanded setup from a trusted matrix the caller has already
-    /// derived from `seed.public_matrix_id`.
+    /// derived from `seed.setup_seed`.
     ///
     /// This constructor deliberately does not rederive or validate the matrix. Use
     /// [`Self::from_verified_parts`] for untrusted serialized setup bytes.
     #[must_use]
     pub fn from_trusted_seed_derived_parts_unchecked(
-        seed: AkitaSetupSeed,
+        seed: AkitaSetupDescriptor,
         shared_matrix: FlatMatrix<F>,
     ) -> Self {
         Self {
@@ -209,7 +209,7 @@ impl<F: FieldCore> AkitaExpandedSetup<F> {
 
     /// Setup seed and runtime layout metadata.
     #[must_use]
-    pub fn seed(&self) -> &AkitaSetupSeed {
+    pub fn seed(&self) -> &AkitaSetupDescriptor {
         &self.seed
     }
 
@@ -232,7 +232,7 @@ where
     /// Returns a serialization error if the seed/matrix shape is malformed or
     /// the matrix was not deterministically derived from the seed.
     pub fn from_verified_parts(
-        seed: AkitaSetupSeed,
+        seed: AkitaSetupDescriptor,
         shared_matrix: FlatMatrix<F>,
     ) -> Result<Self, SerializationError> {
         let out = Self {
@@ -246,10 +246,10 @@ where
 
 /// Fixed public seed for deterministic, reproducible setup.
 #[must_use]
-pub fn sample_public_matrix_id() -> PublicMatrixId {
+pub fn sample_akita_setup_seed() -> AkitaSetupSeed {
     let mut seed = [0u8; 32];
     seed[..8].copy_from_slice(&0xDEAD_BEEF_CAFE_BABEu64.to_le_bytes());
-    PublicMatrixId::shake256_paged_v1(seed)
+    AkitaSetupSeed::shake256_paged_v1(seed)
 }
 
 /// Derive an exact flat prefix of public field elements from a seed.
@@ -269,13 +269,13 @@ pub fn sample_public_matrix_id() -> PublicMatrixId {
 #[must_use]
 pub fn derive_public_matrix_prefix<F: FieldCore + CanonicalField + RandomSampling>(
     num_field_elements: usize,
-    id: &PublicMatrixId,
+    id: &AkitaSetupSeed,
 ) -> FlatMatrix<F> {
     let mut data = vec![F::zero(); num_field_elements];
     cfg_chunks_mut!(data, id.derivation.page_field_elements())
         .enumerate()
         .for_each(|(page_index, coeffs)| {
-            let mut page_rng = PublicMatrixPageXof::new::<F>(id, page_index);
+            let mut page_rng = SetupSeedPageXof::new::<F>(id, page_index);
             for coeff in coeffs.iter_mut() {
                 *coeff = F::random(&mut page_rng);
             }
@@ -293,7 +293,7 @@ pub fn derive_public_matrix_prefix<F: FieldCore + CanonicalField + RandomSamplin
 /// field-element count differs from the seed.
 pub fn validate_public_matrix_shape_matches_seed<F: FieldCore + Valid>(
     shared_matrix: &FlatMatrix<F>,
-    seed: &AkitaSetupSeed,
+    seed: &AkitaSetupDescriptor,
 ) -> Result<(), SerializationError> {
     seed.check()?;
     shared_matrix.check()?;
@@ -316,16 +316,16 @@ pub fn validate_public_matrix_matches_seed<
     F: FieldCore + CanonicalField + RandomSampling + Valid,
 >(
     shared_matrix: &FlatMatrix<F>,
-    seed: &AkitaSetupSeed,
+    seed: &AkitaSetupDescriptor,
 ) -> Result<(), SerializationError> {
     validate_public_matrix_shape_matches_seed(shared_matrix, seed)?;
-    let mut expected = vec![F::zero(); seed.public_matrix_id.derivation.page_field_elements()];
+    let mut expected = vec![F::zero(); seed.setup_seed.derivation.page_field_elements()];
     for (page_index, coeffs) in shared_matrix
         .as_field_slice()
-        .chunks(seed.public_matrix_id.derivation.page_field_elements())
+        .chunks(seed.setup_seed.derivation.page_field_elements())
         .enumerate()
     {
-        let mut page_rng = PublicMatrixPageXof::new::<F>(&seed.public_matrix_id, page_index);
+        let mut page_rng = SetupSeedPageXof::new::<F>(&seed.setup_seed, page_index);
         for value in &mut expected[..coeffs.len()] {
             *value = F::random(&mut page_rng);
         }
@@ -339,14 +339,14 @@ pub fn validate_public_matrix_matches_seed<
 }
 
 /// Concrete SHAKE256 XOF reader for one public-matrix page.
-type PublicMatrixXofReader = <Shake256 as ExtendableOutput>::Reader;
+type SetupSeedXofReader = <Shake256 as ExtendableOutput>::Reader;
 
-struct PublicMatrixPageXof {
-    reader: PublicMatrixXofReader,
+struct SetupSeedPageXof {
+    reader: SetupSeedXofReader,
 }
 
-impl PublicMatrixPageXof {
-    fn new<F: CanonicalField>(id: &PublicMatrixId, page_index: usize) -> Self {
+impl SetupSeedPageXof {
+    fn new<F: CanonicalField>(id: &AkitaSetupSeed, page_index: usize) -> Self {
         let mut xof = Shake256::default();
         absorb_len_prefixed(&mut xof, b"domain", PUBLIC_MATRIX_DOMAIN);
         let derivation_tag = match id.derivation {
@@ -374,7 +374,7 @@ fn field_modulus_bytes<F: CanonicalField>() -> [u8; 32] {
     encoded
 }
 
-impl RngCore for PublicMatrixPageXof {
+impl RngCore for SetupSeedPageXof {
     fn next_u32(&mut self) -> u32 {
         let mut buf = [0u8; 4];
         self.fill_bytes(&mut buf);
@@ -397,7 +397,7 @@ impl RngCore for PublicMatrixPageXof {
     }
 }
 
-impl CryptoRng for PublicMatrixPageXof {}
+impl CryptoRng for SetupSeedPageXof {}
 
 fn absorb_len_prefixed(xof: &mut Shake256, label: &[u8], data: &[u8]) {
     xof.update(&(label.len() as u64).to_le_bytes());
@@ -447,13 +447,13 @@ impl AkitaDeserialize for PublicMatrixDerivation {
     }
 }
 
-impl Valid for PublicMatrixId {
+impl Valid for AkitaSetupSeed {
     fn check(&self) -> Result<(), SerializationError> {
         self.derivation.check()
     }
 }
 
-impl AkitaSerialize for PublicMatrixId {
+impl AkitaSerialize for AkitaSetupSeed {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -469,7 +469,7 @@ impl AkitaSerialize for PublicMatrixId {
     }
 }
 
-impl AkitaDeserialize for PublicMatrixId {
+impl AkitaDeserialize for AkitaSetupSeed {
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(
@@ -490,7 +490,7 @@ impl AkitaDeserialize for PublicMatrixId {
     }
 }
 
-impl Valid for AkitaSetupSeed {
+impl Valid for AkitaSetupDescriptor {
     fn check(&self) -> Result<(), SerializationError> {
         if self.max_num_batched_polys == 0 {
             return Err(SerializationError::InvalidData(
@@ -502,12 +502,12 @@ impl Valid for AkitaSetupSeed {
                 "setup seed num_field_elements must be non-zero".to_string(),
             ));
         }
-        self.public_matrix_id.check()?;
+        self.setup_seed.check()?;
         Ok(())
     }
 }
 
-impl AkitaSerialize for AkitaSetupSeed {
+impl AkitaSerialize for AkitaSetupDescriptor {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -519,8 +519,7 @@ impl AkitaSerialize for AkitaSetupSeed {
             .serialize_with_mode(&mut writer, compress)?;
         self.num_field_elements
             .serialize_with_mode(&mut writer, compress)?;
-        self.public_matrix_id
-            .serialize_with_mode(&mut writer, compress)?;
+        self.setup_seed.serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -528,11 +527,11 @@ impl AkitaSerialize for AkitaSetupSeed {
         self.max_num_vars.serialized_size(compress)
             + self.max_num_batched_polys.serialized_size(compress)
             + self.num_field_elements.serialized_size(compress)
-            + self.public_matrix_id.serialized_size(compress)
+            + self.setup_seed.serialized_size(compress)
     }
 }
 
-impl AkitaDeserialize for AkitaSetupSeed {
+impl AkitaDeserialize for AkitaSetupDescriptor {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -545,13 +544,13 @@ impl AkitaDeserialize for AkitaSetupSeed {
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let num_field_elements =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let public_matrix_id =
-            PublicMatrixId::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let setup_seed =
+            AkitaSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
             max_num_vars,
             max_num_batched_polys,
             num_field_elements,
-            public_matrix_id,
+            setup_seed,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -596,7 +595,8 @@ impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaDeserialize<C
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let seed = AkitaSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let seed =
+            AkitaSetupDescriptor::deserialize_with_mode(&mut reader, compress, validate, &())?;
         seed.check()?;
         let shared_matrix = FlatMatrix::deserialize_with_expected_shape(
             &mut reader,
@@ -619,7 +619,7 @@ impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaDeserialize<C
 impl<F: FieldCore + CanonicalField + RandomSampling + Valid> Valid for AkitaVerifierSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
-        if self.prefix_slots.public_matrix_id() != &self.expanded.seed.public_matrix_id {
+        if self.prefix_slots.setup_seed() != &self.expanded.seed.setup_seed {
             return Err(SerializationError::InvalidData(
                 "setup-prefix registry belongs to a different public matrix".to_string(),
             ));
@@ -724,12 +724,12 @@ mod tests {
         }
     }
 
-    fn seed(public_matrix_seed: [u8; 32]) -> AkitaSetupSeed {
-        AkitaSetupSeed {
+    fn seed(public_matrix_seed: [u8; 32]) -> AkitaSetupDescriptor {
+        AkitaSetupDescriptor {
             max_num_vars: 8,
             max_num_batched_polys: 1,
             num_field_elements: 2 * D,
-            public_matrix_id: public_matrix_seed.into(),
+            setup_seed: public_matrix_seed.into(),
         }
     }
 
@@ -738,9 +738,8 @@ mod tests {
         use crate::proof::{RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierSlot};
 
         let setup_seed = seed([7u8; 32]);
-        let shared_matrix = derive_public_matrix_prefix::<F>(2 * D, &setup_seed.public_matrix_id);
-        let mut prefix_slots =
-            SetupPrefixVerifierRegistry::new(setup_seed.public_matrix_id.clone());
+        let shared_matrix = derive_public_matrix_prefix::<F>(2 * D, &setup_seed.setup_seed);
+        let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed.setup_seed.clone());
         let d_setup = 64;
         let commitment_params = prefix_commitment_params(d_setup, d_setup);
         let matrix = &commitment_params.layout.outer_commit_matrix;
@@ -782,7 +781,7 @@ mod tests {
     #[test]
     fn verifier_setup_rejects_prefix_registry_from_another_public_matrix() {
         let setup_seed = seed([7u8; 32]);
-        let shared_matrix = derive_public_matrix_prefix::<F>(2 * D, &setup_seed.public_matrix_id);
+        let shared_matrix = derive_public_matrix_prefix::<F>(2 * D, &setup_seed.setup_seed);
         let expanded = Arc::new(
             AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                 setup_seed,
@@ -790,7 +789,7 @@ mod tests {
             ),
         );
         let foreign_registry =
-            SetupPrefixVerifierRegistry::new(PublicMatrixId::shake256_paged_v1([9u8; 32]));
+            SetupPrefixVerifierRegistry::new(AkitaSetupSeed::shake256_paged_v1([9u8; 32]));
 
         let err = AkitaVerifierSetup::from_parts(expanded, foreign_registry)
             .expect_err("cross-seed prefix registry must be rejected");
@@ -799,18 +798,18 @@ mod tests {
 
     #[test]
     fn strict_verifier_setup_decode_rejects_matrix_not_derived_from_seed() {
-        let setup_seed = seed([7u8; 32]);
-        let public_matrix_id = setup_seed.public_matrix_id.clone();
-        let wrong_seed = PublicMatrixId::shake256_paged_v1([9u8; 32]);
+        let descriptor = seed([7u8; 32]);
+        let setup_seed = descriptor.setup_seed.clone();
+        let wrong_seed = AkitaSetupSeed::shake256_paged_v1([9u8; 32]);
         let wrong_matrix = derive_public_matrix_prefix::<F>(2 * D, &wrong_seed);
         let setup = AkitaVerifierSetup {
             expanded: Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    setup_seed,
+                    descriptor,
                     wrong_matrix,
                 ),
             ),
-            prefix_slots: SetupPrefixVerifierRegistry::new(public_matrix_id),
+            prefix_slots: SetupPrefixVerifierRegistry::new(setup_seed),
             verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
@@ -825,17 +824,17 @@ mod tests {
 
     #[test]
     fn strict_verifier_setup_decode_rejects_truncated_seed_prefix_matrix() {
-        let setup_seed = seed([7u8; 32]);
-        let public_matrix_id = setup_seed.public_matrix_id.clone();
-        let short_matrix = derive_public_matrix_prefix::<F>(D, &setup_seed.public_matrix_id);
+        let descriptor = seed([7u8; 32]);
+        let setup_seed = descriptor.setup_seed.clone();
+        let short_matrix = derive_public_matrix_prefix::<F>(D, &setup_seed);
         let setup = AkitaVerifierSetup {
             expanded: Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    setup_seed,
+                    descriptor,
                     short_matrix,
                 ),
             ),
-            prefix_slots: SetupPrefixVerifierRegistry::new(public_matrix_id),
+            prefix_slots: SetupPrefixVerifierRegistry::new(setup_seed),
             verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
@@ -863,11 +862,11 @@ mod tests {
 
     #[test]
     fn setup_seed_validity_is_not_the_generic_decode_allocation_cap() {
-        let setup_seed = AkitaSetupSeed {
+        let setup_seed = AkitaSetupDescriptor {
             max_num_vars: 32,
             max_num_batched_polys: 1,
             num_field_elements: MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS + 1,
-            public_matrix_id: [7u8; 32].into(),
+            setup_seed: [7u8; 32].into(),
         };
 
         setup_seed.check().unwrap();
@@ -876,11 +875,11 @@ mod tests {
 
     #[test]
     fn generic_setup_decode_still_rejects_shapes_above_allocation_cap() {
-        let setup_seed = AkitaSetupSeed {
+        let setup_seed = AkitaSetupDescriptor {
             max_num_vars: 32,
             max_num_batched_polys: 1,
             num_field_elements: MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS + 1,
-            public_matrix_id: [7u8; 32].into(),
+            setup_seed: [7u8; 32].into(),
         };
         let mut bytes = Vec::new();
         setup_seed.serialize_compressed(&mut bytes).unwrap();
@@ -896,7 +895,7 @@ mod tests {
 
     #[test]
     fn flat_derivation_is_deterministic_for_same_seed() {
-        let seed = PublicMatrixId::shake256_paged_v1([42u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged_v1([42u8; 32]);
         let m1 = derive_public_matrix_prefix::<SmallF>(15 * SMALL_D, &seed);
         let m2 = derive_public_matrix_prefix::<SmallF>(15 * SMALL_D, &seed);
         assert_eq!(m1, m2);
@@ -904,7 +903,7 @@ mod tests {
 
     #[test]
     fn flat_derivation_is_prefix_stable() {
-        let seed = PublicMatrixId::shake256_paged_v1([7u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged_v1([7u8; 32]);
         let small = derive_public_matrix_prefix::<SmallF>(6 * SMALL_D, &seed);
         let large = derive_public_matrix_prefix::<SmallF>(24 * SMALL_D, &seed);
         let small_view = small.ring_view::<SMALL_D>(1, 6).unwrap();
@@ -916,9 +915,9 @@ mod tests {
 
     #[test]
     fn flat_derivation_matches_sequential_page_stream() {
-        let seed = PublicMatrixId::shake256_paged_v1([5u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged_v1([5u8; 32]);
         let got = derive_public_matrix_prefix::<SmallF>(6 * SMALL_D, &seed);
-        let mut page = PublicMatrixPageXof::new::<SmallF>(&seed, 0);
+        let mut page = SetupSeedPageXof::new::<SmallF>(&seed, 0);
         let expected = (0..6 * SMALL_D)
             .map(|_| SmallF::random(&mut page))
             .collect::<Vec<_>>();
@@ -928,7 +927,7 @@ mod tests {
 
     #[test]
     fn flat_derivation_is_independent_of_ring_dimension() {
-        let seed = PublicMatrixId::shake256_paged_v1([17u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged_v1([17u8; 32]);
         let d64 = derive_public_matrix_prefix::<SmallF>(8 * 64, &seed);
         let d128 = derive_public_matrix_prefix::<SmallF>(4 * 128, &seed);
 
@@ -937,7 +936,7 @@ mod tests {
 
     #[test]
     fn flat_derivation_is_prefix_stable_across_page_boundary() {
-        let seed = PublicMatrixId::shake256_paged_v1([23u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged_v1([23u8; 32]);
         let page_field_elements = seed.derivation.page_field_elements();
         let through_page_zero = derive_public_matrix_prefix::<SmallF>(page_field_elements, &seed);
         let into_page_one = derive_public_matrix_prefix::<SmallF>(page_field_elements + 64, &seed);
@@ -950,9 +949,9 @@ mod tests {
 
     #[test]
     fn paged_derivation_golden_vector() {
-        let seed = PublicMatrixId::shake256_paged_v1([31u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged_v1([31u8; 32]);
         fn samples<F: FieldCore + CanonicalField + RandomSampling>(
-            seed: &PublicMatrixId,
+            seed: &AkitaSetupSeed,
         ) -> [u128; 3] {
             let page_field_elements = seed.derivation.page_field_elements();
             let derived = derive_public_matrix_prefix::<F>(page_field_elements + 64, seed);
@@ -994,9 +993,9 @@ mod tests {
     fn page_xof_binds_the_field_modulus() {
         type OtherF = Fp32<4294967291>;
 
-        let seed = PublicMatrixId::shake256_paged_v1([29u8; 32]);
-        let mut small = PublicMatrixPageXof::new::<SmallF>(&seed, 0);
-        let mut other = PublicMatrixPageXof::new::<OtherF>(&seed, 0);
+        let seed = AkitaSetupSeed::shake256_paged_v1([29u8; 32]);
+        let mut small = SetupSeedPageXof::new::<SmallF>(&seed, 0);
+        let mut other = SetupSeedPageXof::new::<OtherF>(&seed, 0);
         let mut small_bytes = [0u8; 32];
         let mut other_bytes = [0u8; 32];
         small.fill_bytes(&mut small_bytes);
@@ -1007,7 +1006,7 @@ mod tests {
 
     #[test]
     fn different_shapes_from_same_flat() {
-        let seed = PublicMatrixId::shake256_paged_v1([13u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged_v1([13u8; 32]);
         let flat = derive_public_matrix_prefix::<SmallF>(12 * SMALL_D, &seed);
         let view_3x4 = flat.ring_view::<SMALL_D>(3, 4).unwrap();
         let view_2x6 = flat.ring_view::<SMALL_D>(2, 6).unwrap();

@@ -19,8 +19,8 @@ pub use fold_linf_binding::FoldLinfProtocolBinding;
 
 use crate::descriptor_bytes::{push_usize, sis_modulus_profile_tag};
 use crate::{
-    detect_field_modulus, BasisMode, CommittedGroupParams, CompressionPolicyId,
-    DecompositionParams, FoldSchedule, OpeningClaimsLayout, PublicMatrixId, SisModulusProfileId,
+    detect_field_modulus, AkitaSetupSeed, BasisMode, CommittedGroupParams, CompressionPolicyId,
+    DecompositionParams, FoldSchedule, OpeningClaimsLayout, SisModulusProfileId,
     COMPRESSION_POLICY,
 };
 use akita_field::{AkitaError, CanonicalField, ExtField};
@@ -47,10 +47,10 @@ pub type DescriptorDigest = [u8; 32];
 /// # Errors
 ///
 /// Returns a serialization error if the seed cannot be canonically serialized.
-pub fn public_matrix_id_digest(
-    public_matrix_id: &PublicMatrixId,
+pub fn setup_seed_digest(
+    setup_seed: &AkitaSetupSeed,
 ) -> Result<DescriptorDigest, SerializationError> {
-    digest_serializable(public_matrix_id)
+    digest_serializable(setup_seed)
 }
 
 /// Canonical transcript preamble for one Akita proof instance.
@@ -156,8 +156,8 @@ pub struct SetupSection {
     pub sis_modulus_profile: SisModulusProfileId,
     /// Commitment-compression protocol bound into the transcript preamble.
     pub compression_policy: CompressionPolicyId,
-    /// Digest of the canonical [`PublicMatrixId`] bytes.
-    pub public_matrix_id_digest: DescriptorDigest,
+    /// Digest of the canonical [`AkitaSetupSeed`] bytes.
+    pub setup_seed_digest: DescriptorDigest,
     /// Protocol-affecting feature mode (transparent-only after zk-strip).
     pub protocol_features: ProtocolFeatureSet,
     /// Fold-l∞ threshold policy, grind cap, and nonce wire contract.
@@ -178,13 +178,13 @@ impl SetupSection {
     pub fn from_parts(
         decomposition: DecompositionParams,
         sis_modulus_profile: SisModulusProfileId,
-        public_matrix_id: &PublicMatrixId,
+        setup_seed: &AkitaSetupSeed,
     ) -> Result<Self, SerializationError> {
         Ok(Self {
             decomposition,
             sis_modulus_profile,
             compression_policy: COMPRESSION_POLICY,
-            public_matrix_id_digest: public_matrix_id_digest(public_matrix_id)?,
+            setup_seed_digest: setup_seed_digest(setup_seed)?,
             protocol_features: ProtocolFeatureSet::current(),
             fold_linf: FoldLinfProtocolBinding::CURRENT,
         })
@@ -489,7 +489,7 @@ impl AkitaSerialize for SetupSection {
         self.compression_policy
             .tag()
             .serialize_with_mode(&mut writer, compress)?;
-        writer.write_all(&self.public_matrix_id_digest)?;
+        writer.write_all(&self.setup_seed_digest)?;
         self.protocol_features
             .serialize_with_mode(&mut writer, compress)?;
         self.fold_linf.serialize_with_mode(&mut writer, compress)?;
@@ -525,7 +525,7 @@ impl AkitaDeserialize for SetupSection {
                     "unsupported compression policy tag {compression_policy_tag}"
                 ))
             })?;
-        let public_matrix_id_digest = read_digest(&mut reader)?;
+        let setup_seed_digest = read_digest(&mut reader)?;
         let protocol_features =
             ProtocolFeatureSet::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let fold_linf =
@@ -534,7 +534,7 @@ impl AkitaDeserialize for SetupSection {
             decomposition,
             sis_modulus_profile,
             compression_policy,
-            public_matrix_id_digest,
+            setup_seed_digest,
             protocol_features,
             fold_linf,
         };

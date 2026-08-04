@@ -1,7 +1,7 @@
 //! Config-backed prover setup construction.
 //!
 //! With `disk-persistence`, the public field prefix is stored by field and
-//! [`akita_types::PublicMatrixId`], separately from schedule-bound setup-prefix
+//! [`akita_types::AkitaSetupSeed`], separately from schedule-bound setup-prefix
 //! registries. Backend NTT caches are never persisted.
 
 mod recursive_prefixes;
@@ -19,9 +19,9 @@ use akita_serialization::{
 use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
-    detect_field_modulus, digest_effective_schedule, public_matrix_id_digest,
-    sample_public_matrix_id, AkitaScheduleLookupKey, AkitaSetupSeed, FlatMatrix,
-    PolynomialGroupLayout, PublicMatrixId, SetupPrefixProverRegistry,
+    detect_field_modulus, digest_effective_schedule, sample_akita_setup_seed, setup_seed_digest,
+    AkitaScheduleLookupKey, AkitaSetupDescriptor, AkitaSetupSeed, FlatMatrix,
+    PolynomialGroupLayout, SetupPrefixProverRegistry,
 };
 #[cfg(feature = "disk-persistence")]
 use std::fmt::Write as _;
@@ -186,9 +186,9 @@ fn prefix_registry_cache_file_name<Cfg: CommitmentConfig>(
 
 #[cfg(feature = "disk-persistence")]
 fn public_matrix_cache_file_name<F: CanonicalField>(
-    public_matrix_id: &PublicMatrixId,
+    setup_seed: &AkitaSetupSeed,
 ) -> Result<String, AkitaError> {
-    let digest = public_matrix_id_digest(public_matrix_id)
+    let digest = setup_seed_digest(setup_seed)
         .map_err(|err| AkitaError::InvalidSetup(format!("public matrix identity: {err}")))?;
     let mut hex = String::with_capacity(digest.len() * 2);
     for byte in digest {
@@ -237,12 +237,12 @@ pub(crate) fn get_prefix_registry_storage_path<Cfg: CommitmentConfig>(
 
 #[cfg(feature = "disk-persistence")]
 fn get_public_matrix_storage_path<F: CanonicalField>(
-    public_matrix_id: &PublicMatrixId,
+    setup_seed: &AkitaSetupSeed,
 ) -> Result<PathBuf, AkitaError> {
     let mut path = cache_directory().ok_or_else(|| {
         AkitaError::InvalidSetup("could not determine storage directory".to_string())
     })?;
-    path.push(public_matrix_cache_file_name::<F>(public_matrix_id)?);
+    path.push(public_matrix_cache_file_name::<F>(setup_seed)?);
     Ok(path)
 }
 
@@ -311,7 +311,7 @@ fn serialize_public_matrix_cache<F: FieldCore + AkitaSerialize>(
 ) -> Result<(), SerializationError> {
     expanded
         .seed()
-        .public_matrix_id
+        .setup_seed
         .serialize_compressed(&mut *writer)?;
     expanded
         .shared_matrix()
@@ -334,7 +334,7 @@ pub(crate) fn save_prover_setup<
     // public-matrix cache bytes are deterministically validated on load.
     // Prefix-registry provenance is a separate setup-validation boundary.
     let public_matrix_path =
-        get_public_matrix_storage_path::<F>(&setup.expanded.seed().public_matrix_id)?;
+        get_public_matrix_storage_path::<F>(&setup.expanded.seed().setup_seed)?;
     let Some(prefix_registry_path) =
         get_prefix_registry_storage_path::<Cfg>(max_num_vars, max_num_batched_polys)
     else {
@@ -373,7 +373,7 @@ pub(crate) fn save_prover_setup<
             let existing = deserialize_cached_public_matrix::<F>(
                 &mut reader,
                 0,
-                &setup.expanded.seed().public_matrix_id,
+                &setup.expanded.seed().setup_seed,
             );
             let mut trailing = [0u8; 1];
             match existing {
@@ -421,8 +421,8 @@ pub(crate) fn load_prover_setup<
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<AkitaProverSetup<F>, AkitaError> {
-    let public_matrix_id = sample_public_matrix_id();
-    let public_matrix_path = get_public_matrix_storage_path::<F>(&public_matrix_id)?;
+    let setup_seed = sample_akita_setup_seed();
+    let public_matrix_path = get_public_matrix_storage_path::<F>(&setup_seed)?;
     if !public_matrix_path.exists() {
         return Err(AkitaError::InvalidSetup(format!(
             "public matrix cache not found at {}",
@@ -438,7 +438,7 @@ pub(crate) fn load_prover_setup<
     let mut expanded = deserialize_cached_public_matrix::<F>(
         &mut reader,
         required_num_field_elements,
-        &public_matrix_id,
+        &setup_seed,
     )
     .map_err(|err| {
         AkitaError::InvalidSetup(format!("failed to deserialize public matrix: {err}"))
@@ -454,11 +454,11 @@ pub(crate) fn load_prover_setup<
             trailing[0]
         )));
     }
-    expanded.seed = AkitaSetupSeed {
+    expanded.seed = AkitaSetupDescriptor {
         max_num_vars,
         max_num_batched_polys,
         num_field_elements: expanded.shared_matrix().num_field_elements(),
-        public_matrix_id: public_matrix_id.clone(),
+        setup_seed: setup_seed.clone(),
     };
     validate_cached_matrix::<F>(&expanded)?;
 
@@ -493,9 +493,9 @@ pub(crate) fn load_prover_setup<
         }
         slots
     } else {
-        SetupPrefixProverRegistry::new(public_matrix_id)
+        SetupPrefixProverRegistry::new(setup_seed)
     };
-    if prefix_slots.public_matrix_id() != &expanded.seed().public_matrix_id {
+    if prefix_slots.setup_seed() != &expanded.seed().setup_seed {
         return Err(AkitaError::InvalidSetup(
             "cached setup-prefix registry belongs to a different public matrix".to_string(),
         ));
@@ -513,7 +513,7 @@ pub(crate) fn load_prover_setup<
     .is_err()
     {
         setup.prefix_slots =
-            SetupPrefixProverRegistry::new(setup.expanded.seed().public_matrix_id.clone());
+            SetupPrefixProverRegistry::new(setup.expanded.seed().setup_seed.clone());
         recursive_prefixes::populate_required_setup_prefix_slots::<F, Cfg>(
             &mut setup,
             max_num_vars,
@@ -532,11 +532,11 @@ pub(crate) fn load_prover_setup<
 fn deserialize_cached_public_matrix<F: FieldCore + Valid + AkitaDeserialize<Context = ()>>(
     reader: &mut impl Read,
     minimum_num_field_elements: usize,
-    expected_public_matrix_id: &PublicMatrixId,
+    expected_setup_seed: &AkitaSetupSeed,
 ) -> Result<AkitaExpandedSetup<F>, SerializationError> {
-    let public_matrix_id =
-        PublicMatrixId::deserialize_with_mode(&mut *reader, Compress::Yes, Validate::Yes, &())?;
-    if &public_matrix_id != expected_public_matrix_id {
+    let setup_seed =
+        AkitaSetupSeed::deserialize_with_mode(&mut *reader, Compress::Yes, Validate::Yes, &())?;
+    if &setup_seed != expected_setup_seed {
         return Err(SerializationError::InvalidData(
             "cached public matrix identity does not match its lineage key".to_string(),
         ));
@@ -557,11 +557,11 @@ fn deserialize_cached_public_matrix<F: FieldCore + Valid + AkitaDeserialize<Cont
     )?;
     Ok(
         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            AkitaSetupSeed {
+            AkitaSetupDescriptor {
                 max_num_vars: 0,
                 max_num_batched_polys: 1,
                 num_field_elements,
-                public_matrix_id,
+                setup_seed,
             },
             shared_matrix,
         ),
@@ -640,7 +640,7 @@ mod tests {
             {
                 let _ = fs::remove_file(path);
             }
-            if let Ok(path) = get_public_matrix_storage_path::<TestF>(&sample_public_matrix_id()) {
+            if let Ok(path) = get_public_matrix_storage_path::<TestF>(&sample_akita_setup_seed()) {
                 let _ = fs::remove_file(path);
             }
         }
@@ -695,23 +695,23 @@ mod tests {
         fn cache_file_names_use_current_namespaces() {
             let registry = prefix_registry_cache_file_name::<Cfg>(16, 4);
             assert!(registry.contains("prefix_v2_"), "cache name: {registry}");
-            let matrix = public_matrix_cache_file_name::<TestF>(&sample_public_matrix_id())
+            let matrix = public_matrix_cache_file_name::<TestF>(&sample_akita_setup_seed())
                 .expect("matrix cache name");
             assert!(matrix.contains("flat_v3_"), "cache name: {matrix}");
         }
 
         #[test]
         fn config_backed_cache_does_not_apply_generic_setup_decode_limit() {
-            let public_matrix_id = sample_public_matrix_id();
+            let setup_seed = sample_akita_setup_seed();
             let claimed_fields = akita_types::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS + 1;
             let mut bytes = Vec::new();
-            public_matrix_id.serialize_compressed(&mut bytes).unwrap();
+            setup_seed.serialize_compressed(&mut bytes).unwrap();
             claimed_fields.serialize_compressed(&mut bytes).unwrap();
 
             let error = deserialize_cached_public_matrix::<TestF>(
                 &mut bytes.as_slice(),
                 claimed_fields,
-                &public_matrix_id,
+                &setup_seed,
             )
             .unwrap_err();
             assert!(
@@ -892,8 +892,8 @@ mod tests {
                     large_fields
                 );
                 assert_eq!(
-                    covered.expanded.seed().public_matrix_id,
-                    large.expanded.seed().public_matrix_id
+                    covered.expanded.seed().setup_seed,
+                    large.expanded.seed().setup_seed
                 );
                 assert_eq!(covered.expanded.seed().max_num_vars, SMALL_VARS);
                 assert_eq!(covered.expanded.seed().max_num_batched_polys, 1);
@@ -972,7 +972,7 @@ mod tests {
                     FlatMatrix::from_flat_data(vec![TestF::zero(); total]),
                 );
                 let path =
-                    get_public_matrix_storage_path::<TestF>(&sample_public_matrix_id()).unwrap();
+                    get_public_matrix_storage_path::<TestF>(&sample_akita_setup_seed()).unwrap();
                 atomic_write_cache(&path, |writer| {
                     serialize_public_matrix_cache(&corrupt, writer)
                 })
@@ -999,7 +999,7 @@ mod tests {
 
                 new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
                 let path =
-                    get_public_matrix_storage_path::<TestF>(&sample_public_matrix_id()).unwrap();
+                    get_public_matrix_storage_path::<TestF>(&sample_akita_setup_seed()).unwrap();
                 let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
                 file.write_all(&[0]).unwrap();
 

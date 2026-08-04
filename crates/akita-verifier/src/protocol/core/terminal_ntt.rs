@@ -104,7 +104,7 @@ mod tests {
     use akita_field::{Prime128Offset275 as F, Prime32Offset99 as F32};
     use akita_types::{
         max_safe_crt_accumulation_width, select_crt_ntt_params, AkitaExpandedSetup,
-        AkitaScheduleLookupKey, AkitaSetupSeed, FlatMatrix, PolynomialGroupLayout,
+        AkitaScheduleLookupKey, AkitaSetupDescriptor, FlatMatrix, PolynomialGroupLayout,
         ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
     };
     use std::sync::Arc;
@@ -141,11 +141,11 @@ mod tests {
         AkitaVerifierSetup::from_parts(
             Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    AkitaSetupSeed {
+                    AkitaSetupDescriptor {
                         max_num_vars: 1,
                         max_num_batched_polys: 1,
                         num_field_elements: matrix.len(),
-                        public_matrix_id: [9; 32].into(),
+                        setup_seed: [9; 32].into(),
                     },
                     FlatMatrix::from_ring_slice(matrix),
                 ),
@@ -216,11 +216,11 @@ mod tests {
         let setup = AkitaVerifierSetup::from_parts(
             Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    AkitaSetupSeed {
+                    AkitaSetupDescriptor {
                         max_num_vars: 1,
                         max_num_batched_polys: 1,
                         num_field_elements: matrix.len(),
-                        public_matrix_id: [8; 32].into(),
+                        setup_seed: [8; 32].into(),
                     },
                     FlatMatrix::from_ring_slice(&matrix),
                 ),

@@ -9,8 +9,8 @@ use crate::descriptor_bytes::sis_modulus_profile_tag;
 use crate::proof::{AkitaCommitmentHint, RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS};
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
-    CommittedGroupParams, CommittedGroupProfile, InnerCommitMatrixParams, OpeningClaimsLayout,
-    OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, PublicMatrixId,
+    AkitaSetupSeed, CommittedGroupParams, CommittedGroupProfile, InnerCommitMatrixParams,
+    OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -941,23 +941,23 @@ impl<F: FieldCore> SetupPrefixSlot<F> {
 /// In-memory registry of prover-ready setup-prefix slots.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupPrefixProverRegistry<F: FieldCore> {
-    public_matrix_id: PublicMatrixId,
+    setup_seed: AkitaSetupSeed,
     slots: BTreeMap<SetupPrefixSlotId, SetupPrefixSlot<F>>,
 }
 
 impl<F: FieldCore> SetupPrefixProverRegistry<F> {
     #[must_use]
-    pub fn new(public_matrix_id: PublicMatrixId) -> Self {
+    pub fn new(setup_seed: AkitaSetupSeed) -> Self {
         Self {
-            public_matrix_id,
+            setup_seed,
             slots: BTreeMap::new(),
         }
     }
 
     /// Public field stream to which every committed prefix belongs.
     #[must_use]
-    pub fn public_matrix_id(&self) -> &PublicMatrixId {
-        &self.public_matrix_id
+    pub fn setup_seed(&self) -> &AkitaSetupSeed {
+        &self.setup_seed
     }
 
     #[must_use]
@@ -1001,7 +1001,7 @@ impl<F: FieldCore> SetupPrefixProverRegistry<F> {
 
 impl<F: FieldCore + Valid> Valid for SetupPrefixProverRegistry<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        self.public_matrix_id.check()?;
+        self.setup_seed.check()?;
         if self.slots.len() > MAX_SETUP_PREFIX_SLOTS {
             return Err(SerializationError::LengthLimitExceeded {
                 len: u64::try_from(self.slots.len()).unwrap_or(u64::MAX),
@@ -1026,8 +1026,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixProverRegistry
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.public_matrix_id
-            .serialize_with_mode(&mut writer, compress)?;
+        self.setup_seed.serialize_with_mode(&mut writer, compress)?;
         self.slots
             .len()
             .serialize_with_mode(&mut writer, compress)?;
@@ -1038,7 +1037,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixProverRegistry
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.public_matrix_id.serialized_size(compress)
+        self.setup_seed.serialized_size(compress)
             + self.slots.len().serialized_size(compress)
             + self
                 .slots
@@ -1060,11 +1059,11 @@ where
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let public_matrix_id =
-            PublicMatrixId::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let setup_seed =
+            AkitaSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let slot_count =
             read_limited_usize(&mut reader, compress, validate, MAX_SETUP_PREFIX_SLOTS)?;
-        let mut out = Self::new(public_matrix_id);
+        let mut out = Self::new(setup_seed);
         for _ in 0..slot_count {
             let slot =
                 SetupPrefixSlot::deserialize_with_mode(&mut reader, compress, validate, &())?;
@@ -1081,23 +1080,23 @@ where
 /// In-memory registry of verifier-visible setup-prefix slots.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupPrefixVerifierRegistry<F: FieldCore> {
-    public_matrix_id: PublicMatrixId,
+    setup_seed: AkitaSetupSeed,
     slots: BTreeMap<SetupPrefixSlotId, SetupPrefixVerifierSlot<F>>,
 }
 
 impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
     #[must_use]
-    pub fn new(public_matrix_id: PublicMatrixId) -> Self {
+    pub fn new(setup_seed: AkitaSetupSeed) -> Self {
         Self {
-            public_matrix_id,
+            setup_seed,
             slots: BTreeMap::new(),
         }
     }
 
     /// Public field stream to which every committed prefix belongs.
     #[must_use]
-    pub fn public_matrix_id(&self) -> &PublicMatrixId {
-        &self.public_matrix_id
+    pub fn setup_seed(&self) -> &AkitaSetupSeed {
+        &self.setup_seed
     }
 
     #[must_use]
@@ -1129,7 +1128,7 @@ impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
         &mut self,
         prover_registry: &SetupPrefixProverRegistry<F>,
     ) -> Result<(), AkitaError> {
-        if self.public_matrix_id != *prover_registry.public_matrix_id() {
+        if self.setup_seed != *prover_registry.setup_seed() {
             return Err(AkitaError::InvalidSetup(
                 "setup-prefix registries belong to different public matrices".to_string(),
             ));
@@ -1148,7 +1147,7 @@ impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
 
 impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierRegistry<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        self.public_matrix_id.check()?;
+        self.setup_seed.check()?;
         if self.slots.len() > MAX_SETUP_PREFIX_SLOTS {
             return Err(SerializationError::LengthLimitExceeded {
                 len: u64::try_from(self.slots.len()).unwrap_or(u64::MAX),
@@ -1173,8 +1172,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierRegist
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.public_matrix_id
-            .serialize_with_mode(&mut writer, compress)?;
+        self.setup_seed.serialize_with_mode(&mut writer, compress)?;
         self.slots
             .len()
             .serialize_with_mode(&mut writer, compress)?;
@@ -1185,7 +1183,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierRegist
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.public_matrix_id.serialized_size(compress)
+        self.setup_seed.serialized_size(compress)
             + self.slots.len().serialized_size(compress)
             + self
                 .slots
@@ -1207,11 +1205,11 @@ where
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let public_matrix_id =
-            PublicMatrixId::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let setup_seed =
+            AkitaSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let slot_count =
             read_limited_usize(&mut reader, compress, validate, MAX_SETUP_PREFIX_SLOTS)?;
-        let mut out = Self::new(public_matrix_id);
+        let mut out = Self::new(setup_seed);
         for _ in 0..slot_count {
             let slot = SetupPrefixVerifierSlot::deserialize_with_mode(
                 &mut reader,

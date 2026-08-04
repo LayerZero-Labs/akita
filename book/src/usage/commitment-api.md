@@ -63,7 +63,7 @@ coordinate-routing object.
 
 Akita separates four concepts that used to be mixed together:
 
-1. `PublicMatrixId` identifies an infinite, deterministic stream of base-field
+1. `AkitaSetupSeed` identifies an infinite, deterministic stream of base-field
    elements.
 2. `SetupMatrixCapacity` says how many elements of that stream a host has
    materialized.
@@ -89,7 +89,7 @@ rows * active_width * ring_dimension
 All matrix uses start at flat index zero, so a schedule's capacity is the
 maximum of those field-element counts, not their sum. A stored prefix may be
 larger than a schedule needs. That is only local provisioning: it does not
-change `PublicMatrixId`, transcript bytes, or proof validity. A proof made with
+change `AkitaSetupSeed`, transcript bytes, or proof validity. A proof made with
 one materialized capacity can therefore be verified with a larger covering
 prefix carrying the same public matrix identity.
 
