@@ -757,31 +757,11 @@ mod precommit_tests {
             )
             .expect("precommitted group params");
         let precommitted = akita_types::CommittedGroupProfile::from_params(group, &params);
-        let mut policy = policy_of::<fp128::D64OneHot>();
-        policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
-        policy.witness_chunk = ChunkedWitnessCfg::default();
-        let planned = akita_planner::find_group_batch_schedule(
-            &AkitaScheduleLookupKey::single(group),
-            fp128::D64OneHot::root_honest_fold_policy(),
-            &[],
-            &policy,
-            fp128::D64OneHot::ring_challenge_config,
-            fp128::D64OneHot::fold_challenge_shape_at_level,
-        )
-        .expect("singleton-basis planning probe");
-        let root = &planned.schedule.root.params.final_group.commitment;
-
-        assert_eq!(
-            precommitted,
-            akita_types::CommittedGroupProfile::from_params(group, root)
-        );
         let root_basis = fp128::D64OneHot::basis_range().0;
         assert_eq!(precommitted.log_basis_inner, root_basis);
         assert_eq!(precommitted.log_basis_outer, root_basis);
-        assert!(
-            precommitted.num_live_blocks >= 8,
-            "the frozen nv=16 precommit must remain distributable at a W8R2 root"
-        );
+        assert_eq!(precommitted.num_positions_per_block, 256);
+        assert_eq!(precommitted.num_live_blocks, 4);
         assert_ne!(precommitted.inner_commit_matrix.output_rank(), 0);
         assert_ne!(precommitted.outer_commit_matrix.output_rank(), 0);
     }

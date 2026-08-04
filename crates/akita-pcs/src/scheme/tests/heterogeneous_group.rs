@@ -43,6 +43,7 @@ fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
     )
     .expect("K=256 final polynomial");
 
+    let dense_polys = [dense_a.clone(), dense_b.clone()];
     let onehot_pre_group = [MultilinearPolynomial::onehot(onehot_pre.clone())];
     let dense_group = [
         MultilinearPolynomial::dense(dense_a),
@@ -51,9 +52,10 @@ fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
     let final_group = [MultilinearPolynomial::onehot(final_onehot.clone())];
 
     let (onehot_pre_commitment, onehot_pre_hint) =
-        OneHotScheme::commit_group(&setup, &onehot_pre_group, &stack).expect("K=16 precommit");
+        OneHotScheme::commit_group(&setup, std::slice::from_ref(&onehot_pre), &stack)
+            .expect("K=16 precommit");
     let (dense_commitment, dense_hint) =
-        OneHotScheme::commit_group(&setup, &dense_group, &stack).expect("dense precommit");
+        Scheme::commit_group(&setup, &dense_polys, &stack).expect("dense precommit");
     let (final_commitment, final_hint, selection) = OneHotScheme::commit_final_group(
         &setup,
         &final_group,
