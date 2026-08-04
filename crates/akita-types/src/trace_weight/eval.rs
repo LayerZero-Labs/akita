@@ -1,10 +1,10 @@
-use akita_algebra::offset_eq::{eval_affine_digit_interval, AffineWeight};
+use akita_algebra::offset_eq::{eval_affine_digit_intervals, AffineWeight};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::field_reduction::trace_open_folded_ring_mle_dot;
+use crate::field_reduction::{trace_open_folded_ring_mle_dot, trace_open_ring_row};
 use crate::{gadget_row_scalars, lagrange_weights, BasisMode, FpExtEncoding};
 
 use super::layout::TraceWeightLayout;
@@ -132,24 +132,30 @@ where
 
     for term in terms {
         layout.validate_trace_term_block_range(term.block_offset, term.live_block_weights.len())?;
-        let mut col_factor = E::zero();
         for (local_block, &block_weight) in term.live_block_weights.iter().enumerate() {
             let block = term.block_offset + local_block;
+            let role_subcolumns = layout.source_ring_dim / layout.opening_ring_dim;
             for (plane, &gadget) in gadget_row.iter().enumerate() {
-                let col = layout.opening_digit_col_index(block, plane)?;
-                col_factor +=
-                    eq_weight_at_index(col_point, col) * E::lift_base(block_weight) * gadget;
+                for role_subcolumn in 0..role_subcolumns {
+                    for role_coefficient in 0..layout.opening_ring_dim {
+                        let address = layout.opening_digit_coefficient_index(
+                            block,
+                            role_subcolumn,
+                            plane,
+                            role_coefficient,
+                        )?;
+                        let col = address / layout.ring_len();
+                        let coordinate = address % layout.ring_len();
+                        let source = role_subcolumn * layout.opening_ring_dim + role_coefficient;
+                        out += eq_weight_at_index(col_point, col)
+                            * ring_eq[coordinate]
+                            * E::lift_base(block_weight)
+                            * gadget
+                            * E::lift_base(term.inner_opening_ring.coefficients()[source]);
+                    }
+                }
             }
         }
-        let inner_factor = term
-            .inner_opening_ring
-            .coefficients()
-            .iter()
-            .zip(ring_eq.iter())
-            .fold(E::zero(), |acc, (&coeff, &weight)| {
-                acc + E::lift_base(coeff) * weight
-            });
-        out += col_factor * inner_factor;
     }
 
     Ok(out)
@@ -178,6 +184,38 @@ where
     let mut out = E::zero();
     for term in terms {
         layout.validate_trace_term_block_range(term.block_offset, term.block_rings.len())?;
+        let role_subcolumns = layout.source_ring_dim / layout.opening_ring_dim;
+        if role_subcolumns != 1 || layout.source_ring_dim != layout.ring_len() {
+            for (local_block, block_ring) in term.block_rings.iter().enumerate() {
+                let block = term.block_offset + local_block;
+                let row = trace_open_ring_row::<F, E, D>(
+                    block_ring,
+                    &term.packed_inner_point,
+                    layout.ring_bits,
+                )?;
+                for (plane, &gadget) in gadget_row.iter().enumerate() {
+                    for role_subcolumn in 0..role_subcolumns {
+                        for role_coefficient in 0..layout.opening_ring_dim {
+                            let address = layout.opening_digit_coefficient_index(
+                                block,
+                                role_subcolumn,
+                                plane,
+                                role_coefficient,
+                            )?;
+                            let col = address / layout.ring_len();
+                            let coordinate = address % layout.ring_len();
+                            let source =
+                                role_subcolumn * layout.opening_ring_dim + role_coefficient;
+                            out += eq_weight_at_index(col_point, col)
+                                * ring_eq[coordinate]
+                                * gadget
+                                * row[source];
+                        }
+                    }
+                }
+            }
+            continue;
+        }
         // The trace-open pipeline is E-linear in the fold-block ring, so fold
         // every block of this term into one ring element first (weighted by its
         // column factor) and take a single `Tr_H` of one ring product, instead
@@ -187,7 +225,8 @@ where
             let block = term.block_offset + local_block;
             let mut col_factor = E::zero();
             for (plane, &gadget) in gadget_row.iter().enumerate() {
-                let col = layout.opening_digit_col_index(block, plane)?;
+                let address = layout.opening_digit_coefficient_index(block, 0, plane, 0)?;
+                let col = address / layout.ring_len();
                 col_factor += eq_weight_at_index(col_point, col) * gadget;
             }
             if col_factor.is_zero() {
@@ -327,6 +366,20 @@ where
         for (slot, &value) in self.coordinates.iter_mut().zip(&factor.coordinates) {
             *slot += value * scale;
         }
+    }
+
+    fn add(&mut self, factor: &Self) {
+        for (slot, &value) in self.coordinates.iter_mut().zip(&factor.coordinates) {
+            *slot += value;
+        }
+    }
+
+    fn add_scalar(&mut self, scale: E) -> Result<(), AkitaError> {
+        let constant = self.coordinates.first_mut().ok_or_else(|| {
+            AkitaError::InvalidSetup("trace affine coordinates must be non-empty".into())
+        })?;
+        *constant += scale;
+        Ok(())
     }
 
     fn multiply(&self, rhs: &Self) -> Self {
@@ -489,6 +542,57 @@ where
             });
         }
 
+        let role_subcolumns = layout.source_ring_dim / layout.opening_ring_dim;
+        if role_subcolumns != 1 || layout.source_ring_dim != layout.ring_len() {
+            let step = D / (2 * k);
+            let mut term_value = E::zero();
+            for local_block in 0..block_span {
+                let block = term.block_offset + local_block;
+                let coordinates = block_weight_at_index_coords::<F, E>(
+                    &term.b_open,
+                    local_block,
+                    term.basis,
+                    k,
+                    &gamma,
+                );
+                let mut block_coefficients = [E::zero(); D];
+                block_coefficients[0] = coordinates[0];
+                for (index, &coordinate) in coordinates.iter().enumerate().skip(1) {
+                    block_coefficients[index * step] = coordinate;
+                    block_coefficients[D - index * step] = -coordinate;
+                }
+                let block_ring = CyclotomicRing::<E, D>::from_coefficients(block_coefficients);
+                let mut source_weights = vec![E::zero(); D];
+                for (plane, &gadget) in gadget_row.iter().enumerate() {
+                    for role_subcolumn in 0..role_subcolumns {
+                        for role_coefficient in 0..layout.opening_ring_dim {
+                            let address = layout.opening_digit_coefficient_index(
+                                block,
+                                role_subcolumn,
+                                plane,
+                                role_coefficient,
+                            )?;
+                            let col = address / layout.ring_len();
+                            let destination_coordinate = address % layout.ring_len();
+                            let source =
+                                role_subcolumn * layout.opening_ring_dim + role_coefficient;
+                            source_weights[source] += eq_weight_at_index(col_point, col)
+                                * ring_eq[destination_coordinate]
+                                * gadget;
+                        }
+                    }
+                }
+                term_value += trace_open_folded_ring_mle_dot::<F, E, D>(
+                    &block_ring,
+                    &source_weights,
+                    &term.packed_inner_point,
+                    layout.ring_bits,
+                )?;
+            }
+            out += term.coefficient * term_value;
+            continue;
+        }
+
         // `V = Σ_plane gadget[plane] · Σ_j eq(col, e_index(j, plane)) · coords(b_j)`.
         // The descriptor owns the physical E address for every logical block.
         let mut v = vec![E::zero(); k];
@@ -499,16 +603,18 @@ where
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("trace term block index overflow".to_string())
                 })?;
-            let base = layout.opening_digit_col_index(block, 0)?;
-            let contribution = eval_affine_digit_interval(
+            let base = layout.opening_digit_coefficient_index(block, 0, 0, 0)? / layout.ring_len();
+            let contribution = eval_affine_digit_intervals(
                 col_point,
-                base,
+                &[base],
                 unit.global_block_start(),
                 unit.num_live_blocks(),
                 layout.num_digits_open,
+                1,
                 &gadget_row,
                 &high_weights,
                 &low_weights,
+                &[],
             )?;
             for (slot, &value) in v.iter_mut().zip(&contribution.coordinates) {
                 *slot += value;

@@ -1,12 +1,14 @@
 //! Offline schedule planner for the Akita polynomial commitment scheme.
 //!
 //! This crate is a **pure, `Cfg`-free DP library**. The DP entry point
-//! is [`find_group_batch_schedule`], which runs an exhaustive dynamic program to
+//! is [`find_schedule`], which runs an exhaustive dynamic program to
 //! minimize proof size for a schedule lookup key. Every per-preset input is
 //! carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
 //! `fold_challenge_shape_at_level` closure pair, so the planner names no `CommitmentConfig`
 //! types and depends only on `akita-schedules` / `akita-types` /
 //! `akita-challenges` / `akita-field`.
+//! Scalar and mixed-D planning are selected internally by the grouped gate from
+//! the policy-bound ring-dimension domain.
 //!
 //! With the `catalog-gen` feature enabled, this crate also owns the offline
 //! generated-table family list and `gen_schedule_tables` binary. That feature
@@ -21,7 +23,7 @@ pub use akita_schedules::{
 pub mod emit;
 #[cfg(feature = "catalog-gen")]
 pub mod generated_families;
-mod group_batch;
+mod planner;
 pub mod schedule_params;
 
 pub use akita_challenges::TensorChallengeShape;
@@ -33,8 +35,14 @@ pub use akita_schedules::{
     validate_generated_schedule_table, GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
 };
 pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
-pub use group_batch::find_group_batch_schedule;
-pub use schedule_params::{
-    find_schedule, plan_optimal_suffix, suffix_opening_layout, PlannedSuffix, PlannedSuffixFold,
-    PlannedSuffixTerminal,
-};
+pub use planner::find_schedule;
+pub use schedule_params::suffix_opening_layout;
+
+/// Helpers available only to synthetic schedule fixtures and profile experiments.
+#[cfg(feature = "test-support")]
+pub mod test_support {
+    pub use crate::schedule_params::derive_setup_prefix_group;
+    pub use crate::schedule_params::test_support::{
+        plan_optimal_suffix, PlannedSuffix, PlannedSuffixFold, PlannedSuffixTerminal,
+    };
+}

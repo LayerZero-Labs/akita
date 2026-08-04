@@ -10,9 +10,9 @@ use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, DecompositionParams,
-    FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope,
-    SisModulusProfileId,
+    accumulate_matrix_field_elements_for_level, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldSchedule,
+    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusProfileId,
 };
 use std::marker::PhantomData;
 
@@ -26,6 +26,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
     type ExtField = Cfg::ExtField;
 
     const D: usize = Cfg::D;
+    const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] = Cfg::RING_DIMENSION_CANDIDATES;
 
     fn decomposition() -> DecompositionParams {
         Cfg::decomposition()
@@ -56,16 +57,15 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
                 "max_num_batched_polys must be at least 1".to_string(),
             ));
         }
-        let mut envelope = SetupMatrixEnvelope::minimum();
+        let mut max_field_elements = 1usize;
         for num_polys in 1..=max_num_batched_polys {
             let opening_batch = OpeningClaimsLayout::new(max_num_vars, num_polys)?;
             let params = Self::get_params_for_batched_commitment(&opening_batch)?;
-            akita_types::accumulate_matrix_envelope_for_level(
-                &params,
-                &mut envelope.max_setup_len,
-            )?;
+            accumulate_matrix_field_elements_for_level(&params, &mut max_field_elements)?;
         }
-        Ok(envelope)
+        Ok(SetupMatrixEnvelope {
+            max_setup_len: max_field_elements.div_ceil(Cfg::D),
+        })
     }
 
     fn basis_range() -> (u32, u32) {

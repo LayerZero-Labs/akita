@@ -4,9 +4,9 @@ use crate::{CommitmentConfig, PrecommittedCommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
-    FoldSchedule, OpeningClaimsLayout, PrecommittedGroupDescriptor, SetupMatrixEnvelope,
-    SisModulusProfileId, SETUP_OFFLOAD_D_SETUP,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims,
+    DecompositionParams, FoldSchedule, OpeningClaimsLayout, PrecommittedGroupDescriptor,
+    SetupMatrixEnvelope, SisModulusProfileId, SETUP_OFFLOAD_D_SETUP,
 };
 #[cfg(any(
     feature = "schedules-fp128-d64-onehot-recursive",
@@ -24,6 +24,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     type ExtField = Cfg::ExtField;
 
     const D: usize = Cfg::D;
+    const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] = Cfg::RING_DIMENSION_CANDIDATES;
 
     fn decomposition() -> DecompositionParams {
         Cfg::decomposition()
@@ -154,8 +155,9 @@ mod tests {
     use crate::proof_optimized::fp128;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        r_decomp_levels, shared_setup_fold_gadget, PolynomialGroupLayout, RelationAddressGeometry,
-        SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+        r_decomp_levels, shared_setup_fold_gadget, PolynomialGroupLayout, PreparedRelationAddress,
+        RelationAddressGeometry, SetupContributionGroupInputs, SetupContributionPlan,
+        WitnessLayout,
     };
 
     fn scalar(value: u128) -> Prime128OffsetA7F7 {
@@ -220,20 +222,17 @@ mod tests {
     }
 
     #[test]
-    fn profiling_schedule_deferred_setup_weights_match_the_full_plan() {
+    fn profiling_schedule_tensor_setup_weights_match_dense_materialization() {
         let (schedule, opening_batch) = profiling_schedule();
         let params = &schedule.root.params.final_group.commitment;
-        let rows = params
-            .relation_matrix_row_count(opening_batch.num_groups())
-            .expect("relation rows");
         let witness_layout = WitnessLayout::new(
             params,
             &opening_batch,
             params.witness_chunk.num_chunks,
-            rows,
             r_decomp_levels::<Prime128OffsetA7F7>(params.log_basis_open),
         )
         .expect("root witness layout");
+        let rows = witness_layout.r_rows().len();
         let order = opening_batch.root_group_order().expect("relation order");
         let groups = order
             .iter()
@@ -264,9 +263,12 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let next_d = schedule.recursive_folds[0].params.witness.d_a();
-        let address_geometry =
-            RelationAddressGeometry::new(params.role_dims(), next_d, witness_layout.total_len())
-                .expect("relation address geometry");
+        let address_geometry = RelationAddressGeometry::new(
+            params.role_dims(),
+            next_d,
+            witness_layout.live_coeff_len(),
+        )
+        .expect("relation address geometry");
         let address_point = (0..address_geometry.relation_lane_variable_count())
             .map(|index| scalar(101 + index as u128))
             .collect::<Vec<_>>();
@@ -276,46 +278,32 @@ mod tests {
         let alpha = scalar(3);
         let fold_gadget =
             shared_setup_fold_gadget::<Prime128OffsetA7F7>(params, &opening_batch, &groups);
-        let full = SetupContributionPlan::prepare::<Prime128OffsetA7F7>(
-            params,
-            &opening_batch,
-            eq_tau1.clone().into(),
-            &witness_layout,
-            &groups,
-            &address_point,
-            fold_gadget.as_deref(),
-            address_geometry,
-            alpha,
-        )
-        .expect("full setup plan");
-        let deferred = SetupContributionPlan::prepare_deferred::<Prime128OffsetA7F7>(
+        let plan = SetupContributionPlan::prepare::<Prime128OffsetA7F7>(
             params,
             &opening_batch,
             eq_tau1.into(),
             &witness_layout,
             &groups,
-            &address_point,
+            PreparedRelationAddress::new(&address_point).expect("relation address"),
             fold_gadget.as_deref(),
             address_geometry,
-            alpha,
         )
-        .expect("deferred setup plan");
-        let setup_idx_bits = full.required().next_power_of_two().trailing_zeros() as usize;
+        .expect("setup tensor plan");
+        let setup_idx_bits = plan.required().next_power_of_two().trailing_zeros() as usize;
         let rho = (0..setup_idx_bits)
             .map(|index| scalar(401 + index as u128))
             .collect::<Vec<_>>();
-        let dense_mle = full
+        let dense_mle = plan
             .materialize_setup_index_weights(alpha)
-            .expect("full setup weights")
+            .expect("dense setup weights")
             .into_iter()
             .enumerate()
             .fold(Prime128OffsetA7F7::zero(), |acc, (index, weight)| {
                 acc + eq_at_index(&rho, index) * weight
             });
         assert_eq!(
-            deferred
-                .evaluate_setup_index_weight_mle(&rho, alpha)
-                .expect("deferred setup weight MLE"),
+            plan.evaluate_setup_index_weight_mle(&rho, alpha)
+                .expect("tensor setup weight MLE"),
             dense_mle
         );
     }

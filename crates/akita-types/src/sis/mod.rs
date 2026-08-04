@@ -43,6 +43,7 @@ pub use decomposition_digits::{
     balanced_digit_abs_max, compute_num_digits_field_width, decomposed_s_block_ring_count,
     decomposed_t_ring_count, decomposed_w_ring_count, fold_witness_representable_linf_bounds,
     num_digits_for_bound, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
+    projected_role_ring_count,
 };
 pub use fold_witness_grind::{
     FoldWitnessGrindBatchContract, FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB,
@@ -54,6 +55,7 @@ pub use norm_bound::{
     role_a_collision_inf_norm_for_response_bound, rounded_up_collision_inf_norm,
     rounded_up_role_a_inf_norm, weak_binding_inf_norm, FoldChallengeNorms,
     FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessNorms,
+    FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM,
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
     FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
     MAX_FOLD_GRIND_ATTEMPTS,

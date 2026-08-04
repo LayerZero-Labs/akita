@@ -2,6 +2,7 @@
 
 use crate::golomb_rice::TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO;
 use crate::sis::{
+    FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM,
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
     FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
     MAX_FOLD_GRIND_ATTEMPTS,
@@ -23,7 +24,8 @@ pub const FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE: u8 = 1;
 /// Fold-l∞ rejection protocol identity bound into every transcript preamble.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FoldLinfProtocolBinding {
-    /// Tail-bound formula tag (`3` = flat/tensor integer `t*` with descriptor-bound snap policy).
+    /// Tail-bound formula tag (`4` = flat/tensor integer `t*` with the
+    /// descriptor-bound Fp32-versus-wide snap policy).
     pub formula_tag: u8,
     /// Per-challenge grind acceptance target `p_grind = NUM / DEN` in the union bound.
     pub grind_target_accept_prob_num: u32,
@@ -46,12 +48,16 @@ pub struct FoldLinfProtocolBinding {
     pub snap_min_tstar_retain_num: u32,
     /// Minimum retained fraction of `t*` when snapping `δ_fold` downward (denominator).
     pub snap_min_tstar_retain_den: u32,
+    /// Fp32-specific minimum retained fraction of `t*` (numerator).
+    pub fp32_snap_min_tstar_retain_num: u32,
+    /// Fp32-specific minimum retained fraction of `t*` (denominator).
+    pub fp32_snap_min_tstar_retain_den: u32,
 }
 
 impl FoldLinfProtocolBinding {
     /// Active fold-l∞ rejection cutover parameters.
     pub const CURRENT: Self = Self {
-        formula_tag: 3,
+        formula_tag: 4,
         grind_target_accept_prob_num: FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
         grind_target_accept_prob_den: FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
         max_grind_attempts: MAX_FOLD_GRIND_ATTEMPTS,
@@ -63,6 +69,8 @@ impl FoldLinfProtocolBinding {
         wire_rice_low_bits_delta: WIRE_RICE_LOW_BITS_DELTA,
         snap_min_tstar_retain_num: FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
         snap_min_tstar_retain_den: FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN,
+        fp32_snap_min_tstar_retain_num: FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM,
+        fp32_snap_min_tstar_retain_den: FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN,
     };
 
     /// Rational grind acceptance target `(NUM, DEN)` for tail-bound sizing.
@@ -76,13 +84,16 @@ impl FoldLinfProtocolBinding {
 
     /// Minimum retained fraction of `t*` for the field width being sized.
     ///
-    /// Fp32/Fp64 schedules retain `3/4`: their coarse digit boundaries make
-    /// the general `1/2` floor too aggressive. Wider fields use the fraction
-    /// serialized in the protocol binding.
+    /// Fp32 schedules retain `3/4`: their coarse digit boundaries make the
+    /// general `1/2` floor too aggressive. All other fields use the wide-field
+    /// fraction serialized in the protocol binding.
     #[inline]
     pub const fn snap_min_tstar_retain(&self, field_bits: u32) -> (u32, u32) {
-        if field_bits < 128 {
-            (3, 4)
+        if field_bits == 32 {
+            (
+                self.fp32_snap_min_tstar_retain_num,
+                self.fp32_snap_min_tstar_retain_den,
+            )
         } else {
             (
                 self.snap_min_tstar_retain_num,
@@ -133,6 +144,10 @@ impl AkitaSerialize for FoldLinfProtocolBinding {
             .serialize_with_mode(&mut writer, compress)?;
         self.snap_min_tstar_retain_den
             .serialize_with_mode(&mut writer, compress)?;
+        self.fp32_snap_min_tstar_retain_num
+            .serialize_with_mode(&mut writer, compress)?;
+        self.fp32_snap_min_tstar_retain_den
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -149,6 +164,12 @@ impl AkitaSerialize for FoldLinfProtocolBinding {
             + self.wire_rice_low_bits_delta.serialized_size(compress)
             + self.snap_min_tstar_retain_num.serialized_size(compress)
             + self.snap_min_tstar_retain_den.serialized_size(compress)
+            + self
+                .fp32_snap_min_tstar_retain_num
+                .serialized_size(compress)
+            + self
+                .fp32_snap_min_tstar_retain_den
+                .serialized_size(compress)
     }
 }
 
@@ -219,6 +240,18 @@ impl AkitaDeserialize for FoldLinfProtocolBinding {
                 validate,
                 &(),
             )?,
+            fp32_snap_min_tstar_retain_num: u32::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
+            fp32_snap_min_tstar_retain_den: u32::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -232,10 +265,25 @@ mod tests {
     use super::FoldLinfProtocolBinding;
 
     #[test]
-    fn snap_floor_is_canonical_for_small_and_wide_fields() {
+    fn snap_floor_is_canonical_for_fp32_and_wide_fields() {
         let binding = FoldLinfProtocolBinding::CURRENT;
+        assert_eq!(binding.formula_tag, 4);
+        assert_eq!(
+            (
+                binding.fp32_snap_min_tstar_retain_num,
+                binding.fp32_snap_min_tstar_retain_den
+            ),
+            (3, 4)
+        );
+        assert_eq!(
+            (
+                binding.snap_min_tstar_retain_num,
+                binding.snap_min_tstar_retain_den
+            ),
+            (1, 2)
+        );
         assert_eq!(binding.snap_min_tstar_retain(32), (3, 4));
-        assert_eq!(binding.snap_min_tstar_retain(64), (3, 4));
+        assert_eq!(binding.snap_min_tstar_retain(64), (1, 2));
         assert_eq!(binding.snap_min_tstar_retain(128), (1, 2));
     }
 }

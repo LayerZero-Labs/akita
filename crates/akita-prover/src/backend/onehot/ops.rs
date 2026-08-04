@@ -838,12 +838,6 @@ where
             },
         )?;
 
-        let decomposed_inner_rows = crate::kernels::linear::decompose_commit_blocks_into::<F, D>(
-            &t,
-            plan.num_digits_outer,
-            plan.log_basis_outer,
-        )?;
-
-        CommitInnerWitness::from_parts(t, decomposed_inner_rows)
+        Ok(CommitInnerWitness::from_rows(t))
     }
 }

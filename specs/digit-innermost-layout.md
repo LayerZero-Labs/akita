@@ -4,7 +4,7 @@
 |---|---|
 | Author(s) | Quang Dao; Codex assistant |
 | Created | 2026-07-10 |
-| Revised | 2026-07-16 |
+| Revised | 2026-07-31 |
 | Status | active |
 | PR | #294 |
 | Supersedes | Root and recursive layout decisions in `setup-layout-repack.md`, `protocol-core-eor-consolidation.md`, and `distributed-verifier-row-eval.md` |
@@ -12,6 +12,14 @@
 | Book chapter | how/proving/opening-points-layout.md; how/verifying/matrix_evaluation.md |
 
 This spec follows the lifecycle in [`PRUNING.md`](PRUNING.md). It replaces the first version of this file. That version used a power of two block count, a compact position count, and a second virtual opening address. This version reverses those choices.
+
+[`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md)
+is authoritative for the physical outgoing witness: coefficient ranges,
+projected E/T order, native quotient rows, chunk-major unit nesting, and final
+zero suffix. This spec remains authoritative for source-polynomial block order,
+digit-innermost semantics, and challenge ownership. Any ring-slot or
+group-major witness formula below is superseded by that compact coefficient
+contract.
 
 ## Summary
 
@@ -31,7 +39,7 @@ The decomposed witness keeps each digit next to the value it decomposes.
 ```text
 z_hat[position][commit digit][fold digit]
 e_hat[claim][live block index][opening digit]
-t_hat[claim][live block index][A row][opening digit]
+t_hat[claim][live block index][A row][outer digit]
 r_hat[relation row][quotient digit]
 ```
 
@@ -100,7 +108,8 @@ This cutover does not require unequal chunk sumcheck work to be communication fr
 
 This cutover does not require flat random challenges to have a sublinear evaluator. A flat challenge has one independent value per live block.
 
-This cutover does not redesign the mixed ring projection algebra. It keeps the projection work from PR #294 and makes it consume the final witness geometry.
+This cutover does not define the coefficient order of mixed ring projection.
+The role native projection spec defines that order and its relation formulas.
 
 ## Terminology and geometry
 
@@ -287,28 +296,31 @@ It may store role dimensions, projection ratios, required setup footprint, round
 
 ## Physical witness order
 
-For each group in relation order, emit each chunk in chunk order.
+The compact coefficient layout is normative in
+[`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md).
+For each chunk in chunk order, emit each group in authenticated relation order.
 
 ```text
-group 0
-  chunk 0: [ z_00 | e_00 | t_00 ]
-  chunk 1: [ z_01 | e_01 | t_01 ]
+chunk 0
+  group 0: [ z_00 | e_00 | t_00 ]
+  group 1: [ z_10 | e_10 | t_10 ]
 
-group 1
-  chunk 0: [ z_10 | e_10 | t_10 ]
-  chunk 1: [ z_11 | e_11 | t_11 ]
+chunk 1
+  group 0: [ z_01 | e_01 | t_01 ]
+  group 1: [ z_11 | e_11 | t_11 ]
 
 shared:    [ r ]
 ```
 
-For one unit, let `s_j` be its `global_block_start` and let `F_j` be its `num_live_blocks`.
+For one unit, let `s_j` be its `global_block_start` and let `F_j` be its
+`num_live_blocks`. All following ranges are field-coefficient ranges.
 
 Its exact segment lengths are:
 
 ```text
-Z_g  = M_g * delta_c_g * delta_f_g
-E_gj = C_g * F_j * delta_o_g
-T_gj = C_g * F_j * n_A_g * delta_o_g
+Z_g  = M_g * delta_c_g * delta_f_g * a_g
+E_gj = C_g * F_j * delta_o_g * a_g
+T_gj = C_g * F_j * n_A_g * delta_c_g * a_g
 ```
 
 Resolve each unit from one checked cursor.
@@ -320,10 +332,11 @@ t_range = e_range.end .. e_range.end + T_gj
 cursor  = t_range.end
 ```
 
-After the final unit:
+After the final unit, R stores each relation row in its native dimension:
 
 ```text
-r_range = cursor .. cursor + relation_rows * delta_r
+r_len   = delta_r * sum(row_ring_dims)
+r_range = cursor .. cursor + r_len
 ```
 
 No caller may recompute these bases from a uniform stride.
@@ -333,14 +346,14 @@ No caller may recompute these bases from a uniform stride.
 `z_hat` has axes:
 
 ```text
-[position][commit digit][fold digit]
+[position][commit digit][fold digit][A coefficient]
 ```
 
 The fold digit is innermost.
 
 ```text
-z_index(position, d_c, d_f)
-    = z_start + d_f + delta_f * (d_c + delta_c * position)
+z_index(position, d_c, d_f, k)
+    = z_start + k + a_g * (d_f + delta_f * (d_c + delta_c * position))
 ```
 
 Every chunk for the group contains a complete copy of `z_hat_g`.
@@ -350,7 +363,7 @@ Every chunk for the group contains a complete copy of `z_hat_g`.
 `e_hat` has axes:
 
 ```text
-[claim][local live block index][opening digit]
+[claim][local live block index][D subcolumn][opening digit][D coefficient]
 ```
 
 The opening digit is innermost.
@@ -358,8 +371,9 @@ The opening digit is innermost.
 ```text
 u = global_block_index - s_j
 
-e_index(c, u, d_o)
-    = e_start + d_o + delta_o * (u + F_j * c)
+e_index(c, u, s, d_o, k)
+    = e_start + k
+      + d_g * (d_o + delta_o * (s + q_D,g * (u + F_j * c)))
 ```
 
 ### `t_hat`
@@ -367,15 +381,15 @@ e_index(c, u, d_o)
 `t_hat` has axes:
 
 ```text
-[claim][local live block index][A row][opening digit]
+[claim][local live block index][A row][B subcolumn][outer digit][B coefficient]
 ```
 
-The opening digit is innermost.
+The native coefficient is innermost, followed by the outer digit.
 
 ```text
-t_index(c, u, a, d_o)
-    = t_start + d_o
-      + delta_o * (a + n_A * (u + F_j * c))
+t_index(c, u, a, s, d_c, k)
+    = t_start + k
+      + b_g * (d_c + delta_c * (s + q_B,g * (a + n_A * (u + F_j * c))))
 ```
 
 ### `r_hat`
@@ -383,14 +397,14 @@ t_index(c, u, a, d_o)
 `r_hat` has axes:
 
 ```text
-[relation row][quotient digit]
+[relation row][quotient digit][native row coefficient]
 ```
 
 The quotient digit is innermost.
 
 ```text
-r_index(row, d_r)
-    = r_start + d_r + delta_r * row
+r_index(row, d_r, k)
+    = row_start[row] + k + row_ring_dim[row] * d_r
 ```
 
 There is one `r_hat` tail for the complete relation. It is not copied per group or per machine.
@@ -592,7 +606,7 @@ D role e column:
   [claim][global block index][opening digit]
 
 B role t column:
-  [claim][global block index][A row][opening digit]
+  [claim][global block index][A row][outer digit]
 
 A role z column:
   [position][commit digit]
@@ -604,7 +618,11 @@ The semantic setup matrices do not contain chunk copies. A physical relation uni
 
 For multi group roots, D columns concatenate group `e_hat` columns in relation order. Derive each group start by a checked prefix sum. Do not store a mutable `e_setup_col_offset` in a copied group descriptor.
 
-`SetupProjectionGeometry` computes mixed role projection after these semantic columns are known. The prover and verifier use the same checked object for required footprint, round count, alpha powers, and work limits.
+These are semantic columns only. The physical B and D columns insert the role
+subcolumn before the role digit. The exact formulas are in
+[`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md).
+`SetupProjectionGeometry` computes the checked ratios, footprint, round count,
+alpha powers, and work limits from that order.
 
 ## Multi group roots
 
@@ -857,7 +875,7 @@ Files centered on this slice:
 crates/akita-types/src/proof/relation_weights.rs
 crates/akita-types/src/setup_contribution/geometry.rs
 crates/akita-types/src/setup_contribution/plan
-crates/akita-types/src/setup_contribution/setup_index_weight_evaluator.rs
+crates/akita-types/src/setup_contribution/plan/setup_index_weight.rs
 crates/akita-prover/src/protocol/ring_relation.rs
 crates/akita-verifier/src/protocol/ring_switch.rs
 ```
@@ -879,7 +897,8 @@ Files centered on this slice:
 crates/akita-algebra/src/offset_eq.rs
 crates/akita-types/src/trace_weight
 crates/akita-verifier/src/protocol/ring_switch/tensor_challenges.rs
-crates/akita-verifier/src/protocol/slice_mle
+crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs
+crates/akita-types/src/setup_contribution/plan/structured.rs
 ```
 
 Steps:

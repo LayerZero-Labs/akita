@@ -16,9 +16,9 @@ use akita_types::{
 };
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, find_schedule, materialize_candidate_schedule,
-    optimize_fold_challenge_shape, validate_policy, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
-    SuffixState,
+    derive_optimal_suffix_schedule, find_schedule_mixed_ring, find_schedule_singular,
+    materialize_candidate_schedule, optimize_fold_challenge_shape, validate_policy,
+    RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -288,18 +288,13 @@ pub(crate) fn multi_group_root_next_w_len(
 ) -> Result<usize, AkitaError> {
     params.witness_chunk.validate()?;
     params.validate_opening_batch(opening_batch)?;
-    let relation_rows = params.relation_matrix_row_count(opening_batch.num_groups())?;
     let witness_layout = WitnessLayout::new(
         params,
         opening_batch,
         params.witness_chunk.num_chunks,
-        relation_rows,
         compute_num_digits_field_width(field_bits, params.log_basis_open),
     )?;
-    witness_layout
-        .total_len()
-        .checked_mul(params.relation_witness_carrier_ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("multi-group next witness length overflow".into()))
+    Ok(witness_layout.live_coeff_len())
 }
 
 pub(crate) fn multi_group_root_level_candidates_for_basis(
@@ -539,7 +534,7 @@ fn multi_group_root_main_level_params_candidate(
 }
 
 /// Build the phase-1 multi-group-root schedule from the full multi-group key.
-pub fn find_group_batch_schedule(
+pub fn find_schedule(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
@@ -548,50 +543,44 @@ pub fn find_group_batch_schedule(
     validate_policy(policy)?;
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_challenge_shape_at_level = &fold_challenge_shape_at_level;
-    if policy.recursive_setup_planning && !key.precommitteds.is_empty() {
-        let setup_envelope_budget = policy
-            .max_setup_envelope_field_elements
-            .checked_div(policy.ring_dimension)
-            .filter(|budget| *budget > 0)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("supported setup envelope is empty".to_string())
-            })?;
-        return find_group_batch_schedule_inner(
-            key,
-            policy,
-            ring_challenge_config,
-            fold_challenge_shape_at_level,
-            Some(setup_envelope_budget),
-        );
-    }
-    find_group_batch_schedule_inner(
-        key,
-        policy,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
-        None,
-    )
-}
-
-fn find_group_batch_schedule_inner(
-    key: &AkitaScheduleLookupKey,
-    policy: &PlannerPolicy,
-    ring_challenge_config: RingChallengeConfigFn<'_>,
-    fold_challenge_shape_at_level: &dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-    setup_envelope_budget: Option<usize>,
-) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
-    if key.precommitteds.is_empty() {
-        // Genuine multi-group roots only. Empty-precommit keys are scalar and
-        // must not enter recursion-enabled grouped planning.
-        let scalar_policy = policy.direct_only();
-        return find_schedule(
+    let scalar_policy = policy.direct_only();
+    if scalar_policy.selection_policy
+        == crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+    {
+        if !key.precommitteds.is_empty() {
+            return Err(AkitaError::UnsupportedSchedule(
+                "mixed ring-dimension selection is not supported for multi-group roots".to_string(),
+            ));
+        }
+        return find_schedule_mixed_ring(
             key.final_group,
             &scalar_policy,
             ring_challenge_config,
             fold_challenge_shape_at_level,
         );
     }
+    if key.precommitteds.is_empty() {
+        // Genuine multi-group roots only. Empty-precommit keys are scalar and
+        // must not enter recursion-enabled grouped planning.
+        return find_schedule_singular(
+            key.final_group,
+            &scalar_policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+        );
+    }
+    let setup_field_budget = if policy.recursive_setup_planning {
+        let setup_field_budget = policy.max_setup_envelope_field_elements;
+        if setup_field_budget == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "supported setup envelope is empty".to_string(),
+            ));
+        }
+        Some(setup_field_budget)
+    } else {
+        None
+    };
     let root_input_witness_len = 1usize
         .checked_shl(key.final_group.num_vars() as u32)
         .ok_or_else(|| {
@@ -600,13 +589,14 @@ fn find_group_batch_schedule_inner(
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let suffix_ctx = SuffixCtx {
         policy,
-        ring_challenge_cfg: &ring_challenge_cfg,
+        default_ring_challenge_cfg: &ring_challenge_cfg,
         ring_challenge_config,
         fold_challenge_shape_at_level,
         num_vars: key.final_group.num_vars(),
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
-        setup_envelope_budget,
+        setup_field_budget,
         root_lookup_key: Some(key),
+        level_zero_is_root: true,
     };
     let mut memo = ScheduleMemo::new();
     let suffix = derive_optimal_suffix_schedule(
@@ -630,10 +620,15 @@ fn find_group_batch_schedule_inner(
             .values()
             .min_by_key(|candidate| {
                 (
-                    candidate.first_direct_setup_field_len,
+                    candidate.first_direct_setup_field_len_or_max(),
                     candidate.total_bytes,
                 )
             }),
+        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
+            return Err(AkitaError::UnsupportedSchedule(
+                "mixed ring-dimension selection is not supported for multi-group roots".to_string(),
+            ));
+        }
     };
 
     let Some(best) = best.cloned() else {
@@ -642,12 +637,20 @@ fn find_group_batch_schedule_inner(
             key.final_group.num_vars()
         )));
     };
+    let first_direct_setup_field_len = if policy.recursive_setup_planning {
+        Some(best.first_direct_setup_field_len.ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "recursive setup schedule is missing its first direct setup size".into(),
+            )
+        })?)
+    } else {
+        None
+    };
     materialize_candidate_schedule(
         best.total_bytes,
-        best.setup_envelope_ring_elements,
-        policy
-            .recursive_setup_planning
-            .then_some(best.first_direct_setup_field_len),
+        best.setup_field_elements,
+        policy.ring_dimension,
+        first_direct_setup_field_len,
         best.folds,
         best.terminal,
     )
