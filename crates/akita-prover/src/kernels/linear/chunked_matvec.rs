@@ -57,7 +57,7 @@ where
             .map(|row_accs| {
                 row_accs
                     .into_iter()
-                    .map(|acc| acc.to_ring_with_params(params))
+                    .map(|acc| acc.to_ring(params))
                     .collect()
             })
             .collect();
@@ -74,7 +74,7 @@ where
             accumulate(&mut accs, tile_start, tile_end);
             for (out_block, acc_block) in out.iter_mut().zip(accs) {
                 for (dst, acc) in out_block.iter_mut().zip(acc_block) {
-                    *dst += acc.to_ring_with_params(params);
+                    *dst += acc.to_ring(params);
                 }
             }
             out

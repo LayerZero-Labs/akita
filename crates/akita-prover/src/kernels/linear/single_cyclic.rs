@@ -147,7 +147,7 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
                 }
             }
         },
-        |acc, params| acc.to_ring_with_params(params),
+        |acc, params| acc.to_ring(params),
     )
 }
 

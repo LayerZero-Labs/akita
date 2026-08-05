@@ -16,6 +16,7 @@ mod transform_i16;
 mod transform_i32;
 mod wide512;
 
+pub(crate) use runtime::use_avx512_transform_ntt;
 pub use runtime::{avx_ntt_mode, use_avx2_transform_ntt, AvxNttMode};
 
 use montgomery::{

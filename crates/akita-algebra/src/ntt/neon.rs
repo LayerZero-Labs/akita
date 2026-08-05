@@ -841,6 +841,7 @@ mod tests {
         NttTwiddles,
     };
     use super::super::prime::{MontCoeff, NttPrime};
+    use super::super::NttKernelPlan;
     use super::*;
 
     fn random_mont_array_i32<const D: usize>(
@@ -884,7 +885,7 @@ mod tests {
         unsafe { forward_ntt_i32(&mut neon_result, prime, &tw) };
 
         let mut scalar_result = input;
-        scalar_forward_ntt(&mut scalar_result, prime, &tw);
+        scalar_forward_ntt(&mut scalar_result, prime, &tw, NttKernelPlan::Scalar);
 
         for i in 0..512 {
             let n = prime.to_canonical(neon_result[i]);
@@ -903,7 +904,7 @@ mod tests {
         unsafe { inverse_ntt_i32(&mut neon_result, prime, &tw) };
 
         let mut scalar_result = input;
-        scalar_inverse_ntt(&mut scalar_result, prime, &tw);
+        scalar_inverse_ntt(&mut scalar_result, prime, &tw, NttKernelPlan::Scalar);
 
         for i in 0..512 {
             let n = prime.to_canonical(neon_result[i]);
@@ -944,7 +945,7 @@ mod tests {
         unsafe { forward_ntt_cyclic_i32(&mut neon_fwd, prime, &tw) };
 
         let mut scalar_fwd = input;
-        scalar_forward_ntt_cyclic(&mut scalar_fwd, prime, &tw);
+        scalar_forward_ntt_cyclic(&mut scalar_fwd, prime, &tw, NttKernelPlan::Scalar);
 
         for i in 0..512 {
             let n = prime.to_canonical(neon_fwd[i]);
@@ -956,7 +957,7 @@ mod tests {
         unsafe { inverse_ntt_cyclic_i32(&mut neon_inv, prime, &tw) };
 
         let mut scalar_inv = scalar_fwd;
-        scalar_inverse_ntt_cyclic(&mut scalar_inv, prime, &tw);
+        scalar_inverse_ntt_cyclic(&mut scalar_inv, prime, &tw, NttKernelPlan::Scalar);
 
         for i in 0..512 {
             let n = prime.to_canonical(neon_inv[i]);
@@ -1066,7 +1067,7 @@ mod tests {
         unsafe { forward_ntt_i16(&mut neon_result, prime, &tw) };
 
         let mut scalar_result = input;
-        scalar_forward_ntt(&mut scalar_result, prime, &tw);
+        scalar_forward_ntt(&mut scalar_result, prime, &tw, NttKernelPlan::Scalar);
 
         for i in 0..64 {
             let n = prime.to_canonical(neon_result[i]);
@@ -1085,7 +1086,7 @@ mod tests {
         unsafe { inverse_ntt_i16(&mut neon_result, prime, &tw) };
 
         let mut scalar_result = input;
-        scalar_inverse_ntt(&mut scalar_result, prime, &tw);
+        scalar_inverse_ntt(&mut scalar_result, prime, &tw, NttKernelPlan::Scalar);
 
         for i in 0..64 {
             let n = prime.to_canonical(neon_result[i]);
@@ -1123,7 +1124,7 @@ mod tests {
         unsafe { forward_ntt_cyclic_i16(&mut neon_fwd, prime, &tw) };
 
         let mut scalar_fwd = input;
-        scalar_forward_ntt_cyclic(&mut scalar_fwd, prime, &tw);
+        scalar_forward_ntt_cyclic(&mut scalar_fwd, prime, &tw, NttKernelPlan::Scalar);
 
         for i in 0..64 {
             let n = prime.to_canonical(neon_fwd[i]);
@@ -1135,7 +1136,7 @@ mod tests {
         unsafe { inverse_ntt_cyclic_i16(&mut neon_inv, prime, &tw) };
 
         let mut scalar_inv = scalar_fwd;
-        scalar_inverse_ntt_cyclic(&mut scalar_inv, prime, &tw);
+        scalar_inverse_ntt_cyclic(&mut scalar_inv, prime, &tw, NttKernelPlan::Scalar);
 
         for i in 0..64 {
             let n = prime.to_canonical(neon_inv[i]);

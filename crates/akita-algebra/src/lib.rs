@@ -34,7 +34,9 @@ pub use akita_field::{
 pub use eq_poly::{EqPolynomial, SplitEqEvals};
 pub use module::{Module, VectorModule};
 pub use ntt::tables;
-pub use ntt::{CrtCapacity, GarnerData, LimbQ, MontCoeff, NttPrime, PrimeWidth, RADIX_BITS};
+pub use ntt::{
+    CrtCapacity, GarnerData, LimbQ, MontCoeff, NttKernelPlan, NttPrime, PrimeWidth, RADIX_BITS,
+};
 pub use ring::{
     balanced_decompose_coefficients_pow2_i8_into, mat_vec_i16_with_tail, CenteredMontLut,
     CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,

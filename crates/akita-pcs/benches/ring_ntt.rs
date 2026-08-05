@@ -2,12 +2,11 @@
 
 use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
 use akita_algebra::tables::{
-    q128_primes, q32_garner, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES,
-    Q32_PRIMES,
+    q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES,
 };
 use akita_algebra::{
     mat_vec_i16_with_tail, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
-    I16TailParams, MontCoeff,
+    I16TailParams, MontCoeff, NttKernelPlan,
 };
 use akita_field::{Fp64, HalvingField, Prime128Offset159, Prime128OffsetA7F7};
 use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode};
@@ -132,13 +131,9 @@ fn legacy_radix64_i8_reference_matvec(
         for (dst, row) in out.iter_mut().zip(matrix) {
             let mut accumulator = ProductionN128D64::zero();
             for (matrix_entry, vector_entry) in row.iter().zip(&transformed) {
-                accumulator.add_assign_pointwise_mul_with_params(
-                    matrix_entry,
-                    vector_entry,
-                    params,
-                );
+                accumulator.add_assign_pointwise_mul(matrix_entry, vector_entry, params);
             }
-            *dst += accumulator.to_ring_with_params(params).scale(&scale);
+            *dst += accumulator.to_ring(params).scale(&scale);
         }
         scale *= ProductionF128::from_i64(64);
     }
@@ -159,12 +154,13 @@ fn bench_ntt_single_prime_round_trip(c: &mut Criterion) {
     let tw = NttTwiddles::<i32, 64>::compute(prime);
     let base: [MontCoeff<i32>; 64] =
         std::array::from_fn(|i| prime.from_canonical(((i * 5 + 7) as i32) % prime.p));
+    let plan = NttKernelPlan::detect::<i32>();
 
     c.bench_function("ntt_single_prime_forward_inverse_d64", |b| {
         b.iter(|| {
             let mut a = base;
-            forward_ntt(&mut a, prime, &tw);
-            inverse_ntt(&mut a, prime, &tw);
+            forward_ntt(&mut a, prime, &tw, plan);
+            inverse_ntt(&mut a, prime, &tw, plan);
             black_box(a)
         })
     });
@@ -175,11 +171,12 @@ fn bench_ntt_i16_tail_round_trip(c: &mut Criterion) {
     let tw = NttTwiddles::<i16, 64>::compute(prime);
     let base: [MontCoeff<i16>; 64] =
         std::array::from_fn(|i| prime.from_canonical(((i * 5 + 7) as i16) % prime.p));
+    let plan = NttKernelPlan::detect::<i16>();
     c.bench_function("ntt_i16_tail_forward_inverse_d64", |b| {
         b.iter(|| {
             let mut values = base;
-            forward_ntt(&mut values, prime, &tw);
-            inverse_ntt(&mut values, prime, &tw);
+            forward_ntt(&mut values, prime, &tw, plan);
+            inverse_ntt(&mut values, prime, &tw, plan);
             black_box(values)
         })
     });
@@ -187,15 +184,12 @@ fn bench_ntt_i16_tail_round_trip(c: &mut Criterion) {
 
 fn bench_crt_round_trip(c: &mut Criterion) {
     let ring = sample_ring(19);
-    let primes = Q32_PRIMES;
-    let twiddles: [NttTwiddles<i32, 64>; Q32_NUM_PRIMES] =
-        std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
-    let garner = q32_garner();
+    let params = CrtNttParamSet::new(Q32_PRIMES);
 
     c.bench_function("ring_ntt_crt_round_trip_d64_q32_2xi32", |b| {
         b.iter(|| {
-            let ntt = N::from_ring(black_box(&ring), &primes, &twiddles);
-            let back: R = ntt.to_ring(&primes, &twiddles, &garner);
+            let ntt = N::from_ring(black_box(&ring), &params);
+            let back: R = ntt.to_ring(&params);
             black_box(back)
         })
     });
@@ -216,10 +210,10 @@ fn bench_crt_mul_q128m159(c: &mut Criterion) {
 
     c.bench_function("ring_crt_ntt_mul_d32_q128m159_k5", |b| {
         b.iter(|| {
-            let lhs_ntt = N128::from_ring_with_params(black_box(&lhs), &params);
-            let rhs_ntt = N128::from_ring_with_params(black_box(&rhs), &params);
-            let prod = lhs_ntt.pointwise_mul_with_params(&rhs_ntt, &params);
-            let out: R128 = prod.to_ring_with_params(&params);
+            let lhs_ntt = N128::from_ring(black_box(&lhs), &params);
+            let rhs_ntt = N128::from_ring(black_box(&rhs), &params);
+            let prod = lhs_ntt.pointwise_mul(&rhs_ntt, &params);
+            let out: R128 = prod.to_ring(&params);
             black_box(out)
         })
     });
@@ -232,10 +226,10 @@ fn bench_crt_mul_i8_rhs_q128m159(c: &mut Criterion) {
 
     c.bench_function("ring_crt_ntt_mul_i8_rhs_d32_q128m159_k5", |b| {
         b.iter(|| {
-            let lhs_ntt = N128::from_ring_with_params(black_box(&lhs), &params);
+            let lhs_ntt = N128::from_ring(black_box(&lhs), &params);
             let rhs_ntt = N128::from_i8_with_params(black_box(&rhs), &params);
-            let prod = lhs_ntt.pointwise_mul_with_params(&rhs_ntt, &params);
-            let out: R128 = prod.to_ring_with_params(&params);
+            let prod = lhs_ntt.pointwise_mul(&rhs_ntt, &params);
+            let out: R128 = prod.to_ring(&params);
             black_box(out)
         })
     });
@@ -250,7 +244,7 @@ fn bench_crt_cyclic_mul_q128m159(c: &mut Criterion) {
         b.iter(|| {
             let lhs_ntt = N128::from_ring_cyclic(black_box(&lhs), &params);
             let rhs_ntt = N128::from_ring_cyclic(black_box(&rhs), &params);
-            let prod = lhs_ntt.pointwise_mul_with_params(&rhs_ntt, &params);
+            let prod = lhs_ntt.pointwise_mul(&rhs_ntt, &params);
             let out: R128 = prod.to_ring_cyclic(&params);
             black_box(out)
         })
@@ -264,16 +258,14 @@ fn bench_crt_quotient_q128m159(c: &mut Criterion) {
 
     c.bench_function("ring_crt_ntt_quotient_d32_q128m159_k5", |b| {
         b.iter(|| {
-            let lhs_neg = N128::from_ring_with_params(black_box(&lhs), &params);
-            let rhs_neg = N128::from_ring_with_params(black_box(&rhs), &params);
-            let neg: R128 = lhs_neg
-                .pointwise_mul_with_params(&rhs_neg, &params)
-                .to_ring_with_params(&params);
+            let lhs_neg = N128::from_ring(black_box(&lhs), &params);
+            let rhs_neg = N128::from_ring(black_box(&rhs), &params);
+            let neg: R128 = lhs_neg.pointwise_mul(&rhs_neg, &params).to_ring(&params);
 
             let lhs_cyc = N128::from_ring_cyclic(black_box(&lhs), &params);
             let rhs_cyc = N128::from_ring_cyclic(black_box(&rhs), &params);
             let cyc: R128 = lhs_cyc
-                .pointwise_mul_with_params(&rhs_cyc, &params)
+                .pointwise_mul(&rhs_cyc, &params)
                 .to_ring_cyclic(&params);
 
             let out = R128::from_coefficients(std::array::from_fn(|i| {
@@ -290,7 +282,7 @@ fn bench_crt_simd_cached_matvec_q128m159(c: &mut Criterion) {
         .map(|r| {
             (0..CACHE_MAT_COLS)
                 .map(|col| {
-                    N128::from_ring_with_params(
+                    N128::from_ring(
                         &sample_ring_q128m159_tag(23, (r * CACHE_MAT_COLS + col) as u64),
                         &params,
                     )
@@ -299,7 +291,7 @@ fn bench_crt_simd_cached_matvec_q128m159(c: &mut Criterion) {
         })
         .collect();
     let vector: Vec<N128> = (0..CACHE_MAT_COLS)
-        .map(|col| N128::from_ring_with_params(&sample_ring_q128m159_tag(41, col as u64), &params))
+        .map(|col| N128::from_ring(&sample_ring_q128m159_tag(41, col as u64), &params))
         .collect();
 
     c.bench_function("ring_crt_ntt_simd_cached_matvec_d32_q128m159_k5", |b| {
@@ -309,13 +301,9 @@ fn bench_crt_simd_cached_matvec_q128m159(c: &mut Criterion) {
                 .map(|row| {
                     let mut acc = N128::zero();
                     for (mat_entry, vec_entry) in row.iter().zip(vector.iter()) {
-                        acc.add_assign_pointwise_mul_with_params(
-                            mat_entry,
-                            black_box(vec_entry),
-                            &params,
-                        );
+                        acc.add_assign_pointwise_mul(mat_entry, black_box(vec_entry), &params);
                     }
-                    acc.to_ring_with_params(&params)
+                    acc.to_ring(&params)
                 })
                 .collect();
             black_box(out)
@@ -329,7 +317,7 @@ fn bench_crt_simd_cached_matvec_i8_rhs_q128m159(c: &mut Criterion) {
         .map(|r| {
             (0..CACHE_MAT_COLS)
                 .map(|col| {
-                    N128::from_ring_with_params(
+                    N128::from_ring(
                         &sample_ring_q128m159_tag(23, (r * CACHE_MAT_COLS + col) as u64),
                         &params,
                     )
@@ -350,13 +338,9 @@ fn bench_crt_simd_cached_matvec_i8_rhs_q128m159(c: &mut Criterion) {
                     .map(|row| {
                         let mut acc = N128::zero();
                         for (mat_entry, vec_entry) in row.iter().zip(vector.iter()) {
-                            acc.add_assign_pointwise_mul_with_params(
-                                mat_entry,
-                                black_box(vec_entry),
-                                &params,
-                            );
+                            acc.add_assign_pointwise_mul(mat_entry, black_box(vec_entry), &params);
                         }
-                        acc.to_ring_with_params(&params)
+                        acc.to_ring(&params)
                     })
                     .collect();
                 black_box(out)
@@ -375,11 +359,11 @@ fn bench_mixed_crt_cached_matvec_i16_rhs_q128m159(c: &mut Criterion) {
         .collect::<Vec<_>>();
     let wide_matrix = rings
         .iter()
-        .map(|ring| N128::from_ring_with_params(ring, &params.wide))
+        .map(|ring| N128::from_ring(ring, &params.wide))
         .collect::<Vec<_>>();
     let tail_matrix = rings
         .iter()
-        .map(|ring| TailN128::from_ring_with_params(ring, &params.tail))
+        .map(|ring| TailN128::from_ring(ring, &params.tail))
         .collect::<Vec<_>>();
     let rhs = (0..CACHE_MAT_COLS)
         .map(|column| sample_centered_i16(41 + column as u64))
@@ -408,9 +392,7 @@ fn bench_mixed_crt_cached_matvec_i16_rhs_q128m159(c: &mut Criterion) {
 fn bench_crt_cached_dot_components_q128m159(c: &mut Criterion) {
     let wide_params = CrtNttParamSet::new(q128_primes());
     let wide_matrix: Vec<N128> = (0..CACHE_MAT_COLS)
-        .map(|column| {
-            N128::from_ring_with_params(&sample_ring_q128m159_tag(23, column as u64), &wide_params)
-        })
+        .map(|column| N128::from_ring(&sample_ring_q128m159_tag(23, column as u64), &wide_params))
         .collect();
     let wide_vector: Vec<N128> = (0..CACHE_MAT_COLS)
         .map(|column| {
@@ -419,14 +401,14 @@ fn bench_crt_cached_dot_components_q128m159(c: &mut Criterion) {
         .collect();
     let mut wide_product = N128::zero();
     for (matrix_entry, vector_entry) in wide_matrix.iter().zip(&wide_vector) {
-        wide_product.add_assign_pointwise_mul_with_params(matrix_entry, vector_entry, &wide_params);
+        wide_product.add_assign_pointwise_mul(matrix_entry, vector_entry, &wide_params);
     }
 
     c.bench_function("ring_crt_ntt_cached_dot_pointwise_d32_q128m159_k5", |b| {
         b.iter(|| {
             let mut accumulator = N128::zero();
             for (matrix_entry, vector_entry) in wide_matrix.iter().zip(&wide_vector) {
-                accumulator.add_assign_pointwise_mul_with_params(
+                accumulator.add_assign_pointwise_mul(
                     matrix_entry,
                     black_box(vector_entry),
                     &wide_params,
@@ -436,7 +418,7 @@ fn bench_crt_cached_dot_components_q128m159(c: &mut Criterion) {
         })
     });
     c.bench_function("ring_crt_ntt_reconstruct_d32_q128m159_k5", |b| {
-        b.iter(|| black_box(&wide_product).to_ring_with_params::<F128>(&wide_params))
+        b.iter(|| black_box(&wide_product).to_ring::<F128>(&wide_params))
     });
 }
 
@@ -460,7 +442,7 @@ fn bench_production_crt_cached_matvec_d64_q128a7f7(c: &mut Criterion) {
         .map(|row| {
             (0..PRODUCTION_CACHE_MAT_COLS)
                 .map(|column| {
-                    ProductionN128D64::from_ring_with_params(
+                    ProductionN128D64::from_ring(
                         &sample_production_ring_q128_d64(
                             23 + (row * PRODUCTION_CACHE_MAT_COLS + column) as u64,
                         ),
@@ -483,11 +465,11 @@ fn bench_production_crt_cached_matvec_d64_q128a7f7(c: &mut Criterion) {
         .collect::<Vec<_>>();
     let mixed_wide_matrix = source_rings
         .iter()
-        .map(|ring| ProductionN128D64::from_ring_with_params(ring, &mixed_params.wide))
+        .map(|ring| ProductionN128D64::from_ring(ring, &mixed_params.wide))
         .collect::<Vec<_>>();
     let mixed_tail_matrix = source_rings
         .iter()
-        .map(|ring| ProductionTailN128D64::from_ring_with_params(ring, &mixed_params.tail))
+        .map(|ring| ProductionTailN128D64::from_ring(ring, &mixed_params.tail))
         .collect::<Vec<_>>();
     let terminal_rhs = (0..PRODUCTION_CACHE_MAT_COLS)
         .map(|column| sample_production_i16_d64(41 + column as u64))
@@ -502,13 +484,13 @@ fn bench_production_crt_cached_matvec_d64_q128a7f7(c: &mut Criterion) {
                     .map(|row| {
                         let mut accumulator = ProductionN128D64::zero();
                         for (matrix_entry, vector_entry) in row.iter().zip(&wide_vector) {
-                            accumulator.add_assign_pointwise_mul_with_params(
+                            accumulator.add_assign_pointwise_mul(
                                 matrix_entry,
                                 black_box(vector_entry),
                                 &wide_params,
                             );
                         }
-                        accumulator.to_ring_with_params(&wide_params)
+                        accumulator.to_ring(&wide_params)
                     })
                     .collect();
                 black_box(out)

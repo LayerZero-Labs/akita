@@ -494,26 +494,26 @@ fn assert_avx2_ntt_i32_transforms_match_scalar<const D: usize>() {
     let mut avx_fwd = input;
     let mut scalar_fwd = input;
     // SAFETY: guarded by runtime AVX2 detection above.
-    unsafe { forward_ntt_i32(&mut avx_fwd, prime, &tw) };
+    unsafe { forward_ntt_i32(&mut avx_fwd, prime, &tw, false) };
     scalar_forward_ntt_i32(&mut scalar_fwd, prime, &tw);
     assert_eq!(avx_fwd, scalar_fwd);
 
     let mut avx_inv = avx_fwd;
     let mut scalar_inv = scalar_fwd;
     // SAFETY: guarded by runtime AVX2 detection above.
-    unsafe { inverse_ntt_i32(&mut avx_inv, prime, &tw) };
+    unsafe { inverse_ntt_i32(&mut avx_inv, prime, &tw, false) };
     scalar_inverse_ntt_i32(&mut scalar_inv, prime, &tw);
     assert_eq!(avx_inv, scalar_inv);
 
     let mut avx_cyclic = input;
     let mut scalar_cyclic = input;
     // SAFETY: guarded by runtime AVX2 detection above.
-    unsafe { forward_ntt_cyclic_i32(&mut avx_cyclic, prime, &tw) };
+    unsafe { forward_ntt_cyclic_i32(&mut avx_cyclic, prime, &tw, false) };
     scalar_forward_ntt_cyclic_i32(&mut scalar_cyclic, prime, &tw);
     assert_eq!(avx_cyclic, scalar_cyclic);
 
     // SAFETY: guarded by runtime AVX2 detection above.
-    unsafe { inverse_ntt_cyclic_i32(&mut avx_cyclic, prime, &tw) };
+    unsafe { inverse_ntt_cyclic_i32(&mut avx_cyclic, prime, &tw, false) };
     scalar_inverse_ntt_cyclic_i32(&mut scalar_cyclic, prime, &tw);
     assert_eq!(avx_cyclic, scalar_cyclic);
 }

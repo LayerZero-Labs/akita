@@ -639,7 +639,7 @@ fn prepare_ntt_cache_with_tail_prefix<F: FieldCore + CanonicalField, const D: us
                 NttCacheMode::Negacyclic => PreparedNttCache::$variant {
                     neg: Some(
                         cfg_iter!(matrix.as_slice())
-                            .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &params))
+                            .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
                             .collect(),
                     ),
                     cyc: None,
@@ -673,7 +673,7 @@ fn prepare_ntt_cache_with_tail_prefix<F: FieldCore + CanonicalField, const D: us
                     let needs_tail =
                         required_profile_for_params::<F, _, $k, D>(&params, width, rhs_abs_bound)?;
                     let neg = cfg_iter!(matrix.as_slice())
-                        .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &params))
+                        .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
                         .collect();
                     let requested_tail_len = if needs_tail {
                         Some(tail_prefix_len.unwrap_or(matrix.as_slice().len()))
@@ -693,7 +693,7 @@ fn prepare_ntt_cache_with_tail_prefix<F: FieldCore + CanonicalField, const D: us
                             )
                         })?;
                         let negacyclic = cfg_iter!(tail_rings)
-                            .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &tail_params))
+                            .map(|ring| CyclotomicCrtNtt::from_ring(ring, &tail_params))
                             .collect();
                         Some(PreparedI16Tail {
                             negacyclic,

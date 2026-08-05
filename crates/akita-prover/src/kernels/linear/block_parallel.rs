@@ -41,9 +41,7 @@ pub(super) fn mat_vec_mul_digits_i8_block_parallel<
                 );
             }
 
-            accs.into_iter()
-                .map(|acc| acc.to_ring_with_params(params))
-                .collect()
+            accs.into_iter().map(|acc| acc.to_ring(params)).collect()
         })
         .collect()
 }
@@ -90,7 +88,7 @@ pub(super) fn mat_vec_mul_digits_i8_block_parallel_chunked<
                     );
                 }
                 for (dst, acc) in out.iter_mut().zip(accs) {
-                    *dst += acc.to_ring_with_params(params);
+                    *dst += acc.to_ring(params);
                 }
             }
             out
@@ -146,9 +144,7 @@ pub(super) fn mat_vec_mul_i8_block_parallel_with_params_impl<
                 }
             }
 
-            accs.into_iter()
-                .map(|acc| acc.to_ring_with_params(params))
-                .collect()
+            accs.into_iter().map(|acc| acc.to_ring(params)).collect()
         })
         .collect()
 }
@@ -232,7 +228,7 @@ pub(super) fn mat_vec_mul_i8_block_parallel_chunked_with_params<
                 }
 
                 for (dst, acc) in out.iter_mut().zip(accs) {
-                    *dst += acc.to_ring_with_params(params);
+                    *dst += acc.to_ring(params);
                 }
             }
             out
@@ -327,7 +323,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
                     }
                 }
 
-                acc.to_ring_with_params(params)
+                acc.to_ring(params)
             })
             .collect();
     }
@@ -386,7 +382,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
                     );
                 }
 
-                out += acc.to_ring_with_params(params);
+                out += acc.to_ring(params);
             }
 
             out
@@ -448,7 +444,7 @@ fn mat_vec_mul_i8_dense_single_row_chunk_parallel_with_params<
                         );
                     }
 
-                    out += acc.to_ring_with_params(params);
+                    out += acc.to_ring(params);
                     out
                 },
                 |mut a: CyclotomicRing<F, D>, b| {

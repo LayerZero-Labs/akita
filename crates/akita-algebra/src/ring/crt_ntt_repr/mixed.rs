@@ -105,16 +105,8 @@ pub fn mat_vec_i16_with_tail<F: FieldCore + CanonicalField, const K: usize, cons
             let tail_entry = tail_row.get(column).ok_or_else(|| {
                 AkitaError::InvalidSetup("prepared i16-tail NTT matrix row is undersized".into())
             })?;
-            wide_accumulator.add_assign_pointwise_mul_with_params(
-                wide_entry,
-                &wide_rhs,
-                &params.wide,
-            );
-            tail_accumulator.add_assign_pointwise_mul_with_params(
-                tail_entry,
-                &tail_rhs,
-                &params.tail,
-            );
+            wide_accumulator.add_assign_pointwise_mul(wide_entry, &wide_rhs, &params.wide);
+            tail_accumulator.add_assign_pointwise_mul(tail_entry, &tail_rhs, &params.tail);
         }
     }
     Ok(wide_accumulators
@@ -215,11 +207,11 @@ mod tests {
             .collect::<Vec<_>>();
         let wide = matrix
             .iter()
-            .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &wide_params))
+            .map(|ring| CyclotomicCrtNtt::from_ring(ring, &wide_params))
             .collect::<Vec<_>>();
         let tail = matrix
             .iter()
-            .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &tail_params))
+            .map(|ring| CyclotomicCrtNtt::from_ring(ring, &tail_params))
             .collect::<Vec<_>>();
         let rhs = (0..3)
             .map(|column| {

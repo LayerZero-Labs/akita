@@ -276,7 +276,7 @@ fn fused_split_eq_quotients_one_shot<
         .into_iter()
         .zip(a_cyc_accs)
         .map(|(neg_acc, cyc_acc)| {
-            let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring_with_params(params);
+            let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring(params);
             let cyc_ring: CyclotomicRing<F, D> = cyc_acc.to_ring_cyclic(params);
             quotient_from_cyclic_and_negacyclic(&cyc_ring, &neg_ring)
         })
@@ -485,7 +485,7 @@ fn accumulate_centered_quotient_rows<
             }
 
             for ((dst, neg_acc), cyc_acc) in out.iter_mut().zip(neg_accs).zip(cyc_accs) {
-                let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring_with_params(params);
+                let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring(params);
                 let cyc_ring: CyclotomicRing<F, D> = cyc_acc.to_ring_cyclic(params);
                 *dst += quotient_from_cyclic_and_negacyclic(&cyc_ring, &neg_ring);
             }
@@ -521,8 +521,7 @@ fn accumulate_centered_quotient_rows_field<
                     continue;
                 }
                 let z = centered_i32_ring::<F, D>(&z_folded_rings[j]);
-                let neg_lhs: CyclotomicRing<F, D> =
-                    neg_rows[row_idx][j].to_ring_with_params(params);
+                let neg_lhs: CyclotomicRing<F, D> = neg_rows[row_idx][j].to_ring(params);
                 let cyc_lhs: CyclotomicRing<F, D> = cyc_rows[row_idx][j].to_ring_cyclic(params);
                 let neg_product = neg_lhs * z;
                 let mut cyc_product = CyclotomicRing::<F, D>::zero();

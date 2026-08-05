@@ -57,7 +57,7 @@ pub fn use_avx2_transform_ntt() -> bool {
 /// AVX-512 remains available for explicit cross-machine benchmarking, but
 /// true 256-bit AVX2 transforms are the default after winning every measured
 /// D=64/128/256/512 transform on Ice Lake.
-pub(super) fn use_avx512_transform_ntt() -> bool {
+pub(crate) fn use_avx512_transform_ntt() -> bool {
     static USE_AVX512: OnceLock<bool> = OnceLock::new();
     *USE_AVX512.get_or_init(|| {
         select_avx512_transform_ntt(

@@ -5,7 +5,7 @@ use std::array::from_fn;
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::crt::GarnerData;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
-use crate::{CanonicalField, CrtCapacity, FieldCore};
+use crate::{CanonicalField, CrtCapacity, FieldCore, NttKernelPlan};
 
 /// CRT+NTT-domain representation of a cyclotomic ring element.
 ///
@@ -37,6 +37,8 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     pub twiddles: [NttTwiddles<W, D>; K],
     /// Garner reconstruction constants for CRT lift-back.
     pub garner: GarnerData<W, K>,
+    /// Host arithmetic kernels selected when this parameter set was prepared.
+    pub kernel_plan: NttKernelPlan,
 }
 
 mod convert;
@@ -101,6 +103,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
             primes,
             twiddles,
             garner,
+            kernel_plan: NttKernelPlan::detect::<W>(),
         }
     }
 
