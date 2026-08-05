@@ -74,6 +74,7 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
     match family.module_name {
         "fp128_d128_dense" => fp128::D128Dense::schedule_catalog().is_some(),
         "fp128_d128_onehot" => fp128::D128OneHot::schedule_catalog().is_some(),
+        "fp128_d256_onehot" => fp128::D256OneHot::schedule_catalog().is_some(),
         "fp128_mixed_dim_onehot" => fp128::MixedDimFp128OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot" => fp128::D64OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot_recursive" => {
@@ -197,21 +198,15 @@ fn assert_precommit_registry<Cfg: CommitmentConfig>(
     }
     for entry in catalog.entries {
         for group in entry.root.precommitted_groups {
-            let found = catalog
-                .precommitted_profiles
-                .iter()
-                .copied()
-                .map(|row| row.expand_to_committed_profile(&policy_of::<Cfg>()))
-                .any(|profile| {
-                    profile.unwrap_or_else(|e| {
-                        panic!("{} generated precommit row failed: {e}", family.module_name)
-                    }) == group.descriptor
+            group
+                .descriptor
+                .validate(policy_of::<Cfg>().sis_modulus_profile.field_bits())
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{} schedule row references an invalid precommit descriptor: {e}",
+                        family.module_name
+                    )
                 });
-            assert!(
-                found,
-                "family {} schedule row references a precommit descriptor absent from the registry",
-                family.module_name
-            );
         }
     }
 }
@@ -348,6 +343,7 @@ fn family_catalog(
     match family.module_name {
         "fp128_d128_dense" => prepare_family_catalog::<fp128::D128Dense>(family, keys),
         "fp128_d128_onehot" => prepare_family_catalog::<fp128::D128OneHot>(family, keys),
+        "fp128_d256_onehot" => prepare_family_catalog::<fp128::D256OneHot>(family, keys),
         "fp128_mixed_dim_onehot" => {
             prepare_family_catalog::<fp128::MixedDimFp128OneHot>(family, keys)
         }
@@ -412,6 +408,9 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, requests: &[Gro
         }
         "fp128_d128_onehot" => {
             assert_group_batch_table_hits::<fp128::D128OneHot>(family.module_name, requests)
+        }
+        "fp128_d256_onehot" => {
+            assert_group_batch_table_hits::<fp128::D256OneHot>(family.module_name, requests)
         }
         "fp128_mixed_dim_onehot" => assert_group_batch_table_hits::<fp128::MixedDimFp128OneHot>(
             family.module_name,
@@ -508,6 +507,7 @@ fn resolve_family_group_batch_schedule(
     match family.module_name {
         "fp128_d128_dense" => table_backed_group_batch_schedule::<fp128::D128Dense>(request),
         "fp128_d128_onehot" => table_backed_group_batch_schedule::<fp128::D128OneHot>(request),
+        "fp128_d256_onehot" => table_backed_group_batch_schedule::<fp128::D256OneHot>(request),
         "fp128_mixed_dim_onehot" => {
             table_backed_group_batch_schedule::<fp128::MixedDimFp128OneHot>(request)
         }

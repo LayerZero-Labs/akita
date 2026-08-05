@@ -464,6 +464,10 @@ pub mod fp128_d128_dense_precommitted;
 pub mod fp128_d128_onehot;
 #[cfg(feature = "fp128-d128-onehot")]
 pub mod fp128_d128_onehot_precommitted;
+#[cfg(feature = "fp128-d256-onehot")]
+pub mod fp128_d256_onehot;
+#[cfg(feature = "fp128-d256-onehot")]
+pub mod fp128_d256_onehot_precommitted;
 #[cfg(feature = "fp128-d64-dense")]
 pub mod fp128_d64_dense;
 #[cfg(feature = "fp128-d64-dense-multi-chunk")]
@@ -542,6 +546,16 @@ pub fn fp128_d128_onehot_table() -> GeneratedScheduleTable {
         precommitted_profiles:
             fp128_d128_onehot_precommitted::FP128_D128_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_d128_onehot::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-d256-onehot")]
+pub fn fp128_d256_onehot_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_d256_onehot::FP128_D256_ONEHOT_SCHEDULES,
+        precommitted_profiles:
+            fp128_d256_onehot_precommitted::FP128_D256_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp128_d256_onehot::CATALOG_IDENTITY,
     }
 }
 

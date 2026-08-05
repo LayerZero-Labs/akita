@@ -77,6 +77,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
         Cfg::root_honest_fold_policy()
     }
 
+    fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
+        Cfg::schedule_catalog()
+    }
+
     fn supports_multi_group_final_commit() -> bool {
         false
     }
