@@ -13,6 +13,226 @@ use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::forward_dif_tail_eligible;
 use crate::ntt::prime::{MontCoeff, NttPrime};
 
+/// Fuse two adjacent forward DIF stages while their four data quarters are in
+/// registers. The arithmetic and reduction points are identical to executing
+/// stages `len` and `len / 2` separately; only the intermediate array pass is
+/// removed.
+#[target_feature(enable = "avx2")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn forward_dif_radix4_stage_i32_avx2(
+    a_ptr: *mut i32,
+    d: usize,
+    len: usize,
+    tw_ptr: *const i32,
+    p128: __m128i,
+    pinv128: __m128i,
+    p256: __m256i,
+    pinv256: __m256i,
+) {
+    let half = len / 2;
+    let outer_twiddle_base = len - 1;
+    let inner_twiddle_base = half - 1;
+    let mut start = 0usize;
+    while start < d {
+        let mut j = 0usize;
+        if half >= 8 {
+            while j < half {
+                // SAFETY: the caller supplies a valid power-of-two DIF stage;
+                // all four quarters and twiddle vectors are in bounds.
+                unsafe {
+                    let q0 = _mm256_loadu_si256(a_ptr.add(start + j) as *const __m256i);
+                    let q1 = _mm256_loadu_si256(a_ptr.add(start + j + half) as *const __m256i);
+                    let q2 = _mm256_loadu_si256(a_ptr.add(start + j + len) as *const __m256i);
+                    let q3 =
+                        _mm256_loadu_si256(a_ptr.add(start + j + len + half) as *const __m256i);
+                    let outer0 =
+                        _mm256_loadu_si256(tw_ptr.add(outer_twiddle_base + j) as *const __m256i);
+                    let outer1 = _mm256_loadu_si256(
+                        tw_ptr.add(outer_twiddle_base + half + j) as *const __m256i
+                    );
+                    let inner =
+                        _mm256_loadu_si256(tw_ptr.add(inner_twiddle_base + j) as *const __m256i);
+
+                    let sum0 = reduce_range_8x_i32_avx2(_mm256_add_epi32(q0, q2), p256);
+                    let diff0 =
+                        mont_mul_8x_i32_avx2(_mm256_sub_epi32(q0, q2), outer0, p256, pinv256);
+                    let sum1 = reduce_range_8x_i32_avx2(_mm256_add_epi32(q1, q3), p256);
+                    let diff1 =
+                        mont_mul_8x_i32_avx2(_mm256_sub_epi32(q1, q3), outer1, p256, pinv256);
+
+                    _mm256_storeu_si256(
+                        a_ptr.add(start + j) as *mut __m256i,
+                        reduce_range_8x_i32_avx2(_mm256_add_epi32(sum0, sum1), p256),
+                    );
+                    _mm256_storeu_si256(
+                        a_ptr.add(start + j + half) as *mut __m256i,
+                        mont_mul_8x_i32_avx2(_mm256_sub_epi32(sum0, sum1), inner, p256, pinv256),
+                    );
+                    _mm256_storeu_si256(
+                        a_ptr.add(start + j + len) as *mut __m256i,
+                        reduce_range_8x_i32_avx2(_mm256_add_epi32(diff0, diff1), p256),
+                    );
+                    _mm256_storeu_si256(
+                        a_ptr.add(start + j + len + half) as *mut __m256i,
+                        mont_mul_8x_i32_avx2(_mm256_sub_epi32(diff0, diff1), inner, p256, pinv256),
+                    );
+                }
+                j += 8;
+            }
+        } else {
+            debug_assert_eq!(half, 4);
+            // SAFETY: the caller supplies a valid power-of-two DIF stage; all
+            // four quarters and twiddle vectors are in bounds.
+            unsafe {
+                let q0 = _mm_loadu_si128(a_ptr.add(start) as *const __m128i);
+                let q1 = _mm_loadu_si128(a_ptr.add(start + half) as *const __m128i);
+                let q2 = _mm_loadu_si128(a_ptr.add(start + len) as *const __m128i);
+                let q3 = _mm_loadu_si128(a_ptr.add(start + len + half) as *const __m128i);
+                let outer0 = _mm_loadu_si128(tw_ptr.add(outer_twiddle_base) as *const __m128i);
+                let outer1 =
+                    _mm_loadu_si128(tw_ptr.add(outer_twiddle_base + half) as *const __m128i);
+                let inner = _mm_loadu_si128(tw_ptr.add(inner_twiddle_base) as *const __m128i);
+
+                let sum0 = reduce_range_4x_i32_avx2(_mm_add_epi32(q0, q2), p128);
+                let diff0 = mont_mul_4x_i32_avx2(_mm_sub_epi32(q0, q2), outer0, p128, pinv128);
+                let sum1 = reduce_range_4x_i32_avx2(_mm_add_epi32(q1, q3), p128);
+                let diff1 = mont_mul_4x_i32_avx2(_mm_sub_epi32(q1, q3), outer1, p128, pinv128);
+
+                _mm_storeu_si128(
+                    a_ptr.add(start) as *mut __m128i,
+                    reduce_range_4x_i32_avx2(_mm_add_epi32(sum0, sum1), p128),
+                );
+                _mm_storeu_si128(
+                    a_ptr.add(start + half) as *mut __m128i,
+                    mont_mul_4x_i32_avx2(_mm_sub_epi32(sum0, sum1), inner, p128, pinv128),
+                );
+                _mm_storeu_si128(
+                    a_ptr.add(start + len) as *mut __m128i,
+                    reduce_range_4x_i32_avx2(_mm_add_epi32(diff0, diff1), p128),
+                );
+                _mm_storeu_si128(
+                    a_ptr.add(start + len + half) as *mut __m128i,
+                    mont_mul_4x_i32_avx2(_mm_sub_epi32(diff0, diff1), inner, p128, pinv128),
+                );
+            }
+        }
+        start += 2 * len;
+    }
+}
+
+/// Fuse two adjacent inverse DIT stages while their four data quarters are in
+/// registers. This preserves the radix-2 arithmetic and reduction order while
+/// removing the intermediate array pass.
+#[target_feature(enable = "avx2")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn inverse_dit_radix4_stage_i32_avx2(
+    a_ptr: *mut i32,
+    d: usize,
+    len: usize,
+    tw_ptr: *const i32,
+    p128: __m128i,
+    pinv128: __m128i,
+    p256: __m256i,
+    pinv256: __m256i,
+) {
+    let outer_len = 2 * len;
+    let inner_twiddle_base = len - 1;
+    let outer_twiddle_base = outer_len - 1;
+    let mut start = 0usize;
+    while start < d {
+        let mut j = 0usize;
+        if len >= 8 {
+            while j < len {
+                // SAFETY: the caller supplies two valid adjacent DIT stages;
+                // all four quarters and twiddle vectors are in bounds.
+                unsafe {
+                    let q0 = _mm256_loadu_si256(a_ptr.add(start + j) as *const __m256i);
+                    let q1 = _mm256_loadu_si256(a_ptr.add(start + j + len) as *const __m256i);
+                    let q2 = _mm256_loadu_si256(a_ptr.add(start + j + outer_len) as *const __m256i);
+                    let q3 = _mm256_loadu_si256(
+                        a_ptr.add(start + j + outer_len + len) as *const __m256i
+                    );
+                    let inner =
+                        _mm256_loadu_si256(tw_ptr.add(inner_twiddle_base + j) as *const __m256i);
+                    let outer0 =
+                        _mm256_loadu_si256(tw_ptr.add(outer_twiddle_base + j) as *const __m256i);
+                    let outer1 = _mm256_loadu_si256(
+                        tw_ptr.add(outer_twiddle_base + len + j) as *const __m256i
+                    );
+
+                    let inner1 = mont_mul_8x_i32_avx2(q1, inner, p256, pinv256);
+                    let sum0 = reduce_range_8x_i32_avx2(_mm256_add_epi32(q0, inner1), p256);
+                    let diff0 = reduce_range_8x_i32_avx2(_mm256_sub_epi32(q0, inner1), p256);
+                    let inner3 = mont_mul_8x_i32_avx2(q3, inner, p256, pinv256);
+                    let sum1 = reduce_range_8x_i32_avx2(_mm256_add_epi32(q2, inner3), p256);
+                    let diff1 = reduce_range_8x_i32_avx2(_mm256_sub_epi32(q2, inner3), p256);
+                    let outer_sum = mont_mul_8x_i32_avx2(sum1, outer0, p256, pinv256);
+                    let outer_diff = mont_mul_8x_i32_avx2(diff1, outer1, p256, pinv256);
+
+                    _mm256_storeu_si256(
+                        a_ptr.add(start + j) as *mut __m256i,
+                        reduce_range_8x_i32_avx2(_mm256_add_epi32(sum0, outer_sum), p256),
+                    );
+                    _mm256_storeu_si256(
+                        a_ptr.add(start + j + len) as *mut __m256i,
+                        reduce_range_8x_i32_avx2(_mm256_add_epi32(diff0, outer_diff), p256),
+                    );
+                    _mm256_storeu_si256(
+                        a_ptr.add(start + j + outer_len) as *mut __m256i,
+                        reduce_range_8x_i32_avx2(_mm256_sub_epi32(sum0, outer_sum), p256),
+                    );
+                    _mm256_storeu_si256(
+                        a_ptr.add(start + j + outer_len + len) as *mut __m256i,
+                        reduce_range_8x_i32_avx2(_mm256_sub_epi32(diff0, outer_diff), p256),
+                    );
+                }
+                j += 8;
+            }
+        } else {
+            debug_assert_eq!(len, 4);
+            // SAFETY: the caller supplies two valid adjacent DIT stages; all
+            // four quarters and twiddle vectors are in bounds.
+            unsafe {
+                let q0 = _mm_loadu_si128(a_ptr.add(start) as *const __m128i);
+                let q1 = _mm_loadu_si128(a_ptr.add(start + len) as *const __m128i);
+                let q2 = _mm_loadu_si128(a_ptr.add(start + outer_len) as *const __m128i);
+                let q3 = _mm_loadu_si128(a_ptr.add(start + outer_len + len) as *const __m128i);
+                let inner = _mm_loadu_si128(tw_ptr.add(inner_twiddle_base) as *const __m128i);
+                let outer0 = _mm_loadu_si128(tw_ptr.add(outer_twiddle_base) as *const __m128i);
+                let outer1 =
+                    _mm_loadu_si128(tw_ptr.add(outer_twiddle_base + len) as *const __m128i);
+
+                let inner1 = mont_mul_4x_i32_avx2(q1, inner, p128, pinv128);
+                let sum0 = reduce_range_4x_i32_avx2(_mm_add_epi32(q0, inner1), p128);
+                let diff0 = reduce_range_4x_i32_avx2(_mm_sub_epi32(q0, inner1), p128);
+                let inner3 = mont_mul_4x_i32_avx2(q3, inner, p128, pinv128);
+                let sum1 = reduce_range_4x_i32_avx2(_mm_add_epi32(q2, inner3), p128);
+                let diff1 = reduce_range_4x_i32_avx2(_mm_sub_epi32(q2, inner3), p128);
+                let outer_sum = mont_mul_4x_i32_avx2(sum1, outer0, p128, pinv128);
+                let outer_diff = mont_mul_4x_i32_avx2(diff1, outer1, p128, pinv128);
+
+                _mm_storeu_si128(
+                    a_ptr.add(start) as *mut __m128i,
+                    reduce_range_4x_i32_avx2(_mm_add_epi32(sum0, outer_sum), p128),
+                );
+                _mm_storeu_si128(
+                    a_ptr.add(start + len) as *mut __m128i,
+                    reduce_range_4x_i32_avx2(_mm_add_epi32(diff0, outer_diff), p128),
+                );
+                _mm_storeu_si128(
+                    a_ptr.add(start + outer_len) as *mut __m128i,
+                    reduce_range_4x_i32_avx2(_mm_sub_epi32(sum0, outer_sum), p128),
+                );
+                _mm_storeu_si128(
+                    a_ptr.add(start + outer_len + len) as *mut __m128i,
+                    reduce_range_4x_i32_avx2(_mm_sub_epi32(diff0, outer_diff), p128),
+                );
+            }
+        }
+        start += 2 * outer_len;
+    }
+}
+
 /// AVX2 forward negacyclic NTT for one `i32` CRT limb.
 ///
 /// # Safety
@@ -67,6 +287,22 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
     }
 
     let mut len = D / 2;
+    while len >= 8 {
+        // SAFETY: `len` and `len / 2` are valid adjacent DIF stages.
+        unsafe {
+            forward_dif_radix4_stage_i32_avx2(
+                a_ptr,
+                D,
+                len,
+                tw.fwd_twiddles.as_ptr() as *const i32,
+                p_d,
+                pinv_d,
+                p256,
+                pinv256,
+            );
+        }
+        len /= 4;
+    }
     while len >= 4 {
         let twiddle_base = len - 1;
         let tw_ptr = tw.fwd_twiddles.as_ptr() as *const i32;
@@ -195,6 +431,22 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
         }
         len = 4;
     }
+    while len < D / 2 {
+        // SAFETY: `len` and `2 * len` are valid adjacent DIT stages.
+        unsafe {
+            inverse_dit_radix4_stage_i32_avx2(
+                a_ptr,
+                D,
+                len,
+                tw.inv_twiddles.as_ptr() as *const i32,
+                p_d,
+                pinv_d,
+                p256,
+                pinv256,
+            );
+        }
+        len *= 4;
+    }
     while len < D {
         let twiddle_base = len - 1;
         let tw_ptr = tw.inv_twiddles.as_ptr() as *const i32;
@@ -312,6 +564,22 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
     let a_ptr = a.as_mut_ptr() as *mut i32;
 
     let mut len = D / 2;
+    while len >= 8 {
+        // SAFETY: `len` and `len / 2` are valid adjacent DIF stages.
+        unsafe {
+            forward_dif_radix4_stage_i32_avx2(
+                a_ptr,
+                D,
+                len,
+                tw.fwd_twiddles.as_ptr() as *const i32,
+                p_d,
+                pinv_d,
+                p256,
+                pinv256,
+            );
+        }
+        len /= 4;
+    }
     while len >= 4 {
         let twiddle_base = len - 1;
         let tw_ptr = tw.fwd_twiddles.as_ptr() as *const i32;
@@ -439,6 +707,22 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
             );
         }
         len = 4;
+    }
+    while len < D / 2 {
+        // SAFETY: `len` and `2 * len` are valid adjacent DIT stages.
+        unsafe {
+            inverse_dit_radix4_stage_i32_avx2(
+                a_ptr,
+                D,
+                len,
+                tw.inv_twiddles.as_ptr() as *const i32,
+                p_d,
+                pinv_d,
+                p256,
+                pinv256,
+            );
+        }
+        len *= 4;
     }
     while len < D {
         let twiddle_base = len - 1;

@@ -486,14 +486,10 @@ fn scalar_inverse_ntt_cyclic_i32<const D: usize>(
     }
 }
 
-#[test]
-fn avx2_ntt_i32_transforms_match_scalar() {
-    if !std::is_x86_feature_detected!("avx2") {
-        return;
-    }
+fn assert_avx2_ntt_i32_transforms_match_scalar<const D: usize>() {
     let prime = NttPrime::compute(1073707009_i32);
-    let tw = NttTwiddles::<i32, 64>::compute(prime);
-    let input = random_mont_array_i32::<64>(prime, 0x5150);
+    let tw = NttTwiddles::<i32, D>::compute(prime);
+    let input = random_mont_array_i32::<D>(prime, 0x5150 ^ D as u64);
 
     let mut avx_fwd = input;
     let mut scalar_fwd = input;
@@ -520,6 +516,17 @@ fn avx2_ntt_i32_transforms_match_scalar() {
     unsafe { inverse_ntt_cyclic_i32(&mut avx_cyclic, prime, &tw) };
     scalar_inverse_ntt_cyclic_i32(&mut scalar_cyclic, prime, &tw);
     assert_eq!(avx_cyclic, scalar_cyclic);
+}
+
+#[test]
+fn avx2_ntt_i32_transforms_match_scalar() {
+    if !std::is_x86_feature_detected!("avx2") {
+        return;
+    }
+    assert_avx2_ntt_i32_transforms_match_scalar::<64>();
+    assert_avx2_ntt_i32_transforms_match_scalar::<128>();
+    assert_avx2_ntt_i32_transforms_match_scalar::<256>();
+    assert_avx2_ntt_i32_transforms_match_scalar::<512>();
 }
 
 #[test]
