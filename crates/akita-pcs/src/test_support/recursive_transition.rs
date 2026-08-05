@@ -59,16 +59,6 @@ where
             };
             root_dims.validate_role_projection()?;
             middle_dims.validate_role_projection()?;
-            for descriptor in &key.precommitteds {
-                if descriptor.inner_commit_matrix.ring_dimension() != Root::D
-                    || descriptor.outer_commit_matrix.ring_dimension() != root_bd_ring_dim
-                {
-                    return Err(AkitaError::InvalidSetup(
-                        "recursive transition precommit dimensions must match the root A/B band"
-                            .into(),
-                    ));
-                }
-            }
 
             let field_bits = Root::decomposition().field_bits();
             let opening_layout = key.opening_layout()?;
@@ -310,16 +300,7 @@ where
             }
         };
         let pre_group = PolynomialGroupLayout::new(pre_nv, 1);
-        let pre_schedule = per_matrix_ring_dims_root_schedule::<Root>(
-            pre_group.num_vars(),
-            pre_group.num_polynomials(),
-            ROOT_BD_RING_DIM,
-            ROOT_BD_RING_DIM,
-        )?;
-        let descriptor = akita_types::CommittedGroupProfile::from_params(
-            pre_group,
-            &pre_schedule.root.params.final_group.commitment,
-        );
+        let descriptor = committed_group_profile::<Root>(&pre_group)?;
         let key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(final_nv, final_np),
             precommitteds: vec![descriptor, descriptor],

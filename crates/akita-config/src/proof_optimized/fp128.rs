@@ -161,7 +161,12 @@ impl_proof_optimized_preset!(
     256,
     128,
     1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1)
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
+    schedules = (
+        "schedules-fp128-d256-onehot",
+        "fp128_d256_onehot",
+        fp128_d256_onehot_table
+    )
 );
 impl_proof_optimized_preset!(
     MixedDimFp128OneHot,

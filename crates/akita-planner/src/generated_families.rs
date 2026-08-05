@@ -320,6 +320,10 @@ fn precommitted_profiles<Cfg: CommitmentConfig + 'static>(
             &mut profiles,
             standalone_precommit_profile::<Cfg>(PolynomialGroupLayout::new(16, 1))?,
         );
+        push_unique_profile(
+            &mut profiles,
+            standalone_precommit_profile::<Cfg>(PolynomialGroupLayout::new(15, 2))?,
+        );
     }
     if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64Dense>() {
         push_unique_profile(
@@ -616,11 +620,6 @@ pub fn emit_spec_for_family(
     let policy = (family.policy)();
     let group_batch_keys = (family.group_batch_keys)(family)?;
     let mut precommitted_profiles = (family.precommitted_profiles)()?;
-    for (key, _) in &group_batch_keys {
-        for &profile in &key.precommitteds {
-            push_unique_profile(&mut precommitted_profiles, profile);
-        }
-    }
     precommitted_profiles.sort_by_key(CommittedGroupProfile::canonical_descriptor_bytes);
     Ok(EmitSpec {
         module_name: family.module_name,
@@ -672,6 +671,14 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         1,
         50,
         fp128::D64OneHot
+    ),
+    family_row!(
+        "fp128_d256_onehot",
+        "FP128_D256_ONEHOT_SCHEDULES",
+        "fp128-d256-onehot",
+        14,
+        16,
+        fp128::D256OneHot
     ),
     GeneratedFamily {
         module_name: "fp128_mixed_dim_onehot",

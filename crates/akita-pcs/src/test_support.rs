@@ -11,7 +11,7 @@
 //! `ring_plan_test_seed`) remain in [`akita_config::test_support`].
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_config::{policy_of, CommitmentConfig};
+use akita_config::{committed_group_profile, policy_of, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::sis::{
     compute_num_digits_field_width, decomposed_t_ring_count, decomposed_w_ring_count,
