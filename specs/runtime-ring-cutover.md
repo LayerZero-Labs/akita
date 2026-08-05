@@ -370,8 +370,8 @@ New or updated tests:
   a const `D` parameter.
 - A prover/verifier E2E test using the normal public API and a schedule whose
   fold levels use different valid dimensions under one setup envelope.
-- **`akita-verifier` mixed-D rejection tests** mirroring `mixed_d_per_level_e2e`
-  malformed matrix (not only PCS integration).
+- **`akita-verifier` mixed-D rejection tests** covering malformed mixed-D
+  matrices at the verifier boundary.
 - Per-role adapter test: `CommitmentRingDims { d_a:128, d_b:32, d_d:64 }`;
   each operation adapter dispatches on its role dim without imposing an order
   between B and D (planner may still reject divergent dims until Slice 3).

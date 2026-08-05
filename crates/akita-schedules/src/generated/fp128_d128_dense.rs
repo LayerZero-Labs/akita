@@ -47,7 +47,7 @@ pub(crate) static FP128_D128_DENSE_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
             final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(16, 1), num_digits_inner: 43, num_digits_fold: 4, challenge: GeneratedRootFinalChallenge::Flat,
-                commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 512, positions_per_block: 32, live_blocks: 16 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 128, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 128, log_basis: 3, slice_count: 1 } } },
+                commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 512, positions_per_block: 16, live_blocks: 32 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 128, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 128, log_basis: 3, slice_count: 1 } } },
             precommitted_groups: &[],
             open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 128, log_basis: 3, slice_count: 1 },
             witness_partition: GeneratedWitnessPartition::Single,
@@ -157,5 +157,5 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 12329058664815196960,
     key_count: 7,
-    key_digest: 4939727621129500790,
+    key_digest: 1877529539742784118,
 };

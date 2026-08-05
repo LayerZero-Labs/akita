@@ -1,15 +1,12 @@
 #![cfg_attr(feature = "profile-onehot-fp128-d64", allow(dead_code))]
 
 use crate::report::print_layout;
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-use crate::workload::run_recursive_multi_group_onehot_mixed;
 use crate::workload::{
     onehot_k_for_num_vars, run_batched_onehot, run_dense_for, run_onehot,
     run_recursive_multi_group_onehot,
 };
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
-use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::HasWide;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
@@ -18,8 +15,6 @@ use akita_field::{
     CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
 };
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-use akita_pcs::test_support::{MixedDConfig, RecursiveRingDimensionTransitionConfig};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupParams, FpExtEncoding, MultiChunkProfileId,
@@ -136,10 +131,12 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         print_layout(&layout, 1, Cfg::decomposition().field_bits());
         run_onehot::<FF, D, Cfg>(label, nv, &layout, Some(&plan), true);
     } else {
-        let schedule_key = PolynomialGroupLayout::new(nv, num_polys);
-        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_key))
-            .expect("schedule plan");
-        let layout = akita_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
+        let lookup_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(nv, num_polys));
+        let plan = Cfg::runtime_schedule(lookup_key.clone()).expect("schedule plan");
+        let layout = Cfg::get_params_for_batched_commitment(
+            &lookup_key.opening_layout().expect("opening layout"),
+        )
+        .expect("layout");
         let required_vars =
             layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
         if required_vars > nv {
@@ -244,24 +241,12 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2,
     },
     ProfileMode {
-        name: "onehot_fp128_mixed_d_multi_group_recursive",
-        run: run_profile_onehot_fp128_mixed_d_multi_group_recursive,
-    },
-    ProfileMode {
-        name: "onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2",
-        run: run_profile_onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2,
-    },
-    ProfileMode {
         name: "dense_fp128_d128",
         run: run_profile_dense_fp128_d128,
     },
     ProfileMode {
         name: "onehot_fp128_d128",
         run: run_profile_onehot_fp128_d128,
-    },
-    ProfileMode {
-        name: "onehot_fp128_d64_root_d128",
-        run: run_profile_onehot_fp128_d64_root_d128,
     },
     ProfileMode {
         name: "onehot_fp128_d64_tensor",
@@ -330,14 +315,11 @@ const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp128_d64_multi_chunk_w8r2",
     "onehot_fp128_d64_multi_group_recursive",
     "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
-    "onehot_fp128_mixed_d_multi_group_recursive",
-    "onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2",
     // D128+ presets are heavy and/or runtime-DP-backed; keep them out of the
     // default `all` smoke sweep (they are still selectable by explicit
     // `AKITA_MODE=` and drive the profile-bench matrix).
     "dense_fp128_d128",
     "onehot_fp128_d128",
-    "onehot_fp128_d64_root_d128",
     "dense_fp32_d128",
     "onehot_fp32_d128",
     "onehot_fp64_d128",
@@ -498,63 +480,6 @@ fn run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2(
     );
 }
 
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_profile_onehot_fp128_mixed_d_multi_group_recursive(nv: usize, num_polys: usize) {
-    type Cfg = RecursiveRingDimensionTransitionConfig<
-        fp128::D256OneHot,
-        fp128::D128OneHot,
-        fp128::D64OneHot,
-        fp128::D64OneHot,
-        128,
-        64,
-    >;
-    assert_eq!(nv, 32, "mixed recursive profile fixes nv=32");
-    assert_eq!(
-        num_polys, 4,
-        "mixed recursive profile fixes four polynomials"
-    );
-    tracing::info!(
-        "=== onehot_fp128_mixed_d_multi_group_recursive (fp128, {}, recursive setup, L0=256/128/128, L1=128/64/64, L2+=64/64/64) ===",
-        fp128_prime_label()
-    );
-    run_recursive_multi_group_onehot_mixed::<F, { Cfg::D }, Cfg>(
-        "onehot_fp128_mixed_d_multi_group_recursive",
-        16,
-        32,
-        2,
-    );
-}
-
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_profile_onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2(
-    nv: usize,
-    num_polys: usize,
-) {
-    type Cfg = RecursiveRingDimensionTransitionConfig<
-        fp128::D256OneHot,
-        fp128::D128OneHot,
-        fp128::D64OneHot,
-        fp128::D64OneHotMultiChunk,
-        128,
-        64,
-    >;
-    assert_eq!(nv, 32, "mixed recursive W8R2 profile fixes nv=32");
-    assert_eq!(
-        num_polys, 4,
-        "mixed recursive W8R2 profile fixes four polynomials"
-    );
-    tracing::info!(
-        "=== onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2 (fp128, {}, recursive setup + W8R2, L0=256/128/128, L1=128/64/64, L2+=64/64/64) ===",
-        fp128_prime_label()
-    );
-    run_recursive_multi_group_onehot_mixed::<F, { Cfg::D }, Cfg>(
-        "onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2",
-        16,
-        32,
-        2,
-    );
-}
-
 fn run_profile_onehot_fp128_d64_multi_chunk_named<
     const D: usize,
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
@@ -636,256 +561,6 @@ fn run_profile_onehot_fp128_d128(nv: usize, num_polys: usize) {
     type Cfg = fp128::D128OneHot;
     let title = fp128_onehot_title(128, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d128", &title, nv, num_polys);
-}
-
-/// Mixed ring-dimension-per-level experiment: the root fold (level 0) runs at
-/// `D = 128` (via [`fp128::D128OneHot`]); every recursive level and the
-/// terminal fold are repriced at `D = 64` (via [`fp128::D64OneHot`]). The
-/// flat public matrix is shared by all levels; each scheduled matrix interprets
-/// only its own exact field prefix at its own ring dimension.
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_profile_onehot_fp128_d64_root_d128(nv: usize, num_polys: usize) {
-    let prime = fp128_prime_label();
-    let onehot_k = onehot_k_for_num_vars(nv);
-    // Levels `[0, switch)` fold at D=128; the rest at D=64. `AKITA_MIXED_SWITCH`
-    // selects the switch point (default 1 = only the root at D=128). Switching
-    // later keeps the large early folds uniform (fast compact range-check path)
-    // and moves the D-transition penalty onto a small intermediate witness.
-    let switch: usize = std::env::var("AKITA_MIXED_SWITCH")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(1);
-    // Root ring dimension for the leading uniform D-band (default 128).
-    // Tableless D256 is planned offline by the mixed-schedule builder.
-    let root_d: usize = std::env::var("AKITA_MIXED_ROOT_D")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(128);
-    assert_singleton_mode("onehot_fp128_d64_root_d128", num_polys);
-    // Three-band ring-dimension transition: L0 = <root>/128/128, L1 =
-    // 128/64/64, then uniform 64. The root A dimension is 256 or 512.
-    if std::env::var("AKITA_THREE_BAND_RING_DIMENSION_TRANSITION").as_deref() == Ok("1") {
-        run_three_band_ring_dimension_transition(nv);
-        return;
-    }
-    // Multi-level ring-dimension transition: L0 = 128/128/64, L1 = 128/64/64,
-    // then uniform 64.
-    if std::env::var("AKITA_RING_DIMENSION_TRANSITION").as_deref() == Ok("1") {
-        tracing::info!(
-            "=== onehot_fp128_d64_root_d128 (fp128, {prime}, ring-dimension transition L0=128/128/64 L1=128/64/64 then 64, 1-of-{onehot_k}) ==="
-        );
-        run_ring_dimension_transition(nv);
-        return;
-    }
-    // Per-matrix ring dimensions at the root: A = 128, with independently
-    // selected B/D dimensions.
-    // The complete D128 suffix is replanned from the resulting root witness.
-    if std::env::var("AKITA_PER_MATRIX_RING_DIMS_ROOT").as_deref() == Ok("1") {
-        let b_ring_dim: usize = std::env::var("AKITA_ROOT_B_RING_DIM")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(64);
-        let d_ring_dim: usize = std::env::var("AKITA_ROOT_D_RING_DIM")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(64);
-        tracing::info!(
-            "=== onehot_fp128_d64_root_d128 (fp128, {prime}, root d_a=128 / d_b={b_ring_dim} / d_d={d_ring_dim}, 1-of-{onehot_k}) ==="
-        );
-        match (b_ring_dim, d_ring_dim) {
-            (64, 64) => run_per_matrix_ring_dims_root::<64, 64>(nv),
-            (128, 64) => run_per_matrix_ring_dims_root::<128, 64>(nv),
-            (64, 128) => run_per_matrix_ring_dims_root::<64, 128>(nv),
-            (o, p) => panic!(
-                "AKITA_ROOT_B_RING_DIM={o} / AKITA_ROOT_D_RING_DIM={p} unsupported (use 64 or 128, must divide 128)"
-            ),
-        }
-        return;
-    }
-    let title = format!(
-        "=== onehot_fp128_d64_root_d128 (fp128, {prime}, D={root_d} for folds [0,{switch}) then D=64, 1-of-{onehot_k}, log_commit_bound=1) ==="
-    );
-    tracing::info!("{}", title);
-    match (root_d, switch) {
-        (128, 1) => run_mixed_root::<fp128::D128OneHot, 128, 1>(nv),
-        (128, 2) => run_mixed_root::<fp128::D128OneHot, 128, 2>(nv),
-        (128, 3) => run_mixed_root::<fp128::D128OneHot, 128, 3>(nv),
-        (256, 1) => run_mixed_root::<fp128::D256OneHot, 256, 1>(nv),
-        (256, 2) => run_mixed_root::<fp128::D256OneHot, 256, 2>(nv),
-        (256, 3) => run_mixed_root::<fp128::D256OneHot, 256, 3>(nv),
-        (d, s) => {
-            panic!("AKITA_MIXED_ROOT_D={d} / AKITA_MIXED_SWITCH={s} unsupported (root_d 128|256, switch 1|2|3)")
-        }
-    }
-}
-
-/// Three-band ring-dimension transition: L0 = A/B/D `<root>`/128/128, L1 =
-/// 128/64/64, then uniform 64.
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_three_band_ring_dimension_transition(nv: usize) {
-    let root_d: usize = std::env::var("AKITA_THREE_BAND_ROOT_A_RING_DIM")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(256);
-    match root_d {
-        256 => run_three_band_ring_dimension_transition_impl::<fp128::D256OneHot, 256>(nv),
-        512 => run_three_band_ring_dimension_transition_impl::<fp128::D512OneHot, 512>(nv),
-        d => panic!("AKITA_THREE_BAND_ROOT_A_RING_DIM={d} unsupported (use 256 or 512)"),
-    }
-}
-
-/// Three-band ring-dimension transition: L0 = `ROOT_D`/128/128, L1 = 128/64/64,
-/// then uniform 64. D512 is a temporary promotion experiment pending native
-/// per-matrix ring-dimension planning.
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_three_band_ring_dimension_transition_impl<Root, const ROOT_D: usize>(nv: usize)
-where
-    Root: CommitmentConfig<Field = F, ExtField = F>,
-{
-    use akita_pcs::test_support::ThreeBandRingDimensionTransitionConfig;
-    type Cfg<Root> =
-        ThreeBandRingDimensionTransitionConfig<Root, fp128::D128OneHot, fp128::D64OneHot, 128, 64>;
-    tracing::info!(
-        "=== onehot_fp128_d64_root_d128 (fp128, {}, three-band L0={ROOT_D}/128/128 L1=128/64/64 then 64, 1-of-{}) ===",
-        fp128_prime_label(),
-        onehot_k_for_num_vars(nv),
-    );
-    let layout = resolve_layout::<F, Cfg<Root>>(nv);
-    let required_vars =
-        layout.position_index_bits() + layout.block_index_bits() + ROOT_D.trailing_zeros() as usize;
-    if required_vars > nv {
-        panic!(
-            "[onehot_fp128_d64_root_d128] three-band requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
-        );
-    }
-    let plan = Cfg::<Root>::runtime_schedule(AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(nv),
-    ))
-    .expect("three-band schedule plan");
-    print_layout(&layout, 1, Cfg::<Root>::decomposition().field_bits());
-    run_onehot::<F, ROOT_D, Cfg<Root>>(
-        "onehot_fp128_d64_root_d128",
-        nv,
-        &layout,
-        Some(&plan),
-        false,
-    );
-}
-
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_ring_dimension_transition(nv: usize) {
-    // Root opening-matrix ring dimension. L1 is always 128/64/64.
-    let root_open_d: usize = std::env::var("AKITA_TRANSITION_ROOT_D_RING_DIM")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(64);
-    match root_open_d {
-        64 => run_ring_dimension_transition_impl::<64>(nv),
-        128 => run_ring_dimension_transition_impl::<128>(nv),
-        d => panic!("AKITA_TRANSITION_ROOT_D_RING_DIM={d} unsupported (use 64 or 128)"),
-    }
-}
-
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_ring_dimension_transition_impl<const ROOT_D_RING_DIM: usize>(nv: usize) {
-    use akita_pcs::test_support::RingDimensionTransitionConfig;
-    type Cfg<const R: usize> =
-        RingDimensionTransitionConfig<fp128::D128OneHot, fp128::D64OneHot, 64, R>;
-    let layout = resolve_layout::<F, Cfg<ROOT_D_RING_DIM>>(nv);
-    let required_vars = layout.position_index_bits()
-        + layout.block_index_bits()
-        + 128usize.trailing_zeros() as usize;
-    if required_vars > nv {
-        panic!(
-            "[onehot_fp128_d64_root_d128] ring-dimension transition requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
-        );
-    }
-    let plan = Cfg::<ROOT_D_RING_DIM>::runtime_schedule(AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(nv),
-    ))
-    .expect("ring-dimension transition schedule");
-    print_layout(
-        &layout,
-        1,
-        Cfg::<ROOT_D_RING_DIM>::decomposition().field_bits(),
-    );
-    run_onehot::<F, 128, Cfg<ROOT_D_RING_DIM>>(
-        "onehot_fp128_d64_root_d128",
-        nv,
-        &layout,
-        Some(&plan),
-        false,
-    );
-}
-
-/// Run the per-matrix ring-dimension root experiment at A/B/D =
-/// `128`/`B_RING_DIM`/`D_RING_DIM`, followed by a freshly planned D128 suffix.
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_per_matrix_ring_dims_root<const B_RING_DIM: usize, const D_RING_DIM: usize>(nv: usize) {
-    use akita_pcs::test_support::PerMatrixRingDimsRootConfig;
-    type Cfg<const O: usize, const P: usize> = PerMatrixRingDimsRootConfig<fp128::D128OneHot, O, P>;
-    let layout = resolve_layout::<F, Cfg<B_RING_DIM, D_RING_DIM>>(nv);
-    let required_vars = layout.position_index_bits()
-        + layout.block_index_bits()
-        + 128usize.trailing_zeros() as usize;
-    if required_vars > nv {
-        panic!(
-            "[onehot_fp128_d64_root_d128] per-matrix ring-dimension root requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
-        );
-    }
-    let plan = Cfg::<B_RING_DIM, D_RING_DIM>::runtime_schedule(AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(nv),
-    ))
-    .expect("per-matrix ring-dimension root schedule");
-    print_layout(
-        &layout,
-        1,
-        Cfg::<B_RING_DIM, D_RING_DIM>::decomposition().field_bits(),
-    );
-    run_onehot::<F, 128, Cfg<B_RING_DIM, D_RING_DIM>>(
-        "onehot_fp128_d64_root_d128",
-        nv,
-        &layout,
-        Some(&plan),
-        false,
-    );
-}
-
-/// Run the mixed-D experiment: `Env` (ring dim `ROOT_D`) is the leading-band
-/// envelope, switching to `D64OneHot` after fold level `SWITCH_AT_FOLD - 1`.
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_mixed_root<Env, const ROOT_D: usize, const SWITCH_AT_FOLD: usize>(nv: usize)
-where
-    Env: CommitmentConfig<Field = F, ExtField = F>,
-{
-    type Cfg<Env, const S: usize> = MixedDConfig<Env, fp128::D64OneHot, S>;
-    let layout = resolve_layout::<F, Cfg<Env, SWITCH_AT_FOLD>>(nv);
-    let required_vars =
-        layout.position_index_bits() + layout.block_index_bits() + ROOT_D.trailing_zeros() as usize;
-    if required_vars > nv {
-        panic!(
-            "[onehot_fp128_d64_root_d128] fixed onehot profile requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
-        );
-    }
-    let plan = Cfg::<Env, SWITCH_AT_FOLD>::runtime_schedule(AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(nv),
-    ))
-    .expect("mixed-D schedule plan");
-    print_layout(
-        &layout,
-        1,
-        Cfg::<Env, SWITCH_AT_FOLD>::decomposition().field_bits(),
-    );
-    // Commit + fold the root at the envelope ring dimension. Skip the planner
-    // proof-size assertion: the mixed schedule is synthetic and the offline
-    // planner cannot reproduce it from its lookup key.
-    run_onehot::<F, ROOT_D, Cfg<Env, SWITCH_AT_FOLD>>(
-        "onehot_fp128_d64_root_d128",
-        nv,
-        &layout,
-        Some(&plan),
-        false,
-    );
 }
 
 #[cfg(not(feature = "profile-ci"))]

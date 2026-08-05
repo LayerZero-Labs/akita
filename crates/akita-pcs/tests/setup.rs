@@ -241,12 +241,26 @@ where
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
+    let verifier_setup_source =
+        AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv + 1, setup_polys + 1)
+            .expect("larger verifier materialization");
+    assert_eq!(
+        setup.expanded.seed().setup_seed,
+        verifier_setup_source.expanded.seed().setup_seed
+    );
+    assert!(
+        verifier_setup_source
+            .expanded
+            .shared_matrix()
+            .num_field_elements()
+            >= setup.expanded.shared_matrix().num_field_elements()
+    );
     let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier_for_schedule(
-        &setup,
+        &verifier_setup_source,
         &schedule,
         &opening_layout,
     )
-    .expect("schedule-scoped verifier setup");
+    .expect("schedule-scoped verifier setup from a larger covering public prefix");
     let verifier_capacity =
         akita_types::verifier_setup_matrix_capacity_for_schedule(&schedule, &opening_layout)
             .expect("verifier capacity");
