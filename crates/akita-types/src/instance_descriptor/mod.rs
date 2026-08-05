@@ -15,10 +15,7 @@ mod fold_linf_binding;
 #[cfg(test)]
 mod tests;
 
-pub use fold_linf_binding::{
-    FoldLinfProtocolBinding, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
-    FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
-};
+pub use fold_linf_binding::FoldLinfProtocolBinding;
 
 use crate::descriptor_bytes::{push_usize, sis_modulus_profile_tag};
 use crate::{
@@ -28,10 +25,10 @@ use crate::{
 use akita_field::{AkitaError, CanonicalField, ExtField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
+    DEFAULT_MAX_SEQUENCE_LEN,
 };
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
-use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
 /// Descriptor schema version for the in-development transcript preamble.
@@ -198,14 +195,20 @@ impl SetupSection {
 /// Per-proof effective schedule binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanSection {
+    /// Explicit v1 catalog and row identity selected by the public statement.
+    pub schedule_selection: crate::OpeningScheduleSelection,
     /// Digest of the final effective verifier schedule.
     pub effective_schedule_digest: DescriptorDigest,
 }
 
 impl PlanSection {
     /// Build a plan section from the runtime schedule the verifier will replay.
-    pub fn from_schedule(schedule: &FoldSchedule) -> Self {
+    pub fn from_schedule(
+        schedule_selection: crate::OpeningScheduleSelection,
+        schedule: &FoldSchedule,
+    ) -> Self {
         Self {
+            schedule_selection,
             effective_schedule_digest: digest_effective_schedule(schedule),
         }
     }
@@ -214,18 +217,14 @@ impl PlanSection {
 /// Per commit-and-open call descriptor fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallSection {
-    /// Total number of opened polynomials addressed by the call.
-    pub num_polys: u32,
     /// Number of commitment groups opened by the call.
     pub num_commitment_groups: u32,
+    /// Per-group opening-point arities in descriptor/transcript order.
+    pub num_vars_per_commitment_group: Vec<u32>,
     /// Per-group polynomial counts in descriptor/transcript order.
     pub num_polys_per_commitment_group: Vec<u32>,
-    /// Per-group ordered coordinate selections into the shared opening point.
-    pub point_variable_selections: Vec<Vec<u32>>,
     /// Public basis mode for opening-point weights.
     pub basis_mode: BasisMode,
-    /// Common opening-point arity.
-    pub opening_point_arity: u32,
     /// Digest of normalized opening layout.
     pub opening_batch_digest: DescriptorDigest,
 }
@@ -242,27 +241,21 @@ impl CallSection {
         basis_mode: BasisMode,
     ) -> Result<Self, AkitaError> {
         layout.check()?;
+        let num_vars_per_commitment_group = layout
+            .groups()
+            .iter()
+            .map(|group| usize_to_u32(group.num_vars(), "num_vars_per_commitment_group"))
+            .collect::<Result<Vec<_>, _>>()?;
         let num_polys_per_commitment_group = layout
             .groups()
             .iter()
             .map(|group| usize_to_u32(group.num_polynomials(), "num_polys_per_commitment_group"))
             .collect::<Result<Vec<_>, _>>()?;
-        let point_variable_selections = layout
-            .groups()
-            .iter()
-            .map(|group| {
-                (0..group.num_vars())
-                    .map(|index| usize_to_u32(index, "point_variable_selection"))
-                    .collect::<Result<Vec<_>, _>>()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
-            num_polys: usize_to_u32(layout.num_total_polynomials(), "num_polys")?,
             num_commitment_groups: usize_to_u32(layout.num_groups(), "num_commitment_groups")?,
+            num_vars_per_commitment_group,
             num_polys_per_commitment_group,
-            point_variable_selections,
             basis_mode,
-            opening_point_arity: usize_to_u32(layout.max_num_vars(), "opening_point_arity")?,
             opening_batch_digest: layout.opening_batch_digest(),
         })
     }
@@ -546,7 +539,7 @@ impl AkitaDeserialize for SetupSection {
 
 impl Valid for PlanSection {
     fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
+        self.schedule_selection.check()
     }
 }
 
@@ -554,14 +547,16 @@ impl AkitaSerialize for PlanSection {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
-        _compress: Compress,
+        compress: Compress,
     ) -> Result<(), SerializationError> {
+        self.schedule_selection
+            .serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.effective_schedule_digest)?;
         Ok(())
     }
 
-    fn serialized_size(&self, _compress: Compress) -> usize {
-        32
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.schedule_selection.serialized_size(compress) + 32
     }
 }
 
@@ -570,11 +565,17 @@ impl AkitaDeserialize for PlanSection {
 
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
-        _compress: Compress,
+        compress: Compress,
         validate: Validate,
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
         let out = Self {
+            schedule_selection: crate::OpeningScheduleSelection::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
             effective_schedule_digest: read_digest(&mut reader)?,
         };
         if matches!(validate, Validate::Yes) {
@@ -586,9 +587,14 @@ impl AkitaDeserialize for PlanSection {
 
 impl Valid for CallSection {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.num_polys == 0 || self.num_commitment_groups == 0 {
+        if self.num_commitment_groups == 0 {
             return Err(SerializationError::InvalidData(
                 "descriptor call counts must be non-zero".to_string(),
+            ));
+        }
+        if self.num_vars_per_commitment_group.len() != self.num_commitment_groups as usize {
+            return Err(SerializationError::InvalidData(
+                "descriptor group arity count mismatch".to_string(),
             ));
         }
         if self.num_polys_per_commitment_group.len() != self.num_commitment_groups as usize {
@@ -596,40 +602,10 @@ impl Valid for CallSection {
                 "descriptor commitment-group count mismatch".to_string(),
             ));
         }
-        if self.point_variable_selections.len() != self.num_commitment_groups as usize {
-            return Err(SerializationError::InvalidData(
-                "descriptor point-variable selection count mismatch".to_string(),
-            ));
-        }
         if self.num_polys_per_commitment_group.contains(&0) {
             return Err(SerializationError::InvalidData(
                 "descriptor commitment groups must be non-empty".to_string(),
             ));
-        }
-        let total_group_polys =
-            self.num_polys_per_commitment_group
-                .iter()
-                .try_fold(0u32, |acc, &group_size| {
-                    acc.checked_add(group_size).ok_or_else(|| {
-                        SerializationError::InvalidData(
-                            "descriptor group polynomial count overflow".to_string(),
-                        )
-                    })
-                })?;
-        if total_group_polys != self.num_polys {
-            return Err(SerializationError::InvalidData(
-                "descriptor group sizes do not match call counts".to_string(),
-            ));
-        }
-        for selection in &self.point_variable_selections {
-            let mut seen = BTreeSet::new();
-            for &index in selection {
-                if index >= self.opening_point_arity || !seen.insert(index) {
-                    return Err(SerializationError::InvalidData(
-                        "descriptor point-variable selection is malformed".to_string(),
-                    ));
-                }
-            }
         }
         Ok(())
     }
@@ -641,9 +617,18 @@ impl AkitaSerialize for CallSection {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.num_polys.serialize_with_mode(&mut writer, compress)?;
         self.num_commitment_groups
             .serialize_with_mode(&mut writer, compress)?;
+        let arity_count =
+            u32::try_from(self.num_vars_per_commitment_group.len()).map_err(|_| {
+                SerializationError::InvalidData(
+                    "descriptor group arity vector length does not fit u32".to_string(),
+                )
+            })?;
+        arity_count.serialize_with_mode(&mut writer, compress)?;
+        for &num_vars in &self.num_vars_per_commitment_group {
+            num_vars.serialize_with_mode(&mut writer, compress)?;
+        }
         let group_count =
             u32::try_from(self.num_polys_per_commitment_group.len()).map_err(|_| {
                 SerializationError::InvalidData(
@@ -654,55 +639,26 @@ impl AkitaSerialize for CallSection {
         for &group_size in &self.num_polys_per_commitment_group {
             group_size.serialize_with_mode(&mut writer, compress)?;
         }
-        let selection_count =
-            u32::try_from(self.point_variable_selections.len()).map_err(|_| {
-                SerializationError::InvalidData(
-                    "descriptor point-variable selection vector length does not fit u32"
-                        .to_string(),
-                )
-            })?;
-        selection_count.serialize_with_mode(&mut writer, compress)?;
-        for selection in &self.point_variable_selections {
-            let selection_len = u32::try_from(selection.len()).map_err(|_| {
-                SerializationError::InvalidData(
-                    "descriptor point-variable selection length does not fit u32".to_string(),
-                )
-            })?;
-            selection_len.serialize_with_mode(&mut writer, compress)?;
-            for &index in selection {
-                index.serialize_with_mode(&mut writer, compress)?;
-            }
-        }
         encode_basis_mode(self.basis_mode, &mut writer, compress)?;
-        self.opening_point_arity
-            .serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.opening_batch_digest)?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.num_polys.serialized_size(compress)
-            + self.num_commitment_groups.serialized_size(compress)
+        self.num_commitment_groups.serialized_size(compress)
+            + 0u32.serialized_size(compress)
+            + self
+                .num_vars_per_commitment_group
+                .iter()
+                .map(|num_vars| num_vars.serialized_size(compress))
+                .sum::<usize>()
             + 0u32.serialized_size(compress)
             + self
                 .num_polys_per_commitment_group
                 .iter()
                 .map(|group_size| group_size.serialized_size(compress))
                 .sum::<usize>()
-            + 0u32.serialized_size(compress)
-            + self
-                .point_variable_selections
-                .iter()
-                .map(|selection| {
-                    0u32.serialized_size(compress)
-                        + selection
-                            .iter()
-                            .map(|index| index.serialized_size(compress))
-                            .sum::<usize>()
-                })
-                .sum::<usize>()
             + basis_mode_size(compress)
-            + self.opening_point_arity.serialized_size(compress)
             + 32
     }
 }
@@ -716,12 +672,55 @@ impl AkitaDeserialize for CallSection {
         validate: Validate,
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
-        let num_polys = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let num_commitment_groups =
             u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let expected_count = usize::try_from(num_commitment_groups).map_err(|_| {
+            SerializationError::InvalidData(
+                "descriptor commitment-group count does not fit usize".to_string(),
+            )
+        })?;
+        if expected_count == 0 || expected_count > DEFAULT_MAX_SEQUENCE_LEN {
+            return Err(SerializationError::InvalidData(format!(
+                "descriptor commitment-group count {expected_count} is outside 1..={DEFAULT_MAX_SEQUENCE_LEN}"
+            )));
+        }
+        let arity_count = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        if arity_count != num_commitment_groups {
+            return Err(SerializationError::InvalidData(
+                "descriptor group arity count mismatch".to_string(),
+            ));
+        }
+        let mut num_vars_per_commitment_group = Vec::new();
+        num_vars_per_commitment_group
+            .try_reserve_exact(expected_count)
+            .map_err(|_| {
+                SerializationError::InvalidData(
+                    "descriptor group arity allocation failed".to_string(),
+                )
+            })?;
+        for _ in 0..expected_count {
+            num_vars_per_commitment_group.push(u32::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?);
+        }
         let group_count = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let mut num_polys_per_commitment_group = Vec::with_capacity(group_count as usize);
-        for _ in 0..group_count {
+        if group_count != num_commitment_groups {
+            return Err(SerializationError::InvalidData(
+                "descriptor commitment-group count mismatch".to_string(),
+            ));
+        }
+        let mut num_polys_per_commitment_group = Vec::new();
+        num_polys_per_commitment_group
+            .try_reserve_exact(expected_count)
+            .map_err(|_| {
+                SerializationError::InvalidData(
+                    "descriptor commitment-group allocation failed".to_string(),
+                )
+            })?;
+        for _ in 0..expected_count {
             num_polys_per_commitment_group.push(u32::deserialize_with_mode(
                 &mut reader,
                 compress,
@@ -729,28 +728,11 @@ impl AkitaDeserialize for CallSection {
                 &(),
             )?);
         }
-        let selection_count = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let mut point_variable_selections = Vec::with_capacity(selection_count as usize);
-        for _ in 0..selection_count {
-            let selection_len = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-            let mut selection = Vec::with_capacity(selection_len as usize);
-            for _ in 0..selection_len {
-                selection.push(u32::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                    &(),
-                )?);
-            }
-            point_variable_selections.push(selection);
-        }
         let out = Self {
-            num_polys,
             num_commitment_groups,
+            num_vars_per_commitment_group,
             num_polys_per_commitment_group,
-            point_variable_selections,
             basis_mode: decode_basis_mode(&mut reader, compress, validate)?,
-            opening_point_arity: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
             opening_batch_digest: read_digest(&mut reader)?,
         };
         if matches!(validate, Validate::Yes) {
@@ -781,6 +763,15 @@ fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
     let mut out = [0u8; 32];
     out.copy_from_slice(&digest);
     out
+}
+
+/// Hash canonical descriptor bytes with Akita's Blake2b-256 primitive.
+///
+/// Domain separation and version bytes are owned by the caller's canonical
+/// descriptor. This shared primitive prevents catalog and transcript identity
+/// code from implementing divergent hash truncation rules.
+pub fn digest_descriptor_bytes(bytes: &[u8]) -> DescriptorDigest {
+    blake2b_256(bytes)
 }
 
 fn read_digest<R: Read>(mut reader: R) -> Result<DescriptorDigest, SerializationError> {

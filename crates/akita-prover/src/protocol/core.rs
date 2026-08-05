@@ -13,12 +13,11 @@ use crate::protocol::sumcheck::AkitaStage3Prover;
 use crate::protocol::sumcheck::RelationRangeImageProver;
 use crate::protocol::RingRelationProver;
 use crate::{
-    ProverOpeningData, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
-    RingRelationWitness,
+    PreparedGroupProveOps, PreparedProverGroup, ProverOpeningData, ProverTranscriptGrind,
+    RingRelationInstance, RingRelationWitness,
 };
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
-use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
@@ -26,7 +25,6 @@ use akita_field::{
 };
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
-use akita_transcript::labels::ABSORB_STAGE3_NEXT_W_EVAL;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
     ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT,
@@ -47,8 +45,8 @@ use akita_types::{
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, AkitaBatchedProof,
     AkitaExpandedSetup, AkitaStage1Proof, AkitaStage2Proof, BasisMode, Commitment,
     CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof, FoldLevelProof,
-    FoldSchedule, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, RecursiveFoldParams,
-    RingMultiplierOpeningPoint, RingVec, RingView, SetupContributionMode,
+    FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, PreparedOpeningPoint,
+    RecursiveFoldParams, RingMultiplierOpeningPoint, RingVec, RingView, SetupContributionMode,
     SetupPrefixProverRegistry, SetupSumcheckProof, TerminalCommittedGroupParams,
     TerminalFoldParams, TerminalLevelProof,
 };
@@ -69,15 +67,23 @@ mod fold;
 mod fold_kernels;
 mod prove;
 mod root_fold;
+mod root_group;
 mod suffix;
 #[cfg(test)]
 mod tests;
 
 pub(in crate::protocol::core) use extension_opening_reduction::*;
-pub(in crate::protocol::core) use fold::{prepare_fold_inner, prove_fold, PreparedFold};
+pub(in crate::protocol::core) use fold::{
+    prepare_extension_claim_fold, prepare_single_field_fold, prove_fold, ExtensionOpeningSource,
+    PreparedFold,
+};
 pub(in crate::protocol::core) use fold_kernels::*;
 pub use prove::{batched_prove, prove};
 use root_fold::prove_root;
+#[allow(unused_imports)]
+pub(crate) use root_group::{
+    PreparedGroupOpening, RootProverGroupMeta, RootProverGroupOpening, RootProverGroupTensor,
+};
 pub use suffix::{prove_suffix, SuffixProverState};
 
 /// Output from a single prove level, used to extend proof wire data and state.
@@ -104,8 +110,5 @@ pub(in crate::protocol::core) type RelationRangeImageProveResult<E> =
 
 pub(in crate::protocol::core) struct Stage3ProveOutput<E: FieldCore> {
     pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,
-    pub(in crate::protocol::core) next_w_point: Vec<E>,
     pub(in crate::protocol::core) setup_prefix_point: Vec<E>,
-    pub(in crate::protocol::core) setup_prefix_eval: E,
-    pub(in crate::protocol::core) next_w_eval: E,
 }

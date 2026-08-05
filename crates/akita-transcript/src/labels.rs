@@ -15,7 +15,7 @@ pub const DOMAIN_AKITA_PROTOCOL: &[u8] = b"ak/p";
 pub const ABSORB_COMMITMENT: &[u8] = b"ak/a/cm";
 /// Absorb claimed openings/evaluations before relation reduction (paper §4.2).
 pub const ABSORB_EVALUATION_CLAIMS: &[u8] = b"ak/a/ec";
-/// Absorb the public batch nesting shape for multi-group single-point batching.
+/// Absorb the ordered group-local opening shape.
 pub const ABSORB_BATCH_SHAPE: &[u8] = b"ak/a/bs";
 /// Challenge for the evaluation-to-linear-relation reduction (paper §4.2).
 pub const CHALLENGE_LINEAR_RELATION: &[u8] = b"ak/c/lr";
@@ -39,8 +39,6 @@ pub const CHALLENGE_SUMCHECK_ROUND: &[u8] = b"ak/c/scr";
 pub const ABSORB_RANGE_IMAGE_EVALUATION: &[u8] = b"ak/a/scs";
 /// Absorb the stage-2 next-witness evaluation handoff before recursion continues.
 pub const ABSORB_STAGE2_NEXT_W_EVAL: &[u8] = b"ak/a/s2w";
-/// Absorb the stage-3 carried next-witness evaluation before recursion continues.
-pub const ABSORB_STAGE3_NEXT_W_EVAL: &[u8] = b"ak/a/s3w";
 /// Absorb stage-1 inter-stage claims before batching them into the next stage.
 pub const ABSORB_SUMCHECK_INTERSTAGE_CLAIM: &[u8] = b"ak/a/sci";
 /// Challenge for batched sumcheck coefficient sampling.
@@ -85,7 +83,7 @@ pub const CHALLENGE_FOLD_LOW: &[u8] = b"ak/c/wfl";
 
 /// Absorb field-element evaluation claims for γ-batching.
 pub const ABSORB_EVAL_OPENINGS_FIELD: &[u8] = b"ak/a/eof";
-/// Challenge for γ-batching evaluation claims at the same point.
+/// Challenge for γ-batching ordered group-local evaluation claims.
 pub const CHALLENGE_EVAL_BATCH: &[u8] = b"ak/c/eb";
 
 /// Binds the outgoing witness state of an intermediate fold. Ordinary recursive
@@ -121,7 +119,6 @@ pub const ALL_LABELS: &[&[u8]] = &[
     CHALLENGE_SUMCHECK_ROUND,
     ABSORB_RANGE_IMAGE_EVALUATION,
     ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_STAGE3_NEXT_W_EVAL,
     ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
     CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,

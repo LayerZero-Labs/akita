@@ -29,9 +29,10 @@ mod tail_segments;
 mod tests;
 mod wire;
 pub use crate::opening_claims::{
-    sample_public_row_coefficients, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
+    sample_public_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
     PolynomialGroupClaims, PolynomialGroupLayout,
 };
+pub(crate) use batch::root_tensor_projection_enabled_for_width;
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     folded_root_supports_opening_shape, padded_scalar_batch_num_vars, prepare_opening_point,
@@ -40,7 +41,7 @@ pub use batch::{
     RingMultiplierOpeningPoint,
 };
 pub use commitment::{
-    AkitaCommitment, Commitment, DummyProof, ProverCommitmentRows, RingCommitment,
+    AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,
 };
 pub use containers::{
     append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,
@@ -59,10 +60,8 @@ pub use relation::{
 };
 pub use relation_address::RelationAddressGeometry;
 pub use relation_range_image::{RelationRangeImageGroupPlan, RelationRangeImagePlan};
-pub use ring_relation::{
-    ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLengths,
-};
+pub use ring_relation::ring_relation_segment_lengths;
+pub use ring_relation::RingRelationInstance;
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{
     derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
@@ -70,8 +69,9 @@ pub use setup::{
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 pub use setup_envelope::{
-    accumulate_matrix_envelope_for_level, accumulate_terminal_matrix_envelope,
-    inflate_envelope_for_setup_prefix_slot, setup_matrix_envelope_for_schedule,
+    accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
+    setup_matrix_envelope_for_schedule, setup_matrix_field_elements_for_schedule,
+    setup_prefix_slot_field_elements,
 };
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,
@@ -90,10 +90,9 @@ pub use stage1::{
 pub use tail_segments::{
     build_terminal_response, build_terminal_response_from_groups, decode_terminal_z_golomb_payload,
     emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
-    raw_field_segment_bytes, tail_golomb_rice_z_params, tail_segment_multiplicities_from_layout,
+    raw_field_segment_bytes, tail_segment_multiplicities_from_layout,
     tail_segment_multiplicities_from_layout_for_params, terminal_response_upper_bound_bytes,
     terminal_response_z_payload_bytes, validate_terminal_response_z_payload,
-    z_fold_decoded_from_terminal_response, z_fold_encoding_stats_from_terminal_response,
     TailSegmentGroupLayout, TailSegmentLayout, TerminalResponse, TerminalResponseGroupParts,
     TerminalResponseShape,
 };
@@ -102,7 +101,7 @@ pub use terminal_witness::TerminalWitnessTranscriptParts;
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
+use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
@@ -112,7 +111,6 @@ use akita_sumcheck::{
 };
 use akita_transcript::Transcript;
 use std::io::{Read, Write};
-use std::marker::PhantomData;
 
 pub(super) const MAX_PROOF_SHAPE_SEQUENCE_LEN: usize = 1 << 12;
 

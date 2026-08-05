@@ -1,17 +1,15 @@
 use super::*;
-use crate::api::commitment::validate_batched_onehot_chunk_size_for_params;
 use crate::backend::RecursiveFoldSource;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    ProveStackFor, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
-    RuntimeRootProvePoly, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
-    SuffixTensorProveBackend,
+    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
+    SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
 use akita_config::{effective_batched_schedule, ensure_schedule_fits_setup, CommitmentConfig};
 use akita_field::unreduced::ReduceTo;
 use akita_field::{AdditiveGroup, CanonicalField};
-use akita_types::{dispatch_for_field, validate_schedule_ring_dims};
+use akita_types::{dispatch_for_field, OpeningScheduleSelection};
 
 /// Drive batched proving end-to-end under config `Cfg`.
 ///
@@ -35,6 +33,7 @@ pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R>(
         Tensor = TS,
         RingSwitch = R,
     >,
+    selection: OpeningScheduleSelection,
     claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
     transcript: &mut T,
     basis: BasisMode,
@@ -59,17 +58,15 @@ where
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-    P: RuntimeRootProvePoly<Cfg::Field>,
+    P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O, TS>,
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
-        + RuntimeOpeningProveBackendFor<Cfg::Field, P>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
         + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
-        + RuntimeTensorBackendFor<Cfg::Field, P, Cfg::ExtField>
         + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
         + RuntimeTensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, Cfg::ExtField>
         + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
@@ -78,29 +75,18 @@ where
         + RuntimeRingSwitchProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
-    (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, C, O, TS, R>,
     <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
-    claims.validate::<Cfg::Field>()?;
     let opening_claims = claims.opening_claims();
-    opening_claims.validate(expanded.seed())?;
     let opening_batch = opening_claims.layout()?;
-    let flat_polys = claims.flat_polys();
     let final_group_point = opening_claims.group_point(opening_batch.root_final_group_index()?)?;
-    let schedule = effective_batched_schedule::<Cfg>(&opening_batch, &final_group_point)?;
-    validate_schedule_ring_dims(&schedule, expanded.seed())?;
-    ensure_schedule_fits_setup::<Cfg>(expanded.as_ref(), &schedule, &opening_batch)?;
-    schedule.validate_structure()?;
-    let root_step = schedule.root_fold();
-    let root_commit_params = &root_step.params.final_group.commitment;
-    validate_batched_onehot_chunk_size_for_params::<Cfg::Field, &P>(
-        &flat_polys,
-        root_commit_params,
-    )?;
-
+    let resolved = Cfg::resolve_schedule_selection(selection)?;
+    let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)?;
+    let schedule = resolved.schedule();
+    ensure_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, &opening_batch)?;
     // The transcript instance descriptor binds the setup-wide root ring
     // dimension (`gen_ring_dim`), NOT the root stack's const `D`. For uniform-D
     // presets `gen_ring_dim == Cfg::D == D`, so the descriptor bytes are
@@ -116,7 +102,8 @@ where
             bind_transcript_instance_descriptor::<Cfg::Field, T, GEN_D, Cfg>(
                 expanded.as_ref(),
                 &opening_batch,
-                &schedule,
+                selection,
+                schedule,
                 basis,
                 transcript,
             )
@@ -129,7 +116,7 @@ where
         stacks,
         transcript,
         claims,
-        &schedule,
+        schedule,
         basis,
     )
     .map(|(proof, _total_levels)| proof)
@@ -185,17 +172,15 @@ where
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-    P: RuntimeRootProvePoly<Cfg::Field>,
+    P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O, TS>,
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
-        + RuntimeOpeningProveBackendFor<Cfg::Field, P>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
         + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
-        + RuntimeTensorBackendFor<Cfg::Field, P, Cfg::ExtField>
         + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
         + RuntimeTensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, Cfg::ExtField>
         + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
@@ -204,7 +189,6 @@ where
         + RuntimeRingSwitchProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
-    (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, C, O, TS, R>,
     <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,

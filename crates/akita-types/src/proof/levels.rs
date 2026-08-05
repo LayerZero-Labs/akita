@@ -81,16 +81,14 @@ pub struct ExtensionOpeningReductionProof<E: FieldCore> {
     pub sumcheck: SumcheckProof<E>,
 }
 
-/// Fused stage-3 proof for the public setup contribution and carried witness opening.
+/// Stage-3 proof for the public setup contribution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupSumcheckProof<E: FieldCore> {
     /// Claimed setup contribution fed into the stage-2 final row evaluation.
     pub claim: E,
     /// Claimed setup-prefix opening carried into the next fold as a precommitted group.
     pub setup_prefix_eval: E,
-    /// Claimed next-witness opening after the batched stage-3 point projection.
-    pub next_w_eval: E,
-    /// Degree-two batched product sumcheck carrying setup and next-witness terms.
+    /// Degree-two setup-product sumcheck.
     pub sumcheck: SumcheckProof<E>,
 }
 

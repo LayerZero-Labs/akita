@@ -38,15 +38,22 @@ Key structural facts:
 
 ## End-to-end lifecycle
 
-1. **Preset selection.** The caller picks a `CommitmentConfig` preset (`fp32` / `fp64` / `fp128` families). `CommitmentConfig::runtime_schedule` resolves the recursion schedule from a shipped table or the offline DP (`akita_planner::resolve_schedule`).
+1. **Preset selection.** The caller picks a `CommitmentConfig` preset (`fp32` / `fp64` / `fp128` families). `CommitmentConfig::runtime_schedule` resolves the recursion schedule from a shipped table or the offline DP (`akita_planner::resolve_schedule`). The preset also fixes the protocol geometry: when the claim field coincides with the coefficient field (`EXT_DEGREE == 1`, today's `fp128` families) the fold path never runs extension-opening reduction; when claims live in a proper extension (`fp32` / `fp64`), root EOR follows `akita_types::root_tensor_projection_enabled` and suffix EOR follows `EXT_DEGREE > 1`. See [Fold path and field geometry](./proving/fold-path.md).
 2. **Setup.** `akita-setup` expands the config-backed setup (Ajtai matrices, stride envelopes). Setup capacity must cover the requested `num_vars`.
 3. **Commit.** `commit` / `batched_commit` (in `akita-prover`, orchestrated by `akita-pcs`) produce commitments over root polynomials at the opening layout implied by the schedule.
-4. **Prove.** `batched_prove` walks the folded-only schedule level by level: sumcheck stages, extension-opening reduction, recursive suffix work, and the final direct terminal handoff.
-5. **Verify.** `batched_verify` re-derives the schedule, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.
+4. **Claims.** The caller supplies ordered `PolynomialGroupClaims`; each group owns its complete point, evaluations, and commitment.
+5. **Prove.** `batched_prove` walks the folded-only schedule level by level: per-group opening preparation, sumcheck stages, extension-opening reduction, recursive suffix work, and the final direct terminal handoff.
+6. **Verify.** `batched_verify` re-derives the schedule, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.
 
 Entry points: `crates/akita-pcs/src/scheme/mod.rs`, `crates/akita-prover/src/protocol/core/prove.rs`, `crates/akita-verifier/src/protocol/core/verify.rs`.
 
 Further reading: [Configuration and planning](./configuration.md), [Proving](./proving/proving.md), [Verification](./verification.md).
+
+Recursive setup offloading adds one setup-only `SetupSumcheckProof` at each
+nonterminal producer whose successor consumes a setup prefix.
+Its wire payload is the setup claim, the setup-prefix evaluation, and one
+degree-two sumcheck over the native setup domain.
+Its round count and planned size do not depend on the successor witness length.
 
 ## Ring-dimension ownership
 
@@ -98,10 +105,16 @@ Mixed-dimension execution is exercised end-to-end by
 | `CommitmentRingDims`, `validate_schedule_ring_dims` | A/B/D commitment-matrix ring dimensions and schedule validation |
 | `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, exact SIS profile, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
 | `LevelParams` | Per-level recursion layout and config (fold shape, ring/ext degrees, decomposition depth, `role_dims`) |
-| `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_group_batch_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
+| `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
 | `DensePoly`, `OneHotPoly`, `Root*Source`, compute-backend traits | Polynomial sources and operation capabilities consumed by the scheme |
 | `WitnessLayout`, `WitnessUnitLayout` | Canonical digit-innermost group-and-chunk ranges ([opening layout](./proving/opening-points-layout.md)) |
 | `AkitaBatchedProof`, `FoldLevelProof`, `TerminalLevelProof` | Structural serialized proof: root fold, recursive folds, and one terminal witness (singleton openings are the 1×1 batched case) |
-| `OpeningClaims` / `OpeningClaimsLayout` | Public single-point opening claims and layout-only batch geometry for prove/verify, setup, and schedule lookup ([`specs/shared-opening-claims-api.md`](../../../specs/shared-opening-claims-api.md)) |
+| `PolynomialGroupClaims` | One commitment group's complete opening point, evaluations, and commitment |
+| `OpeningClaims` | Ordered group-owned public claims in transcript order |
+| `OpeningClaimsLayout` | Value-free group arities and polynomial counts for setup and schedule lookup |
+| `CommittedGroupProfile`, `CommittedGroup` | Source-free public commitment geometry and its commitment rows |
+| `PreparedProverGroup` | Coarse borrowed prover group; applications may use one concrete enum polynomial type for heterogeneous representations |
+| `ProverOpeningData`, `SelectedProverOpeningData` | Private ordered group-local hint/polynomial records bound to public claims, then paired once with one exact schedule selection |
+| `OpeningScheduleSelection`, `GroupBatchStatement` | Exact generated-row identity and verifier-side self-describing opening statement |
 | `AkitaTranscript`, `Transcript` | Spongefish-backed Fiat-Shamir layer |
 | `AkitaInstanceDescriptor` | Canonical transcript preamble binding algebra, setup, plan, and call shape |

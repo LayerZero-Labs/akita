@@ -2,10 +2,9 @@
 
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::layout::params::append_schedule_sparse_challenge_descriptor_bytes;
-use crate::sis::FoldWitnessLinfCapConfig;
 use crate::{
-    CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    SetupContributionMode, TerminalResponseShape,
+    CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
+    PolynomialGroupLayout, RelationAddressGeometry, SetupContributionMode, TerminalResponseShape,
 };
 use akita_field::{AkitaError, CanonicalField};
 
@@ -36,7 +35,9 @@ pub enum NextWitnessBindingPolicy {
 
 /// Root layout metadata frozen when a standalone commitment group is created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PrecommittedGroupDescriptor {
+pub struct CommittedGroupProfile {
+    /// Version of the canonical committed-profile encoding.
+    pub version: u8,
     /// Per-group root schedule entry shape.
     pub group: PolynomialGroupLayout,
     /// Exact number of live source ring elements per claim (`N`).
@@ -47,90 +48,118 @@ pub struct PrecommittedGroupDescriptor {
     pub num_live_blocks: usize,
     /// Gadget basis selected for the standalone A/source digits.
     pub log_basis_inner: u32,
+    /// Exact gadget depth used by the standalone A/source relation.
+    pub num_digits_inner: usize,
+    /// Complete audited A/source matrix identity.
+    pub inner_commit_matrix: InnerCommitMatrixParams,
     /// Gadget basis selected for the standalone B/`t_hat` digits.
     pub log_basis_outer: u32,
-    /// Ring dimension of the standalone A/source matrix.
-    pub inner_ring_dimension: usize,
-    /// Ring dimension of the standalone B/commitment matrix.
-    pub outer_ring_dimension: usize,
-    /// Exact A-role row count frozen at precommit time.
-    pub n_a: usize,
-    /// Exact A-role collision bucket frozen at precommit time.
-    pub a_coeff_linf_bound: u128,
-    /// Exact B-role row count frozen at precommit time.
-    pub n_b: usize,
-    /// Exact B-role collision bucket frozen at precommit time.
-    pub b_coeff_linf_bound: u128,
+    /// Exact gadget depth used by the standalone B/`t_hat` relation.
+    pub num_digits_outer: usize,
+    /// Complete audited B/commitment matrix identity.
+    pub outer_commit_matrix: OuterCommitMatrixParams,
 }
 
-impl PrecommittedGroupDescriptor {
+impl CommittedGroupProfile {
+    /// Current committed-profile format.
+    pub const VERSION: u8 = 1;
+
     /// Build frozen group metadata from the concrete commit params.
     pub fn from_params(group: PolynomialGroupLayout, params: &CommittedGroupParams) -> Self {
         Self {
+            version: Self::VERSION,
             group,
             num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
             num_positions_per_block: params.num_positions_per_block,
             num_live_blocks: params.num_live_blocks,
             log_basis_inner: params.log_basis_inner,
+            num_digits_inner: params.num_digits_inner,
+            inner_commit_matrix: params.inner_commit_matrix,
             log_basis_outer: params.log_basis_outer,
-            inner_ring_dimension: params.inner_commit_matrix.ring_dimension(),
-            outer_ring_dimension: params.outer_commit_matrix.ring_dimension(),
-            n_a: params.inner_commit_matrix.output_rank(),
-            a_coeff_linf_bound: params.inner_commit_matrix.coeff_linf_bound(),
-            n_b: params.outer_commit_matrix.output_rank(),
-            b_coeff_linf_bound: params.outer_commit_matrix.coeff_linf_bound(),
+            num_digits_outer: params.num_digits_outer,
+            outer_commit_matrix: params.outer_commit_matrix,
         }
     }
 
+    /// Canonical versioned bytes used for catalog and schedule-key identity.
+    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.append_descriptor_bytes(&mut bytes);
+        bytes
+    }
+
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        bytes.push(self.version);
         push_usize(bytes, self.group.num_vars());
         push_usize(bytes, self.group.num_polynomials());
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
         push_u32(bytes, self.log_basis_inner);
+        push_usize(bytes, self.num_digits_inner);
+        self.inner_commit_matrix.append_descriptor_bytes(bytes);
         push_u32(bytes, self.log_basis_outer);
-        push_usize(bytes, self.inner_ring_dimension);
-        push_usize(bytes, self.outer_ring_dimension);
-        push_usize(bytes, self.n_a);
-        crate::descriptor_bytes::push_u128(bytes, self.a_coeff_linf_bound);
-        push_usize(bytes, self.n_b);
-        crate::descriptor_bytes::push_u128(bytes, self.b_coeff_linf_bound);
+        push_usize(bytes, self.num_digits_outer);
+        self.outer_commit_matrix.append_descriptor_bytes(bytes);
     }
 
     /// Validate that this layout is a well-formed standalone commitment group.
-    pub fn validate(&self) -> Result<(), AkitaError> {
+    pub fn validate(&self, field_bits: u32) -> Result<(), AkitaError> {
         self.group.validate()?;
-        if self.n_a == 0
-            || self.n_b == 0
-            || self.inner_ring_dimension == 0
-            || self.outer_ring_dimension == 0
-            || self.a_coeff_linf_bound == 0
-            || self.b_coeff_linf_bound == 0
-        {
-            return Err(AkitaError::InvalidSetup(
-                "precommitted group layout requires nonzero A/B rows and bounds".to_string(),
-            ));
+        if self.version != Self::VERSION {
+            return Err(AkitaError::InvalidSetup(format!(
+                "unsupported committed-group profile version {}",
+                self.version
+            )));
         }
-        if !self.inner_ring_dimension.is_power_of_two()
-            || !self.outer_ring_dimension.is_power_of_two()
-            || !self
-                .inner_ring_dimension
-                .is_multiple_of(self.outer_ring_dimension)
+        self.inner_commit_matrix.validate()?;
+        self.outer_commit_matrix.validate()?;
+        let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
+        let outer_ring_dimension = self.outer_commit_matrix.ring_dimension();
+        if !inner_ring_dimension.is_power_of_two()
+            || !outer_ring_dimension.is_power_of_two()
+            || !inner_ring_dimension.is_multiple_of(outer_ring_dimension)
         {
             return Err(AkitaError::InvalidSetup(
                 "precommitted group requires power-of-two A/B dimensions with A divisible by B"
                     .to_string(),
             ));
         }
-        if self.log_basis_inner == 0 {
+        if self.log_basis_inner == 0 || self.num_digits_inner == 0 {
             return Err(AkitaError::InvalidSetup(
-                "commitment group layout requires nonzero log_basis_inner".to_string(),
+                "commitment group layout requires nonzero inner basis and digit depth".to_string(),
             ));
         }
-        if self.log_basis_outer == 0 {
+        if self.log_basis_outer == 0 || self.num_digits_outer == 0 {
             return Err(AkitaError::InvalidSetup(
-                "commitment group layout requires nonzero log_basis_outer".to_string(),
+                "commitment group layout requires nonzero outer basis and digit depth".to_string(),
+            ));
+        }
+        if self.inner_commit_matrix.sis_modulus_profile().field_bits() != field_bits
+            || self.outer_commit_matrix.sis_modulus_profile().field_bits() != field_bits
+        {
+            return Err(AkitaError::InvalidSetup(
+                "committed-group matrix modulus profile does not match the field".to_string(),
+            ));
+        }
+        let expected_a_width = self
+            .num_positions_per_block
+            .checked_mul(self.num_digits_inner)
+            .ok_or_else(|| AkitaError::InvalidSetup("committed-group A width overflow".into()))?;
+        let projection_ratio = inner_ring_dimension / outer_ring_dimension;
+        let expected_b_width = self
+            .inner_commit_matrix
+            .output_rank()
+            .checked_mul(self.num_digits_outer)
+            .and_then(|width| width.checked_mul(self.num_live_blocks))
+            .and_then(|width| width.checked_mul(self.group.num_polynomials()))
+            .and_then(|width| width.checked_mul(projection_ratio))
+            .ok_or_else(|| AkitaError::InvalidSetup("committed-group B width overflow".into()))?;
+        if self.inner_commit_matrix.input_width() != expected_a_width
+            || self.outer_commit_matrix.input_width() != expected_b_width
+        {
+            return Err(AkitaError::InvalidSetup(
+                "committed-group A/B matrix widths do not match frozen geometry".to_string(),
             ));
         }
         Ok(())
@@ -138,10 +167,11 @@ impl PrecommittedGroupDescriptor {
 
     /// Validate that frozen exact block geometry matches `group.num_vars`.
     pub fn validate_root_geometry(&self) -> Result<(), AkitaError> {
-        let alpha = self.inner_ring_dimension.trailing_zeros() as usize;
+        let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
+        let alpha = inner_ring_dimension.trailing_zeros() as usize;
         let Some(source_field_len) = self
             .num_live_ring_elements_per_claim
-            .checked_mul(self.inner_ring_dimension)
+            .checked_mul(inner_ring_dimension)
         else {
             return Err(AkitaError::InvalidSetup(
                 "commitment group layout geometry overflow".to_string(),
@@ -175,25 +205,16 @@ impl PrecommittedGroupDescriptor {
     }
 
     /// Validate metadata frozen by a precommitted group at precommit time.
-    pub fn validate_frozen_precommit(&self) -> Result<(), AkitaError> {
-        self.validate()?;
+    pub fn validate_frozen_precommit(&self, field_bits: u32) -> Result<(), AkitaError> {
+        self.validate(field_bits)?;
         self.validate_root_geometry()?;
         Ok(())
     }
 }
 
-/// Freezes exact root-commit metadata for each precommitted group when
-/// building a schedule lookup key from an opening layout.
-pub trait ScheduleKeyPrecommitSource {
-    /// Resolve frozen standalone-commit params for one precommitted group.
-    fn precommitted_group_params(
-        group: PolynomialGroupLayout,
-    ) -> Result<PrecommittedGroupDescriptor, AkitaError>;
-}
-
 /// Canonical runtime schedule lookup key.
 ///
-/// Scalar same-point openings use an empty `precommitteds` vector and store the
+/// Single-group openings use an empty `precommitteds` vector and store the
 /// sole group in `final_group`. Multi-group roots list earlier groups in
 /// `precommitteds` and the final group in `final_group`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -201,7 +222,7 @@ pub struct AkitaScheduleLookupKey {
     /// Final group shape for the multi-group root commitment.
     pub final_group: PolynomialGroupLayout,
     /// Previously committed groups in caller-supplied transcript order.
-    pub precommitteds: Vec<PrecommittedGroupDescriptor>,
+    pub precommitteds: Vec<CommittedGroupProfile>,
 }
 
 impl AkitaScheduleLookupKey {
@@ -213,31 +234,16 @@ impl AkitaScheduleLookupKey {
         }
     }
 
-    /// Build the canonical schedule lookup key for `layout`.
-    ///
-    /// Scalar layouts leave `precommitteds` empty. Grouped layouts freeze each
-    /// earlier group through `S` (production uses the exact precommit
-    /// adapter wired by `akita-config`'s `opening_schedule_key`).
-    pub fn from_layout<S: ScheduleKeyPrecommitSource>(
-        layout: &OpeningClaimsLayout,
-    ) -> Result<Self, AkitaError> {
-        layout.check()?;
-        let precommitteds = if layout.num_groups() == 1 {
-            Vec::new()
-        } else {
-            layout
-                .root_precommitted_group_layouts()?
-                .iter()
-                .copied()
-                .map(S::precommitted_group_params)
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        let key = Self {
-            final_group: layout.root_final_group_layout()?,
-            precommitteds,
-        };
-        key.validate()?;
-        Ok(key)
+    /// Canonical ordered bytes used for schedule-key identity tests and caches.
+    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        push_usize(&mut bytes, self.final_group.num_vars());
+        push_usize(&mut bytes, self.final_group.num_polynomials());
+        push_usize(&mut bytes, self.precommitteds.len());
+        for descriptor in &self.precommitteds {
+            descriptor.append_descriptor_bytes(&mut bytes);
+        }
+        bytes
     }
 
     /// Build a multi-group opening layout from this schedule lookup key.
@@ -258,7 +264,7 @@ impl AkitaScheduleLookupKey {
 
     /// Maximum opening arity across the final and precommitted groups.
     ///
-    /// This is the shared opening-point/EOR domain. It is intentionally
+    /// This is the maximum group-local opening/EOR domain. It is intentionally
     /// distinct from `final_group.num_vars()`, which remains the source arity
     /// used to size the final commitment and root witness.
     pub fn max_num_vars(&self) -> usize {
@@ -293,7 +299,7 @@ impl AkitaScheduleLookupKey {
     }
 
     /// Validate per-group metadata.
-    pub fn validate(&self) -> Result<(), AkitaError> {
+    pub fn validate(&self, field_bits: u32) -> Result<(), AkitaError> {
         self.final_group.validate()?;
         if self.final_group.num_vars() == 0 {
             return Err(AkitaError::InvalidSetup(
@@ -302,7 +308,38 @@ impl AkitaScheduleLookupKey {
         }
         for layout in &self.precommitteds {
             layout.group.validate()?;
-            layout.validate()?;
+            layout.validate(field_bits)?;
+        }
+        Ok(())
+    }
+}
+
+/// Exact ordered committed profiles used to resolve a verifier-approved row.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CommittedGroupBatchProfile {
+    /// Final/new commitment group.
+    pub final_group: CommittedGroupProfile,
+    /// Earlier commitments in transcript order.
+    pub precommitteds: Vec<CommittedGroupProfile>,
+}
+
+impl CommittedGroupBatchProfile {
+    /// Build the corresponding public opening layout.
+    pub fn opening_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
+        let mut groups = self
+            .precommitteds
+            .iter()
+            .map(|profile| profile.group)
+            .collect::<Vec<_>>();
+        groups.push(self.final_group.group);
+        OpeningClaimsLayout::from_groups(groups)
+    }
+
+    /// Validate all frozen profiles.
+    pub fn validate(&self, field_bits: u32) -> Result<(), AkitaError> {
+        self.final_group.validate_frozen_precommit(field_bits)?;
+        for profile in &self.precommitteds {
+            profile.validate_frozen_precommit(field_bits)?;
         }
         Ok(())
     }
@@ -360,7 +397,7 @@ pub fn intermediate_w_ring_element_count_with_counts_bits(
         .and_then(|n| n.checked_mul(lp.inner_commit_matrix.output_rank()))
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
-    let num_digits_fold = lp.num_digits_fold(num_polynomials, field_bits)?;
+    let num_digits_fold = lp.num_digits_fold();
     let z_pre_count = num_z_segments
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
@@ -439,7 +476,7 @@ pub fn intermediate_w_ring_element_count_for_chunks(
     let overflow = || AkitaError::InvalidSetup("chunked witness width overflow".to_string());
     let single =
         intermediate_w_ring_element_count_with_counts_bits(field_bits, lp, num_polynomials, 1)?;
-    let num_digits_fold = lp.num_digits_fold(num_polynomials, field_bits)?;
+    let num_digits_fold = lp.num_digits_fold();
     let z_chunk = lp
         .inner_width()
         .checked_mul(num_digits_fold)
@@ -449,43 +486,6 @@ pub fn intermediate_w_ring_element_count_for_chunks(
         .and_then(|copies| copies.checked_mul(z_chunk))
         .and_then(|extra| single.checked_add(extra))
         .ok_or_else(overflow)
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RootSource {
-    Dense { coefficient_bits: u32 },
-    OneHot { chunk_size: usize },
-}
-
-impl RootSource {
-    /// Derive the root-source contract selected by a configuration.
-    pub fn from_config(
-        decomposition: crate::DecompositionParams,
-        onehot_chunk_size: usize,
-    ) -> Self {
-        if decomposition.log_commit_bound == 1 && onehot_chunk_size > 0 {
-            Self::OneHot {
-                chunk_size: onehot_chunk_size,
-            }
-        } else {
-            Self::Dense {
-                coefficient_bits: decomposition.field_bits(),
-            }
-        }
-    }
-
-    /// Derive the root-source contract encoded by committed-group parameters.
-    pub fn from_commitment(commitment: &CommittedGroupParams) -> Self {
-        if commitment.onehot_chunk_size > 0 {
-            Self::OneHot {
-                chunk_size: commitment.onehot_chunk_size,
-            }
-        } else {
-            Self::Dense {
-                coefficient_bits: commitment.field_bits_for_cache(),
-            }
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -511,28 +511,13 @@ impl WitnessPartition {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootFinalGroupParams {
-    pub source: RootSource,
     pub challenge: RootFinalChallenge,
     pub commitment: CommittedGroupParams,
 }
 
-impl RootFinalGroupParams {
-    /// Validate that source metadata and commitment bounds describe one root.
-    pub fn validate(&self) -> Result<(), AkitaError> {
-        let expected = RootSource::from_commitment(&self.commitment);
-        if self.source != expected {
-            return Err(AkitaError::InvalidSetup(format!(
-                "root source {:?} disagrees with commitment source {expected:?}",
-                self.source
-            )));
-        }
-        Ok(())
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootPrecommittedGroupParams {
-    pub descriptor: PrecommittedGroupDescriptor,
+    pub descriptor: CommittedGroupProfile,
     pub commitment: crate::PrecommittedLevelParams,
 }
 
@@ -579,7 +564,6 @@ pub struct TerminalCommittedGroupParams {
     pub num_positions_per_block: usize,
     pub num_live_blocks: usize,
     pub num_digits_inner: usize,
-    pub fold_linf_cap_config: FoldWitnessLinfCapConfig,
 }
 
 /// Minimum fraction of the unconstrained terminal-response target that a
@@ -588,31 +572,6 @@ pub struct TerminalCommittedGroupParams {
 /// SIS-certified capacity.
 pub const TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM: u128 = 1;
 pub const TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN: u128 = 2;
-
-/// Derived terminal-response norm policy for one fixed inner matrix.
-///
-/// The three values have deliberately different meanings:
-///
-/// - `unconstrained_target` is the pre-digit-snap Rademacher/worst-case target
-///   for an honest response. The terminal path has no response digits, so a
-///   digit boundary must not reduce this value.
-/// - `certified_capacity` is the largest raw response norm secured by the
-///   fixed inner matrix, obtained by inverting its checked SIS-table capacity.
-/// - `admission_cap` is the verifier's actual raw-response limit. It is the
-///   certified capacity restricted to the current signed response
-///   representation.
-///
-/// A candidate is usable only when `admission_cap >= ceil(target / 2)`. The
-/// half-target rule is intentionally empirical: applying the conservative
-/// coordinate union bound again at a reduced cap is vacuous for production
-/// tails. It affects honest-prover viability only. The exact SIS capacity
-/// remains the security authority.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TerminalResponseLinfPolicy {
-    pub unconstrained_target: u128,
-    pub certified_capacity: u128,
-    pub admission_cap: u128,
-}
 
 impl TerminalCommittedGroupParams {
     pub fn from_expanded_group(params: CommittedGroupParams) -> Self {
@@ -623,7 +582,6 @@ impl TerminalCommittedGroupParams {
             num_positions_per_block: params.num_positions_per_block,
             num_live_blocks: params.num_live_blocks,
             num_digits_inner: params.num_digits_inner,
-            fold_linf_cap_config: params.fold_linf_cap_config,
         }
     }
 
@@ -633,9 +591,41 @@ impl TerminalCommittedGroupParams {
         params: CommittedGroupParams,
     ) -> Result<(Self, u128), AkitaError> {
         let sparse = params.fold_challenge_config;
+        let num_fold_coeffs = usize::try_from(params.num_fold_coeffs()).map_err(|_| {
+            AkitaError::InvalidSetup("terminal fold coefficient count exceeds usize".into())
+        })?;
+        let cap_config = crate::sis::FoldWitnessLinfCapConfig::for_fold_coeffs(
+            &sparse,
+            akita_challenges::TensorChallengeShape::Flat,
+            params.d_a(),
+            num_fold_coeffs,
+        )?;
+        let challenge = crate::sis::FoldChallengeNorms::new(
+            &sparse,
+            akita_challenges::TensorChallengeShape::Flat,
+        );
+        let witness = crate::sis::FoldWitnessNorms::bounded(params.log_basis_inner, params.d_a());
+        let (unconstrained_target, _) = crate::sis::fold_witness_unsnapped_linf_cap(
+            params.num_live_blocks,
+            1,
+            challenge,
+            witness,
+            &cap_config,
+        )?;
         let terminal = Self::from_expanded_group(params);
-        let response_policy = terminal.response_linf_policy(&sparse)?;
-        Ok((terminal, response_policy.admission_cap))
+        let admission_cap = terminal.certified_response_linf_cap(&sparse)?;
+        let minimum_usable_cap = unconstrained_target
+            .checked_mul(TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM)
+            .ok_or_else(|| AkitaError::InvalidSetup("terminal target ratio overflow".into()))?
+            .div_ceil(TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN);
+        if admission_cap < minimum_usable_cap {
+            return Err(AkitaError::InvalidSetup(format!(
+                "terminal response capacity {admission_cap} retains less than \
+                 {TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM}/\
+                 {TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN} of target {unconstrained_target}"
+            )));
+        }
+        Ok((terminal, admission_cap))
     }
 
     #[inline]
@@ -657,29 +647,16 @@ impl TerminalCommittedGroupParams {
         )
     }
 
-    /// Derive the terminal target, fixed-matrix capacity, and admission cap.
-    ///
-    /// This is the single source used by planning, encoding, grinding, and
-    /// verifier admission. The fixed matrix is never resized here. Candidates
-    /// retaining less than half of the unconstrained target are rejected as
-    /// impractical, while every admitted response remains secured by the exact
-    /// matrix capacity.
-    pub fn response_linf_policy(
+    /// Largest raw response admitted by this fixed inner matrix and the signed
+    /// terminal coefficient representation.
+    pub fn certified_response_linf_cap(
         &self,
         sparse: &akita_challenges::SparseChallengeConfig,
-    ) -> Result<TerminalResponseLinfPolicy, AkitaError> {
+    ) -> Result<u128, AkitaError> {
         let challenge = crate::sis::FoldChallengeNorms::new(
             sparse,
             akita_challenges::TensorChallengeShape::Flat,
         );
-        let witness = crate::sis::FoldWitnessNorms::new(self.log_basis_inner, self.d_a(), 1, false);
-        let (unconstrained_target, _) = crate::sis::fold_witness_unsnapped_linf_cap(
-            self.num_live_blocks,
-            1,
-            challenge,
-            witness,
-            &self.fold_linf_cap_config,
-        )?;
         let collision_capacity = self
             .inner_commit_matrix
             .max_secure_collision_linf()
@@ -697,42 +674,20 @@ impl TerminalCommittedGroupParams {
         .ok_or_else(|| AkitaError::InvalidSetup("terminal A cannot certify a response".into()))?;
         // Terminal NTT kernels currently consume signed i16 coefficients.
         // This representation limit is independent of the SIS capacity.
-        let admission_cap = certified_capacity.min(i16::MAX as u128);
-        let minimum_usable_cap = unconstrained_target
-            .checked_mul(TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM)
-            .ok_or_else(|| AkitaError::InvalidSetup("terminal target ratio overflow".into()))?
-            .div_ceil(TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN);
-        if admission_cap < minimum_usable_cap {
-            return Err(AkitaError::InvalidSetup(format!(
-                "terminal response capacity {admission_cap} retains less than \
-                     {TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM}/\
-                     {TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN} of target \
-                     {unconstrained_target}"
-            )));
-        }
-        Ok(TerminalResponseLinfPolicy {
-            unconstrained_target,
-            certified_capacity,
-            admission_cap,
-        })
+        Ok(certified_capacity.min(i16::MAX as u128))
     }
 
     /// Validate the terminal Fiat–Shamir grind nonce under the same bound
     /// policy used to derive the response wire.
     pub fn validate_fold_grind_nonce(
         &self,
-        sparse: &akita_challenges::SparseChallengeConfig,
+        _sparse: &akita_challenges::SparseChallengeConfig,
         nonce: u32,
     ) -> Result<(), AkitaError> {
-        let admission_cap = self.response_linf_policy(sparse)?.admission_cap;
-        crate::sis::FoldWitnessGrindContract {
-            policy: self.fold_linf_cap_config.policy,
-            witness_linf_cap: admission_cap,
+        if nonce >= crate::FoldLinfProtocolBinding::CURRENT.max_grind_attempts {
+            return Err(AkitaError::InvalidProof);
         }
-        .validate_nonce(
-            nonce,
-            crate::FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
-        )
+        Ok(())
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
@@ -793,7 +748,6 @@ impl FoldSchedule {
     }
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
-        self.root.params.final_group.validate()?;
         if self.root.input_witness_len == 0 || self.root.output_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(
                 "root fold witness lengths must be nonzero".to_string(),
@@ -810,6 +764,28 @@ impl FoldSchedule {
                 "root output witness length does not match its successor".to_string(),
             ));
         }
+        let (first_successor_d, first_successor_opening_num_vars) =
+            self.recursive_folds.first().map_or_else(
+                || {
+                    Ok((
+                        self.terminal.params.witness.d_a(),
+                        self.terminal.params.witness.recursive_opening_num_vars()?,
+                    ))
+                },
+                |step| {
+                    Ok((
+                        step.params.witness.d_a(),
+                        step.params.witness.recursive_opening_num_vars()?,
+                    ))
+                },
+            )?;
+        validate_stage2_successor_capacity(
+            "root fold",
+            &self.root.params.final_group.commitment,
+            self.root.output_witness_len,
+            first_successor_d,
+            first_successor_opening_num_vars,
+        )?;
         let mut predecessor = &self.root.params.final_group.commitment;
         let root_shared_d = predecessor.role_dims().d_d();
         let mut predecessor_setup_d = self.root.params.precommitted_groups.iter().try_fold(
@@ -838,14 +814,15 @@ impl FoldSchedule {
                 crate::validate_role_dims(consumer_dims)?;
                 let prefix_inner_d = prefix
                     .commitment_params
+                    .layout
                     .inner_commit_matrix
                     .ring_dimension();
                 let prefix_outer_d = prefix
                     .commitment_params
+                    .layout
                     .outer_commit_matrix
                     .ring_dimension();
-                if prefix.d_setup != crate::SETUP_OFFLOAD_D_SETUP
-                    || prefix.d_setup != predecessor_setup_d
+                if prefix.d_setup != predecessor_setup_d
                     || prefix_inner_d != consumer_dims.d_a()
                     || prefix_outer_d != consumer_dims.d_b()
                 {
@@ -869,6 +846,28 @@ impl FoldSchedule {
                     "recursive fold {index} output witness length does not match its successor"
                 )));
             }
+            let (successor_d, successor_opening_num_vars) =
+                self.recursive_folds.get(index + 1).map_or_else(
+                    || {
+                        Ok((
+                            self.terminal.params.witness.d_a(),
+                            self.terminal.params.witness.recursive_opening_num_vars()?,
+                        ))
+                    },
+                    |next| {
+                        Ok((
+                            next.params.witness.d_a(),
+                            next.params.witness.recursive_opening_num_vars()?,
+                        ))
+                    },
+                )?;
+            validate_stage2_successor_capacity(
+                &format!("recursive fold {index}"),
+                &step.params.witness,
+                step.output_witness_len,
+                successor_d,
+                successor_opening_num_vars,
+            )?;
             predecessor = &step.params.witness;
             predecessor_setup_d = predecessor.role_dims().common_relation_coeff_count();
         }
@@ -886,18 +885,19 @@ impl FoldSchedule {
         self.root.input_witness_len
     }
 
+    /// Canonical byte encoding used to order semantically distinct schedules.
+    ///
+    /// This is an ordering descriptor, not a wire encoding or transcript
+    /// commitment. It includes every schedule field that can affect proving or
+    /// verification.
+    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.append_descriptor_bytes(&mut bytes);
+        bytes
+    }
+
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.push(1);
-        match self.root.params.final_group.source {
-            RootSource::Dense { coefficient_bits } => {
-                bytes.push(0);
-                push_u32(bytes, coefficient_bits);
-            }
-            RootSource::OneHot { chunk_size } => {
-                bytes.push(1);
-                push_usize(bytes, chunk_size);
-            }
-        }
         match self.root.params.final_group.challenge {
             RootFinalChallenge::Flat => bytes.push(0),
             RootFinalChallenge::Tensor { fold_low_len } => {
@@ -959,6 +959,42 @@ impl FoldSchedule {
             .append_descriptor_bytes(bytes);
         push_usize(bytes, self.terminal.input_witness_len);
     }
+}
+
+fn validate_stage2_successor_capacity(
+    predecessor_name: &str,
+    predecessor: &CommittedGroupParams,
+    output_witness_len: usize,
+    successor_ring_dimension: usize,
+    successor_opening_num_vars: usize,
+) -> Result<(), AkitaError> {
+    // Stage 2 owns the predecessor-derived point. A successor may expose a
+    // wider scheduled cube; preparation derives that wider representation by
+    // zero-extension. The schedule must reject only points that do not fit.
+    if successor_ring_dimension == 0 || !successor_ring_dimension.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{predecessor_name} successor ring dimension {successor_ring_dimension} is invalid"
+        )));
+    }
+    let shared_d = predecessor.role_dims().d_d();
+    let precommitted_role_dims = predecessor
+        .precommitted_group_iter()
+        .map(|group| group.role_dims(shared_d))
+        .collect::<Vec<_>>();
+    let geometry = RelationAddressGeometry::new_for_groups(
+        predecessor.role_dims(),
+        &precommitted_role_dims,
+        successor_ring_dimension,
+        output_witness_len,
+    )?;
+    let stage2_num_vars = geometry.relation_point_variable_count();
+    if stage2_num_vars > successor_opening_num_vars {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{predecessor_name} Stage 2 point has {stage2_num_vars} variables, exceeding \
+             successor opening capacity {successor_opening_num_vars}"
+        )));
+    }
+    Ok(())
 }
 
 fn append_witness_partition_descriptor_bytes(bytes: &mut Vec<u8>, partition: &WitnessPartition) {

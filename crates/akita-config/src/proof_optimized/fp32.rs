@@ -38,7 +38,8 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q32Offset99,
     64,
     32,
-    32
+    32,
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64)
 );
 impl_proof_optimized_preset!(
     D64OneHot,
@@ -47,7 +48,8 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q32Offset99,
     64,
     32,
-    1
+    1,
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1)
 );
 impl_proof_optimized_preset!(
     D128Dense,
@@ -56,7 +58,8 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q32Offset99,
     128,
     32,
-    32
+    32,
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 128)
 );
 impl_proof_optimized_preset!(
     D128OneHot,
@@ -66,6 +69,7 @@ impl_proof_optimized_preset!(
     128,
     32,
     1,
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = (
         "schedules-fp32-d128-onehot",
         "fp32_d128_onehot",
@@ -79,7 +83,8 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q32Offset99,
     256,
     32,
-    32
+    32,
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 256)
 );
 impl_proof_optimized_preset!(
     D256OneHot,
@@ -89,6 +94,7 @@ impl_proof_optimized_preset!(
     256,
     32,
     1,
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = (
         "schedules-fp32-d256-onehot",
         "fp32_d256_onehot",

@@ -42,15 +42,20 @@ use akita_field::AkitaError;
 use akita_planner::generated_families::{
     emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
 };
-use akita_types::{AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout};
+use akita_types::{
+    sis::HonestFoldPolicySpec, AkitaScheduleLookupKey, CommitmentRingDims, FoldSchedule,
+    PolynomialGroupLayout,
+};
+
+type GroupBatchCandidate = (AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>);
 
 #[cfg(feature = "all-schedules")]
 use akita_config::policy_of;
-use akita_schedules::generated::table_entry;
+use akita_schedules::generated::{table_entry, table_entry_range};
 #[cfg(feature = "all-schedules")]
 use akita_schedules::{
     catalog_entries_sorted_for_lookup, schedule_from_entry, validate_catalog_identity,
-    validate_generated_schedule_entry, validate_generated_schedule_table,
+    validate_generated_schedule_table,
 };
 
 #[test]
@@ -65,37 +70,12 @@ fn group_batch_emission_matches_supported_policy_shape() {
     }
 }
 
-#[cfg(feature = "all-schedules")]
-#[test]
-fn generated_entry_rejects_root_source_policy_mismatch() {
-    let catalog = fp128::D64Dense::schedule_catalog().expect("dense schedule catalog");
-    let mut entry = catalog.entries[0];
-    entry.root.final_group.source =
-        akita_schedules::generated::GeneratedRootSource::OneHot { chunk_size: 256 };
-    let key = AkitaScheduleLookupKey {
-        final_group: entry.root.final_group.layout,
-        precommitteds: entry
-            .root
-            .precommitted_groups
-            .iter()
-            .map(|group| group.descriptor)
-            .collect(),
-    };
-    let err = validate_generated_schedule_entry(
-        &entry,
-        &key,
-        &policy_of::<fp128::D64Dense>(),
-        &fp128::D64Dense::ring_challenge_config,
-        &fp128::D64Dense::fold_challenge_shape_at_level,
-    )
-    .expect_err("generated source must match the catalog policy");
-    assert!(matches!(err, AkitaError::InvalidSetup(_)));
-}
-
 fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
     match family.module_name {
         "fp128_d128_dense" => fp128::D128Dense::schedule_catalog().is_some(),
         "fp128_d128_onehot" => fp128::D128OneHot::schedule_catalog().is_some(),
+        "fp128_d256_onehot" => fp128::D256OneHot::schedule_catalog().is_some(),
+        "fp128_mixed_dim_onehot" => fp128::MixedDimFp128OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot" => fp128::D64OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot_recursive" => {
             <akita_config::RecursiveCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::schedule_catalog()
@@ -146,9 +126,10 @@ fn assert_table_hit(
 
 #[cfg(feature = "all-schedules")]
 fn prepare_family_catalog<Cfg: CommitmentConfig>(
-    module_name: &str,
+    family: &GeneratedFamily,
     keys: &[PolynomialGroupLayout],
 ) -> akita_schedules::GeneratedScheduleTable {
+    let module_name = family.module_name;
     let catalog = Cfg::schedule_catalog().unwrap_or_else(|| {
         panic!("family {module_name} must expose schedule_catalog() under all-schedules")
     });
@@ -164,7 +145,70 @@ fn prepare_family_catalog<Cfg: CommitmentConfig>(
         "family {module_name} catalog entries must be sorted for binary lookup"
     );
     assert_table_hit(module_name, &catalog, keys);
+    assert_precommit_registry::<Cfg>(family, &catalog);
     catalog
+}
+
+#[cfg(feature = "all-schedules")]
+fn assert_precommit_registry<Cfg: CommitmentConfig>(
+    family: &GeneratedFamily,
+    catalog: &akita_schedules::GeneratedScheduleTable,
+) {
+    let expected = (family.precommitted_profiles)().unwrap_or_else(|e| {
+        panic!(
+            "{} precommit registry regen failed: {e}",
+            family.module_name
+        )
+    });
+    for expected_profile in expected {
+        let found = catalog
+            .precommitted_profiles
+            .iter()
+            .copied()
+            .map(|row| row.expand_to_committed_profile(&policy_of::<Cfg>()))
+            .any(|profile| {
+                profile.unwrap_or_else(|e| {
+                    panic!("{} generated precommit row failed: {e}", family.module_name)
+                }) == expected_profile
+            });
+        assert!(
+            found,
+            "family {} generated precommit registry is missing {:?}",
+            family.module_name, expected_profile.group
+        );
+    }
+    for &row in catalog.precommitted_profiles {
+        let profile = row
+            .expand_to_committed_profile(&policy_of::<Cfg>())
+            .unwrap_or_else(|e| {
+                panic!("{} generated precommit row failed: {e}", family.module_name)
+            });
+        let runtime =
+            akita_config::committed_group_profile::<Cfg>(&profile.group).unwrap_or_else(|e| {
+                panic!(
+                    "{} runtime precommit lookup failed: {e}",
+                    family.module_name
+                )
+            });
+        assert_eq!(
+            runtime, profile,
+            "family {} runtime precommit profile must match generated registry exactly",
+            family.module_name
+        );
+    }
+    for entry in catalog.entries {
+        for group in entry.root.precommitted_groups {
+            group
+                .descriptor
+                .validate(policy_of::<Cfg>().sis_modulus_profile.field_bits())
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{} schedule row references an invalid precommit descriptor: {e}",
+                        family.module_name
+                    )
+                });
+        }
+    }
 }
 
 #[cfg(feature = "all-schedules")]
@@ -217,6 +261,63 @@ fn catalog_identity_rejects_planner_policy_changes() {
 
 #[cfg(feature = "all-schedules")]
 #[test]
+fn equal_lookup_keys_form_one_contiguous_candidate_range() {
+    let catalog = fp128::D64Dense::schedule_catalog().expect("generated catalog");
+    let entry = *catalog.entries.first().expect("nonempty generated catalog");
+    let entries = Box::leak(vec![entry, entry].into_boxed_slice());
+    let duplicate_table = akita_schedules::GeneratedScheduleTable {
+        entries,
+        precommitted_profiles: catalog.precommitted_profiles,
+        identity: catalog.identity,
+    };
+    let key = entry.to_runtime_lookup_key();
+
+    assert!(catalog_entries_sorted_for_lookup(entries));
+    assert_eq!(table_entry_range(duplicate_table, &key), 0..2);
+    assert_eq!(table_entry(duplicate_table, &key), entries.first());
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn mixed_catalog_identity_binds_nonwinning_candidate_tuples() {
+    static WITHOUT_NONWINNER: &[CommitmentRingDims] = &[
+        CommitmentRingDims::uniform(64),
+        CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 64,
+        },
+        CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 128,
+        },
+    ];
+
+    let policy = policy_of::<fp128::MixedDimFp128OneHot>();
+    let catalog = fp128::MixedDimFp128OneHot::schedule_catalog().expect("mixed catalog");
+    assert!(catalog.entries.iter().all(|entry| entry
+        .root
+        .final_group
+        .commitment
+        .inner_commit_matrix
+        .ring_dimension
+        != 128));
+
+    let mut mutated = catalog;
+    mutated.identity.ring_dimension_candidates = WITHOUT_NONWINNER;
+    let error = validate_catalog_identity(
+        &mutated,
+        &policy,
+        fp128::MixedDimFp128OneHot::ring_challenge_config,
+        fp128::MixedDimFp128OneHot::fold_challenge_shape_at_level,
+    )
+    .expect_err("removing an admitted nonwinner must invalidate the catalog");
+    assert!(error.to_string().contains("catalog identity mismatch"));
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
 fn recursive_companion_catalogs_contain_only_grouped_keys() {
     for family in ALL_GENERATED_FAMILIES {
         if !(family.policy)().recursive_setup_planning {
@@ -240,56 +341,58 @@ fn family_catalog(
     keys: &[PolynomialGroupLayout],
 ) -> akita_schedules::GeneratedScheduleTable {
     match family.module_name {
-        "fp128_d128_dense" => prepare_family_catalog::<fp128::D128Dense>(family.module_name, keys),
-        "fp128_d128_onehot" => {
-            prepare_family_catalog::<fp128::D128OneHot>(family.module_name, keys)
+        "fp128_d128_dense" => prepare_family_catalog::<fp128::D128Dense>(family, keys),
+        "fp128_d128_onehot" => prepare_family_catalog::<fp128::D128OneHot>(family, keys),
+        "fp128_d256_onehot" => prepare_family_catalog::<fp128::D256OneHot>(family, keys),
+        "fp128_mixed_dim_onehot" => {
+            prepare_family_catalog::<fp128::MixedDimFp128OneHot>(family, keys)
         }
-        "fp128_d64_onehot" => prepare_family_catalog::<fp128::D64OneHot>(family.module_name, keys),
+        "fp128_d64_onehot" => prepare_family_catalog::<fp128::D64OneHot>(family, keys),
         "fp128_d64_onehot_recursive" => prepare_family_catalog::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
-        >(family.module_name, keys),
+        >(family, keys),
         "fp128_d64_onehot_recursive_multi_chunk_w8r2" => prepare_family_catalog::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
-        >(family.module_name, keys),
-        "fp128_d64_dense" => prepare_family_catalog::<fp128::D64Dense>(family.module_name, keys),
-        "fp128_d64_onehot_tensor" => prepare_family_catalog::<
-            tensor_verifier::fp128::D64OneHotTensor,
-        >(family.module_name, keys),
+        >(family, keys),
+        "fp128_d64_dense" => prepare_family_catalog::<fp128::D64Dense>(family, keys),
+        "fp128_d64_onehot_tensor" => {
+            prepare_family_catalog::<tensor_verifier::fp128::D64OneHotTensor>(family, keys)
+        }
         "fp128_d64_onehot_multi_chunk" => {
-            prepare_family_catalog::<fp128::D64OneHotMultiChunk>(family.module_name, keys)
+            prepare_family_catalog::<fp128::D64OneHotMultiChunk>(family, keys)
         }
         "fp128_d64_onehot_multi_chunk_w2r2" => {
-            prepare_family_catalog::<fp128::D64OneHotMultiChunkW2R2>(family.module_name, keys)
+            prepare_family_catalog::<fp128::D64OneHotMultiChunkW2R2>(family, keys)
         }
         "fp128_d64_onehot_multi_chunk_w4r2" => {
-            prepare_family_catalog::<fp128::D64OneHotMultiChunkW4R2>(family.module_name, keys)
+            prepare_family_catalog::<fp128::D64OneHotMultiChunkW4R2>(family, keys)
         }
         "fp128_d64_dense_multi_chunk" => {
-            prepare_family_catalog::<fp128::D64DenseMultiChunk>(family.module_name, keys)
+            prepare_family_catalog::<fp128::D64DenseMultiChunk>(family, keys)
         }
-        "fp64_d128_dense" => prepare_family_catalog::<fp64::D128Dense>(family.module_name, keys),
-        "fp64_d128_onehot" => prepare_family_catalog::<fp64::D128OneHot>(family.module_name, keys),
-        "fp64_d256_onehot" => prepare_family_catalog::<fp64::D256OneHot>(family.module_name, keys),
-        "fp32_d128_onehot" => prepare_family_catalog::<fp32::D128OneHot>(family.module_name, keys),
-        "fp32_d256_onehot" => prepare_family_catalog::<fp32::D256OneHot>(family.module_name, keys),
+        "fp64_d128_dense" => prepare_family_catalog::<fp64::D128Dense>(family, keys),
+        "fp64_d128_onehot" => prepare_family_catalog::<fp64::D128OneHot>(family, keys),
+        "fp64_d256_onehot" => prepare_family_catalog::<fp64::D256OneHot>(family, keys),
+        "fp32_d128_onehot" => prepare_family_catalog::<fp32::D128OneHot>(family, keys),
+        "fp32_d256_onehot" => prepare_family_catalog::<fp32::D256OneHot>(family, keys),
         other => panic!("unknown generated family for catalog guard: {other}"),
     }
 }
 
 fn assert_group_batch_table_hits<Cfg: CommitmentConfig>(
     module_name: &str,
-    keys: &[AkitaScheduleLookupKey],
+    requests: &[GroupBatchCandidate],
 ) {
-    if keys.is_empty() {
+    if requests.is_empty() {
         return;
     }
     let catalog = Cfg::schedule_catalog()
         .unwrap_or_else(|| panic!("family {module_name} must expose schedule_catalog()"));
-    let missing = keys
+    let missing = requests
         .iter()
-        .filter(|key| table_entry(catalog, key).is_none())
+        .filter(|(key, _)| table_entry(catalog, key).is_none())
         .take(3)
-        .map(|key| format!("{key:?}"))
+        .map(|(key, _)| format!("{key:?}"))
         .collect::<Vec<_>>();
     assert!(
         missing.is_empty(),
@@ -298,55 +401,65 @@ fn assert_group_batch_table_hits<Cfg: CommitmentConfig>(
     );
 }
 
-fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaScheduleLookupKey]) {
+fn assert_family_group_batch_table_hit(family: &GeneratedFamily, requests: &[GroupBatchCandidate]) {
     match family.module_name {
         "fp128_d128_dense" => {
-            assert_group_batch_table_hits::<fp128::D128Dense>(family.module_name, keys)
+            assert_group_batch_table_hits::<fp128::D128Dense>(family.module_name, requests)
         }
         "fp128_d128_onehot" => {
-            assert_group_batch_table_hits::<fp128::D128OneHot>(family.module_name, keys)
+            assert_group_batch_table_hits::<fp128::D128OneHot>(family.module_name, requests)
         }
+        "fp128_d256_onehot" => {
+            assert_group_batch_table_hits::<fp128::D256OneHot>(family.module_name, requests)
+        }
+        "fp128_mixed_dim_onehot" => assert_group_batch_table_hits::<fp128::MixedDimFp128OneHot>(
+            family.module_name,
+            requests,
+        ),
         "fp128_d64_onehot" => {
-            assert_group_batch_table_hits::<fp128::D64OneHot>(family.module_name, keys)
+            assert_group_batch_table_hits::<fp128::D64OneHot>(family.module_name, requests)
         }
         "fp128_d64_onehot_recursive" => assert_group_batch_table_hits::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
-        >(family.module_name, keys),
+        >(family.module_name, requests),
         "fp128_d64_onehot_recursive_multi_chunk_w8r2" => assert_group_batch_table_hits::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
-        >(family.module_name, keys),
+        >(family.module_name, requests),
         "fp128_d64_dense" => {
-            assert_group_batch_table_hits::<fp128::D64Dense>(family.module_name, keys)
+            assert_group_batch_table_hits::<fp128::D64Dense>(family.module_name, requests)
         }
         "fp128_d64_onehot_tensor" => assert_group_batch_table_hits::<
             tensor_verifier::fp128::D64OneHotTensor,
-        >(family.module_name, keys),
+        >(family.module_name, requests),
         "fp128_d64_onehot_multi_chunk" => {
-            assert_group_batch_table_hits::<fp128::D64OneHotMultiChunk>(family.module_name, keys)
+            assert_group_batch_table_hits::<fp128::D64OneHotMultiChunk>(
+                family.module_name,
+                requests,
+            )
         }
         "fp128_d64_onehot_multi_chunk_w2r2" => assert_group_batch_table_hits::<
             fp128::D64OneHotMultiChunkW2R2,
-        >(family.module_name, keys),
+        >(family.module_name, requests),
         "fp128_d64_onehot_multi_chunk_w4r2" => assert_group_batch_table_hits::<
             fp128::D64OneHotMultiChunkW4R2,
-        >(family.module_name, keys),
+        >(family.module_name, requests),
         "fp128_d64_dense_multi_chunk" => {
-            assert_group_batch_table_hits::<fp128::D64DenseMultiChunk>(family.module_name, keys)
+            assert_group_batch_table_hits::<fp128::D64DenseMultiChunk>(family.module_name, requests)
         }
         "fp64_d128_dense" => {
-            assert_group_batch_table_hits::<fp64::D128Dense>(family.module_name, keys)
+            assert_group_batch_table_hits::<fp64::D128Dense>(family.module_name, requests)
         }
         "fp64_d128_onehot" => {
-            assert_group_batch_table_hits::<fp64::D128OneHot>(family.module_name, keys)
+            assert_group_batch_table_hits::<fp64::D128OneHot>(family.module_name, requests)
         }
         "fp64_d256_onehot" => {
-            assert_group_batch_table_hits::<fp64::D256OneHot>(family.module_name, keys)
+            assert_group_batch_table_hits::<fp64::D256OneHot>(family.module_name, requests)
         }
         "fp32_d128_onehot" => {
-            assert_group_batch_table_hits::<fp32::D128OneHot>(family.module_name, keys)
+            assert_group_batch_table_hits::<fp32::D128OneHot>(family.module_name, requests)
         }
         "fp32_d256_onehot" => {
-            assert_group_batch_table_hits::<fp32::D256OneHot>(family.module_name, keys)
+            assert_group_batch_table_hits::<fp32::D256OneHot>(family.module_name, requests)
         }
         other => panic!("unknown generated family for grouped catalog guard: {other}"),
     }
@@ -356,72 +469,76 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaSc
 fn table_backed_group_batch_schedule(
     family: &GeneratedFamily,
     catalog: akita_schedules::GeneratedScheduleTable,
-    key: &AkitaScheduleLookupKey,
+    request: &GroupBatchCandidate,
 ) -> Result<FoldSchedule, AkitaError> {
-    if let Some(entry) = table_entry(catalog, key) {
+    if let Some(entry) = table_entry(catalog, &request.0) {
         return schedule_from_entry(
             entry,
-            key,
+            &request.0,
             &(family.policy)(),
             family.ring_challenge_config,
             family.fold_challenge_shape_at_level,
         );
     }
-    (family.regen_group_batch)(key.clone())
+    (family.regen_group_batch)(request.0.clone(), request.1.clone())
 }
 
 #[cfg(not(feature = "all-schedules"))]
 fn table_backed_group_batch_schedule<Cfg: CommitmentConfig>(
-    key: &AkitaScheduleLookupKey,
+    request: &GroupBatchCandidate,
 ) -> Result<FoldSchedule, AkitaError> {
-    Cfg::runtime_schedule(key.clone())
+    Cfg::runtime_schedule(request.0.clone())
 }
 
 #[cfg(feature = "all-schedules")]
 fn resolve_family_group_batch_schedule(
     family: &GeneratedFamily,
     catalog: akita_schedules::GeneratedScheduleTable,
-    key: &AkitaScheduleLookupKey,
+    request: &GroupBatchCandidate,
 ) -> Result<FoldSchedule, AkitaError> {
-    table_backed_group_batch_schedule(family, catalog, key)
+    table_backed_group_batch_schedule(family, catalog, request)
 }
 
 #[cfg(not(feature = "all-schedules"))]
 fn resolve_family_group_batch_schedule(
     family: &GeneratedFamily,
-    key: &AkitaScheduleLookupKey,
+    request: &GroupBatchCandidate,
 ) -> Result<FoldSchedule, AkitaError> {
     match family.module_name {
-        "fp128_d128_dense" => table_backed_group_batch_schedule::<fp128::D128Dense>(key),
-        "fp128_d128_onehot" => table_backed_group_batch_schedule::<fp128::D128OneHot>(key),
-        "fp128_d64_onehot" => table_backed_group_batch_schedule::<fp128::D64OneHot>(key),
+        "fp128_d128_dense" => table_backed_group_batch_schedule::<fp128::D128Dense>(request),
+        "fp128_d128_onehot" => table_backed_group_batch_schedule::<fp128::D128OneHot>(request),
+        "fp128_d256_onehot" => table_backed_group_batch_schedule::<fp128::D256OneHot>(request),
+        "fp128_mixed_dim_onehot" => {
+            table_backed_group_batch_schedule::<fp128::MixedDimFp128OneHot>(request)
+        }
+        "fp128_d64_onehot" => table_backed_group_batch_schedule::<fp128::D64OneHot>(request),
         "fp128_d64_onehot_recursive" => table_backed_group_batch_schedule::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
-        >(key),
+        >(request),
         "fp128_d64_onehot_recursive_multi_chunk_w8r2" => table_backed_group_batch_schedule::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
-        >(key),
-        "fp128_d64_dense" => table_backed_group_batch_schedule::<fp128::D64Dense>(key),
+        >(request),
+        "fp128_d64_dense" => table_backed_group_batch_schedule::<fp128::D64Dense>(request),
         "fp128_d64_onehot_tensor" => {
-            table_backed_group_batch_schedule::<tensor_verifier::fp128::D64OneHotTensor>(key)
+            table_backed_group_batch_schedule::<tensor_verifier::fp128::D64OneHotTensor>(request)
         }
         "fp128_d64_onehot_multi_chunk" => {
-            table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunk>(key)
+            table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunk>(request)
         }
         "fp128_d64_onehot_multi_chunk_w2r2" => {
-            table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunkW2R2>(key)
+            table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunkW2R2>(request)
         }
         "fp128_d64_onehot_multi_chunk_w4r2" => {
-            table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunkW4R2>(key)
+            table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunkW4R2>(request)
         }
         "fp128_d64_dense_multi_chunk" => {
-            table_backed_group_batch_schedule::<fp128::D64DenseMultiChunk>(key)
+            table_backed_group_batch_schedule::<fp128::D64DenseMultiChunk>(request)
         }
-        "fp64_d128_dense" => table_backed_group_batch_schedule::<fp64::D128Dense>(key),
-        "fp64_d128_onehot" => table_backed_group_batch_schedule::<fp64::D128OneHot>(key),
-        "fp64_d256_onehot" => table_backed_group_batch_schedule::<fp64::D256OneHot>(key),
-        "fp32_d128_onehot" => table_backed_group_batch_schedule::<fp32::D128OneHot>(key),
-        "fp32_d256_onehot" => table_backed_group_batch_schedule::<fp32::D256OneHot>(key),
+        "fp64_d128_dense" => table_backed_group_batch_schedule::<fp64::D128Dense>(request),
+        "fp64_d128_onehot" => table_backed_group_batch_schedule::<fp64::D128OneHot>(request),
+        "fp64_d256_onehot" => table_backed_group_batch_schedule::<fp64::D256OneHot>(request),
+        "fp32_d128_onehot" => table_backed_group_batch_schedule::<fp32::D128OneHot>(request),
+        "fp32_d256_onehot" => table_backed_group_batch_schedule::<fp32::D256OneHot>(request),
         other => panic!("unknown generated family for multi-group schedule guard: {other}"),
     }
 }
@@ -612,28 +729,29 @@ fn check_scalar_keys(
 fn compare_group_batch_key(
     family: &GeneratedFamily,
     catalog: akita_schedules::GeneratedScheduleTable,
-    key: &AkitaScheduleLookupKey,
+    request: &GroupBatchCandidate,
 ) -> Option<Mismatch> {
-    let table_backed =
-        resolve_family_group_batch_schedule(family, catalog, key).unwrap_or_else(|e| {
+    let table_backed = resolve_family_group_batch_schedule(family, catalog, request)
+        .unwrap_or_else(|e| {
             panic!(
-                "table-backed multi-group schedule failed for family {} key={key:?}: {e}",
-                family.module_name
+                "table-backed multi-group schedule failed for family {} key={:?}: {e}",
+                family.module_name, request.0
             )
         });
-    let regenerated = (family.regen_group_batch)(key.clone()).unwrap_or_else(|e| {
-        panic!(
-            "multi-group DP regen failed for family {} key={key:?}: {e}",
-            family.module_name
-        )
-    });
+    let regenerated = (family.regen_group_batch)(request.0.clone(), request.1.clone())
+        .unwrap_or_else(|e| {
+            panic!(
+                "multi-group DP regen failed for family {} key={:?}: {e}",
+                family.module_name, request.0
+            )
+        });
 
     if schedules_equal(&table_backed, &regenerated) {
         return None;
     }
     Some(Mismatch {
         family: family.module_name,
-        key: format!("group-batch {key:?}"),
+        key: format!("group-batch {:?}", request.0),
         table_backed: render_schedule(&table_backed),
         regenerated: render_schedule(&regenerated),
     })
@@ -642,27 +760,28 @@ fn compare_group_batch_key(
 #[cfg(not(feature = "all-schedules"))]
 fn compare_group_batch_key(
     family: &GeneratedFamily,
-    key: &AkitaScheduleLookupKey,
+    request: &GroupBatchCandidate,
 ) -> Option<Mismatch> {
-    let table_backed = resolve_family_group_batch_schedule(family, key).unwrap_or_else(|e| {
+    let table_backed = resolve_family_group_batch_schedule(family, request).unwrap_or_else(|e| {
         panic!(
-            "table-backed multi-group schedule failed for family {} key={key:?}: {e}",
-            family.module_name
+            "table-backed multi-group schedule failed for family {} key={:?}: {e}",
+            family.module_name, request.0
         )
     });
-    let regenerated = (family.regen_group_batch)(key.clone()).unwrap_or_else(|e| {
-        panic!(
-            "multi-group DP regen failed for family {} key={key:?}: {e}",
-            family.module_name
-        )
-    });
+    let regenerated = (family.regen_group_batch)(request.0.clone(), request.1.clone())
+        .unwrap_or_else(|e| {
+            panic!(
+                "multi-group DP regen failed for family {} key={:?}: {e}",
+                family.module_name, request.0
+            )
+        });
 
     if schedules_equal(&table_backed, &regenerated) {
         return None;
     }
     Some(Mismatch {
         family: family.module_name,
-        key: format!("group-batch {key:?}"),
+        key: format!("group-batch {:?}", request.0),
         table_backed: render_schedule(&table_backed),
         regenerated: render_schedule(&regenerated),
     })
@@ -672,24 +791,26 @@ fn compare_group_batch_key(
 fn check_group_batch_keys(
     family: &GeneratedFamily,
     catalog: akita_schedules::GeneratedScheduleTable,
-    keys: &[AkitaScheduleLookupKey],
+    requests: &[GroupBatchCandidate],
     into: &mut Vec<Mismatch>,
 ) {
-    if keys.is_empty() {
+    if requests.is_empty() {
         return;
     }
 
     let workers = worker_count();
-    if workers > 1 && keys.len() >= 2 * workers {
-        let chunk_size = keys.len().div_ceil(workers);
+    if workers > 1 && requests.len() >= 2 * workers {
+        let chunk_size = requests.len().div_ceil(workers);
         std::thread::scope(|scope| {
-            let handles: Vec<_> = keys
+            let handles: Vec<_> = requests
                 .chunks(chunk_size)
                 .map(|chunk| {
                     scope.spawn(move || {
                         let mut local = Vec::new();
-                        for key in chunk {
-                            if let Some(mismatch) = compare_group_batch_key(family, catalog, key) {
+                        for request in chunk {
+                            if let Some(mismatch) =
+                                compare_group_batch_key(family, catalog, request)
+                            {
                                 local.push(mismatch);
                             }
                         }
@@ -704,8 +825,8 @@ fn check_group_batch_keys(
         return;
     }
 
-    for key in keys {
-        if let Some(mismatch) = compare_group_batch_key(family, catalog, key) {
+    for request in requests {
+        if let Some(mismatch) = compare_group_batch_key(family, catalog, request) {
             into.push(mismatch);
         }
     }
@@ -714,24 +835,24 @@ fn check_group_batch_keys(
 #[cfg(not(feature = "all-schedules"))]
 fn check_group_batch_keys(
     family: &GeneratedFamily,
-    keys: &[AkitaScheduleLookupKey],
+    requests: &[GroupBatchCandidate],
     into: &mut Vec<Mismatch>,
 ) {
-    if keys.is_empty() {
+    if requests.is_empty() {
         return;
     }
 
     let workers = worker_count();
-    if workers > 1 && keys.len() >= 2 * workers {
-        let chunk_size = keys.len().div_ceil(workers);
+    if workers > 1 && requests.len() >= 2 * workers {
+        let chunk_size = requests.len().div_ceil(workers);
         std::thread::scope(|scope| {
-            let handles: Vec<_> = keys
+            let handles: Vec<_> = requests
                 .chunks(chunk_size)
                 .map(|chunk| {
                     scope.spawn(move || {
                         let mut local = Vec::new();
-                        for key in chunk {
-                            if let Some(mismatch) = compare_group_batch_key(family, key) {
+                        for request in chunk {
+                            if let Some(mismatch) = compare_group_batch_key(family, request) {
                                 local.push(mismatch);
                             }
                         }
@@ -746,8 +867,8 @@ fn check_group_batch_keys(
         return;
     }
 
-    for key in keys {
-        if let Some(mismatch) = compare_group_batch_key(family, key) {
+    for request in requests {
+        if let Some(mismatch) = compare_group_batch_key(family, request) {
             into.push(mismatch);
         }
     }

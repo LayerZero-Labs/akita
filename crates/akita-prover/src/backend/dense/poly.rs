@@ -273,7 +273,6 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
             flat.resize(physical_len, 0i8);
             flat
         });
-
         let mut flat = Vec::with_capacity(physical_len);
         for ring in &coeffs {
             flat.extend_from_slice(ring.coefficients());

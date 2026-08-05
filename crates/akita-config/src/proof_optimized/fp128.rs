@@ -22,7 +22,7 @@ pub struct D64OneHot;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHotK16;
 
-/// Binary onehot `D=128` preset for planner-backed experiments.
+/// Binary onehot `D=128`, `K=256` preset for planner-backed experiments.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
 
@@ -30,6 +30,32 @@ pub struct D128OneHot;
 /// fp128 certifies all three commitment roles at this dimension.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D256OneHot;
+
+/// Binary onehot preset with D256 setup generation and planner-selected
+/// per-level commitment dimensions.
+///
+/// Mixed-dimension planning is an offline generation step. Runtime proving
+/// and verification resolve the exact generated catalog row.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MixedDimFp128OneHot;
+
+impl MixedDimFp128OneHot {
+    /// Audited commitment-role dimension candidates used by offline planning.
+    pub const RING_DIMENSION_CANDIDATES: [akita_types::CommitmentRingDims; 4] = [
+        akita_types::CommitmentRingDims::uniform(64),
+        akita_types::CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 64,
+        },
+        akita_types::CommitmentRingDims::uniform(128),
+        akita_types::CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 128,
+        },
+    ];
+}
 
 /// Tableless policy marker for a `D = 512` inner (A-role) root.
 ///
@@ -65,6 +91,7 @@ impl_proof_optimized_preset!(
     128,
     128,
     128,
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 128),
     schedules = (
         "schedules-fp128-d128-dense",
         "fp128_d128_dense",
@@ -79,6 +106,7 @@ impl_proof_optimized_preset!(
     128,
     128,
     1,
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = (
         "schedules-fp128-d128-onehot",
         "fp128_d128_onehot",
@@ -93,6 +121,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     128,
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64),
     schedules = (
         "schedules-fp128-d64-dense",
         "fp128_d64_dense",
@@ -107,7 +136,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     1,
-    256,
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = (
         "schedules-fp128-d64-onehot",
         "fp128_d64_onehot",
@@ -122,7 +151,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     1,
-    16
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 4)
 );
 impl_proof_optimized_preset!(
     D256OneHot,
@@ -132,7 +161,28 @@ impl_proof_optimized_preset!(
     256,
     128,
     1,
-    256
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
+    schedules = (
+        "schedules-fp128-d256-onehot",
+        "fp128_d256_onehot",
+        fp128_d256_onehot_table
+    )
+);
+impl_proof_optimized_preset!(
+    MixedDimFp128OneHot,
+    Field,
+    Field,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    256,
+    128,
+    1,
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
+    schedules = (
+        "schedules-fp128-mixed-dim-onehot",
+        "fp128_mixed_dim_onehot",
+        fp128_mixed_dim_onehot_table
+    ),
+    ring_dimension_candidates = &MixedDimFp128OneHot::RING_DIMENSION_CANDIDATES
 );
 impl_proof_optimized_preset!(
     D512OneHot,
@@ -142,7 +192,7 @@ impl_proof_optimized_preset!(
     512,
     128,
     1,
-    256
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 2)
 );
 impl_multi_chunk_companion!(
     D64OneHotMultiChunk,

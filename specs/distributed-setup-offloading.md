@@ -10,6 +10,12 @@
 | Superseded-by |                                            |
 | Book-chapter  | book/src/how/proving/distributed-prover.md |
 
+> **Stage-3 model update (2026-07-29).** The fused witness-carry details in the
+> original plan were superseded by
+> [`group-local-opening-points.md`](archive/2026-Q3/group-local-opening-points.md).
+> Stage 3 now proves only the setup product; Stage 2 carries the independent
+> witness point and evaluation directly to the successor.
+
 ## Summary
 
 Akita already ships two independent verifier/prover-cost techniques for `D = 64`
@@ -86,10 +92,13 @@ batch — exactly as the generated table
   block geometry differs, because a chunked consuming fold requires
   `num_live_blocks >= num_chunks`.
 - **Every group is chunked the same way.** The canonical `WitnessLayout` is
-  group-major / chunk-minor: at a chunked fold, the main witness group **and**
-  every precommitted group (including the carried setup-prefix group) get
-  `num_chunks` units. The shared `r̂` tail keeps the single-machine relation-row
-  count (`num_commitments = 1`); it does not scale with `num_chunks`.
+  chunk-major with authenticated group order inside each chunk: at a chunked
+  fold, the main witness group **and** every precommitted group (including the
+  carried setup-prefix group) get `num_chunks` units. One machine's complete
+  multi-group chunk is therefore contiguous. The shared native `r̂` tail keeps
+  the single-machine relation-row count (`num_commitments = 1`); it does not
+  scale with `num_chunks`. Exact coefficient ranges are specified by
+  [`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md).
 - **No verifier panics.** Every new rejection path (wrong slot, chunk/blocks
   mismatch, mode/successor mismatch) returns `AkitaError` /
   `SerializationError`, per the verifier no-panic contract.
@@ -141,12 +150,11 @@ the same planner, walker, prover, and verifier, and are mostly orthogonal:
   and dispatches each window to the group's fold kernel; for the setup-prefix
   group that is `setup_prefix_decompose_fold`
   (`crates/akita-prover/src/backend/recursive/setup_prefix_source.rs`).
-- **Stage-3 splits cleanly.** The witness-carry term
-  (`build_witness_carry_term`,
-  `crates/akita-prover/src/protocol/sumcheck/akita_stage3/mod.rs`) re-expresses
-  the *flat* next-witness opening `W(stage2_point)` from `logical_w` and is
-  chunk-agnostic; the setup-product term (built by `build_setup_product_term`
-  → `prepare_setup_sumcheck_terms`,
+- **Stage 3 is setup-only.** The Stage-2 witness point and evaluation pass
+  directly to the successor witness group.
+  Stage 3 does not receive `logical_w` or construct a witness-carry term.
+  Its setup-product term (built by `build_setup_product_term` →
+  `prepare_setup_sumcheck_terms`,
   `crates/akita-prover/src/protocol/sumcheck/akita_stage3/mod.rs`, over the
   `SetupContributionPlan` in `crates/akita-types/src/setup_contribution/plan/`)
   is chunk-aware and validates
@@ -183,8 +191,8 @@ The following are already implemented and verified (the
    `crates/akita-config/tests/generated_tables.rs`
    (`family_catalog_is_linked`, `family_catalog`,
    `assert_family_group_batch_table_hit`, `resolve_family_group_batch_schedule`).
-5. **Planner fix.** `find_group_batch_schedule`
-   (`crates/akita-planner/src/group_batch.rs`) now skips a chunked root fold
+5. **Planner fix.** `find_schedule`
+   (`crates/akita-planner/src/planner.rs`) now skips a chunked root fold
    candidate whose **main** group has `num_live_blocks < num_chunks` (previously
    only precommitted groups were checked; the main-group case was unreachable
    until a multi-group family started emitting chunked roots).
@@ -319,7 +327,7 @@ match the chunked `WitnessLayout`, on both prover and verifier.
   (`crates/akita-prover/src/protocol/ring_switch/coeffs.rs`) must emit
   `num_chunks` `[zⱼ | eⱼ | t̂ⱼ]` units for the setup-prefix group and assert the
   emitted length equals `lp.next_w_len(...)`.
-- Verifier row-MLE: `RelationMatrixEvaluator::eval_at_point`
+- Verifier row-MLE: `RelationMatrixEvaluator::eval_flat_at_point`
   (`crates/akita-verifier/src/protocol/ring_switch.rs`) evaluates the
   setup-prefix group's `E`/`T` partitioned per unit and `Z` replicated per unit,
   through `prepare_relation_matrix_evaluator_multi_group`.
@@ -355,30 +363,24 @@ produces `2 * num_chunks` units (setup-prefix + witness, `num_chunks` each).
 chunked.
 
 **Where.**
-- `build_witness_carry_term`
-  (`crates/akita-prover/src/protocol/sumcheck/akita_stage3/mod.rs`) reconstructs
-  the carried next-witness opening from the flat `logical_w` i8 digits and
-  asserts `term.input_claim() == stage2_next_w_eval`. Confirm `logical_w` at a
-  chunked fold is the flat concatenation the carry term expects (it is the same
-  flat next witness, whose *layout* is chunked but whose *values* are the folded
-  responses), so the assertion holds.
-- `build_setup_product_term` → `prepare_setup_sumcheck_terms`
-  (`crates/akita-prover/src/protocol/sumcheck/akita_stage3/mod.rs`) with the
-  multi-group chunk-consistency check (the "multi-group witness layout does not
-  match root group order" guard) must accept both the level-0 chunked
-  multi-group root and the level-1 chunked two-group suffix. The verifier's copy
-  of that guard lives in `crates/akita-verifier/src/protocol/ring_switch.rs`.
-- Verifier Stage-3: `verify_batched_stage3` /
-  `SetupIndexWeightEvaluator::evaluate`
+- `prove_stage3`
+  (`crates/akita-prover/src/protocol/core/fold.rs`) constructs only the
+  setup-product term from the relation geometry and setup-prefix slot.
+  It does not receive or scan the chunked recursive witness.
+- The Stage-2 witness point and `stage2_next_w_eval` remain an independent
+  successor group, so chunk partitioning does not alter the Stage-3 claim.
+- Verifier Stage-3: `verify_stage3` /
+  `SetupContributionPlan::evaluate_setup_index_weight_mle`
   (`crates/akita-verifier/src/stages/stage3.rs`,
-  `crates/akita-types/src/setup_contribution/setup_index_weight_evaluator.rs`).
+  `crates/akita-types/src/setup_contribution/plan/setup_index_weight.rs`).
   The setup-index weight and `alpha`-power ladder are challenge-driven and
-  chunk-independent; confirm the carried `setup_prefix_eval` is consumed only
-  when `next_fold_level_params.setup_prefix.is_some()`.
+  chunk-independent.
+  The carried `setup_prefix_eval` is consumed only when the successor has an
+  incoming setup-prefix group.
 
 **Acceptance.** Stage-3 prover/verifier accept at levels 0 and 1; the
 `setup_prefix_eval` carried into levels 1 and 2 matches the verifier's
-recomputed point (`BatchedStage3Geometry::shared_suffix_point`).
+recomputed setup-product challenge point.
 
 ### Step 5 — Guard and negative tests
 
@@ -479,7 +481,7 @@ cycles saved by offloading vs the extra chunked-witness bytes.
 - `specs/distributed-planner.md`
 - `specs/multi-group-batching.md`
 - `specs/batched-stage3-setup-opening.md`
-- `crates/akita-planner/src/group_batch.rs`
+- `crates/akita-planner/src/planner.rs`
 - `crates/akita-planner/src/schedule_params/candidate.rs`
 - `crates/akita-prover/src/protocol/fold_grind.rs`
 - `crates/akita-prover/src/protocol/sumcheck/akita_stage3/mod.rs`

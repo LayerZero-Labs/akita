@@ -11,12 +11,11 @@ use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
     extension_opening_reduction_level_bytes, level_proof_bytes, terminal_response_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedLevelParams, RootSource, TerminalResponseShape,
+    PrecommittedLevelParams, TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
 };
 
 use crate::generated::{
     validate_entry_key, GeneratedFoldScheduleEntry, GeneratedRootFinalChallenge,
-    GeneratedRootSource,
 };
 use crate::group_batch::multi_group_root_precommitted_groups_for_open_basis;
 use crate::runtime::{
@@ -36,35 +35,15 @@ pub(crate) fn walk_generated_schedule_entry(
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<GeneratedEntryWalkOutput, AkitaError> {
-    key.validate()?;
+    key.validate(policy.decomposition.field_bits())?;
     validate_entry_key(entry, key)?;
     entry.validate()?;
-    let stored_root_source = match entry.root.final_group.source {
-        GeneratedRootSource::Dense { coefficient_bits } => RootSource::Dense { coefficient_bits },
-        GeneratedRootSource::OneHot { chunk_size } => RootSource::OneHot {
-            chunk_size: chunk_size as usize,
-        },
-    };
-    let configured_root_source =
-        RootSource::from_config(policy.decomposition, policy.onehot_chunk_size);
-    if stored_root_source != configured_root_source {
-        return Err(AkitaError::InvalidSetup(format!(
-            "generated root source {stored_root_source:?} disagrees with catalog policy \
-             source {configured_root_source:?}"
-        )));
-    }
     let is_multi_group = !key.precommitteds.is_empty();
     let expected_root_w_len = 1usize
         .checked_shl(key.final_group.num_vars() as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
     let field_bits = policy.decomposition.field_bits();
-    let challenge_field_bits = field_bits
-        .checked_mul(policy.chal_ext_degree as u32)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "generated schedule challenge field bit width overflow".to_string(),
-            )
-        })?;
+    let challenge_field_bits = policy.challenge_field_bits()?;
     let root_eor_key = PolynomialGroupLayout::new(key.max_num_vars(), key.num_polynomials()?);
     let stored_root_shape = match entry.root.final_group.challenge {
         GeneratedRootFinalChallenge::Flat => TensorChallengeShape::Flat,
@@ -93,6 +72,7 @@ pub(crate) fn walk_generated_schedule_entry(
         let (precommitted_groups, precommitted_d_width) =
             multi_group_root_precommitted_groups_for_open_basis(
                 key,
+                entry.root.precommitted_groups,
                 policy,
                 ring_challenge_config,
                 entry.root.open_commit_matrix.log_basis,
@@ -107,6 +87,8 @@ pub(crate) fn walk_generated_schedule_entry(
                 ring_challenge_config,
                 stored_root_shape,
                 key.final_group.num_polynomials(),
+                entry.root.final_group.num_digits_inner,
+                entry.root.final_group.num_digits_fold,
                 precommitted_groups,
                 precommitted_d_width,
                 entry.root.open_commit_matrix,
@@ -120,6 +102,8 @@ pub(crate) fn walk_generated_schedule_entry(
                 policy,
                 ring_challenge_config,
                 0,
+                Some(entry.root.final_group.num_digits_inner),
+                entry.root.final_group.num_digits_fold,
                 expected_root_w_len,
                 stored_root_shape,
                 key.final_group.num_polynomials(),
@@ -154,6 +138,8 @@ pub(crate) fn walk_generated_schedule_entry(
             policy,
             ring_challenge_config,
             index + 1,
+            None,
+            fold.num_digits_fold,
             input_witness_len,
             TensorChallengeShape::Flat,
             1,
@@ -167,13 +153,48 @@ pub(crate) fn walk_generated_schedule_entry(
         input_witness_len = output_witness_len;
     }
     let terminal_level = entry.recursive_folds.len() + 1;
-    let (terminal_params, admission_cap) = entry.terminal.expand_to_level_params(
+    let terminal_params = entry.terminal.expand_to_level_params(
         policy,
         ring_challenge_config,
         terminal_level,
         input_witness_len,
     )?;
-    let witness_shape = TerminalResponseShape::derive(&terminal_params, admission_cap)?;
+    let z_coords = terminal_params
+        .inner_width()
+        .checked_mul(terminal_params.d_a())
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal z coordinates overflow".into()))?;
+    let e_field_elems = terminal_params
+        .num_live_blocks
+        .checked_mul(terminal_params.d_a())
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal e coordinates overflow".into()))?;
+    let t_field_elems = terminal_params
+        .num_live_blocks
+        .checked_mul(terminal_params.inner_commit_matrix.output_rank())
+        .and_then(|value| value.checked_mul(terminal_params.d_a()))
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal t coordinates overflow".into()))?;
+    let logical_num_elems = z_coords
+        .checked_add(e_field_elems)
+        .and_then(|value| value.checked_add(t_field_elems))
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal response coordinates overflow".into()))?;
+    let z_payload_bytes = usize::try_from(entry.terminal.z_payload_bytes).map_err(|_| {
+        AkitaError::InvalidSetup(
+            "generated terminal payload budget does not fit the target platform".into(),
+        )
+    })?;
+    let witness_shape = TerminalResponseShape {
+        layout: TailSegmentLayout {
+            ring_dimension: terminal_params.d_a(),
+            groups: vec![TailSegmentGroupLayout {
+                z_coords,
+                e_field_elems,
+                t_field_elems,
+                z_admission_linf_cap: entry.terminal.z_admission_linf_cap,
+                z_rice_low_bits: entry.terminal.z_rice_low_bits,
+                z_payload_bytes,
+            }],
+            logical_num_elems,
+        },
+    };
     let mut folds = Vec::with_capacity(expanded.len());
     let mut total_bytes = 0usize;
     for (fold_level, (lp, input_witness_len, output_witness_len)) in expanded.iter().enumerate() {
@@ -197,12 +218,12 @@ pub(crate) fn walk_generated_schedule_entry(
             fold_level,
             root_eor_key,
             *input_witness_len,
+            lp.role_dims().d_a(),
         )?)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("generated level byte count overflow".to_string())
         })?;
-        let stage3_bytes =
-            stage3_payload_bytes_for_successor(policy, next_lp, *output_witness_len)?;
+        let stage3_bytes = stage3_payload_bytes_for_successor(policy, next_lp)?;
         total_bytes = total_bytes
             .checked_add(direct_level_bytes)
             .and_then(|value| value.checked_add(stage3_bytes))
@@ -224,6 +245,7 @@ pub(crate) fn walk_generated_schedule_entry(
             terminal_level,
             root_eor_key,
             input_witness_len,
+            terminal_params.d_a(),
         )?)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("terminal direct byte count overflow".to_string())
@@ -240,11 +262,17 @@ pub(crate) fn walk_generated_schedule_entry(
             "generated schedule validates to zero proof bytes".to_string(),
         ));
     }
-    let mut setup_envelope = 1;
+    let mut setup_field_elements = 1;
     for fold in &folds {
-        akita_types::accumulate_matrix_envelope_for_level(&fold.params, &mut setup_envelope)?;
+        akita_types::accumulate_matrix_field_elements_for_level(
+            &fold.params,
+            &mut setup_field_elements,
+        )?;
     }
-    akita_types::accumulate_terminal_matrix_envelope(&terminal_params, &mut setup_envelope)?;
+    akita_types::accumulate_terminal_matrix_field_elements(
+        &terminal_params,
+        &mut setup_field_elements,
+    )?;
     let first_direct_setup_field_len = if policy.recursive_setup_planning {
         folds
             .iter()
@@ -266,7 +294,8 @@ pub(crate) fn walk_generated_schedule_entry(
     };
     let planned_schedule = materialize_candidate_schedule(
         total_bytes,
-        setup_envelope,
+        setup_field_elements,
+        policy.ring_dimension,
         first_direct_setup_field_len,
         folds,
         CandidateTerminalResponse {

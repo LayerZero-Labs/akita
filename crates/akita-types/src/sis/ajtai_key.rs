@@ -74,6 +74,16 @@ impl SisMatrixRole {
             Self::Open => "Open",
         }
     }
+
+    /// Parse the stable wire/catalog tag.
+    pub const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            1 => Some(Self::Inner),
+            2 => Some(Self::Outer),
+            3 => Some(Self::Open),
+            _ => None,
+        }
+    }
 }
 
 /// Policy identity used by SIS sizing and generated artifacts.
@@ -96,6 +106,14 @@ impl SisSecurityPolicyId {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Quantum128BitADPS16 => "Quantum128BitADPS16",
+        }
+    }
+
+    /// Parse the stable wire/catalog tag.
+    pub const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            1 => Some(Self::Quantum128BitADPS16),
+            _ => None,
         }
     }
 }
@@ -122,12 +140,27 @@ impl SisModulusProfileId {
         }
     }
 
+    /// Bit width of the represented field modulus.
+    pub const fn field_bits(self) -> u32 {
+        128 - (self.modulus() - 1).leading_zeros()
+    }
+
     /// Stable serialized tag.
     pub const fn tag(self) -> u8 {
         match self {
             Self::Q32Offset99 => 1,
             Self::Q64Offset59 => 2,
             Self::Q128OffsetA7F7 => 3,
+        }
+    }
+
+    /// Parse the stable serialized tag.
+    pub const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            1 => Some(Self::Q32Offset99),
+            2 => Some(Self::Q64Offset59),
+            3 => Some(Self::Q128OffsetA7F7),
+            _ => None,
         }
     }
 
@@ -414,12 +447,24 @@ fn audit_commit_matrix_fields(
             expected_role.name()
         )));
     }
+    let ring_dimension = u32::try_from(ring_dimension).map_err(|_| {
+        AkitaError::InvalidSetup(format!(
+            "{} matrix ring dimension exceeds u32",
+            expected_role.name()
+        ))
+    })?;
+    let input_width_u64 = u64::try_from(input_width).map_err(|_| {
+        AkitaError::InvalidSetup(format!(
+            "{} matrix input width exceeds u64",
+            expected_role.name()
+        ))
+    })?;
     let key = sis_table_key_for_linf_bound(
         policy,
         table_digest,
         sis_modulus_profile,
         expected_role,
-        ring_dimension as u32,
+        ring_dimension,
         coeff_linf_bound,
     )
     .ok_or_else(|| {
@@ -429,7 +474,7 @@ fn audit_commit_matrix_fields(
             policy.name()
         ))
     })?;
-    let floor = min_secure_rank(key, input_width as u64).ok_or_else(|| {
+    let floor = min_secure_rank(key, input_width_u64).ok_or_else(|| {
         AkitaError::InvalidSetup(format!(
             "{} matrix has no audited SIS rank for input_width={input_width}",
             expected_role.name()
@@ -459,7 +504,13 @@ fn min_rank_commit_matrix_fields(
             expected_role.name()
         )));
     }
-    let output_rank = min_secure_rank(key, input_width as u64).ok_or_else(|| {
+    let input_width_u64 = u64::try_from(input_width).map_err(|_| {
+        AkitaError::InvalidSetup(format!(
+            "{} matrix input width exceeds u64",
+            expected_role.name()
+        ))
+    })?;
+    let output_rank = min_secure_rank(key, input_width_u64).ok_or_else(|| {
         AkitaError::InvalidSetup(format!(
             "{} matrix has no audited SIS rank for input_width={input_width}",
             expected_role.name()
@@ -475,7 +526,7 @@ fn min_rank_commit_matrix_fields(
 macro_rules! define_commit_matrix_params {
     ($name:ident, $role:expr, $description:literal) => {
         #[doc = $description]
-        #[derive(Debug, Clone, PartialEq, Eq)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub struct $name {
             pub(crate) output_rank: usize,
             pub(crate) input_width: usize,
@@ -522,8 +573,30 @@ macro_rules! define_commit_matrix_params {
                 })
             }
 
+            /// Re-audit all security-sensitive matrix fields against the
+            /// canonical SIS table and rank floor.
+            pub fn validate(&self) -> Result<(), AkitaError> {
+                let fields = audit_commit_matrix_fields(
+                    $role,
+                    self.security_policy(),
+                    self.sis_table_key.table_digest,
+                    self.sis_modulus_profile(),
+                    self.output_rank(),
+                    self.input_width(),
+                    self.coeff_linf_bound(),
+                    self.ring_dimension(),
+                )?;
+                if fields.sis_table_key != self.sis_table_key {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "{} matrix SIS table key is not canonical",
+                        $role.name()
+                    )));
+                }
+                Ok(())
+            }
+
             #[allow(clippy::too_many_arguments)]
-            pub fn new_unchecked(
+            pub const fn new_unchecked(
                 policy: SisSecurityPolicyId,
                 table_digest: SisTableDigest,
                 sis_modulus_profile: SisModulusProfileId,

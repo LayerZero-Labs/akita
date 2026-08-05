@@ -52,7 +52,8 @@ fn setup_envelope_includes_terminal_inner_matrix() {
         PolynomialGroupLayout::singleton(28),
     ))
     .expect("generated fp128 schedule");
-    let envelope = setup_matrix_envelope_for_schedule(&schedule).expect("setup envelope");
+    let envelope =
+        setup_matrix_envelope_for_schedule(&schedule, fp128::D64Dense::D).expect("setup envelope");
     let terminal_a = schedule
         .terminal
         .params
@@ -118,9 +119,19 @@ fn generated_q32_terminals_require_the_i16_tail() {
 
 #[cfg(feature = "schedules-default")]
 #[test]
-fn d64_onehot_k16_uses_the_canonical_chunk_policy_without_a_catalog() {
-    assert_eq!(fp128::D64OneHotK16::onehot_chunk_size(), 16);
-    assert!(fp128::D64OneHotK16::schedule_catalog().is_none());
+fn fp128_d128_onehot_catalog_freezes_root_fold_digits() {
+    let table = fp128::D128OneHot::schedule_catalog().expect("D128 one-hot schedule catalog");
+    let first = table
+        .entries
+        .first()
+        .expect("nonempty D128 one-hot catalog");
+    let schedule = fp128::D128OneHot::runtime_schedule(first.to_runtime_lookup_key())
+        .expect("resolve D128 one-hot row");
+    let root = &schedule.root.params.final_group.commitment;
+    assert_eq!(
+        root.num_digits_fold,
+        first.root.final_group.num_digits_fold as usize
+    );
 }
 
 #[cfg(feature = "schedules-default")]

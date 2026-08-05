@@ -4,11 +4,12 @@
 |---|---|
 | Author(s) | Quang Dao (protocol and implementation direction); Codex (design synthesis) |
 | Created | 2026-07-20 |
-| Status | implementation in progress; direct mixed-role E2E established |
-| Branch | `quang/relation-range-image-rewrite` |
-| Base | `main` at `e131faf48938b975ca63b12b59ac6d86894048e0` (includes PR #312) |
+| Revised | 2026-07-31 |
+| Status | implemented; verifier relation/setup unification under review |
+| Branch | `quang/unify-verifier-setup-weights` |
+| Base | `feat/planner-per-matrix-d` |
 | Integration dependencies | PR #309 at `b0c2d4683539b0c2a465b996f48adfc465a20198`; PR #310 at `4cb4113b02a58889230f3dbaa81deb56895bb4ca` as cross-feature evidence |
-| Related | [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), [`digit-innermost-layout.md`](digit-innermost-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`packed-sumcheck.md`](packed-sumcheck.md) |
+| Related | [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), [`digit-innermost-layout.md`](digit-innermost-layout.md), [`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`packed-sumcheck.md`](packed-sumcheck.md) |
 
 ## Summary
 
@@ -22,9 +23,9 @@ PCS API with audited role-native SIS ranks. Prover-only relation events, common-
 factorization, evaluation-trace terms, segment addressing, and fold storage now live in
 `akita-prover`; `akita-types` retains only checked role/layout and trace-group geometry
 needed across protocol sides. The legacy dense/sparse trace-table implementation is
-test-only. Mixed-role roots and uniform multigroup/multichunk roots are supported as
-separate scheduled shapes; their unscheduled cross-product is not introduced by this PR.
-The remaining compact-kernel cutover is still outstanding.
+test-only. One verifier relation evaluator and one `SetupContributionPlan` now cover
+singleton/multigroup, single-chunk/multichunk, uniform/mixed-role, and direct/deferred
+geometry. Runtime acceptance still requires a planner-authenticated schedule.
 
 The sum-check has three semantic terms:
 
@@ -32,11 +33,11 @@ The sum-check has three semantic terms:
 2. the mandatory evaluation trace that binds opening claims to the committed witness; and
 3. range-image consistency with the independent Stage 1 evaluation.
 
-The goals and acceptance criteria below describe the final PR head, not every additive
-implementation slice. Direct mixed-role evaluation has W=1/W=2 differential parity, and
-the public direct-setup roundtrip now fixes the statement-construction contract. Recursive
-mixed-role setup offload remains deliberately rejected until the later Stage 3 boundary
-change.
+The goals and acceptance criteria below describe the final architecture, not every
+additive implementation slice. Direct mixed-role evaluation has W=1/W=2 differential
+parity, the public direct-setup roundtrip fixes the statement-construction contract, and
+Stage 3 evaluates the same plan formula for uniform, mixed-D, multigroup, and multichunk
+shapes.
 
 All three share one transcript lifecycle and checked protocol geometry. The prover owns
 one round-result reducer and the storage it needs to produce messages. The verifier owns
@@ -67,10 +68,10 @@ basis.
 
 - One checked `RelationRangeImagePlan` and one `RelationRangeImageProver`.
 - One LSB-first flat Boolean address order for homogeneous and mixed dimensions.
-- Distinguish the relation-only alpha-reset boundary
-  `common_relation_coeff_count = min(d_a, d_b, d_d)` from the current joint
-  relation/witness address boundary
-  `common_relation_witness_coeff_count = min(common_relation_coeff_count, d_out)`.
+- Derive the canonical relation coefficient block
+  `relation_coefficient_block_len = min(d_a, d_b, d_d)` from the current
+  relation roles. Outgoing witness packaging does not alter this algebraic
+  boundary.
 - Alpha/common-coordinate rounds before relation-lane rounds.
 - Mandatory evaluation trace represented by per-claim tensor factors, never a flat table.
 - One fused relation/evaluation-trace/range-image round reducer.
@@ -98,9 +99,9 @@ basis.
 - Add a production dense fallback, exact-fringe provider, runtime kernel selector,
   compatibility wrapper, or generic sum-of-products abstraction.
 
-The later recursive-offload PR gets its own spec when implemented. Its stable seam is
-recorded near the end of this document; this PR does not carry a speculative proof-wire
-plan for it.
+Recursive setup offload reuses the same checked relation-address geometry and
+`SetupContributionPlan`; Stage 3 changes the proof wire, not the Stage 2 relation
+coefficient boundary.
 
 ## Shared inputs, separate consumers
 
@@ -180,8 +181,7 @@ Current setup-contribution stage: unchanged proof position and wire
 |---|---|
 | balanced digit table | `digit_witness` |
 | pointwise `w(w+1)` table | `range_image` |
-| largest role-common alpha-reset block | `common_relation_coeff_count` |
-| current joint relation/witness low-address block | `common_relation_witness_coeff_count` |
+| canonical relation alpha-reset block | `relation_coefficient_block_len` |
 | alpha powers over the joint low-address block | `common_alpha_factor` |
 | high-lane linear-relation factor | `relation_lane_weights` |
 | prover opening-trace factors | `EvaluationTraceWeights` |
@@ -198,40 +198,32 @@ stage names for new internal objects.
 
 ## One flat address order
 
-All rounds bind the raw physical field-coefficient address LSB first. Two counts must not
-be conflated:
+All rounds bind the raw physical field-coefficient address LSB first:
 
 ```text
-common_relation_coeff_count = min(d_a, d_b, d_d)
-common_relation_witness_coeff_count
-  = min(common_relation_coeff_count, outgoing_witness_ring_dimension)
+relation_coefficient_block_len = min(d_a, d_b, d_d)
 
 physical_address
-  = common_relation_witness_coeff_count * relation_lane
+  = relation_coefficient_block_len * relation_lane
     + coeff_within_common_block
-0 <= coeff_within_common_block < common_relation_witness_coeff_count
+0 <= coeff_within_common_block < relation_coefficient_block_len
 ```
 
-The first `log2(common_relation_witness_coeff_count)` challenges bind the joint low
+The first `log2(relation_coefficient_block_len)` challenges bind the low
 coefficient block. The rest address physical relation lanes and padded witness capacity.
 x/y is not a public protocol abstraction.
 
-The outgoing dimension appears only because the current prover groups the flat witness
-into outgoing ring elements before Stage 2. Keeping the low block no wider than one such
-element preserves the outgoing opening domain, point order, and current Stage 3 handoff;
-a wider relation-only block could fold across outgoing column boundaries. The outgoing
-dimension is not used by the relation equation, role-local alpha resets, or matrix
-semantics. A verifier relation evaluator that does not consume that storage representation
-should derive its algebra from `common_relation_coeff_count`; if it splits the final point
-at the smaller joint count, that split is address geometry, not an additional relation
-contract.
+The outgoing dimension controls only how the already-flat witness is packaged
+for the next opening. It is not used by the relation equation, role-local
+alpha resets, setup projection, or matrix semantics. `RelationAddressGeometry`
+checks the outgoing representation through the live flat length while deriving
+the Stage 2 coefficient/lane split solely from the current relation roles.
 
-This Stage 2 storage split does not reinterpret the already established Stage 1 tau0
-point. The protocol's digit-range equality point retains its incoming geometry: the
-historical uniform current/outgoing case uses its column-then-ring permutation, while
-mixed-role or cross-level ring transitions retain the historical flat tau0 order. A
-descriptive `digit_range_equality_low_variable_count` records that independent boundary;
-it is not inferred from the joint relation/witness variable count.
+Stage 1 and Stage 2 use the same checked coefficient boundary. Both prover and verifier
+set `digit_range_equality_low_variable_count` to
+`relation_coefficient_variable_count()`, so tau0 and the Stage 2 point agree on the
+LSB-first common coefficient block. The field is descriptive replay metadata, not an
+independent caller-selected split.
 
 `FlatBooleanDomain` checks the live prefix, padded power-of-two domain, point width, and
 LSB-first interpretation. `WitnessLayout` checks semantic group/chunk units inside that
@@ -257,19 +249,19 @@ integration rather than creating a split-brain range/security contract.
 For each role dimension, write
 
 ```text
-d_role = common_relation_witness_coeff_count * role_lane_count
+d_role = relation_coefficient_block_len * role_lane_count
 
-alpha^(common_relation_witness_coeff_count * high_exponent
-        + coeff_within_common_block)
+alpha^(relation_coefficient_block_len * high_exponent
+      + coeff_within_common_block)
   = alpha^coeff_within_common_block
-      * (alpha^common_relation_witness_coeff_count)^high_exponent.
+      * (alpha^relation_coefficient_block_len)^high_exponent.
 ```
 
 The complete non-trace relation weight is
 
 ```text
 RelationWeight(
-  common_relation_witness_coeff_count * relation_lane
+  relation_coefficient_block_len * relation_lane
     + coeff_within_common_block
 )
   = CommonAlphaFactor(coeff_within_common_block)
@@ -278,10 +270,9 @@ RelationWeight(
 
 Role resets, quotient denominators, row challenges, claim coefficients, group weights,
 setup amplitudes, and overlaps are additive contributions to high-lane weights. They do
-not break the common low factor. With outgoing dimension at least 32, mixed
-`128/64/32` therefore uses a common factor of length 32, not 128 and not a full-domain
-table. If the outgoing dimension is smaller, the current factorization may use the
-smaller joint block even though the relation-only boundary remains 32.
+not break the common low factor. Mixed `128/64/32` therefore uses a common factor of
+length 32, independent of whether the outgoing witness is packaged at dimension 128,
+64, or 32.
 
 The prover's relation compiler uses one closed emitter of checked relation events:
 
@@ -302,7 +293,7 @@ consumer still uses the existing x/y-shaped Stage 2 state machine; the later cut
 changes that storage/state representation, not the factorization contract.
 
 Every production event has physical and exponent starts aligned to
-`common_relation_witness_coeff_count` and preserves the low common coordinate. Role-local
+`relation_coefficient_block_len` and preserves the low common coordinate. Role-local
 resets begin new aligned events. Overlaps use `+=`
 exactly once. Unsupported unaligned events return `AkitaError`; there is no production
 fringe or dense fallback. A dense exact-live vector exists only as a differential oracle.
@@ -319,15 +310,50 @@ authority for lane compilation and dense prover-side differential oracles. Sourc
 are dropped after coalescing; no prover provider retains dense and factorized copies.
 
 The verifier does **not** build or consume these events. Its relation evaluator is derived
-directly from the checked common inputs and retains the PR #312 structured algorithm:
-prepared claim/block challenge evaluations; bounded equality windows and affine-interval
-E/T contractions; reuse of setup-plan E/T/Z equality slices; a compact quotient-tail
-contraction; and one coefficient-side alpha evaluation for uniform dimensions. Direct
-setup and deferred setup claims remain explicit mutually exclusive inputs. Refactoring
-may improve ownership, validation, names, and module boundaries, but may not replace
-these contractions with leaf event replay.
+directly from the checked common inputs: one common-coordinate alpha contraction for
+every role geometry; prepared claim/block challenge evaluations; bounded equality
+windows and batched affine-family contractions; reuse of setup-plan E/T/Z equality
+slices; and a compact quotient-tail contraction. Direct setup and deferred setup claims
+remain explicit mutually exclusive inputs. Refactoring may improve ownership,
+validation, names, and module boundaries, but may not replace these contractions with
+leaf event replay.
 
 ## Binding order and relation arithmetic
+
+Let
+
+```text
+c = min(d_a, d_b, d_d)
+q_R = d_R / c
+beta = alpha^c
+```
+
+for role `R`. The relation address is LSB-first. Splitting it into
+`log2(q_R)` low lane coordinates and the remaining high address gives, for
+`0 <= v < q_R`,
+
+```text
+eq(x, q_R*j + v) = eq(x_low, v) * eq(x_high, j).
+```
+
+Therefore the projected role contraction factors as
+
+```text
+Σ_v beta^v * eq(x, q_R*j + v)
+  = P_beta(x_low) * eq(x_high, j),
+
+P_beta(r) = MLE([1, beta, ..., beta^(q_R-1)], r).
+```
+
+The setup-index point has the same factor. Projection is applied once before
+the expensive high-address contraction. When `q_R = 1`, the low point is empty,
+`P_beta([]) = 1`, and the exact same formula becomes the identity case; verifier
+control flow does not select a separate uniform algorithm.
+
+The `q_R = 1` inner kernel keeps this identity implicit. It does not allocate a
+one-entry projection vector, evaluate an empty low factor, or multiply by one.
+This is identity elimination inside the shared evaluator, not a second uniform
+evaluator.
 
 The joint common alpha coordinates bind first. Relation lane weights are constant over each
 low-coordinate block and are not folded during these rounds. For
@@ -393,14 +419,16 @@ The prover's normalized trace input is a nonempty `EvaluationTraceWeights` conta
 `EvaluationTraceTerm` per opening claim. There are no prover-side `Field`, `Ring`, `Root`,
 `Recursive`, `Absent`, sparse-table, or dense-table semantic variants.
 
-The landed term representation owns exactly:
+The role native projected digit cutover extends the term representation to own
+exactly:
 
 - one normalized claim coefficient;
 - the block-opening point and basis;
 - the group's exact live-block count and source ring dimension;
 - opening-digit gadget weights and one precomputed inner-trace row; and
-- one `EvaluationTraceSegment` per witness chunk, recording the flat physical coefficient
-  start, group-global block start, and exact live-block count.
+- one `EvaluationTraceSegment` per witness chunk, recording the flat physical
+  coefficient start, group-global block start, exact live-block count, and the
+  checked native D projection geometry.
 
 The verifier receives its own minimal prepared group descriptors from the same checked
 claim coefficients, opening points, group/chunk ownership, basis, and source dimensions.
@@ -429,35 +457,30 @@ The complication matrix is:
 |---|---|---|---|---|
 | multiple groups | none after flat layout | group-specific rows, gadgets, claim offsets, and exponent resets | one prepared point and claim slice per group | compile authenticated root-group order into runs |
 | multiple chunks | none after flat layout | E/T split by block ownership, Z repeated per chunk, R shared | one physical E segment per claim/unit; global block weights do not reset | retain uneven global block ranges and unit ownership |
-| mixed role dimensions | none | common factor uses the joint relation/witness count; role subcolumns map into common lanes | each claim retains its own source ring split | direct-setup singleton roots only in this PR; do not synthesize grouped/chunked schedules |
+| mixed role dimensions | none | common factor uses the current-role minimum; role subcolumns map into common lanes | each claim retains its own source ring split | projection factors precede the shared high-address kernels |
 | EOR | none | no change | one reduction factor scales the authenticated claim coefficients | normalize a missing reduction factor to one; never make trace optional |
 
 Only the range-image column is genuinely indifferent to these axes. Relation and trace
 arithmetic generalize cleanly once geometry is prepared, but that preparation is a
 load-bearing part of the implementation rather than incidental indexing.
 
-The supported acceptance matrix is deliberately not a full cross-product:
-
-- shipped uniform-role schedules cover singleton, multigroup, multichunk, and combined
-  multigroup/multichunk roots;
-- the direct-setup mixed-role fixture covers a singleton, single-chunk root; and
-- uniform-role folds may transition to a smaller outgoing witness dimension through the
-  checked common Stage 2 coefficient count.
-
-Mixed role dimensions combined with multigroup or multichunk roots, and mixed-role
-recursive setup offload, remain out of scope until the planner emits and authenticates
-those schedules. Tests must not retarget SIS keys or recompute proof sizes to manufacture
-such a shape.
+The evaluator and setup plan support the full singleton/multigroup,
+single-chunk/multichunk, uniform/mixed-role, and direct/deferred cross-product. Runtime
+acceptance still requires a planner-authenticated schedule and valid SIS keys; tests may
+construct checked fixtures for every evaluator shape without claiming that an
+unscheduled production key exists.
 
 ### Canonical physical layout
 
 Within the scheduled shapes above, the canonical layout is supplied by `WitnessLayout`:
 
 ```text
-for group in opening_batch.root_group_order():
-  for unit in witness_layout.units_for_group(group):
+for chunk in 0..num_chunks:
+  for group in opening_batch.root_group_order():
+    unit = witness_layout.unit(group, chunk)
     [z(group, chunk) | e(group, chunk) | t(group, chunk)]
-[shared quotient r suffix]
+[shared native quotient r rows]
+[one zero suffix for successor alignment and Boolean padding]
 ```
 
 Each `WitnessUnitLayout` owns a group id, chunk id, global block range, and exact z/e/t
@@ -465,19 +488,22 @@ physical ranges. The block partition may be uneven; chunks before the remainder 
 own one extra block. Kernels iterate prepared units and runs. They do not assume equal
 chunk widths, `groups * chunks` rectangularity, or reconstruct offsets.
 
+The coefficient order inside projected E and T ranges is defined by
+[`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md).
+
 ### What generalizes without special arithmetic
 
 - Stage 1's result and the Stage 2 range-image term see one flat digit witness. Group and
   chunk boundaries do not change `w(w+1)` or equality arithmetic.
 - The common-alpha scan is unchanged because every unit and role-subcolumn boundary is
   aligned to a physical ring coefficient boundary and therefore to
-  `common_relation_witness_coeff_count`.
+  `relation_coefficient_block_len`.
 - One transcript challenge folds every physical address. Chunks do not receive separate
   sum-check challenges.
 - The shared quotient-R suffix is one ordinary relation segment; it is not replicated by
   the number of groups or chunks.
-- Padding remains one zero suffix after the live physical layout, not padding between
-  units.
+- Boolean-domain padding remains one zero suffix after the physical witness.
+  There is no role-local or group-local padding inside the live prefix.
 
 ### Group-specific inputs that require preparation
 
@@ -497,17 +523,21 @@ while retaining `WitnessLayout` as the semantic source of truth.
 
 ### Chunk-specific semantics
 
-Chunks partition a group's **global** block axis. They do not create claims. For a unit
-with global block start `B`, local block `j`, claim `c`, and opening digit `d`, the E
-column is conceptually
+Chunks partition a group's **global** block axis. They do not create claims. For
+a unit with global block start `B`, `F` local blocks, local block `j`, claim
+`c`, D subcolumn `s`, opening digit `o`, and D coefficient `kappa`, define:
 
 ```text
-unit.e_start
-  + depth_open * (c * unit.num_blocks + j)
-  + d,
+q_D = d_a / d_d
+
+unit.e_coefficient_start
+  + ((((c * F + j) * q_D + s) * depth_open + o) * d_d + kappa),
 
 global_block = B + j.
 ```
+
+Exactly `0 <= s < q_D` exists. The role-native layout spec defines the exact
+trace contraction formula.
 
 The evaluation trace uses `block_opening_weight(global_block)`. It must not reset the
 block index to zero at each chunk. E and T supports are split across units; Z is a separate
@@ -516,12 +546,14 @@ attribution must preserve those distinctions.
 
 ### Evaluation trace over the cross-product
 
-Each `EvaluationTraceTerm` owns its normalized group/claim coefficient, source ring
-dimension, digit gadget and inner trace vectors, and a list of physical E segments—one per
-relevant witness unit. A segment records its flat physical coefficient start and global
-block start/count; digit depth is term-owned and claim placement was already resolved into
-the physical start. This expresses multigroup and multichunk support without
-`TraceTermBatch`, `dense_evals`, or a remapped table.
+Each `EvaluationTraceTerm` owns its normalized group and claim coefficient,
+source ring dimension, D ring dimension, live subcolumn count, digit gadget,
+inner trace vectors, and one physical E segment per relevant
+witness unit. A segment records its flat physical coefficient start and global
+block start and count. The prepared trace walks the native D runs in the order
+`[block][D subcolumn][opening digit][D coefficient]` with no internal padding.
+This expresses multiple groups and chunks without `TraceTermBatch`,
+`dense_evals`, a transpose, or a remapped table.
 
 The prover measures three exact strategies:
 
@@ -549,29 +581,21 @@ emitter, trace segments, setup attribution, and verifier evaluator use the same 
 role/lane mapping and must agree with dense flat oracles across the mixed-dimension/chunk
 cross-product.
 
-Recursive setup offload remains a separate cutover boundary. The current Stage 3 builder
-drops `log2(d_a)` Stage 2 coordinates before constructing the setup product, whereas a
-mixed relation binds only `log2(common_relation_witness_coeff_count)` common alpha
-coordinates before its remaining role
-lanes. Reusing the uniform split would silently omit the A/B lane coordinates. Until the
-Stage 3 setup boundary is generalized to consume the checked common-coordinate count,
-mixed dimensions plus a deferred setup claim are rejected explicitly. The later setup
-boundary slice must remove that rejection and add direct/deferred parity across mixed
-dimensions, groups, and chunks; it must not reinterpret or pad the old `x/y` split.
+Recursive setup offload consumes the same checked relation address point and
+`SetupContributionPlan` as direct evaluation. Stage 3 factors each role's projection
+ratio `q = d_role / relation_coefficient_block_len`; q=1 is the identity case and q>1
+evaluates the setup and relation low-lane power MLEs before the shared compact recurrence.
+Direct and deferred modes therefore support the same mixed dimensions, groups, and chunks.
 
 The address rule is unchanged by chunks:
 
 ```text
-common_relation_coeff_count = min(d_a, d_b, d_d)
-common_relation_witness_coeff_count
-  = min(common_relation_coeff_count, outgoing_witness_ring_dimension)
+relation_coefficient_block_len = min(d_a, d_b, d_d)
 ```
 
-The relation algebra alone admits `common_relation_coeff_count`, but the current Stage 2
-prover uses the intersection with the outgoing dimension so its factorized witness state
-is also aligned to the outgoing witness representation. Role subcolumns map into
-`common_relation_witness_coeff_count`-sized lanes inside each unit. Chunking changes which
-unit owns a block, not alpha exponents or source ring-coordinate order. Evaluation-trace terms retain their own
+Role subcolumns map into `relation_coefficient_block_len`-sized lanes inside each unit.
+Outgoing repacking leaves this factorization unchanged. Chunking changes which unit owns
+a block, not alpha exponents or source ring-coordinate order. Evaluation-trace terms retain their own
 `D_source` split
 
 ```text
@@ -736,17 +760,14 @@ addresses. Its characterization matrix covers:
 - mixed `128/64/64` roles; and
 - mixed `128/64/32` roles.
 
-Until the contribution-level differential tests and performance baseline are complete,
-this point representation is test-only scaffolding. Making an unused production state or
-routing the existing uniform evaluator through it would create a third implementation or
-prematurely perturb the PR #312 hot path.
+`PreparedRelationPoint` is the production entry for every geometry. Uniform q=1 and
+projected q>1 select inner kernels only; maintaining a parallel historical evaluator is
+forbidden.
 
-The current head does not yet meet that contract: `RelationMatrixEvaluator::eval_flat_at_point`
-owns the uniform formula while `mixed_relation::evaluate_mixed_relation_at_point` owns a
-second E/T/Z/setup/R formula and is also selected for uniform current roles followed by a
-different outgoing dimension. The verifier-stabilization slice must consolidate those
-formula owners before further prover work. Dense relation weights remain test oracles,
-not a production verifier fallback.
+The q=1 kernel must preserve the current uniform performance floor by omitting
+all identity projection work.
+
+Dense relation weights remain test oracles, not a production verifier fallback.
 
 Malformed dimensions, group/chunk layouts, claim offsets, point lengths, degrees, round
 counts, and proof-derived allocations return `AkitaError`. Verifier-reachable code adds no
@@ -772,11 +793,10 @@ stage.
 The current head has portions of the old Steps 1–5, but their ownership and support
 claims are not yet stable. Proceed in these reviewable slices:
 
-1. Correct names and documentation without changing proof behavior. In particular,
-   separate `common_relation_coeff_count` from
-   `common_relation_witness_coeff_count`, and record actual rather than intended support.
+1. Correct names and documentation around the single
+   `relation_coefficient_block_len`, and record actual rather than intended support.
 2. Stabilize the verifier before touching the prover state machine: one semantic relation
-   evaluator, one succinct evaluation-trace evaluator, local uniform specializations,
+   evaluator, one succinct evaluation-trace evaluator, deep geometry-selected kernels,
    malformed-input coverage, and PR #312 performance parity.
 3. Move prover-only relation events, trace factors, and fold storage out of `akita-types`.
    Keep only checked protocol geometry and facts consumed by both sides in the common crate.
@@ -818,19 +838,19 @@ state type; no type is introduced solely to mirror prover structure.
 For the verifier relation matrix, PR #312 is also the source-level baseline. Its prepared
 tensor/flat challenge evaluations, equality-window and affine-interval contractions,
 setup-plan reuse, and quotient-tail contraction remain the optimized primitives. The
-stabilized evaluator assembles the relation formula once and specializes those primitives
-for uniform dimensions; it does not retain the current uniform/mixed pair of complete
-formula implementations. Verifier changes relative to PR #312 require a specific semantic
+stabilized evaluator assembles the relation formula once and selects inner primitives
+from checked address geometry; it does not retain a uniform/mixed pair of complete formula
+implementations. Verifier changes relative to PR #312 require a specific semantic
 justification—mixed dimensions, compact trace ownership, no-panic hardening, removal of
 dead state, or a strictly local simplification. Equivalent rewrites and naming-only churn
 are rejected even when their measured runtime is similar.
 
 The final setup kernel is generic at `coeff_count`-ring granularity, not through dynamic
 per-coefficient dispatch. Point preparation bulk-combines equality and lane-alpha weights;
-the hot scan remains const-generic and contiguous. For the uniform case, all lane and role
-ratios are one, preparation borrows the existing E/T/Z slices, and the current
-`SetupContributionPlan` identity scan remains the executable specialization. A strategy
-or geometry match occurs once outside hot loops; no trait object, enum match, closure call,
+the hot scan remains const-generic and contiguous. One-lane unit-weight spans are fused into
+contiguous intervals by the span kernel, and compatible folded families seed one shared
+affine recurrence. These are geometry facts, not a `q == 1` verifier mode. A strategy or
+geometry match occurs once outside hot loops; no trait object, enum match, closure call,
 checked lane reconstruction, or role lookup occurs per coefficient or setup entry.
 
 | Surface | Responsibility |
@@ -906,20 +926,29 @@ lane-factored, and mixed cell, accept only when Criterion's 95% change-interval 
 is at most +5%; a lower bound above +5% rejects the candidate, and an interval crossing the
 threshold is inconclusive and must be rerun with a longer measurement.
 
+The production-path harness is
+`crates/akita-verifier/benches/relation_evaluator.rs` and runs with:
+
+```bash
+cargo bench -p akita-verifier --features benchmark-support \
+  --bench relation_evaluator
+```
+
 The minimum comparison triplet holds A dimension, rows, claims, groups, flat witness
 length, setup coefficient footprint, and transcript inputs fixed:
 
 | Cell | Role dimensions | Outgoing dimension | Purpose |
 |---|---:|---:|---|
 | U | `128/128/128` | 128 | current uniform PR #312 floor |
-| L | `128/128/128` | 32 | isolates unavoidable lane/address work |
-| M | `128/64/32` | 32 | isolates role heterogeneity at the same lane geometry |
+| L | `128/128/128` | 32 | checks that outgoing repackaging does not alter q=1 relation geometry |
+| M | `128/64/32` | 32 | measures projected-lane role heterogeneity |
 
-Candidate/baseline time is capped at 1.05 in every cell. In addition, M/L is capped at
-1.05 so mixed roles do not demonstrably cost more than the equivalent homogeneous
-lane-factored case. L/U is reported separately and is not mislabeled as role-mixing cost.
-Complete verification remains a secondary <=5% gate because whole-verifier timing can
-hide a relation-kernel regression.
+Candidate/baseline time is capped at 1.05 in every cell. U and L are expected to have
+the same q=1 relation geometry because outgoing packaging is not part of the coefficient
+boundary. M is not compared directly to L: under the current-role minimum there is no
+homogeneous `128/128/128` cell with M's 32-coefficient lane geometry, so an M/L cap would
+conflate different algebraic work. Complete verification remains a secondary <=5% gate
+because whole-verifier timing can hide a relation-kernel regression.
 
 Kernel winners are selected by complete Stage 2 and end-to-end prover results. PR #312 is
 the verifier performance floor: no primary verifier cell may regress by more than 5%, and
@@ -935,7 +964,7 @@ measured/unmeasured duplicate, ad hoc timer, or strategy knob.
 | group/chunk layout is recomputed in several crates | `WitnessLayout` is the semantic authority; compiled runs are derived and compared once |
 | block equality resets at a chunk boundary | trace segments retain global block starts and uneven ranges |
 | per-chunk Z or shared R is counted incorrectly | closed relation events distinguish replicated Z units from one R suffix |
-| mixed-D multi-chunk silently uses the old guard/fallback | direct setup removes the guard only after dense-oracle parity; recursive setup remains an explicit rejection until Stage 3 consumes the checked joint relation/witness split rather than assuming `log2(d_a)` low coordinates |
+| mixed-D multi-chunk silently uses the old guard/fallback | direct and deferred plans share checked current-role geometry; dense and heterogeneous multigroup oracles cover q=1 and projected lanes |
 | role-specific decomposition bases imply unsupported range claims | one explicit global range-basis authority is shared with security/sizing |
 | trace is treated as optional | a nonterminal prover plan requires nonempty `EvaluationTraceWeights`, while the verifier requires nonempty `PreparedEvaluationTrace`; missing EOR scales become ones |
 | nominal fusion still reads the full witness twice | relation and range share one block reducer; trace side scan must have strictly smaller support and measured benefit |
@@ -967,7 +996,7 @@ No future proof field, transcript challenge, stage enum, or inactive branch is a
 - Homogeneous direct proof bytes, transcript order, challenges, degree, final point, and
   final evaluation match the incoming epoch.
 - Common alpha coordinates bind first and relation lane state is at most
-  `N / common_relation_witness_coeff_count`.
+  `N / relation_coefficient_block_len`.
 - No `ring_bits == 0` sentinel, dense mixed relation table, exact fringe, full trace table,
   trace remap, hot unit search, or x/y architecture remains.
 - Uniform-role multigroup and multichunk scheduled shapes prove and verify; direct
@@ -980,9 +1009,8 @@ No future proof field, transcript challenge, stage enum, or inactive branch is a
 - Every LB2-LB6 candidate is measured; one complete-stage winner remains per basis.
 - No primary Stage 2/prover benchmark cell regresses beyond measurement noise; targeted
   prover cells show material wins. No primary verifier cell exceeds 1.05x its pinned PR
-  #312 baseline under the Criterion confidence-interval gate, mixed `128/64/32` does not
-  exceed 1.05x lane-equivalent homogeneous `128/128/128`, and verifier relation/trace work
-  never scales with prover event count or physical trace-table size.
+  #312 baseline under the Criterion confidence-interval gate, and verifier relation/trace
+  work never scales with prover event count or physical trace-table size.
 - Numeric setup code touched by the PR contains only reusable final geometry.
 - Documentation guardrails and all repository-required format, lint, and test commands
   pass at the final head.

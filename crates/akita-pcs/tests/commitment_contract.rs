@@ -15,6 +15,8 @@ use akita_config::CommitmentConfig;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_prover::backend::DenseView;
+#[cfg(feature = "compression-diagnostics")]
+use akita_prover::compute::CompressionDiagnosticBackend;
 use akita_prover::compute::{
     CommitInnerPlan, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx, RootCommitKernel,
     RootCommitSource, RootPolyShape,
@@ -76,10 +78,6 @@ impl akita_prover::RootPolyMeta<F> for ContractRootPoly {
     fn num_vars(&self) -> usize {
         self.num_vars
     }
-
-    fn onehot_chunk_size(&self) -> Option<usize> {
-        None
-    }
 }
 
 impl<const DD: usize> RootCommitSource<F, DD> for ContractRootPoly {
@@ -139,6 +137,24 @@ where
         log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, RING_D>>, AkitaError> {
         CpuBackend.digit_rows(prepared, row_len, digits, log_basis)
+    }
+}
+
+#[cfg(feature = "compression-diagnostics")]
+impl<F> CompressionDiagnosticBackend<F> for ContractCommitBackend
+where
+    F: FieldCore + CanonicalField,
+{
+    fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {
+        CpuBackend.compression_cache_bytes(prepared)
+    }
+
+    fn compression_rows<const RING_D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        digit_vectors: &[&[[i8; RING_D]]],
+    ) -> Result<Vec<Vec<CyclotomicRing<F, RING_D>>>, AkitaError> {
+        CpuBackend.compression_rows(prepared, digit_vectors)
     }
 }
 
@@ -214,10 +230,7 @@ fn custom_commit_source_runs_commit_with_params() {
         contract_commitment.rows().count(),
         dense_commitment.rows().count()
     );
-    assert_eq!(
-        contract_hint.decomposed_inner_rows,
-        dense_hint.decomposed_inner_rows
-    );
+    assert_eq!(contract_hint, dense_hint);
 }
 
 #[test]
@@ -266,8 +279,5 @@ fn custom_commit_source_runs_batched_commit_with_params() {
         contract_commitment.rows().count(),
         dense_commitment.rows().count()
     );
-    assert_eq!(
-        contract_hint.decomposed_inner_rows,
-        dense_hint.decomposed_inner_rows
-    );
+    assert_eq!(contract_hint, dense_hint);
 }

@@ -556,11 +556,10 @@ mod tests {
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    setup_prefix_slot_id, AkitaCommitmentHint, DigitBlocks,
+                    setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile,
                     InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-                    PrecommittedGroupDescriptor, PrecommittedLevelParams, RingVec,
-                    SetupPrefixPublicCommitment, SetupPrefixSlot, SisModulusProfileId,
-                    SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
+                    PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
+                    SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
                 };
 
                 const MAX_VARS: usize = 13;
@@ -568,50 +567,56 @@ mod tests {
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let mut setup = new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
+                let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+                    SisTableKey {
+                        policy: DEFAULT_SIS_SECURITY_POLICY,
+                        table_digest: SisTableDigest::CURRENT,
+                        modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                        role: akita_types::SisMatrixRole::Inner,
+                        ring_dimension: u32::try_from(TEST_D).expect("test ring dimension"),
+                        coeff_linf_bound: 32_767,
+                    },
+                    1,
+                )
+                .expect("audited prefix A matrix");
+                let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+                    SisTableKey {
+                        policy: DEFAULT_SIS_SECURITY_POLICY,
+                        table_digest: SisTableDigest::CURRENT,
+                        modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                        role: akita_types::SisMatrixRole::Outer,
+                        ring_dimension: u32::try_from(TEST_D).expect("test ring dimension"),
+                        coeff_linf_bound: 3,
+                    },
+                    inner_commit_matrix.output_rank(),
+                )
+                .expect("audited prefix B matrix");
+                let commitment_rows = outer_commit_matrix.output_rank();
                 let commitment_params = PrecommittedLevelParams {
-                    layout: PrecommittedGroupDescriptor {
+                    layout: CommittedGroupProfile {
+                        version: CommittedGroupProfile::VERSION,
                         group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
                         num_live_ring_elements_per_claim: 1,
                         num_positions_per_block: 1,
                         num_live_blocks: 1,
                         log_basis_inner: 1,
+                        num_digits_inner: 1,
+                        inner_commit_matrix,
                         log_basis_outer: 1,
-                        inner_ring_dimension: TEST_D,
-                        outer_ring_dimension: TEST_D,
-                        n_a: 1,
-                        a_coeff_linf_bound: 1,
-                        n_b: 1,
-                        b_coeff_linf_bound: 1,
+                        num_digits_outer: 1,
+                        outer_commit_matrix,
                     },
-                    inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                        DEFAULT_SIS_SECURITY_POLICY,
-                        SisTableDigest::CURRENT,
-                        SisModulusProfileId::Q128OffsetA7F7,
-                        1,
-                        1,
-                        1,
-                        TEST_D,
-                    ),
-                    outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                        DEFAULT_SIS_SECURITY_POLICY,
-                        SisTableDigest::CURRENT,
-                        SisModulusProfileId::Q128OffsetA7F7,
-                        1,
-                        1,
-                        1,
-                        TEST_D,
-                    ),
                     log_basis_open: 1,
                     fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
-                    num_digits_inner: 1,
-                    num_digits_outer: 1,
                     num_digits_open: 1,
-                    num_digits_fold_one: 1,
+                    num_digits_fold: 1,
                 };
                 let id = setup_prefix_slot_id(TEST_D, 1, commitment_params);
-                // One block of zero planes at the setup ring dimension.
-                let decomposed = DigitBlocks::empty(TEST_D);
-                let hint = AkitaCommitmentHint::singleton(decomposed);
+                let hint = AkitaCommitmentHint::singleton(
+                    RingVec::from_coeffs_with_ring_dim(vec![TestF::zero(); TEST_D], TEST_D)
+                        .expect("inner rows"),
+                )
+                .expect("hint");
                 setup
                     .prefix_slots
                     .insert(SetupPrefixSlot {
@@ -619,7 +624,10 @@ mod tests {
                         natural_len: 1,
                         padded_len: TEST_D,
                         commitment: SetupPrefixPublicCommitment {
-                            rows: vec![RingVec::from_coeffs(vec![TestF::zero(); TEST_D])],
+                            rows: vec![
+                                RingVec::from_coeffs(vec![TestF::zero(); TEST_D]);
+                                commitment_rows
+                            ],
                         },
                         hint,
                     })
@@ -769,12 +777,22 @@ mod tests {
                         plan,
                     )
                     .unwrap();
-                    let typed_digits = inner.decomposed_inner_rows_trusted::<TEST_D>().unwrap();
+                    let n_a = lp.inner_commit_matrix.output_rank();
+                    let blocks = (0..lp.num_live_blocks)
+                        .map(|block| inner.block_rows::<TEST_D>(block, n_a).unwrap())
+                        .collect::<Vec<_>>();
+                    let digits =
+                        akita_prover::kernels::linear::decompose_commit_blocks_into::<
+                            TestF,
+                            TEST_D,
+                            TEST_D,
+                        >(&blocks, lp.num_digits_outer, lp.log_basis_outer)
+                        .unwrap();
                     CpuBackend
                         .digit_rows::<TEST_D>(
                             &prepared,
                             lp.outer_commit_matrix.output_rank(),
-                            typed_digits.typed_planes::<TEST_D>().unwrap(),
+                            digits.typed_planes::<TEST_D>().unwrap(),
                             lp.log_basis_outer,
                         )
                         .unwrap()

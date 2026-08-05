@@ -7,14 +7,13 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField};
 
-use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
+use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;
 use crate::opening_claims::OpeningClaimsLayout;
 use crate::proof::{RelationAddressGeometry, SetupPrefixSlotId};
 
 pub use crate::sis::{
-    FoldWitnessLinfCapConfig, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, SisModulusProfileId,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisModulusProfileId,
 };
 
 pub(crate) fn recursive_opening_num_vars_for_geometry(
@@ -45,9 +44,7 @@ pub(crate) fn recursive_opening_num_vars_for_geometry(
 mod descriptor;
 mod precommitted;
 pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
-use descriptor::{
-    append_fold_linf_policy_descriptor_bytes, append_tensor_challenge_shape_descriptor_bytes,
-};
+use descriptor::append_tensor_challenge_shape_descriptor_bytes;
 pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
 
 /// Gadget basis used by opening-digit segments in the shared D product.
@@ -100,25 +97,8 @@ pub struct CommittedGroupParams {
     pub num_digits_outer: usize,
     /// Gadget decomposition depth for D/opening evaluations.
     pub num_digits_open: usize,
-    /// One-hot chunk size `K` of the committed witness at this level, used to
-    /// derive the per-block witness L1 mass `nonzeros = ceil(D/K)` for the
-    /// folded-witness `min(||c||_inf·||s||_1, ||c||_1·||s||_inf)` bound.
-    ///
-    /// `0` means the level commits a dense witness (balanced gadget digits:
-    /// `||s||_inf = b/2`, `nonzeros = D`). A non-zero value `K` means the level
-    /// commits a one-hot witness (`||s||_inf = 1`, `nonzeros = ceil(D/K)`);
-    /// this is only ever set on a root level whose `log_commit_bound == 1`.
-    pub onehot_chunk_size: usize,
-    /// Level-static fold-linf cap inputs for [`crate::sis::fold_witness_digit_plan`].
-    pub fold_linf_cap_config: FoldWitnessLinfCapConfig,
-    /// Cached [`Self::num_digits_fold`] at `num_claims = 1` for the preset
-    /// field width used by the planner and setup envelope scan.
-    pub num_digits_fold_one: usize,
-    /// Field bit width used to populate [`Self::num_digits_fold_one`]; `0` means 128.
-    pub field_bits_hint: u32,
-    /// Optional cached [`Self::num_digits_fold`] for a batched root `num_claims > 1`.
-    pub cached_num_digits_block_claims: usize,
-    pub cached_num_digits_fold_value: usize,
+    /// Exact folded-witness digit depth selected by this schedule row.
+    pub num_digits_fold: usize,
     /// Multi-chunk witness layout for this level (default: single-chunk).
     ///
     /// The planner populates this from `policy.witness_chunk` and the level's
@@ -216,12 +196,7 @@ impl CommittedGroupParams {
             num_digits_inner: 0,
             num_digits_outer: 0,
             num_digits_open: 0,
-            onehot_chunk_size: 0,
-            fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-            num_digits_fold_one: 1,
-            field_bits_hint: 0,
-            cached_num_digits_block_claims: 0,
-            cached_num_digits_fold_value: 1,
+            num_digits_fold: 1,
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
             setup_prefix: None,
@@ -282,34 +257,6 @@ impl CommittedGroupParams {
             .effective_l1_mass(&self.fold_challenge_config)
     }
 
-    /// Per-row committed-witness `(||s||_inf, ||s||_1)` for the folded
-    /// witness at this level (one-hot vs dense, see [`Self::onehot_chunk_size`]).
-    #[inline]
-    pub fn fold_witness_norms(&self) -> crate::sis::FoldWitnessNorms {
-        let is_onehot = self.onehot_chunk_size > 0;
-        crate::sis::FoldWitnessNorms::new(
-            self.log_basis_inner,
-            self.d_a(),
-            if is_onehot { self.onehot_chunk_size } else { 1 },
-            is_onehot,
-        )
-    }
-
-    /// Per-row folded-witness norms using group-local source gadget geometry.
-    #[inline]
-    pub fn fold_witness_norms_for_params(
-        &self,
-        params: &(impl LevelParamsLike + ?Sized),
-    ) -> crate::sis::FoldWitnessNorms {
-        let is_onehot = self.onehot_chunk_size > 0;
-        crate::sis::FoldWitnessNorms::new(
-            params.log_basis_inner(),
-            params.inner_commit_matrix_params().ring_dimension(),
-            if is_onehot { self.onehot_chunk_size } else { 1 },
-            is_onehot,
-        )
-    }
-
     /// Effective fold-round challenge L∞ norm `||c||_inf` at this level,
     /// accounting for the challenge shape (flat vs tensor).
     #[inline]
@@ -325,308 +272,40 @@ impl CommittedGroupParams {
             .effective_l2_sq_max(&self.fold_challenge_config)
     }
 
-    /// Fold-challenge coefficient count `inner_width · D` (single shared opening point).
+    /// Fold-challenge coefficient count `inner_width · D`.
     #[inline]
     pub fn num_fold_coeffs(&self) -> u128 {
         (self.inner_width() as u128).saturating_mul(self.d_a() as u128)
     }
 
-    /// Exact fold block count `num_claims · num_live_blocks` used in the tail-bound formula.
+    /// Validate the shared fold nonce from schedule-owned challenge policies.
     ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSetup`] when the product overflows `u128`.
-    pub fn num_fold_blocks(&self, num_claims: usize) -> Result<u128, AkitaError> {
-        (num_claims as u128)
-            .checked_mul(self.num_live_blocks as u128)
-            .ok_or_else(|| AkitaError::InvalidSetup("num_fold_blocks overflows u128".to_string()))
-    }
-
-    /// Fold witness L∞ cap policy for this level's sparse family and fold shape.
-    #[inline]
-    pub fn fold_witness_linf_cap_policy(&self) -> crate::sis::FoldWitnessLinfCapPolicy {
-        crate::sis::fold_witness_linf_cap_policy(
-            &self.fold_challenge_config,
-            self.fold_challenge_shape,
-            self.d_a(),
-        )
-    }
-
-    /// Level-static config for [`crate::sis::fold_witness_digit_plan`].
-    #[inline]
-    pub fn fold_witness_linf_cap_config(&self) -> crate::sis::FoldWitnessLinfCapConfig {
-        self.fold_linf_cap_config
-    }
-
-    /// Derive the shape-dependent fold-linf cap config for one root group.
-    ///
-    /// Sparse family, native A dimension, challenge shape, and A width all
-    /// belong to the selected group.
-    pub fn fold_witness_linf_cap_config_for_params(
-        &self,
-        params: &(impl LevelParamsLike + ?Sized),
-    ) -> Result<crate::sis::FoldWitnessLinfCapConfig, AkitaError> {
-        crate::sis::FoldWitnessLinfCapConfig::for_fold_level(
-            &params.fold_challenge_config(),
-            params.fold_challenge_shape(),
-            params.inner_commit_matrix_params().ring_dimension(),
-            params.a_col_len(),
-        )
-    }
-
-    /// Field bit width for fold digit sizing and cached `δ_fold` values (`128` when unset).
-    #[inline]
-    pub fn field_bits_for_cache(&self) -> u32 {
-        let hint = self.field_bits_hint;
-        if hint == 0 {
-            128
-        } else {
-            hint
-        }
-    }
-
-    /// Attach the level-static fold-linf cap config derived from this layout.
-    pub fn with_fold_linf_cap_config(
-        mut self,
-        field_bits: u32,
-        root_num_claims: usize,
-    ) -> Result<Self, AkitaError> {
-        self.field_bits_hint = field_bits;
-        self.fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-            &self.fold_challenge_config,
-            self.fold_challenge_shape,
-            self.d_a(),
-            self.inner_width(),
-        )?;
-        let challenge = crate::sis::FoldChallengeNorms::new(
-            &self.fold_challenge_config,
-            self.fold_challenge_shape,
-        );
-        let witness = self.fold_witness_norms();
-        let (num_digits_fold_one, _) = crate::sis::fold_witness_digit_plan(
-            self.num_live_blocks,
-            1,
-            field_bits,
-            self.log_basis_open,
-            challenge,
-            witness,
-            &self.fold_linf_cap_config,
-        )?;
-        self.num_digits_fold_one = num_digits_fold_one;
-        if root_num_claims > 1 {
-            self.cached_num_digits_block_claims = root_num_claims;
-            let (cached_value, _) = crate::sis::fold_witness_digit_plan(
-                self.num_live_blocks,
-                root_num_claims,
-                field_bits,
-                self.log_basis_open,
-                challenge,
-                witness,
-                &self.fold_linf_cap_config,
-            )?;
-            self.cached_num_digits_fold_value = cached_value;
-        } else {
-            self.cached_num_digits_block_claims = 0;
-            self.cached_num_digits_fold_value = self.num_digits_fold_one;
-        }
-        Ok(self)
-    }
-
-    /// Honest-prover per-coefficient `‖z‖_inf` target for fold digit sizing, grind,
-    /// and terminal Golomb-Rice (`min(β_inf, t*)` or `β_inf` alone).
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`crate::sis::fold_witness_digit_plan`] setup errors.
-    pub fn fold_witness_linf_cap_for_claims(&self, num_claims: usize) -> Result<u128, AkitaError> {
-        let (_delta_fold, inf_norm_bound) = crate::sis::fold_witness_digit_plan(
-            self.num_live_blocks,
-            num_claims,
-            self.field_bits_for_cache(),
-            self.log_basis_open,
-            crate::sis::FoldChallengeNorms::new(
-                &self.fold_challenge_config,
-                self.fold_challenge_shape,
-            ),
-            self.fold_witness_norms(),
-            &self.fold_linf_cap_config,
-        )?;
-        Ok(inf_norm_bound)
-    }
-
-    /// Propagates fold-beta / tail-bound rejections for tail-bound-with-grind levels.
-    pub fn fold_witness_grind_contract(
-        &self,
-        num_claims: usize,
-    ) -> Result<crate::sis::FoldWitnessGrindContract, AkitaError> {
-        let policy = self.fold_witness_linf_cap_policy();
-        let witness_linf_cap = self.fold_witness_linf_cap_for_claims(num_claims)?;
-        Ok(crate::sis::FoldWitnessGrindContract {
-            policy,
-            witness_linf_cap,
-        })
-    }
-
-    /// Derive the shared grind contract from every root group's local geometry.
-    pub fn fold_witness_grind_batch_contract(
+    /// This verifier boundary deliberately does not reconstruct an honest
+    /// source model or an honest folded-response cap. Those values guide the
+    /// prover's search only; nonce admission is fixed by each selected
+    /// group's challenge family, shape, and native A dimension.
+    pub fn validate_fold_grind_nonce(
         &self,
         opening_batch: &OpeningClaimsLayout,
         max_grind_attempts: u32,
-    ) -> Result<crate::sis::FoldWitnessGrindBatchContract, AkitaError> {
+        fold_grind_nonce: u32,
+    ) -> Result<(), AkitaError> {
         self.validate_opening_batch(opening_batch)?;
-        let mut contracts = Vec::with_capacity(opening_batch.num_groups());
-        for group_index in 0..opening_batch.num_groups() {
-            let params = self.group_params(opening_batch, group_index)?;
-            let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
-            let cap_config = self.fold_witness_linf_cap_config_for_params(params)?;
-            let challenge = crate::sis::FoldChallengeNorms::new(
-                &params.fold_challenge_config(),
-                params.fold_challenge_shape(),
-            );
-            let witness_norms = self.fold_witness_norms_for_params(params);
-            let (_, witness_linf_cap) = crate::sis::fold_witness_digit_plan(
-                params.num_live_blocks(),
-                num_claims,
-                self.field_bits_for_cache(),
-                params.log_basis_open(),
-                challenge,
-                witness_norms,
-                &cap_config,
-            )?;
-            let policy = cap_config.policy;
-            contracts.push(crate::sis::FoldWitnessGrindContract {
-                policy,
-                witness_linf_cap,
-            });
-        }
-        crate::sis::FoldWitnessGrindBatchContract::new(contracts, max_grind_attempts)
-    }
-
-    /// Domain-separated preview absorb payload for one fold-level grind search.
-    pub fn fold_grind_probe_order_absorb_buf(&self, num_claims: usize) -> Vec<u8> {
-        let num_claims = u32::try_from(num_claims).unwrap_or(u32::MAX);
-        let mut buf = Vec::with_capacity(48);
-        buf.extend_from_slice(crate::sis::FOLD_GRIND_PROBE_ORDER_ABSORB);
-        buf.extend_from_slice(&(self.d_a() as u64).to_le_bytes());
-        buf.extend_from_slice(&self.log_basis_open.to_le_bytes());
-        buf.extend_from_slice(&(self.num_live_ring_elements_per_claim as u64).to_le_bytes());
-        buf.extend_from_slice(&(self.num_positions_per_block as u64).to_le_bytes());
-        buf.extend_from_slice(&(self.num_live_blocks as u64).to_le_bytes());
-        buf.extend_from_slice(&num_claims.to_le_bytes());
-        buf
-    }
-
-    pub fn fold_witness_linf_tail_bound_sq(&self, num_claims: usize) -> Result<u128, AkitaError> {
-        let cap_config = self.fold_linf_cap_config;
-        if !cap_config.policy.allows_grind() {
+        if max_grind_attempts == 0 {
             return Err(AkitaError::InvalidSetup(
-                "fold_witness_linf_tail_bound_sq: deterministic policy has no tail bound"
-                    .to_string(),
+                "fold grind attempt budget must be positive".to_string(),
             ));
         }
-        if cap_config.num_fold_coeffs == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "fold_witness_linf_tail_bound_sq: num_fold_coeffs must be positive".to_string(),
-            ));
+        if fold_grind_nonce >= max_grind_attempts {
+            return Err(AkitaError::InvalidProof);
         }
-        let witness_linf = self.fold_witness_norms().infinity_norm();
-        let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
-        crate::sis::rademacher_proxy_variance(
-            self.num_live_blocks,
-            num_claims,
-            witness_linf_sq,
-            &cap_config,
-        )
+        Ok(())
     }
 
-    /// Gadget decomposition depth for the folded witness (δ_fold / τ).
-    ///
-    /// Delegates to [`crate::sis::fold_witness_digit_plan`], which derives
-    /// `β = num_claims · num_live_blocks · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
-    /// from this level's fold challenge and witness norms, then applies
-    /// `min(β_inf, t*)` under tail-bound-with-grind policies.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`crate::sis::fold_witness_digit_plan`]'s rejection of a
-    /// degenerate fold bound (`num_live_blocks == 0` or `β` overflow).
+    /// Exact scheduled gadget decomposition depth for the folded witness.
     #[inline]
-    pub fn num_digits_fold(&self, num_claims: usize, field_bits: u32) -> Result<usize, AkitaError> {
-        if num_claims == 1 {
-            return Ok(self.num_digits_fold_one);
-        }
-        if num_claims == self.cached_num_digits_block_claims
-            && self.cached_num_digits_block_claims > 1
-        {
-            return Ok(self.cached_num_digits_fold_value);
-        }
-        let challenge = crate::sis::FoldChallengeNorms::new(
-            &self.fold_challenge_config,
-            self.fold_challenge_shape(),
-        );
-        let (decomposed_fold_digits, _) = crate::sis::fold_witness_digit_plan(
-            self.num_live_blocks,
-            num_claims,
-            field_bits,
-            self.log_basis_open,
-            challenge,
-            self.fold_witness_norms(),
-            &self.fold_linf_cap_config,
-        )?;
-        Ok(decomposed_fold_digits)
-    }
-
-    /// Gadget depth for a root group using group-local geometry, fresh-opening
-    /// basis, and root fold policy.
-    pub fn num_digits_fold_for_params(
-        &self,
-        params: &(impl LevelParamsLike + ?Sized),
-        num_claims: usize,
-        field_bits: u32,
-    ) -> Result<usize, AkitaError> {
-        if num_claims == 1 {
-            return Ok(params.num_digits_fold_one());
-        }
-        let challenge = crate::sis::FoldChallengeNorms::new(
-            &params.fold_challenge_config(),
-            params.fold_challenge_shape(),
-        );
-        let cap_config = self.fold_witness_linf_cap_config_for_params(params)?;
-        let (decomposed_fold_digits, _) = crate::sis::fold_witness_digit_plan(
-            params.num_live_blocks(),
-            num_claims,
-            field_bits,
-            params.log_basis_open(),
-            challenge,
-            self.fold_witness_norms_for_params(params),
-            &cap_config,
-        )?;
-        Ok(decomposed_fold_digits)
-    }
-
-    /// Honest-prover per-coefficient folded-response cap for a root group using
-    /// group-local geometry and the root level's shared challenge/cap policy.
-    pub fn fold_witness_linf_cap_for_params(
-        &self,
-        params: &(impl LevelParamsLike + ?Sized),
-        num_claims: usize,
-        field_bits: u32,
-    ) -> Result<u128, AkitaError> {
-        let challenge = crate::sis::FoldChallengeNorms::new(
-            &params.fold_challenge_config(),
-            params.fold_challenge_shape(),
-        );
-        let cap_config = self.fold_witness_linf_cap_config_for_params(params)?;
-        let (_decomposed_fold_digits, inf_norm_bound) = crate::sis::fold_witness_digit_plan(
-            params.num_live_blocks(),
-            num_claims,
-            field_bits,
-            params.log_basis_open(),
-            challenge,
-            self.fold_witness_norms_for_params(params),
-            &cap_config,
-        )?;
-        Ok(inf_norm_bound)
+    pub fn num_digits_fold(&self) -> usize {
+        self.num_digits_fold
     }
 
     /// Maximum terminal folded-response norm certified by a group's fixed A matrix.
@@ -669,27 +348,6 @@ impl CommittedGroupParams {
                 "terminal inner matrix cannot certify a nonzero folded response".to_string(),
             )
         })
-    }
-
-    /// Set the one-hot chunk size `K`, returning the updated params.
-    #[inline]
-    #[must_use]
-    pub fn with_onehot_chunk_size(mut self, onehot_chunk_size: usize) -> Self {
-        self.onehot_chunk_size = onehot_chunk_size;
-        self
-    }
-
-    /// Replace the fold-round challenge shape, rebuilding derived fold-linf
-    /// digit/cache state for the new shape.
-    #[inline]
-    pub fn with_fold_challenge_shape(
-        mut self,
-        shape: TensorChallengeShape,
-    ) -> Result<Self, AkitaError> {
-        self.fold_challenge_shape = shape;
-        let field_bits = self.field_bits_for_cache();
-        let root_num_claims = self.cached_num_digits_block_claims;
-        self.with_fold_linf_cap_config(field_bits, root_num_claims)
     }
 
     /// Number of Boolean coordinates in the block-index domain.
@@ -789,12 +447,10 @@ impl CommittedGroupParams {
         push_usize(bytes, self.num_live_blocks);
         append_schedule_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config);
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
-        append_fold_linf_policy_descriptor_bytes(bytes, self.fold_witness_linf_cap_policy());
-        push_u128(bytes, self.challenge_l2_sq_max());
         push_usize(bytes, self.num_digits_inner);
         push_usize(bytes, self.num_digits_outer);
         push_usize(bytes, self.num_digits_open);
-        push_usize(bytes, self.onehot_chunk_size);
+        push_usize(bytes, self.num_digits_fold);
         // Chunk binding is appended only when the level is chunked, so
         // single-chunk descriptors stay byte-for-byte identical to the historical
         // layout (the flag-off no-op invariant). When chunked, bind the chunk
@@ -899,6 +555,18 @@ impl CommittedGroupParams {
         self.precommitted_group_count() + 1
     }
 
+    /// Build the canonical root opening layout around one final group.
+    pub fn opening_layout_for_final_group(
+        &self,
+        final_group: crate::PolynomialGroupLayout,
+    ) -> Result<OpeningClaimsLayout, AkitaError> {
+        let precommitted = self
+            .precommitted_group_iter()
+            .map(|group| group.layout.group)
+            .collect::<Vec<_>>();
+        OpeningClaimsLayout::from_root_groups(&precommitted, final_group)
+    }
+
     pub fn validate_opening_batch(
         &self,
         opening_batch: &OpeningClaimsLayout,
@@ -952,20 +620,8 @@ impl CommittedGroupParams {
                 .ok_or(AkitaError::InvalidProof)?
                 .role_dims(self.open_commit_matrix.ring_dimension())
         };
-        dims.validate_a_carrier()?;
+        dims.validate_role_projection()?;
         Ok(dims)
-    }
-
-    /// Ring dimension of the batch-owned recursive-witness carrier.
-    ///
-    /// Every group keeps its native A dimension for fold and relation
-    /// arithmetic. The physical witness carrier uses the largest group A
-    /// dimension so support is independent of caller group order.
-    #[must_use]
-    pub fn relation_witness_carrier_ring_dimension(&self) -> usize {
-        self.precommitted_group_iter()
-            .map(|group| group.inner_commit_matrix.ring_dimension())
-            .fold(self.d_a(), usize::max)
     }
 
     /// Resolve flat relation-address geometry across every opening group's
@@ -974,7 +630,7 @@ impl CommittedGroupParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
         outgoing_witness_ring_dimension: usize,
-        outgoing_witness_source_len: usize,
+        live_witness_coeff_len: usize,
     ) -> Result<RelationAddressGeometry, AkitaError> {
         self.validate_opening_batch(opening_batch)?;
         let group_role_dims = (0..opening_batch.num_groups())
@@ -984,7 +640,7 @@ impl CommittedGroupParams {
             self.role_dims(),
             &group_role_dims,
             outgoing_witness_ring_dimension,
-            outgoing_witness_source_len,
+            live_witness_coeff_len,
         )
     }
 
@@ -999,7 +655,7 @@ impl CommittedGroupParams {
             return Ok(self.outer_commit_matrix.output_rank());
         }
         self.precommitted_group_params(group_index)
-            .map(|group| group.outer_commit_matrix.output_rank())
+            .map(|group| group.layout.outer_commit_matrix.output_rank())
             .ok_or(AkitaError::InvalidProof)
     }
 
@@ -1039,10 +695,10 @@ impl CommittedGroupParams {
                 .checked_add(1)
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             rows = rows
-                .checked_add(group.inner_commit_matrix.output_rank())
+                .checked_add(group.layout.inner_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             rows = rows
-                .checked_add(group.outer_commit_matrix.output_rank())
+                .checked_add(group.layout.outer_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
         rows.checked_add(self.open_commit_matrix.output_rank())
@@ -1080,10 +736,10 @@ impl CommittedGroupParams {
                 .checked_add(1)
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             start = start
-                .checked_add(prior.inner_commit_matrix.output_rank())
+                .checked_add(prior.layout.inner_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             start = start
-                .checked_add(prior.outer_commit_matrix.output_rank())
+                .checked_add(prior.layout.outer_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
         start
@@ -1113,6 +769,7 @@ impl CommittedGroupParams {
             Ok(self
                 .precommitted_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?
+                .layout
                 .inner_commit_matrix
                 .output_rank())
         }
@@ -1129,6 +786,7 @@ impl CommittedGroupParams {
             Ok(self
                 .precommitted_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?
+                .layout
                 .outer_commit_matrix
                 .output_rank())
         }
@@ -1168,7 +826,8 @@ impl CommittedGroupParams {
         Ok(start..end)
     }
 
-    /// Next-witness length in field elements for scalar or multi-group folds.
+    /// Exact live next-witness length in field elements for scalar or
+    /// multi-group folds.
     pub fn output_witness_len<F: CanonicalField>(
         &self,
         opening_batch: &OpeningClaimsLayout,
@@ -1176,19 +835,13 @@ impl CommittedGroupParams {
         opening_batch.check()?;
         self.witness_chunk.validate()?;
         self.validate_opening_batch(opening_batch)?;
-        let relation_rows = self.relation_matrix_row_count(opening_batch.num_groups())?;
         let witness_layout = crate::WitnessLayout::new(
             self,
             opening_batch,
             self.witness_chunk.num_chunks,
-            relation_rows,
             crate::r_decomp_levels::<F>(self.log_basis_open),
         )?;
-        let carrier_ring_dimension = self.relation_witness_carrier_ring_dimension();
-        witness_layout
-            .total_len()
-            .checked_mul(carrier_ring_dimension)
-            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))
+        Ok(witness_layout.live_coeff_len())
     }
 
     /// Row count for an explicit relation-matrix row layout.
@@ -1341,20 +994,14 @@ impl CommittedGroupParams {
             num_digits_inner,
             num_digits_outer,
             num_digits_open,
-            onehot_chunk_size: self.onehot_chunk_size,
-            fold_linf_cap_config: self.fold_linf_cap_config,
-            num_digits_fold_one: self.num_digits_fold_one,
-            field_bits_hint: self.field_bits_hint,
-            cached_num_digits_block_claims: self.cached_num_digits_block_claims,
-            cached_num_digits_fold_value: self.cached_num_digits_fold_value,
+            num_digits_fold: self.num_digits_fold,
             // `with_decomp` recomputes only the A/B/D widths; the chunk layout is
             // a property of the witness this level commits, so preserve it.
             witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
             setup_prefix: self.setup_prefix.clone(),
         };
-        let field_bits = self.field_bits_for_cache();
-        rebuilt.with_fold_linf_cap_config(field_bits, self.cached_num_digits_block_claims)
+        rebuilt.validate_exact_fold_plan()
     }
 
     /// Build a new `CommittedGroupParams` that keeps rank/ring/SIS-bucket info
@@ -1371,11 +1018,7 @@ impl CommittedGroupParams {
     /// argument was constructed via [`CommittedGroupParams::params_only`] or threaded
     /// through [`Self::with_decomp`], and would let the SIS audit at
     /// role-specific commit-matrix constructors short-circuit silently.
-    pub fn with_layout(
-        &self,
-        other: &CommittedGroupParams,
-        field_bits: u32,
-    ) -> Result<Self, AkitaError> {
+    pub fn with_layout(&self, other: &CommittedGroupParams) -> Result<Self, AkitaError> {
         Self {
             log_basis_inner: other.log_basis_inner,
             log_basis_outer: other.log_basis_outer,
@@ -1415,19 +1058,23 @@ impl CommittedGroupParams {
             num_digits_inner: other.num_digits_inner,
             num_digits_outer: other.num_digits_outer,
             num_digits_open: other.num_digits_open,
-            onehot_chunk_size: other.onehot_chunk_size,
-            fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-            num_digits_fold_one: 1,
-            field_bits_hint: 0,
-            cached_num_digits_block_claims: 0,
-            cached_num_digits_fold_value: 1,
+            num_digits_fold: other.num_digits_fold,
             // The chunk layout is a property of the committed witness, sized with
             // the ranks, so it stays with `self` like the SIS buckets.
             witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
             setup_prefix: self.setup_prefix.clone(),
         }
-        .with_fold_linf_cap_config(field_bits, 0)
+        .validate_exact_fold_plan()
+    }
+
+    fn validate_exact_fold_plan(self) -> Result<Self, AkitaError> {
+        if self.num_digits_fold == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "exact fold plan must have nonzero digit depth".into(),
+            ));
+        }
+        Ok(self)
     }
 }
 

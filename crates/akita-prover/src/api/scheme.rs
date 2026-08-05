@@ -1,19 +1,23 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
-use crate::compute::ComputeBackendSetup;
 use crate::compute::{
-    LevelProveStacks, RecursiveProveBackend, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
-    RuntimeRootProvePoly, UniformProverStack,
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
+    RuntimeRootCommitPoly, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend, UniformProverStack,
 };
-use crate::ProverOpeningData;
 use crate::ProverTranscriptGrind;
+use crate::{
+    PreparedGroupProveOps, RecursiveFoldSource, RootTensorProjectionPoly, SelectedProverOpeningData,
+};
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
-    RandomSampling,
+    MulBaseUnreduced, RandomSampling,
 };
+use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
-use akita_types::{BasisMode, FpExtEncoding, PolynomialGroupLayout};
+use akita_types::{BasisMode, CommittedGroupProfile, FpExtEncoding, OpeningScheduleSelection};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -32,7 +36,7 @@ where
     /// Protocol-facing commitment storage.
     type Commitment: Clone + PartialEq + Send + Sync;
     /// Public opening point, claimed-evaluation, and proof scalar field.
-    type ExtField: ExtField<F>;
+    type ExtField: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F> + AkitaSerialize;
     /// Prover-side hint produced for one opening-point commitment.
     type CommitHint: Clone + Send + Sync;
     /// Batched proof object produced by the scheme.
@@ -55,8 +59,8 @@ where
 
     /// Commit a single opening-point bundle.
     ///
-    /// All polynomials in `polys` are aggregated into one commitment using a
-    /// layout derived from the single shared opening-batch shape.
+    /// All polynomials in `polys` are aggregated into one commitment using
+    /// that group's opening layout.
     ///
     /// # Errors
     ///
@@ -75,8 +79,8 @@ where
 
     /// Commit the polynomial bundle used by a batched prove.
     ///
-    /// The input bundle produces one commitment. All polynomials share one
-    /// public opening point in the subsequent [`Self::batched_prove`] call.
+    /// The input bundle produces one commitment and therefore one group-local
+    /// opening point in the subsequent [`Self::batched_prove`] call.
     ///
     /// # Errors
     ///
@@ -109,8 +113,8 @@ where
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B>,
-        precommitteds: Vec<PolynomialGroupLayout>,
-    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
+        precommitteds: Vec<CommittedGroupProfile>,
+    ) -> Result<(Self::Commitment, Self::CommitHint, OpeningScheduleSelection), AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -118,7 +122,7 @@ where
         P: RuntimeRootCommitPoly<F>,
         B: RuntimeRootCommitBackend<F, P, Self::ExtField>;
 
-    /// Produce a fused batched opening proof for one shared opening point.
+    /// Produce a fused batched opening proof over ordered commitment groups.
     ///
     /// A singleton opening is the 1x1 special case (one polynomial, one
     /// commitment, one opening point).
@@ -130,7 +134,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
-        claims: ProverOpeningData<'a, Self::ExtField, P, F>,
+        opening: SelectedProverOpeningData<'a, Self::ExtField, P, F>,
         stacks: &'a impl LevelProveStacks<'a, F, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,
@@ -139,7 +143,17 @@ where
         T: Transcript<F> + ProverTranscriptGrind<F>,
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
-        P: RuntimeRootProvePoly<F>,
-        B: RecursiveProveBackend<F, P, Self::ExtField> + ComputeBackendSetup<F> + 'a,
+        P: PreparedGroupProveOps<F, Self::ExtField, B, B>,
+        B: ComputeBackendSetup<F>
+            + CommitmentComputeBackend<F>
+            + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
+            + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
+            + SuffixOpeningProveBackend<F>
+            + DigitRowsComputeBackend<F>
+            + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, Self::ExtField>
+            + RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, Self::ExtField>
+            + SuffixTensorProveBackend<F, Self::ExtField>
+            + RuntimeRingSwitchProveBackend<F>
+            + 'a,
         <B as ComputeBackendSetup<F>>::PreparedSetup: 'a;
 }

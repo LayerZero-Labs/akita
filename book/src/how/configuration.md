@@ -12,6 +12,14 @@ The single user-facing trait that defines every per-config policy hook (algebra,
 exact SIS profile, decomposition, layout, schedule, transcript bind, prove params), and
 the `fp32` / `fp64` / `fp128` preset families built on it.
 
+Both field roles live on the trait: `Field` carries committed witnesses, setup
+matrices, and SIS, while `ExtField` carries public opening points, claimed
+evaluations, and Fiat-Shamir challenges. The protocol geometry gates on
+whether the two roles coincide (`EXT_DEGREE == 1`, all `fp128` presets) or
+claims live in a proper extension (`EXT_DEGREE > 1`, `fp32` / `fp64`), never
+on field bit-width. See
+[Fold path and field geometry](./proving/fold-path.md).
+
 **Sources to fold in**
 
 - `crates/akita-config/src/lib.rs:54-120`.
@@ -41,7 +49,7 @@ owns shipped table data. The verifier-reachable proof-size formula.
 **Sources to fold in**
 
 - [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner overview, search model, generated tables, and supported features.
-- `crates/akita-planner/src/` (`resolve.rs`, `group_batch.rs`, `generated/`).
+- `crates/akita-planner/src/` (`resolve.rs`, `planner.rs`, `generated/`).
 - `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`level_proof_bytes`, planned witness sizing).
 - Paper §3.11 `sec:akita-planner` (objective/constraints, the dynamic program, generated schedules).
 - `crates/akita-config/src/generated_families.rs`, `crates/akita-schedules/src/generated/`, `crates/akita-planner/src/resolve.rs` (`resolve_schedule`).

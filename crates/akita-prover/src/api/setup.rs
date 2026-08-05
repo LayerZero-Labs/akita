@@ -287,10 +287,11 @@ mod tests {
     #[test]
     fn prover_setup_check_validates_prefix_slots() {
         use akita_types::{
-            setup_prefix_slot_id, AkitaCommitmentHint, DigitBlocks, InnerCommitMatrixParams,
-            OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+            setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile,
+            InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
             PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
-            SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
+            SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
+            DEFAULT_SIS_SECURITY_POLICY,
         };
 
         let mut setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
@@ -300,47 +301,52 @@ mod tests {
             SetupMatrixEnvelope::minimum(),
         )
         .expect("generate setup");
-        let decomposed = DigitBlocks::empty(64);
-        let hint = AkitaCommitmentHint::singleton(decomposed);
+        let decomposed =
+            RingVec::from_coeffs_with_ring_dim(Vec::new(), 64).expect("empty A-native hint");
+        let hint = AkitaCommitmentHint::singleton(decomposed).expect("empty A-native hint");
+        let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: SisTableDigest::CURRENT,
+                modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                role: SisMatrixRole::Inner,
+                ring_dimension: 64,
+                coeff_linf_bound: 32_767,
+            },
+            1,
+        )
+        .expect("audited prefix A matrix");
+        let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: SisTableDigest::CURRENT,
+                modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                role: SisMatrixRole::Outer,
+                ring_dimension: 64,
+                coeff_linf_bound: 3,
+            },
+            inner_commit_matrix.output_rank(),
+        )
+        .expect("audited prefix B matrix");
+        let commitment_rows = outer_commit_matrix.output_rank();
         let commitment_params = PrecommittedLevelParams {
-            layout: PrecommittedGroupDescriptor {
+            layout: CommittedGroupProfile {
+                version: CommittedGroupProfile::VERSION,
                 group: PolynomialGroupLayout::singleton(6),
                 num_live_ring_elements_per_claim: 1,
                 num_positions_per_block: 1,
                 num_live_blocks: 1,
                 log_basis_inner: 1,
+                num_digits_inner: 1,
+                inner_commit_matrix,
                 log_basis_outer: 1,
-                inner_ring_dimension: 64,
-                outer_ring_dimension: 64,
-                n_a: 1,
-                a_coeff_linf_bound: 1,
-                n_b: 1,
-                b_coeff_linf_bound: 1,
+                num_digits_outer: 1,
+                outer_commit_matrix,
             },
-            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
-                1,
-                1,
-                1,
-                64,
-            ),
-            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
-                1,
-                1,
-                1,
-                64,
-            ),
             log_basis_open: 1,
             fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
-            num_digits_inner: 1,
-            num_digits_outer: 1,
             num_digits_open: 1,
-            num_digits_fold_one: 1,
+            num_digits_fold: 1,
         };
         setup
             .prefix_slots
@@ -349,7 +355,10 @@ mod tests {
                 natural_len: 1,
                 padded_len: 3,
                 commitment: SetupPrefixPublicCommitment {
-                    rows: vec![RingVec::from_coeffs(vec![Prime128Offset275::default(); 64])],
+                    rows: vec![
+                        RingVec::from_coeffs(vec![Prime128Offset275::default(); 64]);
+                        commitment_rows
+                    ],
                 },
                 hint,
             })

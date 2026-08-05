@@ -28,6 +28,7 @@ tracing = "0.1"
 
 [features]
 default = ["schedules-default"]
+benchmark-support = []
 schedules-default = ["akita-config/schedules-default"]
 parallel = [
   "akita-algebra/parallel",
@@ -44,3 +45,9 @@ akita-config = { version = "0.1.0", path = "../akita-config", default-features =
   "schedules-fp128-d128-dense",
   "schedules-fp128-d64-dense",
 ] }
+criterion = "0.5"
+
+[[bench]]
+name = "relation_evaluator"
+harness = false
+required-features = ["benchmark-support"]

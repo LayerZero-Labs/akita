@@ -10,14 +10,15 @@
 
 #![allow(clippy::missing_errors_doc)]
 
-use akita_field::{CanonicalField, FieldCore, RandomSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, Commitment, FlatMatrix, OpeningClaims, PointVariableSelection,
-    PolynomialGroupClaims, SetupPrefixVerifierRegistry, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    AkitaVerifierSetup, CommittedGroup, FlatMatrix, GroupBatchStatement, OpeningClaims,
+    OpeningScheduleSelection, PolynomialGroupClaims, SetupPrefixVerifierRegistry,
+    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
 
@@ -36,7 +37,7 @@ pub const BLOB_VALIDATE: Validate = Validate::Yes;
 pub const MAX_JOLT_BLOB_BYTES: u64 = 805_306_368;
 
 /// Magic header so the guest fails fast if it gets the wrong bytes.
-const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv1";
+const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv2";
 const MAX_TRANSCRIPT_DOMAIN_BYTES: usize = 1024;
 const MAX_BLOB_NUM_VARS: usize = 64;
 
@@ -64,8 +65,10 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     pub opening_point: Vec<F>,
     /// Claimed opening value at `opening_point`.
     pub opening: F,
+    /// Exact generated schedule row accepted for this opening batch.
+    pub schedule_selection: OpeningScheduleSelection,
     /// Single committed-poly group: one ring commitment per (poly, point) pair.
-    pub commitment: Commitment<F>,
+    pub commitment: CommittedGroup<F>,
     /// Expanded verifier setup (matrix prefix usable by the verifier kernel).
     pub verifier_setup: AkitaVerifierSetup<F>,
     /// Proof shape descriptor; needed to deserialize `proof` without
@@ -82,23 +85,24 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
     /// The recursion profile currently ships exactly one opening for one
     /// commitment. Keeping this projection here prevents host and guest replay
     /// from growing independent claim-shaping code.
-    pub fn verifier_opening_batch<'a>(
+    pub fn verifier_statement<'a>(
         &'a self,
         openings: &'a [F; 1],
-    ) -> OpeningClaims<'static, F, &'a Commitment<F>> {
-        let point_vars = PointVariableSelection::prefix(
-            usize::try_from(self.num_vars).expect("recursion blob num_vars fits usize"),
-            self.opening_point.len(),
-        )
-        .expect("singleton recursion opening point covers all variables");
-        OpeningClaims::from_groups(
+    ) -> Result<GroupBatchStatement<'a, F, F>, AkitaError> {
+        let num_vars = usize::try_from(self.num_vars).map_err(|_| {
+            AkitaError::InvalidInput("recursion blob num_vars does not fit usize".to_string())
+        })?;
+        if num_vars != self.opening_point.len() {
+            return Err(AkitaError::InvalidInput(
+                "singleton recursion opening point does not cover all variables".to_string(),
+            ));
+        }
+        let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             self.opening_point.clone(),
-            vec![
-                PolynomialGroupClaims::new(point_vars, openings.to_vec(), &self.commitment)
-                    .expect("singleton recursion opening batch has one evaluation"),
-            ],
-        )
-        .expect("singleton recursion opening batch is valid")
+            openings.to_vec(),
+            &self.commitment,
+        )?])?;
+        GroupBatchStatement::new(self.schedule_selection, claims)
     }
 
     fn validate_blob_header_bounds(
@@ -129,7 +133,7 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + CanonicalField + AkitaSerialize,
+    F: FieldCore + CanonicalField + AkitaSerialize + Valid,
 {
     /// Encode the bundle into a single contiguous byte vector.
     pub fn write_to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
@@ -163,14 +167,8 @@ where
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.opening
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
-        let num_commitment_coeffs =
-            u64::try_from(self.commitment.rows().coeff_len()).map_err(|_| {
-                SerializationError::LengthLimitExceeded {
-                    len: self.commitment.rows().coeff_len() as u64,
-                    max: usize::MAX,
-                }
-            })?;
-        num_commitment_coeffs.serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+        self.schedule_selection
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.commitment
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup
@@ -189,7 +187,7 @@ where
             + self.num_vars.serialized_size(BLOB_COMPRESS)
             + self.opening_point.serialized_size(BLOB_COMPRESS)
             + self.opening.serialized_size(BLOB_COMPRESS)
-            + (self.commitment.rows().coeff_len() as u64).serialized_size(BLOB_COMPRESS)
+            + self.schedule_selection.serialized_size(BLOB_COMPRESS)
             + self.commitment.serialized_size(BLOB_COMPRESS)
             + self.verifier_setup.serialized_size(BLOB_COMPRESS)
             + self.proof_shape.serialized_size(BLOB_COMPRESS)
@@ -199,7 +197,12 @@ where
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: FieldCore
+        + CanonicalField
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + AkitaDeserialize<Context = ()>
+        + Valid,
 {
     fn decode_capped_bytes(
         rest: &mut &[u8],
@@ -381,13 +384,17 @@ where
         let opening_point =
             Self::decode_opening_point(&mut rest, transcript_domain.len(), num_vars)?;
         let opening = F::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
-        let num_commitment_coeffs =
-            Self::decode_capped_len(&mut rest, MAX_SETUP_MATRIX_FIELD_ELEMENTS)?;
-        let commitment = Commitment::<F>::deserialize_with_mode(
+        let schedule_selection = OpeningScheduleSelection::deserialize_with_mode(
             &mut rest,
             BLOB_COMPRESS,
             BLOB_VALIDATE,
-            &num_commitment_coeffs,
+            &(),
+        )?;
+        let commitment = CommittedGroup::<F>::deserialize_with_mode(
+            &mut rest,
+            BLOB_COMPRESS,
+            BLOB_VALIDATE,
+            &(),
         )?;
         let verifier_setup = decode_setup(&mut rest)?;
         let proof_shape = AkitaBatchedProofShape::deserialize_with_mode(
@@ -408,6 +415,7 @@ where
             num_vars: num_vars as u64,
             opening_point,
             opening,
+            schedule_selection,
             commitment,
             verifier_setup,
             proof_shape,
@@ -418,7 +426,13 @@ where
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + RandomSampling + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: FieldCore
+        + CanonicalField
+        + FromPrimitiveInt
+        + RandomSampling
+        + AkitaSerialize
+        + AkitaDeserialize<Context = ()>
+        + Valid,
 {
     fn deserialize_strict_host_setup(
         rest: &mut &[u8],
@@ -450,7 +464,12 @@ where
 ))]
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: FieldCore
+        + CanonicalField
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + AkitaDeserialize<Context = ()>
+        + Valid,
 {
     fn deserialize_trusted_host_setup(
         rest: &mut &[u8],
@@ -479,7 +498,7 @@ where
 }
 
 // `akita-algebra` is pulled in only so that downstream consumers can rely on
-// `Commitment<F>` having all of its trait bounds satisfied; declare it
+// `CommittedGroup<F>` having all of its trait bounds satisfied; declare it
 // here to avoid a `cargo machete` style trim.
 #[doc(hidden)]
 pub use akita_algebra as _akita_algebra_dep;
@@ -491,13 +510,15 @@ mod tests {
     use akita_field::Prime128Offset275;
     use akita_types::{
         derive_public_matrix_flat, sample_public_matrix_seed, setup_prefix_slot_id,
-        InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-        PrecommittedGroupDescriptor, PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment,
-        SetupPrefixVerifierSlot, SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
+        CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
+        PolynomialGroupLayout, PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment,
+        SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
+        DEFAULT_SIS_SECURITY_POLICY,
     };
 
     type TestF = Prime128Offset275;
     const TEST_D: usize = 32;
+    const PREFIX_D: usize = 64;
 
     fn blob_prefix() -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -509,45 +530,48 @@ mod tests {
     }
 
     fn prefix_commitment_params() -> PrecommittedLevelParams {
+        let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: SisTableDigest::CURRENT,
+                modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                role: SisMatrixRole::Inner,
+                ring_dimension: u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
+                coeff_linf_bound: 32_767,
+            },
+            1,
+        )
+        .expect("audited prefix A matrix");
+        let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: SisTableDigest::CURRENT,
+                modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                role: SisMatrixRole::Outer,
+                ring_dimension: u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
+                coeff_linf_bound: 3,
+            },
+            inner_commit_matrix.output_rank(),
+        )
+        .expect("audited prefix B matrix");
         PrecommittedLevelParams {
-            layout: PrecommittedGroupDescriptor {
-                group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
+            layout: CommittedGroupProfile {
+                version: CommittedGroupProfile::VERSION,
+                group: PolynomialGroupLayout::singleton(PREFIX_D.trailing_zeros() as usize),
                 num_live_ring_elements_per_claim: 1,
                 num_positions_per_block: 1,
                 num_live_blocks: 1,
                 log_basis_inner: 1,
+                num_digits_inner: 1,
+                inner_commit_matrix,
                 log_basis_outer: 1,
-                inner_ring_dimension: TEST_D,
-                outer_ring_dimension: TEST_D,
-                n_a: 1,
-                a_coeff_linf_bound: 1,
-                n_b: 1,
-                b_coeff_linf_bound: 1,
+                num_digits_outer: 1,
+                outer_commit_matrix,
             },
-            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
-                1,
-                1,
-                1,
-                TEST_D,
-            ),
-            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
-                1,
-                1,
-                1,
-                TEST_D,
-            ),
             log_basis_open: 1,
             fold_challenge_config: SparseChallengeConfig::pm1_only(0),
-            num_digits_inner: 1,
-            num_digits_outer: 1,
             num_digits_open: 1,
-            num_digits_fold_one: 1,
+            num_digits_fold: 1,
         }
     }
 
@@ -556,6 +580,15 @@ mod tests {
         let err = reject_trailing_bytes(&[0]).unwrap_err();
         assert!(err.to_string().contains("trailing bytes"));
         reject_trailing_bytes(&[]).unwrap();
+    }
+
+    #[test]
+    fn previous_blob_version_is_rejected_at_the_magic_boundary() {
+        let mut bytes = blob_prefix();
+        bytes[..BLOB_MAGIC.len()].copy_from_slice(b"AKJOLTv1");
+        let error = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes(&bytes)
+            .expect_err("v1 blob must not reach payload decoding");
+        assert!(error.to_string().contains("magic mismatch"));
     }
 
     #[test]
@@ -607,15 +640,20 @@ mod tests {
             public_matrix_seed,
         };
         let shared_matrix = derive_public_matrix_flat::<TestF, TEST_D>(2, &public_matrix_seed);
-        let id = setup_prefix_slot_id(TEST_D, 1, prefix_commitment_params());
+        let commitment_params = prefix_commitment_params();
+        let commitment_rows = commitment_params.layout.outer_commit_matrix.output_rank();
+        let id = setup_prefix_slot_id(PREFIX_D, 1, commitment_params);
         let mut prefix_slots = SetupPrefixVerifierRegistry::new();
         prefix_slots
             .insert(SetupPrefixVerifierSlot {
                 id: id.clone(),
                 natural_len: 1,
-                padded_len: TEST_D,
+                padded_len: PREFIX_D,
                 commitment: SetupPrefixPublicCommitment {
-                    rows: vec![RingVec::from_coeffs(vec![TestF::zero(); TEST_D])],
+                    rows: vec![
+                        RingVec::from_coeffs(vec![TestF::zero(); PREFIX_D]);
+                        commitment_rows
+                    ],
                 },
             })
             .expect("insert prefix slot");

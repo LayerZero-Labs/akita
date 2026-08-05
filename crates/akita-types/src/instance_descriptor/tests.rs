@@ -1,8 +1,9 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, RootFinalChallenge,
-    RootFinalGroupParams, RootFoldParams, RootFoldStep, RootSource, TerminalCommittedGroupParams,
-    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessPartition,
+    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, OpeningScheduleSelection,
+    RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep, ScheduleRowDigest,
+    TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
+    WitnessPartition,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime32Offset99;
@@ -22,14 +23,11 @@ fn sample_schedule() -> FoldSchedule {
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: RootSource::Dense {
-                        coefficient_bits: 32,
-                    },
                     challenge: RootFinalChallenge::Flat,
                     commitment: committed.clone(),
                 },
                 precommitted_groups: Vec::new(),
-                open_commit_matrix: committed.open_commit_matrix.clone(),
+                open_commit_matrix: committed.open_commit_matrix,
                 sparse_challenge_config: sparse,
                 witness_partition: WitnessPartition::Single,
             },
@@ -48,6 +46,12 @@ fn sample_schedule() -> FoldSchedule {
     }
 }
 
+fn sample_selection() -> OpeningScheduleSelection {
+    OpeningScheduleSelection {
+        row_digest: ScheduleRowDigest::from_bytes([0x22; 32]),
+    }
+}
+
 fn sample_descriptor() -> AkitaInstanceDescriptor {
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("valid opening batch");
     AkitaInstanceDescriptor::new(
@@ -63,9 +67,24 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
             protocol_features: ProtocolFeatureSet::current(),
             fold_linf: FoldLinfProtocolBinding::CURRENT,
         },
-        PlanSection::from_schedule(&sample_schedule()),
+        PlanSection::from_schedule(sample_selection(), &sample_schedule()),
         CallSection::from_layout(&opening_batch, BasisMode::Lagrange).expect("call"),
     )
+}
+
+#[test]
+fn schedule_selection_is_bound_into_the_v1_instance_descriptor() {
+    let descriptor = sample_descriptor();
+    let original = descriptor.canonical_bytes().expect("descriptor bytes");
+
+    let mut changed_row = descriptor;
+    changed_row.plan.schedule_selection.row_digest = ScheduleRowDigest::from_bytes([0x44; 32]);
+    assert_ne!(
+        original,
+        changed_row
+            .canonical_bytes()
+            .expect("changed-row descriptor bytes")
+    );
 }
 
 #[test]
@@ -95,6 +114,49 @@ fn descriptor_roundtrip_preserves_typed_schedule_binding() {
 }
 
 #[test]
+fn call_section_rejects_oversized_group_count_before_allocation() {
+    let mut bytes = Vec::new();
+    u32::MAX
+        .serialize_uncompressed(&mut bytes)
+        .expect("serialize oversized count");
+
+    assert!(matches!(
+        CallSection::deserialize_uncompressed(&bytes[..], &()),
+        Err(SerializationError::InvalidData(_))
+    ));
+}
+
+#[test]
+fn call_section_rejects_mismatched_arity_count_before_allocation() {
+    let mut bytes = Vec::new();
+    1u32.serialize_uncompressed(&mut bytes)
+        .expect("serialize group count");
+    u32::MAX
+        .serialize_uncompressed(&mut bytes)
+        .expect("serialize oversized arity count");
+
+    assert!(matches!(
+        CallSection::deserialize_uncompressed(&bytes[..], &()),
+        Err(SerializationError::InvalidData(_))
+    ));
+}
+
+#[test]
+fn call_section_rejects_mismatched_polynomial_count_before_allocation() {
+    let mut bytes = Vec::new();
+    for value in [1u32, 1, 5, u32::MAX] {
+        value
+            .serialize_uncompressed(&mut bytes)
+            .expect("serialize call section prefix");
+    }
+
+    assert!(matches!(
+        CallSection::deserialize_uncompressed(&bytes[..], &()),
+        Err(SerializationError::InvalidData(_))
+    ));
+}
+
+#[test]
 fn rejects_non_v1_descriptor_version() {
     let mut descriptor = sample_descriptor();
     descriptor.version = AKITA_INSTANCE_DESCRIPTOR_VERSION - 1;
@@ -118,8 +180,8 @@ fn terminal_topology_changes_plan_binding() {
     let mut second = first.clone();
     second.terminal.input_witness_len += 1;
     assert_ne!(
-        PlanSection::from_schedule(&first),
-        PlanSection::from_schedule(&second)
+        PlanSection::from_schedule(sample_selection(), &first),
+        PlanSection::from_schedule(sample_selection(), &second)
     );
 }
 
@@ -129,7 +191,7 @@ fn terminal_sparse_sampler_changes_plan_binding() {
     let mut second = first.clone();
     second.terminal.params.sparse_challenge_config = SparseChallengeConfig::pm1_only(4);
     assert_ne!(
-        PlanSection::from_schedule(&first),
-        PlanSection::from_schedule(&second)
+        PlanSection::from_schedule(sample_selection(), &first),
+        PlanSection::from_schedule(sample_selection(), &second)
     );
 }

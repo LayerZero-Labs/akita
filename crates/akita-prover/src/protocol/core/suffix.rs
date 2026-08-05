@@ -8,6 +8,7 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
+use akita_types::AkitaCommitmentHint;
 use std::sync::Arc;
 
 /// Prover state carried between suffix fold levels.
@@ -18,8 +19,8 @@ pub struct SuffixProverState<F: FieldCore, E: FieldCore> {
     pub logical_w: Option<RecursiveWitnessFlat>,
     /// Transcript-bound public state for the current suffix witness.
     pub binding: NextWitnessState<F>,
-    /// D-erased suffix commitment hint cache.
-    pub hint: RecursiveCommitmentHintCache<F>,
+    /// Persistent semantic A-ring rows for the current suffix commitment.
+    pub hint: AkitaCommitmentHint<F>,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
     /// Sumcheck challenges that become the next suffix opening point.
@@ -133,10 +134,11 @@ where
                 )
             },
         );
-        if current_state.w.len() != input_witness_len {
+        let current_witness_len = current_state.w.live_coeff_len();
+        if current_witness_len != input_witness_len {
             return Err(AkitaError::InvalidSetup(format!(
                 "scheduled fold level {level} did not match runtime state: expected_witness_len={input_witness_len}, actual_witness_len={}",
-                current_state.w.len()
+                current_witness_len
             )));
         }
         let role_dims = level_params.role_dims();
@@ -180,11 +182,12 @@ where
         current_state = out.next_state;
         level += 1;
     }
-    if current_state.w.len() != schedule.terminal.input_witness_len {
+    let current_witness_len = current_state.w.live_coeff_len();
+    if current_witness_len != schedule.terminal.input_witness_len {
         return Err(AkitaError::InvalidSetup(format!(
             "scheduled terminal fold did not match runtime state: expected_witness_len={}, actual_witness_len={}",
             schedule.terminal.input_witness_len,
-            current_state.w.len(),
+            current_witness_len,
         )));
     }
     let terminal = prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(
@@ -239,6 +242,7 @@ where
         w,
         logical_w,
         binding,
+        hint,
         sumcheck_challenges,
         opening,
         setup_prefix_opening,
@@ -249,10 +253,15 @@ where
             "terminal fold cannot receive a setup-prefix opening".into(),
         ));
     }
-    let t_state = match binding {
-        NextWitnessState::TerminalInnerState { t_state } => t_state,
+    match binding {
+        NextWitnessState::TerminalInnerState => {}
         NextWitnessState::OuterCommitment(_) => return Err(AkitaError::InvalidProof),
-    };
+    }
+    let mut terminal_rows = hint.into_rows();
+    if terminal_rows.len() != 1 {
+        return Err(AkitaError::InvalidProof);
+    }
+    let t_state = terminal_rows.pop().ok_or(AkitaError::InvalidProof)?;
     transcript.absorb_and_record_bytes(
         ABSORB_COMMITMENT,
         &akita_types::raw_field_segment_bytes(&t_state)?,
@@ -267,28 +276,29 @@ where
     let params = &scheduled.witness;
     let alpha_bits = params.d_a().trailing_zeros() as usize;
     let recursive_num_vars = params.recursive_opening_num_vars()?;
-    let eor_claims =
-        ProverOpeningData::<E, RecursiveFoldSource<F>, F>::recursive_suffix_eor_claims(
-            sumcheck_challenges.clone(),
-            None,
-            sumcheck_challenges.len(),
-        )?;
+    if sumcheck_challenges.len() > recursive_num_vars {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: recursive_num_vars,
+            actual: sumcheck_challenges.len(),
+        });
+    }
+    let opening_batch = OpeningClaimsLayout::new(sumcheck_challenges.len(), 1)?;
     let polys = [&logical_source];
-    let needs_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
+    let logical_group = PreparedProverGroup::from_refs(&polys)?;
+    let needs_reduction = E::EXT_DEGREE > 1;
     let (protocol_point, reduction, row_coefficients) = if needs_reduction {
-        let proved = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            params.d_a(),
-            |D| prove_extension_opening_reduction::<F, E, T, RecursiveFoldSource<F>, TS, D>(
-                stack.tensor().backend(),
-                Some(stack.tensor().prepared()),
-                &polys,
-                &eor_claims,
-                true,
-                transcript,
-                "terminal",
-            )
+        let eor_inputs = vec![ExtensionOpeningGroupInput {
+            group: &logical_group,
+            point: &sumcheck_challenges,
+            ring_dimension: params.d_a(),
+        }];
+        let proved = prove_extension_opening_reduction::<F, E, T, _, TS>(
+            stack.tensor().backend(),
+            Some(stack.tensor().prepared()),
+            &eor_inputs,
+            true,
+            transcript,
+            "terminal",
         )?;
         (
             proved
@@ -300,22 +310,18 @@ where
             Some(proved.row_coefficients),
         )
     } else {
-        if sumcheck_challenges.len() > recursive_num_vars {
-            return Err(AkitaError::InvalidPointDimension {
-                expected: recursive_num_vars,
-                actual: sumcheck_challenges.len(),
-            });
-        }
         (sumcheck_challenges, None, None)
     };
-    let opening_batch = OpeningClaimsLayout::new(recursive_num_vars, 1)?;
+    for coordinate in &protocol_point {
+        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
+    }
     let (e_folded, fold_output, extension_opening_reduction) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
         params.d_a(),
         |D| {
             let (prepared_point, (folded_rings, folded_blocks)) =
-                prepare_and_evaluate_opening_group::<F, E, T, RecursiveFoldSource<F>, O, D>(
+                prepare_and_evaluate_opening_group::<F, E, RecursiveFoldSource<F>, O, D>(
                     stack.opening().backend(),
                     Some(stack.opening().prepared()),
                     &[&witness_source],
@@ -324,7 +330,6 @@ where
                     params.num_positions_per_block,
                     params.num_live_blocks,
                     alpha_bits,
-                    transcript,
                 )?;
             let (trace, _) = compute_trace_target::<F, E, T, D>(
                 &reduction,
@@ -468,16 +473,13 @@ where
             commitment.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, commit_d, transcript)?;
             commitment
         }
-        NextWitnessState::TerminalInnerState { .. } => return Err(AkitaError::InvalidProof),
+        NextWitnessState::TerminalInnerState => return Err(AkitaError::InvalidProof),
     };
-    // D-free suffix hint: the cache carries the flat `AkitaCommitmentHint<F>`
-    // directly (Slice A re-homed the recomposed rows), so there is no typed
-    // reconstruction here (the former `hint.to_typed::<D>()` bridge is gone).
-    let suffix_hint = hint.into_hint();
+    let suffix_hint = hint;
     let opening_point = &sumcheck_challenges;
 
-    let needs_extension_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
+    let needs_extension_reduction = E::EXT_DEGREE > 1;
     let witness_source = RecursiveFoldSource::witness(Arc::clone(&witness));
     let logical_witness_source = RecursiveFoldSource::witness(logical_witness);
     let witness_polys = [&witness_source];
@@ -496,35 +498,48 @@ where
         RecursiveFoldSource::setup_prefix(Arc::clone(expanded), Arc::new(slot.clone()))
     });
     let setup_polys_storage = setup_source_storage.as_ref().map(|source| [source]);
-    let (block_claims, eor_opening_batch, protocol_point) =
-        ProverOpeningData::new_recursive_suffix_fold(
-            opening_point,
-            recursive_num_vars,
-            setup_prefix_opening,
-            setup_slot,
-            setup_polys_storage.as_ref().map(|polys| &polys[..]),
-            opening,
-            &witness_polys[..],
-            (Commitment::new(witness_commitment), suffix_hint),
-        )?;
+    let block_claims = ProverOpeningData::new_recursive_suffix_fold(
+        opening_point,
+        recursive_num_vars,
+        setup_prefix_opening,
+        setup_slot,
+        setup_polys_storage.as_ref().map(|polys| &polys[..]),
+        opening,
+        &witness_polys[..],
+        (Commitment::new(witness_commitment), suffix_hint),
+    )?;
     let logical_polys = setup_source_storage
         .as_ref()
         .into_iter()
         .chain(std::iter::once(&logical_witness_source))
         .collect::<Vec<_>>();
-    prepare_fold_inner::<F, E, T, _, _, C, O, TS, R>(
-        stack,
-        needs_extension_reduction,
-        block_claims,
-        &logical_polys,
-        &eor_opening_batch,
-        true,
-        transcript,
-        protocol_point,
-        || Ok(()),
-        level_params,
-        BasisMode::Lagrange,
-    )
+    let logical_groups = logical_polys
+        .iter()
+        .map(|poly| PreparedProverGroup::from_ref_vec(vec![*poly]))
+        .collect::<Result<Vec<_>, _>>()?;
+    if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+        prepare_single_field_fold::<F, E, T, _, _, C, O, TS, R>(
+            stack,
+            block_claims,
+            true,
+            transcript,
+            || Ok(()),
+            level_params,
+            BasisMode::Lagrange,
+        )
+    } else {
+        prepare_extension_claim_fold::<F, E, T, _, _, C, O, TS, R>(
+            stack,
+            needs_extension_reduction,
+            block_claims,
+            ExtensionOpeningSource::Logical(&logical_groups),
+            true,
+            transcript,
+            || Ok(()),
+            level_params,
+            BasisMode::Lagrange,
+        )
+    }
     .map_err(|err| AkitaError::InvalidInput(format!("suffix fold preparation failed: {err:?}")))
 }
 

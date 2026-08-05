@@ -113,7 +113,7 @@ within each window, with the single shared quotient appended:
 This is the layout the [planner](distributed-planner.md) prices
 (`w_ring_element_count_for_chunks`) and the
 [verifier](distributed-verifier-row-eval.md) evaluates (`segment_layout` /
-`eval_at_point`). The per-window segment lengths are:
+`eval_flat_at_point`). The per-window segment lengths are:
 
 - `z_len_i = num_digits_fold · num_digits_inner · num_positions_per_block` (replicated, full),
 - `e_len_i = num_digits_open · num_claims · blocks_in_chunk(i)` (partitioned),
@@ -243,10 +243,10 @@ prover-internal column evaluation `compute_relation_matrix_col_evals`
 
 This is the column-MLE counterpart of the verifier's chunked row-MLE
 (specified in [`distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)).
-If the prover and verifier share the structured slice evaluators
-(`crates/akita-verifier/src/protocol/slice_mle/`), the chunked support added there
-is reused and this step is a thin fold over windows; otherwise the prover gets the
-analogous per-window fold. The **sum-check prover bodies are unchanged** — they
+The prover and verifier share checked `WitnessLayout` geometry while the verifier's
+structured contraction is owned by
+`crates/akita-types/src/setup_contribution/plan/structured.rs`; chunked support is a
+thin fold over those common units. The **sum-check prover bodies are unchanged** — they
 consume `relation_matrix_col_evals` and `w_evals_compact` exactly as before.
 
 ### Reused unchanged

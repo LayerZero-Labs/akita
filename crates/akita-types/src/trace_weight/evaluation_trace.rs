@@ -148,8 +148,8 @@ pub fn scale_evaluation_trace_claim_coefficients<E: FieldCore>(
 /// evaluation-trace representations.
 pub struct EvaluationTraceInputs<'a, F: FieldCore, E: FieldCore> {
     pub digit_witness_domain: FlatBooleanDomain,
+    pub relation_coefficient_block_len: usize,
     pub witness_layout: &'a WitnessLayout,
-    pub carrier_ring_dimension: usize,
     pub level_params: &'a CommittedGroupParams,
     pub opening_batch: &'a OpeningClaimsLayout,
     pub prepared_points: &'a [PreparedOpeningPoint<F, E>],
@@ -159,29 +159,36 @@ pub struct EvaluationTraceInputs<'a, F: FieldCore, E: FieldCore> {
 
 /// Prepare the checked, short per-group parameters from which prover and
 /// verifier build their separate trace representations.
-pub fn prepare_evaluation_trace_group_parameters<F, E, const D: usize>(
+pub fn prepare_evaluation_trace_group_parameters<F, E>(
     inputs: &EvaluationTraceInputs<'_, F, E>,
 ) -> Result<Vec<EvaluationTraceGroupParameters<E>>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    if inputs.carrier_ring_dimension != D
-        || inputs.prepared_points.len() != inputs.opening_batch.num_groups()
+    if inputs.prepared_points.len() != inputs.opening_batch.num_groups()
         || inputs.claim_coefficients.len() != inputs.opening_batch.num_total_polynomials()
     {
         return Err(AkitaError::InvalidProof);
     }
-    let expected_live_len = inputs
-        .witness_layout
-        .total_len()
-        .checked_mul(D)
-        .ok_or_else(|| AkitaError::InvalidSetup("trace witness size overflow".into()))?;
+    if inputs.relation_coefficient_block_len == 0
+        || !inputs.relation_coefficient_block_len.is_power_of_two()
+        || !inputs
+            .digit_witness_domain
+            .live_len()
+            .is_multiple_of(inputs.relation_coefficient_block_len)
+    {
+        return Err(AkitaError::InvalidSetup(
+            "evaluation trace requires an aligned common coefficient block".into(),
+        ));
+    }
+    let expected_live_len = inputs.witness_layout.live_coeff_len();
     if inputs.digit_witness_domain.live_len() != expected_live_len {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_live_len,
-            actual: inputs.digit_witness_domain.live_len(),
-        });
+        return Err(AkitaError::InvalidInput(format!(
+            "trace witness domain mismatch: layout_fields={} expected_fields={expected_live_len} actual_fields={}",
+            inputs.witness_layout.live_coeff_len(),
+            inputs.digit_witness_domain.live_len(),
+        )));
     }
     inputs
         .opening_batch
@@ -194,31 +201,29 @@ where
             let group_dims = inputs
                 .level_params
                 .group_role_dims(inputs.opening_batch, group_index)?;
-            if group_dims.d_a() > D {
-                return Err(AkitaError::InvalidSetup(
-                    "trace group A dimension exceeds the outgoing witness carrier".into(),
-                ));
-            }
             let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
             let units = inputs.witness_layout.units_for_group(group_index)?;
-            let covered_blocks = units.iter().enumerate().try_fold(
-                0usize,
-                |expected_start, (expected_chunk, unit)| {
-                    if unit.chunk_index() != expected_chunk
-                        || unit.global_block_start() != expected_start
-                        || unit.num_live_blocks() == 0
-                    {
-                        return Err(AkitaError::InvalidSetup(
-                            "trace witness chunks do not form one ordered block partition".into(),
-                        ));
-                    }
-                    expected_start
-                        .checked_add(unit.num_live_blocks())
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup("trace witness block coverage overflow".into())
-                        })
-                },
-            )?;
+            let covered_blocks =
+                units
+                    .enumerate()
+                    .try_fold(0usize, |expected_start, (expected_chunk, unit)| {
+                        if unit.chunk_index() != expected_chunk
+                            || unit.global_block_start() != expected_start
+                            || unit.num_live_blocks() == 0
+                        {
+                            return Err(AkitaError::InvalidSetup(
+                                "trace witness chunks do not form one ordered block partition"
+                                    .into(),
+                            ));
+                        }
+                        expected_start
+                            .checked_add(unit.num_live_blocks())
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup(
+                                    "trace witness block coverage overflow".into(),
+                                )
+                            })
+                    })?;
             if covered_blocks != group_params.num_live_blocks() {
                 return Err(AkitaError::InvalidProof);
             }
@@ -239,7 +244,7 @@ where
                 group_dims.d_a(),
                 |D_G| {
                     let packed_inner = prepared.packed_inner_trusted::<D_G>()?;
-                    let mut trace = if E::EXT_DEGREE == 1 {
+                    let trace = if E::EXT_DEGREE == 1 {
                         packed_inner
                             .coefficients()
                             .iter()
@@ -253,11 +258,10 @@ where
                             group_alpha_bits,
                         )?
                     };
-                    trace.resize(D, E::zero());
                     Ok::<Arc<[E]>, AkitaError>(trace.into())
                 }
             )?;
-            if inner_trace.len() != D {
+            if inner_trace.len() != group_dims.d_a() {
                 return Err(AkitaError::InvalidProof);
             }
             let opening_digit_weights: Arc<[E]> = gadget_row_scalars::<F>(
@@ -274,7 +278,7 @@ where
                 block_opening_point,
                 basis: inputs.basis,
                 group_block_count: group_params.num_live_blocks(),
-                source_ring_dimension: D,
+                source_ring_dimension: group_dims.d_a(),
                 opening_digit_weights,
                 inner_trace,
             })

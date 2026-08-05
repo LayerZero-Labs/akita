@@ -147,7 +147,7 @@ pub const MIN_A_ROLE_FOLD_CHALLENGE_RING_D: usize = 64;
 **Remove:** `d_a = 32` presets; `proof_optimized_ring_challenge_config(32)`.
 
 **Keep:** D=32 on outer/opening dispatch and NTT. B and D are independent below
-the A carrier; `{128, 32, 64}` and `{128, 64, 32}` are both valid.
+the A-native source; `{128, 32, 64}` and `{128, 64, 32}` are both valid.
 
 ### 5. Unified fold-challenge config (replaces enum families)
 

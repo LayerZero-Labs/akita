@@ -66,7 +66,7 @@ impl RelationRhsLayout {
             ));
         }
         for group in &self.groups {
-            group.role_dims.validate_a_carrier()?;
+            group.role_dims.validate_role_projection()?;
             if group.role_dims.d_d() != self.opening_ring_dim {
                 return Err(AkitaError::InvalidSetup(
                     "relation rhs groups disagree with the level-shared D dimension".into(),
@@ -126,7 +126,7 @@ pub fn relation_rhs_layout_for(
     let n_d = lp.open_commit_matrix.output_rank();
     if !lp.has_precommitted_groups() {
         let role_dims = lp.role_dims();
-        role_dims.validate_a_carrier()?;
+        role_dims.validate_role_projection()?;
         return Ok(RelationRhsLayout::uniform(
             role_dims,
             n_d,
@@ -148,8 +148,8 @@ pub fn relation_rhs_layout_for(
     for (group_index, group) in lp.precommitted_group_iter().enumerate() {
         groups.push(RelationGroupRows {
             role_dims: lp.group_role_dims(opening_batch, group_index)?,
-            n_a: group.inner_commit_matrix.output_rank(),
-            commit_rows: group.outer_commit_matrix.output_rank(),
+            n_a: group.layout.inner_commit_matrix.output_rank(),
+            commit_rows: group.layout.outer_commit_matrix.output_rank(),
             b_inner_rows: 0,
         });
     }

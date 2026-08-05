@@ -17,7 +17,9 @@ use akita_pcs::test_support::RingDimensionTransitionConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::AkitaTranscript;
-use akita_types::{validate_schedule_ring_dims, CommitmentRingDims, OpeningClaimsLayout, RingVec};
+use akita_types::{
+    validate_schedule_ring_dims, CommitmentRingDims, CommittedGroup, OpeningClaimsLayout, RingVec,
+};
 use common::*;
 
 type Envelope = fp128::D128Dense;
@@ -40,14 +42,14 @@ fn verify_with(
     proof: &akita_types::AkitaBatchedProof<F, F>,
     point: &[F],
     openings: &[F],
-    commitment: &Commitment<F>,
+    commitment: &CommittedGroup<F>,
 ) -> Result<(), AkitaError> {
     let mut transcript = AkitaTranscript::<F>::new(LABEL);
     Scheme::batched_verify(
         proof,
         verifier_setup,
         &mut transcript,
-        verify_input(point, openings, commitment),
+        verify_input::<Cfg>(point, openings, commitment),
         BasisMode::Lagrange,
     )
 }
@@ -118,7 +120,7 @@ fn ring_dimension_transition_proves_verifies_and_rejects_tamper() {
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
         let proof = Scheme::batched_prove(
             &setup,
-            prove_input(&point, &poly_refs, &commitment, hint),
+            prove_input::<Cfg, _>(&point, &poly_refs, &commitment, hint),
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -138,9 +140,9 @@ fn ring_dimension_transition_proves_verifies_and_rejects_tamper() {
         .expect_err("tampered opening must be rejected");
 
         let mut tampered_commitment = commitment.clone();
-        let mut coeffs = tampered_commitment.0.coeffs().to_vec();
+        let mut coeffs = tampered_commitment.commitment.0.coeffs().to_vec();
         coeffs[0] += F::one();
-        tampered_commitment.0 = RingVec::from_coeffs(coeffs);
+        tampered_commitment.commitment.0 = RingVec::from_coeffs(coeffs);
         verify_with(
             &verifier_setup,
             &proof,
