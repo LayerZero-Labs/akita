@@ -308,7 +308,7 @@ target.
 - [ ] `AkitaLevelProof`, `AkitaBatchedFoldRoot`, and `TerminalLevelProof` no longer carry a `y_ring` / `y_rings` field; all constructors, shapes (`level_proof_shape`, `TerminalLevelProofShape`), serialization, and `can_decode_vec` shape guards are updated.
 - [ ] `relation_claim_from_rows_extension` (and `relation_claim_from_rows`) no longer take `y_rings`; the public-output rows are removed from the `M` RHS layout in `generate_relation_rhs` and the verifier `RingRelationInstance` construction.
 - [ ] The verifier enforces `TraceOpen(sum_j b_j · e_folded_j) = opening` in non-EOR paths, and the scaled EOR final-claim variant above in EOR paths, via a fused stage-2 term batched as `trace_coeff = γ²`; it no longer calls `recover_ring_subfield_inner_product` / the standalone `internal_claims[0] == opening` check on on-wire `y_ring` (`recursive.rs:319-357`).
-- [ ] `level_proof_bytes` drops the `y_bytes` term; `crates/akita-types/src/proof_size.rs` tests and the planner DP scoring are updated; shipped schedule tables regenerated with `regen_diff` reflecting the new (smaller) sizing.
+- [ ] `level_proof_bytes` drops the `y_bytes` term; `crates/akita-types/src/proof_size.rs` tests and the planner DP scoring are updated; shipped schedule tables are regenerated and `generated_schedule_tables_match_key_planner` reflects the new (smaller) sizing.
 - [ ] Non-ZK and ZK e2e suites are green: `cargo nextest run --profile ci-non-zk` and `--profile ci-all-features`.
 - [ ] `cargo test -p akita-pcs --features logging-transcript --test transcript_hardening` green (event-stream equality after the `y_ring` absorb removal and `trace_coeff = γ²` derivation from post-witness `CHALLENGE_SUMCHECK_BATCH`).
 - [ ] A negative test: tampering the committed `e_hat` digits so that `sum_j b_j · e_folded_j` projects to the wrong subfield value is rejected (replaces the role of the current `y_ring` trace-mismatch rejection paths, e.g. `crates/akita-pcs/src/scheme/tests/batched.rs:419-421`).
@@ -316,7 +316,7 @@ target.
 
 ### Testing Strategy
 
-Must continue passing: the full batched/recursive/terminal/zero-fold e2e set (`crates/akita-pcs/tests/*`), `akita-types` `field_reduction` trace tests, `relation.rs` claim tests, `proof_size.rs` formula tests, `regen_diff`, and the transcript-hardening + proptest suites.
+Must continue passing: the full batched/recursive/terminal/zero-fold e2e set (`crates/akita-pcs/tests/*`), `akita-types` `field_reduction` trace tests, `relation.rs` claim tests, `proof_size.rs` formula tests, `generated_schedule_tables_match_key_planner`, and the transcript-hardening + proptest suites.
 
 New tests:
 
@@ -328,7 +328,7 @@ New tests:
 
 Proof size: strictly smaller, by at least one base-field ring element per level (+ `P` at root). For `fp128_d128` the mandatory `y_ring` saving is `D · 16 = 2048` bytes per level; for `fp64_d64` it is `512` bytes. If public-output rows are removed from `M`, each removed row also deletes its quotient digits from `r_hat`, subject to the next-power-of-two witness padding used by stage 2. The exact total per profile is read from the profile command above and from the updated planner DP.
 Prover/verifier time: negligible change, and for `K = 1` strictly favorable. The verifier replaces one `recover_ring_subfield_inner_product` (`O(|H| · D)`) per level with one `trace_weight(r)` final-point evaluation plus one extra fused-oracle addend per sum-check round; no new rounds. For `K = 1` that final-point evaluation is a pure product of eq / gadget tensors (`O(num_vars)`, no ring arithmetic); for `K > 1` it is one `Tr_H` of a single ring product (`O(|H| · D)`). The closed forms are in *Verifier final-point evaluation*. The prover adds one public weighting table and one term in the per-round stage-2 evaluation, both `O(witness)`.
-Planner: the proof-size optimum may shift slightly (every level is cheaper); re-run the schedule generation and confirm via `regen_diff` and the profile.
+Planner: the proof-size optimum may shift slightly (every level is cheaper); re-run the schedule generation, confirm `generated_schedule_tables_match_key_planner`, and inspect the profile.
 
 ## Design
 
