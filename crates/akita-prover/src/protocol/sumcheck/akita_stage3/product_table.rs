@@ -317,7 +317,6 @@ mod tests {
     use super::*;
     use akita_algebra::ring::scalar_powers;
     use akita_field::Prime128Offset275 as F;
-    use std::time::{Duration, Instant};
 
     fn scalar(value: u64) -> F {
         F::from_u64(value)
@@ -398,78 +397,5 @@ mod tests {
     fn rectangular_setup_product_materializes_index_state_without_coefficient_rounds() {
         assert_round_parity(3, 4, 1);
         assert_round_parity(1, 1, 1);
-    }
-
-    fn elapsed(mut run: impl FnMut(), samples: usize) -> Duration {
-        let start = Instant::now();
-        for _ in 0..samples {
-            run();
-        }
-        start.elapsed()
-    }
-
-    /// Explicit microbenchmark for the old dense setup table (S0) and the
-    /// canonical two-pass rectangular prover (S2).
-    ///
-    /// `cargo test -p akita-prover --release stage3_setup_product_ab -- --ignored --nocapture`
-    #[test]
-    #[ignore = "release-only Stage 3 setup-product A/B benchmark"]
-    fn stage3_setup_product_ab() {
-        const REQUIRED_ROWS: usize = 1 << 15;
-        const ROW_CAPACITY: usize = 1 << 15;
-        const COEFFICIENT_LEN: usize = 64;
-        const SAMPLES: usize = 5;
-
-        let setup = setup_source(REQUIRED_ROWS, COEFFICIENT_LEN);
-        let index_factor = (0..ROW_CAPACITY)
-            .map(|index| scalar((index * 13 + 3) as u64))
-            .collect::<Vec<_>>();
-        let coefficient_factor = scalar_powers(scalar(7), COEFFICIENT_LEN).to_vec();
-        let challenges = (0..(ROW_CAPACITY * COEFFICIENT_LEN).trailing_zeros() as usize)
-            .map(|round| scalar((round * 19 + 11) as u64))
-            .collect::<Vec<_>>();
-
-        let dense_elapsed = elapsed(
-            || {
-                let mut term = dense_term(
-                    &setup,
-                    REQUIRED_ROWS,
-                    ROW_CAPACITY,
-                    COEFFICIENT_LEN,
-                    index_factor.clone(),
-                    coefficient_factor.clone(),
-                );
-                for (round, &challenge) in challenges.iter().enumerate() {
-                    let _ = term.compute_round_univariate(round, term.input_claim());
-                    term.ingest_challenge(round, challenge);
-                }
-                std::hint::black_box(term.folded_table_value().expect("dense folded setup"));
-            },
-            SAMPLES,
-        );
-        let rectangular_elapsed = elapsed(
-            || {
-                let mut term = RectangularSetupProductTerm::new(
-                    &setup,
-                    REQUIRED_ROWS,
-                    index_factor.clone(),
-                    coefficient_factor.clone(),
-                )
-                .expect("rectangular setup product");
-                for (round, &challenge) in challenges.iter().enumerate() {
-                    let _ = term.compute_round_univariate(round);
-                    term.ingest_challenge(round, challenge);
-                }
-                std::hint::black_box(term.folded_table_value().expect("rectangular folded setup"));
-            },
-            SAMPLES,
-        );
-
-        eprintln!(
-            "stage3 setup product A/B: S0_dense={dense_elapsed:?}, S2_rectangular={rectangular_elapsed:?}, ratio={:.4}, dense_table_state_elements={}, rectangular_table_state_elements={}",
-            rectangular_elapsed.as_secs_f64() / dense_elapsed.as_secs_f64(),
-            ROW_CAPACITY * COEFFICIENT_LEN,
-            ROW_CAPACITY + COEFFICIENT_LEN,
-        );
     }
 }
