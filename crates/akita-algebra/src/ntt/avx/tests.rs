@@ -1,6 +1,7 @@
 use super::*;
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::prime::{MontCoeff, NttPrime};
+use crate::ntt::tables::Q128_RAW_PRIMES;
 
 const AVX2_ONLY: AvxCpuFeatures = AvxCpuFeatures {
     avx2: true,
@@ -159,6 +160,115 @@ fn scalar_add_reduce_i32<const D: usize>(
         let sum = MontCoeff::from_raw(acc[i].raw().wrapping_add(other[i].raw()));
         acc[i] = prime.reduce_range(sum);
     }
+}
+
+fn scalar_sub_reduce_i32<const D: usize>(
+    acc: &mut [MontCoeff<i32>; D],
+    other: &[MontCoeff<i32>; D],
+    prime: NttPrime<i32>,
+) {
+    for i in 0..D {
+        let diff = MontCoeff::from_raw(acc[i].raw().wrapping_sub(other[i].raw()));
+        acc[i] = prime.reduce_range(diff);
+    }
+}
+
+fn scalar_neg_reduce_i32<const D: usize>(acc: &mut [MontCoeff<i32>; D], prime: NttPrime<i32>) {
+    for value in acc {
+        *value = prime.reduce_range(MontCoeff::from_raw(value.raw().wrapping_neg()));
+    }
+}
+
+fn scalar_mul_i32<const D: usize>(
+    out: &mut [MontCoeff<i32>; D],
+    lhs: &[MontCoeff<i32>; D],
+    rhs: &[MontCoeff<i32>; D],
+    prime: NttPrime<i32>,
+) {
+    for i in 0..D {
+        out[i] = prime.reduce_range(prime.mul(lhs[i], rhs[i]));
+    }
+}
+
+fn assert_i32_crt_ops<const D: usize>() {
+    for (prime_index, raw_prime) in Q128_RAW_PRIMES.into_iter().enumerate() {
+        let prime = NttPrime::compute(raw_prime);
+        let lhs = edge_mont_array_i32::<D>(prime);
+        let rhs = random_mont_array_i32::<D>(prime, 0x9173 + prime_index as u64);
+
+        let mut expected_add = lhs;
+        scalar_add_reduce_i32(&mut expected_add, &rhs, prime);
+        let mut expected_sub = lhs;
+        scalar_sub_reduce_i32(&mut expected_sub, &rhs, prime);
+        let mut expected_neg = lhs;
+        scalar_neg_reduce_i32(&mut expected_neg, prime);
+        let mut expected_mul = [MontCoeff::from_raw(0); D];
+        scalar_mul_i32(&mut expected_mul, &lhs, &rhs, prime);
+
+        if std::is_x86_feature_detected!("avx2") {
+            let mut add = lhs;
+            let mut sub = lhs;
+            let mut neg = lhs;
+            let mut mul = [MontCoeff::from_raw(0); D];
+            unsafe {
+                add_reduce_i32(add.as_mut_ptr().cast(), rhs.as_ptr().cast(), D, prime.p);
+                sub_reduce_i32(sub.as_mut_ptr().cast(), rhs.as_ptr().cast(), D, prime.p);
+                neg_reduce_i32(neg.as_mut_ptr().cast(), D, prime.p);
+                pointwise_mul_i32(
+                    mul.as_mut_ptr().cast(),
+                    lhs.as_ptr().cast(),
+                    rhs.as_ptr().cast(),
+                    D,
+                    prime.p,
+                    prime.pinv,
+                );
+            }
+            assert_eq!(add, expected_add, "AVX2 add p={raw_prime} D={D}");
+            assert_eq!(sub, expected_sub, "AVX2 sub p={raw_prime} D={D}");
+            assert_eq!(neg, expected_neg, "AVX2 neg p={raw_prime} D={D}");
+            assert_eq!(mul, expected_mul, "AVX2 mul p={raw_prime} D={D}");
+        }
+
+        if std::is_x86_feature_detected!("avx512f")
+            && std::is_x86_feature_detected!("avx512dq")
+            && std::is_x86_feature_detected!("avx512bw")
+        {
+            let mut add = lhs;
+            let mut sub = lhs;
+            let mut neg = lhs;
+            let mut mul = [MontCoeff::from_raw(0); D];
+            unsafe {
+                add_reduce_i32_avx512(add.as_mut_ptr().cast(), rhs.as_ptr().cast(), D, prime.p);
+                sub_reduce_i32_avx512(sub.as_mut_ptr().cast(), rhs.as_ptr().cast(), D, prime.p);
+                neg_reduce_i32_avx512(neg.as_mut_ptr().cast(), D, prime.p);
+                pointwise_mul_i32_avx512(
+                    mul.as_mut_ptr().cast(),
+                    lhs.as_ptr().cast(),
+                    rhs.as_ptr().cast(),
+                    D,
+                    prime.p,
+                    prime.pinv,
+                );
+            }
+            assert_eq!(add, expected_add, "AVX-512 add p={raw_prime} D={D}");
+            assert_eq!(sub, expected_sub, "AVX-512 sub p={raw_prime} D={D}");
+            assert_eq!(neg, expected_neg, "AVX-512 neg p={raw_prime} D={D}");
+            assert_eq!(mul, expected_mul, "AVX-512 mul p={raw_prime} D={D}");
+        }
+    }
+}
+
+#[test]
+fn q128_i32_crt_ops_match_scalar_at_vector_boundaries() {
+    assert_i32_crt_ops::<7>();
+    assert_i32_crt_ops::<8>();
+    assert_i32_crt_ops::<9>();
+    assert_i32_crt_ops::<15>();
+    assert_i32_crt_ops::<16>();
+    assert_i32_crt_ops::<17>();
+    assert_i32_crt_ops::<31>();
+    assert_i32_crt_ops::<32>();
+    assert_i32_crt_ops::<33>();
 }
 
 fn scalar_add_reduce_i16<const D: usize>(

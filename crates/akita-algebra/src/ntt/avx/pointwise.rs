@@ -4,7 +4,7 @@ use std::arch::x86::*;
 use std::arch::x86_64::*;
 
 use super::montgomery::{
-    mont_mul_16x_i16_avx2, mont_mul_16x_i32_avx512, mont_mul_8x_i32_avx2,
+    caddp_8x_i32_avx2, mont_mul_16x_i16_avx2, mont_mul_16x_i32_avx512, mont_mul_8x_i32_avx2,
     reduce_range_16x_i16_avx2, reduce_range_16x_i32_avx512, reduce_range_8x_i32_avx2,
 };
 use crate::ntt::prime::{MontCoeff, NttPrime};
@@ -185,6 +185,227 @@ pub unsafe fn add_reduce_i32_avx512(acc: *mut i32, other: *const i32, d: usize, 
             unsafe {
                 let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(*other.add(i)));
                 *acc.add(i) = prime.reduce_range(sum).raw();
+            }
+            i += 1;
+        }
+    }
+}
+
+/// AVX2 subtract-and-reduce for one `i32` CRT limb.
+///
+/// # Safety
+///
+/// The caller must ensure AVX2 is available and all pointers are valid for
+/// `d` elements. `acc` must be writable.
+#[target_feature(enable = "avx2")]
+pub unsafe fn sub_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32) {
+    let p_v = _mm256_set1_epi32(p);
+    let mut i = 0;
+    while i + 8 <= d {
+        unsafe {
+            let a = _mm256_loadu_si256(acc.add(i) as *const __m256i);
+            let b = _mm256_loadu_si256(other.add(i) as *const __m256i);
+            _mm256_storeu_si256(
+                acc.add(i) as *mut __m256i,
+                reduce_range_8x_i32_avx2(_mm256_sub_epi32(a, b), p_v),
+            );
+        }
+        i += 8;
+    }
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            unsafe {
+                let diff = MontCoeff::from_raw((*acc.add(i)).wrapping_sub(*other.add(i)));
+                *acc.add(i) = prime.reduce_range(diff).raw();
+            }
+            i += 1;
+        }
+    }
+}
+
+/// AVX-512 subtract-and-reduce for one `i32` CRT limb.
+///
+/// # Safety
+///
+/// The caller must ensure AVX-512F/DQ/BW are available and all pointers are
+/// valid for `d` elements. `acc` must be writable.
+#[target_feature(enable = "avx512f,avx512dq,avx512bw")]
+pub unsafe fn sub_reduce_i32_avx512(acc: *mut i32, other: *const i32, d: usize, p: i32) {
+    let p_v = _mm512_set1_epi32(p);
+    let mut i = 0;
+    while i + 16 <= d {
+        unsafe {
+            let a = _mm512_loadu_si512(acc.add(i) as *const __m512i);
+            let b = _mm512_loadu_si512(other.add(i) as *const __m512i);
+            _mm512_storeu_si512(
+                acc.add(i) as *mut __m512i,
+                reduce_range_16x_i32_avx512(_mm512_sub_epi32(a, b), p_v),
+            );
+        }
+        i += 16;
+    }
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            unsafe {
+                let diff = MontCoeff::from_raw((*acc.add(i)).wrapping_sub(*other.add(i)));
+                *acc.add(i) = prime.reduce_range(diff).raw();
+            }
+            i += 1;
+        }
+    }
+}
+
+/// AVX2 negate-and-reduce for one `i32` CRT limb.
+///
+/// # Safety
+///
+/// The caller must ensure AVX2 is available and `acc` is valid and writable
+/// for `d` elements.
+#[target_feature(enable = "avx2")]
+pub unsafe fn neg_reduce_i32(acc: *mut i32, d: usize, p: i32) {
+    let p_v = _mm256_set1_epi32(p);
+    let zero = _mm256_setzero_si256();
+    let mut i = 0;
+    while i + 8 <= d {
+        unsafe {
+            let a = _mm256_loadu_si256(acc.add(i) as *const __m256i);
+            _mm256_storeu_si256(
+                acc.add(i) as *mut __m256i,
+                reduce_range_8x_i32_avx2(_mm256_sub_epi32(zero, a), p_v),
+            );
+        }
+        i += 8;
+    }
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            unsafe {
+                let neg = MontCoeff::from_raw((*acc.add(i)).wrapping_neg());
+                *acc.add(i) = prime.reduce_range(neg).raw();
+            }
+            i += 1;
+        }
+    }
+}
+
+/// AVX-512 negate-and-reduce for one `i32` CRT limb.
+///
+/// # Safety
+///
+/// The caller must ensure AVX-512F/DQ/BW are available and `acc` is valid and
+/// writable for `d` elements.
+#[target_feature(enable = "avx512f,avx512dq,avx512bw")]
+pub unsafe fn neg_reduce_i32_avx512(acc: *mut i32, d: usize, p: i32) {
+    let p_v = _mm512_set1_epi32(p);
+    let zero = _mm512_setzero_si512();
+    let mut i = 0;
+    while i + 16 <= d {
+        unsafe {
+            let a = _mm512_loadu_si512(acc.add(i) as *const __m512i);
+            _mm512_storeu_si512(
+                acc.add(i) as *mut __m512i,
+                reduce_range_16x_i32_avx512(_mm512_sub_epi32(zero, a), p_v),
+            );
+        }
+        i += 16;
+    }
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            unsafe {
+                let neg = MontCoeff::from_raw((*acc.add(i)).wrapping_neg());
+                *acc.add(i) = prime.reduce_range(neg).raw();
+            }
+            i += 1;
+        }
+    }
+}
+
+/// AVX2 pointwise Montgomery multiplication for one `i32` CRT limb.
+///
+/// # Safety
+///
+/// The caller must ensure AVX2 is available. All pointers must be valid for
+/// `d` elements, and `out` must be writable.
+#[target_feature(enable = "avx2")]
+pub unsafe fn pointwise_mul_i32(
+    out: *mut i32,
+    lhs: *const i32,
+    rhs: *const i32,
+    d: usize,
+    p: i32,
+    pinv: i32,
+) {
+    let p_v = _mm256_set1_epi32(p);
+    let pinv_v = _mm256_set1_epi32(pinv);
+    let mut i = 0;
+    while i + 8 <= d {
+        unsafe {
+            let l = _mm256_loadu_si256(lhs.add(i) as *const __m256i);
+            let r = _mm256_loadu_si256(rhs.add(i) as *const __m256i);
+            let prod = mont_mul_8x_i32_avx2(l, r, p_v, pinv_v);
+            _mm256_storeu_si256(out.add(i) as *mut __m256i, caddp_8x_i32_avx2(prod, p_v));
+        }
+        i += 8;
+    }
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            unsafe {
+                *out.add(i) = prime
+                    .caddp(prime.mul(
+                        MontCoeff::from_raw(*lhs.add(i)),
+                        MontCoeff::from_raw(*rhs.add(i)),
+                    ))
+                    .raw();
+            }
+            i += 1;
+        }
+    }
+}
+
+/// AVX-512 pointwise Montgomery multiplication for one `i32` CRT limb.
+///
+/// # Safety
+///
+/// The caller must ensure AVX-512F/DQ/BW are available. All pointers must be
+/// valid for `d` elements, and `out` must be writable.
+#[target_feature(enable = "avx512f,avx512dq,avx512bw")]
+pub unsafe fn pointwise_mul_i32_avx512(
+    out: *mut i32,
+    lhs: *const i32,
+    rhs: *const i32,
+    d: usize,
+    p: i32,
+    pinv: i32,
+) {
+    let p_v = _mm512_set1_epi32(p);
+    let pinv_v = _mm512_set1_epi32(pinv);
+    let mut i = 0;
+    while i + 16 <= d {
+        unsafe {
+            let l = _mm512_loadu_si512(lhs.add(i) as *const __m512i);
+            let r = _mm512_loadu_si512(rhs.add(i) as *const __m512i);
+            let prod = mont_mul_16x_i32_avx512(l, r, p_v, pinv_v);
+            _mm512_storeu_si512(
+                out.add(i) as *mut __m512i,
+                reduce_range_16x_i32_avx512(prod, p_v),
+            );
+        }
+        i += 16;
+    }
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            unsafe {
+                *out.add(i) = prime
+                    .reduce_range(prime.mul(
+                        MontCoeff::from_raw(*lhs.add(i)),
+                        MontCoeff::from_raw(*rhs.add(i)),
+                    ))
+                    .raw();
             }
             i += 1;
         }

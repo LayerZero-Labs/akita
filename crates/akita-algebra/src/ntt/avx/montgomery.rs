@@ -47,6 +47,13 @@ pub(super) unsafe fn reduce_range_8x_i32_avx2(a: __m256i, p: __m256i) -> __m256i
     _mm256_add_epi32(after_sub, _mm256_and_si256(p, lt_mask))
 }
 
+/// Add `p` to negative lanes, mapping `(-p, p)` into `[0, p)`.
+#[target_feature(enable = "avx2")]
+pub(super) unsafe fn caddp_8x_i32_avx2(a: __m256i, p: __m256i) -> __m256i {
+    let negative = _mm256_cmpgt_epi32(_mm256_setzero_si256(), a);
+    _mm256_add_epi32(a, _mm256_and_si256(p, negative))
+}
+
 #[target_feature(enable = "avx2")]
 pub(super) unsafe fn mont_mul_4x_i32_avx2(
     a: __m128i,

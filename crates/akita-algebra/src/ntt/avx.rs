@@ -22,7 +22,10 @@ use montgomery::{
     mont_mul_16x_i32_avx512, mont_mul_4x_i32_avx2, mont_mul_8x_i32_avx2,
     reduce_range_16x_i32_avx512, reduce_range_4x_i32_avx2, reduce_range_8x_i32_avx2,
 };
-pub use pointwise::{add_reduce_i16, add_reduce_i32, add_reduce_i32_avx512};
+pub use pointwise::{
+    add_reduce_i16, add_reduce_i32, add_reduce_i32_avx512, neg_reduce_i32, neg_reduce_i32_avx512,
+    pointwise_mul_i32, pointwise_mul_i32_avx512, sub_reduce_i32, sub_reduce_i32_avx512,
+};
 pub(crate) use pointwise::{
     pointwise_mul_acc_i16, pointwise_mul_acc_i32, pointwise_mul_acc_i32_avx512,
 };

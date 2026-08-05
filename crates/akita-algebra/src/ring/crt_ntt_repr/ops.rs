@@ -331,8 +331,24 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     }
 
     /// Add another CRT+NTT element and reduce each coefficient with the matching
-    /// prime to maintain valid Montgomery ranges using the scalar backend.
+    /// prime to maintain valid Montgomery ranges.
     pub fn add_reduced(&self, rhs: &Self, primes: &[NttPrime<W>; K]) -> Self {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if size_of::<W>() == size_of::<i32>() && avx::use_avx2_transform_ntt() {
+            let mut out = self.clone();
+            for (k, prime) in primes.iter().enumerate() {
+                let p = prime.p.to_i64() as i32;
+                unsafe {
+                    avx::add_reduce_i32(
+                        out.limbs[k].as_mut_ptr() as *mut i32,
+                        rhs.limbs[k].as_ptr() as *const i32,
+                        D,
+                        p,
+                    )
+                }
+            }
+            return out;
+        }
         self.add_reduced_with_backend::<ScalarBackend>(rhs, primes)
     }
 
@@ -359,8 +375,24 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         out
     }
 
-    /// Subtract another CRT+NTT element and reduce using the scalar backend.
+    /// Subtract another CRT+NTT element and reduce.
     pub fn sub_reduced(&self, rhs: &Self, primes: &[NttPrime<W>; K]) -> Self {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if size_of::<W>() == size_of::<i32>() && avx::use_avx2_transform_ntt() {
+            let mut out = self.clone();
+            for (k, prime) in primes.iter().enumerate() {
+                let p = prime.p.to_i64() as i32;
+                unsafe {
+                    avx::sub_reduce_i32(
+                        out.limbs[k].as_mut_ptr() as *mut i32,
+                        rhs.limbs[k].as_ptr() as *const i32,
+                        D,
+                        p,
+                    )
+                }
+            }
+            return out;
+        }
         self.sub_reduced_with_backend::<ScalarBackend>(rhs, primes)
     }
 
@@ -386,8 +418,30 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         out
     }
 
-    /// Negate each CRT+NTT coefficient and reduce using the scalar backend.
+    /// Negate each CRT+NTT coefficient and reduce.
     pub fn neg_reduced(&self, primes: &[NttPrime<W>; K]) -> Self {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if size_of::<W>() == size_of::<i32>() {
+            if let Some(mode) = Self::x86_pointwise_mode() {
+                let mut out = self.clone();
+                for (k, prime) in primes.iter().enumerate() {
+                    let p = prime.p.to_i64() as i32;
+                    unsafe {
+                        match mode {
+                            AvxNttMode::Avx2 => {
+                                avx::neg_reduce_i32(out.limbs[k].as_mut_ptr() as *mut i32, D, p)
+                            }
+                            AvxNttMode::Avx512 => avx::neg_reduce_i32_avx512(
+                                out.limbs[k].as_mut_ptr() as *mut i32,
+                                D,
+                                p,
+                            ),
+                        }
+                    }
+                }
+                return out;
+            }
+        }
         self.neg_reduced_with_backend::<ScalarBackend>(primes)
     }
 
@@ -412,8 +466,37 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         out
     }
 
-    /// Pointwise multiplication in CRT+NTT domain using the scalar backend.
+    /// Pointwise multiplication in CRT+NTT domain.
     pub fn pointwise_mul(&self, rhs: &Self, primes: &[NttPrime<W>; K]) -> Self {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if size_of::<W>() == size_of::<i32>() {
+            if let Some(mode) = Self::x86_pointwise_mode() {
+                let mut out = Self::zero();
+                for (k, prime) in primes.iter().copied().enumerate() {
+                    unsafe {
+                        match mode {
+                            AvxNttMode::Avx2 => avx::pointwise_mul_i32(
+                                out.limbs[k].as_mut_ptr() as *mut i32,
+                                self.limbs[k].as_ptr() as *const i32,
+                                rhs.limbs[k].as_ptr() as *const i32,
+                                D,
+                                prime.p.to_i64() as i32,
+                                prime.pinv.to_i64() as i32,
+                            ),
+                            AvxNttMode::Avx512 => avx::pointwise_mul_i32_avx512(
+                                out.limbs[k].as_mut_ptr() as *mut i32,
+                                self.limbs[k].as_ptr() as *const i32,
+                                rhs.limbs[k].as_ptr() as *const i32,
+                                D,
+                                prime.p.to_i64() as i32,
+                                prime.pinv.to_i64() as i32,
+                            ),
+                        }
+                    }
+                }
+                return out;
+            }
+        }
         self.pointwise_mul_with_backend::<ScalarBackend>(rhs, primes)
     }
 
