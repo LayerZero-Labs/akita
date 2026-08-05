@@ -1,7 +1,8 @@
 use std::array::from_fn;
 
-use crate::backend::{CrtReconstruct, NttPrimeOps, NttTransform, ScalarBackend};
-use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt_cyclic, NttTwiddles};
+use crate::ntt::butterfly::{
+    forward_ntt, forward_ntt_cyclic, inverse_ntt, inverse_ntt_cyclic, NttTwiddles,
+};
 use crate::ntt::crt::GarnerData;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
 use crate::ring::cyclotomic::CyclotomicRing;
@@ -24,11 +25,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .enumerate()
         {
             let mut limb = self.limbs[k];
-            <ScalarBackend as NttTransform<W, D>>::inverse_ntt(&mut limb, *prime, twiddles);
+            inverse_ntt(&mut limb, *prime, twiddles);
             for (dst, src) in coefficients.iter_mut().zip(limb.iter()) {
-                *dst = prime.center(<ScalarBackend as NttPrimeOps<W, D>>::to_canonical(
-                    *prime, *src,
-                ));
+                *dst = prime.center(prime.to_canonical(*src));
             }
         }
         canonical
@@ -41,11 +40,30 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         primes: &[NttPrime<W>; K],
         twiddles: &[NttTwiddles<W, D>; K],
     ) -> Self {
-        Self::from_ring_with_backend::<F, ScalarBackend>(ring, primes, twiddles)
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+        let centered_coeffs: [i128; D] = from_fn(|i| {
+            let canonical = ring.coeffs[i].to_canonical_u128();
+            if canonical > half_q {
+                -((q - canonical) as i128)
+            } else {
+                canonical as i128
+            }
+        });
+
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for ((limb, prime), tw) in limbs.iter_mut().zip(primes.iter()).zip(twiddles.iter()) {
+            let reducer = CenteredPrimeWideReducer::new(*prime);
+            for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
+                *dst = prime.from_canonical(reducer.reduce_i128(*centered));
+            }
+            forward_ntt(limb, *prime, tw);
+        }
+        Self { limbs }
     }
 
     /// Convert a coefficient-form ring element into CRT+NTT domain
-    /// using a bundled parameter set and the scalar backend.
+    /// using a bundled parameter set.
     pub fn from_ring_with_params<F: CrtNttConvertibleField>(
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
@@ -56,16 +74,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// Convert a coefficient-form ring element into both negacyclic and cyclic
     /// CRT+NTT domains, sharing coefficient centering and CRT reduction.
     pub fn from_ring_pair_with_params<F: CrtNttConvertibleField>(
-        ring: &CyclotomicRing<F, D>,
-        params: &CrtNttParamSet<W, K, D>,
-    ) -> (Self, Self) {
-        Self::from_ring_pair_with_backend::<F, ScalarBackend>(ring, params)
-    }
-
-    fn from_ring_pair_with_backend<
-        F: CrtNttConvertibleField,
-        B: NttPrimeOps<W, D> + NttTransform<W, D>,
-    >(
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> (Self, Self) {
@@ -90,10 +98,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         {
             let reducer = CenteredPrimeWideReducer::new(*prime);
             for (dst, centered) in neg_limb.iter_mut().zip(centered_coeffs.iter()) {
-                *dst = B::from_canonical(*prime, reducer.reduce_i128(*centered));
+                *dst = prime.from_canonical(reducer.reduce_i128(*centered));
             }
             *cyc_limb = *neg_limb;
-            B::forward_ntt(neg_limb, *prime, tw);
+            forward_ntt(neg_limb, *prime, tw);
             forward_ntt_cyclic(cyc_limb, *prime, tw);
         }
         (Self { limbs: neg_limbs }, Self { limbs: cyc_limbs })
@@ -126,45 +134,21 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         Self { limbs }
     }
 
-    /// Convert a coefficient-form ring element into CRT+NTT domain
-    /// through an explicit backend implementation.
-    pub fn from_ring_with_backend<
-        F: CrtNttConvertibleField,
-        B: NttPrimeOps<W, D> + NttTransform<W, D>,
-    >(
-        ring: &CyclotomicRing<F, D>,
-        primes: &[NttPrime<W>; K],
-        twiddles: &[NttTwiddles<W, D>; K],
-    ) -> Self {
-        let q = (-F::one()).to_canonical_u128() + 1;
-        let half_q = q / 2;
-        let centered_coeffs: [i128; D] = from_fn(|i| {
-            let canonical = ring.coeffs[i].to_canonical_u128();
-            if canonical > half_q {
-                -((q - canonical) as i128)
-            } else {
-                canonical as i128
-            }
-        });
-
-        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
-        for ((limb, prime), tw) in limbs.iter_mut().zip(primes.iter()).zip(twiddles.iter()) {
-            let reducer = CenteredPrimeWideReducer::new(*prime);
-            // Interpret coefficients in centered form (-q/2, q/2] before reducing
-            // into the CRT primes. This makes the reduction map consistent with
-            // negacyclic subtraction (which naturally produces negative values).
-            for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
-                *dst = B::from_canonical(*prime, reducer.reduce_i128(*centered));
-            }
-            B::forward_ntt(limb, *prime, tw);
-        }
-        Self { limbs }
-    }
-
     /// Convert small integer coefficients (e.g. gadget digits) into
     /// negacyclic CRT+NTT domain, bypassing Fp128 centering entirely.
     pub fn from_i8_with_params(digits: &[i8; D], params: &CrtNttParamSet<W, K, D>) -> Self {
-        Self::from_i8_negacyclic_backend::<ScalarBackend>(digits, params)
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for ((limb, prime), tw) in limbs
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+        {
+            for (dst, &digit) in limb.iter_mut().zip(digits.iter()) {
+                *dst = prime.from_canonical(W::from_i64(i64::from(digit)));
+            }
+            forward_ntt(limb, *prime, tw);
+        }
+        Self { limbs }
     }
 
     /// Convert centered i32 coefficients into negacyclic CRT+NTT domain.
@@ -172,7 +156,19 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         coeffs: &[i32; D],
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
-        Self::from_centered_i32_negacyclic_backend::<ScalarBackend>(coeffs, params)
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for ((limb, prime), tw) in limbs
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+        {
+            let reducer = CenteredPrimeReducer::new(*prime);
+            for (dst, &coefficient) in limb.iter_mut().zip(coeffs.iter()) {
+                *dst = prime.from_canonical(reducer.reduce_i64(i64::from(coefficient)));
+            }
+            forward_ntt(limb, *prime, tw);
+        }
+        Self { limbs }
     }
 
     /// Convert centered i32 coefficients into negacyclic CRT+NTT form using a
@@ -192,13 +188,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let reducer = CenteredPrimeReducer::new(*prime);
             for (dst, &coefficient) in limb.iter_mut().zip(coeffs) {
                 *dst = lut.get(k, coefficient).unwrap_or_else(|| {
-                    <ScalarBackend as NttPrimeOps<W, D>>::from_canonical(
-                        *prime,
-                        reducer.reduce_i64(i64::from(coefficient)),
-                    )
+                    prime.from_canonical(reducer.reduce_i64(i64::from(coefficient)))
                 });
             }
-            <ScalarBackend as NttTransform<W, D>>::forward_ntt(limb, *prime, tw);
+            forward_ntt(limb, *prime, tw);
         }
         Self { limbs }
     }
@@ -244,7 +237,19 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         coeffs: &[i32; D],
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
-        Self::from_centered_i32_cyclic_backend::<ScalarBackend>(coeffs, params)
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for ((limb, prime), tw) in limbs
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+        {
+            let reducer = CenteredPrimeReducer::new(*prime);
+            for (dst, &coefficient) in limb.iter_mut().zip(coeffs.iter()) {
+                *dst = prime.from_canonical(reducer.reduce_i64(i64::from(coefficient)));
+            }
+            forward_ntt_cyclic(limb, *prime, tw);
+        }
+        Self { limbs }
     }
 
     /// Convert centered i32 coefficients into both negacyclic and cyclic
@@ -253,7 +258,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         coeffs: &[i32; D],
         params: &CrtNttParamSet<W, K, D>,
     ) -> (Self, Self) {
-        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, None, false)
+        Self::from_centered_i32_pair(coeffs, params, None, false)
     }
 
     /// Like [`Self::from_centered_i32_pair_with_params`] but uses a precomputed
@@ -263,7 +268,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         params: &CrtNttParamSet<W, K, D>,
         lut: &CenteredMontLut<W, K>,
     ) -> (Self, Self) {
-        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, Some(lut), false)
+        Self::from_centered_i32_pair(coeffs, params, Some(lut), false)
     }
 
     /// Like [`Self::from_centered_i32_pair_with_lut`] for caller-validated
@@ -278,90 +283,27 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         params: &CrtNttParamSet<W, K, D>,
         lut: &CenteredMontLut<W, K>,
     ) -> (Self, Self) {
-        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, Some(lut), true)
-    }
-
-    fn from_i8_negacyclic_backend<B: NttPrimeOps<W, D> + NttTransform<W, D>>(
-        digits: &[i8; D],
-        params: &CrtNttParamSet<W, K, D>,
-    ) -> Self {
-        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
-        for ((limb, prime), tw) in limbs
-            .iter_mut()
-            .zip(params.primes.iter())
-            .zip(params.twiddles.iter())
-        {
-            for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
-                *dst = B::from_canonical(*prime, W::from_i64(d as i64));
-            }
-            B::forward_ntt(limb, *prime, tw);
-        }
-        Self { limbs }
-    }
-
-    fn from_centered_i32_negacyclic_backend<B: NttPrimeOps<W, D> + NttTransform<W, D>>(
-        coeffs: &[i32; D],
-        params: &CrtNttParamSet<W, K, D>,
-    ) -> Self {
-        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
-        for ((limb, prime), tw) in limbs
-            .iter_mut()
-            .zip(params.primes.iter())
-            .zip(params.twiddles.iter())
-        {
-            let reducer = CenteredPrimeReducer::new(*prime);
-            for (dst, &coeff) in limb.iter_mut().zip(coeffs.iter()) {
-                *dst = B::from_canonical(*prime, reducer.reduce_i64(i64::from(coeff)));
-            }
-            B::forward_ntt(limb, *prime, tw);
-        }
-        Self { limbs }
+        Self::from_centered_i32_pair(coeffs, params, Some(lut), true)
     }
 
     /// Convert small integer coefficients into cyclic CRT+NTT domain,
     /// bypassing Fp128 centering entirely.
     pub fn from_i8_cyclic(digits: &[i8; D], params: &CrtNttParamSet<W, K, D>) -> Self {
-        Self::from_i8_cyclic_backend::<ScalarBackend>(digits, params)
-    }
-
-    fn from_i8_cyclic_backend<B: NttPrimeOps<W, D>>(
-        digits: &[i8; D],
-        params: &CrtNttParamSet<W, K, D>,
-    ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for ((limb, prime), tw) in limbs
             .iter_mut()
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
-                *dst = B::from_canonical(*prime, W::from_i64(d as i64));
+            for (dst, &digit) in limb.iter_mut().zip(digits.iter()) {
+                *dst = prime.from_canonical(W::from_i64(i64::from(digit)));
             }
             forward_ntt_cyclic(limb, *prime, tw);
         }
         Self { limbs }
     }
 
-    fn from_centered_i32_cyclic_backend<B: NttPrimeOps<W, D>>(
-        coeffs: &[i32; D],
-        params: &CrtNttParamSet<W, K, D>,
-    ) -> Self {
-        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
-        for ((limb, prime), tw) in limbs
-            .iter_mut()
-            .zip(params.primes.iter())
-            .zip(params.twiddles.iter())
-        {
-            let reducer = CenteredPrimeReducer::new(*prime);
-            for (dst, &coeff) in limb.iter_mut().zip(coeffs.iter()) {
-                *dst = B::from_canonical(*prime, reducer.reduce_i64(i64::from(coeff)));
-            }
-            forward_ntt_cyclic(limb, *prime, tw);
-        }
-        Self { limbs }
-    }
-
-    fn from_centered_i32_pair_backend<B: NttPrimeOps<W, D>>(
+    fn from_centered_i32_pair(
         coeffs: &[i32; D],
         params: &CrtNttParamSet<W, K, D>,
         lut: Option<&CenteredMontLut<W, K>>,
@@ -383,13 +325,13 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                         unsafe { lut.get_unchecked(k, coeff) }
                     } else {
                         lut.get(k, coeff).unwrap_or_else(|| {
-                            B::from_canonical(*prime, reducer.reduce_i64(i64::from(coeff)))
+                            prime.from_canonical(reducer.reduce_i64(i64::from(coeff)))
                         })
                     };
                 }
             } else {
                 for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {
-                    *dst = B::from_canonical(*prime, reducer.reduce_i64(i64::from(coeff)));
+                    *dst = prime.from_canonical(reducer.reduce_i64(i64::from(coeff)));
                 }
             }
             *cyc_limb = *neg_limb;
@@ -399,19 +341,33 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         (Self { limbs: neg_limbs }, Self { limbs: cyc_limbs })
     }
 
-    /// Convert from CRT+NTT domain back to coefficient form
-    /// using the default scalar backend.
+    /// Convert from CRT+NTT domain back to coefficient form.
     pub fn to_ring<F: CrtNttConvertibleField>(
         &self,
         primes: &[NttPrime<W>; K],
         twiddles: &[NttTwiddles<W, D>; K],
         garner: &GarnerData<W, K>,
     ) -> CyclotomicRing<F, D> {
-        self.to_ring_with_backend::<F, ScalarBackend>(primes, twiddles, garner)
+        let mut canonical = [[W::default(); D]; K];
+        for (k, ((coefficients, prime), twiddles)) in canonical
+            .iter_mut()
+            .zip(primes.iter())
+            .zip(twiddles.iter())
+            .enumerate()
+        {
+            let mut limb = self.limbs[k];
+            inverse_ntt(&mut limb, *prime, twiddles);
+            for (dst, src) in coefficients.iter_mut().zip(limb.iter()) {
+                *dst = prime.center(prime.to_canonical(*src));
+            }
+        }
+
+        let coefficients = super::reconstruct::<F, W, K, D>(primes, garner, &canonical);
+        CyclotomicRing::from_coefficients(coefficients)
     }
 
     /// Convert from CRT+NTT domain back to coefficient form
-    /// using a bundled parameter set and the scalar backend.
+    /// using a bundled parameter set.
     pub fn to_ring_with_params<F: CrtNttConvertibleField>(
         &self,
         params: &CrtNttParamSet<W, K, D>,
@@ -419,49 +375,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         self.to_ring(&params.primes, &params.twiddles, &params.garner)
     }
 
-    /// Convert from CRT+NTT domain back to coefficient form
-    /// through an explicit backend implementation.
-    pub fn to_ring_with_backend<
-        F: CrtNttConvertibleField,
-        B: NttPrimeOps<W, D> + NttTransform<W, D> + CrtReconstruct<W, K, D>,
-    >(
-        &self,
-        primes: &[NttPrime<W>; K],
-        twiddles: &[NttTwiddles<W, D>; K],
-        garner: &GarnerData<W, K>,
-    ) -> CyclotomicRing<F, D> {
-        let mut canonical = [[W::default(); D]; K];
-        for (k, ((can, prime), tw)) in canonical
-            .iter_mut()
-            .zip(primes.iter())
-            .zip(twiddles.iter())
-            .enumerate()
-        {
-            let mut limb = self.limbs[k];
-            B::inverse_ntt(&mut limb, *prime, tw);
-            for (dst, src) in can.iter_mut().zip(limb.iter()) {
-                let canon = B::to_canonical(*prime, *src);
-                *dst = prime.center(canon);
-            }
-        }
-
-        let coeffs = B::reconstruct::<F>(primes, &canonical, garner);
-
-        CyclotomicRing::from_coefficients(coeffs)
-    }
-
     /// Convert a coefficient-form ring element into CRT+**cyclic** NTT domain
-    /// using the scalar backend.
+    /// using a bundled parameter set.
     pub fn from_ring_cyclic<F: CrtNttConvertibleField>(
-        ring: &CyclotomicRing<F, D>,
-        params: &CrtNttParamSet<W, K, D>,
-    ) -> Self {
-        Self::from_ring_cyclic_with_backend::<F, ScalarBackend>(ring, params)
-    }
-
-    /// Convert a coefficient-form ring element into CRT+**cyclic** NTT domain
-    /// through an explicit backend.
-    pub fn from_ring_cyclic_with_backend<F: CrtNttConvertibleField, B: NttPrimeOps<W, D>>(
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
@@ -484,7 +400,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         {
             let reducer = CenteredPrimeWideReducer::new(*prime);
             for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
-                *dst = B::from_canonical(*prime, reducer.reduce_i128(*centered));
+                *dst = prime.from_canonical(reducer.reduce_i128(*centered));
             }
             forward_ntt_cyclic(limb, *prime, tw);
         }
@@ -498,18 +414,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         &self,
         params: &CrtNttParamSet<W, K, D>,
     ) -> CyclotomicRing<F, D> {
-        self.to_ring_cyclic_with_backend::<F, ScalarBackend>(params)
-    }
-
-    /// Convert from CRT+**cyclic** NTT domain back to coefficient form
-    /// through an explicit backend.
-    pub fn to_ring_cyclic_with_backend<
-        F: CrtNttConvertibleField,
-        B: NttPrimeOps<W, D> + CrtReconstruct<W, K, D>,
-    >(
-        &self,
-        params: &CrtNttParamSet<W, K, D>,
-    ) -> CyclotomicRing<F, D> {
         let mut canonical = [[W::default(); D]; K];
         for (k, ((can, prime), tw)) in canonical
             .iter_mut()
@@ -520,11 +424,11 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let mut limb = self.limbs[k];
             inverse_ntt_cyclic(&mut limb, *prime, tw);
             for (dst, src) in can.iter_mut().zip(limb.iter()) {
-                let canon = B::to_canonical(*prime, *src);
+                let canon = prime.to_canonical(*src);
                 *dst = prime.center(canon);
             }
         }
-        let coeffs = B::reconstruct::<F>(&params.primes, &canonical, &params.garner);
+        let coeffs = params.reconstruct::<F>(&canonical);
         CyclotomicRing::from_coefficients(coeffs)
     }
 }

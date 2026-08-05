@@ -1,4 +1,3 @@
-use akita_algebra::backend::{CrtReconstruct, NttPrimeOps};
 use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
 use akita_algebra::poly::Poly;
 use akita_algebra::tables::{
@@ -8,7 +7,7 @@ use akita_algebra::tables::{
 use akita_algebra::NttPrime;
 use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, LimbQ,
-    MontCoeff, ScalarBackend,
+    MontCoeff,
 };
 use akita_field::{Fp128, Fp32, Fp64, Prime128Offset275};
 
@@ -527,7 +526,7 @@ fn cyclotomic_ntt_reduced_ops_are_stable() {
 }
 
 #[test]
-fn backend_path_matches_default_scalar_path() {
+fn bundled_params_match_explicit_tables() {
     type F = Fp64<{ Q32_MODULUS }>;
     type R = CyclotomicRing<F, 64>;
     type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
@@ -540,14 +539,14 @@ fn backend_path_matches_default_scalar_path() {
     }));
 
     let default_ntt = N::from_ring(&ring, &primes, &twiddles);
-    let backend_ntt = N::from_ring_with_backend::<F, ScalarBackend>(&ring, &primes, &twiddles);
-    assert_eq!(default_ntt, backend_ntt);
-
     let garner = q32_garner();
+    let params = CrtNttParamSet::new(primes);
+    let bundled_ntt = N::from_ring_with_params(&ring, &params);
+    assert_eq!(default_ntt, bundled_ntt);
+
     let default_back = default_ntt.to_ring(&primes, &twiddles, &garner);
-    let backend_back =
-        backend_ntt.to_ring_with_backend::<F, ScalarBackend>(&primes, &twiddles, &garner);
-    assert_eq!(default_back, backend_back);
+    let bundled_back = bundled_ntt.to_ring_with_params::<F>(&params);
+    assert_eq!(default_back, bundled_back);
 }
 
 #[test]
@@ -579,34 +578,25 @@ fn crt_ntt_mul_matches_schoolbook_q32() {
 }
 
 #[test]
-fn q128_garner_reconstruct_matches_coeffs_no_ntt() {
+fn q128_bundled_params_round_trip() {
     type F = Fp128<{ Q128_MODULUS }>;
+    type R = CyclotomicRing<F, 64>;
+    type N = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 64>;
 
     let primes = q128_primes();
-    let garner = q128_garner();
-
-    let coeffs: [F; 64] = std::array::from_fn(|i| {
+    let params = CrtNttParamSet::new(primes);
+    let ring = R::from_coefficients(std::array::from_fn(|i| {
         if i < 8 {
             F::from_u64((i as u64 * 31) + 7)
         } else {
             F::zero()
         }
-    });
+    }));
 
-    let mut canonical = [[0i32; 64]; Q128_NUM_PRIMES];
-    for (k, prime) in primes.iter().enumerate() {
-        let p = prime.p as u32 as u128;
-        for (i, c) in coeffs.iter().enumerate() {
-            canonical[k][i] = (c.to_canonical_u128() % p) as i32;
-        }
-    }
+    let ntt = N::from_ring_with_params(&ring, &params);
+    let reconstructed = ntt.to_ring_with_params::<F>(&params);
 
-    let reconstructed: [F; 64] =
-        <ScalarBackend as CrtReconstruct<i32, Q128_NUM_PRIMES, 64>>::reconstruct(
-            &primes, &canonical, &garner,
-        );
-
-    assert_eq!(reconstructed, coeffs);
+    assert_eq!(reconstructed, ring);
 }
 
 #[test]
@@ -624,7 +614,7 @@ fn q128_prime_ntt_round_trip_per_prime() {
         let mut limb = [MontCoeff::from_raw(0i32); 64];
         for (i, r) in residues.iter().enumerate() {
             let reduced = (*r as i64 % (prime.p as i64)) as i32;
-            limb[i] = <ScalarBackend as NttPrimeOps<i32, 64>>::from_canonical(prime, reduced);
+            limb[i] = prime.from_canonical(reduced);
         }
 
         forward_ntt(&mut limb, prime, &twiddles[k]);
@@ -632,7 +622,7 @@ fn q128_prime_ntt_round_trip_per_prime() {
 
         for (i, r) in residues.iter().enumerate() {
             let expected = (*r as i64 % (prime.p as i64)) as i32;
-            let got = <ScalarBackend as NttPrimeOps<i32, 64>>::to_canonical(prime, limb[i]);
+            let got = prime.to_canonical(limb[i]);
             assert_eq!(got, expected, "prime idx={k} coeff idx={i}");
         }
     }

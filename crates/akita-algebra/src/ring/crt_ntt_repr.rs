@@ -49,6 +49,47 @@ mod tests;
 pub use lut::{CenteredMontLut, DigitMontLut};
 pub use mixed::{mat_vec_i16_with_tail, I16TailParams};
 
+fn reconstruct<F, W, const K: usize, const D: usize>(
+    primes: &[NttPrime<W>; K],
+    garner: &GarnerData<W, K>,
+    canonical: &[[W; D]; K],
+) -> [F; D]
+where
+    F: CrtNttConvertibleField,
+    W: PrimeWidth,
+{
+    let mut coefficients = [F::zero(); D];
+    for (index, coefficient) in coefficients.iter_mut().enumerate() {
+        let mut mixed_radix = [0i64; K];
+        mixed_radix[0] = canonical[0][index].to_i64();
+        for i in 1..K {
+            let modulus = primes[i].p.to_i64();
+            let mut digit = canonical[i][index].to_i64();
+            #[allow(clippy::needless_range_loop)]
+            for j in 0..i {
+                digit -= mixed_radix[j];
+                digit = ((digit % modulus) + modulus) % modulus;
+                digit = (digit * garner.gamma[i][j].to_i64()) % modulus;
+            }
+            if digit > modulus / 2 {
+                digit -= modulus;
+            }
+            mixed_radix[i] = digit;
+        }
+
+        let mut result = F::from_i64(mixed_radix[0]);
+        let mut partial_product = F::from_i64(primes[0].p.to_i64());
+        for i in 1..K {
+            result += F::from_i64(mixed_radix[i]) * partial_product;
+            if i + 1 < K {
+                partial_product *= F::from_i64(primes[i].p.to_i64());
+            }
+        }
+        *coefficient = result;
+    }
+    coefficients
+}
+
 impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     /// Build a full parameter set from CRT primes.
     ///
@@ -66,5 +107,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     /// Exact CRT product capacity of this parameter set.
     pub fn crt_capacity(&self) -> CrtCapacity {
         CrtCapacity::from_prime_moduli(self.primes.iter().map(|prime| prime.p.to_i64() as u128))
+    }
+
+    fn reconstruct<F: CrtNttConvertibleField>(&self, canonical: &[[W; D]; K]) -> [F; D] {
+        reconstruct(&self.primes, &self.garner, canonical)
     }
 }

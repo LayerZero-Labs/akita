@@ -3,7 +3,6 @@ use std::mem::size_of;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use std::mem::MaybeUninit;
 
-use crate::backend::{NttPrimeOps, ScalarBackend};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::ntt::avx::{self, AvxNttMode};
 use crate::ntt::butterfly::forward_ntt;
@@ -355,30 +354,20 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             // limb of the transparent nested-array representation.
             return unsafe { out.assume_init() };
         }
-        self.add_reduced_with_backend::<ScalarBackend>(rhs, primes)
-    }
-
-    /// Add another CRT+NTT element and reduce using a bundled parameter set.
-    pub fn add_reduced_with_params(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        self.add_reduced(rhs, &params.primes)
-    }
-
-    /// Add another CRT+NTT element and reduce each coefficient with the matching
-    /// prime through an explicit backend implementation.
-    pub fn add_reduced_with_backend<B: NttPrimeOps<W, D>>(
-        &self,
-        rhs: &Self,
-        primes: &[NttPrime<W>; K],
-    ) -> Self {
         let mut out = self.clone();
         for (k, (limb, rhs_limb)) in out.limbs.iter_mut().zip(rhs.limbs.iter()).enumerate() {
             let prime = primes[k];
             for (a, b) in limb.iter_mut().zip(rhs_limb.iter()) {
                 let sum = MontCoeff::from_raw(a.raw().wrapping_add(b.raw()));
-                *a = B::reduce_range(prime, sum);
+                *a = prime.reduce_range(sum);
             }
         }
         out
+    }
+
+    /// Add another CRT+NTT element and reduce using a bundled parameter set.
+    pub fn add_reduced_with_params(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
+        self.add_reduced(rhs, &params.primes)
     }
 
     /// Subtract another CRT+NTT element and reduce.
@@ -403,29 +392,20 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             // limb of the transparent nested-array representation.
             return unsafe { out.assume_init() };
         }
-        self.sub_reduced_with_backend::<ScalarBackend>(rhs, primes)
-    }
-
-    /// Subtract another CRT+NTT element and reduce using a bundled parameter set.
-    pub fn sub_reduced_with_params(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        self.sub_reduced(rhs, &params.primes)
-    }
-
-    /// Subtract another CRT+NTT element and reduce through an explicit backend.
-    pub fn sub_reduced_with_backend<B: NttPrimeOps<W, D>>(
-        &self,
-        rhs: &Self,
-        primes: &[NttPrime<W>; K],
-    ) -> Self {
         let mut out = self.clone();
         for (k, (limb, rhs_limb)) in out.limbs.iter_mut().zip(rhs.limbs.iter()).enumerate() {
             let prime = primes[k];
             for (a, b) in limb.iter_mut().zip(rhs_limb.iter()) {
                 let diff = MontCoeff::from_raw(a.raw().wrapping_sub(b.raw()));
-                *a = B::reduce_range(prime, diff);
+                *a = prime.reduce_range(diff);
             }
         }
         out
+    }
+
+    /// Subtract another CRT+NTT element and reduce using a bundled parameter set.
+    pub fn sub_reduced_with_params(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
+        self.sub_reduced(rhs, &params.primes)
     }
 
     /// Negate each CRT+NTT coefficient and reduce.
@@ -459,28 +439,20 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 return unsafe { out.assume_init() };
             }
         }
-        self.neg_reduced_with_backend::<ScalarBackend>(primes)
-    }
-
-    /// Negate each CRT+NTT coefficient and reduce using a bundled parameter set.
-    pub fn neg_reduced_with_params(&self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        self.neg_reduced(&params.primes)
-    }
-
-    /// Negate each CRT+NTT coefficient and reduce through an explicit backend.
-    pub fn neg_reduced_with_backend<B: NttPrimeOps<W, D>>(
-        &self,
-        primes: &[NttPrime<W>; K],
-    ) -> Self {
         let mut out = self.clone();
         for (k, limb) in out.limbs.iter_mut().enumerate() {
             let prime = primes[k];
             for a in limb.iter_mut() {
                 let neg = MontCoeff::from_raw(a.raw().wrapping_neg());
-                *a = B::reduce_range(prime, neg);
+                *a = prime.reduce_range(neg);
             }
         }
         out
+    }
+
+    /// Negate each CRT+NTT coefficient and reduce using a bundled parameter set.
+    pub fn neg_reduced_with_params(&self, params: &CrtNttParamSet<W, K, D>) -> Self {
+        self.neg_reduced(&params.primes)
     }
 
     /// Pointwise multiplication in CRT+NTT domain.
@@ -522,7 +494,20 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 return unsafe { out.assume_init() };
             }
         }
-        self.pointwise_mul_with_backend::<ScalarBackend>(rhs, primes)
+        let mut out = [[MontCoeff::from_raw(W::default()); D]; K];
+        for (k, ((output, lhs), rhs)) in out
+            .iter_mut()
+            .zip(self.limbs.iter())
+            .zip(rhs.limbs.iter())
+            .enumerate()
+        {
+            let prime = primes[k];
+            prime.pointwise_mul(output, lhs, rhs);
+            for coefficient in output.iter_mut() {
+                *coefficient = prime.reduce_range(*coefficient);
+            }
+        }
+        Self { limbs: out }
     }
 
     /// Pointwise multiplication in CRT+NTT domain using a bundled parameter set.
@@ -590,29 +575,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             }
             Self::add_assign_pointwise_mul_limb(acc_limb, lhs_limb, rhs_limb, prime);
         }
-    }
-
-    /// Pointwise multiplication in CRT+NTT domain through an explicit backend.
-    pub fn pointwise_mul_with_backend<B: NttPrimeOps<W, D>>(
-        &self,
-        rhs: &Self,
-        primes: &[NttPrime<W>; K],
-    ) -> Self {
-        let mut out = [[MontCoeff::from_raw(W::default()); D]; K];
-        for (k, ((o, a), b)) in out
-            .iter_mut()
-            .zip(self.limbs.iter())
-            .zip(rhs.limbs.iter())
-            .enumerate()
-        {
-            let prime = primes[k];
-            B::pointwise_mul(prime, o, a, b);
-            // Keep coefficients in a bounded range for subsequent inverse NTT.
-            for c in o.iter_mut() {
-                *c = B::reduce_range(prime, *c);
-            }
-        }
-        Self { limbs: out }
     }
 
     /// Apply `sigma_{-1}` directly in NTT domain (`slot[j] -> slot[D-1-j]`).
