@@ -6,6 +6,152 @@ use std::ops::{Add, Sub};
 
 use super::prime::{NttPrime, PrimeWidth};
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SmallNat {
+    limbs: Vec<u32>,
+}
+
+impl SmallNat {
+    fn one() -> Self {
+        Self { limbs: vec![1] }
+    }
+
+    fn mul_u128(&mut self, rhs: u128) {
+        if rhs == 0 {
+            self.limbs = vec![0];
+            return;
+        }
+        let mut rhs_limbs = Vec::new();
+        let mut value = rhs;
+        while value != 0 {
+            rhs_limbs.push(value as u32);
+            value >>= 32;
+        }
+        let mut out = vec![0u32; self.limbs.len() + rhs_limbs.len()];
+        for (i, &lhs) in self.limbs.iter().enumerate() {
+            let mut carry = 0u128;
+            for (j, &rhs) in rhs_limbs.iter().enumerate() {
+                let index = i + j;
+                let accum = u128::from(out[index]) + u128::from(lhs) * u128::from(rhs) + carry;
+                out[index] = accum as u32;
+                carry = accum >> 32;
+            }
+            let mut index = i + rhs_limbs.len();
+            while carry != 0 {
+                if index == out.len() {
+                    out.push(0);
+                }
+                let accum = u128::from(out[index]) + carry;
+                out[index] = accum as u32;
+                carry = accum >> 32;
+                index += 1;
+            }
+        }
+        while out.len() > 1 && out.last() == Some(&0) {
+            out.pop();
+        }
+        self.limbs = out;
+    }
+}
+
+impl Ord for SmallNat {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.limbs.len().cmp(&other.limbs.len()) {
+            Ordering::Equal => self.limbs.iter().rev().cmp(other.limbs.iter().rev()),
+            ordering => ordering,
+        }
+    }
+}
+
+impl PartialOrd for SmallNat {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Exact product capacity of a CRT residue profile.
+///
+/// The product is independent of the residue representation and execution
+/// kernels. It can therefore compare homogeneous i16/i32 profiles, mixed
+/// profiles, and wider SIMD-specific profiles through one exact bound.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CrtCapacity {
+    product: SmallNat,
+}
+
+impl CrtCapacity {
+    /// Build a capacity from canonical prime moduli.
+    pub fn from_prime_moduli(primes: impl IntoIterator<Item = u128>) -> Self {
+        let mut product = SmallNat::one();
+        for prime in primes {
+            product.mul_u128(prime);
+        }
+        Self { product }
+    }
+
+    /// Extend this capacity with one additional canonical prime modulus.
+    #[must_use]
+    pub fn with_prime_modulus(mut self, prime: u128) -> Self {
+        self.product.mul_u128(prime);
+        self
+    }
+
+    /// Whether this CRT product can reconstruct the requested accumulation.
+    ///
+    /// The strict exactness condition is
+    /// `2 * width * D * floor(q / 2) * rhs_abs_bound < product(primes)`.
+    pub fn supports<F: crate::CanonicalField, const D: usize>(
+        &self,
+        width: usize,
+        rhs_abs_bound: u64,
+    ) -> bool {
+        let modulus = (-F::one()).to_canonical_u128() + 1;
+        let mut required = SmallNat::one();
+        required.mul_u128(2);
+        required.mul_u128(width as u128);
+        required.mul_u128(D as u128);
+        required.mul_u128(modulus / 2);
+        required.mul_u128(u128::from(rhs_abs_bound));
+        required < self.product
+    }
+
+    /// Conservative maximum matrix width supported at one coefficient bound.
+    pub fn max_safe_width<F: crate::CanonicalField, const D: usize>(
+        &self,
+        rhs_abs_bound: u64,
+    ) -> Option<usize> {
+        if rhs_abs_bound == 0 {
+            return Some(usize::MAX);
+        }
+        let modulus = (-F::one()).to_canonical_u128() + 1;
+        if modulus <= 1 || D == 0 || !self.supports::<F, D>(1, rhs_abs_bound) {
+            return None;
+        }
+        let mut low = 1usize;
+        let mut high = 2usize;
+        while self.supports::<F, D>(high, rhs_abs_bound) {
+            low = high;
+            let Some(next) = high.checked_mul(2) else {
+                if self.supports::<F, D>(usize::MAX, rhs_abs_bound) {
+                    return Some(usize::MAX);
+                }
+                high = usize::MAX;
+                break;
+            };
+            high = next;
+        }
+        while low + 1 < high {
+            let mid = low + (high - low) / 2;
+            if self.supports::<F, D>(mid, rhs_abs_bound) {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        Some(low)
+    }
+}
+
 /// Limb radix bit-width (`2^14`).
 pub const RADIX_BITS: u32 = 14;
 const RADIX: i32 = 1 << RADIX_BITS;
@@ -198,5 +344,40 @@ impl<const L: usize> fmt::Display for LimbQ<L> {
         } else {
             write!(f, "LimbQ{:?}", self.limbs)
         }
+    }
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::CrtCapacity;
+    use crate::ntt::tables::{I16_TAIL_PRIME, Q32_PRIMES};
+    use crate::PrimeWidth;
+    use akita_field::Prime32Offset99;
+
+    #[test]
+    fn q32_capacity_matches_existing_exact_widths() {
+        let base =
+            CrtCapacity::from_prime_moduli(Q32_PRIMES.iter().map(|prime| prime.p.to_i64() as u128));
+        assert_eq!(
+            base.max_safe_width::<Prime32Offset99, 128>(32_768),
+            Some(63)
+        );
+        assert_eq!(
+            base.clone()
+                .with_prime_modulus(I16_TAIL_PRIME.p as u128)
+                .max_safe_width::<Prime32Offset99, 128>(32_768),
+            Some(786_406)
+        );
+    }
+
+    #[test]
+    fn mixed_wide_and_small_capacity_is_representation_independent() {
+        let mixed =
+            CrtCapacity::from_prime_moduli([1_125_899_906_826_241u128, I16_TAIL_PRIME.p as u128]);
+        assert_eq!(
+            mixed.max_safe_width::<Prime32Offset99, 128>(32_768),
+            Some(768)
+        );
+        assert!(mixed.supports::<Prime32Offset99, 128>(128, 32_768));
     }
 }

@@ -11,6 +11,6 @@ pub mod prime;
 pub mod tables;
 
 pub use butterfly::NttTwiddles;
-pub use crt::{GarnerData, LimbQ, RADIX_BITS};
+pub use crt::{CrtCapacity, GarnerData, LimbQ, RADIX_BITS};
 pub use forward_dif_tail_policy::forward_dif_tail_eligible;
 pub use prime::{MontCoeff, NttPrime, PrimeWidth};

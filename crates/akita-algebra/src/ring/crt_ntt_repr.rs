@@ -5,7 +5,7 @@ use std::array::from_fn;
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::crt::GarnerData;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
-use crate::{CanonicalField, FieldCore};
+use crate::{CanonicalField, CrtCapacity, FieldCore};
 
 /// CRT+NTT-domain representation of a cyclotomic ring element.
 ///
@@ -61,5 +61,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
             twiddles,
             garner,
         }
+    }
+
+    /// Exact CRT product capacity of this parameter set.
+    pub fn crt_capacity(&self) -> CrtCapacity {
+        CrtCapacity::from_prime_moduli(self.primes.iter().map(|prime| prime.p.to_i64() as u128))
     }
 }

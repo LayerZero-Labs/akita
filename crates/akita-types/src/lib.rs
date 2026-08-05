@@ -77,9 +77,9 @@ pub use layout::{
     SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
 };
 pub use ntt_cache::{
-    max_safe_crt_accumulation_width, ntt_cache_requires_i16_tail, prepare_compression_ntt_cache,
-    prepare_ntt_cache, select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey,
-    NttCacheMode, NttPrefixRequirement, NttTransformDomain, PreparedNttCache, ProtocolCrtNttParams,
+    ntt_cache_requires_i16_tail, prepare_compression_ntt_cache, prepare_ntt_cache,
+    select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey, NttCacheMode,
+    NttPrefixRequirement, NttTransformDomain, PreparedNttCache, ProtocolCrtNttParams,
 };
 pub use proof::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,

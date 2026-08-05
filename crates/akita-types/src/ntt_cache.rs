@@ -223,94 +223,6 @@ fn select_crt_ntt_params_for_modulus<F: CanonicalField, const D: usize>(
     )))
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct SmallNat {
-    limbs: Vec<u32>,
-}
-
-impl SmallNat {
-    fn one() -> Self {
-        Self { limbs: vec![1] }
-    }
-
-    fn mul_u128(&mut self, rhs: u128) {
-        if rhs == 0 {
-            self.limbs = vec![0];
-            return;
-        }
-        let mut rhs_limbs = Vec::new();
-        let mut value = rhs;
-        while value != 0 {
-            rhs_limbs.push(value as u32);
-            value >>= 32;
-        }
-        let mut out = vec![0u32; self.limbs.len() + rhs_limbs.len()];
-        for (i, &lhs) in self.limbs.iter().enumerate() {
-            let mut carry = 0u128;
-            for (j, &rhs) in rhs_limbs.iter().enumerate() {
-                let index = i + j;
-                let accum = u128::from(out[index]) + u128::from(lhs) * u128::from(rhs) + carry;
-                out[index] = accum as u32;
-                carry = accum >> 32;
-            }
-            let mut index = i + rhs_limbs.len();
-            while carry != 0 {
-                if index == out.len() {
-                    out.push(0);
-                }
-                let accum = u128::from(out[index]) + carry;
-                out[index] = accum as u32;
-                carry = accum >> 32;
-                index += 1;
-            }
-        }
-        while out.len() > 1 && out.last() == Some(&0) {
-            out.pop();
-        }
-        self.limbs = out;
-    }
-}
-
-impl Ord for SmallNat {
-    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        match self.limbs.len().cmp(&other.limbs.len()) {
-            core::cmp::Ordering::Equal => self.limbs.iter().rev().cmp(other.limbs.iter().rev()),
-            ordering => ordering,
-        }
-    }
-}
-
-impl PartialOrd for SmallNat {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-fn crt_width_is_safe<F: CanonicalField, const D: usize>(
-    crt_product: &SmallNat,
-    width: usize,
-    rhs_abs_bound: u64,
-) -> bool {
-    let modulus = (-F::one()).to_canonical_u128() + 1;
-    let mut required = SmallNat::one();
-    required.mul_u128(2);
-    required.mul_u128(width as u128);
-    required.mul_u128(D as u128);
-    required.mul_u128(modulus / 2);
-    required.mul_u128(u128::from(rhs_abs_bound));
-    required < *crt_product
-}
-
-fn crt_product<W: PrimeWidth, const K: usize, const D: usize>(
-    params: &CrtNttParamSet<W, K, D>,
-) -> SmallNat {
-    let mut product = SmallNat::one();
-    for prime in &params.primes {
-        product.mul_u128(prime.p.to_i64() as u128);
-    }
-    product
-}
-
 fn required_profile_for_params<F, W, const K: usize, const D: usize>(
     params: &CrtNttParamSet<W, K, D>,
     width: usize,
@@ -320,65 +232,19 @@ where
     F: CanonicalField,
     W: PrimeWidth,
 {
-    let mut product = crt_product(params);
-    if crt_width_is_safe::<F, D>(&product, width, rhs_abs_bound) {
+    let capacity = params.crt_capacity();
+    if capacity.supports::<F, D>(width, rhs_abs_bound) {
         return Ok(false);
     }
-    product.mul_u128(I16_TAIL_PRIME.p as u128);
-    if crt_width_is_safe::<F, D>(&product, width, rhs_abs_bound) {
+    if capacity
+        .with_prime_modulus(I16_TAIL_PRIME.p as u128)
+        .supports::<F, D>(width, rhs_abs_bound)
+    {
         return Ok(true);
     }
     Err(AkitaError::InvalidSetup(format!(
         "CRT accumulation exceeds base plus i16-tail capacity for D={D}, width={width}, rhs_abs_bound={rhs_abs_bound}"
     )))
-}
-
-/// Conservative maximum matrix width that one signed CRT accumulator can hold.
-///
-/// The bound covers all `D` convolution coefficients and centered setup entries:
-/// `2 * width * D * floor(q/2) * rhs_abs_bound < product(CRT primes)`.
-pub fn max_safe_crt_accumulation_width<
-    F: CanonicalField,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    params: &CrtNttParamSet<W, K, D>,
-    rhs_abs_bound: u64,
-) -> Option<usize> {
-    if rhs_abs_bound == 0 {
-        return Some(usize::MAX);
-    }
-    let modulus = (-F::one()).to_canonical_u128() + 1;
-    if modulus <= 1 || D == 0 {
-        return None;
-    }
-    let crt_product = crt_product(params);
-    if !crt_width_is_safe::<F, D>(&crt_product, 1, rhs_abs_bound) {
-        return None;
-    }
-    let mut low = 1usize;
-    let mut high = 2usize;
-    while crt_width_is_safe::<F, D>(&crt_product, high, rhs_abs_bound) {
-        low = high;
-        let Some(next) = high.checked_mul(2) else {
-            if crt_width_is_safe::<F, D>(&crt_product, usize::MAX, rhs_abs_bound) {
-                return Some(usize::MAX);
-            }
-            high = usize::MAX;
-            break;
-        };
-        high = next;
-    }
-    while low + 1 < high {
-        let mid = low + (high - low) / 2;
-        if crt_width_is_safe::<F, D>(&crt_product, mid, rhs_abs_bound) {
-            low = mid;
-        } else {
-            high = mid;
-        }
-    }
-    Some(low)
 }
 
 /// NTT representations requested by protocol and backend consumers.
@@ -1132,11 +998,10 @@ mod tests {
         else {
             panic!("Q128 field must select Q128 params");
         };
-        let safe = max_safe_crt_accumulation_width::<Prime128Offset275, i32, Q128_NUM_PRIMES, D>(
-            &params,
-            1 << 15,
-        )
-        .expect("one term fits");
+        let safe = params
+            .crt_capacity()
+            .max_safe_width::<Prime128Offset275, D>(1 << 15)
+            .expect("one term fits");
         assert!(!ntt_cache_requires_i16_tail::<Prime128Offset275, D>(safe, 16).unwrap());
         assert!(ntt_cache_requires_i16_tail::<Prime128Offset275, D>(safe + 1, 16).unwrap());
     }

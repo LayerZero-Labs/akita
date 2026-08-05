@@ -103,9 +103,8 @@ mod tests {
     use akita_config::{proof_optimized::fp128::D64OneHot, CommitmentConfig};
     use akita_field::{Prime128Offset275 as F, Prime32Offset99 as F32};
     use akita_types::{
-        max_safe_crt_accumulation_width, select_crt_ntt_params, AkitaExpandedSetup,
-        AkitaScheduleLookupKey, AkitaSetupDescriptor, FlatMatrix, PolynomialGroupLayout,
-        ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
+        select_crt_ntt_params, AkitaExpandedSetup, AkitaScheduleLookupKey, AkitaSetupDescriptor,
+        FlatMatrix, PolynomialGroupLayout, ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
     };
     use std::sync::Arc;
 
@@ -273,11 +272,10 @@ mod tests {
         else {
             panic!("Q128 field must select Q128 params");
         };
-        let safe_width = max_safe_crt_accumulation_width::<F, _, Q128_NUM_PRIMES, D>(
-            &params,
-            1 << (TERMINAL_I16_LOG_BASIS - 1),
-        )
-        .expect("base profile supports a terminal width");
+        let safe_width = params
+            .crt_capacity()
+            .max_safe_width::<F, D>(1 << (TERMINAL_I16_LOG_BASIS - 1))
+            .expect("base profile supports a terminal width");
         assert!(safe_width < 4);
 
         let initial_tail = setup
