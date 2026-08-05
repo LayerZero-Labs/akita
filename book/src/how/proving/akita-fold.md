@@ -420,13 +420,13 @@ They have different origins:
 
 ## The four physical relation families
 
-Equation (11) assembles three digit segments, but placing them next to one
-another does not yet show that they describe the same polynomial opening.
-Equations (9a) and (9b) establish this consistency among the recomposed values.
-The committed witness instead contains $\hat{\mathbf e}$,
-$\hat{\mathbf t}$, and $\hat{\mathbf z}$. Substituting Equations (3), (6), and
-(10), then adding the two commitment equations from the previous section,
-gives four families of linear equations over
+Equation (11) specifies how the three digit segments are assembled, but it
+does not impose any algebraic relation among them. Substituting the balanced
+recompositions from Equations (3), (6), and (10) into the recomposed identities
+(9a) and (9b) gives two relations among the private witness segments.
+Equations (4) and (7) provide two additional relations that anchor those
+segments to the public commitments. Together, these give four families of
+linear equations over
 
 $$
 R=F[X]/(X^D+1).
@@ -440,9 +440,9 @@ segments to the public commitments $\mathbf u$ and $\mathbf v_D$.
 ### 1. Fold-evaluation consistency
 
 Equation (9a) is the fold-evaluation identity among the recomposed values. To
-express it in terms of the next-fold witness, substitute the
-balanced digit representations of $E_b$ from Equation (6) and $\mathbf z$
-from Equation (10). This gives the `consistency` row
+express it in terms of the next-fold witness, substitute the balanced digit
+representations of $E_b$ from Equation (6) and $\mathbf z$ from Equation (10).
+This gives the fold-evaluation consistency relation
 
 $$
 \boxed{
@@ -455,7 +455,7 @@ Q_pG_a^{\mathrm{in}}G_f^{\mathrm{fold}}\hat z_{p,a,f}.
 \tag{12}
 $$
 
-This row uses the random fold challenges $c_b$, not the block-opening weights
+This relation uses the random fold challenges $c_b$, not the block-opening weights
 $B_b$. The latter belong to the separate field-valued evaluation relation on
 $\hat{\mathbf e}$. In particular, this ring relation does not contain the
 scalar target $v_{\mathrm{tr}}$.
@@ -485,9 +485,9 @@ columns are indexed by $(p,a)$.
 ### 3. Outer-commitment consistency
 
 The first two families compare private witness segments but do not yet tie
-them to the commitment seen by the verifier. The outer-commitment rows provide
-that public anchor by requiring $\hat{\mathbf t}$ to open the commitment that
-entered this fold:
+them to the commitment seen by the verifier. The outer-commitment relation
+provides that public anchor by requiring $\hat{\mathbf t}$ to open the
+commitment that entered this fold:
 
 $$
 \boxed{
@@ -503,9 +503,9 @@ challenges.
 
 ### 4. Opening-commitment consistency
 
-Finally, the opening-commitment rows anchor $\hat{\mathbf e}$ to the public
-ring vector $\mathbf v_D$ that was absorbed before the fold challenges were
-sampled:
+Finally, the opening-commitment relation anchors $\hat{\mathbf e}$ to the
+public ring vector $\mathbf v_D$ that was absorbed before the fold challenges
+were sampled:
 
 $$
 \boxed{
@@ -516,8 +516,10 @@ $$
 \tag{15}
 $$
 
-This prevents the prover from changing the partial-evaluation digits after
-$\mathbf v_D$ has been fixed. Like the other three families, it is a relation
+Because $\mathbf v_D$ is fixed before the fold challenges are sampled, this
+relation, together with the boundedness of $\hat{\mathbf e}$ and Module-SIS
+binding, prevents the prover from adapting the partial-evaluation digits after
+learning those challenges. Like the other three families, it is a relation
 over $R$; it is distinct from the field-valued scalar evaluation claim.
 
 ## Assemble the ring relation
@@ -545,14 +547,17 @@ $$
 \tag{17}
 $$
 
-For one group, the physical row order and right-hand side are:
+Let $n_A$, $n_B$, and $n_D$ denote the row counts of $\mathbf A$,
+$\mathbf B$, and $\mathbf D$, respectively. In the basic one-group layout,
+the four relation families occupy $1+n_A+n_B+n_D$ physical rows. Their order
+and right-hand sides are:
 
-| Physical rows | Meaning | Right-hand side |
-|---|---|---|
-| `consistency` | Equation (12) | $0$ |
-| $\mathbf A$ rows | Equation (13) | $\mathbf 0$ |
-| $\mathbf B$ rows | Equation (14) | $\mathbf u$ |
-| $\mathbf D$ rows | Equation (15) | $\mathbf v_D$ |
+| Physical rows | Count | Meaning | Right-hand side |
+|---|---:|---|---|
+| `consistency` | $1$ | Equation (12) | $0$ |
+| $\mathbf A$ rows | $n_A$ | Equation (13) | $\mathbf 0$ |
+| $\mathbf B$ rows | $n_B$ | Equation (14) | $\mathbf u$ |
+| $\mathbf D$ rows | $n_D$ | Equation (15) | $\mathbf v_D$ |
 
 Consequently,
 
