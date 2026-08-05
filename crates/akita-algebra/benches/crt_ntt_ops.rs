@@ -6,13 +6,13 @@ use akita_algebra::tables::{q128_primes, Q128_NUM_PRIMES};
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, MontCoeff};
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 
-fn input<const D: usize>(salt: i32) -> CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D> {
+fn input<const D: usize>(seed: i32) -> CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D> {
     let primes = q128_primes();
     CyclotomicCrtNtt {
         limbs: std::array::from_fn(|k| {
             std::array::from_fn(|i| {
                 let p = primes[k].p;
-                let x = ((i as i64 * 0x1f123bb5 + i64::from(salt)) % i64::from(p)) as i32;
+                let x = ((i as i64 * 0x1f123bb5 + i64::from(seed)) % i64::from(p)) as i32;
                 MontCoeff::from_raw(if i & 1 == 0 { x } else { -x })
             })
         }),
