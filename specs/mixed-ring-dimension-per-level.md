@@ -1353,7 +1353,6 @@ transition.”
 | `ring_dimension_transition_e2e.rs` | Direct L0 `128/128/64`, L1 `128/64/64`, then D64; public PCS API and tamper rejection |
 | `ring_dimension_transition_schedule.rs` | Exact widths, independently planned suffixes, D256/D512 schedule invariants, setup envelope equality, dynamic D128 recursive prefix, and W8R2 partition preservation |
 | `recursive_ring_dimension_transition_e2e.rs` | CI-sized recursive mixed-D (`256/128/128 → 128/64/64 → 64`) plain and W8R2 prove/verify at `nv=24`, serialize round-trip, transcript agreement, wrong-opening rejection, and missing D64 outer-NTT rejection. The cases run serially to cap peak memory. Stage 3 tampering remains in the shared recursive-profile E2E coverage. |
-| profile modes `onehot_fp128_mixed_d_multi_group_recursive*` | Benchmark-only `nv=32` recursive prove/verify for the plain and W8R2 mixed-D workloads; excluded from active `profile-ci` |
 
 The disabled legacy fixture `mixed_role_e2e.rs` has been deleted. Active
 per-matrix coverage is `per_matrix_ring_dims_root_e2e.rs`.
@@ -1480,7 +1479,7 @@ verify, 2,461 proof bytes, and approximately 10.1 GiB of peak RSS. E therefore
 remains the balanced profile; F is only attractive when root commitment time
 dominates those costs.
 
-### Recursive mixed-D results (`nv = 32`, two multi-group workloads)
+### Archived Recursive Mixed-D Results (`nv = 32`, two multi-group workloads)
 
 This experiment applies the requested recursive transition to the two PR #331
 CI benchmark workloads:
@@ -1490,9 +1489,9 @@ CI benchmark workloads:
 | Recursive multi-group | `onehot_fp128_d64_multi_group_recursive` | `onehot_fp128_mixed_d_multi_group_recursive` |
 | Recursive multi-group W8R2 | `onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2` | `onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2` |
 
-Both workloads open two precommitted 16-variable singleton groups plus two
-32-variable final-group polynomials. The profile argument is therefore
-`nv=32`, `np=4`. Both mixed runs use:
+Both workloads opened two precommitted 16-variable singleton groups plus two
+32-variable final-group polynomials. The profile argument was therefore
+`nv=32`, `np=4`. Both mixed runs used:
 
 ```text
 L0 final and precommitted groups: A/B/D = 256/128/128
@@ -1520,18 +1519,18 @@ The D64 controls were built with the exact CI profiler feature graph:
 --no-default-features --features parallel,profile-ci
 ```
 
-The experimental mixed modes intentionally are not linked into
-`profile-ci`, because they use the offline planner through `akita-pcs`
-test-support. They were built from the same source with:
+At measurement time, the experimental mixed modes were intentionally not linked
+into `profile-ci`, because they used offline-planner schedule fixtures through
+`akita-pcs` test-support. They were built from the same source with:
 
 ```text
 --no-default-features --features parallel
 ```
 
-This preserves the production rule that the CI/runtime profiler does not link
-the offline planner. It does mean the comparison uses two feature graphs, not
-one binary. The measured prover and verifier protocol implementations are the
-same; only schedule availability and experimental test-support linkage differ.
+These PCS profile modes have since been removed because recursive mixed-D
+verification is not a production-supported verifier path. Keep recursive
+mixed-D experiments in tests or planner-only tooling until that verifier path
+is promoted.
 
 #### Two-run means
 
@@ -1622,62 +1621,13 @@ kernels fixed at `2f0c35b66`.
 
 ## Reproduction
 
-Use the default profile feature set. The mixed experimental modes are compiled
-out by `profile-ci` and by the dedicated D64-only profile feature.
+Use the default profile feature set for production-supported profile modes.
+Synthetic mixed-D PCS profile modes that depended on `akita-pcs` test-support
+have been removed from the profile example.
 
 ```bash
-# A: uniform D64
 AKITA_NUM_VARS=36 \
 AKITA_MODE=onehot_fp128_d64 \
-AKITA_PROFILE_TRACE=0 \
-AKITA_PROFILE_LOG=info \
-cargo run --release -p akita-pcs --example profile
-
-# A′ or B: D128 leading band, then D64
-AKITA_NUM_VARS=36 \
-AKITA_MODE=onehot_fp128_d64_root_d128 \
-AKITA_MIXED_ROOT_D=128 \
-AKITA_MIXED_SWITCH=1 \
-AKITA_PROFILE_TRACE=0 \
-AKITA_PROFILE_LOG=info \
-cargo run --release -p akita-pcs --example profile
-
-# Change AKITA_MIXED_SWITCH to 2 for B.
-
-# E: uniform D128 root, 128/64/64 at L1, then D64
-AKITA_NUM_VARS=36 \
-AKITA_MODE=onehot_fp128_d64_root_d128 \
-AKITA_RING_DIMENSION_TRANSITION=1 \
-AKITA_TRANSITION_ROOT_D_RING_DIM=128 \
-AKITA_PROFILE_TRACE=0 \
-AKITA_PROFILE_LOG=info \
-cargo run --release -p akita-pcs --example profile
-
-# F: temporary D512 A-only root
-AKITA_NUM_VARS=36 \
-AKITA_MODE=onehot_fp128_d64_root_d128 \
-AKITA_THREE_BAND_RING_DIMENSION_TRANSITION=1 \
-AKITA_THREE_BAND_ROOT_A_RING_DIM=512 \
-AKITA_PROFILE_TRACE=0 \
-AKITA_PROFILE_LOG=info \
-cargo run --release -p akita-pcs --example profile
-
-# C: root 128/64/64, then uniform D128
-AKITA_NUM_VARS=36 \
-AKITA_MODE=onehot_fp128_d64_root_d128 \
-AKITA_PER_MATRIX_RING_DIMS_ROOT=1 \
-AKITA_ROOT_B_RING_DIM=64 \
-AKITA_ROOT_D_RING_DIM=64 \
-AKITA_PROFILE_TRACE=0 \
-AKITA_PROFILE_LOG=info \
-cargo run --release -p akita-pcs --example profile
-
-# D: root 128/128/64, then uniform D128
-AKITA_NUM_VARS=36 \
-AKITA_MODE=onehot_fp128_d64_root_d128 \
-AKITA_PER_MATRIX_RING_DIMS_ROOT=1 \
-AKITA_ROOT_B_RING_DIM=128 \
-AKITA_ROOT_D_RING_DIM=64 \
 AKITA_PROFILE_TRACE=0 \
 AKITA_PROFILE_LOG=info \
 cargo run --release -p akita-pcs --example profile
@@ -1702,26 +1652,9 @@ python3 scripts/profile_bench_report.py run \
   --case onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2:32:4:recursive
 ```
 
-Then build and run the test-support mixed profiles:
-
-```bash
-cargo build --release -p akita-pcs --example profile \
-  --no-default-features --features parallel
-
-python3 scripts/profile_bench_report.py run \
-  --binary ./target/release/examples/profile \
-  --output-dir /tmp/akita-recursive-mixed \
-  --runs 2 --warmups 1 \
-  --case onehot_fp128_mixed_d_multi_group_recursive:32:4:recursive
-
-python3 scripts/profile_bench_report.py run \
-  --binary ./target/release/examples/profile \
-  --output-dir /tmp/akita-recursive-w8r2-mixed \
-  --runs 2 --warmups 1 \
-  --case onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2:32:4:recursive
-```
-
-Extract the comparable phase metrics:
+The archived recursive mixed-D runs are no longer reproducible through
+`akita-pcs --example profile`. Extract comparable phase metrics from archived
+logs with:
 
 ```bash
 rg '\] (setup|commit|prove|verify OK|proof: total)' <log>

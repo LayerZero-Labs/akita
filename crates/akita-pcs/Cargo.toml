@@ -70,9 +70,9 @@ logging-transcript = [
   "akita-transcript/logging-transcript",
   "akita-prover/logging-transcript",
 ]
-# Test/example-only mixed ring-dimension schedule builders (relocated from
+# Integration-test-only mixed ring-dimension schedule builders (relocated from
 # akita-config, which cannot depend on the offline planner without a cycle).
-# Enabled for this crate's own tests/examples via the self dev-dependency below.
+# Enabled for this crate's own integration tests via the self dev-dependency below.
 test-support = [
   "dep:akita-planner",
   "akita-config/test-support",
@@ -97,10 +97,10 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
-# Test/example-only: pull in `akita-config`'s test-support layout helpers
-# (e.g. `test_support::akita_batched_root_layout`). Examples resolve this
-# dev-dependency edge, so do not enable schedule-table features here: Cargo
-# feature unification would link those tables into the profile-ci binary
+# Test-only: pull in `akita-config`'s test-support layout helpers
+# (e.g. `test_support::akita_batched_root_layout`). Do not enable
+# schedule-table features here: Cargo feature unification would link those
+# tables into the profile-ci binary
 # (`--no-default-features --features profile-ci`), failing
 # `scripts/check_profile_ci_linkage.sh`. Tests that need extra tables rely
 # on `default = ["schedules-default"]` or explicit `required-features`.
@@ -109,8 +109,8 @@ akita-config = { version = "0.1.0", path = "../akita-config", default-features =
 ] }
 akita-planner = { version = "0.1.0", path = "../akita-planner" }
 # Self dev-dependency: turns on `test-support` for this crate's own integration
-# tests and examples so `akita_pcs::test_support` (the mixed-D schedule builders)
-# is available without enabling it for production/library builds.
+# tests so `akita_pcs::test_support` (the mixed-D schedule builders) is
+# available without enabling it for production/library builds.
 akita-pcs = { version = "0.1.0", path = ".", features = ["test-support"] }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 rand = "0.8"

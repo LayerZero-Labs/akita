@@ -12,24 +12,26 @@ use akita_field::{
     FromPrimitiveInt, HalvingField, LiftBase, PseudoMersenneField, RandomSampling,
     TranscriptChallenge,
 };
-use akita_pcs::test_support::materialize_schedule_setup_prefix_slots;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
     OpeningFoldKernel, OpeningFoldPlan, RecursiveProveBackend, RootPolyShape, RootProvePoly,
     RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly,
 };
-use akita_prover::{AkitaProverSetup, ComputeBackendSetup, CpuBackend};
+use akita_prover::{
+    commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend, ComputeBackendSetup,
+    CpuBackend,
+};
 use akita_prover::{
     DensePoly, OneHotIndex, OneHotPoly, ProverOpeningData, SelectedProverOpeningData,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    AkitaBatchedProof, AkitaCommitmentHint, BasisMode, CommittedGroup, CommittedGroupBatchProfile,
-    CommittedGroupParams, CommittedGroupProfile, FoldSchedule, FpExtEncoding, GroupBatchStatement,
-    OpeningClaims, OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupClaims,
-    PolynomialGroupLayout, SetupContributionMode,
+    dispatch_for_field, lagrange_weights, reduce_inner_opening_to_ring_element,
+    ring_opening_point_from_field, AkitaBatchedProof, AkitaCommitmentHint, BasisMode,
+    CommittedGroup, CommittedGroupBatchProfile, CommittedGroupParams, CommittedGroupProfile,
+    FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
+    OpeningScheduleSelection, PolynomialGroupClaims, PolynomialGroupLayout, SetupContributionMode,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -75,6 +77,45 @@ fn planned_payload_bytes<Cfg: CommitmentConfig>(
     )
     .and_then(|planned| planned.estimate.estimated_proof_payload_bytes())
     .expect("runtime schedule estimate")
+}
+
+fn materialize_schedule_setup_prefix_slots<F, B>(
+    setup: &mut AkitaProverSetup<F>,
+    backend: &B,
+    prepared: &B::PreparedSetup,
+    schedule: &FoldSchedule,
+) -> Result<(), akita_field::AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
+    B: CommitmentComputeBackend<F>,
+{
+    for slot_id in schedule
+        .recursive_folds
+        .iter()
+        .filter_map(|fold| fold.params.incoming_setup_prefix.as_ref())
+    {
+        if setup.prefix_slots.get(slot_id).is_some() {
+            continue;
+        }
+        let n_prefix = slot_id.n_prefix()?;
+        let slot = dispatch_for_field!(
+            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+            F,
+            slot_id.d_setup(),
+            |D_SETUP| {
+                commit_setup_prefix::<F, D_SETUP, B>(
+                    &setup.expanded,
+                    backend,
+                    prepared,
+                    &slot_id.commitment_params,
+                    n_prefix,
+                    slot_id.natural_len,
+                )
+            }
+        )?;
+        setup.prefix_slots.insert(slot)?;
+    }
+    Ok(())
 }
 
 fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
@@ -1086,47 +1127,6 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
             true,
         ),
     }
-}
-
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-pub(crate) fn run_recursive_multi_group_onehot_mixed<FF, const D: usize, Cfg>(
-    label: &str,
-    pre_num_vars: usize,
-    final_num_vars: usize,
-    final_num_polys: usize,
-) where
-    Cfg: CommitmentConfig<Field = FF>,
-    FF: CanonicalField
-        + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
-        + Valid
-        + AkitaSerialize
-        + 'static,
-    Cfg::ExtField: FrobeniusExtField<FF>
-        + FpExtEncoding<FF>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize
-        + Valid,
-{
-    assert_eq!(
-        profile_setup_contribution_mode(),
-        SetupContributionMode::Recursive,
-        "mixed recursive profile requires AKITA_SETUP_MODE=recursive"
-    );
-    run_recursive_multi_group_onehot_with_proof_cfg::<FF, D, Cfg, Cfg>(
-        label,
-        pre_num_vars,
-        final_num_vars,
-        final_num_polys,
-        SetupContributionMode::Recursive,
-        false,
-    );
 }
 
 fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, ProofCfg>(
