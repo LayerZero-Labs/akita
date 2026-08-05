@@ -78,10 +78,6 @@ impl akita_prover::RootPolyMeta<F> for ContractRootPoly {
     fn num_vars(&self) -> usize {
         self.num_vars
     }
-
-    fn onehot_chunk_size(&self) -> Option<usize> {
-        None
-    }
 }
 
 impl<const DD: usize> RootCommitSource<F, DD> for ContractRootPoly {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::schedule::CommittedGroupProfile;
 use crate::WitnessLayout;
 
 #[test]
@@ -6,8 +7,14 @@ fn multi_group_m_row_count_matches_canonical_layout() {
     let (lp, _) = sample_multi_group_root_params();
     let n_a_final = lp.inner_commit_matrix.output_rank();
     let n_b_final = lp.outer_commit_matrix.output_rank();
-    let n_a_pre = lp.precommitted_groups[0].inner_commit_matrix.output_rank();
-    let n_b_pre = lp.precommitted_groups[0].outer_commit_matrix.output_rank();
+    let n_a_pre = lp.precommitted_groups[0]
+        .layout
+        .inner_commit_matrix
+        .output_rank();
+    let n_b_pre = lp.precommitted_groups[0]
+        .layout
+        .outer_commit_matrix
+        .output_rank();
     let n_d = lp.open_commit_matrix.output_rank();
 
     assert_eq!(
@@ -21,8 +28,14 @@ fn multi_group_row_offsets_match_a_before_b_layout() {
     let (lp, batch) = sample_multi_group_root_params();
     let n_a_final = lp.inner_commit_matrix.output_rank();
     let n_b_final = lp.outer_commit_matrix.output_rank();
-    let n_a_pre = lp.precommitted_groups[0].inner_commit_matrix.output_rank();
-    let n_b_pre = lp.precommitted_groups[0].outer_commit_matrix.output_rank();
+    let n_a_pre = lp.precommitted_groups[0]
+        .layout
+        .inner_commit_matrix
+        .output_rank();
+    let n_b_pre = lp.precommitted_groups[0]
+        .layout
+        .outer_commit_matrix
+        .output_rank();
     let final_group = batch.root_final_group_index().expect("final group");
 
     assert_eq!(
@@ -63,8 +76,8 @@ fn multi_group_root_accepts_multi_chunk_witness_layout() {
 fn group_role_dims_use_group_a_b_and_level_shared_d() {
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
-    let outer = &precommitted.outer_commit_matrix;
-    precommitted.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &precommitted.layout.outer_commit_matrix;
+    precommitted.layout.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -73,7 +86,6 @@ fn group_role_dims_use_group_a_b_and_level_shared_d() {
         outer.coeff_linf_bound(),
         32,
     );
-    precommitted.layout.outer_ring_dimension = 32;
     let dims = lp
         .group_role_dims(&batch, 0)
         .expect("precommitted group role dimensions");
@@ -97,7 +109,11 @@ fn group_role_dims_use_group_a_b_and_level_shared_d() {
 fn precommitted_params_reject_frozen_matrix_dimension_mismatch() {
     let (mut lp, _) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
-    precommitted.layout.outer_ring_dimension /= 2;
+    precommitted
+        .layout
+        .outer_commit_matrix
+        .sis_table_key
+        .ring_dimension /= 2;
     let err = precommitted
         .validate()
         .expect_err("frozen B dimension must match the serialized B matrix");
@@ -110,8 +126,8 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
 
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
-    let inner = &precommitted.inner_commit_matrix;
-    precommitted.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+    let inner = &precommitted.layout.inner_commit_matrix;
+    precommitted.layout.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner.sis_table_key().table_digest,
         inner.sis_modulus_profile(),
@@ -120,9 +136,8 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         inner.coeff_linf_bound(),
         128,
     );
-    precommitted.layout.inner_ring_dimension = 128;
-    let outer = &precommitted.outer_commit_matrix;
-    precommitted.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &precommitted.layout.outer_commit_matrix;
+    precommitted.layout.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -213,8 +228,6 @@ fn address_oracle_precommit(
     blocks: usize,
     claims: usize,
 ) -> PrecommittedLevelParams {
-    use crate::schedule::PrecommittedGroupDescriptor;
-
     let mut lp = address_oracle_group_params(d_a, d_b, d_d, blocks);
     certify_test_sis_bounds(&mut lp);
     let outer = &lp.outer_commit_matrix;
@@ -227,18 +240,13 @@ fn address_oracle_precommit(
         outer.coeff_linf_bound(),
         d_b,
     );
-    let layout =
-        PrecommittedGroupDescriptor::from_params(PolynomialGroupLayout::new(4, claims), &lp);
+    let layout = CommittedGroupProfile::from_params(PolynomialGroupLayout::new(4, claims), &lp);
     PrecommittedLevelParams {
         layout,
-        inner_commit_matrix: lp.inner_commit_matrix,
-        outer_commit_matrix: lp.outer_commit_matrix,
         log_basis_open: lp.log_basis_open,
         fold_challenge_config: lp.fold_challenge_config,
-        num_digits_inner: lp.num_digits_inner,
-        num_digits_outer: lp.num_digits_outer,
         num_digits_open: lp.num_digits_open,
-        num_digits_fold_one: lp.num_digits_fold_one,
+        num_digits_fold: lp.num_digits_fold,
     }
 }
 
@@ -319,9 +327,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     let q_b = d_a / d_b;
                     let q_d = d_a / d_d;
                     let delta_z = params.num_digits_inner();
-                    let delta_f = lp
-                        .num_digits_fold_for_params(params, claims, lp.field_bits_for_cache())
-                        .expect("fold depth");
+                    let delta_f = params.num_digits_fold();
                     let delta_d = params.num_digits_open();
                     let delta_b = params.num_digits_outer();
                     let n_a = params.a_rows_len();

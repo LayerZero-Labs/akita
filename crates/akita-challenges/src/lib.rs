@@ -23,7 +23,6 @@
 mod challenge;
 mod config;
 mod fold_draw;
-mod grind_probe;
 mod sampler;
 mod tensor;
 
@@ -34,7 +33,6 @@ pub use config::{
     MIN_FOLD_CHALLENGE_ENTROPY_BITS, PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
 pub use fold_draw::{fold_challenge_sample_label, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
-pub use grind_probe::grind_probe_permutation;
 pub use sampler::sample_sparse_challenges;
 pub use tensor::{
     fold_high_digest, fold_sparse_challenge_sample_count, witness_fold_challenge_labels,

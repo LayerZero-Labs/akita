@@ -2,7 +2,7 @@
 //!
 //! Relocated from `akita-config`: after the runtime-resolution move (#327),
 //! `akita-planner` depends on `akita-config`, so `akita-config` can no longer
-//! depend on the offline planner ([`akita_planner::test_support::plan_optimal_suffix`])
+//! depend on the offline planner ([`akita_planner::plan_optimal_suffix`])
 //! without a dependency cycle. These builders live here (a crate above both)
 //! and are gated behind the `test-support` Cargo feature, which production
 //! builds never enable.
@@ -11,7 +11,7 @@
 //! `ring_plan_test_seed`) remain in [`akita_config::test_support`].
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_config::{policy_of, CommitmentConfig, PrecommittedCommitmentConfig};
+use akita_config::{committed_group_profile, policy_of, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::sis::{
     compute_num_digits_field_width, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -19,12 +19,12 @@ use akita_types::sis::{
     OpenCommitMatrixParams, OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{
-    active_setup_field_len, padded_setup_prefix_len, setup_prefix_slot_id, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams,
-    DecompositionParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
-    RecursiveFoldParams, RecursiveFoldStep, RootFoldStep, RootSource, SetupMatrixEnvelope,
-    SisMatrixRole, SisModulusProfileId, SisTableDigest, TerminalFoldParams, TerminalFoldStep,
-    WitnessLayout, WitnessPartition,
+    active_setup_field_len, padded_setup_prefix_len, schedule_row_digest, setup_prefix_slot_id,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims,
+    CommittedGroupBatchProfile, CommittedGroupParams, DecompositionParams, FoldSchedule,
+    OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout, RecursiveFoldParams,
+    RecursiveFoldStep, RootFoldStep, SetupMatrixEnvelope, SisMatrixRole, SisModulusProfileId,
+    SisTableDigest, TerminalFoldParams, TerminalFoldStep, WitnessLayout, WitnessPartition,
 };
 use std::{
     any::TypeId,
@@ -85,6 +85,80 @@ fn cached_synthetic_schedule(
     Ok(schedule)
 }
 
+#[derive(Clone)]
+struct SyntheticResolvedRow {
+    config: TypeId,
+    row: akita_config::ResolvedScheduleRow,
+}
+
+fn synthetic_resolved_rows() -> &'static Mutex<Vec<SyntheticResolvedRow>> {
+    static ROWS: OnceLock<Mutex<Vec<SyntheticResolvedRow>>> = OnceLock::new();
+    ROWS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn select_synthetic_schedule_row<C>(
+    profiles: &CommittedGroupBatchProfile,
+    key: AkitaScheduleLookupKey,
+) -> Result<akita_config::ResolvedScheduleRow, AkitaError>
+where
+    C: CommitmentConfig + 'static,
+{
+    let schedule = C::runtime_schedule(key)?;
+    let row_digest = schedule_row_digest(profiles, &schedule)?;
+    let selection = OpeningScheduleSelection { row_digest };
+    let row = akita_config::ResolvedScheduleRow::try_new(
+        selection,
+        profiles.clone(),
+        schedule,
+        &akita_config::policy_of::<C>(),
+    )?;
+    let mut rows = synthetic_resolved_rows()
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("synthetic row cache is poisoned".into()))?;
+    if let Some(existing) = rows.iter_mut().find(|existing| {
+        existing.config == TypeId::of::<C>() && existing.row.selection() == selection
+    }) {
+        existing.row = row.clone();
+        return Ok(row);
+    }
+    if rows.len() >= 1024 {
+        return Err(AkitaError::InvalidSetup(
+            "synthetic row cache capacity exceeded".into(),
+        ));
+    }
+    rows.push(SyntheticResolvedRow {
+        config: TypeId::of::<C>(),
+        row: row.clone(),
+    });
+    Ok(row)
+}
+
+fn resolve_synthetic_schedule_row<C>(
+    selection: OpeningScheduleSelection,
+) -> Result<akita_config::ResolvedScheduleRow, AkitaError>
+where
+    C: CommitmentConfig + 'static,
+{
+    synthetic_resolved_rows()
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("synthetic row cache is poisoned".into()))?
+        .iter()
+        .find(|entry| entry.config == TypeId::of::<C>() && entry.row.selection() == selection)
+        .map(|entry| entry.row.clone())
+        .ok_or_else(|| {
+            AkitaError::UnsupportedSchedule(
+                "synthetic schedule selection is not present in the test catalog".into(),
+            )
+        })
+}
+
+fn synthetic_schedule_key(profiles: &CommittedGroupBatchProfile) -> AkitaScheduleLookupKey {
+    AkitaScheduleLookupKey {
+        final_group: profiles.final_group.group,
+        precommitteds: profiles.precommitteds.clone(),
+    }
+}
+
 // -------------------------------------------------------------------------
 // Multi-group native-dimension fixture: precommitted groups use the envelope config,
 // while the final group and recursive suffix use a smaller native config.
@@ -93,10 +167,9 @@ fn cached_synthetic_schedule(
 /// Test config for a multi-group root whose precommitted groups use
 /// `Envelope::D` while the final group and recursive suffix use `Final::D`.
 ///
-/// `Self::D` remains the setup-generation envelope. Runtime schedules are
-/// selected by `Final`, but [`Self::get_params_for_prove`] freezes preceding
-/// groups through `PrecommittedCommitmentConfig<Self>`, so their native
-/// dimensions are retained in the grouped schedule.
+/// `Self::D` remains the setup-generation envelope. Exact grouped runtime keys
+/// select schedules under `Final`, retaining each preceding group's frozen
+/// native descriptor.
 #[derive(Debug)]
 pub struct EnvelopeFinalGroupConfig<Envelope, Final>(PhantomData<fn() -> (Envelope, Final)>);
 
@@ -116,8 +189,8 @@ impl<Envelope, Final> Default for EnvelopeFinalGroupConfig<Envelope, Final> {
 
 impl<Envelope, Final> CommitmentConfig for EnvelopeFinalGroupConfig<Envelope, Final>
 where
-    Envelope: CommitmentConfig,
-    Final: CommitmentConfig<Field = Envelope::Field, ExtField = Envelope::ExtField>,
+    Envelope: CommitmentConfig + 'static,
+    Final: CommitmentConfig<Field = Envelope::Field, ExtField = Envelope::ExtField> + 'static,
 {
     type Field = Envelope::Field;
     type ExtField = Envelope::ExtField;
@@ -166,8 +239,8 @@ where
         Envelope::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Envelope::onehot_chunk_size().min(Final::onehot_chunk_size())
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Envelope::root_honest_fold_policy()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -193,8 +266,12 @@ where
                         as fn(AkitaScheduleInputs) -> TensorChallengeShape,
                 )
             };
-        akita_planner::find_schedule(
+        let precommitted_honest_fold_policies =
+            vec![Envelope::root_honest_fold_policy(); key.precommitteds.len()];
+        akita_planner::find_group_batch_schedule(
             &key,
+            Envelope::root_honest_fold_policy(),
+            &precommitted_honest_fold_policies,
             &policy,
             ring_challenge_config,
             fold_challenge_shape_at_level,
@@ -202,29 +279,30 @@ where
         .map(|planned| planned.schedule)
     }
 
+    fn select_schedule_for_profiles(
+        profiles: &CommittedGroupBatchProfile,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
+    }
+
+    fn resolve_schedule_selection(
+        selection: OpeningScheduleSelection,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        resolve_synthetic_schedule_row::<Self>(selection)
+    }
+
     fn get_params_for_prove(
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<FoldSchedule, AkitaError> {
         opening_batch.check()?;
-        let final_group = opening_batch.root_final_group_layout()?;
-        let precommitteds = opening_batch
-            .root_precommitted_group_layouts()?
-            .iter()
-            .copied()
-            .map(|group| {
-                let singleton =
-                    OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
-                let params = <PrecommittedCommitmentConfig<Self> as CommitmentConfig>::
-                    get_params_for_batched_commitment(&singleton)?;
-                Ok(akita_types::PrecommittedGroupDescriptor::from_params(
-                    group, &params,
-                ))
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-        Self::runtime_schedule(AkitaScheduleLookupKey {
-            final_group,
-            precommitteds,
-        })
+        if opening_batch.num_groups() != 1 {
+            return Err(AkitaError::InvalidInput(
+                "grouped schedule selection requires exact committed-group descriptors".into(),
+            ));
+        }
+        Self::runtime_schedule(AkitaScheduleLookupKey::single(
+            opening_batch.root_final_group_layout()?,
+        ))
     }
 }
 
@@ -243,7 +321,7 @@ where
 /// Fold levels `[0, switch_at_fold)` keep the `EnvelopeCfg` schedule prefix
 /// (its root, and any recursive levels before the switch), at the envelope's
 /// ring dimension. From `switch_at_fold` onward the schedule is a
-/// **proof-size-optimal** continuation planned by [`akita_planner::test_support::plan_optimal_suffix`]
+/// **proof-size-optimal** continuation planned by [`akita_planner::plan_optimal_suffix`]
 /// at `SuffixCfg`'s ring dimension, starting from the envelope prefix's output
 /// witness — not the envelope's own (differently sized) suffix repriced in
 /// place. This is what lets a large-ring-dimension root fold hand off to a
@@ -284,13 +362,18 @@ where
                     "mixed-D fixture requires a singleton and a non-root switch".into(),
                 ));
             }
+            let envelope_policy = policy_of::<EnvelopeCfg>();
+            let envelope_domain =
+                akita_planner::RingDimensionSearchDomain::uniform(envelope_policy.ring_dimension)?;
             let envelope_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
                 num_vars,
                 num_polynomials,
             ));
             let envelope = akita_planner::find_schedule(
-                &envelope_key,
-                &policy_of::<EnvelopeCfg>(),
+                envelope_key.final_group,
+                &envelope_policy,
+                EnvelopeCfg::root_honest_fold_policy(),
+                &envelope_domain,
                 EnvelopeCfg::ring_challenge_config,
                 EnvelopeCfg::fold_challenge_shape_at_level,
             )?
@@ -313,7 +396,7 @@ where
             };
 
             // Optimal small-ring-dimension continuation from the prefix output.
-            let suffix = akita_planner::test_support::plan_optimal_suffix(
+            let suffix = akita_planner::plan_optimal_suffix(
                 &policy_of::<SuffixCfg>(),
                 SuffixCfg::ring_challenge_config,
                 SuffixCfg::fold_challenge_shape_at_level,
@@ -327,7 +410,7 @@ where
             for fold in &suffix.folds {
                 recursive_folds.push(RecursiveFoldStep {
                     params: RecursiveFoldParams {
-                        open_commit_matrix: fold.params.open_commit_matrix.clone(),
+                        open_commit_matrix: fold.params.open_commit_matrix,
                         sparse_challenge_config: fold.params.fold_challenge_config,
                         witness: fold.params.clone(),
                         incoming_setup_prefix: None,
@@ -392,8 +475,8 @@ impl<Env, Suffix, const SWITCH_AT_FOLD: usize> Default
 impl<Env, Suffix, const SWITCH_AT_FOLD: usize> CommitmentConfig
     for MixedDConfig<Env, Suffix, SWITCH_AT_FOLD>
 where
-    Env: CommitmentConfig,
-    Suffix: CommitmentConfig<Field = Env::Field, ExtField = Env::ExtField>,
+    Env: CommitmentConfig + 'static,
+    Suffix: CommitmentConfig<Field = Env::Field, ExtField = Env::ExtField> + 'static,
 {
     type Field = Env::Field;
     type ExtField = Env::ExtField;
@@ -441,8 +524,8 @@ where
         Env::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Env::onehot_chunk_size()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Env::root_honest_fold_policy()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -455,6 +538,18 @@ where
             key.final_group.num_polynomials(),
             SWITCH_AT_FOLD,
         )
+    }
+
+    fn select_schedule_for_profiles(
+        profiles: &CommittedGroupBatchProfile,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
+    }
+
+    fn resolve_schedule_selection(
+        selection: OpeningScheduleSelection,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        resolve_synthetic_schedule_row::<Self>(selection)
     }
 
     fn get_params_for_prove(
@@ -501,13 +596,18 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
             lookup_key: None,
         },
         || {
+            let root_policy = policy_of::<Env>();
+            let root_domain =
+                akita_planner::RingDimensionSearchDomain::uniform(root_policy.ring_dimension)?;
             let root_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
                 num_vars,
                 num_polynomials,
             ));
             let mut root = akita_planner::find_schedule(
-                &root_key,
-                &policy_of::<Env>(),
+                root_key.final_group,
+                &root_policy,
+                Env::root_honest_fold_policy(),
+                &root_domain,
                 Env::ring_challenge_config,
                 Env::fold_challenge_shape_at_level,
             )?
@@ -519,12 +619,7 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
                 b_ring_dim,
                 d_ring_dim,
             )?;
-            root.params.open_commit_matrix = root
-                .params
-                .final_group
-                .commitment
-                .open_commit_matrix
-                .clone();
+            root.params.open_commit_matrix = root.params.final_group.commitment.open_commit_matrix;
 
             let field_bits = Env::decomposition().field_bits();
             let opening_layout = OpeningClaimsLayout::new(num_vars, num_polynomials)?;
@@ -534,7 +629,7 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
                 &opening_layout,
             )?;
             root.output_witness_len = root_out;
-            let suffix = akita_planner::test_support::plan_optimal_suffix(
+            let suffix = akita_planner::plan_optimal_suffix(
                 &policy_of::<Env>(),
                 Env::ring_challenge_config,
                 Env::fold_challenge_shape_at_level,
@@ -684,8 +779,8 @@ impl<Env, Suffix, const MID_BD_RING_DIM: usize, const ROOT_D_RING_DIM: usize> De
 impl<Env, Suffix, const MID_BD_RING_DIM: usize, const ROOT_D_RING_DIM: usize> CommitmentConfig
     for RingDimensionTransitionConfig<Env, Suffix, MID_BD_RING_DIM, ROOT_D_RING_DIM>
 where
-    Env: CommitmentConfig,
-    Suffix: CommitmentConfig<Field = Env::Field, ExtField = Env::ExtField>,
+    Env: CommitmentConfig + 'static,
+    Suffix: CommitmentConfig<Field = Env::Field, ExtField = Env::ExtField> + 'static,
 {
     type Field = Env::Field;
     type ExtField = Env::ExtField;
@@ -742,8 +837,8 @@ where
         Env::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Env::onehot_chunk_size()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Env::root_honest_fold_policy()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -765,6 +860,18 @@ where
                 opening: MID_BD_RING_DIM,
             },
         )
+    }
+
+    fn select_schedule_for_profiles(
+        profiles: &CommittedGroupBatchProfile,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
+    }
+
+    fn resolve_schedule_selection(
+        selection: OpeningScheduleSelection,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        resolve_synthetic_schedule_row::<Self>(selection)
     }
 
     fn get_params_for_prove(
@@ -789,7 +896,7 @@ where
 
 /// Convert one planned suffix fold into its wire schedule representation
 /// (mirrors the `mixed_d_per_level_schedule` conversion).
-fn planned_fold_step(fold: &akita_planner::test_support::PlannedSuffixFold) -> RecursiveFoldStep {
+fn planned_fold_step(fold: &akita_planner::PlannedSuffixFold) -> RecursiveFoldStep {
     let witness_partition = if fold.params.witness_chunk.num_chunks == 1 {
         WitnessPartition::Single
     } else {
@@ -799,7 +906,7 @@ fn planned_fold_step(fold: &akita_planner::test_support::PlannedSuffixFold) -> R
     };
     RecursiveFoldStep {
         params: RecursiveFoldParams {
-            open_commit_matrix: fold.params.open_commit_matrix.clone(),
+            open_commit_matrix: fold.params.open_commit_matrix,
             sparse_challenge_config: fold.params.fold_challenge_config,
             witness: fold.params.clone(),
             incoming_setup_prefix: None,
@@ -813,7 +920,7 @@ fn planned_fold_step(fold: &akita_planner::test_support::PlannedSuffixFold) -> R
 fn finish_schedule(
     root: RootFoldStep,
     mut recursive_folds: Vec<RecursiveFoldStep>,
-    suffix: akita_planner::test_support::PlannedSuffix,
+    suffix: akita_planner::PlannedSuffix,
     opening_layout: &OpeningClaimsLayout,
 ) -> Result<FoldSchedule, AkitaError> {
     recursive_folds.extend(suffix.folds.iter().map(planned_fold_step));
@@ -864,9 +971,9 @@ pub fn ring_dimension_transition_schedule<Root, Mid, Suffix>(
     middle_dims: CommitmentRingDims,
 ) -> Result<FoldSchedule, AkitaError>
 where
-    Root: CommitmentConfig,
-    Mid: CommitmentConfig<Field = Root::Field, ExtField = Root::ExtField>,
-    Suffix: CommitmentConfig<Field = Root::Field, ExtField = Root::ExtField>,
+    Root: CommitmentConfig + 'static,
+    Mid: CommitmentConfig<Field = Root::Field, ExtField = Root::ExtField> + 'static,
+    Suffix: CommitmentConfig<Field = Root::Field, ExtField = Root::ExtField> + 'static,
 {
     cached_synthetic_schedule(
         SyntheticScheduleCacheKey {
@@ -912,13 +1019,16 @@ where
                 root_policy.ring_dimension_candidates = D256_PLANNER_CANDIDATES;
             }
             root_policy.ring_dimension = planned_root_d;
+            let root_domain = akita_planner::RingDimensionSearchDomain::uniform(planned_root_d)?;
             let root_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
                 num_vars,
                 num_polynomials,
             ));
             let mut root = akita_planner::find_schedule(
-                &root_key,
+                root_key.final_group,
                 &root_policy,
+                Root::root_honest_fold_policy(),
+                &root_domain,
                 Root::ring_challenge_config,
                 Root::fold_challenge_shape_at_level,
             )?
@@ -956,25 +1066,32 @@ where
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("D512 A matrix width overflow".into())
                     })?;
-                let decomposition = DecompositionParams {
-                    log_basis: commitment.log_basis_inner,
-                    ..Root::decomposition()
-                };
+                let num_fold_coeffs = inner_width.checked_mul(Root::D).ok_or_else(|| {
+                    AkitaError::InvalidSetup("D512 fold coefficient count overflow".into())
+                })?;
+                commitment.num_digits_fold = akita_types::sis::HonestFoldPolicy::num_digits_fold(
+                    &Root::root_honest_fold_policy(),
+                    akita_types::sis::HonestFoldSizingQuery {
+                        ring_dimension: Root::D,
+                        num_claims: num_polynomials,
+                        num_live_blocks: commitment.num_live_blocks,
+                        num_chunks: 1,
+                        num_fold_coeffs,
+                        log_basis: commitment.log_basis_open,
+                        challenge_config: &ring_challenge,
+                        challenge_shape: commitment.fold_challenge_shape,
+                    },
+                )?;
                 let norm = rounded_up_role_a_inf_norm(
                     root_policy.sis_security_policy,
                     SisTableDigest::Q128_INNER_D512,
                     Root::sis_modulus_profile(),
                     Root::D,
-                    decomposition,
                     commitment.log_basis_open,
                     &ring_challenge,
                     commitment.fold_challenge_shape,
-                    true,
-                    Root::onehot_chunk_size(),
+                    commitment.num_digits_fold,
                     Root::ring_subfield_embedding_norm_bound(),
-                    commitment.num_live_blocks,
-                    num_polynomials,
-                    inner_width as u64,
                 )
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup(
@@ -992,7 +1109,6 @@ where
                     },
                     inner_width,
                 )?;
-                commitment = commitment.with_fold_linf_cap_config(field_bits, num_polynomials)?;
                 root.params.final_group.commitment = commitment;
                 root.params.sparse_challenge_config = ring_challenge;
             }
@@ -1005,12 +1121,7 @@ where
                 root_dims.d_b(),
                 root_dims.d_d(),
             )?;
-            root.params.open_commit_matrix = root
-                .params
-                .final_group
-                .commitment
-                .open_commit_matrix
-                .clone();
+            root.params.open_commit_matrix = root.params.final_group.commitment.open_commit_matrix;
             let root_out = outgoing_witness_field_len(
                 field_bits,
                 &root.params.final_group.commitment,
@@ -1021,7 +1132,7 @@ where
 
             // Band 2 (`Mid`): plan an optimal `Mid`-dim continuation from the root
             // output and keep only its first fold as L1.
-            let mid = akita_planner::test_support::plan_optimal_suffix(
+            let mid = akita_planner::plan_optimal_suffix(
                 &policy_of::<Mid>(),
                 Mid::ring_challenge_config,
                 Mid::fold_challenge_shape_at_level,
@@ -1044,7 +1155,7 @@ where
                 middle_dims.d_b(),
                 middle_dims.d_d(),
             )?;
-            l1_step.params.open_commit_matrix = l1_step.params.witness.open_commit_matrix.clone();
+            l1_step.params.open_commit_matrix = l1_step.params.witness.open_commit_matrix;
             let l1_out = outgoing_witness_field_len(
                 field_bits,
                 &l1_step.params.witness,
@@ -1054,7 +1165,7 @@ where
             let l1_lb = l1_step.params.witness.log_basis_open;
 
             // Band 3 (`Suffix`): optimal small-ring continuation from L1's output.
-            let suffix = akita_planner::test_support::plan_optimal_suffix(
+            let suffix = akita_planner::plan_optimal_suffix(
                 &policy_of::<Suffix>(),
                 Suffix::ring_challenge_config,
                 Suffix::fold_challenge_shape_at_level,
@@ -1114,9 +1225,9 @@ impl<Root, Mid, Suffix, const ROOT_BD_RING_DIM: usize, const L1_BD_RING_DIM: usi
 impl<Root, Mid, Suffix, const ROOT_BD_RING_DIM: usize, const L1_BD_RING_DIM: usize> CommitmentConfig
     for ThreeBandRingDimensionTransitionConfig<Root, Mid, Suffix, ROOT_BD_RING_DIM, L1_BD_RING_DIM>
 where
-    Root: CommitmentConfig,
-    Mid: CommitmentConfig<Field = Root::Field, ExtField = Root::ExtField>,
-    Suffix: CommitmentConfig<Field = Root::Field, ExtField = Root::ExtField>,
+    Root: CommitmentConfig + 'static,
+    Mid: CommitmentConfig<Field = Root::Field, ExtField = Root::ExtField> + 'static,
+    Suffix: CommitmentConfig<Field = Root::Field, ExtField = Root::ExtField> + 'static,
 {
     type Field = Root::Field;
     type ExtField = Root::ExtField;
@@ -1173,8 +1284,8 @@ where
         Root::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Root::onehot_chunk_size()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Root::root_honest_fold_policy()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -1196,6 +1307,18 @@ where
                 opening: L1_BD_RING_DIM,
             },
         )
+    }
+
+    fn select_schedule_for_profiles(
+        profiles: &CommittedGroupBatchProfile,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
+    }
+
+    fn resolve_schedule_selection(
+        selection: OpeningScheduleSelection,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        resolve_synthetic_schedule_row::<Self>(selection)
     }
 
     fn get_params_for_prove(
@@ -1250,12 +1373,17 @@ impl<Env, const B_RING_DIM: usize, const D_RING_DIM: usize> Default
 impl<Env, const B_RING_DIM: usize, const D_RING_DIM: usize> CommitmentConfig
     for PerMatrixRingDimsRootConfig<Env, B_RING_DIM, D_RING_DIM>
 where
-    Env: CommitmentConfig,
+    Env: CommitmentConfig + 'static,
 {
     type Field = Env::Field;
     type ExtField = Env::ExtField;
 
     const D: usize = Env::D;
+    const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] = &[CommitmentRingDims {
+        inner: Env::D,
+        outer: B_RING_DIM,
+        opening: D_RING_DIM,
+    }];
 
     fn decomposition() -> DecompositionParams {
         Env::decomposition()
@@ -1302,8 +1430,8 @@ where
         Env::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Env::onehot_chunk_size()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Env::root_honest_fold_policy()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -1317,6 +1445,18 @@ where
             B_RING_DIM,
             D_RING_DIM,
         )
+    }
+
+    fn select_schedule_for_profiles(
+        profiles: &CommittedGroupBatchProfile,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
+    }
+
+    fn resolve_schedule_selection(
+        selection: OpeningScheduleSelection,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        resolve_synthetic_schedule_row::<Self>(selection)
     }
 
     fn get_params_for_prove(

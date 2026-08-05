@@ -81,17 +81,17 @@ where
     let recomposed_inner_rows = backend.dense_commit_rows(
         prepared,
         DenseCommitRowsPlan {
-            n_a: level_params.inner_commit_matrix.output_rank(),
+            n_a: level_params.layout.inner_commit_matrix.output_rank(),
             input: DenseCommitInput::CoeffBlocks {
                 block_slices,
-                num_digits_inner: level_params.num_digits_inner,
+                num_digits_inner: level_params.layout.num_digits_inner,
                 log_basis_inner: level_params.layout.log_basis_inner,
             },
         },
     )?;
 
-    let n_b = level_params.outer_commit_matrix.output_rank();
-    let d_b = level_params.outer_commit_matrix.ring_dimension();
+    let n_b = level_params.layout.outer_commit_matrix.output_rank();
+    let d_b = level_params.layout.outer_commit_matrix.ring_dimension();
     let commitment_rows =
         dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Outer), F, d_b, |D_B| {
             let blocks = recomposed_inner_rows
@@ -100,7 +100,7 @@ where
                 .collect::<Vec<_>>();
             let decomposed_inner_rows = decompose_commit_blocks_into::<F, D, D_B>(
                 &blocks,
-                level_params.num_digits_outer,
+                level_params.layout.num_digits_outer,
                 level_params.layout.log_basis_outer,
             )?;
             validate_commit_outer_input_nonempty(decomposed_inner_rows.total_planes())?;
@@ -382,8 +382,8 @@ mod tests {
         let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
         let mut prefix_params =
             setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
-        let outer = &prefix_params.outer_commit_matrix;
-        prefix_params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        let outer = &prefix_params.layout.outer_commit_matrix;
+        prefix_params.layout.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),
@@ -392,7 +392,6 @@ mod tests {
             outer.coeff_linf_bound(),
             32,
         );
-        prefix_params.layout.outer_ring_dimension = 32;
 
         let setup = test_setup::<64>(&level_params, n_prefix);
         let backend = CpuBackend;
@@ -413,7 +412,7 @@ mod tests {
 
         assert_eq!(
             slot.commitment.rows[0].coeff_len(),
-            prefix_params.outer_commit_matrix.output_rank() * 32
+            prefix_params.layout.outer_commit_matrix.output_rank() * 32
         );
     }
 }

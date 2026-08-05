@@ -6,7 +6,7 @@ use akita_field::{AkitaError, Prime128OffsetA7F7 as F};
 use akita_types::{
     validate_role_dims, validate_role_dispatch, validate_schedule_ring_dims, AkitaSetupSeed,
     CommitmentRingDims, CommittedGroupParams, FoldSchedule, RingRole, RingView, RootFinalChallenge,
-    RootFinalGroupParams, RootFoldParams, RootFoldStep, RootSource, SisModulusProfileId,
+    RootFinalGroupParams, RootFoldParams, RootFoldStep, SisModulusProfileId,
     TailSegmentGroupLayout, TailSegmentLayout, TerminalCommittedGroupParams, TerminalFoldParams,
     TerminalFoldStep, TerminalResponseShape, WitnessPartition,
 };
@@ -67,14 +67,11 @@ fn typed_schedule_rejects_root_dimension_above_setup_dimension() {
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: RootSource::Dense {
-                        coefficient_bits: 128,
-                    },
                     challenge: RootFinalChallenge::Flat,
                     commitment: root.clone(),
                 },
                 precommitted_groups: Vec::new(),
-                open_commit_matrix: root.open_commit_matrix.clone(),
+                open_commit_matrix: root.open_commit_matrix,
                 sparse_challenge_config: root.fold_challenge_config,
                 witness_partition: WitnessPartition::Single,
             },
@@ -95,6 +92,7 @@ fn typed_schedule_rejects_root_dimension_above_setup_dimension() {
                             z_coords: 64,
                             e_field_elems: 64,
                             t_field_elems: 64,
+                            z_admission_linf_cap: 1,
                             z_payload_bytes: 1,
                             z_rice_low_bits: 0,
                         }],

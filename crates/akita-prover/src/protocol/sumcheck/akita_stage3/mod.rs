@@ -321,11 +321,7 @@ where
         groups.push(SetupContributionGroupInputs {
             group_id: group_index,
             num_claims,
-            depth_fold: lp.num_digits_fold_for_params(
-                group_lp,
-                num_claims,
-                lp.field_bits_for_cache(),
-            )?,
+            depth_fold: group_lp.num_digits_fold(),
             a_row_start: a_range.start,
             b_row_start: b_range.start,
         });

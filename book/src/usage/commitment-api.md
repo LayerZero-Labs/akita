@@ -25,10 +25,27 @@ commitment, point coordinates, and evaluations in that order.
 `OpeningClaimsLayout` contains only group arities and polynomial counts, so
 setup and schedule selection do not depend on point values.
 
-On the prover side, `ProverOpeningData::new` receives the same claims together
-with commitment hints and polynomial slices in matching group order.
-The verifier receives only `OpeningClaims` and the proof.
-There is no ambient shared point or coordinate-routing object.
+On the prover side, `ProverOpeningData` privately binds each commitment hint to
+one `PreparedProverGroup<P>` in the same protocol-visible order as the public
+claims. `SelectedProverOpeningData` pairs that material with the one exact
+`OpeningScheduleSelection` returned by the final commit. Akita treats the
+concrete polynomial representation as a caller contract: callers must supply
+groups with the arity and shape claimed by the public statement. Bad prover
+material is a completeness failure, not a verifier soundness input.
+
+Applications that need dense and one-hot polynomials in one opening use one
+application-owned enum as `P`. Akita does not add provider registrations or
+recursive heterogeneous wrappers. The verifier receives a
+`GroupBatchStatement` containing only the exact generated-row selection and
+self-describing public claims.
+
+`commit_group` takes a raw polynomial group. `commit_final_group` takes the
+exact ordered precommitted profiles and atomically returns the final
+`CommittedGroup`, its hint, and the `OpeningScheduleSelection` that must be used
+for proving and verification.
+
+There is no ambient shared point, global polynomial type for the batch, or
+coordinate-routing object.
 
 **Sources to fold in**
 
@@ -36,7 +53,10 @@ There is no ambient shared point or coordinate-routing object.
 - `crates/akita-prover/src/api/scheme.rs` (`CommitmentProver`).
 - `crates/akita-types/src/proof/scheme.rs` (`CommitmentVerifier`).
 - `crates/akita-types/src/opening_claims.rs` (`OpeningClaims`, `OpeningClaimsLayout`).
-- `crates/akita-prover/src/types/opening_data.rs` (`ProverOpeningData`).
+- `crates/akita-prover/src/types/opening_data.rs` (`ProverOpeningData`,
+  `SelectedProverOpeningData`).
+- `crates/akita-prover/src/api/prepared_group.rs` (coarse prepared group
+  carrier).
 - `crates/akita-pcs/tests/single_poly_e2e.rs`, `batched_aggregated_e2e.rs`.
 
 ## Setup and caching

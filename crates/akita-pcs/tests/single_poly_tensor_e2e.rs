@@ -14,8 +14,8 @@ use akita_types::AkitaBatchedProof;
 use common::*;
 
 const TENSOR_D: usize = D64OneHotTensor::D;
-const TENSOR_K: usize = TENSOR_D;
 
+#[cfg(feature = "profile-ci")]
 fn run_single_onehot_tensor(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
@@ -23,19 +23,23 @@ fn run_single_onehot_tensor(nv: usize) {
             &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
+        let tensor_k = 256;
         let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
-        assert_eq!(total_ring * TENSOR_K, 1usize << nv);
-        assert_eq!(
-            layout.fold_challenge_shape,
-            akita_challenges::TensorChallengeShape::Tensor { fold_low_len: 2 },
+        assert_eq!(total_ring * TENSOR_D, 1usize << nv);
+        let num_onehot_chunks = (1usize << nv) / tensor_k;
+        assert!(
+            matches!(
+                layout.fold_challenge_shape,
+                akita_challenges::TensorChallengeShape::Tensor { .. }
+            ),
             "D64OneHotTensor must emit a tensor-shaped root fold"
         );
 
         let mut rng = StdRng::seed_from_u64(0xfeed_d00d_0000 + nv as u64);
-        let indices: Vec<Option<u8>> = (0..total_ring)
-            .map(|_| Some(rng.gen_range(0..TENSOR_K) as u8))
+        let indices: Vec<Option<u8>> = (0..num_onehot_chunks)
+            .map(|_| Some(rng.gen_range(0..tensor_k) as u8))
             .collect();
-        let poly = OneHotPoly::<F, u8>::new(TENSOR_K, TENSOR_D, indices).expect("onehot poly");
+        let poly = OneHotPoly::<F, u8>::new(tensor_k, TENSOR_D, indices).expect("onehot poly");
 
         let pt = random_point(nv, 0xc0ff_ee00 + nv as u64);
         let expected_opening = opening_from_poly::<TENSOR_D, _>(&poly, &pt, &layout);
@@ -64,7 +68,7 @@ fn run_single_onehot_tensor(nv: usize) {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/onehot");
         let proof = AkitaCommitmentScheme::<D64OneHotTensor>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
+            prove_input::<D64OneHotTensor, _>(&pt[..], &poly_refs[..], &commitments[0], hint),
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -78,7 +82,7 @@ fn run_single_onehot_tensor(nv: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<D64OneHotTensor>(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -137,7 +141,7 @@ fn run_single_dense_tensor(nv: usize) {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/dense");
         let proof = AkitaCommitmentScheme::<D64OneHotTensor>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
+            prove_input::<D64OneHotTensor, _>(&pt[..], &poly_refs[..], &commitments[0], hint),
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -151,7 +155,7 @@ fn run_single_dense_tensor(nv: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<D64OneHotTensor>(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -175,26 +179,20 @@ fn round_trip_proof(proof: &AkitaBatchedProof<F, F>) -> AkitaBatchedProof<F, F> 
     .expect("deserialize")
 }
 
-// Deferred (D128-tensor follow-up): the tensor fold challenge applies an `ω²`
-// factor to the effective challenge L1 mass, and under the safe
-// `onehot_chunk_size = 1` default (`nonzeros = D`) the A-role collision pushes
-// the D64 tensor family past its secure threshold, so every level degrades to
-// cleartext and no tensor-shaped root fold is emitted. Re-enable once the tensor
-// family is migrated to D=128.
 #[test]
-#[ignore = "D64 one-hot tensor degrades to cleartext under onehot_chunk_size=1; pending D128 tensor migration"]
+#[cfg(feature = "profile-ci")]
 fn single_onehot_tensor_nv15() {
     run_single_onehot_tensor(15);
 }
 
 #[test]
-#[ignore = "D64 one-hot tensor degrades to cleartext under onehot_chunk_size=1; pending D128 tensor migration"]
+#[cfg(feature = "profile-ci")]
 fn single_onehot_tensor_nv20() {
     run_single_onehot_tensor(20);
 }
 
 #[test]
-#[ignore = "D64 one-hot tensor degrades to cleartext under onehot_chunk_size=1; pending D128 tensor migration"]
+#[cfg(feature = "profile-ci")]
 fn single_onehot_tensor_nv22() {
     run_single_onehot_tensor(22);
 }

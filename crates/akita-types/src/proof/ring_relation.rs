@@ -14,6 +14,71 @@ use akita_challenges::Challenges;
 use akita_field::{AkitaError, FieldCore};
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
 
+/// Ring-column counts per witness segment in emission order (`z ‖ e ‖ t ‖ …`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingRelationSegmentLengths {
+    pub z_len: usize,
+    pub e_len: usize,
+    pub t_len: usize,
+}
+
+/// Opening-batch counts that determine witness segment widths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingRelationOpeningCounts {
+    pub num_claims: usize,
+    pub num_t_vectors: usize,
+}
+
+/// Witness segment lengths shared by prover emission, layout offsets, and M-table sizing.
+pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
+    lp: &CommittedGroupParams,
+    opening_counts: RingRelationOpeningCounts,
+) -> Result<RingRelationSegmentLengths, AkitaError> {
+    let num_live_blocks = lp.num_live_blocks;
+    if num_live_blocks == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "num_live_blocks must be positive".to_string(),
+        ));
+    }
+    let depth_open = lp.num_digits_open;
+    let depth_inner = lp.num_digits_inner;
+    let depth_outer = lp.num_digits_outer;
+    let RingRelationOpeningCounts {
+        num_claims,
+        num_t_vectors,
+    } = opening_counts;
+    let depth_fold = lp.num_digits_fold();
+    if depth_open == 0 || depth_inner == 0 || depth_outer == 0 || depth_fold == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "prepared ring-switch layout has zero width".to_string(),
+        ));
+    }
+    let total_blocks = num_live_blocks
+        .checked_mul(num_claims)
+        .ok_or_else(|| AkitaError::InvalidSetup("total block count overflow".to_string()))?;
+    let t_total_blocks = num_live_blocks
+        .checked_mul(num_t_vectors)
+        .ok_or_else(|| AkitaError::InvalidSetup("T block count overflow".to_string()))?;
+
+    let e_len = depth_open
+        .checked_mul(total_blocks)
+        .ok_or_else(|| AkitaError::InvalidSetup("e-hat segment length overflow".to_string()))?;
+    let t_len = depth_outer
+        .checked_mul(lp.inner_commit_matrix.output_rank())
+        .and_then(|len| len.checked_mul(t_total_blocks))
+        .ok_or_else(|| AkitaError::InvalidSetup("T segment length overflow".to_string()))?;
+    let z_len = depth_fold
+        .checked_mul(depth_inner)
+        .and_then(|len| len.checked_mul(lp.num_positions_per_block))
+        .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
+
+    Ok(RingRelationSegmentLengths {
+        z_len,
+        e_len,
+        t_len,
+    })
+}
+
 /// Public statement of the negacyclic-ring matrix relation at one fold level.
 ///
 /// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
@@ -400,14 +465,13 @@ mod tests {
     }
 
     fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
-        const BOUND: u128 = 1;
         lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
             lp.inner_commit_matrix.security_policy(),
             lp.inner_commit_matrix.sis_table_key().table_digest,
             lp.inner_commit_matrix.sis_modulus_profile(),
             lp.inner_commit_matrix.output_rank(),
             lp.inner_commit_matrix.input_width(),
-            BOUND,
+            2,
             lp.d_a(),
         );
         lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
@@ -416,7 +480,7 @@ mod tests {
             lp.outer_commit_matrix.sis_modulus_profile(),
             lp.outer_commit_matrix.output_rank(),
             lp.outer_commit_matrix.input_width(),
-            BOUND,
+            3,
             lp.d_a(),
         );
     }
@@ -432,8 +496,8 @@ mod tests {
         }
     }
 
-    fn test_level_params() -> CommittedGroupParams {
-        CommittedGroupParams::params_only(
+    fn test_level_params(_num_fold_claims: usize) -> CommittedGroupParams {
+        let mut params = CommittedGroupParams::params_only(
             crate::SisModulusProfileId::Q32Offset99,
             D,
             2,
@@ -443,7 +507,9 @@ mod tests {
             fold_challenge_config(),
         )
         .with_decomp(4, 8, 1, 2, 2)
-        .expect("test params")
+        .expect("test params");
+        params.num_digits_fold = 3;
+        params
     }
 
     fn test_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenges {
@@ -464,7 +530,7 @@ mod tests {
 
     #[test]
     fn relation_instance_rejects_empty_y() {
-        let lp = test_level_params();
+        let lp = test_level_params(1);
         let opening_batch = OpeningClaimsLayout::new(2, 1).expect("valid opening batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
@@ -487,9 +553,12 @@ mod tests {
         );
     }
 
-    fn chunk_test_level_params(block_index_bits: usize) -> CommittedGroupParams {
+    fn chunk_test_level_params(
+        block_index_bits: usize,
+        _num_fold_claims: usize,
+    ) -> CommittedGroupParams {
         // num_live_blocks = 2^block_index_bits, num_positions_per_block = 2^position_index_bits, single-tier.
-        CommittedGroupParams::params_only(
+        let mut params = CommittedGroupParams::params_only(
             crate::SisModulusProfileId::Q32Offset99,
             D,
             2,
@@ -499,7 +568,9 @@ mod tests {
             fold_challenge_config(),
         )
         .with_decomp(4, 1usize << (2 + block_index_bits), 1, 2, 2)
-        .expect("test params")
+        .expect("test params");
+        params.num_digits_fold = 3;
+        params
     }
 
     /// Build a minimal non-terminal relation instance whose layout-relevant
@@ -530,9 +601,18 @@ mod tests {
 
     #[test]
     fn resolve_single_chunk_matches_legacy_offsets() {
-        let lp = chunk_test_level_params(1);
-        assert_eq!(lp.witness_chunk.num_chunks, 1);
         let num_claims = 3;
+        let lp = chunk_test_level_params(1, num_claims);
+        assert_eq!(lp.witness_chunk.num_chunks, 1);
+        let _lens = ring_relation_segment_lengths::<F>(
+            &lp,
+            RingRelationOpeningCounts {
+                num_claims,
+                num_t_vectors: num_claims,
+            },
+        )
+        .expect("lengths");
+
         let resolved = build_instance(&lp, num_claims, 4)
             .segment_layout(&lp, None)
             .expect("resolved layout");
@@ -552,7 +632,7 @@ mod tests {
     fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
         let num_claims = 2;
         for w in [1usize, 2, 4, 8] {
-            let mut lp = chunk_test_level_params(3); // num_live_blocks = 8
+            let mut lp = chunk_test_level_params(3, num_claims); // num_live_blocks = 8
             if w > 1 {
                 lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
                     num_chunks: w,
@@ -583,11 +663,7 @@ mod tests {
             for unit in layout.units() {
                 assert_eq!(
                     unit.z_range().len(),
-                    lp.num_positions_per_block
-                        * lp.num_digits_inner
-                        * lp.num_digits_fold(num_claims, lp.field_bits_for_cache())
-                            .unwrap()
-                        * D
+                    lp.num_positions_per_block * lp.num_digits_inner * lp.num_digits_fold() * D
                 );
             }
 
@@ -613,7 +689,7 @@ mod tests {
     fn resolve_rejects_bad_chunk_count() {
         let num_claims = 2;
         // num_chunks = 3 is not a power of two.
-        let mut lp = chunk_test_level_params(3);
+        let mut lp = chunk_test_level_params(3, num_claims);
         lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
             num_chunks: 3,
             num_activated_levels: 1,
@@ -623,7 +699,7 @@ mod tests {
             .is_err());
 
         // num_chunks = 16 exceeds num_live_blocks = 8.
-        let mut lp = chunk_test_level_params(3);
+        let mut lp = chunk_test_level_params(3, num_claims);
         lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
             num_chunks: 16,
             num_activated_levels: 1,
@@ -636,7 +712,7 @@ mod tests {
     #[test]
     fn resolve_rejects_capacity_overflow() {
         let num_claims = 2;
-        let lp = chunk_test_level_params(3);
+        let lp = chunk_test_level_params(3, num_claims);
         // A witness ring capacity of 1 is far smaller than offset_r + r_len.
         assert!(
             build_instance(&lp, num_claims, 4)
@@ -654,7 +730,7 @@ mod tests {
     fn relation_segment_layout_uses_same_axis_contract() {
         use crate::proof::relation::RelationRhsLayout;
 
-        let lp = test_level_params();
+        let lp = test_level_params(3);
         let opening_batch = OpeningClaimsLayout::new(2, 3).expect("valid batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
@@ -694,7 +770,7 @@ mod tests {
     }
 
     fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout) {
-        use crate::schedule::PrecommittedGroupDescriptor;
+        use crate::schedule::CommittedGroupProfile;
         let fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(MULTI_GROUP_D)
             .expect("multi-group test ring dimension has a production challenge");
         let lp = CommittedGroupParams::params_only(
@@ -721,18 +797,14 @@ mod tests {
         .expect("multi-group precommit params");
         certify_test_sis_bounds(&mut precommit_lp);
         let precommit = PrecommittedLevelParams {
-            layout: PrecommittedGroupDescriptor::from_params(
+            layout: CommittedGroupProfile::from_params(
                 PolynomialGroupLayout::new(4, 1),
                 &precommit_lp,
             ),
-            inner_commit_matrix: precommit_lp.inner_commit_matrix.clone(),
-            outer_commit_matrix: precommit_lp.outer_commit_matrix.clone(),
             log_basis_open: precommit_lp.log_basis_open,
             fold_challenge_config: precommit_lp.fold_challenge_config,
-            num_digits_inner: precommit_lp.num_digits_inner,
-            num_digits_outer: precommit_lp.num_digits_outer,
             num_digits_open: precommit_lp.num_digits_open,
-            num_digits_fold_one: precommit_lp.num_digits_fold_one,
+            num_digits_fold: precommit_lp.num_digits_fold,
         };
         let mut multi_group_lp = lp;
         multi_group_lp.precommitted_groups = vec![precommit];
@@ -927,9 +999,7 @@ mod tests {
             )
             .expect("emit T");
 
-            let depth_fold = lp
-                .num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())
-                .expect("fold depth");
+            let depth_fold = params.num_digits_fold();
             for unit in layout.units_for_group(group_index).expect("units") {
                 let z_source = (0..params.num_positions_per_block() * depth_witness * depth_fold)
                     .map(|index| {

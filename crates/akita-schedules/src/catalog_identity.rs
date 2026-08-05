@@ -13,7 +13,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::instance_descriptor::AKITA_INSTANCE_DESCRIPTOR_VERSION;
 use akita_types::{
-    AkitaScheduleInputs, CommitmentRingDims, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+    AkitaScheduleInputs, CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout,
 };
 
 use crate::generated::{
@@ -56,7 +56,6 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(policy.chal_ext_degree as u64);
     h.write_u64(u64::from(policy.basis_range.0));
     h.write_u64(u64::from(policy.basis_range.1));
-    h.write_u64(policy.onehot_chunk_size as u64);
     h.write_u64(policy.witness_chunk.num_chunks as u64);
     h.write_u64(policy.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(policy.recursive_setup_planning));
@@ -85,7 +84,6 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(identity.chal_ext_degree as u64);
     h.write_u64(u64::from(identity.basis_range.0));
     h.write_u64(u64::from(identity.basis_range.1));
-    h.write_u64(identity.onehot_chunk_size as u64);
     h.write_u64(identity.witness_chunk.num_chunks as u64);
     h.write_u64(identity.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(identity.recursive_setup_planning));
@@ -145,7 +143,6 @@ struct CatalogIdentityExpectation {
     claim_ext_degree: usize,
     chal_ext_degree: usize,
     basis_range: (u32, u32),
-    onehot_chunk_size: usize,
     witness_chunk: akita_types::ChunkedWitnessCfg,
     recursive_setup_planning: bool,
 
@@ -176,7 +173,6 @@ impl CatalogIdentityExpectation {
             claim_ext_degree: identity.claim_ext_degree,
             chal_ext_degree: identity.chal_ext_degree,
             basis_range: identity.basis_range,
-            onehot_chunk_size: identity.onehot_chunk_size,
             witness_chunk: identity.witness_chunk,
             recursive_setup_planning: identity.recursive_setup_planning,
 
@@ -230,7 +226,6 @@ fn catalog_identity_expectation(
         claim_ext_degree: policy.claim_ext_degree,
         chal_ext_degree: policy.chal_ext_degree,
         basis_range: policy.basis_range,
-        onehot_chunk_size: policy.onehot_chunk_size,
         witness_chunk: policy.witness_chunk,
         recursive_setup_planning: policy.recursive_setup_planning,
 
@@ -275,7 +270,6 @@ pub fn expected_catalog_identity(
         claim_ext_degree: expected.claim_ext_degree,
         chal_ext_degree: expected.chal_ext_degree,
         basis_range: expected.basis_range,
-        onehot_chunk_size: expected.onehot_chunk_size,
         witness_chunk: expected.witness_chunk,
         recursive_setup_planning: expected.recursive_setup_planning,
 
@@ -382,17 +376,12 @@ fn verify_ring_challenge_config_digest_on_cache_hit(
 fn validate_catalog_keys(entries: &[GeneratedFoldScheduleEntry]) -> Result<(), AkitaError> {
     for pair in entries.windows(2) {
         match generated_schedule_key_cmp(&pair[0], &pair[1]) {
-            Ordering::Less => {}
-            Ordering::Equal => {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "schedule catalog contains duplicate key {:?}",
-                    pair[0]
-                )));
-            }
+            Ordering::Less | Ordering::Equal => {}
             Ordering::Greater => {
                 return Err(AkitaError::InvalidSetup(
                     "schedule catalog entries are not sorted for binary lookup \
-                     (final_group num_vars/num_polynomials, then precommitted layout)"
+                     (final_group num_vars/num_polynomials, source encoding, then exact \
+                      precommitted profiles)"
                         .to_string(),
                 ));
             }
@@ -549,10 +538,13 @@ fn entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
     for entry in entries {
         write_generated_schedule_key(&mut h, entry.root.final_group.layout);
         write_generated_group(&mut h, entry.root.final_group.commitment);
+        h.write_u64(u64::from(entry.root.final_group.num_digits_inner));
+        h.write_u64(u64::from(entry.root.final_group.num_digits_fold));
         h.write_u64(entry.root.precommitted_groups.len() as u64);
         for group in entry.root.precommitted_groups {
             write_generated_precommitted_group_key(&mut h, &group.descriptor);
             write_generated_group(&mut h, group.commitment);
+            h.write_u64(u64::from(group.num_digits_fold));
         }
         write_generated_open_matrix(&mut h, entry.root.open_commit_matrix);
         write_generated_partition(&mut h, entry.root.witness_partition);
@@ -611,19 +603,8 @@ fn write_generated_schedule_key(h: &mut Fnv64, key: PolynomialGroupLayout) {
     h.write_u64(key.num_polynomials() as u64);
 }
 
-fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &PrecommittedGroupDescriptor) {
-    write_generated_schedule_key(h, key.group);
-    h.write_u64(key.num_live_ring_elements_per_claim as u64);
-    h.write_u64(key.num_positions_per_block as u64);
-    h.write_u64(key.num_live_blocks as u64);
-    h.write_u64(u64::from(key.log_basis_inner));
-    h.write_u64(u64::from(key.log_basis_outer));
-    h.write_u64(key.inner_ring_dimension as u64);
-    h.write_u64(key.outer_ring_dimension as u64);
-    h.write_u64(key.n_a as u64);
-    h.write_bytes(&key.a_coeff_linf_bound.to_le_bytes());
-    h.write_u64(key.n_b as u64);
-    h.write_bytes(&key.b_coeff_linf_bound.to_le_bytes());
+fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &CommittedGroupProfile) {
+    h.write_bytes(&key.canonical_descriptor_bytes());
 }
 
 pub fn ring_challenge_config_digest(

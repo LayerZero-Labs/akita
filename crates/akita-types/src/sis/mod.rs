@@ -11,24 +11,23 @@
 //! let width_s = decomposition_digits::decomposed_s_block_ring_count(
 //!     num_positions_per_block, decomposition_digits::num_digits_inner(decomp, is_root))?;
 //! let norm_s = norm_bound::rounded_up_role_a_inf_norm(
-//!     bits, table_digest, family, d, decomp, &stage1, shape, is_root, k, nu,
-//!     num_live_blocks, num_claims, width_s as u64)?;
+//!     policy, table_digest, family, d, log_basis_response, &stage1, shape,
+//!     exact_fold_digit_depth, ring_subfield_norm_bound)?;
 //! let n_a = ajtai_key::min_secure_rank(
 //!     SisTableKey { policy, family, ring_dimension: d as u32, coeff_linf_bound: norm_s },
 //!     width_s as u64)?;
 //! let inner_commit_matrix = InnerCommitMatrixParams::try_new(bits, family, n_a, width_s, norm_s, d)?;
 //! ```
 //!
-//! Layout/search orchestration (`optimal_block_geometry_split`, the `*_layout_from_params`
-//! builders) stays in `crate::layout`; it composes these primitives but
-//! contains no SIS formula of its own.
+//! Layout/search orchestration stays in `akita-planner`; it composes these
+//! primitives but contains no SIS formula of its own.
 
 pub mod ajtai_key;
 pub mod compression;
 pub mod decomposition_digits;
 pub mod fold_linf_cap;
-pub mod fold_witness_grind;
 mod generated_sis_table;
+pub mod honest_fold_policy;
 pub mod norm_bound;
 
 pub use ajtai_key::{
@@ -45,11 +44,14 @@ pub use decomposition_digits::{
     num_digits_for_bound, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
     projected_role_ring_count,
 };
-pub use fold_witness_grind::{
-    FoldWitnessGrindBatchContract, FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB,
+pub use honest_fold_policy::{
+    BalancedSignedDigitFoldPolicy, DigitSnapCalibration, HonestFoldPolicy, HonestFoldPolicySpec,
+    HonestFoldSizingQuery, UnitOneHotFoldPolicy,
 };
+#[cfg(test)]
+pub(crate) use norm_bound::fold_witness_digit_plan;
 pub use norm_bound::{
-    fold_witness_digit_plan, fold_witness_linf_cap_policy, fold_witness_unsnapped_linf_cap,
+    fold_witness_linf_cap_policy, fold_witness_unsnapped_linf_cap,
     max_response_linf_for_role_a_collision, rademacher_proxy_variance,
     rademacher_proxy_variance_flat_challenges, rademacher_proxy_variance_tensor_challenges,
     role_a_collision_inf_norm_for_response_bound, rounded_up_collision_inf_norm,

@@ -112,5 +112,9 @@ Mixed-dimension execution is exercised end-to-end by
 | `PolynomialGroupClaims` | One commitment group's complete opening point, evaluations, and commitment |
 | `OpeningClaims` | Ordered group-owned public claims in transcript order |
 | `OpeningClaimsLayout` | Value-free group arities and polynomial counts for setup and schedule lookup |
+| `CommittedGroupProfile`, `CommittedGroup` | Source-free public commitment geometry and its commitment rows |
+| `PreparedProverGroup` | Coarse borrowed prover group; applications may use one concrete enum polynomial type for heterogeneous representations |
+| `ProverOpeningData`, `SelectedProverOpeningData` | Private ordered group-local hint/polynomial records bound to public claims, then paired once with one exact schedule selection |
+| `OpeningScheduleSelection`, `GroupBatchStatement` | Exact generated-row identity and verifier-side self-describing opening statement |
 | `AkitaTranscript`, `Transcript` | Spongefish-backed Fiat-Shamir layer |
 | `AkitaInstanceDescriptor` | Canonical transcript preamble binding algebra, setup, plan, and call shape |

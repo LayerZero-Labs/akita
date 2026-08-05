@@ -155,7 +155,6 @@ mod tests {
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 
     use crate::golomb_rice::golomb_rice_encode_vec;
-    use crate::tail_golomb_rice_z_params;
     use crate::{
         terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
         FoldLevelProof, RingVec, SetupSumcheckProof, SisModulusProfileId, TerminalLevelProof,
@@ -172,13 +171,19 @@ mod tests {
         let shape = TerminalResponseShape::from_groups(
             lp,
             field_bits,
-            [(lp as &dyn crate::LevelParamsLike, num_claims, num_claims, 1)],
+            [(
+                lp as &dyn crate::LevelParamsLike,
+                num_claims,
+                num_claims,
+                1,
+                127,
+            )],
         )
         .expect("terminal response shape");
         let layout = shape.layout.clone();
         let group = layout.groups[0];
-        let (rice_low_bits, zigzag_w) =
-            tail_golomb_rice_z_params(lp, num_claims).expect("golomb z params");
+        let rice_low_bits = group.z_rice_low_bits;
+        let zigzag_w = crate::golomb_rice::golomb_rice_zigzag_width(group.z_admission_linf_cap);
         let z_payload =
             golomb_rice_encode_vec(&vec![0i64; group.z_coords], rice_low_bits, zigzag_w)
                 .expect("encode zero z segment");

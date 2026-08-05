@@ -94,10 +94,9 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         1,
         64,
     );
+    lp.num_digits_fold = 2;
     let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
-    let depth_fold = lp
-        .num_digits_fold_for_params(&lp, 2, lp.field_bits_for_cache())
-        .unwrap();
+    let depth_fold = lp.num_digits_fold();
     let rows = lp
         .relation_matrix_row_count(opening_batch.num_groups())
         .unwrap();

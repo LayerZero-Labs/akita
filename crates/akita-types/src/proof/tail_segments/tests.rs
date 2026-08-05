@@ -5,6 +5,7 @@ use akita_field::CanonicalField;
 use akita_field::Prime128OffsetA7F7;
 
 type F = Prime128OffsetA7F7;
+const TEST_ADMISSION_CAP: u128 = 127;
 
 fn test_lp() -> CommittedGroupParams {
     let mut params = CommittedGroupParams::params_only(
@@ -51,6 +52,7 @@ fn scalar_group_layout(
             num_w_vectors,
             num_t_vectors,
             num_z_segments,
+            TEST_ADMISSION_CAP,
         )],
     )
     .map(|shape| shape.layout)
@@ -68,10 +70,19 @@ fn recompose_and_split_digits_round_trip() {
 fn terminal_decoder_uses_one_coding_and_admission_cap() {
     let cap = 7;
     let values = [6, -6];
-    let (rice_low_bits, zigzag_w) = tail_golomb_rice_z_params_from_cap(cap).unwrap();
+    let rice_low_bits = wire_rice_low_bits(cap);
+    let zigzag_w = golomb_rice_zigzag_width(cap);
     let payload = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
+    let group = TailSegmentGroupLayout {
+        z_coords: values.len(),
+        e_field_elems: 0,
+        t_field_elems: 0,
+        z_admission_linf_cap: cap,
+        z_rice_low_bits: rice_low_bits,
+        z_payload_bytes: payload.len(),
+    };
     assert_eq!(
-        decode_terminal_z_golomb_payload(&payload, values.len(), cap, None).unwrap(),
+        decode_terminal_z_golomb_payload(&payload, &group).unwrap(),
         values
     );
 }
@@ -80,10 +91,18 @@ fn terminal_decoder_uses_one_coding_and_admission_cap() {
 fn terminal_response_z_budget_uses_golomb_rate_not_packed_digit_width() {
     let lp = test_lp();
     let field_bits = F::modulus_bits();
-    let layout = scalar_group_layout(&lp, 1, 1, 1, field_bits).unwrap();
-    let z_bytes = terminal_response_z_payload_bytes(&lp, &layout, 1).unwrap();
+    let cap = 31;
+    let layout = TerminalResponseShape::from_groups(
+        &lp,
+        field_bits,
+        [(&lp as &dyn LevelParamsLike, 1, 1, 1, cap)],
+    )
+    .unwrap()
+    .layout;
+    let z_bytes = terminal_response_z_payload_bytes(&layout);
     let group = layout.groups[0];
-    let depth_fold = lp.num_digits_fold(1, field_bits).unwrap();
+    assert_eq!(z_bytes, z_payload_budget_from_cap(group.z_coords, cap));
+    let depth_fold = lp.num_digits_fold();
     let packed_z = crate::layout::proof_size::packed_digits_bytes(
         group.z_coords.saturating_mul(depth_fold),
         8,
@@ -98,7 +117,13 @@ fn direct_terminal_layout_contains_only_z_e_t_planes() {
     let layout = TerminalResponseShape::from_groups(
         &lp,
         field_bits,
-        [(&lp as &dyn LevelParamsLike, 1usize, 1usize, 1usize)],
+        [(
+            &lp as &dyn LevelParamsLike,
+            1usize,
+            1usize,
+            1usize,
+            TEST_ADMISSION_CAP,
+        )],
     )
     .expect("direct terminal layout")
     .layout;
@@ -113,7 +138,13 @@ fn direct_terminal_builder_constructs_z_e_t_segments() {
     let layout = TerminalResponseShape::from_groups(
         &lp,
         field_bits,
-        [(&lp as &dyn LevelParamsLike, 1usize, 1usize, 1usize)],
+        [(
+            &lp as &dyn LevelParamsLike,
+            1usize,
+            1usize,
+            1usize,
+            TEST_ADMISSION_CAP,
+        )],
     )
     .expect("direct terminal layout")
     .layout;
@@ -130,7 +161,10 @@ fn direct_terminal_builder_constructs_z_e_t_segments() {
         recomposed_inner_rows: &recomposed_inner_rows,
         z_folded_centered_flat: &z_folded_centered_flat,
     };
-    let witness = build_terminal_response_from_groups(lp.d_a(), &[group], &lp)
+    let scheduled_shape = TerminalResponseShape {
+        layout: layout.clone(),
+    };
+    let witness = build_terminal_response_from_groups(lp.d_a(), &[group], &lp, &scheduled_shape)
         .expect("direct terminal witness");
 
     assert_eq!(witness.layout, layout);
@@ -144,12 +178,14 @@ fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
     let lp = test_lp();
     let field_bits = F::modulus_bits();
     let layout = scalar_group_layout(&lp, 1, 1, 1, field_bits).unwrap();
-    let scheduled_z_bytes = terminal_response_z_payload_bytes(&lp, &layout, 1).unwrap();
+    let scheduled_z_bytes = terminal_response_z_payload_bytes(&layout);
     assert!(
         scheduled_z_bytes > 16,
         "test expects scheduled z budget to exceed a tight payload"
     );
-    let (rice_low_bits, zigzag_w_z) = tail_golomb_rice_z_params(&lp, 1).unwrap();
+    let group = layout.groups[0];
+    let rice_low_bits = group.z_rice_low_bits;
+    let zigzag_w_z = golomb_rice_zigzag_width(group.z_admission_linf_cap);
     let centered = [[-3i32, 0, 1, 2, -1, 4, 0, 0]; 2];
     let z_payload = test_support::encode_z_segment_from_centered(
         &centered,
@@ -160,7 +196,6 @@ fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
     )
     .unwrap();
     assert!(z_payload.len() < scheduled_z_bytes);
-    let group = layout.groups[0];
     let witness = TerminalResponse {
         layout: layout.clone(),
         z_payloads: vec![z_payload],
@@ -231,25 +266,44 @@ fn terminal_transcript_parts_separate_t_state_from_z_response() {
 fn decode_terminal_z_rejects_coefficient_above_fold_cap() {
     use crate::golomb_rice::golomb_rice_encode_vec;
 
-    let lp = test_lp();
-    let cap = lp.fold_witness_linf_cap_for_claims(1).unwrap();
-    let (rice_low_bits, zigzag_w) = tail_golomb_rice_z_params(&lp, 1).unwrap();
-    let over_cap = cap as i64 + 1;
+    let cap = TEST_ADMISSION_CAP;
+    let rice_low_bits = wire_rice_low_bits(cap);
+    let zigzag_w = golomb_rice_zigzag_width(cap);
+    // For cap = 2^k - 1, the signed zigzag width admits -2^k but not +2^k.
+    // Use the representable negative endpoint to reach the decoder's explicit
+    // magnitude check without weakening the production encoder.
+    let over_cap = -(cap as i64) - 1;
     let payload =
-        golomb_rice_encode_vec(&[over_cap], rice_low_bits, zigzag_w).expect("zigzag covers cap+1");
-    assert!(decode_terminal_z_golomb_payload(&payload, 1, cap, None,).is_err());
+        golomb_rice_encode_vec(&[over_cap], rice_low_bits, zigzag_w).expect("zigzag covers -cap-1");
+    let group = TailSegmentGroupLayout {
+        z_coords: 1,
+        e_field_elems: 0,
+        t_field_elems: 0,
+        z_admission_linf_cap: cap,
+        z_rice_low_bits: rice_low_bits,
+        z_payload_bytes: payload.len(),
+    };
+    assert!(decode_terminal_z_golomb_payload(&payload, &group).is_err());
 }
 
 #[test]
 fn decode_terminal_z_rejects_trailing_zero_byte_padding() {
     use crate::golomb_rice::golomb_rice_encode_vec;
 
-    let lp = test_lp();
-    let (rice_low_bits, zigzag_w) = tail_golomb_rice_z_params(&lp, 1).unwrap();
+    let cap = TEST_ADMISSION_CAP;
+    let rice_low_bits = wire_rice_low_bits(cap);
+    let zigzag_w = golomb_rice_zigzag_width(cap);
     let mut payload = golomb_rice_encode_vec(&[-2i64, 1, 0], rice_low_bits, zigzag_w).unwrap();
     payload.push(0x00);
-    let cap = lp.fold_witness_linf_cap_for_claims(1).unwrap();
-    assert!(decode_terminal_z_golomb_payload(&payload, 3, cap, None,).is_err());
+    let group = TailSegmentGroupLayout {
+        z_coords: 3,
+        e_field_elems: 0,
+        t_field_elems: 0,
+        z_admission_linf_cap: cap,
+        z_rice_low_bits: rice_low_bits,
+        z_payload_bytes: payload.len(),
+    };
+    assert!(decode_terminal_z_golomb_payload(&payload, &group).is_err());
 }
 
 #[test]
@@ -261,6 +315,7 @@ fn terminal_layout_validation_rejects_overflow_without_panicking() {
                 z_coords: 1,
                 e_field_elems: usize::MAX,
                 t_field_elems: 1,
+                z_admission_linf_cap: 1,
                 z_payload_bytes: 1,
                 z_rice_low_bits: 0,
             },
@@ -268,6 +323,7 @@ fn terminal_layout_validation_rejects_overflow_without_panicking() {
                 z_coords: 1,
                 e_field_elems: 1,
                 t_field_elems: usize::MAX,
+                z_admission_linf_cap: 1,
                 z_payload_bytes: usize::MAX,
                 z_rice_low_bits: 0,
             },

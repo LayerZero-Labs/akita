@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "logging-transcript")]
 
-//! Complete-fold wire fixture for descriptor v2: typed fold
+//! Complete-fold wire fixture for descriptor v1: typed fold
 //! topology plus the direct terminal response.
 
 mod common;
@@ -42,15 +42,15 @@ const FOLD_PROTOCOL_EPOCH: &[FoldProtocolEpoch] = &[
         witness_seed: 0xd1_613_001,
         transcript_domain: b"akita/protocol-epoch/direct-to-terminal",
         proof_len: 49_056,
-        proof_digest: "b99ea8b10cf9a231816821699cfa8457",
+        proof_digest: "9af14ab776b3db1cfd049a03db83b646",
         event_count: 139,
-        event_digest: "93fbc90bc6a93a1b908ed837fcb21d1a",
+        event_digest: "0e77545a99c753fbc1c5417a78d19fc3",
         terminal_len: 46_092,
-        terminal_digest: "023739153655c055c206d9d12d53d8bf",
+        terminal_digest: "a1b4419e2a860a30d5e34c8407032bb0",
         digit_range_levels: &[DigitRangeLevelEpoch {
             basis: 8,
             payload_len: 1_104,
-            payload_digest: "353ab46a5e7b79262d997bf5be07cd32",
+            payload_digest: "dff4b393619f97e85f06eecf31cad86e",
         }],
     },
     FoldProtocolEpoch {
@@ -58,37 +58,37 @@ const FOLD_PROTOCOL_EPOCH: &[FoldProtocolEpoch] = &[
         num_vars: 20,
         witness_seed: 0xd1_613_002,
         transcript_domain: b"akita/protocol-epoch/recursive-nonterminal",
-        proof_len: 78_448,
-        proof_digest: "ded42abcccdec493a4a25574eb39b29e",
+        proof_len: 78_451,
+        proof_digest: "a79d98260b8f6c5649d3db11f12d5883",
         event_count: 929,
-        event_digest: "337d5a7b41b40c10184383d1a89f988b",
-        terminal_len: 52_396,
-        terminal_digest: "de6ee3aa96724d4cf3e3749550f45d1d",
+        event_digest: "daf344785cd542e92b53ba3aa9c44800",
+        terminal_len: 52_399,
+        terminal_digest: "67528cfc65c820cb890676476efbd73f",
         digit_range_levels: &[
             DigitRangeLevelEpoch {
                 basis: 8,
                 payload_len: 1_232,
-                payload_digest: "9b70ebb776467887e59a3eaeaf74c648",
+                payload_digest: "a20d3dea4e3806532b5313ed02add1d5",
             },
             DigitRangeLevelEpoch {
                 basis: 32,
                 payload_len: 2_384,
-                payload_digest: "938a816824c792a270723d932bb0636e",
+                payload_digest: "918885213faeed0571c7cc853767988e",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 3_056,
-                payload_digest: "673131a63a6f531664a66ada1b763138",
+                payload_digest: "938b7fea8ac167d6c0ceff626562d27a",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "1d83821bb0c855b33d057a68398c170c",
+                payload_digest: "d9c4ae78c11263d42e6eb933ec3d96b0",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "e12ac249486a9028a6c3ce9f111fb037",
+                payload_digest: "031a84d52457af19bd18eda01d377363",
             },
         ],
     },
@@ -117,7 +117,7 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(expected.transcript_domain));
     let proof = Scheme::batched_prove(
         &setup,
-        prove_input(&point, &[&poly], &commitment, hint),
+        prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -132,7 +132,7 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&point, &[opening], &commitment),
+        verify_input::<OneHotCfg>(&point, &[opening], &commitment),
         BasisMode::Lagrange,
     )
     .expect("verify");

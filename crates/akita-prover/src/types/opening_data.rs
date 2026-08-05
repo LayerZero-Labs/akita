@@ -1,41 +1,126 @@
 use crate::api::CommitmentWithHint;
 use crate::backend::RecursiveFoldSource;
 use crate::compute::RootPolyMeta;
+use crate::protocol::core::RootProverGroupMeta;
+use crate::PreparedProverGroup;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
-    AkitaCommitmentHint, Commitment, CommittedGroupParams, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims, PolynomialGroupLayout, RingVec, SetupPrefixSlot,
+    AkitaCommitmentHint, Commitment, CommittedGroup, CommittedGroupParams, OpeningClaims,
+    OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupClaims, PolynomialGroupLayout,
+    RingVec, SetupPrefixSlot,
 };
 
-/// Prover opening input: public claims plus prover-only hints and polynomials.
+/// Exact top-level row selection paired with its prover opening material.
+pub type SelectedProverOpeningData<'a, PointF, G, CommitF> = (
+    OpeningScheduleSelection,
+    ProverOpeningData<'a, PointF, G, CommitF>,
+);
+
 #[derive(Debug, Clone)]
-pub struct ProverOpeningData<'a, PointF: Clone, P, CommitF: FieldCore> {
-    opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
-    hints: Vec<AkitaCommitmentHint<CommitF>>,
-    polynomials: Vec<&'a [&'a P]>,
+struct ProverGroupInput<G, CommitF: FieldCore> {
+    hint: AkitaCommitmentHint<CommitF>,
+    group: G,
 }
 
-impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, CommitF> {
-    /// Bundle public claims with matching prover hints and polynomial groups.
-    pub fn new(
+impl<G, CommitF: FieldCore> ProverGroupInput<G, CommitF> {
+    fn new(hint: AkitaCommitmentHint<CommitF>, group: G) -> Self {
+        Self { hint, group }
+    }
+
+    fn hint(&self) -> &AkitaCommitmentHint<CommitF> {
+        &self.hint
+    }
+
+    fn group(&self) -> &G {
+        &self.group
+    }
+}
+
+fn bind_group_inputs<G, CommitF: FieldCore>(
+    hints: Vec<AkitaCommitmentHint<CommitF>>,
+    groups: Vec<G>,
+) -> Result<Vec<ProverGroupInput<G, CommitF>>, AkitaError> {
+    if hints.len() != groups.len() {
+        return Err(AkitaError::InvalidInput(
+            "prover hint and prepared-source counts are misaligned".to_string(),
+        ));
+    }
+    Ok(hints
+        .into_iter()
+        .zip(groups)
+        .map(|(hint, group)| ProverGroupInput::new(hint, group))
+        .collect())
+}
+
+/// Prover opening input: public claims plus ordered group-local prover material.
+#[derive(Debug, Clone)]
+pub struct ProverOpeningData<'a, PointF: Clone, G, CommitF: FieldCore> {
+    opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
+    group_inputs: Vec<ProverGroupInput<G, CommitF>>,
+}
+
+impl<'a, PointF: Clone, P, CommitF: FieldCore>
+    ProverOpeningData<'a, PointF, PreparedProverGroup<'a, P>, CommitF>
+where
+    P: RootPolyMeta<CommitF>,
+{
+    fn new_internal(
         opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
         hints: Vec<AkitaCommitmentHint<CommitF>>,
         polynomials: Vec<&'a [&'a P]>,
     ) -> Result<Self, AkitaError> {
+        let groups = polynomials
+            .into_iter()
+            .map(PreparedProverGroup::from_refs)
+            .collect::<Result<Vec<_>, _>>()?;
+        let group_inputs = bind_group_inputs(hints, groups)?;
         let data = Self {
             opening_claims,
-            hints,
-            polynomials,
+            group_inputs,
         };
         data.check_alignment()?;
         Ok(data)
     }
 
+    /// Bundle public claims with matching prover hints and polynomial groups.
+    pub fn new(
+        opening_claims: OpeningClaims<'a, PointF, CommittedGroup<CommitF>>,
+        hints: Vec<AkitaCommitmentHint<CommitF>>,
+        polynomials: Vec<&'a [&'a P]>,
+    ) -> Result<Self, AkitaError> {
+        let groups = polynomials
+            .into_iter()
+            .map(PreparedProverGroup::from_refs)
+            .collect::<Result<Vec<_>, _>>()?;
+        let raw_groups = opening_claims
+            .groups()
+            .iter()
+            .map(|group| {
+                PolynomialGroupClaims::new(
+                    group.point().to_vec(),
+                    group.evaluations().to_vec(),
+                    group.commitment().commitment().clone(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let group_inputs = bind_group_inputs(hints, groups)?;
+        let data = Self {
+            opening_claims: OpeningClaims::from_groups(raw_groups)?,
+            group_inputs,
+        };
+        data.check_alignment()?;
+        Ok(data)
+    }
+}
+
+#[allow(private_bounds)]
+impl<'a, PointF: Clone, G, CommitF: FieldCore> ProverOpeningData<'a, PointF, G, CommitF>
+where
+    G: RootProverGroupMeta<CommitF>,
+{
     fn check_alignment(&self) -> Result<(), AkitaError> {
-        if self.opening_claims.num_groups() != self.hints.len()
-            || self.opening_claims.num_groups() != self.polynomials.len()
-        {
+        if self.opening_claims.num_groups() != self.group_inputs.len() {
             return Err(AkitaError::InvalidInput(
                 "prover opening data group counts are misaligned".to_string(),
             ));
@@ -43,10 +128,11 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
         for group_index in 0..self.opening_claims.num_groups() {
             let expected = self.opening_claims.group_evaluations(group_index)?.len();
             let actual = self
-                .polynomials
+                .group_inputs
                 .get(group_index)
                 .ok_or_else(|| AkitaError::InvalidInput("missing polynomial group".to_string()))?
-                .len();
+                .group
+                .num_polynomials();
             if actual != expected {
                 return Err(AkitaError::InvalidInput(
                     "prover opening data polynomial/evaluation counts are misaligned".to_string(),
@@ -56,26 +142,13 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
         Ok(())
     }
 
-    /// Validate alignment and root polynomial shape.
-    pub fn validate<PolyF>(&self) -> Result<(), AkitaError>
-    where
-        PolyF: FieldCore,
-        P: RootPolyMeta<PolyF>,
-    {
-        self.check_alignment()?;
-        self.opening_layout::<PolyF>()?;
-        Ok(())
-    }
-
     /// Largest natural root arity across all polynomial groups.
-    pub fn num_vars<PolyF>(&self) -> Result<usize, AkitaError>
-    where
-        PolyF: FieldCore,
-        P: RootPolyMeta<PolyF>,
-    {
-        self.polynomials
+    pub fn num_vars(&self) -> Result<usize, AkitaError> {
+        self.group_inputs
             .iter()
-            .flat_map(|group| group.iter().map(|poly| poly.num_vars()))
+            .map(|input| input.group.num_vars())
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
             .max()
             .ok_or_else(|| {
                 AkitaError::InvalidInput(
@@ -90,22 +163,11 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
     }
 
     /// Layout-only opening geometry derived from prover polynomials.
-    pub fn opening_layout<PolyF>(&self) -> Result<OpeningClaimsLayout, AkitaError>
-    where
-        PolyF: FieldCore,
-        P: RootPolyMeta<PolyF>,
-    {
-        let mut groups = Vec::with_capacity(self.polynomials.len());
-        for (group_index, group) in self.polynomials.iter().enumerate() {
-            let first_poly = group.first().ok_or_else(|| {
-                AkitaError::InvalidInput("opening polynomial groups must be nonempty".to_string())
-            })?;
-            let group_num_vars = first_poly.num_vars();
-            if group.iter().any(|poly| poly.num_vars() != group_num_vars) {
-                return Err(AkitaError::InvalidInput(
-                    "opening polynomial groups must have uniform arity".to_string(),
-                ));
-            }
+    pub fn opening_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
+        let mut groups = Vec::with_capacity(self.group_inputs.len());
+        for (group_index, input) in self.group_inputs.iter().enumerate() {
+            let group = &input.group;
+            let group_num_vars = group.num_vars()?;
             let group_point = self.opening_claims.group_point(group_index)?;
             if group_point.len() != group_num_vars {
                 return Err(AkitaError::InvalidPointDimension {
@@ -113,35 +175,32 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
                     actual: group_point.len(),
                 });
             }
-            groups.push(PolynomialGroupLayout::new(group_num_vars, group.len()));
+            groups.push(PolynomialGroupLayout::new(
+                group_num_vars,
+                group.num_polynomials(),
+            ));
         }
         OpeningClaimsLayout::from_groups(groups)
     }
 
-    /// Prover-only hints, one per polynomial group.
-    pub fn hints(&self) -> &[AkitaCommitmentHint<CommitF>] {
-        &self.hints
-    }
-
     /// Borrow one prover hint.
     pub fn group_hint(&self, index: usize) -> Result<&AkitaCommitmentHint<CommitF>, AkitaError> {
-        self.hints.get(index).ok_or(AkitaError::InvalidProof)
-    }
-
-    /// Borrow one polynomial group.
-    pub fn group_polys(&self, index: usize) -> Result<&'a [&'a P], AkitaError> {
-        self.polynomials
+        self.group_inputs
             .get(index)
-            .copied()
+            .map(ProverGroupInput::hint)
             .ok_or(AkitaError::InvalidProof)
     }
 
-    /// Polynomials flattened in canonical claim order.
-    pub fn flat_polys(&self) -> Vec<&'a P> {
-        self.polynomials
-            .iter()
-            .flat_map(|group| group.iter().copied())
-            .collect()
+    /// Borrow one polynomial group.
+    pub(crate) fn group(&self, index: usize) -> Result<&G, AkitaError> {
+        self.group_inputs
+            .get(index)
+            .map(ProverGroupInput::group)
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    pub(crate) fn groups(&self) -> impl ExactSizeIterator<Item = &G> {
+        self.group_inputs.iter().map(ProverGroupInput::group)
     }
 
     /// Commitments in commitment-group order.
@@ -162,13 +221,12 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
     where
         CommitF: CanonicalField,
         PointF: ExtField<CommitF>,
-        P: RootPolyMeta<CommitF>,
         T: Transcript<CommitF>,
     {
         // `opening_layout` validates that each public point matches its
         // polynomial group's shape, keeping this byte-identical to verifier
         // replay for well-formed inputs.
-        let layout = self.opening_layout::<CommitF>()?;
+        let layout = self.opening_layout()?;
         layout.append_batch_shape_to_transcript::<CommitF, T>(transcript)?;
         for (group_index, commitment) in self.commitments().into_iter().enumerate() {
             let ring_dim = root_params.group_role_dims(&layout, group_index)?.d_b();
@@ -238,14 +296,15 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
     pub(crate) fn regroup_polynomial_refs<'b, Q>(
         self,
         polynomials: &'b [&'b Q],
-    ) -> Result<ProverOpeningData<'b, PointF, Q, CommitF>, AkitaError>
+    ) -> Result<ProverOpeningData<'b, PointF, PreparedProverGroup<'b, Q>, CommitF>, AkitaError>
     where
         'a: 'b,
+        Q: RootPolyMeta<CommitF>,
     {
         let mut input_offset = 0usize;
-        let mut regrouped = Vec::with_capacity(self.polynomials.len());
-        for group in self.polynomials {
-            let group_len = group.len();
+        let mut regrouped = Vec::with_capacity(self.group_inputs.len());
+        for input in self.group_inputs {
+            let group_len = input.group.num_polynomials();
             let input_end = input_offset.checked_add(group_len).ok_or_else(|| {
                 AkitaError::InvalidInput("fold input group offset overflow".to_string())
             })?;
@@ -253,7 +312,10 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
                 polynomials.get(input_offset..input_end).ok_or_else(|| {
                     AkitaError::InvalidInput("fold input group shape mismatch".to_string())
                 })?;
-            regrouped.push(replacement_polynomials);
+            regrouped.push(ProverGroupInput::new(
+                input.hint,
+                PreparedProverGroup::from_refs(replacement_polynomials)?,
+            ));
             input_offset = input_end;
         }
         if input_offset != polynomials.len() {
@@ -261,11 +323,17 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
                 "fold input group coverage mismatch".to_string(),
             ));
         }
-        ProverOpeningData::new(self.opening_claims, self.hints, regrouped)
+        let data = ProverOpeningData {
+            opening_claims: self.opening_claims,
+            group_inputs: regrouped,
+        };
+        data.check_alignment()?;
+        Ok(data)
     }
 }
 
-impl<'a, PointF, CommitF> ProverOpeningData<'a, PointF, RecursiveFoldSource<CommitF>, CommitF>
+impl<'a, PointF, CommitF>
+    ProverOpeningData<'a, PointF, PreparedProverGroup<'a, RecursiveFoldSource<CommitF>>, CommitF>
 where
     PointF: FieldCore,
     CommitF: FieldCore,
@@ -309,13 +377,13 @@ where
                     vec![setup_prefix_eval],
                     Commitment::new(setup_commitment_rows),
                 )?;
-                ProverOpeningData::new(
+                ProverOpeningData::new_internal(
                     OpeningClaims::from_groups(vec![setup_group, witness_group])?,
                     vec![setup_slot.hint.clone(), witness_commitment.1],
                     vec![setup_polys, witness_polys],
                 )
             }
-            (None, None, None) => ProverOpeningData::new(
+            (None, None, None) => ProverOpeningData::new_internal(
                 OpeningClaims::from_groups(vec![witness_group])?,
                 vec![witness_commitment.1],
                 vec![witness_polys],
@@ -334,7 +402,7 @@ mod tests {
     use akita_field::Fp32;
     use akita_transcript::labels::ABSORB_COMMITMENT;
     use akita_transcript::AkitaTranscript;
-    use akita_types::{PrecommittedGroupDescriptor, PrecommittedLevelParams, SisModulusProfileId};
+    use akita_types::{CommittedGroupProfile, PrecommittedLevelParams, SisModulusProfileId};
 
     type F = Fp32<251>;
 
@@ -382,7 +450,7 @@ mod tests {
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            1,
+            2,
             inner.ring_dimension(),
         );
         let outer = &pre.outer_commit_matrix;
@@ -392,7 +460,7 @@ mod tests {
             outer.sis_modulus_profile(),
             outer.output_rank(),
             outer.input_width(),
-            1,
+            3,
             outer.ring_dimension(),
         );
         let mut root = CommittedGroupParams::params_only(
@@ -408,15 +476,11 @@ mod tests {
         .with_decomp(1, 1, 1, 1, 1)
         .expect("root params");
         root.precommitted_groups.push(PrecommittedLevelParams {
-            layout: PrecommittedGroupDescriptor::from_params(pre_layout, &pre),
-            inner_commit_matrix: pre.inner_commit_matrix,
-            outer_commit_matrix: pre.outer_commit_matrix,
+            layout: CommittedGroupProfile::from_params(pre_layout, &pre),
             log_basis_open: pre.log_basis_open,
             fold_challenge_config: pre.fold_challenge_config,
-            num_digits_inner: pre.num_digits_inner,
-            num_digits_outer: pre.num_digits_outer,
             num_digits_open: pre.num_digits_open,
-            num_digits_fold_one: pre.num_digits_fold_one,
+            num_digits_fold: pre.num_digits_fold,
         });
         root
     }
@@ -424,7 +488,7 @@ mod tests {
     fn multi_group_data<'a>(
         pre_refs: &'a [&'a MockPoly],
         final_refs: &'a [&'a MockPoly],
-    ) -> ProverOpeningData<'a, F, MockPoly, F> {
+    ) -> ProverOpeningData<'a, F, PreparedProverGroup<'a, MockPoly>, F> {
         let claims = OpeningClaims::from_groups(vec![
             PolynomialGroupClaims::new(vec![F::zero(); 2], vec![F::zero()], commitment())
                 .expect("pre group"),
@@ -436,7 +500,7 @@ mod tests {
             .expect("final group"),
         ])
         .expect("claims");
-        ProverOpeningData::new(
+        ProverOpeningData::new_internal(
             claims,
             vec![empty_hint(), empty_hint()],
             vec![pre_refs, final_refs],
@@ -453,7 +517,7 @@ mod tests {
         let final_refs = [&final_a, &final_b];
         let data = multi_group_data(&pre_refs, &final_refs);
 
-        let layout = data.opening_layout::<F>().expect("precise layout");
+        let layout = data.opening_layout().expect("precise layout");
 
         assert_eq!(
             layout.groups(),
@@ -474,7 +538,7 @@ mod tests {
         let data = multi_group_data(&pre_refs, &final_refs);
 
         let err = data
-            .opening_layout::<F>()
+            .opening_layout()
             .expect_err("pre group point vars claim two variables");
 
         assert!(matches!(

@@ -327,8 +327,7 @@ impl WitnessLayout {
                 let depth_witness = params.num_digits_inner();
                 let depth_commit = params.num_digits_outer();
                 let depth_open = params.num_digits_open();
-                let depth_fold =
-                    lp.num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())?;
+                let depth_fold = params.num_digits_fold();
                 if num_claims == 0
                     || params.num_live_blocks() == 0
                     || params.num_positions_per_block() == 0
@@ -358,6 +357,8 @@ impl WitnessLayout {
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
 
+        // Chunk is the outer physical key. Within each chunk, groups are laid
+        // out in relation order, and each unit is `[Z | E | T]`.
         for chunk_index in 0..num_chunks {
             for &(
                 group_index,
@@ -932,7 +933,7 @@ mod tests {
     fn test_layout(
         num_chunks: usize,
     ) -> (CommittedGroupParams, OpeningClaimsLayout, WitnessLayout) {
-        let lp = CommittedGroupParams::params_only(
+        let mut lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,
             32,
             2,
@@ -943,6 +944,7 @@ mod tests {
         )
         .with_decomp(4, 25, 1, 2, 2)
         .expect("test params");
+        lp.num_digits_fold = 3;
         let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
         let layout =
             WitnessLayout::new(&lp, &opening_batch, num_chunks, 2).expect("witness layout");
@@ -953,9 +955,7 @@ mod tests {
     fn layout_indexing_matches_digit_innermost_semantics() {
         let (lp, opening_batch, layout) = test_layout(2);
         let unit = layout.unit(0, 1).expect("unit");
-        let depth_fold = lp
-            .num_digits_fold(2, lp.field_bits_for_cache())
-            .expect("fold depth");
+        let depth_fold = lp.num_digits_fold();
         assert_ne!(
             lp.num_digits_inner, lp.num_digits_outer,
             "fixture must distinguish witness and commitment depths"
@@ -1012,15 +1012,13 @@ mod tests {
     fn layout_rejects_out_of_range_semantic_indices() {
         let (lp, _, layout) = test_layout(2);
         let unit = layout.unit(0, 0).expect("unit");
-        let depth_fold = lp
-            .num_digits_fold(2, lp.field_bits_for_cache())
-            .expect("fold depth");
+        let depth_fold = lp.num_digits_fold();
         let dims = lp.role_dims();
         assert!(unit
             .e_coefficient_index(dims.d_a(), dims.d_d(), 2, 2, 2, 0, 0, 0, 0)
             .is_err());
         assert!(unit
-            .t_coefficient_index(dims.d_a(), dims.d_b(), 2, 1, 2, 0, 0, 1, 0, 0, 0,)
+            .t_coefficient_index(dims.d_a(), dims.d_b(), 2, 1, 2, 0, 0, 1, 0, 0, 0)
             .is_err());
         assert!(unit
             .z_coefficient_index(dims.d_a(), 4, 1, depth_fold, 4, 0, 0, 0)

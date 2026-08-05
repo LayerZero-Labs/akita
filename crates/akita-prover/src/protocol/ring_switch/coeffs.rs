@@ -57,14 +57,9 @@ fn emit_group_witness_segments<F: CanonicalField>(
     layout: &WitnessLayout,
     group_id: usize,
     group: &PreparedRingSwitchGroup<'_, F>,
-    root_lp: &CommittedGroupParams,
     num_claims: usize,
 ) -> Result<(), AkitaError> {
-    let num_digits_fold = root_lp.num_digits_fold_for_params(
-        group.params,
-        num_claims,
-        root_lp.field_bits_for_cache(),
-    )?;
+    let num_digits_fold = group.params.num_digits_fold();
     dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
@@ -365,7 +360,6 @@ where
             &witness_layout,
             group_index,
             &owned[group_index],
-            lp,
             group_layout.num_polynomials(),
         )?;
     }

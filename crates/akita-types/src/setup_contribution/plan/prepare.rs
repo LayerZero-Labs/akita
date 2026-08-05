@@ -316,9 +316,7 @@ fn validate_static_inputs<E: FieldCore>(
 ) -> Result<usize, AkitaError> {
     opening_batch.check()?;
     let num_groups = opening_batch.num_groups();
-    let num_polynomials = opening_batch.num_total_polynomials();
-    let depth_fold =
-        level_params.num_digits_fold(num_polynomials, level_params.field_bits_for_cache())?;
+    let depth_fold = level_params.num_digits_fold();
     if level_params.num_live_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
             "num_live_blocks must be positive".into(),
