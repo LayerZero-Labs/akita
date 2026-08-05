@@ -7,14 +7,6 @@
 //! [`CommitmentConfig::get_params_for_batched_commitment`] directly and never
 //! need this module.
 //!
-//! The mixed ring-dimension schedule builders (`mixed_d_per_level_schedule`,
-//! `ring_dimension_transition_schedule`, `per_matrix_ring_dims_root_schedule`,
-//! and their
-//! config adapters) live in
-//! `akita-pcs/tests/support`: they call the offline planner, which cannot be a
-//! dependency of `akita-config` without a cycle (`akita-planner` depends on
-//! `akita-config`).
-
 use akita_field::AkitaError;
 use akita_types::{AkitaScheduleLookupKey, CommittedGroupParams, PolynomialGroupLayout};
 

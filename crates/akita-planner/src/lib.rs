@@ -40,7 +40,5 @@ pub use emit::{
 };
 pub use planner::find_schedule;
 pub use schedule_params::{
-    derive_standalone_precommit_profile, plan_optimal_suffix, plan_setup_prefix_commitment,
-    suffix_opening_layout, PlannedSuffix, PlannedSuffixFold, PlannedSuffixTerminal,
-    RingDimensionSearchDomain, SetupPrefixPlanRequest, SuffixPlanStart,
+    derive_standalone_precommit_profile, suffix_opening_layout, RingDimensionSearchDomain,
 };

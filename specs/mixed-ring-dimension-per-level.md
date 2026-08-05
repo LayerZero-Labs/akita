@@ -10,7 +10,6 @@
 | Primary profile mode | `onehot_fp128_mixed_dim` |
 | Related spec | `specs/runtime-ring-cutover.md` |
 | Projected digit layout | `specs/role-native-projected-digit-layout.md` |
-| Current synthetic implementation | `crates/akita-pcs/src/test_support.rs` |
 | Planner implementation | `crates/akita-planner/src/schedule_params/` |
 
 ## Purpose of this document
@@ -327,12 +326,11 @@ emitter also copies dimensions from a completed schedule. The blocking work is
 search, runtime expansion, policy identity, and setup accounting—not a second
 schedule or proof format.
 
-The synthetic builders demonstrate protocol feasibility but are not suitable
-planner architecture. They plan a uniform schedule, mutate or rebuild selected
-matrices, recompute the boundary, and invoke
-`akita_planner::test_support::plan_optimal_suffix` again. A native planner
-must produce the final matrices directly; it must not generate a uniform
-candidate and retarget it after selection.
+The removed synthetic builders demonstrated protocol feasibility but were not
+suitable planner architecture. They planned a uniform schedule, mutated or
+rebuilt selected matrices, and recomputed boundaries outside the native
+planner. A native planner must produce the final matrices directly; it must not
+generate a uniform candidate and retarget it after selection.
 
 ### Future broader ring-dimension policy
 
@@ -1026,115 +1024,18 @@ and D.
 
 ## Schedule construction
 
-All builders below live in `crates/akita-pcs/src/test_support.rs`. They are
-cached by configuration type, input arity, and dimension parameters to avoid
-rerunning offline dynamic programming during profiles.
+The synthetic PCS mixed-D builders described below were test-only artifacts.
+They have been removed from `akita-pcs`; production callers must exercise the
+planner and PCS through normal schedule resolution rather than depending on
+crate-local fixtures.
 
-### Uniform leading band: `mixed_d_per_level_schedule`
+### Removed synthetic PCS fixtures
 
-```rust
-mixed_d_per_level_schedule::<Envelope, Suffix>(
-    num_vars,
-    num_polynomials,
-    switch_at_fold,
-)
-```
-
-Construction:
-
-1. Plan the envelope schedule.
-2. Keep the root and exactly the recursive folds before
-   `switch_at_fold`.
-3. Read the kept prefix's exact output witness length and opening basis.
-4. Call `akita_planner::test_support::plan_optimal_suffix` under the suffix policy.
-5. Convert the planned suffix into `FoldSchedule` wire types and validate the
-   result.
-
-This fixes the original “repriced suffix” defect. Repricing an existing D128
-tail at D64 did not preserve shrinkage and could terminate with a very large
-cleartext witness. The suffix planner, not the synthetic builder, remains the
-single authority for fold geometry.
-
-Adapter:
-
-```rust
-MixedDConfig<Envelope, Suffix, SWITCH_AT_FOLD>
-```
-
-### Per-matrix root: `per_matrix_ring_dims_root_schedule`
-
-```rust
-per_matrix_ring_dims_root_schedule::<Env>(
-    num_vars,
-    num_polynomials,
-    b_ring_dim,
-    d_ring_dim,
-)
-```
-
-Construction:
-
-1. Plan a uniform `Env` root.
-2. Rebuild B and D from the final A-source projection geometry.
-3. Recompute the root's exact outgoing witness length.
-4. Replan the **complete** uniform-`Env` suffix from that boundary.
-5. Derive the setup envelope from the completed mixed schedule.
-
-Adapter:
-
-```rust
-PerMatrixRingDimsRootConfig<Env, B_RING_DIM, D_RING_DIM>
-```
-
-The suffix is uniform `Env::D`. With `Env = D128OneHot`, this produces C and D,
-whose terminal remains D128.
-
-### Multi-band transition: `ring_dimension_transition_schedule`
-
-```rust
-ring_dimension_transition_schedule::<Root, Mid, Suffix>(
-    num_vars,
-    num_polynomials,
-    root_dims,
-    middle_dims,
-)
-```
-
-This is the canonical builder for E, F, and the active transition E2E:
-
-1. Plan the root under `Root`.
-2. If `Root::D == 512`, temporarily plan D256 root geometry and promote A to
-   D512 using the audited D512 A-role SIS table.
-3. Rebuild root B/D from the **final** A geometry.
-4. Recompute the root output.
-5. Plan a `Mid` suffix from that exact root output and retain its first fold.
-6. Rebuild that fold's B/D matrices from its final A geometry.
-7. Recompute the middle-fold output.
-8. Plan the complete `Suffix` continuation from that exact output.
-9. Validate the finished schedule and exact setup envelope.
-
-The builder accepts only singleton batches. Its cache key contains
-`Root`/`Mid`/`Suffix` type IDs plus root and middle B/D dimensions. The A
-dimensions are encoded by the `Root` and `Mid` types.
-
-Adapters:
-
-```rust
-RingDimensionTransitionConfig<
-    Env,
-    Suffix,
-    MID_BD_RING_DIM,
-    ROOT_D_RING_DIM,
->
-
-ThreeBandRingDimensionTransitionConfig<
-    Root,
-    Mid,
-    Suffix,
-    ROOT_BD_RING_DIM,
-    L1_BD_RING_DIM,
->
-```
+The former test-local PCS builders covered uniform leading bands, per-matrix
+root overrides, and multi-band transitions. Those fixtures were intentionally
+removed so no crate depends on planner test artifacts. Mixed-D behavior should
+now be exercised either in planner tests or through production schedule
+resolution.
 
 ### Exact matrix retargeting
 
@@ -1282,8 +1183,7 @@ This is a behavioral test-support fix, not only a test rename.
 
 Changes:
 
-- Replaced mutation of already-planned suffixes with staged calls to
-  `akita_planner::test_support::plan_optimal_suffix`.
+- Replaced mutation of already-planned suffixes with staged suffix replanning.
 - Replaced separate B/D retarget helpers with
   `retarget_commitment_matrices`.
 - Made width derivation use the final A projection source.
@@ -1318,13 +1218,6 @@ Backward compatibility is not provided.
 | Old | Current |
 |---|---|
 | `compressed_role_root_schedule` | `per_matrix_ring_dims_root_schedule` |
-| `CompressedRoleRootConfig` | `PerMatrixRingDimsRootConfig` |
-| `role_switch_schedule` / `three_band_role_switch_schedule` | `ring_dimension_transition_schedule` |
-| `RoleSwitchConfig` | `RingDimensionTransitionConfig` |
-| `ThreeBandRoleSwitchConfig` | `ThreeBandRingDimensionTransitionConfig` |
-| `compressed_role_e2e.rs` | `per_matrix_ring_dims_root_e2e.rs` |
-| `role_switch_e2e.rs` | `ring_dimension_transition_e2e.rs` |
-| `three_band_schedule.rs` | folded into `ring_dimension_transition_schedule.rs` |
 
 Profile environment renames:
 
@@ -1346,16 +1239,9 @@ transition.”
 
 ### Active acceptance tests
 
-| Test | What it proves |
-|---|---|
-| `mixed_d_per_level_e2e.rs` | Cross-level D128→D64 prove/verify, replay, malformed input, tamper rejection |
-| `per_matrix_ring_dims_root_e2e.rs` | Active `128/32/64` root through public PCS API; wrong opening and commitment tamper rejection |
-| `ring_dimension_transition_e2e.rs` | Direct L0 `128/128/64`, L1 `128/64/64`, then D64; public PCS API and tamper rejection |
-| `ring_dimension_transition_schedule.rs` | Exact widths, independently planned suffixes, D256/D512 schedule invariants, setup envelope equality, dynamic D128 recursive prefix, and W8R2 partition preservation |
-| `recursive_ring_dimension_transition_e2e.rs` | CI-sized recursive mixed-D (`256/128/128 → 128/64/64 → 64`) plain and W8R2 prove/verify at `nv=24`, serialize round-trip, transcript agreement, wrong-opening rejection, and missing D64 outer-NTT rejection. The cases run serially to cap peak memory. Stage 3 tampering remains in the shared recursive-profile E2E coverage. |
-
-The disabled legacy fixture `mixed_role_e2e.rs` has been deleted. Active
-per-matrix coverage is `per_matrix_ring_dims_root_e2e.rs`.
+The former `akita-pcs` synthetic mixed-D integration tests have been deleted.
+Verifier malformed-proof coverage remains in `akita-verifier`; planner tests
+continue to cover mixed-D search and validation at the planning boundary.
 
 ### Lower-level coverage
 
@@ -1623,9 +1509,8 @@ kernels fixed at `2f0c35b66`.
 ## Reproduction
 
 Use the default profile feature set for production-supported profile modes.
-Synthetic mixed-D PCS profile modes that depended on `akita-pcs` test-support
-have been removed from the profile example; the remaining mixed-D fixtures live
-under `akita-pcs/tests/support`.
+Synthetic mixed-D PCS profile modes that depended on `akita-pcs` test fixtures
+have been removed from the profile example.
 
 ```bash
 AKITA_NUM_VARS=36 \
@@ -1678,11 +1563,6 @@ For a publishable table:
 Focused schedule and E2E checks:
 
 ```bash
-cargo test -p akita-pcs --test ring_dimension_transition_schedule
-cargo test -p akita-pcs --test per_matrix_ring_dims_root_e2e
-cargo test -p akita-pcs --test ring_dimension_transition_e2e
-cargo test -p akita-pcs --test mixed_d_per_level_e2e
-cargo test -p akita-pcs --test recursive_ring_dimension_transition_e2e
 cargo test -p akita-planner --lib --features catalog-gen
 ```
 
@@ -1717,7 +1597,6 @@ back.
 | Catalog identity | `crates/akita-schedules/src/catalog_identity.rs` |
 | Config-to-policy projection | `crates/akita-config/src/lib.rs` |
 | Proof-byte and setup-envelope accounting | `crates/akita-types/src/proof_size.rs`, `crates/akita-types/src/proof/setup_envelope.rs` |
-| Mixed schedule builders and adapters | `crates/akita-pcs/src/test_support.rs` |
 | Profile selection and environment variables | `crates/akita-pcs/examples/profile/modes.rs` |
 | A/B/D dimension validation | `crates/akita-types/src/layout/ring_dims.rs` |
 | Relation-address geometry | `crates/akita-types/src/proof/relation_address.rs` |
@@ -1728,7 +1607,6 @@ back.
 | Verifier relation evaluation | `crates/akita-verifier/src/protocol/ring_switch.rs` and `ring_switch/` |
 | Prover Stage 3 | `crates/akita-prover/src/protocol/sumcheck/akita_stage3/` |
 | Verifier Stage 3 | `crates/akita-verifier/src/stages/stage3.rs` |
-| Active acceptance tests | `crates/akita-pcs/tests/{mixed_d_per_level_e2e,per_matrix_ring_dims_root_e2e,ring_dimension_transition_e2e,ring_dimension_transition_schedule}.rs` |
 
 ## Known limits and next work
 
@@ -1750,12 +1628,9 @@ row.
 ### P1: dynamic setup-prefix dimension
 
 Setup-prefix offload still uses the D64 registry contract for catalog
-recursive families. The synthetic recursive mixed-D profile materializes a
-dynamic D128 prefix outside that registry and is covered by
-`recursive_ring_dimension_transition_e2e.rs`. A production mixed batch whose
-common relation dimension is below 64 remains rejected until setup generation,
-registry lookup, planner admission, and verifier dispatch select `d_setup`
-consistently.
+recursive families. A production mixed batch whose common relation dimension is
+below 64 remains rejected until setup generation, registry lookup, planner
+admission, and verifier dispatch select `d_setup` consistently.
 
 ### P2: expand the sweep
 

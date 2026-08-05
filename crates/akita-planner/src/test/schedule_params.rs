@@ -1,4 +1,3 @@
-#[allow(unused_imports)]
 use super::*;
 #[cfg(feature = "catalog-gen")]
 use akita_types::extension_opening_reduction_level_bytes;
@@ -327,54 +326,6 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
         selected.schedule.canonical_descriptor_bytes(),
         unpruned.schedule.canonical_descriptor_bytes()
     );
-}
-
-#[test]
-fn independent_suffix_preserves_raw_predecessor_phase() {
-    use akita_config::{policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig};
-
-    let policy = policy_of::<D64OneHot>();
-    let domain = RingDimensionSearchDomain::uniform(64).unwrap();
-    let schedule = find_schedule(
-        PolynomialGroupLayout::singleton(32),
-        &policy,
-        D64OneHot::root_honest_fold_policy(),
-        &domain,
-        D64OneHot::ring_challenge_config,
-        D64OneHot::fold_challenge_shape_at_level,
-    )
-    .unwrap()
-    .schedule;
-    let (raw_index, raw_predecessor) = schedule
-        .recursive_folds
-        .iter()
-        .enumerate()
-        .find(|(index, fold)| {
-            fold.params.witness.payload_mode == akita_types::CommitmentPayloadMode::Raw
-                && index + 1 < schedule.recursive_folds.len()
-        })
-        .expect("fixture must have a raw recursive fold with a recursive successor");
-
-    let suffix = plan_optimal_suffix(
-        &policy,
-        D64OneHot::ring_challenge_config,
-        D64OneHot::fold_challenge_shape_at_level,
-        32,
-        SuffixPlanStart {
-            level: raw_index + 2,
-            witness_len: raw_predecessor.output_witness_len,
-            log_basis: raw_predecessor.params.witness.log_basis_open,
-            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix
-                .after(raw_predecessor.params.witness.payload_mode),
-        },
-    )
-    .unwrap();
-
-    assert!(!suffix.folds.is_empty());
-    assert!(suffix
-        .folds
-        .iter()
-        .all(|fold| fold.params.payload_mode == akita_types::CommitmentPayloadMode::Raw));
 }
 
 #[cfg(feature = "catalog-gen")]
