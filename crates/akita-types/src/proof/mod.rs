@@ -36,7 +36,7 @@ mod wire;
 pub const MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS: usize = 1 << 26;
 
 pub use crate::opening_claims::{
-    sample_public_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
+    derive_public_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
     PolynomialGroupClaims, PolynomialGroupLayout,
 };
 pub(crate) use batch::root_tensor_projection_enabled_for_width;

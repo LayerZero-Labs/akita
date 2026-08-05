@@ -13,10 +13,13 @@ use proptest::prelude::*;
 type Scheme = AkitaCommitmentScheme<DenseCfg>;
 
 fn batch_shape(index: usize) -> usize {
+    // The generated dense catalog authorizes singleton, pair, and four-claim
+    // rows. Keep fuzz inputs on those public rows so failures exercise
+    // transcript replay rather than missing-schedule rejection.
     match index {
         0 => 1,
         1 => 2,
-        _ => 3,
+        _ => 4,
     }
 }
 

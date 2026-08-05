@@ -2,6 +2,7 @@
 
 use crate::descriptor_bytes::push_usize;
 use crate::instance_descriptor::DescriptorDigest;
+use crate::proof::batch::append_claim_values_to_transcript;
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupDescriptor;
 use crate::{CommittedGroup, OpeningScheduleSelection};
@@ -551,9 +552,10 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     }
 }
 
-/// Sample gamma coefficients for the one public row.
-pub fn sample_public_row_coefficients<F, L, T>(
+/// Bind claimed evaluations and derive their public-row batching coefficients.
+pub fn derive_public_row_coefficients<F, L, T>(
     layout: &OpeningClaimsLayout,
+    openings: &[L],
     transcript: &mut T,
 ) -> Result<Vec<L>, AkitaError>
 where
@@ -562,6 +564,13 @@ where
     T: Transcript<F>,
 {
     layout.check()?;
+    if openings.len() != layout.num_total_polynomials() {
+        return Err(AkitaError::InvalidSize {
+            expected: layout.num_total_polynomials(),
+            actual: openings.len(),
+        });
+    }
+    append_claim_values_to_transcript::<F, L, T>(openings, transcript);
     if layout.num_total_polynomials() == 1 {
         return Ok(vec![L::one()]);
     }
@@ -582,6 +591,7 @@ fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
 mod tests {
     use super::*;
     use akita_field::Prime128OffsetA7F7;
+    use akita_transcript::AkitaTranscript;
 
     type F = Prime128OffsetA7F7;
 
@@ -699,5 +709,29 @@ mod tests {
             layout.root_final_group_layout().expect("final group"),
             final_group
         );
+    }
+
+    #[test]
+    fn public_row_coefficients_bind_against_claim_cancellation() {
+        let layout = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::singleton(2),
+            PolynomialGroupLayout::singleton(3),
+        ])
+        .expect("two-group layout");
+        let openings = [F::from_u64(5), F::from_u64(11)];
+        let delta = F::from_u64(3);
+        let tampered = [openings[0] + delta, openings[1] - delta];
+
+        let target = |values: &[F]| {
+            let mut transcript = AkitaTranscript::<F>::new(b"test/public-row-claim-binding");
+            let coefficients =
+                derive_public_row_coefficients::<F, F, _>(&layout, values, &mut transcript)
+                    .expect("derive coefficients");
+            layout
+                .batched_eval_target(&coefficients, values)
+                .expect("batched target")
+        };
+
+        assert_ne!(target(&openings), target(&tampered));
     }
 }
