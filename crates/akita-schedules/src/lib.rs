@@ -1,6 +1,7 @@
 //! Runtime schedule catalogs and strict generated schedule resolution.
 
 mod audit;
+mod candidate;
 pub mod catalog_identity;
 pub mod generated;
 mod group_batch;
@@ -18,9 +19,10 @@ pub use catalog_identity::{
 };
 pub use generated::*;
 pub use resolve::{
-    estimate_proof_bytes, resolve_generated_schedule_selection, resolve_group_batch_schedule,
-    resolve_schedule, schedule_from_entry, select_generated_schedule_row,
-    select_generated_schedule_row_for_profiles, ResolvedScheduleRow,
+    estimate_proof_bytes, resolve_generated_precommitted_group_profile,
+    resolve_generated_schedule_selection, resolve_group_batch_schedule, resolve_schedule,
+    schedule_from_entry, select_generated_schedule_row, select_generated_schedule_row_for_profiles,
+    ResolvedScheduleRow,
 };
 pub use runtime::{
     default_sis_security_policy, PlannerCostModelId, PlannerPolicy, RuntimeSchedulePolicy,
@@ -30,6 +32,10 @@ pub use runtime::{
 /// Shared schedule-construction primitives used by offline search and generated-row replay.
 #[doc(hidden)]
 pub mod planner_support {
+    pub use crate::candidate::{
+        projected_collision_role_price, scalar_root_fold_level_params_candidate,
+        sis_key_at_dimension,
+    };
     pub use crate::runtime::{
         grouped_segment_rings, materialize_candidate_schedule, optimize_fold_challenge_shape,
         planned_next_witness_len, stage3_payload_bytes_for_successor, validate_policy,

@@ -11,7 +11,7 @@
 //! `ring_plan_test_seed`) remain in [`akita_config::test_support`].
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_config::{policy_of, CommitmentConfig};
+use akita_config::{committed_group_profile, policy_of, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::sis::{
     compute_num_digits_field_width, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -1076,6 +1076,7 @@ where
                         ring_dimension: Root::D,
                         num_claims: num_polynomials,
                         num_live_blocks: commitment.num_live_blocks,
+                        num_chunks: 1,
                         num_fold_coeffs,
                         log_basis: commitment.log_basis_open,
                         challenge_config: &ring_challenge,
@@ -1432,6 +1433,10 @@ where
 
     fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
         Env::root_honest_fold_policy()
+    }
+
+    fn selection_policy() -> akita_planner::SelectionPolicyId {
+        akita_planner::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {

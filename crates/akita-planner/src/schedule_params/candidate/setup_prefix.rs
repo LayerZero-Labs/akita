@@ -151,7 +151,10 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
         else {
             continue;
         };
-        let Some(num_fold_coeffs) = width_s.checked_mul(d) else {
+        let Some(num_fold_coeffs) = width_s
+            .checked_mul(d)
+            .and_then(|count| count.checked_mul(num_chunks))
+        else {
             continue;
         };
         let fold_policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
@@ -162,6 +165,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
             ring_dimension: d,
             num_claims: 1,
             num_live_blocks,
+            num_chunks,
             num_fold_coeffs,
             log_basis: log_basis_open,
             challenge_config: ring_challenge_cfg,

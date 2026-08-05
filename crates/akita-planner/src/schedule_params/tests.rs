@@ -717,11 +717,11 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
 
     assert_eq!(
         selected.estimate.estimated_num_setup_field_elements,
-        20_971_520
+        22_544_384
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        91_016
+        90_728
     );
 }
 

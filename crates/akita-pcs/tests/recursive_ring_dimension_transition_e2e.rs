@@ -18,10 +18,11 @@
 mod common;
 
 use akita_config::proof_optimized::fp128;
-use akita_config::CommitmentConfig;
+use akita_config::{
+    committed_group_params, committed_group_profile, CommitmentConfig, PrecommittedCommitmentConfig,
+};
 use akita_pcs::test_support::{
-    materialize_schedule_setup_prefix_slots, per_matrix_ring_dims_root_schedule,
-    PerMatrixRingDimsRootConfig, RecursiveRingDimensionTransitionConfig,
+    materialize_schedule_setup_prefix_slots, RecursiveRingDimensionTransitionConfig,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
@@ -47,7 +48,7 @@ type Suffix = fp128::D64OneHot;
 type PlainCfg = RecursiveRingDimensionTransitionConfig<Root, Mid, Suffix, Suffix, 128, 64>;
 type W8R2Cfg =
     RecursiveRingDimensionTransitionConfig<Root, Mid, Suffix, fp128::D64OneHotMultiChunk, 128, 64>;
-type PrecommitCfg = PerMatrixRingDimsRootConfig<Root, 128, 128>;
+type PrecommitCfg = fp128::D256OneHot;
 
 const PRE_NV: usize = 14;
 const FINAL_NV: usize = 24;
@@ -58,10 +59,14 @@ const TOTAL_GROUP_SIZE: usize = PRE_GROUPS * PRE_GROUP_SIZE + FINAL_GROUP_SIZE;
 const ONEHOT_K: usize = 256;
 static RECURSIVE_E2E_LOCK: Mutex<()> = Mutex::new(());
 
-fn root_band_precommit_layout() -> akita_types::CommittedGroupParams {
-    let pre_schedule = per_matrix_ring_dims_root_schedule::<Root>(PRE_NV, PRE_GROUP_SIZE, 128, 128)
-        .expect("root-band precommit schedule");
-    pre_schedule.root.params.final_group.commitment
+fn catalog_precommit_layout() -> akita_types::CommittedGroupParams {
+    committed_group_params::<PrecommitCfg>(&PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE))
+        .expect("generated precommit params")
+}
+
+fn catalog_precommit_profile() -> CommittedGroupProfile {
+    committed_group_profile::<PrecommitCfg>(&PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE))
+        .expect("generated precommit profile")
 }
 
 fn make_layout_onehot_poly(
@@ -166,13 +171,14 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
     ProofCfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     type Scheme<ProofCfg> = AkitaCommitmentScheme<ProofCfg>;
-    type Precommitted = AkitaCommitmentScheme<PrecommitCfg>;
+    type Precommitted = AkitaCommitmentScheme<PrecommittedCommitmentConfig<PrecommitCfg>>;
 
     init_rayon_pool();
     run_on_large_stack(move || {
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
-        let pre_layout = root_band_precommit_layout();
-        let pre_frozen = CommittedGroupProfile::from_params(pre_key, &pre_layout);
+        let pre_layout = catalog_precommit_layout();
+        let pre_frozen = catalog_precommit_profile();
+        assert_eq!(pre_frozen.group, pre_key);
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             precommitteds: vec![pre_frozen, pre_frozen],
@@ -240,6 +246,7 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
                 &preprocessing_stack,
             )
             .expect("precommit group");
+            assert_eq!(commitment.profile, pre_frozen);
             pre_polys_by_group.push(vec![poly]);
             pre_commitments.push(commitment);
             pre_hints.push(hint);
@@ -342,9 +349,9 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
             BasisMode::Lagrange,
         )
         .expect("mixed recursive proof");
-        let requirements =
-            NttExecutionRequirements::from_prove_schedule(&schedule).expect("NTT requirements");
-        let prefix_layout = &schedule.recursive_folds[0]
+        let requirements = NttExecutionRequirements::from_prove_schedule(&selected_schedule)
+            .expect("NTT requirements");
+        let prefix_layout = &selected_schedule.recursive_folds[0]
             .params
             .incoming_setup_prefix
             .as_ref()
@@ -417,9 +424,12 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         )
         .expect("deserialize mixed recursive proof");
 
-        let verifier_setup =
-            Scheme::<ProofCfg>::setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
-                .expect("verifier setup");
+        let verifier_setup = Scheme::<ProofCfg>::setup_verifier_for_schedule(
+            &setup,
+            &selected_schedule,
+            &opening_layout,
+        )
+        .expect("verifier setup");
         let verify_claims = |final_openings: Vec<F>| {
             let mut verifier_groups = Vec::new();
             for (group_idx, openings) in pre_openings.iter().enumerate() {
@@ -478,8 +488,8 @@ fn recursive_mixed_d_prefix_commit_lazily_builds_exact_ntt_slots() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
-        let pre_layout = root_band_precommit_layout();
-        let descriptor = CommittedGroupProfile::from_params(pre_key, &pre_layout);
+        let descriptor = catalog_precommit_profile();
+        assert_eq!(descriptor.group, pre_key);
         let schedule = PlainCfg::runtime_schedule(AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             precommitteds: vec![descriptor, descriptor],
