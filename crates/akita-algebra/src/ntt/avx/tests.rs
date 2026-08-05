@@ -26,7 +26,7 @@ fn avx_mode_defaults_to_avx2_when_supported() {
 }
 
 #[test]
-fn avx512_is_default_when_available() {
+fn avx512_is_default_pointwise_mode_when_available() {
     assert_eq!(
         select_avx_ntt_mode(None, None, None, AVX512_CAPABLE),
         Some(AvxNttMode::Avx512)
@@ -35,6 +35,19 @@ fn avx512_is_default_when_available() {
         select_avx_ntt_mode(None, None, Some("1"), AVX512_CAPABLE),
         Some(AvxNttMode::Avx512)
     );
+}
+
+#[test]
+fn avx2_transform_is_default_and_avx512_is_explicit() {
+    assert!(!select_avx512_transform_ntt(None, Some(AvxNttMode::Avx512)));
+    assert!(select_avx512_transform_ntt(
+        Some("1"),
+        Some(AvxNttMode::Avx512)
+    ));
+    assert!(!select_avx512_transform_ntt(
+        Some("1"),
+        Some(AvxNttMode::Avx2)
+    ));
 }
 
 #[test]
@@ -211,9 +224,21 @@ fn assert_i32_crt_ops<const D: usize>() {
             let mut neg = lhs;
             let mut mul = [MontCoeff::from_raw(0); D];
             unsafe {
-                add_reduce_i32(add.as_mut_ptr().cast(), rhs.as_ptr().cast(), D, prime.p);
-                sub_reduce_i32(sub.as_mut_ptr().cast(), rhs.as_ptr().cast(), D, prime.p);
-                neg_reduce_i32(neg.as_mut_ptr().cast(), D, prime.p);
+                add_reduce_i32(
+                    add.as_mut_ptr().cast(),
+                    add.as_ptr().cast(),
+                    rhs.as_ptr().cast(),
+                    D,
+                    prime.p,
+                );
+                sub_reduce_i32(
+                    sub.as_mut_ptr().cast(),
+                    sub.as_ptr().cast(),
+                    rhs.as_ptr().cast(),
+                    D,
+                    prime.p,
+                );
+                neg_reduce_i32(neg.as_mut_ptr().cast(), neg.as_ptr().cast(), D, prime.p);
                 pointwise_mul_i32(
                     mul.as_mut_ptr().cast(),
                     lhs.as_ptr().cast(),
@@ -238,9 +263,21 @@ fn assert_i32_crt_ops<const D: usize>() {
             let mut neg = lhs;
             let mut mul = [MontCoeff::from_raw(0); D];
             unsafe {
-                add_reduce_i32_avx512(add.as_mut_ptr().cast(), rhs.as_ptr().cast(), D, prime.p);
-                sub_reduce_i32_avx512(sub.as_mut_ptr().cast(), rhs.as_ptr().cast(), D, prime.p);
-                neg_reduce_i32_avx512(neg.as_mut_ptr().cast(), D, prime.p);
+                add_reduce_i32_avx512(
+                    add.as_mut_ptr().cast(),
+                    add.as_ptr().cast(),
+                    rhs.as_ptr().cast(),
+                    D,
+                    prime.p,
+                );
+                sub_reduce_i32_avx512(
+                    sub.as_mut_ptr().cast(),
+                    sub.as_ptr().cast(),
+                    rhs.as_ptr().cast(),
+                    D,
+                    prime.p,
+                );
+                neg_reduce_i32_avx512(neg.as_mut_ptr().cast(), neg.as_ptr().cast(), D, prime.p);
                 pointwise_mul_i32_avx512(
                     mul.as_mut_ptr().cast(),
                     lhs.as_ptr().cast(),
@@ -550,6 +587,7 @@ fn avx2_add_reduce_i32_matches_scalar_with_tail() {
     unsafe {
         add_reduce_i32(
             avx_acc.as_mut_ptr() as *mut i32,
+            avx_acc.as_ptr() as *const i32,
             other.as_ptr() as *const i32,
             D,
             prime.p,
@@ -611,6 +649,7 @@ fn avx512_add_reduce_i32_matches_scalar_with_tail() {
     unsafe {
         add_reduce_i32_avx512(
             avx_acc.as_mut_ptr() as *mut i32,
+            avx_acc.as_ptr() as *const i32,
             other.as_ptr() as *const i32,
             D,
             prime.p,

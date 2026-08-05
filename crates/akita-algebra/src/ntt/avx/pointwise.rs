@@ -117,24 +117,23 @@ pub(crate) unsafe fn pointwise_mul_acc_i32_avx512(
 
 /// AVX2 add-and-reduce for one `i32` CRT limb.
 ///
-/// Computes `acc[i] = reduce_range(acc[i] + other[i])`.
+/// Computes `out[i] = reduce_range(lhs[i] + rhs[i])`.
 ///
 /// # Safety
 ///
-/// The caller must ensure AVX2 is available. `acc` and `other` must be valid
-/// for `d` `i32` elements. `acc` must be writable and must not alias in a way
-/// that violates Rust's mutable-reference rules.
+/// The caller must ensure AVX2 is available. All pointers must be valid for
+/// `d` `i32` elements and `out` must be writable. `out` may equal `lhs`.
 #[target_feature(enable = "avx2")]
-pub unsafe fn add_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32) {
+pub unsafe fn add_reduce_i32(out: *mut i32, lhs: *const i32, rhs: *const i32, d: usize, p: i32) {
     let p_v = _mm256_set1_epi32(p);
     let mut i = 0;
     while i + 8 <= d {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
         unsafe {
-            let a = _mm256_loadu_si256(acc.add(i) as *const __m256i);
-            let b = _mm256_loadu_si256(other.add(i) as *const __m256i);
+            let a = _mm256_loadu_si256(lhs.add(i) as *const __m256i);
+            let b = _mm256_loadu_si256(rhs.add(i) as *const __m256i);
             _mm256_storeu_si256(
-                acc.add(i) as *mut __m256i,
+                out.add(i) as *mut __m256i,
                 reduce_range_8x_i32_avx2(_mm256_add_epi32(a, b), p_v),
             );
         }
@@ -145,8 +144,8 @@ pub unsafe fn add_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32)
         while i < d {
             // SAFETY: guaranteed by this function's safety contract and loop bound.
             unsafe {
-                let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(*other.add(i)));
-                *acc.add(i) = prime.reduce_range(sum).raw();
+                let sum = MontCoeff::from_raw((*lhs.add(i)).wrapping_add(*rhs.add(i)));
+                *out.add(i) = prime.reduce_range(sum).raw();
             }
             i += 1;
         }
@@ -155,24 +154,30 @@ pub unsafe fn add_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32)
 
 /// AVX-512 add-and-reduce for one `i32` CRT limb.
 ///
-/// Computes `acc[i] = reduce_range(acc[i] + other[i])`.
+/// Computes `out[i] = reduce_range(lhs[i] + rhs[i])`.
 ///
 /// # Safety
 ///
-/// The caller must ensure AVX-512F/DQ/BW are available. `acc` and `other` must
-/// be valid for `d` `i32` elements. `acc` must be writable and must not alias in
-/// a way that violates Rust's mutable-reference rules.
+/// The caller must ensure AVX-512F/DQ/BW are available. All pointers must be
+/// valid for `d` `i32` elements and `out` must be writable. `out` may equal
+/// `lhs`.
 #[target_feature(enable = "avx512f,avx512dq,avx512bw")]
-pub unsafe fn add_reduce_i32_avx512(acc: *mut i32, other: *const i32, d: usize, p: i32) {
+pub unsafe fn add_reduce_i32_avx512(
+    out: *mut i32,
+    lhs: *const i32,
+    rhs: *const i32,
+    d: usize,
+    p: i32,
+) {
     let p_v = _mm512_set1_epi32(p);
     let mut i = 0;
     while i + 16 <= d {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
         unsafe {
-            let a = _mm512_loadu_si512(acc.add(i) as *const __m512i);
-            let b = _mm512_loadu_si512(other.add(i) as *const __m512i);
+            let a = _mm512_loadu_si512(lhs.add(i) as *const __m512i);
+            let b = _mm512_loadu_si512(rhs.add(i) as *const __m512i);
             _mm512_storeu_si512(
-                acc.add(i) as *mut __m512i,
+                out.add(i) as *mut __m512i,
                 reduce_range_16x_i32_avx512(_mm512_add_epi32(a, b), p_v),
             );
         }
@@ -183,8 +188,8 @@ pub unsafe fn add_reduce_i32_avx512(acc: *mut i32, other: *const i32, d: usize, 
         while i < d {
             // SAFETY: guaranteed by this function's safety contract and loop bound.
             unsafe {
-                let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(*other.add(i)));
-                *acc.add(i) = prime.reduce_range(sum).raw();
+                let sum = MontCoeff::from_raw((*lhs.add(i)).wrapping_add(*rhs.add(i)));
+                *out.add(i) = prime.reduce_range(sum).raw();
             }
             i += 1;
         }
@@ -196,17 +201,17 @@ pub unsafe fn add_reduce_i32_avx512(acc: *mut i32, other: *const i32, d: usize, 
 /// # Safety
 ///
 /// The caller must ensure AVX2 is available and all pointers are valid for
-/// `d` elements. `acc` must be writable.
+/// `d` elements. `out` must be writable and may equal `lhs`.
 #[target_feature(enable = "avx2")]
-pub unsafe fn sub_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32) {
+pub unsafe fn sub_reduce_i32(out: *mut i32, lhs: *const i32, rhs: *const i32, d: usize, p: i32) {
     let p_v = _mm256_set1_epi32(p);
     let mut i = 0;
     while i + 8 <= d {
         unsafe {
-            let a = _mm256_loadu_si256(acc.add(i) as *const __m256i);
-            let b = _mm256_loadu_si256(other.add(i) as *const __m256i);
+            let a = _mm256_loadu_si256(lhs.add(i) as *const __m256i);
+            let b = _mm256_loadu_si256(rhs.add(i) as *const __m256i);
             _mm256_storeu_si256(
-                acc.add(i) as *mut __m256i,
+                out.add(i) as *mut __m256i,
                 reduce_range_8x_i32_avx2(_mm256_sub_epi32(a, b), p_v),
             );
         }
@@ -216,8 +221,8 @@ pub unsafe fn sub_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32)
         let prime = NttPrime::compute(p);
         while i < d {
             unsafe {
-                let diff = MontCoeff::from_raw((*acc.add(i)).wrapping_sub(*other.add(i)));
-                *acc.add(i) = prime.reduce_range(diff).raw();
+                let diff = MontCoeff::from_raw((*lhs.add(i)).wrapping_sub(*rhs.add(i)));
+                *out.add(i) = prime.reduce_range(diff).raw();
             }
             i += 1;
         }
@@ -229,17 +234,23 @@ pub unsafe fn sub_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32)
 /// # Safety
 ///
 /// The caller must ensure AVX-512F/DQ/BW are available and all pointers are
-/// valid for `d` elements. `acc` must be writable.
+/// valid for `d` elements. `out` must be writable and may equal `lhs`.
 #[target_feature(enable = "avx512f,avx512dq,avx512bw")]
-pub unsafe fn sub_reduce_i32_avx512(acc: *mut i32, other: *const i32, d: usize, p: i32) {
+pub unsafe fn sub_reduce_i32_avx512(
+    out: *mut i32,
+    lhs: *const i32,
+    rhs: *const i32,
+    d: usize,
+    p: i32,
+) {
     let p_v = _mm512_set1_epi32(p);
     let mut i = 0;
     while i + 16 <= d {
         unsafe {
-            let a = _mm512_loadu_si512(acc.add(i) as *const __m512i);
-            let b = _mm512_loadu_si512(other.add(i) as *const __m512i);
+            let a = _mm512_loadu_si512(lhs.add(i) as *const __m512i);
+            let b = _mm512_loadu_si512(rhs.add(i) as *const __m512i);
             _mm512_storeu_si512(
-                acc.add(i) as *mut __m512i,
+                out.add(i) as *mut __m512i,
                 reduce_range_16x_i32_avx512(_mm512_sub_epi32(a, b), p_v),
             );
         }
@@ -249,8 +260,8 @@ pub unsafe fn sub_reduce_i32_avx512(acc: *mut i32, other: *const i32, d: usize, 
         let prime = NttPrime::compute(p);
         while i < d {
             unsafe {
-                let diff = MontCoeff::from_raw((*acc.add(i)).wrapping_sub(*other.add(i)));
-                *acc.add(i) = prime.reduce_range(diff).raw();
+                let diff = MontCoeff::from_raw((*lhs.add(i)).wrapping_sub(*rhs.add(i)));
+                *out.add(i) = prime.reduce_range(diff).raw();
             }
             i += 1;
         }
@@ -261,18 +272,18 @@ pub unsafe fn sub_reduce_i32_avx512(acc: *mut i32, other: *const i32, d: usize, 
 ///
 /// # Safety
 ///
-/// The caller must ensure AVX2 is available and `acc` is valid and writable
-/// for `d` elements.
+/// The caller must ensure AVX2 is available. `out` must be writable and `input`
+/// must be readable for `d` elements. The pointers may be equal.
 #[target_feature(enable = "avx2")]
-pub unsafe fn neg_reduce_i32(acc: *mut i32, d: usize, p: i32) {
+pub unsafe fn neg_reduce_i32(out: *mut i32, input: *const i32, d: usize, p: i32) {
     let p_v = _mm256_set1_epi32(p);
     let zero = _mm256_setzero_si256();
     let mut i = 0;
     while i + 8 <= d {
         unsafe {
-            let a = _mm256_loadu_si256(acc.add(i) as *const __m256i);
+            let a = _mm256_loadu_si256(input.add(i) as *const __m256i);
             _mm256_storeu_si256(
-                acc.add(i) as *mut __m256i,
+                out.add(i) as *mut __m256i,
                 reduce_range_8x_i32_avx2(_mm256_sub_epi32(zero, a), p_v),
             );
         }
@@ -282,8 +293,8 @@ pub unsafe fn neg_reduce_i32(acc: *mut i32, d: usize, p: i32) {
         let prime = NttPrime::compute(p);
         while i < d {
             unsafe {
-                let neg = MontCoeff::from_raw((*acc.add(i)).wrapping_neg());
-                *acc.add(i) = prime.reduce_range(neg).raw();
+                let neg = MontCoeff::from_raw((*input.add(i)).wrapping_neg());
+                *out.add(i) = prime.reduce_range(neg).raw();
             }
             i += 1;
         }
@@ -294,18 +305,18 @@ pub unsafe fn neg_reduce_i32(acc: *mut i32, d: usize, p: i32) {
 ///
 /// # Safety
 ///
-/// The caller must ensure AVX-512F/DQ/BW are available and `acc` is valid and
-/// writable for `d` elements.
+/// The caller must ensure AVX-512F/DQ/BW are available. `out` must be writable
+/// and `input` readable for `d` elements. The pointers may be equal.
 #[target_feature(enable = "avx512f,avx512dq,avx512bw")]
-pub unsafe fn neg_reduce_i32_avx512(acc: *mut i32, d: usize, p: i32) {
+pub unsafe fn neg_reduce_i32_avx512(out: *mut i32, input: *const i32, d: usize, p: i32) {
     let p_v = _mm512_set1_epi32(p);
     let zero = _mm512_setzero_si512();
     let mut i = 0;
     while i + 16 <= d {
         unsafe {
-            let a = _mm512_loadu_si512(acc.add(i) as *const __m512i);
+            let a = _mm512_loadu_si512(input.add(i) as *const __m512i);
             _mm512_storeu_si512(
-                acc.add(i) as *mut __m512i,
+                out.add(i) as *mut __m512i,
                 reduce_range_16x_i32_avx512(_mm512_sub_epi32(zero, a), p_v),
             );
         }
@@ -315,8 +326,8 @@ pub unsafe fn neg_reduce_i32_avx512(acc: *mut i32, d: usize, p: i32) {
         let prime = NttPrime::compute(p);
         while i < d {
             unsafe {
-                let neg = MontCoeff::from_raw((*acc.add(i)).wrapping_neg());
-                *acc.add(i) = prime.reduce_range(neg).raw();
+                let neg = MontCoeff::from_raw((*input.add(i)).wrapping_neg());
+                *out.add(i) = prime.reduce_range(neg).raw();
             }
             i += 1;
         }

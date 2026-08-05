@@ -4,9 +4,11 @@ use std::arch::x86::*;
 use std::arch::x86_64::*;
 
 use super::montgomery::{
-    forward_dif_tail_i32_avx2, mont_mul_4x_i32_avx2, reduce_range_4x_i32_avx2,
+    forward_dif_tail_i32_avx2, inverse_dit_head_i32_avx2, mont_mul_4x_i32_avx2,
+    mont_mul_8x_i32_avx2, reduce_range_4x_i32_avx2, reduce_range_8x_i32_avx2,
 };
-use super::{avx_ntt_mode, d32, wide512, AvxNttMode};
+use super::runtime::use_avx512_transform_ntt;
+use super::{d32, wide512};
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::forward_dif_tail_eligible;
 use crate::ntt::prime::{MontCoeff, NttPrime};
@@ -32,7 +34,7 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
             );
         }
     }
-    if matches!(avx_ntt_mode(), Some(AvxNttMode::Avx512)) {
+    if use_avx512_transform_ntt() {
         // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
         unsafe {
             return wide512::forward_ntt_i32(a, prime, tw);
@@ -41,21 +43,23 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
 
     let p_d = _mm_set1_epi32(prime.p);
     let pinv_d = _mm_set1_epi32(prime.pinv);
+    let p256 = _mm256_set1_epi32(prime.p);
+    let pinv256 = _mm256_set1_epi32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
 
     let psi_ptr = tw.psi_pows.as_ptr() as *const i32;
     let mut i = 0;
-    while i + 4 <= D {
+    while i + 8 <= D {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
         unsafe {
-            let ai = _mm_loadu_si128(a_ptr.add(i) as *const __m128i);
-            let psi = _mm_loadu_si128(psi_ptr.add(i) as *const __m128i);
-            _mm_storeu_si128(
-                a_ptr.add(i) as *mut __m128i,
-                mont_mul_4x_i32_avx2(ai, psi, p_d, pinv_d),
+            let ai = _mm256_loadu_si256(a_ptr.add(i) as *const __m256i);
+            let psi = _mm256_loadu_si256(psi_ptr.add(i) as *const __m256i);
+            _mm256_storeu_si256(
+                a_ptr.add(i) as *mut __m256i,
+                mont_mul_8x_i32_avx2(ai, psi, p256, pinv256),
             );
         }
-        i += 4;
+        i += 8;
     }
     while i < D {
         a[i] = prime.mul(a[i], tw.psi_pows[i]);
@@ -69,22 +73,42 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
         let mut start = 0usize;
         while start < D {
             let mut j = 0usize;
-            while j < len {
-                // SAFETY: guaranteed by stage bounds and this function's safety contract.
-                unsafe {
-                    let u = _mm_loadu_si128(a_ptr.add(start + j) as *const __m128i);
-                    let v = _mm_loadu_si128(a_ptr.add(start + j + len) as *const __m128i);
-                    let w = _mm_loadu_si128(tw_ptr.add(twiddle_base + j) as *const __m128i);
-                    _mm_storeu_si128(
-                        a_ptr.add(start + j) as *mut __m128i,
-                        reduce_range_4x_i32_avx2(_mm_add_epi32(u, v), p_d),
-                    );
-                    _mm_storeu_si128(
-                        a_ptr.add(start + j + len) as *mut __m128i,
-                        mont_mul_4x_i32_avx2(_mm_sub_epi32(u, v), w, p_d, pinv_d),
-                    );
+            if len >= 8 {
+                while j < len {
+                    // SAFETY: guaranteed by stage bounds and this function's safety contract.
+                    unsafe {
+                        let u = _mm256_loadu_si256(a_ptr.add(start + j) as *const __m256i);
+                        let v = _mm256_loadu_si256(a_ptr.add(start + j + len) as *const __m256i);
+                        let w = _mm256_loadu_si256(tw_ptr.add(twiddle_base + j) as *const __m256i);
+                        _mm256_storeu_si256(
+                            a_ptr.add(start + j) as *mut __m256i,
+                            reduce_range_8x_i32_avx2(_mm256_add_epi32(u, v), p256),
+                        );
+                        _mm256_storeu_si256(
+                            a_ptr.add(start + j + len) as *mut __m256i,
+                            mont_mul_8x_i32_avx2(_mm256_sub_epi32(u, v), w, p256, pinv256),
+                        );
+                    }
+                    j += 8;
                 }
-                j += 4;
+            } else {
+                while j < len {
+                    // SAFETY: guaranteed by stage bounds and this function's safety contract.
+                    unsafe {
+                        let u = _mm_loadu_si128(a_ptr.add(start + j) as *const __m128i);
+                        let v = _mm_loadu_si128(a_ptr.add(start + j + len) as *const __m128i);
+                        let w = _mm_loadu_si128(tw_ptr.add(twiddle_base + j) as *const __m128i);
+                        _mm_storeu_si128(
+                            a_ptr.add(start + j) as *mut __m128i,
+                            reduce_range_4x_i32_avx2(_mm_add_epi32(u, v), p_d),
+                        );
+                        _mm_storeu_si128(
+                            a_ptr.add(start + j + len) as *mut __m128i,
+                            mont_mul_4x_i32_avx2(_mm_sub_epi32(u, v), w, p_d, pinv_d),
+                        );
+                    }
+                    j += 4;
+                }
             }
             start += 2 * len;
         }
@@ -145,7 +169,7 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
             );
         }
     }
-    if matches!(avx_ntt_mode(), Some(AvxNttMode::Avx512)) {
+    if use_avx512_transform_ntt() {
         // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
         unsafe {
             return wide512::inverse_ntt_i32(a, prime, tw);
@@ -154,15 +178,50 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
 
     let p_d = _mm_set1_epi32(prime.p);
     let pinv_d = _mm_set1_epi32(prime.pinv);
+    let p256 = _mm256_set1_epi32(prime.p);
+    let pinv256 = _mm256_set1_epi32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
 
     let mut len = 1usize;
+    if D.is_multiple_of(16) {
+        // SAFETY: the divisibility check covers every 16-element block.
+        unsafe {
+            inverse_dit_head_i32_avx2::<D>(
+                a_ptr,
+                tw.inv_twiddles.as_ptr() as *const i32,
+                p_d,
+                pinv_d,
+            );
+        }
+        len = 4;
+    }
     while len < D {
         let twiddle_base = len - 1;
         let tw_ptr = tw.inv_twiddles.as_ptr() as *const i32;
         let mut start = 0usize;
         while start < D {
-            if len >= 4 {
+            if len >= 8 {
+                let mut j = 0usize;
+                while j < len {
+                    // SAFETY: guaranteed by stage bounds and this function's safety contract.
+                    unsafe {
+                        let w = _mm256_loadu_si256(tw_ptr.add(twiddle_base + j) as *const __m256i);
+                        let u = _mm256_loadu_si256(a_ptr.add(start + j) as *const __m256i);
+                        let v_raw =
+                            _mm256_loadu_si256(a_ptr.add(start + j + len) as *const __m256i);
+                        let v = mont_mul_8x_i32_avx2(v_raw, w, p256, pinv256);
+                        _mm256_storeu_si256(
+                            a_ptr.add(start + j) as *mut __m256i,
+                            reduce_range_8x_i32_avx2(_mm256_add_epi32(u, v), p256),
+                        );
+                        _mm256_storeu_si256(
+                            a_ptr.add(start + j + len) as *mut __m256i,
+                            reduce_range_8x_i32_avx2(_mm256_sub_epi32(u, v), p256),
+                        );
+                    }
+                    j += 8;
+                }
+            } else if len >= 4 {
                 let mut j = 0usize;
                 while j < len {
                     // SAFETY: guaranteed by stage bounds and this function's safety contract.
@@ -200,17 +259,17 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
 
     let fused_ptr = tw.d_inv_psi_inv.as_ptr() as *const i32;
     let mut i = 0;
-    while i + 4 <= D {
+    while i + 8 <= D {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
         unsafe {
-            let ai = _mm_loadu_si128(a_ptr.add(i) as *const __m128i);
-            let fused = _mm_loadu_si128(fused_ptr.add(i) as *const __m128i);
-            _mm_storeu_si128(
-                a_ptr.add(i) as *mut __m128i,
-                mont_mul_4x_i32_avx2(ai, fused, p_d, pinv_d),
+            let ai = _mm256_loadu_si256(a_ptr.add(i) as *const __m256i);
+            let fused = _mm256_loadu_si256(fused_ptr.add(i) as *const __m256i);
+            _mm256_storeu_si256(
+                a_ptr.add(i) as *mut __m256i,
+                mont_mul_8x_i32_avx2(ai, fused, p256, pinv256),
             );
         }
-        i += 4;
+        i += 8;
     }
     while i < D {
         a[i] = prime.mul(a[i], tw.d_inv_psi_inv[i]);
@@ -239,7 +298,7 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
             );
         }
     }
-    if matches!(avx_ntt_mode(), Some(AvxNttMode::Avx512)) {
+    if use_avx512_transform_ntt() {
         // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
         unsafe {
             return wide512::forward_ntt_cyclic_i32(a, prime, tw);
@@ -248,6 +307,8 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
 
     let p_d = _mm_set1_epi32(prime.p);
     let pinv_d = _mm_set1_epi32(prime.pinv);
+    let p256 = _mm256_set1_epi32(prime.p);
+    let pinv256 = _mm256_set1_epi32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
 
     let mut len = D / 2;
@@ -257,22 +318,42 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
         let mut start = 0usize;
         while start < D {
             let mut j = 0usize;
-            while j < len {
-                // SAFETY: guaranteed by stage bounds and this function's safety contract.
-                unsafe {
-                    let u = _mm_loadu_si128(a_ptr.add(start + j) as *const __m128i);
-                    let v = _mm_loadu_si128(a_ptr.add(start + j + len) as *const __m128i);
-                    let w = _mm_loadu_si128(tw_ptr.add(twiddle_base + j) as *const __m128i);
-                    _mm_storeu_si128(
-                        a_ptr.add(start + j) as *mut __m128i,
-                        reduce_range_4x_i32_avx2(_mm_add_epi32(u, v), p_d),
-                    );
-                    _mm_storeu_si128(
-                        a_ptr.add(start + j + len) as *mut __m128i,
-                        mont_mul_4x_i32_avx2(_mm_sub_epi32(u, v), w, p_d, pinv_d),
-                    );
+            if len >= 8 {
+                while j < len {
+                    // SAFETY: guaranteed by stage bounds and this function's safety contract.
+                    unsafe {
+                        let u = _mm256_loadu_si256(a_ptr.add(start + j) as *const __m256i);
+                        let v = _mm256_loadu_si256(a_ptr.add(start + j + len) as *const __m256i);
+                        let w = _mm256_loadu_si256(tw_ptr.add(twiddle_base + j) as *const __m256i);
+                        _mm256_storeu_si256(
+                            a_ptr.add(start + j) as *mut __m256i,
+                            reduce_range_8x_i32_avx2(_mm256_add_epi32(u, v), p256),
+                        );
+                        _mm256_storeu_si256(
+                            a_ptr.add(start + j + len) as *mut __m256i,
+                            mont_mul_8x_i32_avx2(_mm256_sub_epi32(u, v), w, p256, pinv256),
+                        );
+                    }
+                    j += 8;
                 }
-                j += 4;
+            } else {
+                while j < len {
+                    // SAFETY: guaranteed by stage bounds and this function's safety contract.
+                    unsafe {
+                        let u = _mm_loadu_si128(a_ptr.add(start + j) as *const __m128i);
+                        let v = _mm_loadu_si128(a_ptr.add(start + j + len) as *const __m128i);
+                        let w = _mm_loadu_si128(tw_ptr.add(twiddle_base + j) as *const __m128i);
+                        _mm_storeu_si128(
+                            a_ptr.add(start + j) as *mut __m128i,
+                            reduce_range_4x_i32_avx2(_mm_add_epi32(u, v), p_d),
+                        );
+                        _mm_storeu_si128(
+                            a_ptr.add(start + j + len) as *mut __m128i,
+                            mont_mul_4x_i32_avx2(_mm_sub_epi32(u, v), w, p_d, pinv_d),
+                        );
+                    }
+                    j += 4;
+                }
             }
             start += 2 * len;
         }
@@ -333,7 +414,7 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
             );
         }
     }
-    if matches!(avx_ntt_mode(), Some(AvxNttMode::Avx512)) {
+    if use_avx512_transform_ntt() {
         // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
         unsafe {
             return wide512::inverse_ntt_cyclic_i32(a, prime, tw);
@@ -342,15 +423,50 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
 
     let p_d = _mm_set1_epi32(prime.p);
     let pinv_d = _mm_set1_epi32(prime.pinv);
+    let p256 = _mm256_set1_epi32(prime.p);
+    let pinv256 = _mm256_set1_epi32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
 
     let mut len = 1usize;
+    if D.is_multiple_of(16) {
+        // SAFETY: the divisibility check covers every 16-element block.
+        unsafe {
+            inverse_dit_head_i32_avx2::<D>(
+                a_ptr,
+                tw.inv_twiddles.as_ptr() as *const i32,
+                p_d,
+                pinv_d,
+            );
+        }
+        len = 4;
+    }
     while len < D {
         let twiddle_base = len - 1;
         let tw_ptr = tw.inv_twiddles.as_ptr() as *const i32;
         let mut start = 0usize;
         while start < D {
-            if len >= 4 {
+            if len >= 8 {
+                let mut j = 0usize;
+                while j < len {
+                    // SAFETY: guaranteed by stage bounds and this function's safety contract.
+                    unsafe {
+                        let w = _mm256_loadu_si256(tw_ptr.add(twiddle_base + j) as *const __m256i);
+                        let u = _mm256_loadu_si256(a_ptr.add(start + j) as *const __m256i);
+                        let v_raw =
+                            _mm256_loadu_si256(a_ptr.add(start + j + len) as *const __m256i);
+                        let v = mont_mul_8x_i32_avx2(v_raw, w, p256, pinv256);
+                        _mm256_storeu_si256(
+                            a_ptr.add(start + j) as *mut __m256i,
+                            reduce_range_8x_i32_avx2(_mm256_add_epi32(u, v), p256),
+                        );
+                        _mm256_storeu_si256(
+                            a_ptr.add(start + j + len) as *mut __m256i,
+                            reduce_range_8x_i32_avx2(_mm256_sub_epi32(u, v), p256),
+                        );
+                    }
+                    j += 8;
+                }
+            } else if len >= 4 {
                 let mut j = 0usize;
                 while j < len {
                     // SAFETY: guaranteed by stage bounds and this function's safety contract.
@@ -386,18 +502,18 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
         len *= 2;
     }
 
-    let d_inv = _mm_set1_epi32(tw.d_inv.raw());
+    let d_inv = _mm256_set1_epi32(tw.d_inv.raw());
     let mut i = 0;
-    while i + 4 <= D {
+    while i + 8 <= D {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
         unsafe {
-            let ai = _mm_loadu_si128(a_ptr.add(i) as *const __m128i);
-            _mm_storeu_si128(
-                a_ptr.add(i) as *mut __m128i,
-                mont_mul_4x_i32_avx2(ai, d_inv, p_d, pinv_d),
+            let ai = _mm256_loadu_si256(a_ptr.add(i) as *const __m256i);
+            _mm256_storeu_si256(
+                a_ptr.add(i) as *mut __m256i,
+                mont_mul_8x_i32_avx2(ai, d_inv, p256, pinv256),
             );
         }
-        i += 4;
+        i += 8;
     }
     while i < D {
         a[i] = prime.mul(a[i], tw.d_inv);

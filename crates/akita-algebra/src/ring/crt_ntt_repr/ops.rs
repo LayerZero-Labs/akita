@@ -1,5 +1,7 @@
 #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use std::mem::size_of;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use std::mem::MaybeUninit;
 
 use crate::backend::{NttPrimeOps, ScalarBackend};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -335,19 +337,23 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     pub fn add_reduced(&self, rhs: &Self, primes: &[NttPrime<W>; K]) -> Self {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         if size_of::<W>() == size_of::<i32>() && avx::use_avx2_transform_ntt() {
-            let mut out = self.clone();
+            let mut out = MaybeUninit::<Self>::uninit();
+            let out_ptr = out.as_mut_ptr().cast::<i32>();
             for (k, prime) in primes.iter().enumerate() {
                 let p = prime.p.to_i64() as i32;
                 unsafe {
                     avx::add_reduce_i32(
-                        out.limbs[k].as_mut_ptr() as *mut i32,
+                        out_ptr.add(k * D),
+                        self.limbs[k].as_ptr() as *const i32,
                         rhs.limbs[k].as_ptr() as *const i32,
                         D,
                         p,
                     )
                 }
             }
-            return out;
+            // SAFETY: the SIMD loop initializes all `D` coefficients in every
+            // limb of the transparent nested-array representation.
+            return unsafe { out.assume_init() };
         }
         self.add_reduced_with_backend::<ScalarBackend>(rhs, primes)
     }
@@ -379,19 +385,23 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     pub fn sub_reduced(&self, rhs: &Self, primes: &[NttPrime<W>; K]) -> Self {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         if size_of::<W>() == size_of::<i32>() && avx::use_avx2_transform_ntt() {
-            let mut out = self.clone();
+            let mut out = MaybeUninit::<Self>::uninit();
+            let out_ptr = out.as_mut_ptr().cast::<i32>();
             for (k, prime) in primes.iter().enumerate() {
                 let p = prime.p.to_i64() as i32;
                 unsafe {
                     avx::sub_reduce_i32(
-                        out.limbs[k].as_mut_ptr() as *mut i32,
+                        out_ptr.add(k * D),
+                        self.limbs[k].as_ptr() as *const i32,
                         rhs.limbs[k].as_ptr() as *const i32,
                         D,
                         p,
                     )
                 }
             }
-            return out;
+            // SAFETY: the SIMD loop initializes all `D` coefficients in every
+            // limb of the transparent nested-array representation.
+            return unsafe { out.assume_init() };
         }
         self.sub_reduced_with_backend::<ScalarBackend>(rhs, primes)
     }
@@ -423,23 +433,30 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         if size_of::<W>() == size_of::<i32>() {
             if let Some(mode) = Self::x86_pointwise_mode() {
-                let mut out = self.clone();
+                let mut out = MaybeUninit::<Self>::uninit();
+                let out_ptr = out.as_mut_ptr().cast::<i32>();
                 for (k, prime) in primes.iter().enumerate() {
                     let p = prime.p.to_i64() as i32;
                     unsafe {
                         match mode {
-                            AvxNttMode::Avx2 => {
-                                avx::neg_reduce_i32(out.limbs[k].as_mut_ptr() as *mut i32, D, p)
-                            }
+                            AvxNttMode::Avx2 => avx::neg_reduce_i32(
+                                out_ptr.add(k * D),
+                                self.limbs[k].as_ptr() as *const i32,
+                                D,
+                                p,
+                            ),
                             AvxNttMode::Avx512 => avx::neg_reduce_i32_avx512(
-                                out.limbs[k].as_mut_ptr() as *mut i32,
+                                out_ptr.add(k * D),
+                                self.limbs[k].as_ptr() as *const i32,
                                 D,
                                 p,
                             ),
                         }
                     }
                 }
-                return out;
+                // SAFETY: the SIMD loop initializes all `D` coefficients in
+                // every limb of the transparent nested-array representation.
+                return unsafe { out.assume_init() };
             }
         }
         self.neg_reduced_with_backend::<ScalarBackend>(primes)
@@ -471,12 +488,18 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         if size_of::<W>() == size_of::<i32>() {
             if let Some(mode) = Self::x86_pointwise_mode() {
-                let mut out = Self::zero();
+                let mut out = MaybeUninit::<Self>::uninit();
+                let out_ptr = out.as_mut_ptr().cast::<i32>();
                 for (k, prime) in primes.iter().copied().enumerate() {
+                    // SAFETY: `Self` and `MontCoeff<W>` are transparent over
+                    // nested contiguous arrays. The width check above proves
+                    // that each coefficient occupies one `i32`, and every
+                    // kernel writes all `D` coefficients in its limb.
+                    let out_limb = unsafe { out_ptr.add(k * D) };
                     unsafe {
                         match mode {
                             AvxNttMode::Avx2 => avx::pointwise_mul_i32(
-                                out.limbs[k].as_mut_ptr() as *mut i32,
+                                out_limb,
                                 self.limbs[k].as_ptr() as *const i32,
                                 rhs.limbs[k].as_ptr() as *const i32,
                                 D,
@@ -484,7 +507,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                                 prime.pinv.to_i64() as i32,
                             ),
                             AvxNttMode::Avx512 => avx::pointwise_mul_i32_avx512(
-                                out.limbs[k].as_mut_ptr() as *mut i32,
+                                out_limb,
                                 self.limbs[k].as_ptr() as *const i32,
                                 rhs.limbs[k].as_ptr() as *const i32,
                                 D,
@@ -494,7 +517,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                         }
                     }
                 }
-                return out;
+                // SAFETY: the loop above initializes every coefficient in all
+                // `K` limbs, which is the complete transparent representation.
+                return unsafe { out.assume_init() };
             }
         }
         self.pointwise_mul_with_backend::<ScalarBackend>(rhs, primes)

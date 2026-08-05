@@ -1,8 +1,10 @@
 use std::hint::black_box;
 
+use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt};
+use akita_algebra::ntt::NttTwiddles;
 use akita_algebra::tables::{q128_primes, Q128_NUM_PRIMES};
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, MontCoeff};
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 
 fn input<const D: usize>(salt: i32) -> CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D> {
     let primes = q128_primes();
@@ -36,6 +38,35 @@ fn bench_d<const D: usize>(c: &mut Criterion) {
         b.iter(|| black_box(lhs.pointwise_mul_with_params(black_box(&rhs), black_box(&params))))
     });
     group.finish();
+
+    let prime = q128_primes()[0];
+    let twiddles = NttTwiddles::compute(prime);
+    let coeffs = lhs.limbs[0];
+    let mut evals = coeffs;
+    forward_ntt(&mut evals, prime, &twiddles);
+    let mut ntt_group = c.benchmark_group("q128_ntt_i32");
+
+    ntt_group.bench_with_input(BenchmarkId::new("forward", D), &D, |b, _| {
+        b.iter_batched(
+            || coeffs,
+            |mut values| {
+                forward_ntt(&mut values, black_box(prime), black_box(&twiddles));
+                black_box(values)
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    ntt_group.bench_with_input(BenchmarkId::new("inverse", D), &D, |b, _| {
+        b.iter_batched(
+            || evals,
+            |mut values| {
+                inverse_ntt(&mut values, black_box(prime), black_box(&twiddles));
+                black_box(values)
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    ntt_group.finish();
 }
 
 fn benches(c: &mut Criterion) {
