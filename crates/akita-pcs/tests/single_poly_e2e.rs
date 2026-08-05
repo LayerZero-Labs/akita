@@ -117,7 +117,7 @@ fn run_single_onehot(nv: usize) {
 type DenseCfg = fp128::D128Dense;
 const DENSE_D: usize = DenseCfg::D;
 
-fn run_single_dense(nv: usize, expected_uncompressed_proof_bytes: usize) {
+fn run_single_dense(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = DenseCfg::get_params_for_batched_commitment(
@@ -192,12 +192,11 @@ fn run_single_dense(nv: usize, expected_uncompressed_proof_bytes: usize) {
         proof
             .serialize_uncompressed(&mut uncompressed)
             .expect("serialize uncompressed balanced proof");
+        // Check the public size calculation against actual serialization. Do
+        // not freeze an exact byte total here: transcript changes alter proof
+        // values, and the terminal response uses variable-length encoding.
+        // Dedicated proof-size tests own the schedule's upper-bound formulas.
         assert_eq!(proof.size(), uncompressed.len());
-        assert_eq!(
-            uncompressed.len(),
-            expected_uncompressed_proof_bytes,
-            "dense nv={nv} serialized proof size changed"
-        );
 
         let mut serialized = Vec::new();
         let proof_shape = proof.shape();
@@ -256,17 +255,17 @@ fn single_onehot_nv20() {
 
 #[test]
 fn single_dense_nv13() {
-    run_single_dense(13, 84_657);
+    run_single_dense(13);
 }
 
 #[test]
 fn single_dense_nv15() {
-    run_single_dense(15, 84_982);
+    run_single_dense(15);
 }
 
 #[test]
 fn single_dense_nv18() {
-    run_single_dense(18, 88_400);
+    run_single_dense(18);
 }
 
 // #[test]

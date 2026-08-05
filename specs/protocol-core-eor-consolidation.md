@@ -50,17 +50,12 @@ The refactor is implemented in the prover and verifier protocol crates:
 
 - Serialized proof layout and `ExtensionOpeningReductionProof` wire encoding are
   unchanged. Only module homes and in-memory preparation paths moved.
-- Fiat–Shamir transcript layout is path-specific and must stay aligned with the
-  shipped prover/verifier replay:
-  - **Root EOR** (`pad_base_evals = false`): absorb logical openings, sample row
-    coefficients γ, absorb proof partials, sample EOR η, then run the EOR
-    sumcheck.
-  - **Recursive suffix EOR** (`pad_base_evals = true`, single claim): absorb
-    proof partials only, sample EOR η, with row coefficient fixed to `[1]` (no
-    opening absorb and no γ squeeze). The verifier suffix path must not
-    pre-absorb the carried opening before `verify_fold_eor`.
+- Every EOR path absorbs logical openings and derives its public row
+  coefficients before it absorbs proof partials and samples EOR η. A singleton
+  uses coefficient `[1]`; a larger batch samples γ from the transcript.
 - Root and suffix share one implementation (`prepare_extension_opening_reduction`
-  / `verify_fold_eor`); the `pad_base_evals` flag selects the branch above.
+  / `verify_fold_eor`). `pad_base_evals` controls opening geometry only. It does
+  not control transcript binding or batching coefficients.
 - Prover and verifier must keep the same root/suffix boundary. Root folds use
   `BlockOrder::RowMajor`; suffix folds use `BlockOrder::ColumnMajor`.
 - EOR is optional and shape-driven. Non-EOR roots use `FoldInputPoly::Original`;
@@ -109,8 +104,9 @@ The refactor is implemented in the prover and verifier protocol crates:
   ring-relation over `&FoldInputPoly` references.
 - `crates/akita-verifier/src/protocol/core/fold.rs` owns shared per-fold replay
   (`verify_fold_eor`, `verify_fold`, stage verifiers).
-- Recursive suffix EOR uses partials-first transcript replay (`pad_base_evals =
-  true`); root EOR keeps openings-then-γ-then-partials.
+- Root and recursive suffix EOR both bind openings and derive γ before proof
+  partials. Prover and verifier must use `derive_public_row_coefficients` for
+  this step.
 - The default validation suite passes:
   `cargo fmt -q`,
   `cargo clippy --all --message-format=short -q -- -D warnings`, and
@@ -135,8 +131,8 @@ Additional review checks:
 
 - Search for stale module references to `protocol/flow/root_extension`.
 - Search for root-only EOR materialization paths that bypass `FoldInputPoly`.
-- Confirm suffix EOR does not pre-absorb openings on the verifier or absorb them
-  on the prover when `pad_base_evals = true`.
+- Confirm every opening batch uses `derive_public_row_coefficients` before EOR
+  partials.
 - Confirm terminal witness shape checks still use the segment-aware
   `admits_realized` relation after merging main's tail encoding work.
 
@@ -202,14 +198,11 @@ prepared tensor partials, sampled row coefficients, built dense or sparse EOR
 terms, and then separately transformed root polynomials into a projected form for
 ring-relation construction.
 
-The consolidated path has one EOR lifecycle, with transcript branching on
-`pad_base_evals`:
+The consolidated path has one EOR lifecycle:
 
 1. `prepare_extension_opening_reduction` pads the logical opening point and
-   derives tensor column partials. On the **root** path it then absorbs logical
-   openings, samples row coefficients γ, absorbs proof partials, and samples EOR
-   η. On the **recursive suffix** path it skips opening absorb and γ, fixes the
-   row coefficient to `[1]`, absorbs proof partials, and samples EOR η.
+   derives tensor column partials. Every path then absorbs logical openings,
+   derives public row coefficients, absorbs proof partials, and samples EOR η.
 2. `build_extension_opening_reduction_terms` selects sparse terms when every
    input supports sparse tensor packed extension evaluations; otherwise it builds
    dense terms from base evaluations and tensor equality factors.
