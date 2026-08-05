@@ -281,22 +281,89 @@ not by itself prove the scalar evaluation claim.
 
 ### The folded response and its digitization
 
-Once the opening digits have been committed through $\mathbf v_D$, the
-transcript samples one sparse ring-valued challenge $c_b(X)$ for each live
-block. These challenges are separate from the query weights $B_b$. The prover
-uses them to fold the original block digits:
+The opening commitment $\mathbf v_D$ binds the prover to
+$\hat{\mathbf e}$, but it does not by itself show that the corresponding
+partial evaluations were computed from the incoming polynomial blocks. For
+every block $b$, correctness requires
+
+$$
+\boxed{
+E_b
+=
+\sum_p Q_pF_{p,b}
+=
+\sum_{p,a}Q_pG_a^{\mathrm{in}}s_{b,p,a}.
+}
+\tag{8}
+$$
+
+Equation (8) connects the partial evaluation derived in this fold to the
+incoming block witness $\mathbf s_b$. The public commitment $\mathbf u$
+creates a second consistency requirement. Equation (4),
+$\mathbf u=\mathbf B\hat{\mathbf t}$, binds the outer digits
+$\hat{\mathbf t}$, which recompose the inner images $\mathbf t_b$ through
+Equation (3). However, this commitment relation does not by itself show that
+the inner images were computed from the incoming block witness. The missing
+link is the blockwise relation $\mathbf t_b=\mathbf A\mathbf s_b$ from
+Equation (2).
+
+Checking both relations separately for every live block would retain the block
+index in the next proof. Instead, after $\mathbf u$ and $\mathbf v_D$ have
+been fixed, the transcript samples one sparse ring-valued challenge $c_b(X)$
+for each live block. These challenges are separate from the query weights
+$B_b$. The prover folds the incoming block witnesses into one response:
 
 $$
 z_{p,a}(X)
 =
 \sum_b c_b(X)s_{b,p,a}(X).
-\tag{8}
+\tag{9}
 $$
 
-The response $\mathbf z$ no longer carries a live-block index. This is the
-fold's main reduction toward a smaller next-level witness, but combining the
-blocks increases coefficient magnitudes. Let $\sigma_\infty$ bound the
-coefficient norm of every digit block $\mathbf s_b$, and let
+The folded response $\mathbf z$ no longer carries a live-block index. Because
+both blockwise relations are linear in $\mathbf s_b$, the same challenges
+batch them into relations on this single response. For the partial
+evaluations, Equations (8) and (9) give
+
+$$
+\begin{aligned}
+\sum_b c_bE_b
+&=
+\sum_{b,p,a}c_bQ_pG_a^{\mathrm{in}}s_{b,p,a}\\
+&=
+\sum_{p,a}Q_pG_a^{\mathrm{in}}
+\left(\sum_b c_bs_{b,p,a}\right)\\
+&=
+\sum_{p,a}Q_pG_a^{\mathrm{in}}z_{p,a}.
+\end{aligned}
+\tag{9a}
+$$
+
+For the inner commitments, Equations (2) and (9) give the vector relation
+
+$$
+\begin{aligned}
+\sum_b c_b\mathbf t_b
+&=
+\mathbf A\left(\sum_b c_b\mathbf s_b\right)\\
+&=
+\mathbf A\mathbf z.
+\end{aligned}
+\tag{9b}
+$$
+
+Equation (9a) says that evaluating within each block and then folding gives the
+same result as first folding the block witnesses into $\mathbf z$ and then
+applying the evaluation weights. Equation (9b) similarly connects
+$\mathbf z$ to the inner images bound through $\mathbf u$. If any blockwise
+relation is incorrect, its error is unlikely to disappear in the corresponding
+random combination. Thus the challenges remove the block index while
+preserving the two links from the incoming witness: one to the partial
+evaluations created in this fold, and one to the commitment that entered it.
+
+This compression has an arithmetic cost: combining the blocks increases
+coefficient magnitudes. Let $\sigma_\infty$ bound the coefficient norm of
+every digit block $\mathbf s_b$, and let
 $\omega=\max_b\lVert c_b\rVert_1$. Negacyclic multiplication gives
 
 $$
@@ -318,50 +385,18 @@ the resulting $\mathbf z$ fits that scheduled bound. This grinding helps the
 honest prover find a compact response; the range check on its committed digits
 is what certifies the bound in the protocol.
 
-Before digitizing $\mathbf z$, linearity already gives two
-challenge-dependent identities among the recomposed ring elements. For the
-partial evaluations, Equations (1), (5), and (8) give
-
-$$
-\begin{aligned}
-\sum_b c_bE_b
-&=
-\sum_{b,p}c_bQ_pF_{p,b}\\
-&=
-\sum_{p,a}Q_pG_a^{\mathrm{in}}
-\left(\sum_b c_bs_{b,p,a}\right)\\
-&=
-\sum_{p,a}Q_pG_a^{\mathrm{in}}z_{p,a}.
-\end{aligned}
-\tag{8a}
-$$
-
-Similarly, Equations (2) and (8) imply, for every row $\rho$ of $\mathbf A$,
-
-$$
-\begin{aligned}
-\sum_b c_bt_{b,\rho}
-&=
-\sum_{p,a}A_{\rho,(p,a)}
-\left(\sum_b c_bs_{b,p,a}\right)\\
-&=
-\sum_{p,a}A_{\rho,(p,a)}z_{p,a}.
-\end{aligned}
-\tag{8b}
-$$
-
-Equations (8a) and (8b) are identities among the recomposed values; they do not
-yet use the opening digits $\hat{\mathbf e}$ or outer digits
-$\hat{\mathbf t}$. The next-level committed witness also contains bounded
-digits rather than $\mathbf z$ itself so that its shortness is certified for
-the Module-SIS binding argument. Akita therefore decomposes $\mathbf z$ once
-more:
+Equations (9a) and (9b) are identities among the recomposed values; they do not
+yet use the opening digits $\hat{\mathbf e}$, the outer digits
+$\hat{\mathbf t}$, or bounded digits for $\mathbf z$. The next-level committed
+witness contains digit rings rather than $\mathbf z$ itself so that its
+shortness is certified for the Module-SIS binding argument. Akita therefore
+decomposes $\mathbf z$ once more:
 
 $$
 z_{p,a}(X)
 =
 \sum_f G_f^{\mathrm{fold}}\hat z_{p,a,f}(X).
-\tag{9}
+\tag{10}
 $$
 
 The three main digit segments assembled for the next witness are therefore
@@ -372,7 +407,7 @@ $$
 \hat{\mathbf e}
 \;\Vert\;
 \hat{\mathbf t}.
-\tag{10}
+\tag{11}
 $$
 
 They have different origins:
@@ -385,12 +420,12 @@ They have different origins:
 
 ## The four physical relation families
 
-Equation (10) assembles three digit segments, but placing them next to one
+Equation (11) assembles three digit segments, but placing them next to one
 another does not yet show that they describe the same polynomial opening.
-Equations (8a) and (8b) establish this consistency among the recomposed values.
+Equations (9a) and (9b) establish this consistency among the recomposed values.
 The committed witness instead contains $\hat{\mathbf e}$,
 $\hat{\mathbf t}$, and $\hat{\mathbf z}$. Substituting Equations (3), (6), and
-(9), then adding the two commitment equations from the previous section,
+(10), then adding the two commitment equations from the previous section,
 gives four families of linear equations over
 
 $$
@@ -404,35 +439,10 @@ segments to the public commitments $\mathbf u$ and $\mathbf v_D$.
 
 ### 1. Fold-evaluation consistency
 
-For every block $b$, the partial evaluation $E_b$ must be computed from the
-same polynomial digits $\mathbf s_b$ that enter the fold. Equations (1) and
-(5) give the blockwise identity
-
-$$
-\boxed{
-E_b
-=
-\sum_p Q_pF_{p,b}
-=
-\sum_{p,a}Q_pG_a^{\mathrm{in}}s_{b,p,a}.
-}
-\tag{11}
-$$
-
-Rather than checking Equation (11) separately for every block, Equation (8a)
-uses the random challenges $c_b$ to batch them as
-$\sum_b c_bE_b=\sum_{p,a}Q_pG_a^{\mathrm{in}}z_{p,a}$. The left side folds
-the claimed partial evaluations, while the right side evaluates the same
-challenge-folded response $\mathbf z$. Thus one ring equation checks that
-evaluating positions and folding blocks give the same result. If any
-blockwise identity is inconsistent, its error is unlikely to cancel in this
-random combination. Moreover, the opening digits are committed through
-$\mathbf v_D$ before the challenges are sampled, so they cannot be adjusted
-after the $c_b$ values are known.
-
-To express Equation (8a) in terms of the next-fold witness, substitute the
+Equation (9a) is the fold-evaluation identity among the recomposed values. To
+express it in terms of the next-fold witness, substitute the
 balanced digit representations of $E_b$ from Equation (6) and $\mathbf z$
-from Equation (9). This gives the `consistency` row
+from Equation (10). This gives the `consistency` row
 
 $$
 \boxed{
@@ -452,20 +462,10 @@ scalar target $v_{\mathrm{tr}}$.
 
 ### 2. Inner-commitment consistency
 
-For every block $b$, the inner commitment defines the basic relation
-$\mathbf t_b=\mathbf A\mathbf s_b$. The goal is to check this entire family of
-blockwise relations. Checking them one by one would retain a separate vector
-equation for every block. Instead, Equation (8b) uses the challenges $c_b$ to
-batch them as
-$\sum_b c_b\mathbf t_b=\mathbf A(\sum_b c_b\mathbf s_b)=\mathbf A\mathbf z$.
-This leaves one vector relation across the blocks: the challenges batch the
-block index $b$, while every row $\rho$ of $\mathbf A$ is still checked. It
-connects the folded response to the commitment-side $\mathbf t_b$ values,
-which the outer-commitment rows below anchor to $\mathbf u$.
-
-The next-fold witness stores the balanced digits rather than the recomposed
-values. Substitute Equation (3) for $\mathbf t_b$ and Equation (9) for
-$\mathbf z$. For every row $\rho$ of $\mathbf A$, this gives
+Equation (9b) is the inner-commitment identity among the recomposed values.
+The next-fold witness stores their balanced digits instead. Substitute
+Equation (3) for $\mathbf t_b$ and Equation (10) for $\mathbf z$. For every
+row $\rho$ of $\mathbf A$, this gives
 
 $$
 \boxed{
