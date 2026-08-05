@@ -693,6 +693,19 @@ pub struct PlannedSuffix {
     pub total_bytes: usize,
 }
 
+/// Boundary state for an independently planned recursive suffix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SuffixPlanStart {
+    /// Absolute fold level of the first suffix fold.
+    pub level: usize,
+    /// Field-element witness length entering the suffix.
+    pub witness_len: usize,
+    /// Predecessor fold's `log_basis` lower bound.
+    pub log_basis: u32,
+    /// Monotone compression phase after the retained predecessor prefix.
+    pub payload_phase: akita_types::CommitmentPayloadPhase,
+}
+
 /// Plan the proof-size-optimal recursive suffix that folds a witness of
 /// `start_witness_len` field elements (produced by some predecessor fold at
 /// `start_level - 1`) down to a cleartext terminal, at `policy.uniform_ring_dimension`.
@@ -700,10 +713,13 @@ pub struct PlannedSuffix {
 /// This is the exact suffix DP [`find_schedule`] runs after choosing a root,
 /// exposed so callers can splice an optimal suffix onto a differently sized
 /// predecessor — e.g. a mixed ring-dimension-per-level schedule whose root
-/// folds at a larger ring dimension than the suffix. `start_lb` is the
+/// folds at a larger ring dimension than the suffix. `start.log_basis` is the
 /// predecessor level's `log_basis` (fold `log_basis` is non-decreasing), and
-/// `num_vars` is the opening arity (used for the singleton opening layout the
-/// suffix prices against).
+/// `start.payload_phase` is the monotone compression phase after the retained
+/// predecessor prefix. A raw predecessor must use
+/// [`akita_types::CommitmentPayloadPhase::RawSuffix`] so the independent suffix
+/// cannot resume compression. `num_vars` is the opening arity (used for the
+/// singleton opening layout the suffix prices against).
 ///
 /// # Errors
 ///
@@ -714,9 +730,7 @@ pub fn plan_optimal_suffix(
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     num_vars: usize,
-    start_level: usize,
-    start_witness_len: usize,
-    start_lb: u32,
+    start: SuffixPlanStart,
 ) -> Result<PlannedSuffix, AkitaError> {
     validate_policy(policy)?;
     if policy.recursive_setup_planning {
@@ -742,11 +756,11 @@ pub fn plan_optimal_suffix(
         &ctx,
         &mut memo,
         SuffixState {
-            level: start_level,
-            current_witness_len: start_witness_len,
-            current_lb: start_lb,
+            level: start.level,
+            current_witness_len: start.witness_len,
+            current_lb: start.log_basis,
             incoming_setup_prefix: None,
-            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            payload_phase: start.payload_phase,
         },
         0,
     )?;
@@ -756,7 +770,8 @@ pub fn plan_optimal_suffix(
         .min_by_key(|suffix| suffix.direct_frontier_score())
         .ok_or_else(|| {
             AkitaError::UnsupportedSchedule(format!(
-                "no terminating suffix for witness_len={start_witness_len} at level {start_level}"
+                "no terminating suffix for witness_len={} at level {}",
+                start.witness_len, start.level
             ))
         })?;
     Ok(PlannedSuffix {

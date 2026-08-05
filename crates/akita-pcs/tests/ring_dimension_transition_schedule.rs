@@ -4,9 +4,9 @@
 
 use akita_config::{policy_of, proof_optimized::fp128, CommitmentConfig};
 use akita_pcs::test_support::{
-    per_matrix_ring_dims_root_schedule, ring_dimension_transition_schedule,
-    PerMatrixRingDimsRootConfig, RecursiveRingDimensionTransitionConfig,
-    ThreeBandRingDimensionTransitionConfig,
+    mixed_d_per_level_schedule, per_matrix_ring_dims_root_schedule,
+    ring_dimension_transition_schedule, PerMatrixRingDimsRootConfig,
+    RecursiveRingDimensionTransitionConfig, ThreeBandRingDimensionTransitionConfig,
 };
 use akita_types::sis::{decomposed_t_ring_count, decomposed_w_ring_count};
 use akita_types::{
@@ -48,14 +48,21 @@ fn assert_suffix_matches_plan<Cfg: CommitmentConfig>(
     start_witness_len: usize,
     start_log_basis: u32,
 ) {
+    let payload_phase = schedule.recursive_folds[..first_actual_fold].iter().fold(
+        akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        |phase, fold| phase.after(fold.params.witness.payload_mode),
+    );
     let suffix = akita_planner::plan_optimal_suffix(
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
         NUM_VARS,
-        start_level,
-        start_witness_len,
-        start_log_basis,
+        akita_planner::SuffixPlanStart {
+            level: start_level,
+            witness_len: start_witness_len,
+            log_basis: start_log_basis,
+            payload_phase,
+        },
     )
     .expect("independent suffix plan");
     let actual = &schedule.recursive_folds[first_actual_fold..];
@@ -194,6 +201,49 @@ fn per_matrix_ring_dims_root_replans_its_complete_suffix() {
             setup_matrix_capacity(NUM_VARS, 1)
             .expect("configured envelope");
     assert_eq!(configured, required);
+}
+
+#[test]
+fn mixed_d_splice_after_raw_prefix_cannot_resume_compression() {
+    let policy = policy_of::<fp128::D64OneHot>();
+    let domain =
+        akita_planner::RingDimensionSearchDomain::uniform(64).expect("uniform D64 planner domain");
+    let envelope = akita_planner::find_schedule(
+        PolynomialGroupLayout::singleton(32),
+        &policy,
+        fp128::D64OneHot::root_honest_fold_policy(),
+        &domain,
+        fp128::D64OneHot::ring_challenge_config,
+        fp128::D64OneHot::fold_challenge_shape_at_level,
+    )
+    .expect("D64 envelope schedule")
+    .schedule;
+    let raw_index = envelope
+        .recursive_folds
+        .iter()
+        .enumerate()
+        .find(|(index, fold)| {
+            fold.params.witness.payload_mode == akita_types::CommitmentPayloadMode::Raw
+                && index + 1 < envelope.recursive_folds.len()
+        })
+        .map(|(index, _)| index)
+        .expect("fixture must have a raw fold with a recursive successor");
+    let switch_at_fold = raw_index + 2;
+
+    let spliced =
+        mixed_d_per_level_schedule::<fp128::D64OneHot, fp128::D64OneHot>(32, 1, switch_at_fold)
+            .expect("raw-prefix splice must remain a valid monotone schedule");
+
+    assert_eq!(
+        spliced.recursive_folds[raw_index]
+            .params
+            .witness
+            .payload_mode,
+        akita_types::CommitmentPayloadMode::Raw
+    );
+    assert!(spliced.recursive_folds[raw_index + 1..]
+        .iter()
+        .all(|fold| fold.params.witness.payload_mode == akita_types::CommitmentPayloadMode::Raw));
 }
 
 fn recursive_transition_schedule<ChunkCfg>() -> FoldSchedule
