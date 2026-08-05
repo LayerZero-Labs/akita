@@ -2,6 +2,72 @@
 use super::*;
 
 #[cfg(test)]
+fn find_schedule(
+    key: PolynomialGroupLayout,
+    policy: &PlannerPolicy,
+    honest_fold_policy: HonestFoldPolicySpec,
+    dimensions: &RingDimensionSearchDomain,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<PlannedFoldSchedule, AkitaError> {
+    key.validate()?;
+    validate_policy(policy)?;
+    dimensions.validate_for_policy(policy)?;
+    if dimensions.is_uniform_policy_domain(policy) {
+        return find_schedule_inner(
+            key,
+            policy,
+            honest_fold_policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+        );
+    }
+    if policy.selection_policy
+        != crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+    {
+        return Err(AkitaError::InvalidSetup(
+            "mixed-D search requires MinSetupMatrixFieldElementsThenProofPayload".into(),
+        ));
+    }
+    if policy.recursive_setup_planning {
+        return Err(AkitaError::InvalidSetup(
+            "mixed-D search does not yet support recursive setup planning".into(),
+        ));
+    }
+    if policy.witness_chunk.uses_multi_chunk() {
+        return Err(AkitaError::InvalidSetup(
+            "mixed-D search does not yet support direct multi-chunk planning".into(),
+        ));
+    }
+    let suffix_dimensions = CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
+    if !dimensions.candidates().contains(&suffix_dimensions) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "mixed-D search requires the D{MIXED_SEARCH_SUFFIX_RING_DIMENSION} uniform candidate \
+             used from fold level {MIXED_SEARCH_FOLD_LEVELS} onward"
+        )));
+    }
+    if dimensions.candidates().iter().any(|dims| {
+        dims.d_a() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
+            || dims.d_b() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
+            || dims.d_d() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
+    }) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "mixed-D candidates must be component-wise at least \
+             D{MIXED_SEARCH_SUFFIX_RING_DIMENSION} so the schedule can return monotonically to \
+             uniform D{MIXED_SEARCH_SUFFIX_RING_DIMENSION}"
+        )));
+    }
+    mixed_search::find_schedule(
+        key,
+        policy,
+        honest_fold_policy,
+        dimensions,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+    )
+}
+
+#[cfg(test)]
 fn policy_for_domain(
     mut policy: PlannerPolicy,
     domain: &RingDimensionSearchDomain,
@@ -176,7 +242,7 @@ fn grouped_scalar_fallback_preserves_mixed_domain() {
     let policy = policy_for_domain(base_policy, &domain);
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
 
-    let grouped = crate::find_group_batch_schedule(
+    let grouped = crate::find_schedule(
         &key,
         D256OneHot::root_honest_fold_policy(),
         &[],
@@ -803,7 +869,7 @@ fn recursive_exact_cutover_proof_size_is_documented() {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],
     };
-    let planned = crate::find_group_batch_schedule(
+    let planned = crate::find_schedule(
         &key,
         Recursive::root_honest_fold_policy(),
         &[

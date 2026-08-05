@@ -68,7 +68,7 @@ where
             let root_policy = policy_of::<Root>().direct_only();
             let precommitted_honest_fold_policies =
                 vec![Root::root_honest_fold_policy(); key.precommitteds.len()];
-            let mut root = akita_planner::find_group_batch_schedule(
+            let mut root = akita_planner::find_schedule(
                 key,
                 Root::root_honest_fold_policy(),
                 &precommitted_honest_fold_policies,

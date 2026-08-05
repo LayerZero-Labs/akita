@@ -65,7 +65,7 @@ fn planned_payload_bytes<Cfg: CommitmentConfig>(
     }
     let precommitted_honest_fold_policies =
         vec![Cfg::root_honest_fold_policy(); key.precommitteds.len()];
-    akita_planner::find_group_batch_schedule(
+    akita_planner::find_schedule(
         &key,
         Cfg::root_honest_fold_policy(),
         &precommitted_honest_fold_policies,

@@ -271,7 +271,7 @@ where
             };
         let precommitted_honest_fold_policies =
             vec![Envelope::root_honest_fold_policy(); key.precommitteds.len()];
-        akita_planner::find_group_batch_schedule(
+        akita_planner::find_schedule(
             &key,
             Envelope::root_honest_fold_policy(),
             &precommitted_honest_fold_policies,
@@ -366,18 +366,15 @@ where
                 ));
             }
             let envelope_policy = policy_of::<EnvelopeCfg>();
-            let envelope_domain = akita_planner::RingDimensionSearchDomain::uniform(
-                envelope_policy.uniform_ring_dimension,
-            )?;
             let envelope_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
                 num_vars,
                 num_polynomials,
             ));
             let envelope = akita_planner::find_schedule(
-                envelope_key.final_group,
-                &envelope_policy,
+                &envelope_key,
                 EnvelopeCfg::root_honest_fold_policy(),
-                &envelope_domain,
+                &[],
+                &envelope_policy,
                 EnvelopeCfg::ring_challenge_config,
                 EnvelopeCfg::fold_challenge_shape_at_level,
             )?
@@ -610,18 +607,15 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
         },
         || {
             let root_policy = policy_of::<Env>();
-            let root_domain = akita_planner::RingDimensionSearchDomain::uniform(
-                root_policy.uniform_ring_dimension,
-            )?;
             let root_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
                 num_vars,
                 num_polynomials,
             ));
             let mut root = akita_planner::find_schedule(
-                root_key.final_group,
-                &root_policy,
+                &root_key,
                 Env::root_honest_fold_policy(),
-                &root_domain,
+                &[],
+                &root_policy,
                 Env::ring_challenge_config,
                 Env::fold_challenge_shape_at_level,
             )?
@@ -1036,16 +1030,15 @@ where
             if Root::D != planned_root_d {
                 root_policy.ring_dimension_candidates = D256_PLANNER_CANDIDATES;
             }
-            let root_domain = akita_planner::RingDimensionSearchDomain::uniform(planned_root_d)?;
             let root_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
                 num_vars,
                 num_polynomials,
             ));
             let mut root = akita_planner::find_schedule(
-                root_key.final_group,
-                &root_policy,
+                &root_key,
                 Root::root_honest_fold_policy(),
-                &root_domain,
+                &[],
+                &root_policy,
                 Root::ring_challenge_config,
                 Root::fold_challenge_shape_at_level,
             )?

@@ -1,4 +1,4 @@
-//! Multi-group root-batch schedule planning.
+//! Root schedule planning.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
@@ -15,7 +15,7 @@ use akita_types::{
 };
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, find_schedule, materialize_candidate_schedule,
+    derive_optimal_suffix_schedule, find_schedule_singular, materialize_candidate_schedule,
     optimize_fold_challenge_shape, select_complete_candidate, validate_policy,
     RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
@@ -526,8 +526,8 @@ fn multi_group_root_main_level_params_candidate(
     Ok(Some(params))
 }
 
-/// Build the phase-1 multi-group-root schedule from the full multi-group key.
-pub fn find_group_batch_schedule(
+/// Build the fold schedule selected by a full schedule lookup key.
+pub fn find_schedule(
     key: &AkitaScheduleLookupKey,
     final_honest_fold_policy: HonestFoldPolicySpec,
     precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
@@ -539,7 +539,7 @@ pub fn find_group_batch_schedule(
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_challenge_shape_at_level = &fold_challenge_shape_at_level;
     if policy.recursive_setup_planning && !key.precommitteds.is_empty() {
-        return find_group_batch_schedule_inner(
+        return find_schedule_inner(
             key,
             final_honest_fold_policy,
             precommitted_honest_fold_policies,
@@ -549,7 +549,7 @@ pub fn find_group_batch_schedule(
             policy.setup_field_budget,
         );
     }
-    find_group_batch_schedule_inner(
+    find_schedule_inner(
         key,
         final_honest_fold_policy,
         precommitted_honest_fold_policies,
@@ -560,7 +560,7 @@ pub fn find_group_batch_schedule(
     )
 }
 
-fn find_group_batch_schedule_inner(
+fn find_schedule_inner(
     key: &AkitaScheduleLookupKey,
     final_honest_fold_policy: HonestFoldPolicySpec,
     precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
@@ -571,17 +571,13 @@ fn find_group_batch_schedule_inner(
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate(policy.decomposition.field_bits())?;
     if key.precommitteds.is_empty() {
-        // Genuine multi-group roots only. Empty-precommit keys are scalar and
-        // must not enter recursion-enabled grouped planning.
+        // Empty-precommit keys are scalar. They enter the same public planner
+        // gate, then use the direct-only scalar policy internally.
         let scalar_policy = policy.direct_only();
-        let dimensions = crate::schedule_params::RingDimensionSearchDomain::new(
-            scalar_policy.ring_dimension_candidates.iter().copied(),
-        )?;
-        return find_schedule(
+        return find_schedule_singular(
             key.final_group,
             &scalar_policy,
             final_honest_fold_policy,
-            &dimensions,
             ring_challenge_config,
             fold_challenge_shape_at_level,
         );
@@ -603,6 +599,7 @@ fn find_group_batch_schedule_inner(
         root_lookup_key: Some(key),
         root_honest_fold_policy: Some(final_honest_fold_policy),
         precommitted_honest_fold_policies,
+        level_zero_is_root: true,
     };
     let mut memo = ScheduleMemo::new();
     let suffix = derive_optimal_suffix_schedule(

@@ -18,8 +18,8 @@ use std::{
 };
 
 use crate::{
-    derive_standalone_precommit_profile, find_group_batch_schedule, find_schedule,
-    runtime_schedule_key_cmp, EmitSpec, PlannerPolicy, RingDimensionSearchDomain,
+    derive_standalone_precommit_profile, find_schedule, runtime_schedule_key_cmp, EmitSpec,
+    PlannerPolicy,
 };
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
@@ -172,7 +172,7 @@ pub struct GeneratedFamily {
     /// Scalar opening keys emitted for this family.
     pub scalar_keys: &'static [PolynomialGroupLayout],
     /// Pure DP regeneration that ignores any generated table
-    /// (`find_group_batch_schedule(&single_key, &[], &policy_of::<Cfg>(), …)`).
+    /// (`find_schedule(&single_key, &[], &policy_of::<Cfg>(), …)`).
     pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
     /// Pure multi-group DP regeneration that ignores any generated table.
     pub regen_group_batch:
@@ -239,7 +239,7 @@ fn plan_regen<Cfg: CommitmentConfig>(
     key: &AkitaScheduleLookupKey,
     precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
 ) -> Result<FoldSchedule, AkitaError> {
-    let planned = find_group_batch_schedule(
+    let planned = find_schedule(
         key,
         honest_fold_policy_of::<Cfg>(),
         precommitted_honest_fold_policies,
@@ -260,12 +260,11 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
 fn regen_mixed_dim_fp128_onehot(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
     type Cfg = fp128::MixedDimFp128OneHot;
     let policy = policy_of::<Cfg>();
-    let dimensions = RingDimensionSearchDomain::new(Cfg::RING_DIMENSION_CANDIDATES)?;
     Ok(find_schedule(
-        key,
-        &policy,
+        &AkitaScheduleLookupKey::single(key),
         honest_fold_policy_of::<Cfg>(),
-        &dimensions,
+        &[],
+        &policy,
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )?

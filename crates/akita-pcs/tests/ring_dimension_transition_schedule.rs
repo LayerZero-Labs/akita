@@ -10,8 +10,9 @@ use akita_pcs::test_support::{
 };
 use akita_types::sis::{decomposed_t_ring_count, decomposed_w_ring_count};
 use akita_types::{
-    setup_matrix_capacity_for_schedule, CommitmentRingDims, CommittedGroupParams, FoldSchedule,
-    OpeningClaimsLayout, PolynomialGroupLayout, SisTableDigest, WitnessPartition,
+    setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey, CommitmentRingDims,
+    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, SisTableDigest,
+    WitnessPartition,
 };
 
 const NUM_VARS: usize = 36;
@@ -206,13 +207,11 @@ fn per_matrix_ring_dims_root_replans_its_complete_suffix() {
 #[test]
 fn mixed_d_splice_after_raw_prefix_cannot_resume_compression() {
     let policy = policy_of::<fp128::D64OneHot>();
-    let domain =
-        akita_planner::RingDimensionSearchDomain::uniform(64).expect("uniform D64 planner domain");
     let envelope = akita_planner::find_schedule(
-        PolynomialGroupLayout::singleton(32),
-        &policy,
+        &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(32)),
         fp128::D64OneHot::root_honest_fold_policy(),
-        &domain,
+        &[],
+        &policy,
         fp128::D64OneHot::ring_challenge_config,
         fp128::D64OneHot::fold_challenge_shape_at_level,
     )
