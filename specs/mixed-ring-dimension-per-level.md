@@ -582,11 +582,9 @@ The current benchmark makes the requested policy's result concrete:
 | B | **67,633,152** | 97,824 | **21.945 ms** |
 | E | **67,633,152** | 95,768 | **21.869 ms** |
 | F | 90,177,536 | 98,229 | 27.153 ms |
-| C | 135,266,304 | 108,171 | 35.367 ms |
-| D | **67,633,152** | 108,183 | 25.931 ms |
 
-Under an unrestricted choice among only these seven predefined schedules,
-`(setup field elements, proof bytes)` selects A′: it ties B/E/D on setup and
+Under an unrestricted choice among only these five predefined schedules,
+`(setup field elements, proof bytes)` selects A′: it ties B/E on setup and
 has the smallest proof among them. That historical comparison is not a correctness reference
 for the approved planner domain. The planner additionally enforces
 component-wise descent and returns to D64 at L2. It also searches block splits
@@ -918,7 +916,7 @@ The planner integration is complete only when all of these hold:
     tampering, malformed dimensions, unsupported SIS cells, and setup
     under-capacity.
 12. The `nv=36` constrained search completes, obeys all transition/rank caps,
-    and the complete A/A′/B/E/F/C/D benchmark matrix is rerun from one build.
+    and the complete A/A′/B/E/F benchmark matrix is rerun from one build.
 
 ### Required planner tests
 
@@ -966,11 +964,15 @@ The labels below are local to this spec.
 | B | L0–L1 uniform D128, then uniform D64 (`switch = 2`) |
 | E | L0 `128/128/128`, L1 `128/64/64`, then uniform D64 |
 | F | L0 `512/128/128`, L1 `128/64/64`, then uniform D64 |
-| C | root `128/64/64`, then a freshly planned uniform-D128 suffix |
-| D | root `128/128/64`, then a freshly planned uniform-D128 suffix |
+| P256-direct | L0 `256/128/128`, then uniform D64 |
+| P256-three-band | L0 `256/128/128`, L1 `128/64/64`, then uniform D64 |
 
-C and D are per-matrix-root experiments. They are not D64-tail variants and
-must not be described as alternatives that share E's suffix policy.
+`P256-direct` is the current nv=36 offline-planner shape. The stock profiler
+does not expose that nv=36 row because the generated mixed-D runtime catalog
+currently contains only nv=32; its measurement below used benchmark-only
+wiring around the existing synthetic transition builder. `P256-three-band` is
+directly selectable through the stock three-band profile with
+`AKITA_THREE_BAND_ROOT_A_RING_DIM=256`.
 
 ## Current deterministic schedule snapshot
 
@@ -988,8 +990,6 @@ elements gives the setup-vector byte footprint.
 | B | 7 | `128/128/128` | `3/1/1` | 157,319,424 | 528,384 @ D128 | 127,488 / 64 |
 | E | 7 | `128/128/128` | `3/1/1` | 157,319,424 | 528,384 @ D128 | 127,488 / 64 |
 | F | 7 | `512/128/128` | `1/1/1` | 247,552,000 | 176,128 @ D512 | 127,488 / 64 |
-| C | 6 | `128/64/64` | `3/2/1` | 157,324,928 | 1,056,768 @ D128 | 155,648 / 128 |
-| D | 6 | `128/128/64` | `3/1/1` | 157,319,424 | 528,384 @ D128 | 155,648 / 128 |
 
 Important transition rows:
 
@@ -998,8 +998,6 @@ Important transition rows:
 | B | `128/128/128` | `3/1/1` | 5,644,288 |
 | E | `128/64/64` | `3/1/1` | 5,644,288 |
 | F | `128/64/64` | `3/2/1` | 6,323,968 |
-| C | `128/128/128` | `3/1/1` | 5,644,288 |
-| D | `128/128/128` | `3/1/1` | 5,644,288 |
 
 Exact root matrix input widths:
 
@@ -1008,8 +1006,6 @@ Exact root matrix input widths:
 | A | 262,144 | 1,056,768 | 176,128 |
 | A′ / B / E | 131,072 | 528,384 | 176,128 |
 | F | 32,768 | 704,512 | 704,512 |
-| C | 131,072 | 1,056,768 | 352,256 |
-| D | 131,072 | 528,384 | 352,256 |
 
 The F widths are the key correction from the latest scheduler work. A D512
 A source with D128 B/D matrices has four physical subcolumns per native column.
@@ -1079,8 +1075,9 @@ Adapter:
 PerMatrixRingDimsRootConfig<Env, B_RING_DIM, D_RING_DIM>
 ```
 
-The suffix is uniform `Env::D`. With `Env = D128OneHot`, this produces C and D,
-whose terminal remains D128.
+The suffix is uniform `Env::D`. This builder remains test support for
+per-matrix root geometry; it is no longer exposed as a standalone profile
+benchmark.
 
 ### Multi-band transition: `ring_dimension_transition_schedule`
 
@@ -1281,7 +1278,7 @@ Changes:
   `retarget_commitment_matrices`.
 - Made width derivation use the final A projection source.
 - Recomputed outgoing witness lengths after each retargeted level.
-- Replanned C/D's complete D128 suffix.
+- Replanned the per-matrix root builder's complete uniform suffix.
 - Replanned E/F's middle and D64 continuations at their exact boundaries.
 - Derived every adapter's setup envelope from its actual synthetic schedule.
 - Added schedule tests for:
@@ -1300,7 +1297,7 @@ Review result:
   function.
 - The D512 promotion is now internally consistent, but still heuristic because
   the planner does not choose the D512 root geometry natively.
-- Existing E/F/C/D benchmark provenance became ambiguous. This spec now marks
+- Existing E/F benchmark provenance became ambiguous. This spec now marks
   it explicitly.
 
 ### `25a1e94a6` — name ring dimensions precisely
@@ -1323,9 +1320,6 @@ Profile environment renames:
 
 | Old | Current |
 |---|---|
-| `AKITA_MIXED_ROLE` | `AKITA_PER_MATRIX_RING_DIMS_ROOT` |
-| `AKITA_MIXED_OUTER_D` | `AKITA_ROOT_B_RING_DIM` |
-| `AKITA_MIXED_OPEN_D` | `AKITA_ROOT_D_RING_DIM` |
 | `AKITA_MIXED_ROLESWITCH` | `AKITA_RING_DIMENSION_TRANSITION` |
 | `AKITA_MIXED_ROLESWITCH_ROOT_D` | `AKITA_TRANSITION_ROOT_D_RING_DIM` |
 | `AKITA_MIXED_THREEBAND` | `AKITA_THREE_BAND_RING_DIMENSION_TRANSITION` |
@@ -1373,7 +1367,44 @@ per-matrix coverage is `per_matrix_ring_dims_root_e2e.rs`.
 
 ## Benchmark status
 
-### Results (nv = 36; after exact staged replanning; timings are 2-run means)
+### Current-main rerun with D256 topologies
+
+The table below was measured on 2026-08-05 from `30e69d4d4d` on the same Apple
+M4 Max MacBook Pro (16 cores, 64 GB), running macOS 26.6. The protocol matches
+the historical table: default features, direct setup contributions, 16 Rayon
+prove threads, 16 Rayon verify threads, tracing off, one discarded warmup, and
+two sequential retained runs. With two samples, the reported median is their
+arithmetic mean.
+
+| Profile / schedule | Root ranks `n_a/n_b/n_d` | Levels | Commit | Prove | Verify | Proof bytes | Physical setup fields | Setup vector / prover NTT cache | Peak RSS |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| A: uniform D64 | `6/2/1` | 9 | 23.261 s | 2.471 s | 31.411 ms | 93,395 | 135,266,304 | 2.16 GB / 5.41 GB | 11.72 GiB |
+| A′: `128/128/128 → 64/64/64` | `3/1/1` | 9 | 13.999 s | 2.424 s | 21.431 ms | 94,417 | 67,633,152 | 1.08 GB / 5.41 GB | 10.66 GiB |
+| B: two uniform-D128 levels, then D64 | `3/1/1` | 7 | 15.206 s | 2.476 s | 19.632 ms | 97,810 | 67,633,152 | 1.08 GB / 5.41 GB | 10.66 GiB |
+| E: `128/128/128 → 128/64/64 → 64/64/64` | `3/1/1` | 7 | 16.002 s | **2.381 s** | 20.071 ms | 95,760 | 67,633,152 | 1.08 GB / 5.41 GB | 10.65 GiB |
+| **P256-direct: `256/128/128 → 64/64/64`** | **`1/1/1`** | 9 | 9.143 s | 2.838 s | 18.143 ms | 94,418 | **45,088,768** | **0.72 GB / 5.41 GB** | 10.22 GiB |
+| **P256-three-band: `256/128/128 → 128/64/64 → 64/64/64`** | **`1/1/1`** | 7 | **8.454 s** | 2.598 s | **16.373 ms** | 95,737 | **45,088,768** | **0.72 GB / 5.41 GB** | **10.20 GiB** |
+
+Both D256 topologies attain rank one for A. Relative to D128, they reduce the
+physical setup objective from 67,633,152 to 45,088,768 fp128 field elements,
+a 33.3% reduction. The three-band topology also removes two fold levels
+relative to the direct-D64 suffix and was the faster measured D256 variant.
+
+The current D512 F profile is not included as a successful timing row. It now
+fails during schedule selection with a catalog/SIS identity mismatch after
+commit. Before failure it used 90,177,536 physical setup fields, a 1.44 GB
+setup vector, a 10.82 GB reported prover NTT cache, and approximately 18.19
+GiB peak RSS. Since D256 already gives A rank one with half that physical setup,
+the current measurements provide no rank or setup rationale for D512.
+
+The stock nv=36 profiler also currently materializes `2^28` high Lagrange
+weights and exceeds the `2^25` sequence limit before setup. For this rerun only,
+the public one-hot opening was computed with the existing streaming opening
+kernel before the timed phases. The diagnostic edit was removed after the
+measurements and did not change schedule construction, prove, verify, or proof
+serialization.
+
+### Historical results (nv = 36; after exact staged replanning; timings are 2-run means)
 
 All columns below were measured on 2026-07-28 from one release build of
 `25a1e94a6`. The host was an Apple M4 Max MacBook Pro (16 cores, 64 GB) running
@@ -1382,18 +1413,18 @@ contributions, 16 Rayon prove threads, 16 Rayon verify threads, tracing off,
 one discarded warmup, and two sequential measured runs per column. With two
 samples, the harness median is also their arithmetic mean.
 
-| Metric | A: `D = 64` all | A′: `D = 128` root only (`switch = 1`) | B: `D = 128` L0–L1 (`switch = 2`) | E: `128/128/128 → 128/64/64 → 64` | F: `512/128/128 → 128/64/64 → 64` | C: root `128/64/64` | D: root `128/128/64` |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Commit | 22.61 s | 13.58 s | 13.75 s | 13.52 s | **10.17 s** | 13.79 s | 13.42 s |
-| Prove | 2.921 s | 3.308 s | 3.076 s | **3.047 s** | 4.656 s | 3.189 s | 3.159 s |
-| Verify | 0.0362 s | 0.0277 s | 0.0219 s | **0.0219 s** | 0.0272 s | 0.0354 s | 0.0259 s |
-| Proof bytes | **93,400** | 94,428 | 97,824 | 95,768 | 98,229 | 108,171 | 108,183 |
-| Fold / terminal bytes | 41,012 / 52,388 | 42,036 / 52,392 | 34,956 / 62,868 | 32,908 / 62,860 | 35,372 / 62,857 | 35,672 / 72,499 | 35,672 / 72,511 |
-| Setup vector / prover NTT cache | 2.16 GB / 5.41 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | 1.44 GB / 3.61 GB | 2.16 GB / 5.41 GB | 1.08 GB / 2.71 GB |
-| Verifier NTT cache | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB |
-| Peak RSS | 11.40 GiB | 10.45 GiB | 10.32 GiB | 10.34 GiB | 20.48 GiB | 16.51 GiB | 10.47 GiB |
-| Root ranks `n_a/n_b/n_d` | `6/2/1` | `3/1/1` | `3/1/1` | `3/1/1` | `1/1/1` | `3/2/1` | `3/1/1` |
-| Fold levels, including terminal | 9 | 9 | 7 | 7 | 7 | 6 | 6 |
+| Metric | A: `D = 64` all | A′: `D = 128` root only (`switch = 1`) | B: `D = 128` L0–L1 (`switch = 2`) | E: `128/128/128 → 128/64/64 → 64` | F: `512/128/128 → 128/64/64 → 64` |
+|---|---:|---:|---:|---:|---:|
+| Commit | 22.61 s | 13.58 s | 13.75 s | 13.52 s | **10.17 s** |
+| Prove | 2.921 s | 3.308 s | 3.076 s | **3.047 s** | 4.656 s |
+| Verify | 0.0362 s | 0.0277 s | 0.0219 s | **0.0219 s** | 0.0272 s |
+| Proof bytes | **93,400** | 94,428 | 97,824 | 95,768 | 98,229 |
+| Fold / terminal bytes | 41,012 / 52,388 | 42,036 / 52,392 | 34,956 / 62,868 | 32,908 / 62,860 | 35,372 / 62,857 |
+| Setup vector / prover NTT cache | 2.16 GB / 5.41 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | 1.44 GB / 3.61 GB |
+| Verifier NTT cache | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB |
+| Peak RSS | 11.40 GiB | 10.45 GiB | 10.32 GiB | 10.34 GiB | 20.48 GiB |
+| Root ranks `n_a/n_b/n_d` | `6/2/1` | `3/1/1` | `3/1/1` | `3/1/1` | `1/1/1` |
+| Fold levels, including terminal | 9 | 9 | 7 | 7 | 7 |
 
 The two retained timing samples were:
 
@@ -1404,12 +1435,10 @@ The two retained timing samples were:
 | B | 13.7369 s, 13.7621 s | 3.0878 s, 3.0644 s | 22.000 ms, 21.891 ms |
 | E | 13.6481 s, 13.3853 s | 3.0292 s, 3.0643 s | 21.972 ms, 21.766 ms |
 | F | 10.1663 s, 10.1765 s | 4.7063 s, 4.6053 s | 27.240 ms, 27.067 ms |
-| C | 13.7317 s, 13.8389 s | 3.1873 s, 3.1916 s | 35.359 ms, 35.374 ms |
-| D | 13.4459 s, 13.3866 s | 3.1818 s, 3.1368 s | 25.704 ms, 26.157 ms |
 
 #### Follow-up reproduction after planner-native mixed-D cut
 
-The full seven-profile matrix was rerun from `8d7598fff` on 2026-07-28 after
+The full five-profile matrix was rerun from `8d7598fff` on 2026-07-28 after
 adding the opt-in per-matrix planner search. The build, host, direct setup
 mode, thread counts, warmup count, and retained-run count matched the protocol
 above.
@@ -1423,18 +1452,18 @@ Every deterministic result reproduced exactly:
 
 The follow-up measurements were:
 
-| Metric | A: `D = 64` all | A′: `D = 128` root only | B: `D = 128` L0–L1 | E: `128/128/128 → 128/64/64 → 64` | F: `512/128/128 → 128/64/64 → 64` | C: root `128/64/64` | D: root `128/128/64` |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Commit | 23.410 s | 13.885 s | 13.790 s | 15.996 s | **11.241 s** | 14.782 s | 14.617 s |
-| Prove | 2.972 s | 3.335 s | **3.091 s** | 3.125 s | 4.894 s | 3.232 s | 3.241 s |
-| Verify | 0.0360 s | 0.0271 s | **0.0212 s** | 0.0223 s | 0.0281 s | 0.0368 s | 0.0273 s |
-| Proof bytes | **93,400** | 94,428 | 97,824 | 95,768 | 98,229 | 108,171 | 108,183 |
-| Fold / terminal bytes | 41,012 / 52,388 | 42,036 / 52,392 | 34,956 / 62,868 | 32,908 / 62,860 | 35,372 / 62,857 | 35,672 / 72,499 | 35,672 / 72,511 |
-| Setup vector / prover NTT cache | 2.16 GB / 5.41 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | 1.44 GB / 3.61 GB | 2.16 GB / 5.41 GB | 1.08 GB / 2.71 GB |
-| Verifier NTT cache | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB |
-| Peak RSS | 11.40 GiB | 10.46 GiB | 10.32 GiB | 10.32 GiB | 20.54 GiB | 16.51 GiB | 10.35 GiB |
-| Root ranks `n_a/n_b/n_d` | `6/2/1` | `3/1/1` | `3/1/1` | `3/1/1` | `1/1/1` | `3/2/1` | `3/1/1` |
-| Fold levels, including terminal | 9 | 9 | 7 | 7 | 7 | 6 | 6 |
+| Metric | A: `D = 64` all | A′: `D = 128` root only | B: `D = 128` L0–L1 | E: `128/128/128 → 128/64/64 → 64` | F: `512/128/128 → 128/64/64 → 64` |
+|---|---:|---:|---:|---:|---:|
+| Commit | 23.410 s | 13.885 s | 13.790 s | 15.996 s | **11.241 s** |
+| Prove | 2.972 s | 3.335 s | **3.091 s** | 3.125 s | 4.894 s |
+| Verify | 0.0360 s | 0.0271 s | **0.0212 s** | 0.0223 s | 0.0281 s |
+| Proof bytes | **93,400** | 94,428 | 97,824 | 95,768 | 98,229 |
+| Fold / terminal bytes | 41,012 / 52,388 | 42,036 / 52,392 | 34,956 / 62,868 | 32,908 / 62,860 | 35,372 / 62,857 |
+| Setup vector / prover NTT cache | 2.16 GB / 5.41 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | 1.44 GB / 3.61 GB |
+| Verifier NTT cache | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB |
+| Peak RSS | 11.40 GiB | 10.46 GiB | 10.32 GiB | 10.32 GiB | 20.54 GiB |
+| Root ranks `n_a/n_b/n_d` | `6/2/1` | `3/1/1` | `3/1/1` | `3/1/1` | `1/1/1` |
+| Fold levels, including terminal | 9 | 9 | 7 | 7 | 7 |
 
 The retained samples were:
 
@@ -1445,13 +1474,11 @@ The retained samples were:
 | B | 13.7956 s, 13.7841 s | 3.0777 s, 3.1044 s | 21.368 ms, 21.040 ms |
 | E | 15.1230 s, 16.8683 s | 3.1357 s, 3.1144 s | 22.806 ms, 21.712 ms |
 | F | 11.3390 s, 11.1421 s | 4.8520 s, 4.9355 s | 27.898 ms, 28.230 ms |
-| C | 14.7149 s, 14.8497 s | 3.2271 s, 3.2359 s | 36.907 ms, 36.597 ms |
-| D | 14.5899 s, 14.6444 s | 3.2066 s, 3.2750 s | 26.843 ms, 27.731 ms |
 
 Relative to the earlier idle-machine table, prove changed by `+0.5%` to
-`+5.1%` and verify by `-3.4%` to `+5.2%`. Commit was more sensitive to host
-state: A/A′/B changed by only `+0.3%` to `+3.5%`, while the later E/F/C/D
-runs were `+7.2%` to `+18.3%`. E's two commit samples alone differed by
+`+5.1%` and verify by `-3.4%` to `+3.5%`. Commit was more sensitive to host
+state: A/A′/B changed by only `+0.3%` to `+3.5%`, while the later E/F
+runs were `+10.5%` to `+18.3%`. E's two commit samples alone differed by
 11.5%, while its proof geometry and prove/verify times remained stable.
 An independent E repeat after the matrix measured 14.282 s commit, 3.092 s
 prove, and 22.649 ms verify, reducing its commit delta from `+18.3%` to
@@ -1651,26 +1678,6 @@ AKITA_NUM_VARS=36 \
 AKITA_MODE=onehot_fp128_d64_root_d128 \
 AKITA_THREE_BAND_RING_DIMENSION_TRANSITION=1 \
 AKITA_THREE_BAND_ROOT_A_RING_DIM=512 \
-AKITA_PROFILE_TRACE=0 \
-AKITA_PROFILE_LOG=info \
-cargo run --release -p akita-pcs --example profile
-
-# C: root 128/64/64, then uniform D128
-AKITA_NUM_VARS=36 \
-AKITA_MODE=onehot_fp128_d64_root_d128 \
-AKITA_PER_MATRIX_RING_DIMS_ROOT=1 \
-AKITA_ROOT_B_RING_DIM=64 \
-AKITA_ROOT_D_RING_DIM=64 \
-AKITA_PROFILE_TRACE=0 \
-AKITA_PROFILE_LOG=info \
-cargo run --release -p akita-pcs --example profile
-
-# D: root 128/128/64, then uniform D128
-AKITA_NUM_VARS=36 \
-AKITA_MODE=onehot_fp128_d64_root_d128 \
-AKITA_PER_MATRIX_RING_DIMS_ROOT=1 \
-AKITA_ROOT_B_RING_DIM=128 \
-AKITA_ROOT_D_RING_DIM=64 \
 AKITA_PROFILE_TRACE=0 \
 AKITA_PROFILE_LOG=info \
 cargo run --release -p akita-pcs --example profile

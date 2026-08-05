@@ -678,31 +678,6 @@ fn run_profile_onehot_fp128_d64_root_d128(nv: usize, num_polys: usize) {
         run_ring_dimension_transition(nv);
         return;
     }
-    // Per-matrix ring dimensions at the root: A = 128, with independently
-    // selected B/D dimensions.
-    // The complete D128 suffix is replanned from the resulting root witness.
-    if std::env::var("AKITA_PER_MATRIX_RING_DIMS_ROOT").as_deref() == Ok("1") {
-        let b_ring_dim: usize = std::env::var("AKITA_ROOT_B_RING_DIM")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(64);
-        let d_ring_dim: usize = std::env::var("AKITA_ROOT_D_RING_DIM")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(64);
-        tracing::info!(
-            "=== onehot_fp128_d64_root_d128 (fp128, {prime}, root d_a=128 / d_b={b_ring_dim} / d_d={d_ring_dim}, 1-of-{onehot_k}) ==="
-        );
-        match (b_ring_dim, d_ring_dim) {
-            (64, 64) => run_per_matrix_ring_dims_root::<64, 64>(nv),
-            (128, 64) => run_per_matrix_ring_dims_root::<128, 64>(nv),
-            (64, 128) => run_per_matrix_ring_dims_root::<64, 128>(nv),
-            (o, p) => panic!(
-                "AKITA_ROOT_B_RING_DIM={o} / AKITA_ROOT_D_RING_DIM={p} unsupported (use 64 or 128, must divide 128)"
-            ),
-        }
-        return;
-    }
     let title = format!(
         "=== onehot_fp128_d64_root_d128 (fp128, {prime}, D={root_d} for folds [0,{switch}) then D=64, 1-of-{onehot_k}, log_commit_bound=1) ==="
     );
@@ -811,39 +786,6 @@ fn run_ring_dimension_transition_impl<const ROOT_D_RING_DIM: usize>(nv: usize) {
         Cfg::<ROOT_D_RING_DIM>::decomposition().field_bits(),
     );
     run_onehot::<F, 128, Cfg<ROOT_D_RING_DIM>>(
-        "onehot_fp128_d64_root_d128",
-        nv,
-        &layout,
-        Some(&plan),
-        false,
-    );
-}
-
-/// Run the per-matrix ring-dimension root experiment at A/B/D =
-/// `128`/`B_RING_DIM`/`D_RING_DIM`, followed by a freshly planned D128 suffix.
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_per_matrix_ring_dims_root<const B_RING_DIM: usize, const D_RING_DIM: usize>(nv: usize) {
-    use akita_pcs::test_support::PerMatrixRingDimsRootConfig;
-    type Cfg<const O: usize, const P: usize> = PerMatrixRingDimsRootConfig<fp128::D128OneHot, O, P>;
-    let layout = resolve_layout::<F, Cfg<B_RING_DIM, D_RING_DIM>>(nv);
-    let required_vars = layout.position_index_bits()
-        + layout.block_index_bits()
-        + 128usize.trailing_zeros() as usize;
-    if required_vars > nv {
-        panic!(
-            "[onehot_fp128_d64_root_d128] per-matrix ring-dimension root requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
-        );
-    }
-    let plan = Cfg::<B_RING_DIM, D_RING_DIM>::runtime_schedule(AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(nv),
-    ))
-    .expect("per-matrix ring-dimension root schedule");
-    print_layout(
-        &layout,
-        1,
-        Cfg::<B_RING_DIM, D_RING_DIM>::decomposition().field_bits(),
-    );
-    run_onehot::<F, 128, Cfg<B_RING_DIM, D_RING_DIM>>(
         "onehot_fp128_d64_root_d128",
         nv,
         &layout,
