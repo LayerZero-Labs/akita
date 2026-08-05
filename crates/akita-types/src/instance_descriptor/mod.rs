@@ -15,10 +15,7 @@ mod fold_linf_binding;
 #[cfg(test)]
 mod tests;
 
-pub use fold_linf_binding::{
-    FoldLinfProtocolBinding, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
-    FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
-};
+pub use fold_linf_binding::FoldLinfProtocolBinding;
 
 use crate::descriptor_bytes::{push_usize, sis_modulus_profile_tag};
 use crate::{
@@ -35,7 +32,7 @@ use blake2::{Blake2b, Digest};
 use std::io::{Read, Write};
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 2;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 1;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
@@ -198,14 +195,20 @@ impl SetupSection {
 /// Per-proof effective schedule binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanSection {
+    /// Explicit v1 catalog and row identity selected by the public statement.
+    pub schedule_selection: crate::OpeningScheduleSelection,
     /// Digest of the final effective verifier schedule.
     pub effective_schedule_digest: DescriptorDigest,
 }
 
 impl PlanSection {
     /// Build a plan section from the runtime schedule the verifier will replay.
-    pub fn from_schedule(schedule: &FoldSchedule) -> Self {
+    pub fn from_schedule(
+        schedule_selection: crate::OpeningScheduleSelection,
+        schedule: &FoldSchedule,
+    ) -> Self {
         Self {
+            schedule_selection,
             effective_schedule_digest: digest_effective_schedule(schedule),
         }
     }
@@ -536,7 +539,7 @@ impl AkitaDeserialize for SetupSection {
 
 impl Valid for PlanSection {
     fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
+        self.schedule_selection.check()
     }
 }
 
@@ -544,14 +547,16 @@ impl AkitaSerialize for PlanSection {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
-        _compress: Compress,
+        compress: Compress,
     ) -> Result<(), SerializationError> {
+        self.schedule_selection
+            .serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.effective_schedule_digest)?;
         Ok(())
     }
 
-    fn serialized_size(&self, _compress: Compress) -> usize {
-        32
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.schedule_selection.serialized_size(compress) + 32
     }
 }
 
@@ -560,11 +565,17 @@ impl AkitaDeserialize for PlanSection {
 
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
-        _compress: Compress,
+        compress: Compress,
         validate: Validate,
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
         let out = Self {
+            schedule_selection: crate::OpeningScheduleSelection::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
             effective_schedule_digest: read_digest(&mut reader)?,
         };
         if matches!(validate, Validate::Yes) {
@@ -752,6 +763,15 @@ fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
     let mut out = [0u8; 32];
     out.copy_from_slice(&digest);
     out
+}
+
+/// Hash canonical descriptor bytes with Akita's Blake2b-256 primitive.
+///
+/// Domain separation and version bytes are owned by the caller's canonical
+/// descriptor. This shared primitive prevents catalog and transcript identity
+/// code from implementing divergent hash truncation rules.
+pub fn digest_descriptor_bytes(bytes: &[u8]) -> DescriptorDigest {
+    blake2b_256(bytes)
 }
 
 fn read_digest<R: Read>(mut reader: R) -> Result<DescriptorDigest, SerializationError> {

@@ -1,22 +1,16 @@
 use super::*;
 
 #[cfg(feature = "catalog-gen")]
-use akita_types::extension_opening_reduction_level_bytes;
-
-#[cfg(feature = "catalog-gen")]
-fn policy_for_candidates(
+fn policy_for_domain(
     mut policy: PlannerPolicy,
-    candidates: impl IntoIterator<Item = CommitmentRingDims>,
+    domain: &RingDimensionSearchDomain,
 ) -> PlannerPolicy {
-    let mut candidates = candidates.into_iter().collect::<Vec<_>>();
-    candidates.sort_by_key(|dims| (dims.d_a(), dims.d_b(), dims.d_d()));
-    candidates.dedup();
-    policy.ring_dimension_candidates = Box::leak(candidates.into_boxed_slice());
-    policy.selection_policy = crate::SelectionPolicyId::for_policy(
-        false,
-        policy.ring_dimension,
-        policy.ring_dimension_candidates,
-    );
+    policy.ring_dimension_candidates = Box::leak(domain.candidates().to_vec().into_boxed_slice());
+    policy.selection_policy = if domain.candidates().len() > 1 {
+        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+    } else {
+        crate::SelectionPolicyId::MinEstimatedProofPayload
+    };
     policy
 }
 
@@ -42,88 +36,46 @@ fn balanced_chunk_geometry_prices_exact_work_and_residual_imbalance() {
     );
 }
 
-#[cfg(feature = "catalog-gen")]
 #[test]
-fn planner_policy_rejects_noncanonical_or_invalid_dimension_candidates() {
-    use akita_config::{policy_of, proof_optimized::fp128::D256OneHot};
-
-    let reject = |candidates: Vec<CommitmentRingDims>| {
-        let mut policy = policy_of::<D256OneHot>();
-        policy.ring_dimension_candidates = Box::leak(candidates.into_boxed_slice());
-        policy.selection_policy = crate::SelectionPolicyId::for_policy(
-            false,
-            policy.ring_dimension,
-            policy.ring_dimension_candidates,
-        );
-        validate_policy(&policy).is_err()
-    };
-    let d64 = CommitmentRingDims::uniform(64);
-    let a128 = CommitmentRingDims {
-        inner: 128,
-        outer: 64,
-        opening: 64,
-    };
-
-    assert!(reject(vec![a128, d64, a128]));
-    assert!(reject(vec![CommitmentRingDims {
-        inner: 64,
-        outer: 128,
-        opening: 64,
-    }]));
-    assert!(reject(vec![CommitmentRingDims::uniform(512)]));
-
-    for setup_generation_dimension in [0, 192] {
-        let mut policy = policy_of::<D256OneHot>();
-        policy.ring_dimension = setup_generation_dimension;
-        policy.selection_policy = crate::SelectionPolicyId::for_policy(
-            false,
-            policy.ring_dimension,
-            policy.ring_dimension_candidates,
-        );
-        assert!(validate_policy(&policy)
-            .unwrap_err()
-            .to_string()
-            .contains("setup generation dimension must be a nonzero power of two"));
-    }
-}
-
-#[cfg(feature = "catalog-gen")]
-#[test]
-fn public_planner_uses_setup_first_objective_for_singleton_lower_dimension() {
-    use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-
-    static D64_DOMAIN: [CommitmentRingDims; 1] = [CommitmentRingDims::uniform(64)];
-
-    let mut policy = policy_of::<D256OneHot>();
-    policy.ring_dimension_candidates = &D64_DOMAIN;
-    policy.selection_policy = crate::SelectionPolicyId::for_policy(
-        false,
-        policy.ring_dimension,
-        policy.ring_dimension_candidates,
-    );
-    assert_eq!(
-        policy.selection_policy,
-        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-    );
-
-    let key = PolynomialGroupLayout::singleton(16);
-    let selected = crate::find_schedule(
-        &akita_types::AkitaScheduleLookupKey::single(key),
-        &policy,
-        D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
+fn ring_dimension_domain_is_canonical_and_rejects_invalid_carriers() {
+    let domain = RingDimensionSearchDomain::new(
+        256,
+        [
+            CommitmentRingDims {
+                inner: 128,
+                outer: 64,
+                opening: 64,
+            },
+            CommitmentRingDims::uniform(64),
+            CommitmentRingDims {
+                inner: 128,
+                outer: 64,
+                opening: 64,
+            },
+        ],
     )
     .unwrap();
     assert_eq!(
-        selected
-            .schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .role_dims(),
-        D64_DOMAIN[0]
+        domain.candidates(),
+        &[
+            CommitmentRingDims::uniform(64),
+            CommitmentRingDims {
+                inner: 128,
+                outer: 64,
+                opening: 64
+            },
+        ]
     );
+    assert!(RingDimensionSearchDomain::new(
+        256,
+        [CommitmentRingDims {
+            inner: 64,
+            outer: 128,
+            opening: 64
+        }]
+    )
+    .is_err());
+    assert!(RingDimensionSearchDomain::new(128, [CommitmentRingDims::uniform(256)]).is_err());
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -140,11 +92,14 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
             opening: 64,
         },
     ];
-    let policy = policy_for_candidates(base_policy, dimensions);
+    let domain = RingDimensionSearchDomain::new(base_policy.ring_dimension, dimensions).unwrap();
+    let policy = policy_for_domain(base_policy, &domain);
     let key = PolynomialGroupLayout::singleton(16);
-    let selected = find_schedule_mixed_ring(
+    let selected = find_schedule(
         key,
         &policy,
+        D256OneHot::root_honest_fold_policy(),
+        &domain,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -154,10 +109,13 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
     );
 
-    let uniform_policy = policy_for_candidates(policy_of::<D256OneHot>(), [dimensions[0]]);
-    let candidate = find_schedule_mixed_ring(
+    let uniform = RingDimensionSearchDomain::new(policy.ring_dimension, [dimensions[0]]).unwrap();
+    let uniform_policy = policy_for_domain(policy_of::<D256OneHot>(), &uniform);
+    let candidate = find_schedule(
         key,
         &uniform_policy,
+        D256OneHot::root_honest_fold_policy(),
+        &uniform,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -171,8 +129,8 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     );
 
     let schedule = &selected.schedule;
-    assert!(policy
-        .ring_dimension_candidates
+    assert!(domain
+        .candidates()
         .contains(&schedule.root.params.final_group.commitment.role_dims()));
     let mut previous = schedule.root.params.final_group.commitment.role_dims();
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
@@ -207,19 +165,24 @@ fn grouped_scalar_fallback_preserves_mixed_domain() {
             opening: 64,
         },
     ];
-    let policy = policy_for_candidates(base_policy, dimensions);
+    let domain = RingDimensionSearchDomain::new(base_policy.ring_dimension, dimensions).unwrap();
+    let policy = policy_for_domain(base_policy, &domain);
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
 
-    let grouped = crate::find_schedule(
+    let grouped = crate::find_group_batch_schedule(
         &key,
+        D256OneHot::root_honest_fold_policy(),
+        &[],
         &policy,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
-    let direct = find_schedule_mixed_ring(
+    let direct = find_schedule(
         key.final_group,
         &policy,
+        D256OneHot::root_honest_fold_policy(),
+        &domain,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -237,7 +200,7 @@ fn grouped_scalar_fallback_preserves_mixed_domain() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn pruned_mixed_search_matches_unpruned_traversal_and_is_deterministic() {
+fn pruned_mixed_search_matches_unpruned_traversal_and_is_canonical() {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<D256OneHot>();
@@ -247,12 +210,18 @@ fn pruned_mixed_search_matches_unpruned_traversal_and_is_deterministic() {
         outer: 64,
         opening: 64,
     };
-    let policy = policy_for_candidates(base_policy, [d64, a128]);
+    let reversed_with_duplicate =
+        RingDimensionSearchDomain::new(base_policy.ring_dimension, [a128, d64, a128]).unwrap();
+    let canonical =
+        RingDimensionSearchDomain::new(base_policy.ring_dimension, [d64, a128]).unwrap();
+    let policy = policy_for_domain(base_policy, &canonical);
     let key = PolynomialGroupLayout::singleton(16);
 
-    let selected = find_schedule_mixed_ring(
+    let selected = find_schedule(
         key,
         &policy,
+        D256OneHot::root_honest_fold_policy(),
+        &reversed_with_duplicate,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -260,13 +229,17 @@ fn pruned_mixed_search_matches_unpruned_traversal_and_is_deterministic() {
     let unpruned = unpruned_search::find_schedule(
         key,
         &policy,
+        D256OneHot::root_honest_fold_policy(),
+        &canonical,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
-    let repeated = find_schedule_mixed_ring(
+    let repeated = find_schedule(
         key,
         &policy,
+        D256OneHot::root_honest_fold_policy(),
+        &canonical,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -302,8 +275,8 @@ fn mixed_search_parallel_generation_is_descriptor_deterministic() {
         .map(|_| {
             std::thread::spawn(|| {
                 let base_policy = policy_of::<D256OneHot>();
-                let policy = policy_for_candidates(
-                    base_policy,
+                let domain = RingDimensionSearchDomain::new(
+                    base_policy.ring_dimension,
                     [
                         CommitmentRingDims {
                             inner: 128,
@@ -312,10 +285,14 @@ fn mixed_search_parallel_generation_is_descriptor_deterministic() {
                         },
                         CommitmentRingDims::uniform(64),
                     ],
-                );
-                find_schedule_mixed_ring(
+                )
+                .expect("mixed dimension domain");
+                let policy = policy_for_domain(base_policy, &domain);
+                find_schedule(
                     PolynomialGroupLayout::singleton(16),
                     &policy,
+                    D256OneHot::root_honest_fold_policy(),
+                    &domain,
                     D256OneHot::ring_challenge_config,
                     D256OneHot::fold_challenge_shape_at_level,
                 )
@@ -341,11 +318,15 @@ fn mixed_root_prices_eor_at_candidate_a_dimension() {
     // D256 enables root projection at this width while the D64 candidate does not.
     policy.claim_ext_degree = 64;
     let candidate_dimensions = CommitmentRingDims::uniform(64);
-    policy = policy_for_candidates(policy, [candidate_dimensions]);
+    let domain = RingDimensionSearchDomain::new(policy.ring_dimension, [candidate_dimensions])
+        .expect("mixed dimension domain");
+    policy = policy_for_domain(policy, &domain);
     let key = PolynomialGroupLayout::singleton(16);
-    let selected = find_schedule_mixed_ring(
+    let selected = find_schedule(
         key,
         &policy,
+        D256OneHot::root_honest_fold_policy(),
+        &domain,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -408,10 +389,15 @@ fn mixed_search_skips_an_unsupported_sis_candidate_and_keeps_its_sibling() {
     let base_policy = policy_of::<D512OneHot>();
     let d64 = CommitmentRingDims::uniform(64);
     let unsupported_uniform_d512 = CommitmentRingDims::uniform(512);
-    let policy = policy_for_candidates(base_policy, [d64, unsupported_uniform_d512]);
-    let selected = find_schedule_mixed_ring(
+    let domain =
+        RingDimensionSearchDomain::new(base_policy.ring_dimension, [d64, unsupported_uniform_d512])
+            .expect("mixed domain");
+    let policy = policy_for_domain(base_policy, &domain);
+    let selected = find_schedule(
         PolynomialGroupLayout::singleton(16),
         &policy,
+        D512OneHot::root_honest_fold_policy(),
+        &domain,
         D512OneHot::ring_challenge_config,
         D512OneHot::fold_challenge_shape_at_level,
     )
@@ -447,20 +433,32 @@ fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
         outer: 128,
         opening: 128,
     };
-    let policy = policy_for_candidates(base_policy, [d64, d128_mixed, d128, d256_mixed]);
-    let selected = find_schedule_mixed_ring(
+    let domain = RingDimensionSearchDomain::new(
+        base_policy.ring_dimension,
+        [d64, d128_mixed, d128, d256_mixed],
+    )
+    .expect("benchmark dimension domain");
+    let policy = policy_for_domain(base_policy, &domain);
+    let selected = find_schedule(
         PolynomialGroupLayout::singleton(36),
         &policy,
+        D256OneHot::root_honest_fold_policy(),
+        &domain,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
     .expect("nv36 mixed planner");
+    let rank_one_capped_domain =
+        RingDimensionSearchDomain::new(policy.ring_dimension, [d64, d128_mixed, d128])
+            .expect("rank-one-capped comparison domain");
     let mut comparison_policy =
-        policy_for_candidates(policy_of::<D256OneHot>(), [d64, d128_mixed, d128]);
+        policy_for_domain(policy_of::<D256OneHot>(), &rank_one_capped_domain);
     comparison_policy.max_setup_envelope_field_elements = usize::MAX;
-    let rank_one_capped = find_schedule_mixed_ring(
+    let rank_one_capped = find_schedule(
         PolynomialGroupLayout::singleton(36),
         &comparison_policy,
+        D256OneHot::root_honest_fold_policy(),
+        &rank_one_capped_domain,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -478,14 +476,14 @@ fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
     );
     assert_eq!(
         selected.estimate.estimated_setup_envelope_ring_elements,
-        262_144
+        176_128
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        99_368
+        98_728
     );
     assert_eq!(rank_one_capped_root.inner_commit_matrix.output_rank(), 3);
-    assert_eq!(selected_root.inner_commit_matrix.output_rank(), 2);
+    assert_eq!(selected_root.inner_commit_matrix.output_rank(), 1);
     assert_eq!(rank_one_capped_root.outer_commit_matrix.output_rank(), 1);
     assert_eq!(selected_root.outer_commit_matrix.output_rank(), 1);
     assert!(
@@ -508,10 +506,17 @@ fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<D256OneHot>();
-    let missing_policy = policy_for_candidates(base_policy, [CommitmentRingDims::uniform(128)]);
-    let error = find_schedule_mixed_ring(
+    let missing_d64 = RingDimensionSearchDomain::new(
+        base_policy.ring_dimension,
+        [CommitmentRingDims::uniform(128)],
+    )
+    .unwrap();
+    let missing_policy = policy_for_domain(base_policy, &missing_d64);
+    let error = find_schedule(
         PolynomialGroupLayout::singleton(16),
         &missing_policy,
+        D256OneHot::root_honest_fold_policy(),
+        &missing_d64,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -520,8 +525,8 @@ fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
         .to_string()
         .contains("requires the D64 uniform candidate"));
 
-    let below_policy = policy_for_candidates(
-        base_policy,
+    let below_d64 = RingDimensionSearchDomain::new(
+        base_policy.ring_dimension,
         [
             CommitmentRingDims::uniform(64),
             CommitmentRingDims {
@@ -530,10 +535,14 @@ fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
                 opening: 64,
             },
         ],
-    );
-    let error = find_schedule_mixed_ring(
+    )
+    .unwrap();
+    let below_policy = policy_for_domain(base_policy, &below_d64);
+    let error = find_schedule(
         PolynomialGroupLayout::singleton(16),
         &below_policy,
+        D256OneHot::root_honest_fold_policy(),
+        &below_d64,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -548,10 +557,15 @@ fn mixed_search_rejects_direct_multi_chunk_policy() {
 
     let mut policy = policy_of::<D256OneHot>();
     policy.witness_chunk = akita_types::ChunkedWitnessCfg::d64_production();
-    policy = policy_for_candidates(policy, [CommitmentRingDims::uniform(64)]);
-    let error = find_schedule_mixed_ring(
+    let domain =
+        RingDimensionSearchDomain::new(policy.ring_dimension, [CommitmentRingDims::uniform(64)])
+            .unwrap();
+    policy = policy_for_domain(policy, &domain);
+    let error = find_schedule(
         PolynomialGroupLayout::singleton(16),
         &policy,
+        D256OneHot::root_honest_fold_policy(),
+        &domain,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -567,17 +581,21 @@ fn mixed_search_validates_key_and_policy_at_entry() {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<D256OneHot>();
-    let policy = policy_for_candidates(
-        base_policy,
+    let domain = RingDimensionSearchDomain::new(
+        base_policy.ring_dimension,
         [
             CommitmentRingDims::uniform(64),
             CommitmentRingDims::uniform(base_policy.ring_dimension),
         ],
-    );
+    )
+    .unwrap();
+    let policy = policy_for_domain(base_policy, &domain);
 
-    let error = find_schedule_mixed_ring(
+    let error = find_schedule(
         PolynomialGroupLayout::new(16, 0),
         &policy,
+        D256OneHot::root_honest_fold_policy(),
+        &domain,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -588,9 +606,11 @@ fn mixed_search_validates_key_and_policy_at_entry() {
 
     let mut invalid_policy = policy;
     invalid_policy.max_setup_envelope_field_elements = 0;
-    let error = find_schedule_mixed_ring(
+    let error = find_schedule(
         PolynomialGroupLayout::singleton(16),
         &invalid_policy,
+        D256OneHot::root_honest_fold_policy(),
+        &domain,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -602,23 +622,23 @@ fn mixed_search_validates_key_and_policy_at_entry() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn planner_policy_binds_candidates_to_setup_generation_dimension() {
+fn dimension_domain_is_bound_to_setup_generation_dimension() {
     use akita_config::{policy_of, proof_optimized::fp128::D128OneHot, CommitmentConfig};
 
-    let policy = policy_for_candidates(
-        policy_of::<D128OneHot>(),
-        [CommitmentRingDims::uniform(256)],
-    );
-    let error = find_schedule_mixed_ring(
+    let policy = policy_of::<D128OneHot>();
+    let domain = RingDimensionSearchDomain::uniform(256).unwrap();
+    let error = find_schedule(
         PolynomialGroupLayout::singleton(16),
         &policy,
+        D128OneHot::root_honest_fold_policy(),
+        &domain,
         D128OneHot::ring_challenge_config,
         D128OneHot::fold_challenge_shape_at_level,
     )
     .unwrap_err();
     assert!(error
         .to_string()
-        .contains("does not divide setup generation D128"));
+        .contains("domain uses setup generation D256, but policy uses D128"));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -627,8 +647,8 @@ fn mixed_search_applies_setup_budget_in_physical_fields() {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
     let mut policy = policy_of::<D256OneHot>();
-    policy = policy_for_candidates(
-        policy,
+    let domain = RingDimensionSearchDomain::new(
+        policy.ring_dimension,
         [
             CommitmentRingDims::uniform(64),
             CommitmentRingDims {
@@ -637,10 +657,14 @@ fn mixed_search_applies_setup_budget_in_physical_fields() {
                 opening: 64,
             },
         ],
-    );
-    let selected = find_schedule_mixed_ring(
+    )
+    .unwrap();
+    policy = policy_for_domain(policy, &domain);
+    let selected = find_schedule(
         PolynomialGroupLayout::singleton(16),
         &policy,
+        D256OneHot::root_honest_fold_policy(),
+        &domain,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -649,9 +673,11 @@ fn mixed_search_applies_setup_budget_in_physical_fields() {
         akita_types::setup_matrix_field_elements_for_schedule(&selected.schedule).unwrap();
     policy.max_setup_envelope_field_elements = exact_fields - 1;
 
-    let error = find_schedule_mixed_ring(
+    let error = find_schedule(
         PolynomialGroupLayout::singleton(16),
         &policy,
+        D256OneHot::root_honest_fold_policy(),
+        &domain,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -665,19 +691,23 @@ fn preserved_recursive_proof_size_is_documented() {
     use akita_config::{
         policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
-    use akita_types::{AkitaScheduleLookupKey, PrecommittedGroupDescriptor};
+    use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile};
 
     type Recursive = RecursiveCommitmentConfig<D64OneHot>;
     let precommit_layout = PolynomialGroupLayout::singleton(16);
     let precommit_policy = policy_of::<D64OneHot>();
-    let precommit = find_schedule_singular(
+    let precommit_domain =
+        RingDimensionSearchDomain::uniform(precommit_policy.ring_dimension).unwrap();
+    let precommit = find_schedule(
         precommit_layout,
         &precommit_policy,
+        D64OneHot::root_honest_fold_policy(),
+        &precommit_domain,
         D64OneHot::ring_challenge_config,
         D64OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
-    let descriptor = PrecommittedGroupDescriptor::from_params(
+    let descriptor = CommittedGroupProfile::from_params(
         precommit_layout,
         &precommit.schedule.root.params.final_group.commitment,
     );
@@ -685,8 +715,13 @@ fn preserved_recursive_proof_size_is_documented() {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],
     };
-    let planned = crate::find_schedule(
+    let planned = crate::find_group_batch_schedule(
         &key,
+        Recursive::root_honest_fold_policy(),
+        &[
+            D64OneHot::root_honest_fold_policy(),
+            D64OneHot::root_honest_fold_policy(),
+        ],
         &policy_of::<Recursive>(),
         Recursive::ring_challenge_config,
         Recursive::fold_challenge_shape_at_level,

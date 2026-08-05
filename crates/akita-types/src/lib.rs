@@ -25,6 +25,7 @@ pub mod opening_claims;
 pub mod proof;
 pub mod proof_size;
 pub mod schedule;
+pub mod schedule_selection;
 pub mod setup_contribution;
 pub mod sis;
 pub mod tail_golomb_rice_low_bits;
@@ -55,14 +56,13 @@ pub use field_reduction::{
 pub use golomb_rice::{
     golomb_rice_flat_admit_terminal_wire, golomb_rice_flat_rows_admit_terminal_wire,
     golomb_rice_max_quotient_for_cap, golomb_rice_rows_admit_terminal_wire,
-    golomb_rice_rows_encodable_at_wire_low_bits, golomb_rice_total_wire_bits, ZFoldEncodingStats,
-    TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO,
+    golomb_rice_rows_encodable_at_wire_low_bits, golomb_rice_total_wire_bits,
+    golomb_rice_values_within_cap, golomb_rice_zigzag_width, ZFoldEncodingStats,
 };
 pub use instance_descriptor::{
     digest_effective_schedule, digest_level_params, digest_serializable, setup_seed_digest,
     AkitaInstanceDescriptor, AlgebraSection, CallSection, FoldLinfProtocolBinding, PlanSection,
-    ProtocolFeatureSet, SetupSection, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
-    FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
+    ProtocolFeatureSet, SetupSection,
 };
 pub use layout::{
     basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
@@ -92,21 +92,21 @@ pub use proof::{
     padded_setup_prefix_len, prepare_opening_point, raw_field_segment_bytes,
     relation_claim_from_layout_extension, relation_claim_from_rows,
     relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
-    relation_rhs_row_count, ring_subfield_packed_extension_opening_point,
-    root_tensor_projection_enabled, sample_public_matrix_seed, select_setup_prefix_slot,
-    setup_matrix_envelope_for_schedule, setup_matrix_field_elements_for_schedule,
-    setup_prefix_precommitted_params, setup_prefix_slot_field_elements, setup_prefix_slot_id,
-    tail_golomb_rice_z_params, tail_segment_multiplicities_from_layout,
-    tail_segment_multiplicities_from_layout_for_params, terminal_response_upper_bound_bytes,
-    terminal_response_z_payload_bytes, validate_batched_inputs,
-    validate_public_matrix_matches_seed, validate_scalar_point_matches_poly_arity,
-    validate_terminal_response_z_payload, z_fold_decoded_from_terminal_response,
-    z_fold_encoding_stats_from_terminal_response, AkitaBatchedProof, AkitaBatchedProofShape,
-    AkitaCommitment, AkitaCommitmentHint, AkitaExpandedSetup, AkitaSetupSeed, AkitaStage1Proof,
-    AkitaStage1StageProof, AkitaStage1StageShape, AkitaStage2Proof, AkitaVerifierSetup, Commitment,
-    CommitmentVerifier, DigitBlockIter, DigitBlocks, DummyProof, ExtensionOpeningReductionProof,
-    ExtensionOpeningReductionShape, FoldLevelProof, LevelProofShape, NextWitnessBinding,
-    NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
+    relation_rhs_row_count, ring_relation_segment_lengths,
+    ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
+    sample_public_matrix_seed, select_setup_prefix_slot, setup_matrix_envelope_for_schedule,
+    setup_matrix_field_elements_for_schedule, setup_prefix_precommitted_params,
+    setup_prefix_slot_field_elements, setup_prefix_slot_id,
+    tail_segment_multiplicities_from_layout, tail_segment_multiplicities_from_layout_for_params,
+    terminal_response_upper_bound_bytes, terminal_response_z_payload_bytes,
+    validate_batched_inputs, validate_public_matrix_matches_seed,
+    validate_scalar_point_matches_poly_arity, validate_terminal_response_z_payload,
+    AkitaBatchedProof, AkitaBatchedProofShape, AkitaCommitment, AkitaCommitmentHint,
+    AkitaExpandedSetup, AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof,
+    AkitaStage1StageShape, AkitaStage2Proof, AkitaVerifierSetup, Commitment, CommitmentVerifier,
+    CommittedGroup, DigitBlockIter, DigitBlocks, DummyProof, ExtensionOpeningReductionProof,
+    ExtensionOpeningReductionShape, FoldLevelProof, GroupBatchStatement, LevelProofShape,
+    NextWitnessBinding, NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
     PolynomialGroupClaims, PolynomialGroupLayout, PreparedOpeningPoint, ProverCommitmentRows,
     PublicMatrixSeed, RelationAddressGeometry, RelationGroupRows, RelationRangeImageGroupPlan,
     RelationRangeImagePlan, RelationRhsLayout, RingCommitment, RingMultiplierOpeningPoint,
@@ -122,15 +122,17 @@ pub use proof::{
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
-    detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, FoldSchedule, FoldScheduleEstimate, NextWitnessBindingPolicy,
-    PlannedFoldSchedule, PrecommittedGroupDescriptor, RecursiveFoldParams, RecursiveFoldStep,
-    RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    RootPrecommittedGroupParams, RootSource, ScheduleKeyPrecommitSource,
-    TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseLinfPolicy,
-    WitnessPartition, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN,
-    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
+    detect_field_modulus, intermediate_w_ring_element_count_for_chunks,
+    intermediate_w_ring_element_count_with_counts,
+    intermediate_w_ring_element_count_with_counts_bits, r_decomp_levels, root_input_witness_len,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
+    FoldSchedule, FoldScheduleEstimate, NextWitnessBindingPolicy, PlannedFoldSchedule,
+    RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams,
+    RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, TerminalCommittedGroupParams,
+    TerminalFoldParams, TerminalFoldStep, WitnessPartition,
+    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
+pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{
     ensure_setup_envelope, shared_setup_fold_gadget, PreparedRelationAddress,
     SetupContributionGroupInputs, SetupContributionPlan, SetupProjectionGeometry,
@@ -140,10 +142,7 @@ pub use sis::{
     SisMatrixRole, SisModulusProfileId, SisRoleCell, SisSecurityPolicyId, SisTableDigest,
     SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
-pub use tail_golomb_rice_low_bits::{
-    cap_rice_low_bits, wire_rice_low_bits, wire_rice_low_bits_from_rule, WIRE_RICE_LOW_BITS_DELTA,
-    WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
-};
+pub use tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 pub use trace_weight::{
     build_multi_group_root_stage2_trace_table, build_trace_claim_multi_group_root,
     build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,

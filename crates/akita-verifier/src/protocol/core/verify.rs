@@ -201,7 +201,8 @@ where
 
 use akita_types::{
     dispatch_for_field, validate_schedule_ring_dims, AkitaBatchedProof, AkitaVerifierSetup,
-    BasisMode, Commitment, FoldSchedule, FpExtEncoding, OpeningClaims,
+    BasisMode, Commitment, CommittedGroupBatchProfile, FoldSchedule, FpExtEncoding,
+    GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
 
 /// Verify a batched proof under config `Cfg`.
@@ -218,7 +219,7 @@ pub fn batched_verify<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
+    statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
     basis: BasisMode,
 ) -> Result<(), AkitaError>
 where
@@ -233,30 +234,94 @@ where
         + Valid,
     T: Transcript<Cfg::Field>,
 {
+    let selection = statement.selection();
+    let claims = statement.into_claims();
     claims
         .validate(setup.expanded.seed())
         .map_err(|_| AkitaError::InvalidProof)?;
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
+    let (final_group, precommitteds) = claims
+        .groups()
+        .split_last()
+        .ok_or(AkitaError::InvalidProof)?;
+    let final_descriptor = *final_group.commitment().profile();
+    if final_descriptor.group.num_vars() != final_group.num_vars()
+        || final_descriptor.group.num_polynomials() != final_group.num_evaluations()
+        || precommitteds.iter().any(|group| {
+            let descriptor = group.commitment().profile();
+            descriptor.group.num_vars() != group.num_vars()
+                || descriptor.group.num_polynomials() != group.num_evaluations()
+        })
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    for group in claims.groups() {
+        let committed = group.commitment();
+        let descriptor = committed.profile();
+        descriptor
+            .validate_frozen_precommit(Cfg::decomposition().field_bits())
+            .map_err(|_| AkitaError::InvalidProof)?;
+        let expected_coeffs = descriptor
+            .outer_commit_matrix
+            .output_rank()
+            .checked_mul(descriptor.outer_commit_matrix.ring_dimension())
+            .ok_or(AkitaError::InvalidProof)?;
+        if committed.commitment().rows().coeff_len() != expected_coeffs {
+            return Err(AkitaError::InvalidProof);
+        }
+    }
+    let batch_profile = CommittedGroupBatchProfile {
+        final_group: final_descriptor,
+        precommitteds: precommitteds
+            .iter()
+            .map(|group| *group.commitment().profile())
+            .collect(),
+    };
+    batch_profile
+        .validate(Cfg::decomposition().field_bits())
+        .map_err(|_| AkitaError::InvalidProof)?;
     let final_group_index = opening_batch
         .root_final_group_index()
         .map_err(|_| AkitaError::InvalidProof)?;
     let final_group_point = claims
         .group_point(final_group_index)
         .map_err(|_| AkitaError::InvalidProof)?;
-    let schedule = effective_batched_schedule::<Cfg>(&opening_batch, final_group_point)
+    let resolved = Cfg::resolve_schedule_selection(selection)?;
+    let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)
         .map_err(|_| AkitaError::InvalidProof)?;
-    validate_schedule_ring_dims(&schedule, setup.expanded.seed())?;
-    ensure_schedule_fits_setup::<Cfg>(setup.expanded.as_ref(), &schedule, &opening_batch)?;
+    if resolved.profiles() != &batch_profile {
+        return Err(AkitaError::InvalidProof);
+    }
+    let schedule = resolved.schedule();
+    let root_params = &schedule.root_fold().params;
+    let expected_final_descriptor = akita_types::CommittedGroupProfile::from_params(
+        final_descriptor.group,
+        &root_params.final_group.commitment,
+    );
+    if final_descriptor != expected_final_descriptor
+        || root_params.precommitted_groups.len() != precommitteds.len()
+        || root_params
+            .precommitted_groups
+            .iter()
+            .zip(precommitteds)
+            .any(|(params, claims_group)| {
+                params.commitment.layout != *claims_group.commitment().profile()
+            })
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    validate_schedule_ring_dims(schedule, setup.expanded.seed())?;
+    ensure_schedule_fits_setup::<Cfg>(setup.expanded.as_ref(), schedule, &opening_batch)?;
     schedule
         .validate_structure()
         .map_err(|_| AkitaError::InvalidProof)?;
-    validate_proof_against_schedule(proof, &schedule)?;
+    validate_proof_against_schedule(proof, schedule)?;
 
     // Schedule resolution is the earliest point at which the terminal ring
     // dimension, A widths, and exact base-versus-i16-tail capabilities are all
     // known. Warm those derived, non-serialized prefixes before transcript
     // replay so terminal verification performs cache lookup only.
-    super::terminal_ntt::warm_for_schedule(setup, &schedule)?;
+    super::terminal_ntt::warm_for_schedule(setup, schedule)?;
 
     // The transcript instance descriptor binds the setup-wide root ring
     // dimension (`gen_ring_dim`), which is byte-identical to the const `Cfg::D`
@@ -272,7 +337,8 @@ where
                 bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
                     &setup.expanded,
                     &opening_batch,
-                    &schedule,
+                    selection,
+                    schedule,
                     basis,
                     transcript,
                 )
@@ -280,7 +346,21 @@ where
         )?;
     }
 
-    verify::<Cfg::Field, Cfg::ExtField, T>(proof, setup, transcript, claims, basis, &schedule)
+    let raw_groups = claims
+        .groups()
+        .iter()
+        .map(|group| {
+            PolynomialGroupClaims::new(
+                group.point().to_vec(),
+                group.evaluations().to_vec(),
+                group.commitment().commitment(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| AkitaError::InvalidProof)?;
+    let raw_claims =
+        OpeningClaims::from_groups(raw_groups).map_err(|_| AkitaError::InvalidProof)?;
+    verify::<Cfg::Field, Cfg::ExtField, T>(proof, setup, transcript, raw_claims, basis, schedule)
 }
 
 #[cfg(test)]

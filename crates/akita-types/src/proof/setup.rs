@@ -594,45 +594,48 @@ mod tests {
     const SMALL_D: usize = 64;
 
     fn prefix_commitment_params(n_prefix: usize, d_setup: usize) -> crate::PrecommittedLevelParams {
+        let inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
+            crate::SisTableKey {
+                policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: crate::sis::SisTableDigest::CURRENT,
+                modulus_profile: crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+                role: crate::sis::SisMatrixRole::Inner,
+                ring_dimension: u32::try_from(d_setup).expect("test ring dimension"),
+                coeff_linf_bound: 32_767,
+            },
+            1,
+        )
+        .expect("audited prefix A matrix");
+        let outer_commit_matrix = crate::OuterCommitMatrixParams::try_new_with_min_rank(
+            crate::SisTableKey {
+                policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: crate::sis::SisTableDigest::CURRENT,
+                modulus_profile: crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+                role: crate::sis::SisMatrixRole::Outer,
+                ring_dimension: u32::try_from(d_setup).expect("test ring dimension"),
+                coeff_linf_bound: 3,
+            },
+            inner_commit_matrix.output_rank() * (n_prefix / d_setup),
+        )
+        .expect("audited prefix B matrix");
         crate::PrecommittedLevelParams {
-            layout: crate::PrecommittedGroupDescriptor {
+            layout: crate::CommittedGroupProfile {
+                version: crate::CommittedGroupProfile::VERSION,
                 group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
                 num_live_ring_elements_per_claim: n_prefix / d_setup,
                 num_positions_per_block: 1,
                 num_live_blocks: n_prefix / d_setup,
                 log_basis_inner: 1,
+                num_digits_inner: 1,
+                inner_commit_matrix,
                 log_basis_outer: 1,
-                inner_ring_dimension: d_setup,
-                outer_ring_dimension: d_setup,
-                n_a: 1,
-                a_coeff_linf_bound: 1,
-                n_b: 1,
-                b_coeff_linf_bound: 1,
+                num_digits_outer: 1,
+                outer_commit_matrix,
             },
-            inner_commit_matrix: crate::InnerCommitMatrixParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                crate::sis::SisTableDigest::CURRENT,
-                crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-                1,
-                1,
-                1,
-                d_setup,
-            ),
-            outer_commit_matrix: crate::OuterCommitMatrixParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                crate::sis::SisTableDigest::CURRENT,
-                crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-                1,
-                1,
-                1,
-                d_setup,
-            ),
             log_basis_open: 1,
             fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
-            num_digits_inner: 1,
-            num_digits_outer: 1,
             num_digits_open: 1,
-            num_digits_fold_one: 1,
+            num_digits_fold: 1,
         }
     }
 
@@ -653,12 +656,15 @@ mod tests {
         let setup_seed = seed([7u8; 32]);
         let shared_matrix = derive_public_matrix_flat::<F, D>(2, &setup_seed.public_matrix_seed);
         let mut prefix_slots = SetupPrefixVerifierRegistry::new();
+        let d_setup = 64;
+        let commitment_params = prefix_commitment_params(d_setup, d_setup);
+        let commitment_rows = commitment_params.layout.outer_commit_matrix.output_rank();
         let slot = SetupPrefixVerifierSlot {
-            id: crate::setup_prefix_slot_id(D, D - 1, prefix_commitment_params(D, D)),
-            natural_len: D - 1,
-            padded_len: D,
+            id: crate::setup_prefix_slot_id(d_setup, d_setup - 1, commitment_params),
+            natural_len: d_setup - 1,
+            padded_len: d_setup,
             commitment: SetupPrefixPublicCommitment {
-                rows: vec![RingVec::from_coeffs(vec![F::zero(); D])],
+                rows: vec![RingVec::from_coeffs(vec![F::zero(); d_setup]); commitment_rows],
             },
         };
         prefix_slots.insert(slot).expect("insert prefix slot");

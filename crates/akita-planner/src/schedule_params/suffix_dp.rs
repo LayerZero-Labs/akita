@@ -10,11 +10,10 @@ use akita_types::{
     CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout, TerminalResponseShape,
 };
 
-use crate::{planner::multi_group_root_level_candidates_for_basis, PlannerPolicy};
+use crate::{group_batch::multi_group_root_level_candidates_for_basis, PlannerPolicy};
 
 use super::{
-    derive_candidate_level_params, level_setup_field_elements, planned_next_witness_len,
-    scalar_root_fold_level_params_candidate, stage3_payload_bytes_for_successor,
+    derive_candidate_level_params, level_setup_field_elements, stage3_payload_bytes_for_successor,
     suffix_opening_layout, terminal_setup_field_elements, CandidateFoldStep,
     CandidateTerminalResponse, ScheduleCandidate, MAX_RECURSION_DEPTH,
 };
@@ -35,6 +34,12 @@ use super::{
 pub(crate) struct SuffixResult {
     pub(crate) best_by_first_direct_setup_per_lb: BTreeMap<u32, ScheduleCandidate>,
     pub(crate) best_by_payload_per_lb: BTreeMap<u32, ScheduleCandidate>,
+}
+
+impl SuffixResult {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.best_by_first_direct_setup_per_lb.is_empty()
+    }
 }
 
 /// Like [`terminal_direct_suffix_cost`], but returns `None` when the fold at
@@ -294,7 +299,8 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) key: PolynomialGroupLayout,
     pub(crate) setup_field_budget: Option<usize>,
     pub(crate) root_lookup_key: Option<&'a AkitaScheduleLookupKey>,
-    pub(crate) level_zero_is_root: bool,
+    pub(crate) root_honest_fold_policy: Option<akita_types::sis::HonestFoldPolicySpec>,
+    pub(crate) precommitted_honest_fold_policies: &'a [akita_types::sis::HonestFoldPolicySpec],
 }
 
 #[derive(Clone, Copy)]
@@ -335,10 +341,7 @@ fn price_level_candidate_with_children(
     // There is no alternative terminal-shaped predecessor output: the
     // predecessor produces one canonical witness, and the terminal inner
     // commitment consumes that exact witness.
-    if !(ctx.level_zero_is_root && state.level == 0)
-        && state.incoming_setup_prefix.is_none()
-        && !candidate_params.has_precommitted_groups()
-    {
+    if state.incoming_setup_prefix.is_none() && !candidate_params.has_precommitted_groups() {
         let field_bits = policy.decomposition.field_bits();
         if let Some((mut direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
             state.current_witness_len,
@@ -457,10 +460,11 @@ pub(crate) fn derive_optimal_suffix_schedule(
         ring_challenge_config,
         fold_challenge_shape_at_level,
         num_vars,
-        key,
+        key: _,
         setup_field_budget: _,
         root_lookup_key,
-        level_zero_is_root: _,
+        root_honest_fold_policy,
+        precommitted_honest_fold_policies,
     } = *ctx;
     let SuffixState {
         level,
@@ -499,13 +503,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 .map(|total_polys| PolynomialGroupLayout::new(root_key.max_num_vars(), total_polys))
         })
         .transpose()?;
-    let eor_key = root_eor_key.unwrap_or_else(|| {
-        if level == 0 {
-            key
-        } else {
-            PolynomialGroupLayout::singleton(num_vars)
-        }
-    });
+    let eor_key = root_eor_key.unwrap_or_else(|| PolynomialGroupLayout::singleton(num_vars));
     let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
         policy.challenge_field_bits()?,
         policy.claim_ext_degree,
@@ -519,18 +517,13 @@ pub(crate) fn derive_optimal_suffix_schedule(
         memo.insert(memo_key, Arc::clone(&result));
         return Ok(result);
     };
-    let scalar_opening_layout = if root_level_key.is_some() {
-        None
-    } else if level == 0 {
-        Some(OpeningClaimsLayout::new(
-            key.num_vars(),
-            key.num_polynomials(),
-        )?)
-    } else {
+    let scalar_opening_layout = if root_level_key.is_none() {
         Some(suffix_opening_layout(
             current_witness_len,
             incoming_setup_prefix,
         )?)
+    } else {
+        None
     };
     let requested_fold_shape = fold_challenge_shape_at_level(akita_types::AkitaScheduleInputs {
         num_vars,
@@ -553,6 +546,12 @@ pub(crate) fn derive_optimal_suffix_schedule(
             })?;
             let candidates = multi_group_root_level_candidates_for_basis(
                 root_key,
+                root_honest_fold_policy.ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "multi-group root is missing its honest fold policy".to_string(),
+                    )
+                })?,
+                precommitted_honest_fold_policies,
                 policy,
                 default_ring_challenge_cfg,
                 ring_challenge_config,
@@ -561,62 +560,6 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 lb,
             )?;
             (current_opening_layout, candidates, true)
-        } else if level == 0 {
-            let mut candidates = Vec::new();
-            let dimensions = CommitmentRingDims::uniform(policy.ring_dimension);
-            let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
-                continue;
-            };
-            let alpha = dimensions.d_a().trailing_zeros() as usize;
-            let reduced_vars = key.num_vars().saturating_sub(alpha);
-            if reduced_vars == 0 {
-                continue;
-            }
-            let initial_witness_len_bits = current_witness_len
-                .checked_mul(policy.decomposition.field_bits() as usize)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("root witness bit length overflow".into())
-                })?;
-            let min_block_index_bits = if reduced_vars >= 3 { 1 } else { 0 };
-            let max_block_index_bits = (reduced_vars - 1).min(usize::BITS as usize - 1);
-            for block_index_bits in (min_block_index_bits..=max_block_index_bits).rev() {
-                let Some(candidate_params) = scalar_root_fold_level_params_candidate(
-                    policy,
-                    &ring_challenge_cfg,
-                    dimensions,
-                    key.num_vars(),
-                    key.num_polynomials(),
-                    lb,
-                    block_index_bits,
-                    requested_fold_shape,
-                )?
-                else {
-                    continue;
-                };
-                let output_witness_len = planned_next_witness_len(
-                    policy.decomposition.field_bits(),
-                    &candidate_params,
-                    key.num_polynomials(),
-                    policy.chunks_at_level(0),
-                )?;
-                if output_witness_len.checked_mul(lb as usize).ok_or_else(|| {
-                    AkitaError::InvalidSetup("root next witness bit length overflow".into())
-                })? >= initial_witness_len_bits
-                {
-                    continue;
-                }
-                candidates.push((candidate_params, output_witness_len));
-            }
-            if candidates.is_empty() {
-                continue;
-            }
-            (
-                scalar_opening_layout.as_ref().ok_or_else(|| {
-                    AkitaError::InvalidSetup("scalar root opening layout is missing".to_string())
-                })?,
-                candidates,
-                false,
-            )
         } else {
             let mut candidates = Vec::new();
             let dimensions = CommitmentRingDims::uniform(policy.ring_dimension);

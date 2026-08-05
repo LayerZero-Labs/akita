@@ -9,8 +9,8 @@ use crate::descriptor_bytes::sis_modulus_profile_tag;
 use crate::proof::{setup::MAX_SETUP_MATRIX_FIELD_ELEMENTS, AkitaCommitmentHint, RingVec};
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
-    CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PolynomialGroupLayout, PrecommittedGroupDescriptor, PrecommittedLevelParams,
+    CommittedGroupParams, CommittedGroupProfile, InnerCommitMatrixParams, OpeningClaimsLayout,
+    OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -30,7 +30,7 @@ pub const SETUP_OFFLOAD_D_SETUP: usize = 64;
 ///
 /// `natural_len` distinguishes exact prefixes that share the padded commitment
 /// domain derived from `commitment_params`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct SetupPrefixSlotId {
     /// Coefficient-axis ring dimension for the delegated prefix object.
     pub d_setup: usize,
@@ -39,6 +39,14 @@ pub struct SetupPrefixSlotId {
     /// Commitment parameters used to build the setup-prefix object.
     pub commitment_params: PrecommittedLevelParams,
 }
+
+impl PartialEq for SetupPrefixSlotId {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for SetupPrefixSlotId {}
 
 impl SetupPrefixSlotId {
     /// Padded flat coefficient length committed for this slot.
@@ -360,6 +368,10 @@ fn serialize_precommitted_level_params<W: Write>(
 ) -> Result<(), SerializationError> {
     params
         .layout
+        .version
+        .serialize_with_mode(&mut writer, compress)?;
+    params
+        .layout
         .group
         .num_vars()
         .serialize_with_mode(&mut writer, compress)?;
@@ -386,8 +398,18 @@ fn serialize_precommitted_level_params<W: Write>(
         .serialize_with_mode(&mut writer, compress)?;
     params
         .layout
+        .num_digits_inner
+        .serialize_with_mode(&mut writer, compress)?;
+    serialize_commit_matrix(&params.layout.inner_commit_matrix, &mut writer, compress)?;
+    params
+        .layout
         .log_basis_outer
         .serialize_with_mode(&mut writer, compress)?;
+    params
+        .layout
+        .num_digits_outer
+        .serialize_with_mode(&mut writer, compress)?;
+    serialize_commit_matrix(&params.layout.outer_commit_matrix, &mut writer, compress)?;
     params
         .log_basis_open
         .serialize_with_mode(&mut writer, compress)?;
@@ -400,26 +422,10 @@ fn serialize_precommitted_level_params<W: Write>(
         .count_pm2
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .layout
-        .n_a
-        .serialize_with_mode(&mut writer, compress)?;
-    params
-        .layout
-        .n_b
-        .serialize_with_mode(&mut writer, compress)?;
-    serialize_commit_matrix(&params.inner_commit_matrix, &mut writer, compress)?;
-    serialize_commit_matrix(&params.outer_commit_matrix, &mut writer, compress)?;
-    params
-        .num_digits_inner
-        .serialize_with_mode(&mut writer, compress)?;
-    params
-        .num_digits_outer
-        .serialize_with_mode(&mut writer, compress)?;
-    params
         .num_digits_open
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .num_digits_fold_one
+        .num_digits_fold
         .serialize_with_mode(&mut writer, compress)?;
     Ok(())
 }
@@ -429,6 +435,12 @@ fn deserialize_precommitted_level_params<R: Read>(
     compress: Compress,
     validate: Validate,
 ) -> Result<PrecommittedLevelParams, SerializationError> {
+    let version = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    if version != CommittedGroupProfile::VERSION {
+        return Err(SerializationError::InvalidData(format!(
+            "unknown committed-group profile version {version}"
+        )));
+    }
     let group_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let group_num_polynomials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_live_ring_elements_per_claim =
@@ -437,46 +449,39 @@ fn deserialize_precommitted_level_params<R: Read>(
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_live_blocks = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let log_basis_inner = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let num_digits_inner = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let inner_commit_matrix: InnerCommitMatrixParams =
+        deserialize_commit_matrix(&mut reader, compress, validate)?;
     let log_basis_outer = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let num_digits_outer = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let outer_commit_matrix: OuterCommitMatrixParams =
+        deserialize_commit_matrix(&mut reader, compress, validate)?;
     let log_basis_open = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let challenge_count_pm1 = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let challenge_count_pm2 = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let n_a = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let n_b = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let inner_commit_matrix: InnerCommitMatrixParams =
-        deserialize_commit_matrix(&mut reader, compress, validate)?;
-    let outer_commit_matrix: OuterCommitMatrixParams =
-        deserialize_commit_matrix(&mut reader, compress, validate)?;
-    let num_digits_inner = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let num_digits_outer = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_open = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let num_digits_fold_one = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let num_digits_fold = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     Ok(PrecommittedLevelParams {
-        layout: PrecommittedGroupDescriptor {
+        layout: CommittedGroupProfile {
+            version,
             group: PolynomialGroupLayout::new(group_num_vars, group_num_polynomials),
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
             log_basis_inner,
+            num_digits_inner,
+            inner_commit_matrix,
             log_basis_outer,
-            inner_ring_dimension: inner_commit_matrix.ring_dimension(),
-            outer_ring_dimension: outer_commit_matrix.ring_dimension(),
-            n_a,
-            a_coeff_linf_bound: inner_commit_matrix.coeff_linf_bound(),
-            n_b,
-            b_coeff_linf_bound: outer_commit_matrix.coeff_linf_bound(),
+            num_digits_outer,
+            outer_commit_matrix,
         },
-        inner_commit_matrix,
-        outer_commit_matrix,
         log_basis_open,
         fold_challenge_config: akita_challenges::SparseChallengeConfig {
             count_pm1: challenge_count_pm1,
             count_pm2: challenge_count_pm2,
         },
-        num_digits_inner,
-        num_digits_outer,
         num_digits_open,
-        num_digits_fold_one,
+        num_digits_fold,
     })
 }
 
@@ -484,7 +489,8 @@ fn precommitted_level_params_serialized_size(
     params: &PrecommittedLevelParams,
     compress: Compress,
 ) -> usize {
-    params.layout.group.num_vars().serialized_size(compress)
+    params.layout.version.serialized_size(compress)
+        + params.layout.group.num_vars().serialized_size(compress)
         + params
             .layout
             .group
@@ -500,7 +506,11 @@ fn precommitted_level_params_serialized_size(
             .serialized_size(compress)
         + params.layout.num_live_blocks.serialized_size(compress)
         + params.layout.log_basis_inner.serialized_size(compress)
+        + params.layout.num_digits_inner.serialized_size(compress)
+        + commit_matrix_serialized_size(&params.layout.inner_commit_matrix, compress)
         + params.layout.log_basis_outer.serialized_size(compress)
+        + params.layout.num_digits_outer.serialized_size(compress)
+        + commit_matrix_serialized_size(&params.layout.outer_commit_matrix, compress)
         + params.log_basis_open.serialized_size(compress)
         + params
             .fold_challenge_config
@@ -510,14 +520,8 @@ fn precommitted_level_params_serialized_size(
             .fold_challenge_config
             .count_pm2
             .serialized_size(compress)
-        + params.layout.n_a.serialized_size(compress)
-        + params.layout.n_b.serialized_size(compress)
-        + commit_matrix_serialized_size(&params.inner_commit_matrix, compress)
-        + commit_matrix_serialized_size(&params.outer_commit_matrix, compress)
-        + params.num_digits_inner.serialized_size(compress)
-        + params.num_digits_outer.serialized_size(compress)
         + params.num_digits_open.serialized_size(compress)
-        + params.num_digits_fold_one.serialized_size(compress)
+        + params.num_digits_fold.serialized_size(compress)
 }
 
 impl AkitaSerialize for SetupPrefixSlotId {
@@ -526,6 +530,7 @@ impl AkitaSerialize for SetupPrefixSlotId {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
+        self.check()?;
         self.d_setup.serialize_with_mode(&mut writer, compress)?;
         self.natural_len
             .serialize_with_mode(&mut writer, compress)?;
@@ -1263,29 +1268,48 @@ pub fn setup_prefix_precommitted_params(
         if inner_width <= prefix_params.inner_commit_matrix.input_width()
             && outer_width <= prefix_params.outer_commit_matrix.input_width()
         {
+            let inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+                prefix_params.inner_commit_matrix.security_policy(),
+                prefix_params
+                    .inner_commit_matrix
+                    .sis_table_key()
+                    .table_digest,
+                prefix_params.inner_commit_matrix.sis_modulus_profile(),
+                prefix_params.inner_commit_matrix.output_rank(),
+                inner_width,
+                prefix_params.inner_commit_matrix.coeff_linf_bound(),
+                prefix_params.inner_commit_matrix.ring_dimension(),
+            );
+            let outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+                prefix_params.outer_commit_matrix.security_policy(),
+                prefix_params
+                    .outer_commit_matrix
+                    .sis_table_key()
+                    .table_digest,
+                prefix_params.outer_commit_matrix.sis_modulus_profile(),
+                prefix_params.outer_commit_matrix.output_rank(),
+                outer_width,
+                prefix_params.outer_commit_matrix.coeff_linf_bound(),
+                prefix_params.outer_commit_matrix.ring_dimension(),
+            );
             return Ok(PrecommittedLevelParams {
-                layout: PrecommittedGroupDescriptor {
+                layout: CommittedGroupProfile {
+                    version: CommittedGroupProfile::VERSION,
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
                     num_live_ring_elements_per_claim: ring_slots,
                     num_positions_per_block,
                     num_live_blocks,
                     log_basis_inner: prefix_params.log_basis_inner,
+                    num_digits_inner: prefix_params.num_digits_inner,
+                    inner_commit_matrix,
                     log_basis_outer: prefix_params.log_basis_outer,
-                    inner_ring_dimension: prefix_params.inner_commit_matrix.ring_dimension(),
-                    outer_ring_dimension: prefix_params.outer_commit_matrix.ring_dimension(),
-                    n_a: prefix_params.inner_commit_matrix.output_rank(),
-                    a_coeff_linf_bound: prefix_params.inner_commit_matrix.coeff_linf_bound(),
-                    n_b: prefix_params.outer_commit_matrix.output_rank(),
-                    b_coeff_linf_bound: prefix_params.outer_commit_matrix.coeff_linf_bound(),
+                    num_digits_outer: prefix_params.num_digits_outer,
+                    outer_commit_matrix,
                 },
-                inner_commit_matrix: prefix_params.inner_commit_matrix.clone(),
-                outer_commit_matrix: prefix_params.outer_commit_matrix.clone(),
                 log_basis_open: prefix_params.log_basis_open,
                 fold_challenge_config: prefix_params.fold_challenge_config,
-                num_digits_inner: prefix_params.num_digits_inner,
-                num_digits_outer: prefix_params.num_digits_outer,
                 num_digits_open: prefix_params.num_digits_open,
-                num_digits_fold_one: prefix_params.num_digits_fold_one,
+                num_digits_fold: prefix_params.num_digits_fold,
             });
         }
         num_positions_per_block = num_positions_per_block.checked_mul(2).ok_or_else(|| {

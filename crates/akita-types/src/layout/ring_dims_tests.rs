@@ -1,9 +1,8 @@
 use super::*;
 use crate::{
     CommittedGroupParams, FoldSchedule, RootFinalChallenge, RootFinalGroupParams, RootFoldParams,
-    RootFoldStep, RootSource, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
-    WitnessPartition,
+    RootFoldStep, TailSegmentGroupLayout, TailSegmentLayout, TerminalCommittedGroupParams,
+    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessPartition,
 };
 use akita_challenges::SparseChallengeConfig;
 
@@ -28,14 +27,11 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: RootSource::Dense {
-                        coefficient_bits: 128,
-                    },
                     challenge: RootFinalChallenge::Flat,
                     commitment: root.clone(),
                 },
                 precommitted_groups: Vec::new(),
-                open_commit_matrix: root.open_commit_matrix.clone(),
+                open_commit_matrix: root.open_commit_matrix,
                 sparse_challenge_config: root.fold_challenge_config,
                 witness_partition: WitnessPartition::Single,
             },
@@ -54,6 +50,7 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
                             z_coords: ring_dimension,
                             e_field_elems: ring_dimension,
                             t_field_elems: ring_dimension,
+                            z_admission_linf_cap: 1,
                             z_payload_bytes: 1,
                             z_rice_low_bits: 0,
                         }],

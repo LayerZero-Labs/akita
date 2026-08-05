@@ -1,19 +1,33 @@
-use super::*;
+//! Canonical scalar root candidate construction shared by offline planning and
+//! standalone precommit selection.
+
+use crate::runtime::{optimize_fold_challenge_shape, PlannerPolicy};
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_field::AkitaError;
+use akita_types::sis::{
+    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
+    num_digits_inner, num_digits_open, projected_role_ring_count, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisTableKey,
+};
+use akita_types::{CommitmentRingDims, CommittedGroupParams, DecompositionParams, SisMatrixRole};
 
 /// Build one scalar root-fold candidate for an explicit basis and split.
 ///
-/// `Ok(None)` is the canonical candidate-infeasibility signal used by both
-/// schedule optimization and setup-capacity certification.
+/// `Ok(None)` is the canonical candidate-infeasibility signal used by schedule
+/// optimization, setup-capacity certification, and standalone precommit
+/// selection.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn scalar_root_fold_level_params_candidate(
+pub fn scalar_root_fold_level_params_candidate(
     policy: &PlannerPolicy,
-    ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
+    ring_challenge_cfg: &SparseChallengeConfig,
     dimensions: CommitmentRingDims,
     num_vars: usize,
     num_claims: usize,
     log_basis: u32,
     block_index_bits: usize,
     requested_fold_shape: TensorChallengeShape,
+    honest_fold_policy: HonestFoldPolicySpec,
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
     dimensions.validate_role_projection()?;
     let alpha = (dimensions.d_a() as u32).trailing_zeros() as usize;
@@ -54,31 +68,39 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     else {
         return Ok(None);
     };
+    let Some(num_fold_coeffs) = width_s
+        .checked_mul(dimensions.d_a())
+        .and_then(|count| count.checked_mul(root_num_chunks))
+    else {
+        return Ok(None);
+    };
+    let Ok(num_digits_fold) = honest_fold_policy.num_digits_fold(HonestFoldSizingQuery {
+        ring_dimension: dimensions.d_a(),
+        num_claims,
+        num_live_blocks,
+        num_chunks: root_num_chunks,
+        num_fold_coeffs,
+        log_basis,
+        challenge_config: ring_challenge_cfg,
+        challenge_shape: fold_challenge_shape,
+    }) else {
+        return Ok(None);
+    };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
         policy.sis_table_digest,
         policy.sis_modulus_profile,
         dimensions.d_a(),
-        witness_decomp,
         log_basis,
         ring_challenge_cfg,
         fold_challenge_shape,
-        true,
-        policy.onehot_chunk_size,
+        num_digits_fold,
         policy.ring_subfield_norm_bound,
-        num_live_blocks,
-        num_claims,
-        width_s as u64,
     ) else {
         return Ok(None);
     };
     let Ok(inner_commit_matrix) = InnerCommitMatrixParams::try_new_with_min_rank(
-        sis_key_at_dimension(
-            policy,
-            akita_types::SisMatrixRole::Inner,
-            dimensions.d_a(),
-            norm_s,
-        ),
+        sis_key_at_dimension(policy, SisMatrixRole::Inner, dimensions.d_a(), norm_s),
         width_s,
     ) else {
         return Ok(None);
@@ -93,7 +115,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     };
     let Some((outer_key, width_t)) = projected_collision_role_price(
         policy,
-        akita_types::SisMatrixRole::Outer,
+        SisMatrixRole::Outer,
         dimensions.d_a(),
         dimensions.d_b(),
         native_width_t,
@@ -113,7 +135,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     };
     let Some((open_key, width_w)) = projected_collision_role_price(
         policy,
-        akita_types::SisMatrixRole::Open,
+        SisMatrixRole::Open,
         dimensions.d_a(),
         dimensions.d_d(),
         native_width_w,
@@ -125,12 +147,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     else {
         return Ok(None);
     };
-    let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
-        policy.onehot_chunk_size
-    } else {
-        0
-    };
-    let params = (CommittedGroupParams {
+    Ok(Some(CommittedGroupParams {
         log_basis_inner: witness_decomp.log_basis,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
@@ -145,16 +162,57 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         num_digits_inner,
         num_digits_outer: num_digits_open,
         num_digits_open,
-        onehot_chunk_size,
-        fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        num_digits_fold_one: 1,
-        field_bits_hint: 0,
-        cached_num_digits_block_claims: 0,
-        cached_num_digits_fold_value: 1,
+        num_digits_fold,
         witness_chunk: policy.witness_chunk_for_level(0),
         precommitted_groups: Vec::new(),
         setup_prefix: None,
-    })
-    .with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)?;
-    Ok(Some(params))
+    }))
+}
+
+/// Construct the canonical SIS-table key for one role and ring dimension.
+pub fn sis_key_at_dimension(
+    policy: &PlannerPolicy,
+    role: SisMatrixRole,
+    ring_dimension: usize,
+    coeff_linf_bound: u128,
+) -> SisTableKey {
+    SisTableKey {
+        policy: policy.sis_security_policy,
+        table_digest: policy.sis_table_digest,
+        modulus_profile: policy.sis_modulus_profile,
+        role,
+        ring_dimension: ring_dimension as u32,
+        coeff_linf_bound,
+    }
+}
+
+/// Price one projected B/D collision role using canonical physical width and
+/// coefficient bounds.
+pub fn projected_collision_role_price(
+    policy: &PlannerPolicy,
+    role: SisMatrixRole,
+    carrier_dimension: usize,
+    role_dimension: usize,
+    native_width: usize,
+    log_basis: u32,
+) -> Option<(SisTableKey, usize)> {
+    if role == SisMatrixRole::Inner
+        || role_dimension == 0
+        || !carrier_dimension.is_multiple_of(role_dimension)
+    {
+        return None;
+    }
+    let coeff_linf_bound = rounded_up_collision_inf_norm(
+        policy.sis_security_policy,
+        policy.sis_modulus_profile,
+        role,
+        role_dimension,
+        log_basis,
+    )?;
+    let physical_width =
+        projected_role_ring_count(carrier_dimension, role_dimension, native_width)?;
+    Some((
+        sis_key_at_dimension(policy, role, role_dimension, coeff_linf_bound),
+        physical_width,
+    ))
 }

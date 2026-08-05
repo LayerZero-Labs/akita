@@ -1,5 +1,13 @@
 # Spec: Folded-Witness ∞-Norm Rejection (digit-count tightening)
 
+> **Architecture revision for #338.** This specification remains the regression
+> baseline for the existing balanced signed digit formulas and snap ratios.
+> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md)
+> supersedes its ownership of intermediate infinity norm caps, field-selected
+> policy inputs, terminal Golomb-Rice parameters, and ZK probe order. Under the
+> revised contract, an intermediate group policy emits `num_digits_fold`, and
+> the terminal response shape owns raw admission and wire parameters.
+
 | Field       | Value                                                     |
 |-------------|-----------------------------------------------------------|
 | Author(s)   | Quang Dao                                                 |

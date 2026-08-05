@@ -12,11 +12,10 @@ use super::ajtai_key::{
     ceil_supported_linf_bound, SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId,
     SisTableDigest,
 };
-use super::decomposition_digits::{
-    balanced_digit_abs_max, balanced_digit_max, num_digits_for_bound,
-};
+use super::decomposition_digits::balanced_digit_abs_max;
+#[cfg(test)]
+use super::decomposition_digits::{balanced_digit_max, num_digits_for_bound};
 use crate::layout::digit_math::isqrt_ceil;
-use crate::{DecompositionParams, FoldLinfProtocolBinding};
 
 pub use super::fold_linf_cap::{
     fold_witness_linf_cap_policy, rademacher_proxy_variance,
@@ -96,13 +95,14 @@ pub fn max_response_linf_for_role_a_collision(
     collision_linf_capacity.checked_div(price_per_unit)
 }
 
-/// A-role committed-level coefficient-`L∞` collision bucket.
+/// A-role committed-level coefficient-`L∞` collision bucket for one exact
+/// verifier-accepted fold digit depth.
 ///
 /// Prices the folded witness sum `z = Σ c_i·s_i` in the L∞ MSIS table. Lemma 7
 /// bounds the extracted kernel by challenge mass; stage-1 digit membership
 /// accepts every balanced `δ_fold`-digit string, whose absolute coefficient
-/// envelope is [`balanced_digit_abs_max`] at the `δ_fold` depth
-/// induced by [`fold_witness_digit_plan`]. MSIS accounting prices the
+/// envelope is [`balanced_digit_abs_max`] at the selected `δ_fold` depth.
+/// MSIS accounting prices the
 /// weak-binding collision `2 · c_bar · z_bar · nu`, where the challenge slack
 /// is `c_bar = 2 · challenge.l1_norm` and the digit envelope is
 /// `z_bar = 2 · balanced_digit_abs_max`, then rounds up to the audited
@@ -117,42 +117,16 @@ pub fn rounded_up_role_a_inf_norm(
     table_digest: SisTableDigest,
     sis_modulus_profile: SisModulusProfileId,
     d: usize,
-    witness_decomposition: DecompositionParams,
     log_basis_response: u32,
     fold_challenge_config: &SparseChallengeConfig,
     fold_shape: TensorChallengeShape,
-    is_root: bool,
-    onehot_chunk_size: usize,
+    fold_decomposed_digits: usize,
     ring_subfield_norm_bound: u32,
-    num_live_blocks: usize,
-    num_claims: usize,
-    inner_width: u64,
 ) -> Option<u128> {
     let challenge = FoldChallengeNorms::new(fold_challenge_config, fold_shape);
-    let is_onehot = is_root && witness_decomposition.log_commit_bound == 1 && onehot_chunk_size > 0;
-    let witness = FoldWitnessNorms::new(
-        witness_decomposition.log_basis,
-        d,
-        onehot_chunk_size,
-        is_onehot,
-    );
-    let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-        fold_challenge_config,
-        fold_shape,
-        d,
-        inner_width as usize,
-    )
-    .ok()?;
-    let (fold_decomposed_digits, _) = fold_witness_digit_plan(
-        num_live_blocks,
-        num_claims,
-        witness_decomposition.field_bits(),
-        log_basis_response,
-        challenge,
-        witness,
-        &cap_config,
-    )
-    .ok()?;
+    if log_basis_response == 0 || fold_decomposed_digits == 0 {
+        return None;
+    }
     let recomposed_inf_norm_bound =
         balanced_digit_abs_max(log_basis_response, fold_decomposed_digits);
     let collision_linf = weak_binding_inf_norm(
@@ -204,6 +178,26 @@ pub struct FoldWitnessNorms {
 }
 
 impl FoldWitnessNorms {
+    /// Build an exact numeric honest-witness estimate for offline planning.
+    #[inline]
+    #[must_use]
+    pub const fn new(infinity_norm: u128, l1_norm: u128) -> Self {
+        Self {
+            infinity_norm,
+            l1_norm,
+        }
+    }
+
+    /// Validate a nondegenerate numeric planning estimate.
+    pub fn validate(self) -> Result<(), AkitaError> {
+        if self.infinity_norm == 0 || self.l1_norm < self.infinity_norm {
+            return Err(AkitaError::InvalidSetup(
+                "fold witness norms require 0 < infinity_norm <= l1_norm".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Witness L∞ norm `||s||_inf`.
     #[inline]
     #[must_use]
@@ -221,31 +215,32 @@ impl FoldWitnessNorms {
     /// Per-block committed witness `s` (`(||s||_inf, ||s||_1)`), used to derive
     /// the worst-case `‖z‖_inf` envelope `β_inf` on the fold sum `z = Σ c_i·s_i`.
     ///
-    /// `||s||_inf` is `1` for one-hot or `b/2 = 2^(log_basis-1)` for dense
-    /// balanced digits; `||s||_1 = nonzeros · ||s||_inf` with
-    /// `nonzeros = ceil(D / K)`:
-    ///
-    /// - dense                     : `K = 1`     ⇒ `nonzeros = D`
-    /// - one-hot, chunk size `K ≥ D`: single-chunk ⇒ `nonzeros = 1`
-    /// - one-hot, chunk size `K < D`: multi-chunk  ⇒ `nonzeros = D / K`
+    /// `||s||_inf = b/2 = 2^(log_basis-1)` and every ring coefficient may be
+    /// nonzero.
     #[inline]
     #[must_use]
-    pub fn new(
-        log_basis: u32,
-        ring_dimension: usize,
-        onehot_chunk_size: usize,
-        is_onehot: bool,
-    ) -> Self {
-        let (infinity_norm, chunk) = if is_onehot {
-            (1u128, onehot_chunk_size)
-        } else {
-            (1u128 << (log_basis.saturating_sub(1)), 1)
-        };
-        let nonzeros = (ring_dimension as u128).div_ceil((chunk.max(1)) as u128);
+    pub fn bounded(log_basis: u32, ring_dimension: usize) -> Self {
+        let infinity_norm = 1u128 << (log_basis.saturating_sub(1));
         Self {
             infinity_norm,
-            l1_norm: infinity_norm.saturating_mul(nonzeros),
+            l1_norm: infinity_norm.saturating_mul(ring_dimension as u128),
         }
+    }
+
+    /// Sparse-binary witness with at most one nonzero per logical chunk.
+    ///
+    /// `||s||_inf = 1` and `||s||_1 = ceil(D / K)`.
+    #[inline]
+    pub fn sparse_binary(ring_dimension: usize, chunk_size: usize) -> Result<Self, AkitaError> {
+        if chunk_size == 0 || !chunk_size.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "sparse-binary fold witness chunk size must be a nonzero power of two".into(),
+            ));
+        }
+        Ok(Self {
+            infinity_norm: 1,
+            l1_norm: (ring_dimension as u128).div_ceil(chunk_size as u128),
+        })
     }
 }
 
@@ -258,7 +253,8 @@ impl FoldWitnessNorms {
 /// # Errors
 ///
 /// Propagates folded-witness bound / tail-bound setup errors.
-pub fn fold_witness_digit_plan(
+#[cfg(test)]
+pub(crate) fn fold_witness_digit_plan(
     num_live_blocks: usize,
     num_claims: usize,
     field_bits: u32,
@@ -281,15 +277,15 @@ pub fn fold_witness_digit_plan(
     // honest-prover digit envelope at `δ-1` still clears
     // `retain_num/retain_den · t*`.
     //
-    // The protocol binding owns the field-width-specific retain floor.
+    // This pre-cutover regression oracle uses the historical field-specific
+    // retain floor. Production policy ownership lives in honest_fold_policy.
     if let (
         FoldWitnessLinfCapPolicy::TailBoundWithGrind
         | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
         Some(rademacher_inf_norm_bound),
     ) = (cap_config.policy, rademacher_inf_norm_bound)
     {
-        let (retain_num, retain_den) =
-            FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain(field_bits);
+        let (retain_num, retain_den): (u32, u32) = if field_bits == 32 { (3, 4) } else { (1, 2) };
         if retain_den > 0 && fold_decomposed_digits > 1 && rademacher_inf_norm_bound > 0 {
             let floor = (rademacher_inf_norm_bound.saturating_mul(u128::from(retain_num))
                 / u128::from(retain_den))
@@ -452,12 +448,14 @@ mod tests {
 
     #[test]
     fn witness_block_l1_norm_chunks() {
-        // dense (K=1): ||s||_1 = D · b/2 = 64 · 4.
-        assert_eq!(FoldWitnessNorms::new(3, 64, 1, false).l1_norm, 64 * 4);
+        // Dense: ||s||_1 = D · b/2 = 64 · 4.
+        assert_eq!(FoldWitnessNorms::bounded(3, 64).l1_norm, 64 * 4);
         // one-hot single-chunk (K >= D): nonzeros = 1.
-        assert_eq!(FoldWitnessNorms::new(3, 64, 64, true).l1_norm, 1);
+        assert_eq!(FoldWitnessNorms::sparse_binary(64, 64).unwrap().l1_norm, 1);
         // one-hot multi-chunk (K < D): nonzeros = ceil(D/K) = 8.
-        assert_eq!(FoldWitnessNorms::new(3, 64, 8, true).l1_norm, 8);
+        assert_eq!(FoldWitnessNorms::sparse_binary(64, 8).unwrap().l1_norm, 8);
+        assert!(FoldWitnessNorms::sparse_binary(64, 0).is_err());
+        assert!(FoldWitnessNorms::sparse_binary(64, 3).is_err());
     }
 
     #[test]
@@ -465,10 +463,14 @@ mod tests {
         // One-hot: ||s||_inf = 1. Dense: ||s||_inf = b/2 = 2^(lb-1), the same
         // at root and recursive (the committed witness is a balanced base-b
         // decomposition with digits in [-b/2, b/2-1] at every level).
-        assert_eq!(FoldWitnessNorms::new(3, 64, 64, true).infinity_norm, 1);
-        assert_eq!(FoldWitnessNorms::new(3, 64, 1, false).infinity_norm, 4); // 2^2
-                                                                             // No root/recursive split: dense is b/2 regardless of `is_onehot=false`.
-        assert_eq!(FoldWitnessNorms::new(5, 64, 1, false).infinity_norm, 16); // 2^4
+        assert_eq!(
+            FoldWitnessNorms::sparse_binary(64, 64)
+                .unwrap()
+                .infinity_norm,
+            1
+        );
+        assert_eq!(FoldWitnessNorms::bounded(3, 64).infinity_norm, 4); // 2^2
+        assert_eq!(FoldWitnessNorms::bounded(5, 64).infinity_norm, 16); // 2^4
     }
 
     #[test]
@@ -491,19 +493,17 @@ mod tests {
             log_commit_bound: 1,
             log_open_bound: Some(128),
         };
-        let (d, is_root, onehot_chunk_size, num_live_blocks, num_claims, subfield, inner_width) =
-            (64usize, true, 64usize, 2usize, 1usize, 1u32, 2u64);
+        let (d, num_live_blocks, num_claims, subfield, inner_width) =
+            (64usize, 2usize, 1usize, 1u32, 2u64);
 
         // Recompute the Lemma-7 envelope from the same primitives the function wires.
         let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
-        let is_onehot = is_root && decomposition.log_commit_bound == 1 && onehot_chunk_size > 0;
-        let witness =
-            FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
-        let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
+        let witness = FoldWitnessNorms::sparse_binary(d, 64).unwrap();
+        let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
             &fold_challenge_config,
             fold_shape,
             d,
-            inner_width as usize,
+            inner_width as usize * d,
         )
         .unwrap();
         let (delta_fold, _) = fold_witness_digit_plan(
@@ -534,16 +534,11 @@ mod tests {
                 SisTableDigest::CURRENT,
                 SisModulusProfileId::Q32Offset99,
                 d,
-                decomposition,
                 decomposition.log_basis,
                 &fold_challenge_config,
                 fold_shape,
-                is_root,
-                onehot_chunk_size,
+                delta_fold,
                 subfield,
-                num_live_blocks,
-                num_claims,
-                inner_width,
             )
             .unwrap(),
             envelope,
@@ -571,18 +566,16 @@ mod tests {
             log_commit_bound: 1,
             log_open_bound: Some(128),
         };
-        let (d, is_root, onehot_chunk_size, num_live_blocks, num_claims, subfield, inner_width) =
-            (64usize, true, 64usize, 4usize, 1usize, 1u32, 2u64);
+        let (d, num_live_blocks, num_claims, subfield, inner_width) =
+            (64usize, 4usize, 1usize, 1u32, 2u64);
 
         let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
-        let is_onehot = is_root && decomposition.log_commit_bound == 1 && onehot_chunk_size > 0;
-        let witness =
-            FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
-        let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
+        let witness = FoldWitnessNorms::sparse_binary(d, 64).unwrap();
+        let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
             &fold_challenge_config,
             fold_shape,
             d,
-            inner_width as usize,
+            inner_width as usize * d,
         )
         .unwrap();
         let (delta_fold, honest_cap) = fold_witness_digit_plan(
@@ -605,16 +598,11 @@ mod tests {
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q64Offset59,
             d,
-            decomposition,
             decomposition.log_basis,
             &fold_challenge_config,
             fold_shape,
-            is_root,
-            onehot_chunk_size,
+            delta_fold,
             subfield,
-            num_live_blocks,
-            num_claims,
-            inner_width,
         )
         .unwrap();
         let cap_priced = ceil_supported_linf_bound(
@@ -650,14 +638,14 @@ mod tests {
         };
         let fold_shape = TensorChallengeShape::Flat;
         let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
-        let witness = FoldWitnessNorms::new(3, 64, 1, false);
+        let witness = FoldWitnessNorms::bounded(3, 64);
         let decomposition = DecompositionParams {
             log_basis: 3,
             log_commit_bound: 128,
             log_open_bound: None,
         };
         let cap_config =
-            FoldWitnessLinfCapConfig::for_fold_level(&fold_challenge_config, fold_shape, 64, 2)
+            FoldWitnessLinfCapConfig::for_fold_coeffs(&fold_challenge_config, fold_shape, 64, 128)
                 .unwrap();
         let (delta_fold, inf_norm_bound) = fold_witness_digit_plan(
             5,
@@ -717,18 +705,16 @@ mod tests {
             log_commit_bound: 128,
             log_open_bound: None,
         };
-        let (d, is_root, onehot_chunk_size, num_live_blocks, num_claims, subfield, inner_width) =
-            (64usize, false, 1usize, 2usize, 1usize, 1u32, 2u64);
+        let (d, num_live_blocks, num_claims, subfield, inner_width) =
+            (64usize, 2usize, 1usize, 1u32, 2u64);
 
         let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
-        let is_onehot = is_root && decomposition.log_commit_bound == 1 && onehot_chunk_size > 0;
-        let witness =
-            FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
-        let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
+        let witness = FoldWitnessNorms::bounded(decomposition.log_basis, d);
+        let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
             &fold_challenge_config,
             fold_shape,
             d,
-            inner_width as usize,
+            inner_width as usize * d,
         )
         .unwrap();
         let (delta_fold, _) = fold_witness_digit_plan(
@@ -747,16 +733,11 @@ mod tests {
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q32Offset99,
             d,
-            decomposition,
             decomposition.log_basis,
             &fold_challenge_config,
             fold_shape,
-            is_root,
-            onehot_chunk_size,
+            delta_fold,
             subfield,
-            num_live_blocks,
-            num_claims,
-            inner_width,
         )
         .unwrap();
         assert_eq!(

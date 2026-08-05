@@ -4,8 +4,7 @@
 //! [`RingRelationProver`].
 use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
-    OpeningFoldKernel, OperationCtx, RootOpeningSource, RootPolyMeta,
-    RuntimeOpeningProveBackendFor,
+    OpeningFoldKernel, OperationCtx, RootOpeningSource,
 };
 #[cfg(feature = "compression-diagnostics")]
 use crate::diagnostics::compression::{
@@ -404,12 +403,13 @@ impl RingRelationProver {
     ///
     /// # Panics
     ///
-    /// Panics if the batched `e_hat` decomposition or flattened batched hints
-    /// produced by the prover do not preserve the expected block sizes.  These
+    /// Panics if the batched `e_hat` decomposition does not preserve the
+    /// expected block sizes. This
     /// invariants hold by construction for well-formed inputs accepted by the
     /// error checks above and are therefore treated as internal programming
     /// errors rather than recoverable failures.
     #[allow(clippy::too_many_arguments, clippy::new_ret_no_self)]
+    #[allow(private_bounds)]
     #[tracing::instrument(skip_all, name = "RingRelationProver::new")]
     #[inline(never)]
     pub fn new<'a, F, PointF, T, P, OB, RB>(
@@ -428,13 +428,11 @@ impl RingRelationProver {
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
         PointF: Clone,
         T: Transcript<F> + ProverTranscriptGrind<F>,
-        P: RootOpeningSource<F, 32>
-            + RootOpeningSource<F, 64>
-            + RootOpeningSource<F, 128>
-            + RootOpeningSource<F, 256>
-            + RootOpeningSource<F, 512>
-            + RootPolyMeta<F>,
-        OB: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, P>,
+        PointF: akita_types::FpExtEncoding<F>
+            + akita_field::ExtField<F>
+            + akita_serialization::AkitaSerialize,
+        P: crate::protocol::core::RootProverGroupOpening<F, PointF, OB>,
+        OB: DigitRowsComputeBackend<F>,
         RB: DigitRowsComputeBackend<F>,
     {
         let prepare_span = tracing::info_span!("ring_relation_prepare_inputs").entered();
@@ -442,7 +440,6 @@ impl RingRelationProver {
         validate_chunked_witness_cfg(&lp)?;
         let dims = lp.role_dims();
         let opening_batch = block_claims.opening_claims().layout()?;
-        let polys = block_claims.flat_polys();
         let num_groups = block_claims.opening_claims().num_groups();
         let group_opening_points = group_opening_points.into_vec();
         let group_ring_multiplier_points = group_ring_multiplier_points.into_vec();
@@ -506,12 +503,12 @@ impl RingRelationProver {
             }
         }
         let num_claims = opening_batch.num_total_polynomials();
-        if polys.is_empty() {
+        if num_claims == 0 {
             return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one polynomial".to_string(),
             ));
         }
-        if polys.len() != pre_folded_e_by_poly.len() || polys.len() != num_claims {
+        if pre_folded_e_by_poly.len() != num_claims {
             return Err(AkitaError::InvalidInput(
                 "batched prover input lengths do not match".to_string(),
             ));
@@ -673,8 +670,6 @@ impl RingRelationProver {
                 "computed and discarded shadow compressed commitments"
             );
         }
-        let opening_backend = opening_ctx.backend();
-
         // Concatenated folded `e` rows in the same order as the terminal witness.
         let e_folded_order = if lp.has_precommitted_groups() {
             opening_batch.root_group_order()?
@@ -703,15 +698,14 @@ impl RingRelationProver {
             .map(|group_index| {
                 Ok(fold_grind::FoldGrindGroup {
                     group_index,
-                    polys: block_claims.group_polys(group_index)?,
+                    group: block_claims.group(group_index)?,
                     params: lp.group_params(&opening_batch, group_index)?,
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let (grind_outputs, fold_grind_nonce) =
-            fold_grind::sample_multi_group_fold_decompose_witnesses::<F, _, OB, T>(
-                opening_backend,
-                Some(opening_ctx.prepared()),
+            fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, _, OB, T>(
+                opening_ctx,
                 transcript,
                 &lp,
                 &opening_batch,

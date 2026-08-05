@@ -1,10 +1,8 @@
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction or root-tensor-projection symbols in scope.
 use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
-use crate::compute::{
-    ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack,
-    RuntimeOpeningProveBackendFor, RuntimeRootProvePoly,
-};
+use crate::compute::{ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack};
+use crate::protocol::core::RootProverGroupOpening;
 use crate::{ProverOpeningData, ProverTranscriptGrind};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
@@ -39,10 +37,10 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RuntimeRootProvePoly<F>,
+    P: RootProverGroupOpening<F, E, O>,
     V: FnOnce() -> Result<(), AkitaError>,
     C: ComputeBackendSetup<F>,
-    O: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, P>,
+    O: DigitRowsComputeBackend<F>,
     TS: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F>,
 {

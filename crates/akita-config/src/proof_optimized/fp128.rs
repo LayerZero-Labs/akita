@@ -22,7 +22,7 @@ pub struct D64OneHot;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHotK16;
 
-/// Binary onehot `D=128` preset for planner-backed experiments.
+/// Binary onehot `D=128`, `K=256` preset for planner-backed experiments.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
 
@@ -91,6 +91,7 @@ impl_proof_optimized_preset!(
     128,
     128,
     128,
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 128),
     schedules = (
         "schedules-fp128-d128-dense",
         "fp128_d128_dense",
@@ -105,6 +106,7 @@ impl_proof_optimized_preset!(
     128,
     128,
     1,
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = (
         "schedules-fp128-d128-onehot",
         "fp128_d128_onehot",
@@ -119,6 +121,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     128,
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64),
     schedules = (
         "schedules-fp128-d64-dense",
         "fp128_d64_dense",
@@ -133,7 +136,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     1,
-    256,
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = (
         "schedules-fp128-d64-onehot",
         "fp128_d64_onehot",
@@ -148,7 +151,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     1,
-    16
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 4)
 );
 impl_proof_optimized_preset!(
     D256OneHot,
@@ -158,7 +161,12 @@ impl_proof_optimized_preset!(
     256,
     128,
     1,
-    256
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
+    schedules = (
+        "schedules-fp128-d256-onehot",
+        "fp128_d256_onehot",
+        fp128_d256_onehot_table
+    )
 );
 impl_proof_optimized_preset!(
     MixedDimFp128OneHot,
@@ -168,7 +176,7 @@ impl_proof_optimized_preset!(
     256,
     128,
     1,
-    256,
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = (
         "schedules-fp128-mixed-dim-onehot",
         "fp128_mixed_dim_onehot",
@@ -184,7 +192,7 @@ impl_proof_optimized_preset!(
     512,
     128,
     1,
-    256
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 2)
 );
 impl_multi_chunk_companion!(
     D64OneHotMultiChunk,

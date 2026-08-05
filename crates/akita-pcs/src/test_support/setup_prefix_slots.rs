@@ -36,6 +36,7 @@ where
             slot_id.d_setup,
             slot_id
                 .commitment_params
+                .layout
                 .outer_commit_matrix
                 .ring_dimension(),
         ] {

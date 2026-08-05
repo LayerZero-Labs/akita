@@ -44,21 +44,38 @@ pub(crate) fn recursive_fold_level_params_candidate(
     let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, delta_commit) else {
         return Ok(None);
     };
+    let Some(num_fold_coeffs) = width_s
+        .checked_mul(dimensions.d_a())
+        .and_then(|count| count.checked_mul(num_chunks))
+    else {
+        return Ok(None);
+    };
+    let fold_policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+        policy.decomposition.field_bits(),
+        FoldWitnessNorms::bounded(decomp.log_basis, dimensions.d_a()),
+    );
+    let Ok(num_digits_fold) = fold_policy.num_digits_fold(HonestFoldSizingQuery {
+        ring_dimension: dimensions.d_a(),
+        num_claims: 1,
+        num_live_blocks,
+        num_chunks,
+        num_fold_coeffs,
+        log_basis: decomp.log_basis,
+        challenge_config: ring_challenge_cfg,
+        challenge_shape: fold_challenge_shape,
+    }) else {
+        return Ok(None);
+    };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
         policy.sis_table_digest,
         policy.sis_modulus_profile,
         dimensions.d_a(),
-        decomp,
         decomp.log_basis,
         ring_challenge_cfg,
         fold_challenge_shape,
-        false,
-        policy.onehot_chunk_size,
+        num_digits_fold,
         policy.ring_subfield_norm_bound,
-        num_live_blocks,
-        1,
-        width_s as u64,
     ) else {
         return Ok(None);
     };
@@ -128,17 +145,11 @@ pub(crate) fn recursive_fold_level_params_candidate(
         num_digits_inner: delta_commit,
         num_digits_outer: delta_open,
         num_digits_open: delta_open,
-        onehot_chunk_size: 0,
-        fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        num_digits_fold_one: 1,
-        field_bits_hint: 0,
-        cached_num_digits_block_claims: 0,
-        cached_num_digits_fold_value: 1,
+        num_digits_fold,
         witness_chunk: policy.witness_chunk_for_level(fold_level),
         precommitted_groups: Vec::new(),
         setup_prefix: None,
-    }
-    .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1)?;
+    };
     Ok(Some(params))
 }
 
@@ -279,6 +290,10 @@ fn prepare_recursive_level_search(
     if current_witness_len == 0 {
         return Ok(None);
     }
+    // The previous fold owns a compact field-coefficient buffer. It need not
+    // end on the next A-ring boundary; commitment alignment pads only the
+    // transient ring view. Plan from the live coefficient count, rounding up
+    // solely to determine the next fold's block geometry.
     let num_ring_elems = current_witness_len.div_ceil(dimensions.d_a());
     let reduced_vars = num_ring_elems
         .checked_next_power_of_two()

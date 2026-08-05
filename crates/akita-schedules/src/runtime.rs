@@ -7,8 +7,8 @@ use akita_types::{
     DecompositionParams, FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout,
     PlannedFoldSchedule, PolynomialGroupLayout, RecursiveFoldParams, RecursiveFoldStep,
     RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    RootPrecommittedGroupParams, RootSource, SisModulusProfileId, SisSecurityPolicyId,
-    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
+    RootPrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
+    TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
     DEFAULT_SIS_SECURITY_POLICY,
 };
 
@@ -112,7 +112,6 @@ pub struct PlannerPolicy {
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),
-    pub onehot_chunk_size: usize,
     pub witness_chunk: ChunkedWitnessCfg,
     pub recursive_setup_planning: bool,
 }
@@ -409,7 +408,6 @@ pub fn materialize_candidate_schedule(
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: RootSource::from_commitment(&root.params),
                     challenge: match root.params.fold_challenge_shape {
                         TensorChallengeShape::Flat => RootFinalChallenge::Flat,
                         TensorChallengeShape::Tensor { fold_low_len } => {
@@ -428,7 +426,7 @@ pub fn materialize_candidate_schedule(
                         commitment,
                     })
                     .collect(),
-                open_commit_matrix: root.params.open_commit_matrix.clone(),
+                open_commit_matrix: root.params.open_commit_matrix,
                 sparse_challenge_config: root.params.fold_challenge_config,
                 witness_partition: witness_partition(root.params.witness_chunk.num_chunks),
             },
@@ -439,7 +437,7 @@ pub fn materialize_candidate_schedule(
             .into_iter()
             .map(|fold| RecursiveFoldStep {
                 params: RecursiveFoldParams {
-                    open_commit_matrix: fold.params.open_commit_matrix.clone(),
+                    open_commit_matrix: fold.params.open_commit_matrix,
                     sparse_challenge_config: fold.params.fold_challenge_config,
                     incoming_setup_prefix: fold.params.setup_prefix.clone(),
                     witness_partition: witness_partition(fold.params.witness_chunk.num_chunks),

@@ -18,22 +18,21 @@
 mod common;
 
 use akita_config::proof_optimized::fp128;
-use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig};
+use akita_config::{
+    committed_group_params, committed_group_profile, CommitmentConfig, PrecommittedCommitmentConfig,
+};
 use akita_pcs::test_support::{
     materialize_schedule_setup_prefix_slots, RecursiveRingDimensionTransitionConfig,
 };
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{
-    commit_setup_prefix, ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
-    ProverOpeningData,
-};
+use akita_prover::{commit_setup_prefix, ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
     active_setup_field_len, dispatch_for_field, lagrange_weights, padded_setup_prefix_len,
-    AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, CommitmentRingDims, FoldSchedule,
-    NttCacheKey, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, WitnessPartition,
+    AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, CommitmentRingDims,
+    CommittedGroupProfile, FoldSchedule, GroupBatchStatement, NttCacheKey, OpeningClaims,
+    PolynomialGroupClaims, PolynomialGroupLayout, WitnessPartition,
 };
 use common::*;
 use rand::rngs::StdRng;
@@ -46,6 +45,7 @@ type Suffix = fp128::D64OneHot;
 type PlainCfg = RecursiveRingDimensionTransitionConfig<Root, Mid, Suffix, Suffix, 128, 64>;
 type W8R2Cfg =
     RecursiveRingDimensionTransitionConfig<Root, Mid, Suffix, fp128::D64OneHotMultiChunk, 128, 64>;
+type PrecommitCfg = fp128::D256OneHot;
 
 const PRE_NV: usize = 14;
 const FINAL_NV: usize = 24;
@@ -55,6 +55,16 @@ const FINAL_GROUP_SIZE: usize = 1;
 const TOTAL_GROUP_SIZE: usize = PRE_GROUPS * PRE_GROUP_SIZE + FINAL_GROUP_SIZE;
 const ONEHOT_K: usize = 256;
 static RECURSIVE_E2E_LOCK: Mutex<()> = Mutex::new(());
+
+fn catalog_precommit_layout() -> akita_types::CommittedGroupParams {
+    committed_group_params::<PrecommitCfg>(&PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE))
+        .expect("generated precommit params")
+}
+
+fn catalog_precommit_profile() -> CommittedGroupProfile {
+    committed_group_profile::<PrecommitCfg>(&PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE))
+        .expect("generated precommit profile")
+}
 
 fn make_layout_onehot_poly(
     layout: &akita_types::CommittedGroupParams,
@@ -130,6 +140,7 @@ fn assert_mixed_recursive_geometry(schedule: &FoldSchedule) {
     assert_eq!(
         prefix
             .commitment_params
+            .layout
             .inner_commit_matrix
             .ring_dimension(),
         128,
@@ -138,6 +149,7 @@ fn assert_mixed_recursive_geometry(schedule: &FoldSchedule) {
     assert_eq!(
         prefix
             .commitment_params
+            .layout
             .outer_commit_matrix
             .ring_dimension(),
         64,
@@ -152,22 +164,18 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
     ProofCfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     type Scheme<ProofCfg> = AkitaCommitmentScheme<ProofCfg>;
-    type Precommitted<ProofCfg> = AkitaCommitmentScheme<PrecommittedCommitmentConfig<ProofCfg>>;
+    type Precommitted = AkitaCommitmentScheme<PrecommittedCommitmentConfig<PrecommitCfg>>;
 
     init_rayon_pool();
     run_on_large_stack(move || {
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
-        let pre_layout =
-            PrecommittedCommitmentConfig::<ProofCfg>::get_params_for_batched_commitment(
-                &OpeningClaimsLayout::new(PRE_NV, PRE_GROUP_SIZE).expect("precommit batch"),
-            )
-            .expect("precommit params");
-        let pre_frozen = PrecommittedGroupDescriptor::from_params(pre_key, &pre_layout);
+        let pre_layout = catalog_precommit_layout();
+        let pre_frozen = catalog_precommit_profile();
+        assert_eq!(pre_frozen.group, pre_key);
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             precommitteds: vec![pre_frozen, pre_frozen],
         };
-        let pre_keys = vec![pre_key; PRE_GROUPS];
         let opening_layout = schedule_key.opening_layout().expect("opening layout");
 
         let schedule =
@@ -220,12 +228,10 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         for group_idx in 0..PRE_GROUPS {
             let poly =
                 make_layout_onehot_poly(&pre_layout, 0x0bee_fcaf_3340_0000 + group_idx as u64);
-            let (commitment, hint) = Precommitted::<ProofCfg>::batched_commit(
-                &setup,
-                std::slice::from_ref(&poly),
-                &stack,
-            )
-            .expect("precommit group");
+            let (commitment, hint) =
+                Precommitted::commit_group(&setup, std::slice::from_ref(&poly), &stack)
+                    .expect("precommit group");
+            assert_eq!(commitment.profile, pre_frozen);
             pre_polys_by_group.push(vec![poly]);
             pre_commitments.push(commitment);
             pre_hints.push(hint);
@@ -236,9 +242,23 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
                 make_layout_onehot_poly(root_params, 0x0bee_fcaf_3340_1000 + poly_idx as u64)
             })
             .collect();
-        let (final_commitment, final_hint) =
-            Scheme::<ProofCfg>::commit_final_group(&setup, &final_polys, &stack, pre_keys)
-                .expect("final mixed commitment");
+        let (final_commitment, final_hint, selection) = Scheme::<ProofCfg>::commit_final_group(
+            &setup,
+            &final_polys,
+            &stack,
+            pre_commitments.iter().map(|group| group.profile).collect(),
+        )
+        .expect("final mixed commitment");
+        let selected_schedule = ProofCfg::resolve_schedule_selection(selection)
+            .expect("selected mixed recursive schedule")
+            .into_schedule();
+        materialize_schedule_setup_prefix_slots(
+            &mut setup,
+            &CpuBackend,
+            &prepared,
+            &selected_schedule,
+        )
+        .expect("materialize selected mixed setup-prefix slots");
 
         let point = random_point(FINAL_NV, 0xcafe_3340_0001);
         let pre_openings: Vec<Vec<F>> = pre_polys_by_group
@@ -289,12 +309,12 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         let mut prover_hints = pre_hints;
         prover_hints.push(final_hint);
 
-        let prover_claims = ProverOpeningData::new(
+        let prover_claims = selected_prover_data::<ProofCfg, _>(
             OpeningClaims::from_groups(prover_groups).expect("prover claims"),
             prover_hints,
             prover_polys,
-        )
-        .expect("mixed recursive prover data");
+        );
+        let selection = prover_claims.0;
 
         let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
         let proof = Scheme::<ProofCfg>::batched_prove(
@@ -338,7 +358,8 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
                 PolynomialGroupClaims::new(point.clone(), final_openings, &final_commitment)
                     .expect("final verifier group"),
             );
-            OpeningClaims::from_groups(verifier_groups).expect("verifier claims")
+            let claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
+            GroupBatchStatement::new(selection, claims).expect("verifier statement")
         };
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
@@ -379,12 +400,8 @@ fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
-        let pre_layout =
-            PrecommittedCommitmentConfig::<PlainCfg>::get_params_for_batched_commitment(
-                &OpeningClaimsLayout::new(PRE_NV, PRE_GROUP_SIZE).expect("precommit batch"),
-            )
-            .expect("precommit params");
-        let descriptor = PrecommittedGroupDescriptor::from_params(pre_key, &pre_layout);
+        let descriptor = catalog_precommit_profile();
+        assert_eq!(descriptor.group, pre_key);
         let schedule = PlainCfg::runtime_schedule(AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             precommitteds: vec![descriptor, descriptor],

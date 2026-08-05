@@ -42,7 +42,7 @@ where
             lookup_key: Some(key.clone()),
         },
         || {
-            key.validate()?;
+            key.validate(Root::decomposition().field_bits())?;
             if key.precommitteds.is_empty() {
                 return Err(AkitaError::InvalidSetup(
                     "recursive ring-dimension transition requires precommitted groups".into(),
@@ -60,16 +60,6 @@ where
             };
             root_dims.validate_role_projection()?;
             middle_dims.validate_role_projection()?;
-            for descriptor in &key.precommitteds {
-                if descriptor.inner_ring_dimension != Root::D
-                    || descriptor.outer_ring_dimension != root_bd_ring_dim
-                {
-                    return Err(AkitaError::InvalidSetup(
-                        "recursive transition precommit dimensions must match the root A/B band"
-                            .into(),
-                    ));
-                }
-            }
 
             let field_bits = Root::decomposition().field_bits();
             let opening_layout = key.opening_layout()?;
@@ -77,8 +67,12 @@ where
             // Plan the exact multi-group root at Root::D, then rebuild B and
             // shared D from the requested final projection geometry.
             let root_policy = policy_of::<Root>().direct_only();
-            let mut root = akita_planner::find_schedule(
+            let precommitted_honest_fold_policies =
+                vec![Root::root_honest_fold_policy(); key.precommitteds.len()];
+            let mut root = akita_planner::find_group_batch_schedule(
                 key,
+                Root::root_honest_fold_policy(),
+                &precommitted_honest_fold_policies,
                 &root_policy,
                 Root::ring_challenge_config,
                 Root::fold_challenge_shape_at_level,
@@ -91,14 +85,7 @@ where
                 root_bd_ring_dim,
                 root_bd_ring_dim,
             )?;
-            root.params.final_group.source =
-                RootSource::from_commitment(&root.params.final_group.commitment);
-            root.params.open_commit_matrix = root
-                .params
-                .final_group
-                .commitment
-                .open_commit_matrix
-                .clone();
+            root.params.open_commit_matrix = root.params.final_group.commitment.open_commit_matrix;
             let root_out = outgoing_witness_field_len(
                 field_bits,
                 &root.params.final_group.commitment,
@@ -111,7 +98,7 @@ where
             // rebuild its B/D matrices before attaching the setup prefix.
             let mut mid_policy = policy_of::<Mid>().direct_only();
             mid_policy.witness_chunk = ChunkCfg::chunked_witness_cfg();
-            let mid = akita_planner::test_support::plan_optimal_suffix(
+            let mid = akita_planner::plan_optimal_suffix(
                 &mid_policy,
                 Mid::ring_challenge_config,
                 Mid::fold_challenge_shape_at_level,
@@ -150,22 +137,18 @@ where
             let natural_prefix_len = active_setup_field_len(root_commitment, &opening_layout)?;
             let n_prefix = padded_setup_prefix_len(natural_prefix_len);
             let ring_challenge = Mid::ring_challenge_config(setup_prefix_d)?;
-            let prefix_params = akita_planner::test_support::derive_setup_prefix_group(
-                &mid_policy,
-                &ring_challenge,
-                l1_step.params.witness.fold_challenge_shape,
-                l1_step.params.witness.log_basis_outer,
-                l1_step.params.witness.log_basis_open,
-                n_prefix,
-                l1_step.params.witness.witness_chunk.num_chunks,
-                middle_bd_ring_dim,
-            )?
-            .ok_or_else(|| {
-                AkitaError::UnsupportedSchedule(format!(
-                    "no setup-prefix commitment at A{}/B{middle_bd_ring_dim} for n_prefix={n_prefix}",
-                    mid_policy.ring_dimension,
-                ))
-            })?;
+            let prefix_params = akita_planner::test_support::plan_setup_prefix_commitment(
+                akita_planner::test_support::SetupPrefixPlanRequest {
+                    policy: &mid_policy,
+                    ring_challenge: &ring_challenge,
+                    fold_shape: l1_step.params.witness.fold_challenge_shape,
+                    log_basis_outer: l1_step.params.witness.log_basis_outer,
+                    log_basis_open: l1_step.params.witness.log_basis_open,
+                    prefix_field_elements: n_prefix,
+                    num_chunks: l1_step.params.witness.witness_chunk.num_chunks,
+                    outer_ring_dimension: middle_bd_ring_dim,
+                },
+            )?;
             let setup_prefix =
                 setup_prefix_slot_id(setup_prefix_d, natural_prefix_len, prefix_params);
             let prefix_d_width = setup_prefix
@@ -187,7 +170,7 @@ where
                 )?;
             l1_step.params.witness.setup_prefix = Some(setup_prefix.clone());
             l1_step.params.incoming_setup_prefix = Some(setup_prefix);
-            l1_step.params.open_commit_matrix = l1_step.params.witness.open_commit_matrix.clone();
+            l1_step.params.open_commit_matrix = l1_step.params.witness.open_commit_matrix;
             let l1_layout = akita_planner::suffix_opening_layout(
                 l1_step.input_witness_len,
                 Some(natural_prefix_len),
@@ -199,7 +182,7 @@ where
 
             let mut suffix_policy = policy_of::<Suffix>().direct_only();
             suffix_policy.witness_chunk = ChunkCfg::chunked_witness_cfg();
-            let suffix = akita_planner::test_support::plan_optimal_suffix(
+            let suffix = akita_planner::plan_optimal_suffix(
                 &suffix_policy,
                 Suffix::ring_challenge_config,
                 Suffix::fold_challenge_shape_at_level,
@@ -331,16 +314,7 @@ where
             }
         };
         let pre_group = PolynomialGroupLayout::new(pre_nv, 1);
-        let pre_schedule = per_matrix_ring_dims_root_schedule::<Root>(
-            pre_group.num_vars(),
-            pre_group.num_polynomials(),
-            ROOT_BD_RING_DIM,
-            ROOT_BD_RING_DIM,
-        )?;
-        let descriptor = akita_types::PrecommittedGroupDescriptor::from_params(
-            pre_group,
-            &pre_schedule.root.params.final_group.commitment,
-        );
+        let descriptor = committed_group_profile::<Root>(&pre_group)?;
         let key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(final_nv, final_np),
             precommitteds: vec![descriptor, descriptor],
@@ -357,8 +331,8 @@ where
         Root::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Root::onehot_chunk_size()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Root::root_honest_fold_policy()
     }
 
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {
@@ -381,6 +355,18 @@ where
         )
     }
 
+    fn select_schedule_for_profiles(
+        profiles: &CommittedGroupBatchProfile,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
+    }
+
+    fn resolve_schedule_selection(
+        selection: OpeningScheduleSelection,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        resolve_synthetic_schedule_row::<Self>(selection)
+    }
+
     fn get_params_for_prove(
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<FoldSchedule, AkitaError> {
@@ -391,7 +377,7 @@ where
             .copied()
             .map(|group| {
                 let schedule = Self::runtime_schedule(AkitaScheduleLookupKey::single(group))?;
-                Ok(akita_types::PrecommittedGroupDescriptor::from_params(
+                Ok(akita_types::CommittedGroupProfile::from_params(
                     group,
                     &schedule.root.params.final_group.commitment,
                 ))

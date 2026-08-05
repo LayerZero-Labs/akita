@@ -143,7 +143,7 @@ where
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
-        prove_input(
+        prove_input::<Cfg, _>(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
@@ -161,14 +161,14 @@ where
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("verify");
 }
 
-/// Onehot variant of [`run_dense_e2e`].  `K` is the onehot chunk size; in
-/// practice we set `K = D` so `(total_ring * K) == 2^poly_nv`.
+/// Onehot variant of [`run_dense_e2e`]. `K` is the onehot chunk size selected
+/// by the config; standard one-hot presets use `K = 256`.
 fn run_onehot_e2e<Cfg, const D: usize>(setup_nv: usize, setup_polys: usize, poly_nv: usize)
 where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
@@ -180,14 +180,7 @@ where
         &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
-    // The committed poly's one-hot chunk size must match the config's required
-    // `onehot_chunk_size` (e.g. 256 for D64OneHot); configs with no constraint
-    // (`<= 1`) use the K = D one-chunk-per-ring-element representation.
-    let k = if layout.onehot_chunk_size > 1 {
-        layout.onehot_chunk_size
-    } else {
-        D
-    };
+    let k = 256;
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     assert_eq!(
         total_ring * D,
@@ -226,7 +219,7 @@ where
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
-        prove_input(
+        prove_input::<Cfg, _>(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
@@ -244,7 +237,7 @@ where
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("verify");
@@ -263,7 +256,7 @@ where
         &tampered,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect_err("tampering predecessor-bound terminal t must be rejected");
@@ -278,7 +271,7 @@ where
         &wrong_binding,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect_err("schedule/proof binding mismatch must reject without panic");
@@ -337,7 +330,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
-        prove_input(
+        prove_input::<Cfg, _>(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
@@ -355,7 +348,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("batched verify");
@@ -384,11 +377,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let layout =
         akita_config::test_support::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
             .expect("batched layout");
-    let k = if layout.onehot_chunk_size > 1 {
-        layout.onehot_chunk_size
-    } else {
-        D
-    };
+    let k = 256;
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     assert_eq!(total_ring * D, 1usize << poly_nv);
     let total_chunks = total_ring * D / k;
@@ -429,7 +418,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
-        prove_input(
+        prove_input::<Cfg, _>(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
@@ -447,7 +436,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("batched onehot verify");

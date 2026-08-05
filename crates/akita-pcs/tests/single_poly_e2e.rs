@@ -5,7 +5,7 @@
 //!
 //! Two polynomial representations are covered:
 //!
-//! * **One-hot** — `fp128::D64OneHot` (D = 64, K = D).
+//! * **One-hot** — `fp128::D64OneHot` (D = 64, K = 256).
 //! * **Dense**   — `fp128::D128Dense`   (D = 128, arbitrary field coefficients).
 //!
 //! Variable counts:
@@ -69,7 +69,7 @@ fn run_single_onehot(nv: usize) {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot");
         let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<OneHotCfg, _>(
                 &pt[..],
                 &poly_refs[..],
                 &commitments[0],
@@ -97,7 +97,7 @@ fn run_single_onehot(nv: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<OneHotCfg>(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -115,7 +115,7 @@ fn run_single_onehot(nv: usize) {
 type DenseCfg = fp128::D128Dense;
 const DENSE_D: usize = DenseCfg::D;
 
-fn run_single_dense(nv: usize) {
+fn run_single_dense(nv: usize, expected_uncompressed_proof_bytes: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = DenseCfg::get_params_for_batched_commitment(
@@ -153,7 +153,7 @@ fn run_single_dense(nv: usize) {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/dense");
         let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<DenseCfg, _>(
                 &pt[..],
                 &poly_refs[..],
                 &commitments[0],
@@ -164,6 +164,17 @@ fn run_single_dense(nv: usize) {
             BasisMode::Lagrange,
         )
         .expect("prove");
+
+        let mut uncompressed = Vec::new();
+        proof
+            .serialize_uncompressed(&mut uncompressed)
+            .expect("serialize uncompressed balanced proof");
+        assert_eq!(proof.size(), uncompressed.len());
+        assert_eq!(
+            uncompressed.len(),
+            expected_uncompressed_proof_bytes,
+            "dense nv={nv} serialized proof size changed"
+        );
 
         let mut serialized = Vec::new();
         let proof_shape = proof.shape();
@@ -181,7 +192,7 @@ fn run_single_dense(nv: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<DenseCfg>(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -222,17 +233,17 @@ fn single_onehot_nv20() {
 
 #[test]
 fn single_dense_nv13() {
-    run_single_dense(13);
+    run_single_dense(13, 84_753);
 }
 
 #[test]
 fn single_dense_nv15() {
-    run_single_dense(15);
+    run_single_dense(15, 92_839);
 }
 
 #[test]
 fn single_dense_nv18() {
-    run_single_dense(18);
+    run_single_dense(18, 102_099);
 }
 
 // #[test]
@@ -289,7 +300,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
         let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<OneHotCfg, _>(
                 &pt[..],
                 &poly_refs[..],
                 &commitments[0],
@@ -318,7 +329,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<OneHotCfg>(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(

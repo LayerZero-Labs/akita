@@ -7,7 +7,10 @@ use std::path::PathBuf;
 use akita_planner::generated_families::{
     emit_spec_for_family, wiring_emit_spec, ALL_GENERATED_FAMILIES,
 };
-use akita_planner::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
+use akita_planner::{
+    refresh_generated_wiring, run_regen_fmt, write_family_module,
+    write_precommitted_profiles_module, EmitSpec,
+};
 
 fn generator_command() -> &'static str {
     "cargo run --release -p akita-planner --features catalog-gen --bin gen_schedule_tables -- <output-dir>"
@@ -83,6 +86,10 @@ fn main() -> Result<(), String> {
         for spec in &specs {
             let dest = write_family_module(spec)
                 .map_err(|e| format!("{}: write family module: {e}", spec.module_name))?;
+            println!("wrote {}", dest.display());
+            let dest = write_precommitted_profiles_module(spec).map_err(|e| {
+                format!("{}: write precommit registry module: {e}", spec.module_name)
+            })?;
             println!("wrote {}", dest.display());
         }
     }

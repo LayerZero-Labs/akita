@@ -2,6 +2,7 @@ use super::*;
 
 struct UnprunedCtx<'a> {
     policy: &'a PlannerPolicy,
+    dimensions: &'a RingDimensionSearchDomain,
     ring_challenge_config: &'a dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_shape: &'a dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     key: PolynomialGroupLayout,
@@ -21,6 +22,7 @@ fn enumerate_suffixes(
 ) -> Result<Vec<ScheduleCandidate>, AkitaError> {
     let UnprunedCtx {
         policy,
+        dimensions,
         ring_challenge_config,
         fold_shape,
         key,
@@ -45,7 +47,7 @@ fn enumerate_suffixes(
     let mut schedules = Vec::new();
 
     for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
-        for candidate_dimensions in policy.ring_dimension_candidates {
+        for candidate_dimensions in dimensions.candidates() {
             let suffix_dimensions = CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
             if level >= MIXED_SEARCH_FOLD_LEVELS {
                 if *candidate_dimensions != suffix_dimensions {
@@ -204,11 +206,14 @@ fn enumerate_suffixes(
 pub(super) fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
+    honest_fold_policy: HonestFoldPolicySpec,
+    dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
     validate_policy(policy)?;
+    dimensions.validate_for_policy(policy)?;
 
     let field_bits = policy.decomposition.field_bits();
     let input_witness_len = 1usize.checked_shl(key.num_vars() as u32).ok_or_else(|| {
@@ -224,13 +229,14 @@ pub(super) fn find_schedule(
     let mut complete = Vec::new();
     let ctx = UnprunedCtx {
         policy,
+        dimensions,
         ring_challenge_config: &ring_challenge_config,
         fold_shape: &fold_shape,
         key,
     };
 
     for log_basis in min_log_basis..=max_log_basis {
-        for root_dimensions in policy.ring_dimension_candidates {
+        for root_dimensions in dimensions.candidates() {
             let alpha = root_dimensions.d_a().trailing_zeros() as usize;
             let reduced_vars = key.num_vars().saturating_sub(alpha);
             if reduced_vars == 0 {
@@ -251,6 +257,7 @@ pub(super) fn find_schedule(
                     log_basis,
                     block_bits,
                     root_shape,
+                    honest_fold_policy,
                 )?
                 else {
                     continue;
@@ -349,16 +356,8 @@ pub(super) fn find_schedule(
             candidate.setup_field_elements <= policy.max_setup_envelope_field_elements
         })
         .map(|candidate| {
-            let descriptor = materialize_candidate_schedule(
-                candidate.total_bytes,
-                candidate.setup_field_elements,
-                policy.ring_dimension,
-                candidate.first_direct_setup_field_len,
-                candidate.folds.clone(),
-                candidate.terminal.clone(),
-            )?
-            .schedule
-            .canonical_descriptor_bytes();
+            let descriptor =
+                candidate_schedule_descriptor_bytes(&candidate, policy.ring_dimension)?;
             Ok((
                 candidate.setup_field_elements,
                 candidate.total_bytes,

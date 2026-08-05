@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, PrecommittedLevelParams, SisModulusProfileId,
+    CommittedGroupParams, CommittedGroupProfile, OpeningClaimsLayout, OuterCommitMatrixParams,
+    PolynomialGroupLayout, PrecommittedLevelParams, SisModulusProfileId,
 };
 use akita_challenges::SparseChallengeConfig;
 
@@ -115,26 +115,32 @@ fn retarget_group_role_dims(
     params.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
             .expect("production challenge");
-    let inner = &params.inner_commit_matrix;
-    params.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
-        inner.security_policy(),
-        inner.sis_table_key().table_digest,
-        inner.sis_modulus_profile(),
-        inner.output_rank(),
+    let inner = params.inner_commit_matrix;
+    params.inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
+        crate::SisTableKey {
+            policy: inner.security_policy(),
+            table_digest: inner.sis_table_key().table_digest,
+            modulus_profile: inner.sis_modulus_profile(),
+            role: crate::sis::SisMatrixRole::Inner,
+            ring_dimension: u32::try_from(inner_ring_dimension).expect("test ring dimension"),
+            coeff_linf_bound: 131_071,
+        },
         inner.input_width(),
-        inner.coeff_linf_bound().max(1),
-        inner_ring_dimension,
-    );
-    let outer = &params.outer_commit_matrix;
-    params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
-        outer.security_policy(),
-        outer.sis_table_key().table_digest,
-        outer.sis_modulus_profile(),
-        outer.output_rank(),
+    )
+    .expect("audited retargeted A matrix");
+    let outer = params.outer_commit_matrix;
+    params.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+        crate::SisTableKey {
+            policy: outer.security_policy(),
+            table_digest: outer.sis_table_key().table_digest,
+            modulus_profile: outer.sis_modulus_profile(),
+            role: crate::sis::SisMatrixRole::Outer,
+            ring_dimension: u32::try_from(outer_ring_dimension).expect("test ring dimension"),
+            coeff_linf_bound: 3,
+        },
         outer.input_width() * (inner_ring_dimension / outer_ring_dimension),
-        outer.coeff_linf_bound().max(1),
-        outer_ring_dimension,
-    );
+    )
+    .expect("audited retargeted B matrix");
 }
 
 fn precommitted_group(
@@ -142,15 +148,11 @@ fn precommitted_group(
     group: PolynomialGroupLayout,
 ) -> PrecommittedLevelParams {
     PrecommittedLevelParams {
-        layout: PrecommittedGroupDescriptor::from_params(group, params),
-        inner_commit_matrix: params.inner_commit_matrix.clone(),
-        outer_commit_matrix: params.outer_commit_matrix.clone(),
+        layout: CommittedGroupProfile::from_params(group, params),
         log_basis_open: params.log_basis_open,
         fold_challenge_config: params.fold_challenge_config,
-        num_digits_inner: params.num_digits_inner,
-        num_digits_outer: params.num_digits_outer,
         num_digits_open: params.num_digits_open,
-        num_digits_fold_one: params.num_digits_fold_one,
+        num_digits_fold: params.num_digits_fold,
     }
 }
 

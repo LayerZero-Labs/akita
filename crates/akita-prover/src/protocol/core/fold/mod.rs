@@ -4,8 +4,7 @@ mod single_field;
 use super::*;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack,
-    RootOpeningSource, RootPolyMeta, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
-    RuntimeRootProvePoly,
+    RuntimeRingSwitchProveBackend,
 };
 use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
 use crate::protocol::sumcheck::DigitRangeProver;
@@ -17,7 +16,9 @@ use akita_types::{
     RelationRangeImagePlan,
 };
 
-pub(in crate::protocol::core) use extension_claim::prepare_extension_claim_fold;
+pub(in crate::protocol::core) use extension_claim::{
+    prepare_extension_claim_fold, ExtensionOpeningSource,
+};
 pub(in crate::protocol::core) use single_field::prepare_single_field_fold;
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
@@ -41,7 +42,7 @@ pub(super) fn prepare_non_eor_opening<'a, F, E, P, V>(
 where
     F: FieldCore,
     E: ExtField<F>,
-    P: RuntimeRootProvePoly<F>,
+    P: RootProverGroupMeta<F>,
     V: FnOnce() -> Result<(), AkitaError>,
 {
     validate_non_eor()?;
@@ -94,13 +95,8 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    Q: RootOpeningSource<F, 32>
-        + RootOpeningSource<F, 64>
-        + RootOpeningSource<F, 128>
-        + RootOpeningSource<F, 256>
-        + RootOpeningSource<F, 512>
-        + RootPolyMeta<F>,
-    O: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, Q>,
+    Q: RootProverGroupOpening<F, E, O>,
+    O: DigitRowsComputeBackend<F>,
     R: DigitRowsComputeBackend<F>,
     C: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
@@ -163,60 +159,25 @@ where
                 append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
             }
         }
-        let group_polys = block_claims.group_polys(group_index).map_err(|err| {
-            AkitaError::InvalidInput(format!(
-                "root group polynomials {group_index} failed: {err:?}"
-            ))
-        })?;
-        let (prepared_point, group_e_folded_by_claim, group_openings) = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            group_dims.d_a(),
-            |D| {
-                let (prepared_point, (group_folded_rings, group_e_folded_by_claim)) =
-                    prepare_and_evaluate_opening_group::<F, E, Q, O, D>(
-                        opening.backend(),
-                        Some(opening.prepared()),
-                        group_polys,
-                        group_protocol_point,
-                        basis,
-                        group_lp.num_positions_per_block(),
-                        group_lp.num_live_blocks(),
-                        group_alpha_bits,
-                    )
-                    .map_err(|err| {
-                        AkitaError::InvalidInput(format!(
-                            "evaluate claims group {group_index} failed: {err:?}"
-                        ))
-                    })?;
-                let inner_point =
-                    &group_protocol_point[..group_protocol_point.len().min(group_alpha_bits)];
-                let group_openings = group_folded_rings
-                    .iter()
-                    .map(|folded_ring| {
-                        scalar_opening_from_folded_ring::<F, E, D>(
-                            folded_ring,
-                            &prepared_point,
-                            inner_point,
-                            basis,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let group_e_folded_by_claim = group_e_folded_by_claim
-                    .iter()
-                    .map(|rows| RingVec::from_ring_elems(rows).into_compact())
-                    .collect::<Vec<_>>();
-                Ok::<_, AkitaError>((prepared_point, group_e_folded_by_claim, group_openings))
-            }
-        )
-        .map_err(|err| {
-            AkitaError::InvalidInput(format!(
-                "root opening preparation group {group_index} failed: {err:?}"
-            ))
-        })?;
-        prepared_points.push(prepared_point);
-        e_folded_by_claim.extend(group_e_folded_by_claim);
-        scalar_openings.extend(group_openings);
+        let prepared = block_claims
+            .group(group_index)?
+            .prepare_opening(
+                opening,
+                group_dims.d_a(),
+                group_protocol_point,
+                basis,
+                group_lp.num_positions_per_block(),
+                group_lp.num_live_blocks(),
+                group_alpha_bits,
+            )
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!(
+                    "root opening preparation group {group_index} failed: {err:?}"
+                ))
+            })?;
+        prepared_points.push(prepared.point);
+        e_folded_by_claim.extend(prepared.folded_by_claim);
+        scalar_openings.extend(prepared.scalar_openings);
     }
     let (trace_claim, row_coefficients) = prepare_evaluation_trace_claim::<F, E, T>(
         &reduction,

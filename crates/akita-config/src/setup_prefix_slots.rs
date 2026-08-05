@@ -161,8 +161,7 @@ mod tests {
     use crate::proof_optimized::fp128;
     use crate::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
     use akita_types::{
-        AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
-        PrecommittedGroupDescriptor,
+        AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
     };
 
     type SetupCfg = RecursiveCommitmentConfig<fp128::D64OneHot>;
@@ -176,7 +175,7 @@ mod tests {
                 &singleton,
             )
             .expect("precommit params");
-        let precommitted = PrecommittedGroupDescriptor::from_params(pre, &pre_params);
+        let precommitted = CommittedGroupProfile::from_params(pre, &pre_params);
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![precommitted, precommitted],
@@ -233,12 +232,28 @@ mod tests {
                 one_slot_field_elements >= n_prefix,
                 "slot envelope must cover the padded prefix storage"
             );
-            let a_coeff_len = slot.commitment_params.inner_commit_matrix.output_rank()
+            let a_coeff_len = slot
+                .commitment_params
+                .layout
+                .inner_commit_matrix
+                .output_rank()
                 * slot.commitment_params.inner_width()
-                * slot.commitment_params.inner_commit_matrix.ring_dimension();
-            let b_coeff_len = slot.commitment_params.outer_commit_matrix.output_rank()
+                * slot
+                    .commitment_params
+                    .layout
+                    .inner_commit_matrix
+                    .ring_dimension();
+            let b_coeff_len = slot
+                .commitment_params
+                .layout
+                .outer_commit_matrix
+                .output_rank()
                 * slot.commitment_params.outer_width()
-                * slot.commitment_params.outer_commit_matrix.ring_dimension();
+                * slot
+                    .commitment_params
+                    .layout
+                    .outer_commit_matrix
+                    .ring_dimension();
             assert!(one_slot_field_elements >= a_coeff_len);
             assert!(one_slot_field_elements >= b_coeff_len);
             slot_field_elements = slot_field_elements.max(one_slot_field_elements);

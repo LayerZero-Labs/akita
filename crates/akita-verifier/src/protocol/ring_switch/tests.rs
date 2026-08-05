@@ -126,12 +126,7 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
         .map(|index| MixedF::from_u64(11 + index as u64))
         .collect::<Vec<_>>()
         .into();
-    let depth_fold = lp
-        .num_digits_fold(
-            opening_batch.num_total_polynomials(),
-            lp.field_bits_for_cache(),
-        )
-        .unwrap();
+    let depth_fold = lp.num_digits_fold();
     let evaluator = RelationMatrixEvaluator {
         relation_address_geometry,
         groups: vec![RelationMatrixGroupEvaluator {

@@ -29,8 +29,8 @@ mod tail_segments;
 mod tests;
 mod wire;
 pub use crate::opening_claims::{
-    derive_public_row_coefficients, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
-    PolynomialGroupLayout,
+    derive_public_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
+    PolynomialGroupClaims, PolynomialGroupLayout,
 };
 pub(crate) use batch::root_tensor_projection_enabled_for_width;
 pub use batch::{
@@ -41,7 +41,7 @@ pub use batch::{
     RingMultiplierOpeningPoint,
 };
 pub use commitment::{
-    AkitaCommitment, Commitment, DummyProof, ProverCommitmentRows, RingCommitment,
+    AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,
 };
 pub use containers::{
     append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,
@@ -60,6 +60,7 @@ pub use relation::{
 };
 pub use relation_address::RelationAddressGeometry;
 pub use relation_range_image::{RelationRangeImageGroupPlan, RelationRangeImagePlan};
+pub use ring_relation::ring_relation_segment_lengths;
 pub use ring_relation::RingRelationInstance;
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{
@@ -89,10 +90,9 @@ pub use stage1::{
 pub use tail_segments::{
     build_terminal_response, build_terminal_response_from_groups, decode_terminal_z_golomb_payload,
     emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
-    raw_field_segment_bytes, tail_golomb_rice_z_params, tail_segment_multiplicities_from_layout,
+    raw_field_segment_bytes, tail_segment_multiplicities_from_layout,
     tail_segment_multiplicities_from_layout_for_params, terminal_response_upper_bound_bytes,
     terminal_response_z_payload_bytes, validate_terminal_response_z_payload,
-    z_fold_decoded_from_terminal_response, z_fold_encoding_stats_from_terminal_response,
     TailSegmentGroupLayout, TailSegmentLayout, TerminalResponse, TerminalResponseGroupParts,
     TerminalResponseShape,
 };

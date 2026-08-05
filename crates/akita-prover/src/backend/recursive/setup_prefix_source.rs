@@ -171,7 +171,14 @@ fn setup_prefix_fold_geometry<const D: usize>(
     source_ring_len: usize,
 ) -> Result<(usize, usize), AkitaError> {
     let geometry = &slot.id.commitment_params.layout;
-    geometry.validate()?;
+    geometry.validate(
+        slot.id
+            .commitment_params
+            .layout
+            .inner_commit_matrix
+            .sis_modulus_profile()
+            .field_bits(),
+    )?;
     if slot.id.d_setup != D
         || geometry.group.num_polynomials() != 1
         || geometry.num_live_ring_elements_per_claim != source_ring_len

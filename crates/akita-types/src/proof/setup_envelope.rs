@@ -78,16 +78,16 @@ pub fn accumulate_matrix_field_elements_for_level(
     for group in &params.precommitted_groups {
         include_matrix_field_elements(
             max_field_elements,
-            group.inner_commit_matrix.output_rank(),
+            group.layout.inner_commit_matrix.output_rank(),
             group.inner_width(),
-            group.inner_commit_matrix.ring_dimension(),
+            group.layout.inner_commit_matrix.ring_dimension(),
             "precommitted inner setup",
         )?;
         include_matrix_field_elements(
             max_field_elements,
-            group.outer_commit_matrix.output_rank(),
+            group.layout.outer_commit_matrix.output_rank(),
             group.outer_width(),
-            group.outer_commit_matrix.ring_dimension(),
+            group.layout.outer_commit_matrix.ring_dimension(),
             "precommitted outer setup",
         )?;
     }
@@ -124,16 +124,16 @@ pub fn setup_prefix_slot_field_elements(slot: &SetupPrefixSlotId) -> Result<usiz
     let params = &slot.commitment_params;
     include_matrix_field_elements(
         &mut max_field_elements,
-        params.inner_commit_matrix.output_rank(),
+        params.layout.inner_commit_matrix.output_rank(),
         params.inner_width(),
-        params.inner_commit_matrix.ring_dimension(),
+        params.layout.inner_commit_matrix.ring_dimension(),
         "setup-prefix inner setup",
     )?;
     include_matrix_field_elements(
         &mut max_field_elements,
-        params.outer_commit_matrix.output_rank(),
+        params.layout.outer_commit_matrix.output_rank(),
         params.outer_width(),
-        params.outer_commit_matrix.ring_dimension(),
+        params.layout.outer_commit_matrix.ring_dimension(),
         "setup-prefix outer setup",
     )?;
     Ok(max_field_elements)
