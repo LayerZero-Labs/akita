@@ -157,6 +157,7 @@ fn synthetic_schedule_key(profiles: &CommittedGroupBatchProfile) -> AkitaSchedul
 }
 
 #[derive(Debug)]
+/// Test-only commitment config that combines an envelope config with a final group config.
 pub struct EnvelopeFinalGroupConfig<Envelope, Final>(PhantomData<fn() -> (Envelope, Final)>);
 
 impl<Envelope, Final> Clone for EnvelopeFinalGroupConfig<Envelope, Final> {
