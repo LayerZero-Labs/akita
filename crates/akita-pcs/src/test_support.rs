@@ -6,9 +6,6 @@
 //! without a dependency cycle. These builders live here (a crate above both)
 //! and are gated behind the `test-support` Cargo feature, which production
 //! builds never enable.
-//!
-//! The non-planner layout helpers (`akita_batched_root_layout`,
-//! `ring_plan_test_seed`) remain in [`akita_config::test_support`].
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_config::{committed_group_profile, policy_of, CommitmentConfig};
@@ -159,18 +156,8 @@ fn synthetic_schedule_key(profiles: &CommittedGroupBatchProfile) -> AkitaSchedul
     }
 }
 
-// -------------------------------------------------------------------------
-// Multi-group native-dimension fixture: precommitted groups use the envelope config,
-// while the final group and recursive suffix use a smaller native config.
-// -------------------------------------------------------------------------
-
-/// Test config for a multi-group root whose precommitted groups use
-/// `Envelope::D` while the final group and recursive suffix use `Final::D`.
-///
-/// `Self::D` remains the uniform planner default. Exact grouped runtime keys
-/// select schedules under `Final`, retaining each preceding group's frozen
-/// native descriptor. Public setup storage remains flat and dimension-free.
 #[derive(Debug)]
+/// Test-only commitment config that combines an envelope config with a final group config.
 pub struct EnvelopeFinalGroupConfig<Envelope, Final>(PhantomData<fn() -> (Envelope, Final)>);
 
 impl<Envelope, Final> Clone for EnvelopeFinalGroupConfig<Envelope, Final> {
@@ -222,14 +209,33 @@ where
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixCapacity, AkitaError> {
-        let envelope_field_elements =
+        let mut num_field_elements =
             Envelope::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?
-                .num_field_elements;
-        let final_field_elements =
-            Final::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?.num_field_elements;
-        Ok(SetupMatrixCapacity {
-            num_field_elements: envelope_field_elements.max(final_field_elements),
-        })
+                .num_field_elements
+                .max(
+                    Final::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?
+                        .num_field_elements,
+                );
+        for final_polys in 1..max_num_batched_polys {
+            let pre_polys = max_num_batched_polys - final_polys;
+            for pre_num_vars in [14usize, 15, 16].into_iter().filter(|&n| n <= max_num_vars) {
+                let Ok(precommitted) = committed_group_profile::<Self>(
+                    &PolynomialGroupLayout::new(pre_num_vars, pre_polys),
+                ) else {
+                    continue;
+                };
+                let Ok(schedule) = Self::runtime_schedule(AkitaScheduleLookupKey {
+                    final_group: PolynomialGroupLayout::new(max_num_vars, final_polys),
+                    precommitteds: vec![precommitted],
+                }) else {
+                    continue;
+                };
+                num_field_elements = num_field_elements.max(
+                    akita_types::setup_matrix_capacity_for_schedule(&schedule)?.num_field_elements,
+                );
+            }
+        }
+        Ok(SetupMatrixCapacity { num_field_elements })
     }
 
     fn basis_range() -> (u32, u32) {
