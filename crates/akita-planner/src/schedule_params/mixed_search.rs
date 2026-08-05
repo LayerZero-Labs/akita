@@ -288,10 +288,10 @@ pub(crate) fn find_schedule(
         level: 0,
         input_witness_len,
     });
-    let root_num_chunks = policy.chunks_at_level(0);
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(0);
     let mut memo = MixedMemo::new();
     let mut complete = Vec::new();
+    let schedule_key = AkitaScheduleLookupKey::single(key);
 
     for log_basis in min_log_basis..=max_log_basis {
         for root_dimensions in dimensions.candidates() {
@@ -300,46 +300,24 @@ pub(crate) fn find_schedule(
             if reduced_vars == 0 {
                 continue;
             }
-            let min_block_bits = if reduced_vars >= 3 { 1 } else { 0 };
-            let max_block_bits = (reduced_vars - 1).min(usize::BITS as usize - 1);
             let Ok(ring_challenge) = ring_challenge_config(root_dimensions.d_a()) else {
                 continue;
             };
-            for block_bits in (min_block_bits..=max_block_bits).rev() {
-                let Some(root_params) = scalar_root_fold_level_params_candidate(
-                    policy,
-                    &ring_challenge,
-                    *root_dimensions,
-                    key.num_vars(),
-                    key.num_polynomials(),
-                    log_basis,
-                    block_bits,
-                    root_shape,
+            for (root_params, output_witness_len) in
+                crate::planner::root_level_candidates_for_basis(
+                    &schedule_key,
                     honest_fold_policy,
+                    &[],
+                    policy,
+                    *root_dimensions,
+                    &ring_challenge,
+                    &ring_challenge_config,
+                    root_shape,
+                    input_witness_len,
+                    log_basis,
+                    true,
                 )?
-                else {
-                    continue;
-                };
-                let Some(output_witness_len) = planned_next_witness_len(
-                    field_bits,
-                    &root_params,
-                    key.num_polynomials(),
-                    root_num_chunks,
-                )?
-                else {
-                    continue;
-                };
-                if output_witness_len
-                    .checked_mul(log_basis as usize)
-                    .ok_or_else(|| AkitaError::InvalidSetup("mixed bit length overflow".into()))?
-                    >= input_witness_len
-                        .checked_mul(field_bits as usize)
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup("mixed input bit length overflow".into())
-                        })?
-                {
-                    continue;
-                }
+            {
                 let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
                     policy.challenge_field_bits()?,
                     policy.claim_ext_degree,

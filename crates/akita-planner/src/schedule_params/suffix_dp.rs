@@ -10,11 +10,10 @@ use akita_types::{
     CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout, TerminalResponseShape,
 };
 
-use crate::{planner::multi_group_root_level_candidates_for_basis, PlannerPolicy};
+use crate::{planner::root_level_candidates_for_basis, PlannerPolicy};
 
 use super::{
-    derive_candidate_level_params, level_setup_field_elements, planned_next_witness_len,
-    scalar_root_fold_level_params_candidate, stage3_payload_bytes_for_successor,
+    derive_candidate_level_params, level_setup_field_elements, stage3_payload_bytes_for_successor,
     suffix_opening_layout, terminal_setup_field_elements, CandidateFoldStep,
     CandidateTerminalResponse, ScheduleCandidate, MAX_RECURSION_DEPTH,
 };
@@ -541,7 +540,12 @@ pub(crate) fn derive_optimal_suffix_schedule(
     let root_level_key = root_lookup_key.filter(|_| level == 0);
     if root_level_key.is_some() && incoming_setup_prefix.is_some() {
         return Err(AkitaError::InvalidSetup(
-            "multi-group root cannot consume an incoming setup prefix".to_string(),
+            "root batch cannot consume an incoming setup prefix".to_string(),
+        ));
+    }
+    if level_zero_is_root && level == 0 && root_level_key.is_none() {
+        return Err(AkitaError::InvalidSetup(
+            "root-level suffix state is missing its opening lookup key".to_string(),
         ));
     }
     if payload_phase == akita_types::CommitmentPayloadPhase::RawSuffix
@@ -583,11 +587,6 @@ pub(crate) fn derive_optimal_suffix_schedule(
     };
     let scalar_opening_layout = if root_level_key.is_some() {
         None
-    } else if level_zero_is_root && level == 0 {
-        Some(OpeningClaimsLayout::new(
-            key.num_vars(),
-            key.num_polynomials(),
-        )?)
     } else {
         Some(suffix_opening_layout(
             current_witness_len,
@@ -611,92 +610,30 @@ pub(crate) fn derive_optimal_suffix_schedule(
             root_level_key
         {
             let current_opening_layout = root_opening_layout.as_ref().ok_or_else(|| {
-                AkitaError::InvalidSetup("multi-group root opening layout is missing".to_string())
+                AkitaError::InvalidSetup("root batch opening layout is missing".to_string())
             })?;
-            let candidates = multi_group_root_level_candidates_for_basis(
+            let dimensions = CommitmentRingDims::uniform(policy.uniform_ring_dimension);
+            let candidates = root_level_candidates_for_basis(
                 root_key,
                 root_honest_fold_policy.ok_or_else(|| {
                     AkitaError::InvalidSetup(
-                        "multi-group root is missing its honest fold policy".to_string(),
+                        "root batch is missing its honest fold policy".to_string(),
                     )
                 })?,
                 precommitted_honest_fold_policies,
                 policy,
+                dimensions,
                 default_ring_challenge_cfg,
                 ring_challenge_config,
                 requested_fold_shape,
                 current_witness_len,
                 lb,
+                true,
             )?;
             (
                 current_opening_layout,
                 candidates,
                 !root_key.precommitteds.is_empty(),
-            )
-        } else if level_zero_is_root && level == 0 {
-            let mut candidates = Vec::new();
-            let dimensions = CommitmentRingDims::uniform(policy.uniform_ring_dimension);
-            let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
-                continue;
-            };
-            let alpha = dimensions.d_a().trailing_zeros() as usize;
-            let reduced_vars = key.num_vars().saturating_sub(alpha);
-            if reduced_vars == 0 {
-                continue;
-            }
-            let initial_witness_len_bits = current_witness_len
-                .checked_mul(policy.decomposition.field_bits() as usize)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("root witness bit length overflow".into())
-                })?;
-            let min_block_index_bits = if reduced_vars >= 3 { 1 } else { 0 };
-            let max_block_index_bits = (reduced_vars - 1).min(usize::BITS as usize - 1);
-            let honest_fold_policy = root_honest_fold_policy.ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "scalar root is missing its honest fold policy".to_string(),
-                )
-            })?;
-            for block_index_bits in (min_block_index_bits..=max_block_index_bits).rev() {
-                let Some(candidate_params) = scalar_root_fold_level_params_candidate(
-                    policy,
-                    &ring_challenge_cfg,
-                    dimensions,
-                    key.num_vars(),
-                    key.num_polynomials(),
-                    lb,
-                    block_index_bits,
-                    requested_fold_shape,
-                    honest_fold_policy,
-                )?
-                else {
-                    continue;
-                };
-                let Some(output_witness_len) = planned_next_witness_len(
-                    policy.decomposition.field_bits(),
-                    &candidate_params,
-                    key.num_polynomials(),
-                    policy.chunks_at_level(0),
-                )?
-                else {
-                    continue;
-                };
-                if output_witness_len.checked_mul(lb as usize).ok_or_else(|| {
-                    AkitaError::InvalidSetup("root next witness bit length overflow".into())
-                })? >= initial_witness_len_bits
-                {
-                    continue;
-                }
-                candidates.push((candidate_params, output_witness_len));
-            }
-            if candidates.is_empty() {
-                continue;
-            }
-            (
-                scalar_opening_layout.as_ref().ok_or_else(|| {
-                    AkitaError::InvalidSetup("scalar root opening layout is missing".to_string())
-                })?,
-                candidates,
-                false,
             )
         } else {
             let mut candidates = Vec::new();

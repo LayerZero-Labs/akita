@@ -19,10 +19,10 @@ use akita_types::sis::{
 };
 use akita_types::{
     level_proof_bytes, padded_setup_prefix_len, try_extension_opening_reduction_level_bytes,
-    AkitaScheduleInputs, CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile,
-    DecompositionParams, FoldSchedule, FoldScheduleEstimate, PlannedFoldSchedule,
-    PolynomialGroupLayout, PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep,
-    RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams,
+    CommittedGroupProfile, DecompositionParams, FoldSchedule, FoldScheduleEstimate,
+    PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams, RecursiveFoldParams,
+    RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
     RootPrecommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
     WitnessLayout, WitnessPartition,
 };
@@ -41,7 +41,6 @@ mod unpruned_search;
 pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
     derive_candidate_level_params, derive_candidate_level_params_all_splits,
-    planned_next_witness_len, scalar_root_fold_level_params_candidate,
 };
 pub(crate) use objective::select_complete_candidate;
 pub(crate) use setup_score::{
@@ -491,9 +490,9 @@ pub fn derive_standalone_precommit_profile(
         level: 0,
         input_witness_len: witness_len,
     });
-    let field_bits = direct_policy.decomposition.field_bits();
     let (min_log_basis, max_log_basis) = direct_policy.log_basis_search_range_at_level(0);
     let mut best: Option<(usize, CommittedGroupParams)> = None;
+    let schedule_key = AkitaScheduleLookupKey::single(key);
 
     for candidate_log_basis in min_log_basis..=max_log_basis {
         for dimensions in direct_policy.ring_dimension_candidates.iter().copied() {
@@ -505,32 +504,21 @@ pub fn derive_standalone_precommit_profile(
             if reduced_vars == 0 {
                 continue;
             }
-            let min_block_index_bits = if reduced_vars >= 3 { 1 } else { 0 };
-            let max_block_index_bits = (reduced_vars - 1).min(usize::BITS as usize - 1);
-            for block_index_bits in (min_block_index_bits..=max_block_index_bits).rev() {
-                let Some(candidate_params) = scalar_root_fold_level_params_candidate(
-                    &direct_policy,
-                    &ring_challenge_cfg,
-                    dimensions,
-                    key.num_vars(),
-                    key.num_polynomials(),
-                    candidate_log_basis,
-                    block_index_bits,
-                    requested_fold_shape,
+            for (candidate_params, next_witness_len) in
+                crate::planner::root_level_candidates_for_basis(
+                    &schedule_key,
                     honest_fold_policy,
+                    &[],
+                    &direct_policy,
+                    dimensions,
+                    &ring_challenge_cfg,
+                    &ring_challenge_config,
+                    requested_fold_shape,
+                    witness_len,
+                    candidate_log_basis,
+                    false,
                 )?
-                else {
-                    continue;
-                };
-                let Some(next_witness_len) = planned_next_witness_len(
-                    field_bits,
-                    &candidate_params,
-                    key.num_polynomials(),
-                    direct_policy.chunks_at_level(0),
-                )?
-                else {
-                    continue;
-                };
+            {
                 match &best {
                     Some((best_len, _)) if *best_len <= next_witness_len => {}
                     _ => best = Some((next_witness_len, candidate_params)),

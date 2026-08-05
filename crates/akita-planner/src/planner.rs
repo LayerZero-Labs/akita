@@ -6,13 +6,15 @@ use akita_types::sis::{
     compute_num_digits_field_width, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, num_digits_inner, num_digits_open, rounded_up_collision_inf_norm,
     rounded_up_role_a_inf_norm, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisTableKey,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
 };
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams,
     CommittedGroupProfile, DecompositionParams, OpeningClaimsLayout, PlannedFoldSchedule,
     PolynomialGroupLayout, PrecommittedLevelParams, WitnessLayout,
 };
+
+use akita_schedules::planner_support::{projected_collision_role_price, sis_key_at_dimension};
 
 use crate::schedule_params::{
     derive_optimal_suffix_schedule, materialize_candidate_schedule, mixed_search,
@@ -21,21 +23,6 @@ use crate::schedule_params::{
     MIXED_SEARCH_FOLD_LEVELS, MIXED_SEARCH_SUFFIX_RING_DIMENSION,
 };
 use crate::PlannerPolicy;
-
-fn sis_key(
-    policy: &PlannerPolicy,
-    role: akita_types::SisMatrixRole,
-    coeff_linf_bound: u128,
-) -> SisTableKey {
-    SisTableKey {
-        policy: policy.sis_security_policy,
-        table_digest: policy.sis_table_digest,
-        modulus_profile: policy.sis_modulus_profile,
-        role,
-        ring_dimension: policy.uniform_ring_dimension as u32,
-        coeff_linf_bound,
-    }
-}
 
 #[derive(Clone, Debug)]
 struct PrecommittedGroupSeed {
@@ -198,6 +185,7 @@ fn materialize_precommitted_group_for_open_basis(
 
 struct MultiGroupRootCandidateCtx<'a> {
     policy: &'a PlannerPolicy,
+    dimensions: CommitmentRingDims,
     ring_challenge_cfg: &'a SparseChallengeConfig,
     requested_fold_shape: TensorChallengeShape,
     final_honest_fold_policy: HonestFoldPolicySpec,
@@ -228,6 +216,7 @@ fn precommitted_groups_for_open_basis(
     seeds: &[PrecommittedGroupSeed],
     policy: &PlannerPolicy,
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    shared_opening_ring_dimension: usize,
     log_basis_open: u32,
 ) -> Result<(Vec<PrecommittedLevelParams>, usize), AkitaError> {
     let groups = seeds
@@ -246,13 +235,13 @@ fn precommitted_groups_for_open_basis(
     let mut d_width = 0usize;
     for group in &groups {
         d_width = d_width
-            .checked_add(group.d_segment_width(policy.uniform_ring_dimension)?)
-            .ok_or_else(|| AkitaError::InvalidSetup("multi-group D width overflow".to_string()))?;
+            .checked_add(group.d_segment_width(shared_opening_ring_dimension)?)
+            .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
     }
     Ok((groups, d_width))
 }
 
-pub(crate) fn multi_group_root_next_w_len(
+pub(crate) fn root_batch_next_w_len(
     field_bits: u32,
     params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
@@ -272,23 +261,26 @@ pub(crate) fn multi_group_root_next_w_len(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn multi_group_root_level_candidates_for_basis(
+pub(crate) fn root_level_candidates_for_basis(
     key: &AkitaScheduleLookupKey,
     final_honest_fold_policy: HonestFoldPolicySpec,
     precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
     policy: &PlannerPolicy,
+    dimensions: CommitmentRingDims,
     ring_challenge_cfg: &SparseChallengeConfig,
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     requested_fold_shape: TensorChallengeShape,
     root_input_witness_len: usize,
     candidate_log_basis: u32,
+    require_witness_contraction: bool,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
+    dimensions.validate_role_projection()?;
     let field_bits = policy.decomposition.field_bits();
-    let alpha = (policy.uniform_ring_dimension as u32).trailing_zeros() as usize;
+    let alpha = dimensions.d_a().trailing_zeros() as usize;
     let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
     if reduced_vars == 0 {
         return Err(AkitaError::UnsupportedSchedule(format!(
-            "multi-group num_vars={} does not exceed log2(ring_dimension)={alpha}",
+            "root batch num_vars={} does not exceed log2(ring_dimension)={alpha}",
             key.final_group.num_vars()
         )));
     }
@@ -297,6 +289,7 @@ pub(crate) fn multi_group_root_level_candidates_for_basis(
         multi_group_root_precommitted_group_seeds(key, precommitted_honest_fold_policies, policy)?;
     let candidate_ctx = MultiGroupRootCandidateCtx {
         policy,
+        dimensions,
         ring_challenge_cfg,
         requested_fold_shape,
         final_honest_fold_policy,
@@ -304,9 +297,7 @@ pub(crate) fn multi_group_root_level_candidates_for_basis(
     let opening_batch = key.opening_layout()?;
     let initial_witness_len_bits = root_input_witness_len
         .checked_mul(field_bits as usize)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root witness bit length overflow".into())
-        })?;
+        .ok_or_else(|| AkitaError::InvalidSetup("root batch witness bit length overflow".into()))?;
     let min_block_index_bits: usize = if reduced_vars >= 3 { 1 } else { 0 };
     let max_block_index_bits: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
 
@@ -316,11 +307,12 @@ pub(crate) fn multi_group_root_level_candidates_for_basis(
             &precommitted_groups,
             policy,
             ring_challenge_config,
+            dimensions.d_d(),
             candidate_log_basis,
         )?;
     for block_index_bits in (min_block_index_bits..=max_block_index_bits).rev() {
         let position_index_bits = reduced_vars - block_index_bits;
-        let Some(mut candidate_params) = multi_group_root_main_level_params_candidate(
+        let Some(mut candidate_params) = root_final_group_level_params_candidate(
             &candidate_ctx,
             key.final_group.num_polynomials(),
             candidate_log_basis,
@@ -346,16 +338,17 @@ pub(crate) fn multi_group_root_level_candidates_for_basis(
         }
         candidate_params.witness_chunk = policy.witness_chunk_for_level(0);
         let Some(output_witness_len) =
-            multi_group_root_next_w_len(field_bits, &candidate_params, &opening_batch)?
+            root_batch_next_w_len(field_bits, &candidate_params, &opening_batch)?
         else {
             continue;
         };
-        if output_witness_len
-            .checked_mul(candidate_log_basis as usize)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("multi-group root next witness bit length overflow".into())
-            })?
-            >= initial_witness_len_bits
+        if require_witness_contraction
+            && output_witness_len
+                .checked_mul(candidate_log_basis as usize)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("root batch next witness bit length overflow".into())
+                })?
+                >= initial_witness_len_bits
         {
             continue;
         }
@@ -365,7 +358,7 @@ pub(crate) fn multi_group_root_level_candidates_for_basis(
     Ok(candidates)
 }
 
-fn multi_group_root_main_level_params_candidate(
+fn root_final_group_level_params_candidate(
     ctx: &MultiGroupRootCandidateCtx<'_>,
     main_num_polys: usize,
     log_basis: u32,
@@ -375,7 +368,8 @@ fn multi_group_root_main_level_params_candidate(
     precommitted_d_width: usize,
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
     let policy = ctx.policy;
-    let d = policy.uniform_ring_dimension;
+    let dimensions = ctx.dimensions;
+    let d_a = dimensions.d_a();
     let family = policy.sis_modulus_profile;
     let decomp = ctx.policy.decomposition;
     let level_decomp = DecompositionParams {
@@ -410,7 +404,7 @@ fn multi_group_root_main_level_params_candidate(
     };
     let num_chunks = policy.chunks_at_level(0);
     let Some(num_fold_coeffs) = width_s
-        .checked_mul(d)
+        .checked_mul(d_a)
         .and_then(|count| count.checked_mul(num_chunks))
     else {
         return Ok(None);
@@ -418,7 +412,7 @@ fn multi_group_root_main_level_params_candidate(
     let Ok(num_digits_fold) = ctx
         .final_honest_fold_policy
         .num_digits_fold(HonestFoldSizingQuery {
-            ring_dimension: d,
+            ring_dimension: d_a,
             num_claims: main_num_polys,
             num_live_blocks,
             num_chunks,
@@ -434,7 +428,7 @@ fn multi_group_root_main_level_params_candidate(
         policy.sis_security_policy,
         policy.sis_table_digest,
         family,
-        d,
+        d_a,
         log_basis,
         ctx.ring_challenge_cfg,
         fold_challenge_shape,
@@ -444,31 +438,31 @@ fn multi_group_root_main_level_params_candidate(
         return Ok(None);
     };
     let Ok(inner_commit_matrix) = InnerCommitMatrixParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::Inner, norm_s),
+        sis_key_at_dimension(policy, akita_types::SisMatrixRole::Inner, d_a, norm_s),
         width_s,
     ) else {
         return Ok(None);
     };
     let n_a = inner_commit_matrix.output_rank();
 
-    let Some(norm_t) = rounded_up_collision_inf_norm(
-        policy.sis_security_policy,
-        family,
-        akita_types::SisMatrixRole::Outer,
-        d,
-        log_basis,
-    ) else {
-        return Ok(None);
-    };
     let Some(width_t) =
         decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, main_num_polys)
     else {
         return Ok(None);
     };
-    let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::Outer, norm_t),
+    let Some((outer_key, width_t)) = projected_collision_role_price(
+        policy,
+        akita_types::SisMatrixRole::Outer,
+        d_a,
+        dimensions.d_b(),
         width_t,
+        log_basis,
     ) else {
+        return Ok(None);
+    };
+    let Ok(outer_commit_matrix) =
+        OuterCommitMatrixParams::try_new_with_min_rank(outer_key, width_t)
+    else {
         return Ok(None);
     };
 
@@ -479,20 +473,19 @@ fn multi_group_root_main_level_params_candidate(
     };
     let d_width = main_d_width
         .checked_add(precommitted_d_width)
-        .ok_or_else(|| AkitaError::InvalidSetup("multi-group D width overflow".to_string()))?;
-    let Some(norm_w) = rounded_up_collision_inf_norm(
-        policy.sis_security_policy,
-        family,
+        .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
+    let Some((open_key, d_width)) = projected_collision_role_price(
+        policy,
         akita_types::SisMatrixRole::Open,
-        d,
+        d_a,
+        dimensions.d_d(),
+        d_width,
         log_basis,
     ) else {
         return Ok(None);
     };
-    let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::Open, norm_w),
-        d_width,
-    ) else {
+    let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(open_key, d_width)
+    else {
         return Ok(None);
     };
 
@@ -513,7 +506,8 @@ fn multi_group_root_main_level_params_candidate(
         num_digits_outer,
         num_digits_open,
         num_digits_fold,
-        // Multi-group root folds use the ordinary single-chunk precommit path.
+        // Root folds use the ordinary single-chunk precommit path before the
+        // schedule-level chunk policy is applied.
         witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         precommitted_groups: precommitted_groups.to_vec(),
         setup_prefix: None,
