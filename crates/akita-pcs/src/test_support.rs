@@ -156,6 +156,12 @@ fn synthetic_schedule_key(profiles: &CommittedGroupBatchProfile) -> AkitaSchedul
     }
 }
 
+/// Test config for a multi-group root whose precommitted groups use
+/// `Envelope::D` while the final group and recursive suffix use `Final::D`.
+///
+/// `Self::D` remains the uniform planner default. Exact grouped runtime keys
+/// select schedules under `Final`, retaining each preceding group's frozen
+/// native descriptor. Public setup storage remains flat and dimension-free.
 #[derive(Debug)]
 /// Test-only commitment config that combines an envelope config with a final group config.
 pub struct EnvelopeFinalGroupConfig<Envelope, Final>(PhantomData<fn() -> (Envelope, Final)>);
