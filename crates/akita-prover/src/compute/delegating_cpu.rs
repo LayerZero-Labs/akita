@@ -4,11 +4,10 @@
 //! [`super::stack::ProverComputeStack`] wiring without standing up four separate
 //! hardware backends.
 
-#[cfg(feature = "compression-diagnostics")]
-use super::backend::CompressionDiagnosticBackend;
 use super::backend::{
-    CommitmentComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
-    DigitRowsComputeBackend, RingSwitchComputeBackend,
+    CommitmentComputeBackend, CompressionComputeBackend, CompressionRowsProducts,
+    ComputeBackendSetup, CyclicRowsComputeBackend, DigitRowsComputeBackend,
+    RingSwitchComputeBackend,
 };
 use super::cpu::CpuBackend;
 use super::kernels::{
@@ -93,10 +92,9 @@ macro_rules! delegate_digit_rows {
     };
 }
 
-#[cfg(feature = "compression-diagnostics")]
-macro_rules! delegate_compression_diagnostics {
+macro_rules! delegate_compression {
     ($ty:ty) => {
-        impl<F> CompressionDiagnosticBackend<F> for $ty
+        impl<F> CompressionComputeBackend<F> for $ty
         where
             F: FieldCore + CanonicalField,
         {
@@ -104,12 +102,12 @@ macro_rules! delegate_compression_diagnostics {
                 CpuBackend.compression_cache_bytes(prepared)
             }
 
-            fn compression_rows<const D: usize>(
+            fn compression_rows_products<const D: usize>(
                 &self,
                 prepared: &Self::PreparedSetup,
                 digit_vectors: &[&[[i8; D]]],
-            ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-                CpuBackend.compression_rows(prepared, digit_vectors)
+            ) -> Result<Vec<CompressionRowsProducts<F, D>>, AkitaError> {
+                CpuBackend.compression_rows_products(prepared, digit_vectors)
             }
         }
     };
@@ -317,8 +315,7 @@ macro_rules! delegate_ring_switch_kernels {
 pub struct CommitCluster;
 
 delegate_compute_backend_setup!(CommitCluster);
-#[cfg(feature = "compression-diagnostics")]
-delegate_compression_diagnostics!(CommitCluster);
+delegate_compression!(CommitCluster);
 delegate_digit_rows!(CommitCluster);
 delegate_cyclic_rows!(CommitCluster);
 delegate_root_commit_kernel!(CommitCluster);
@@ -373,8 +370,7 @@ where
 pub struct OpeningCluster;
 
 delegate_compute_backend_setup!(OpeningCluster);
-#[cfg(feature = "compression-diagnostics")]
-delegate_compression_diagnostics!(OpeningCluster);
+delegate_compression!(OpeningCluster);
 delegate_digit_rows!(OpeningCluster);
 delegate_opening_kernels!(OpeningCluster);
 
@@ -390,8 +386,7 @@ delegate_tensor_kernels!(TensorCluster);
 pub struct RingSwitchCluster;
 
 delegate_compute_backend_setup!(RingSwitchCluster);
-#[cfg(feature = "compression-diagnostics")]
-delegate_compression_diagnostics!(RingSwitchCluster);
+delegate_compression!(RingSwitchCluster);
 delegate_digit_rows!(RingSwitchCluster);
 delegate_cyclic_rows!(RingSwitchCluster);
 delegate_ring_switch_kernels!(RingSwitchCluster);

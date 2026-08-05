@@ -130,7 +130,7 @@ where
             |next| {
                 (
                     super::fold::FoldSuccessorParams::Recursive(&next.params),
-                    akita_types::NextWitnessBindingPolicy::OuterCommitment,
+                    akita_types::NextWitnessBindingPolicy::OuterPayload,
                 )
             },
         );
@@ -255,7 +255,7 @@ where
     }
     match binding {
         NextWitnessState::TerminalInnerState => {}
-        NextWitnessState::OuterCommitment(_) => return Err(AkitaError::InvalidProof),
+        NextWitnessState::OuterPayload(_) => return Err(AkitaError::InvalidProof),
     }
     let mut terminal_rows = hint.into_rows();
     if terminal_rows.len() != 1 {
@@ -458,18 +458,21 @@ where
     let logical_witness = optional_logical_w
         .map(Arc::new)
         .unwrap_or_else(|| Arc::clone(&witness));
-    let role_dims = level_params.role_dims();
-    let commit_d = role_dims.d_b();
+    let payload_geometry = level_params.outer_payload_geometry()?;
     let witness_commitment = match binding {
-        NextWitnessState::OuterCommitment(commitment) => {
-            if !commitment.can_decode_vec(commit_d) {
+        NextWitnessState::OuterPayload(commitment) => {
+            if commitment.coeff_len() != payload_geometry.transmitted_coefficients() {
                 return Err(AkitaError::InvalidInput(format!(
-                    "suffix commitment length {} is not decodable at B-role dimension {}",
+                    "suffix commitment length {} does not match expected coefficient count {}",
                     commitment.coeffs().len(),
-                    commit_d,
+                    payload_geometry.transmitted_coefficients(),
                 )));
             }
-            commitment.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, commit_d, transcript)?;
+            commitment.append_flat_to_transcript::<T>(
+                ABSORB_COMMITMENT,
+                payload_geometry.transcript_ring_dimension(),
+                transcript,
+            )?;
             commitment
         }
         NextWitnessState::TerminalInnerState => return Err(AkitaError::InvalidProof),

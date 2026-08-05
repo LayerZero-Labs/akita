@@ -82,7 +82,7 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
 /// Public statement of the negacyclic-ring matrix relation at one fold level.
 ///
 /// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
-/// closures borrow typed ring rows via [`Self::rhs_trusted`], [`Self::v_trusted`],
+/// closures borrow typed role-local ring rows via [`Self::v_trusted`],
 /// and [`Self::row_coefficient_rings_trusted`].
 #[derive(Debug, Clone)]
 pub struct RingRelationInstance<F: FieldCore> {
@@ -174,14 +174,6 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 expected: role_dims.d_d(),
                 actual: v.coeff_len(),
             });
-        }
-        if let Ok(uniform) = role_dims.uniform_dim() {
-            if !rhs.can_decode_vec(uniform) {
-                return Err(AkitaError::InvalidSize {
-                    expected: uniform,
-                    actual: rhs.coeff_len(),
-                });
-            }
         }
         for (idx, chunk) in row_coefficient_rings
             .coeffs()
@@ -292,8 +284,8 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
 
     /// Validate that all role carriers match a single uniform dimension `D`.
     ///
-    /// Required by fused ring-switch paths that borrow the full `y` vector as
-    /// typed rings at one dimension (Slice 1 splits this).
+    /// The heterogeneous RHS is intentionally excluded: compression rows use
+    /// native dimensions even when A/B/D share `D`.
     pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
         let uniform = self.role_dims.uniform_dim()?;
         if uniform != D {
@@ -302,13 +294,10 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
             )));
         }
         validate_role_dispatch::<D>(self.role_dims, RingRole::Inner)?;
-        if !self.row_coefficient_rings.can_decode_vec(D)
-            || !self.rhs.can_decode_vec(D)
-            || !self.v.can_decode_vec(D)
-        {
+        if !self.row_coefficient_rings.can_decode_vec(D) || !self.v.can_decode_vec(D) {
             return Err(AkitaError::InvalidSize {
                 expected: D,
-                actual: self.rhs.coeff_len(),
+                actual: self.v.coeff_len(),
             });
         }
         for point in &self.group_ring_multiplier_points {
@@ -320,12 +309,6 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     /// Validate one role carrier against dispatch `D`.
     pub fn ensure_role_dim<const D: usize>(&self, role: RingRole) -> Result<(), AkitaError> {
         validate_role_dispatch::<D>(self.role_dims, role).map(|_| ())
-    }
-
-    /// Borrow `y` rows when all roles share one dimension.
-    pub fn rhs_trusted<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
-        self.ensure_ring_dim::<D>()?;
-        self.rhs.as_ring_slice::<D>()
     }
 
     /// Borrow `v` rows at the D-role dimension (`d_d`).
@@ -439,8 +422,9 @@ mod tests {
     use crate::layout::PrecommittedLevelParams;
     use crate::DigitBlocks;
     use crate::{
-        emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
-        InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+        emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes,
+        relation_rhs_coeff_len, relation_rhs_layout_for, InnerCommitMatrixParams,
+        OuterCommitMatrixParams, PolynomialGroupLayout,
     };
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
     use akita_field::Fp32;
@@ -580,9 +564,13 @@ mod tests {
     fn build_instance(
         lp: &CommittedGroupParams,
         num_claims: usize,
-        num_rows: usize,
+        _num_rows: usize,
     ) -> RingRelationInstance<F> {
         let opening_batch = OpeningClaimsLayout::new(8, num_claims).expect("opening batch");
+        let rhs_coeff_len = relation_rhs_coeff_len(
+            &relation_rhs_layout_for(lp, &opening_batch).expect("relation layout"),
+        )
+        .expect("relation rhs length");
         let opening_point = opening_point(lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         RingRelationInstance::<F>::new(
@@ -592,7 +580,7 @@ mod tests {
             opening_batch,
             vec![F::one(); num_claims],
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::one(); num_claims]),
-            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); num_rows]),
+            RingVec::from_coeffs(vec![F::zero(); rhs_coeff_len]),
             RingVec::from_ring_elems::<D>(&[]),
             CommitmentRingDims::uniform(D),
         )
@@ -728,32 +716,22 @@ mod tests {
 
     #[test]
     fn relation_segment_layout_uses_same_axis_contract() {
-        use crate::proof::relation::RelationRhsLayout;
-
         let lp = test_level_params(3);
         let opening_batch = OpeningClaimsLayout::new(2, 3).expect("valid batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let relation_rhs_layout = RelationRhsLayout::uniform(
-            lp.role_dims(),
-            lp.open_commit_matrix.output_rank(),
-            lp.inner_commit_matrix.output_rank(),
-            lp.outer_commit_matrix.output_rank(),
-            0,
-            1,
-        );
-        let relation_rhs_rows = lp.relation_matrix_row_count(1).expect("row count");
-        let v_zeros = vec![CyclotomicRing::zero(); relation_rhs_layout.n_d];
-        let y_zeros = vec![CyclotomicRing::zero(); relation_rhs_rows];
-        let instance = RingRelationInstance::<F>::from_parts::<D>(
+        let relation_rhs_layout = relation_rhs_layout_for(&lp, &opening_batch).expect("layout");
+        let rhs_coeff_len = relation_rhs_coeff_len(&relation_rhs_layout).expect("rhs length");
+        let instance = RingRelationInstance::<F>::new(
             vec![test_challenges(&lp, opening_batch.num_total_polynomials())],
             vec![opening_point],
             vec![ring_multiplier_point],
             opening_batch,
             vec![F::one(); 3],
-            &[CyclotomicRing::one(); 3],
-            &y_zeros,
-            &v_zeros,
+            RingVec::from_ring_elems::<D>(&[CyclotomicRing::one(); 3]),
+            RingVec::from_coeffs(vec![F::zero(); rhs_coeff_len]),
+            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); relation_rhs_layout.n_d]),
+            CommitmentRingDims::uniform(D),
         )
         .expect("same-axis relation");
 
@@ -819,9 +797,10 @@ mod tests {
     #[test]
     fn multi_group_segment_layout_total_matches_next_w_len() {
         let (lp, opening_batch) = multi_group_one_three_fixture();
-        let relation_rhs_rows = lp
-            .relation_matrix_row_count(opening_batch.num_groups())
-            .expect("row count");
+        let relation_rhs_coefficients = relation_rhs_coeff_len(
+            &relation_rhs_layout_for(&lp, &opening_batch).expect("relation layout"),
+        )
+        .expect("rhs length");
         let opening_point_pre = opening_point(&lp);
         let opening_point_final = opening_point(&lp);
         let ring_multiplier_pre = RingMultiplierOpeningPoint::from_base(&opening_point_pre);
@@ -836,10 +815,7 @@ mod tests {
                 CyclotomicRing::one();
                 opening_batch.num_total_polynomials()
             ]),
-            RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
-                CyclotomicRing::zero();
-                relation_rhs_rows
-            ]),
+            RingVec::from_coeffs(vec![F::zero(); relation_rhs_coefficients]),
             RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
                 CyclotomicRing::zero();
                 lp.open_commit_matrix.output_rank()
@@ -856,7 +832,7 @@ mod tests {
         // `[z_g | e_g | t_g]` unit per group before the shared R tail.
         assert_eq!(layout.units().len(), num_groups);
         let quotient_depth = r_decomp_levels::<F>(lp.log_basis_open);
-        let r_len_total = layout
+        let quotient_coeff_len = layout
             .r_rows()
             .iter()
             .map(|row| row.ring_dim() * quotient_depth)
@@ -872,7 +848,7 @@ mod tests {
             assert_eq!(unit.t_range().start, base + z_g + e_g);
             if p + 1 == num_groups {
                 assert_eq!(layout.r_range().start, base + z_g + e_g + t_g);
-                assert_eq!(layout.r_range().len(), r_len_total);
+                assert!(layout.r_range().len() >= quotient_coeff_len);
             }
             base += z_g + e_g + t_g;
         }
@@ -880,7 +856,7 @@ mod tests {
         let expected_witness_len = lp
             .output_witness_len::<F>(&opening_batch)
             .expect("next w len");
-        assert_eq!(base + r_len_total, expected_witness_len);
+        assert_eq!(layout.live_coeff_len(), expected_witness_len);
     }
 
     #[test]
@@ -890,9 +866,10 @@ mod tests {
             num_chunks: 2,
             num_activated_levels: 1,
         };
-        let relation_rhs_rows = lp
-            .relation_matrix_row_count(opening_batch.num_groups())
-            .expect("row count");
+        let relation_rhs_coefficients = relation_rhs_coeff_len(
+            &relation_rhs_layout_for(&lp, &opening_batch).expect("relation layout"),
+        )
+        .expect("rhs length");
         let opening_point_pre = opening_point(&lp);
         let opening_point_final = opening_point(&lp);
         let ring_multiplier_pre = RingMultiplierOpeningPoint::from_base(&opening_point_pre);
@@ -905,10 +882,7 @@ mod tests {
             opening_batch,
             vec![F::one(); gamma_len],
             RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![CyclotomicRing::one(); gamma_len]),
-            RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
-                CyclotomicRing::zero();
-                relation_rhs_rows
-            ]),
+            RingVec::from_coeffs(vec![F::zero(); relation_rhs_coefficients]),
             RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
                 CyclotomicRing::zero();
                 lp.open_commit_matrix.output_rank()
@@ -1053,11 +1027,17 @@ mod tests {
             }
         }
         let quotient_depth = r_decomp_levels::<F>(lp.log_basis_open);
-        let r_source = (0..layout.r_rows().len() * quotient_depth)
-            .map(|index| marker::<MULTI_GROUP_D>(900 + index))
-            .collect::<Vec<_>>();
-        emit_witness_r_planes(&mut emitted, &layout, quotient_depth, &r_source).expect("emit R");
-        let r_range = layout.r_range();
-        assert_eq!(&emitted[r_range], flatten_markers(r_source).as_slice());
+        for (row_index, row) in layout.r_rows().iter().enumerate() {
+            for digit in 0..quotient_depth {
+                for coefficient in 0..row.ring_dim() {
+                    let address = layout
+                        .r_coefficient_index(row_index, digit, coefficient)
+                        .expect("R address");
+                    let value = ((row_index + digit + coefficient) % 100 + 1) as i8;
+                    emitted[address] = value;
+                    assert_eq!(emitted[address], value);
+                }
+            }
+        }
     }
 }

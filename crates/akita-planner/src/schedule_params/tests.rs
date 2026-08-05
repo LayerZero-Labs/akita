@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use super::*;
 
-#[cfg(all(test, feature = "catalog-gen"))]
+#[cfg(test)]
 fn policy_for_domain(
     mut policy: PlannerPolicy,
     domain: &RingDimensionSearchDomain,
@@ -271,6 +271,90 @@ fn pruned_mixed_search_matches_unpruned_traversal_and_is_canonical() {
     );
 }
 
+#[test]
+fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
+    use akita_config::{policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig};
+
+    let domain = RingDimensionSearchDomain::uniform(64).unwrap();
+    let policy = policy_for_domain(policy_of::<D64OneHot>(), &domain);
+    let key = PolynomialGroupLayout::singleton(16);
+    let selected = find_schedule(
+        key,
+        &policy,
+        D64OneHot::root_honest_fold_policy(),
+        &domain,
+        D64OneHot::ring_challenge_config,
+        D64OneHot::fold_challenge_shape_at_level,
+    )
+    .unwrap();
+    let unpruned = unpruned_search::find_schedule(
+        key,
+        &policy,
+        D64OneHot::root_honest_fold_policy(),
+        &domain,
+        D64OneHot::ring_challenge_config,
+        D64OneHot::fold_challenge_shape_at_level,
+    )
+    .unwrap();
+
+    assert_eq!(
+        selected.estimate.estimated_proof_payload_bytes().unwrap(),
+        unpruned.estimate.estimated_proof_payload_bytes().unwrap()
+    );
+    assert_eq!(
+        selected.schedule.canonical_descriptor_bytes(),
+        unpruned.schedule.canonical_descriptor_bytes()
+    );
+}
+
+#[test]
+fn independent_suffix_preserves_raw_predecessor_phase() {
+    use akita_config::{policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig};
+
+    let policy = policy_of::<D64OneHot>();
+    let domain = RingDimensionSearchDomain::uniform(64).unwrap();
+    let schedule = find_schedule(
+        PolynomialGroupLayout::singleton(32),
+        &policy,
+        D64OneHot::root_honest_fold_policy(),
+        &domain,
+        D64OneHot::ring_challenge_config,
+        D64OneHot::fold_challenge_shape_at_level,
+    )
+    .unwrap()
+    .schedule;
+    let (raw_index, raw_predecessor) = schedule
+        .recursive_folds
+        .iter()
+        .enumerate()
+        .find(|(index, fold)| {
+            fold.params.witness.payload_mode == akita_types::CommitmentPayloadMode::Raw
+                && index + 1 < schedule.recursive_folds.len()
+        })
+        .expect("fixture must have a raw recursive fold with a recursive successor");
+
+    let suffix = plan_optimal_suffix(
+        &policy,
+        D64OneHot::ring_challenge_config,
+        D64OneHot::fold_challenge_shape_at_level,
+        32,
+        SuffixPlanStart {
+            level: raw_index + 2,
+            witness_len: raw_predecessor.output_witness_len,
+            log_basis: raw_predecessor.params.witness.log_basis_open,
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix
+                .after(raw_predecessor.params.witness.payload_mode),
+        },
+    )
+    .unwrap();
+
+    assert!(!suffix.folds.is_empty());
+    assert!(suffix
+        .folds
+        .iter()
+        .all(|fold| fold.params.payload_mode == akita_types::CommitmentPayloadMode::Raw));
+}
+
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn mixed_search_parallel_generation_is_descriptor_deterministic() {
@@ -364,7 +448,7 @@ fn mixed_root_prices_eor_at_candidate_a_dimension() {
         .first()
         .map(|step| &step.params.witness);
     let next_binding = if next_params.is_some() {
-        akita_types::NextWitnessBindingPolicy::OuterCommitment
+        akita_types::NextWitnessBindingPolicy::OuterPayload
     } else {
         akita_types::NextWitnessBindingPolicy::TerminalInnerState
     };
@@ -480,7 +564,7 @@ fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        98_728
+        90_312
     );
     assert_eq!(rank_one_capped_root.inner_commit_matrix.output_rank(), 3);
     assert_eq!(selected_root.inner_commit_matrix.output_rank(), 1);
@@ -662,7 +746,36 @@ fn mixed_search_applies_setup_budget_in_physical_fields() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn preserved_recursive_proof_size_is_documented() {
+fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
+    use akita_config::{
+        policy_of, proof_optimized::fp128::D64OneHotMultiChunkW4R2, CommitmentConfig,
+    };
+
+    let policy = policy_of::<D64OneHotMultiChunkW4R2>();
+    let domain = RingDimensionSearchDomain::uniform(64).unwrap();
+    let selected = find_schedule(
+        PolynomialGroupLayout::singleton(32),
+        &policy,
+        D64OneHotMultiChunkW4R2::root_honest_fold_policy(),
+        &domain,
+        D64OneHotMultiChunkW4R2::ring_challenge_config,
+        D64OneHotMultiChunkW4R2::fold_challenge_shape_at_level,
+    )
+    .expect("W4R2 schedule");
+
+    assert_eq!(
+        selected.estimate.estimated_num_setup_field_elements,
+        22_544_384
+    );
+    assert_eq!(
+        selected.estimate.estimated_proof_payload_bytes().unwrap(),
+        90_728
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn recursive_exact_cutover_proof_size_is_documented() {
     use akita_config::{
         policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
@@ -705,6 +818,6 @@ fn preserved_recursive_proof_size_is_documented() {
 
     assert_eq!(
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
-        102_732
+        94_680
     );
 }

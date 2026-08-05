@@ -158,6 +158,7 @@ fn generated_entry(
         .recursive_folds
         .iter()
         .map(|step| GeneratedRecursiveFold {
+            payload_mode: step.params.witness.payload_mode,
             witness: committed_group(&step.params.witness),
             num_digits_fold: step.params.witness.num_digits_fold as u32,
             open_commit_matrix: open_matrix_params(
@@ -369,6 +370,13 @@ fn emit_partition(value: GeneratedWitnessPartition) -> String {
     }
 }
 
+fn emit_payload_mode(value: akita_types::CommitmentPayloadMode) -> &'static str {
+    match value {
+        akita_types::CommitmentPayloadMode::Compressed => "CommitmentPayloadMode::Compressed",
+        akita_types::CommitmentPayloadMode::Raw => "CommitmentPayloadMode::Raw",
+    }
+}
+
 fn emit_setup_prefix(value: Option<GeneratedSetupPrefixInput>) -> String {
     match value {
         Some(value) => format!(
@@ -446,7 +454,8 @@ fn emit_schedule_entry(
         for fold in entry.recursive_folds {
             writeln!(
                 out,
-                "            GeneratedRecursiveFold {{ witness: {}, num_digits_fold: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
+                "            GeneratedRecursiveFold {{ payload_mode: {}, witness: {}, num_digits_fold: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
+                emit_payload_mode(fold.payload_mode),
                 emit_committed_group(fold.witness),
                 fold.num_digits_fold,
                 emit_open_matrix(fold.open_commit_matrix),
@@ -722,7 +731,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
          GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
          CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, CommittedGroupProfile, \
          InnerCommitMatrixParams, OuterCommitMatrixParams, \
-         SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \
+         CommitmentPayloadMode, SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \
          TensorChallengeShape,\n}};"
     )
     .map_err(|e| e.to_string())?;

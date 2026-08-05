@@ -64,7 +64,8 @@ offloaded levels. No fold index, contiguity rule, or prefix-size threshold
 decides the count.
 
 The selected schedule minimizes the first remaining direct setup footprint and
-uses exact estimated proof bytes, including Stage 3, as its tie-breaker.
+then exact estimated proof bytes, including Stage 3. Equal candidates then use
+the smaller total physical setup envelope and the canonical schedule descriptor.
 Recursive successors use the existing multi-group representation with the setup
 prefix as a precommitted group and the folded witness as the final group.
 Recursive multi-group generated schedules are stored separately from ordinary
@@ -234,12 +235,15 @@ Among feasible complete schedules, the PR #318 policy compares:
 (
     first_direct_setup_field_len,
     exact_estimated_proof_bytes,
+    total_setup_field_elements,
+    canonical_descriptor,
 )
 ```
 
-where `exact_estimated_proof_bytes` includes every Stage 3 payload. The future
-Pareto planner may replace this policy, but generated catalogs must bind whichever
-selection policy produced them.
+where `exact_estimated_proof_bytes` includes every Stage 3 payload. The suffix
+frontier retains the first three numeric coordinates. The descriptor is only a
+complete-schedule tie-break. The future Pareto planner may replace this policy,
+but generated catalogs must bind whichever selection policy produced them.
 
 The recursive search applies `PlannerPolicy::setup_field_budget` when a host
 sets it to `Some(limit)`. The shipped policy uses `None` because the

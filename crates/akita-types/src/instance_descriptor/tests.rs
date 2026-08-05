@@ -63,6 +63,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
                 log_open_bound: Some(32),
             },
             sis_modulus_profile: SisModulusProfileId::Q32Offset99,
+            compression_policy: COMPRESSION_POLICY,
             setup_seed_digest: [1; 32],
             protocol_features: ProtocolFeatureSet::current(),
             fold_linf: FoldLinfProtocolBinding::CURRENT,
@@ -100,6 +101,22 @@ fn setup_section_rejects_mismatched_zk_protocol_feature() {
     descriptor.setup.protocol_features.zk = true;
     assert!(matches!(
         descriptor.check(),
+        Err(SerializationError::InvalidData(_))
+    ));
+}
+
+#[test]
+fn setup_section_rejects_unknown_compression_policy_tag() {
+    let setup = sample_descriptor().setup;
+    let mut bytes = Vec::new();
+    setup
+        .serialize_uncompressed(&mut bytes)
+        .expect("serialize setup section");
+    let policy_offset = decomposition_size(&setup.decomposition, Compress::No)
+        + sis_modulus_profile_size(Compress::No);
+    bytes[policy_offset] = u8::MAX;
+    assert!(matches!(
+        SetupSection::deserialize_uncompressed(&bytes[..], &()),
         Err(SerializationError::InvalidData(_))
     ));
 }

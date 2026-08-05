@@ -1,17 +1,15 @@
 use crate::backend::onehot::{column_sweep_ajtai_onehot, MultiChunkEntry, SingleChunkEntry};
 use crate::backend::sparse_ring::column_sweep_sparse;
-#[cfg(feature = "compression-diagnostics")]
-use crate::compute::backend::CompressionDiagnosticBackend;
 use crate::compute::backend::{
-    CommitmentComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
-    DigitRowsComputeBackend, RingSwitchComputeBackend,
+    CommitmentComputeBackend, CompressionComputeBackend, CompressionRowsProducts,
+    ComputeBackendSetup, CyclicRowsComputeBackend, DigitRowsComputeBackend,
+    RingSwitchComputeBackend,
 };
 use crate::compute::plans::{
     DenseCommitInput, DenseCommitRowsPlan, OneHotCommitBlocks, OneHotCommitRowsPlan,
     RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
     RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
-#[cfg(feature = "compression-diagnostics")]
 use crate::kernels::linear::validate_compression_batch_shape;
 use crate::kernels::linear::{
     digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
@@ -34,10 +32,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-#[cfg(feature = "compression-diagnostics")]
 mod compression_cache;
 
-#[cfg(feature = "compression-diagnostics")]
 use compression_cache::CompressionNttCache;
 
 /// CPU backend using the existing Rust/Rayon kernels.
@@ -57,7 +53,6 @@ type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
 pub struct CpuPreparedSetup<F: FieldCore> {
     expanded: Arc<AkitaExpandedSetup<F>>,
     shared_ntt: Mutex<HashMap<NttCacheKey, Arc<NttSlotCell>>>,
-    #[cfg(feature = "compression-diagnostics")]
     compression_ntt: CompressionNttCache,
     ntt_i8_capacity_by_ring_d: Mutex<HashMap<usize, CrtI8CapacityProfile>>,
     #[cfg(test)]
@@ -154,7 +149,6 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
         f(typed)
     }
 
-    #[cfg(feature = "compression-diagnostics")]
     fn with_compression_ntt<const D: usize, R>(
         &self,
         input_width: usize,
@@ -238,7 +232,6 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
     }
 
     /// In-memory byte footprint of exact-prefix compression NTT caches.
-    #[cfg(feature = "compression-diagnostics")]
     pub fn compression_ntt_cache_bytes(&self) -> usize {
         self.compression_ntt.cache_bytes()
     }
@@ -416,7 +409,6 @@ where
         Ok(CpuPreparedSetup {
             expanded,
             shared_ntt: Mutex::new(HashMap::new()),
-            #[cfg(feature = "compression-diagnostics")]
             compression_ntt: CompressionNttCache::default(),
             ntt_i8_capacity_by_ring_d: Mutex::new(HashMap::new()),
             #[cfg(test)]
@@ -731,8 +723,7 @@ where
     }
 }
 
-#[cfg(feature = "compression-diagnostics")]
-impl<F> CompressionDiagnosticBackend<F> for CpuBackend
+impl<F> CompressionComputeBackend<F> for CpuBackend
 where
     F: FieldCore + CanonicalField,
 {
@@ -740,16 +731,25 @@ where
         Some(prepared.compression_ntt_cache_bytes())
     }
 
-    fn compression_rows<const D: usize>(
+    fn compression_rows_products<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup,
         digit_vectors: &[&[[i8; D]]],
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    ) -> Result<Vec<CompressionRowsProducts<F, D>>, AkitaError> {
         let input_width = validate_compression_batch_shape(digit_vectors)?;
         let total_ring_elements = prepared.expanded.shared_matrix.num_field_elements() / D;
         validate_digit_row_request(1, input_width, total_ring_elements)?;
         prepared.with_compression_ntt::<D, _>(input_width, |ntt| {
-            mat_vec_mul_ntt_digits_i8(ntt, 1, input_width, digit_vectors, 1)
+            let negacyclic = mat_vec_mul_ntt_digits_i8(ntt, 1, input_width, digit_vectors, 1)?;
+            let cyclic = digit_vectors
+                .iter()
+                .map(|digits| mat_vec_mul_ntt_single_i8_cyclic(ntt, 1, input_width, digits, 1))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(negacyclic
+                .into_iter()
+                .zip(cyclic)
+                .map(|(negacyclic, cyclic)| CompressionRowsProducts { negacyclic, cyclic })
+                .collect())
         })
     }
 }

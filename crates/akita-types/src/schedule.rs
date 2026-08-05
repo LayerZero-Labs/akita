@@ -26,8 +26,8 @@ pub struct AkitaScheduleInputs {
 /// suffix fold as a public inner `t` state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NextWitnessBindingPolicy {
-    /// Bind `u = B * decompose(t)` and recurse through another committed fold.
-    OuterCommitment,
+    /// Bind the terminal compressed commitment payload and recurse.
+    OuterPayload,
     /// Bind canonical inner-state `t` bytes for the following suffix-terminal
     /// fold. No outer `u` is present on this edge.
     TerminalInnerState,
@@ -62,7 +62,7 @@ pub struct CommittedGroupProfile {
 
 impl CommittedGroupProfile {
     /// Current committed-profile format.
-    pub const VERSION: u8 = 1;
+    pub const VERSION: u8 = 2;
 
     /// Build frozen group metadata from the concrete commit params.
     pub fn from_params(group: PolynomialGroupLayout, params: &CommittedGroupParams) -> Self {
@@ -748,6 +748,36 @@ impl FoldSchedule {
     }
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
+        if !self
+            .root
+            .params
+            .final_group
+            .commitment
+            .payload_mode
+            .is_compressed()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "root fold payload must be compressed".into(),
+            ));
+        }
+        let mut payload_phase = crate::CommitmentPayloadPhase::CompressedPrefix;
+        for (index, step) in self.recursive_folds.iter().enumerate() {
+            let consumes_setup_prefix = step.params.witness.setup_prefix.is_some();
+            if payload_phase == crate::CommitmentPayloadPhase::RawSuffix && consumes_setup_prefix {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "recursive fold {index} cannot resume compression by consuming a setup prefix after the raw suffix"
+                )));
+            }
+            if !payload_phase
+                .candidate_modes(index + 1, consumes_setup_prefix)
+                .contains(&step.params.witness.payload_mode)
+            {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "recursive fold {index} payload mode disagrees with the compression cutover policy"
+                )));
+            }
+            payload_phase = payload_phase.after(step.params.witness.payload_mode);
+        }
         if self.root.input_witness_len == 0 || self.root.output_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(
                 "root fold witness lengths must be nonzero".to_string(),

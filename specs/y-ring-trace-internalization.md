@@ -387,7 +387,7 @@ Full rationale and cross-scheme survey:
 |--------|-------|------|-------------------|
 | Opening/evaluation point | `\mathbf{r}` | `opening_point`, `prepared_point` | `packed_inner_point` |
 | Eval/opening claim (scalar) | `v`, `\bar{v}`, `v'` | `opening`, `openings`, `input_claim` | `.v` (commitment vector) |
-| Opening commitment | `\mathbf{v} = D\hat{\mathbf{e}}` | `.v`, `RingRelationInstance::v`, `ABSORB_PROVER_V` | scalar `opening` |
+| Opening commitment | `\mathbf{v} = D\hat{\mathbf{e}}` | internal D relation source; compressed wire field `opening_payload`; `ABSORB_OPENING_PAYLOAD` | scalar `opening` |
 | Packed inner trace weight | `\check{r}_{\mathrm{in}}` | `packed_inner_point` | commitment `.v` |
 | Relation RHS vector | `y` in `Mz = y + \cdots` | `RingRelationInstance::y`, `generate_relation_rhs` | `y_ring` / `Y`, stage-2 `y` axis |
 | Removed folded ring output | `Y`, `y_{\mathrm{ring}}` | *(dropped on wire)* | commitment `.v`, scalar `opening` |

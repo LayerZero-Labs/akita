@@ -78,8 +78,8 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
 #[test]
 fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
     type MixedF = Prime128OffsetA7F7;
-    const D_INNER: usize = 64;
-    const D_PROJECTED: usize = 32;
+    const D_INNER: usize = 128;
+    const D_PROJECTED: usize = 64;
     let mut lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D_INNER,

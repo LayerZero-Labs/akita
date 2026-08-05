@@ -37,11 +37,11 @@ impl PlannerCostModelId {
 /// Deterministic schedule-selection policy bound into generated catalogs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionPolicyId {
-    /// Pick the minimum estimated proof payload.
+    /// Pick proof bytes, then physical setup fields, then canonical descriptor.
     MinEstimatedProofPayload,
-    /// Pick the minimum physical setup-matrix field footprint, then payload.
+    /// Pick physical setup fields, then proof bytes, then canonical descriptor.
     MinSetupMatrixFieldElementsThenProofPayload,
-    /// Pick the first direct setup footprint, then payload.
+    /// Pick first direct setup, proof bytes, total setup, then descriptor.
     MinFirstDirectSetupThenPayload,
 }
 

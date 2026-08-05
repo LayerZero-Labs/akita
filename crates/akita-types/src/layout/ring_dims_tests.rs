@@ -147,14 +147,14 @@ fn rejects_non_power_of_two_role_dimension() {
 fn accepts_either_b_d_order_below_a() {
     for dims in [
         CommitmentRingDims {
-            inner: 128,
-            outer: 32,
-            opening: 64,
+            inner: 256,
+            outer: 64,
+            opening: 128,
         },
         CommitmentRingDims {
-            inner: 128,
-            outer: 64,
-            opening: 32,
+            inner: 256,
+            outer: 128,
+            opening: 64,
         },
     ] {
         validate_role_dims(dims).expect("B and D must not be ordered relative to each other");
@@ -167,11 +167,11 @@ fn rejects_b_or_d_larger_than_a() {
         CommitmentRingDims {
             inner: 64,
             outer: 128,
-            opening: 32,
+            opening: 64,
         },
         CommitmentRingDims {
             inner: 64,
-            outer: 32,
+            outer: 64,
             opening: 128,
         },
     ] {
@@ -187,7 +187,30 @@ fn common_relation_count_depends_only_on_current_roles() {
     let mixed_roles = CommitmentRingDims {
         inner: 128,
         outer: 64,
-        opening: 32,
+        opening: 64,
     };
-    assert_eq!(mixed_roles.common_relation_coeff_count(), 32);
+    assert_eq!(mixed_roles.common_relation_coeff_count(), 64);
+}
+
+#[test]
+fn rejects_sub_d64_commitment_matrix_dimensions() {
+    for dims in [
+        CommitmentRingDims {
+            inner: 32,
+            outer: 32,
+            opening: 32,
+        },
+        CommitmentRingDims {
+            inner: 128,
+            outer: 32,
+            opening: 64,
+        },
+        CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 32,
+        },
+    ] {
+        validate_role_dims(dims).expect_err("A/B/D dimensions below 64 must be rejected");
+    }
 }

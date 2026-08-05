@@ -6,7 +6,7 @@ use crate::protocol::core::RootProverGroupOpening;
 use crate::{ProverOpeningData, ProverTranscriptGrind};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
+    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
@@ -27,7 +27,13 @@ pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, V, C,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    F: FieldCore
+        + CanonicalField
+        + FromPrimitiveInt
+        + HalvingField
+        + HasWide
+        + RandomSampling
+        + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>

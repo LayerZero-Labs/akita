@@ -52,13 +52,13 @@ PROOF_LEVEL_BYTE_FIELDS = (
     "extension_opening_partials_bytes",
     "extension_opening_sumcheck_bytes",
     "fold_grind_nonce_bytes",
-    "v_bytes",
+    "opening_payload_bytes",
     "stage1_sumcheck_bytes",
     "stage1_interstage_claims_bytes",
     "stage1_range_image_evaluation_bytes",
     "stage2_sumcheck_bytes",
     "stage3_sumcheck_bytes",
-    "next_w_commitment_bytes",
+    "next_w_payload_bytes",
     "next_w_eval_bytes",
 )
 
@@ -2006,9 +2006,9 @@ def render_proof_levels(
     print()
     print(
         "| Fold level | Proof step | Fold-level bytes | Extension-opening partials | "
-        "Extension-opening sumcheck | Grinding nonce | Opening commitment (`v`) | "
+        "Extension-opening sumcheck | Grinding nonce | Opening payload (`p_H`) | "
         "Stage 1 sumcheck | Stage 1 transition claims | Range-image evaluation | "
-        "Stage 2 sumcheck | Stage 3 sumcheck | Next-witness commitment | "
+        "Stage 2 sumcheck | Stage 3 sumcheck | Next-witness payload | "
         "Next-witness evaluation |"
     )
     print(
@@ -2029,13 +2029,13 @@ def render_proof_levels(
             f"{proof_component_value(level, baseline, 'extension_opening_partials_bytes')} | "
             f"{proof_component_value(level, baseline, 'extension_opening_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'fold_grind_nonce_bytes')} | "
-            f"{proof_component_value(level, baseline, 'v_bytes')} | "
+            f"{proof_component_value(level, baseline, 'opening_payload_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage1_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage1_interstage_claims_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage1_range_image_evaluation_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage2_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage3_sumcheck_bytes')} | "
-            f"{proof_component_value(level, baseline, 'next_w_commitment_bytes')} | "
+            f"{proof_component_value(level, baseline, 'next_w_payload_bytes')} | "
             f"{proof_component_value(level, baseline, 'next_w_eval_bytes')} |"
         )
     print()

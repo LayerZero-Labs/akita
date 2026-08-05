@@ -23,45 +23,10 @@ use std::io::{Read, Write};
 
 const MAX_SETUP_PREFIX_SLOTS: usize = 4096;
 
-/// Build the opening layout for one recursive suffix witness.
-///
-/// An incoming setup prefix is a separate singleton group. Its Boolean domain
-/// uses the padded prefix length, while the witness keeps its own arity.
-pub fn suffix_opening_layout(
-    current_witness_len: usize,
-    incoming_setup_prefix: Option<usize>,
-) -> Result<OpeningClaimsLayout, AkitaError> {
-    fn power_of_two_vars(field_len: usize, context: &'static str) -> Result<usize, AkitaError> {
-        if field_len == 0 {
-            return Err(AkitaError::InvalidSetup(format!(
-                "{context} must be nonzero"
-            )));
-        }
-        let padded = field_len.checked_next_power_of_two().ok_or_else(|| {
-            AkitaError::InvalidSetup(format!("{context} power-of-two padding overflow"))
-        })?;
-        Ok(padded.trailing_zeros() as usize)
-    }
-
-    let witness_vars = power_of_two_vars(current_witness_len, "suffix witness length")?;
-    let witness_group = PolynomialGroupLayout::singleton(witness_vars);
-    match incoming_setup_prefix {
-        Some(natural_len) => {
-            let n_prefix = padded_setup_prefix_len(natural_len);
-            if n_prefix == 0 || !n_prefix.is_power_of_two() {
-                return Err(AkitaError::InvalidSetup(
-                    "incoming setup prefix length must be a nonzero power of two".to_string(),
-                ));
-            }
-            let prefix_vars = power_of_two_vars(n_prefix, "incoming setup prefix length")?;
-            OpeningClaimsLayout::from_groups(vec![
-                PolynomialGroupLayout::singleton(prefix_vars),
-                witness_group,
-            ])
-        }
-        None => OpeningClaimsLayout::from_groups(vec![witness_group]),
-    }
-}
+#[path = "setup_prefix_helpers.rs"]
+mod helpers;
+use helpers::setup_prefix_compression_plan;
+pub use helpers::suffix_opening_layout;
 
 /// Identity for one committed setup-prefix slot.
 ///
@@ -759,12 +724,19 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierSlot<F> {
             ));
         }
         self.commitment.check()?;
+        let expected_payload_coefficients =
+            setup_prefix_compression_plan(&self.id.commitment_params)?.terminal_coefficients();
+        if self.commitment.rows.len() != 1 {
+            return Err(SerializationError::InvalidData(
+                "setup prefix commitment must contain one compressed payload".into(),
+            ));
+        }
         for row in &self.commitment.rows {
-            if row.coeff_len() != self.id.d_setup() {
+            if row.coeff_len() != expected_payload_coefficients {
                 return Err(SerializationError::InvalidData(format!(
                     "setup prefix commitment row has {} coefficients, expected {}",
                     row.coeff_len(),
-                    self.id.d_setup()
+                    expected_payload_coefficients
                 )));
             }
         }
@@ -864,19 +836,26 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
             ));
         }
         self.commitment.check()?;
-        // Re-assert the invariant the const generic `D` used to enforce: every
-        // commitment row must have exactly `d_setup` coefficients.
+        let compression_plan = setup_prefix_compression_plan(&self.id.commitment_params)?;
+        let expected_payload_coefficients = compression_plan.terminal_coefficients();
+        if self.commitment.rows.len() != 1 {
+            return Err(SerializationError::InvalidData(
+                "setup prefix commitment must contain one compressed payload".into(),
+            ));
+        }
         for row in &self.commitment.rows {
-            if row.coeff_len() != self.id.d_setup() {
+            if row.coeff_len() != expected_payload_coefficients {
                 return Err(SerializationError::InvalidData(format!(
-                    "setup prefix prover slot commitment row has {} coefficients, expected \
-                     d_setup={}",
+                    "setup prefix prover slot commitment row has {} coefficients, expected {}",
                     row.coeff_len(),
-                    self.id.d_setup()
+                    expected_payload_coefficients
                 )));
             }
         }
-        self.hint.check()
+        self.hint.check()?;
+        self.hint
+            .validate_outer_compression(&compression_plan)
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))
     }
 }
 
@@ -941,6 +920,12 @@ where
 }
 
 impl<F: FieldCore> SetupPrefixSlot<F> {
+    fn validate_compression_hint(&self) -> Result<(), AkitaError> {
+        let plan = setup_prefix_compression_plan(&self.id.commitment_params)
+            .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+        self.hint.validate_outer_compression(&plan)
+    }
+
     /// Strip prover-only hint material for verifier metadata.
     #[must_use]
     pub fn verifier_slot(&self) -> SetupPrefixVerifierSlot<F> {
@@ -991,6 +976,7 @@ impl<F: FieldCore> SetupPrefixProverRegistry<F> {
     }
 
     pub fn insert(&mut self, slot: SetupPrefixSlot<F>) -> Result<(), AkitaError> {
+        slot.validate_compression_hint()?;
         if self.slots.contains_key(&slot.id) {
             return Err(AkitaError::InvalidSetup(
                 "duplicate setup prefix slot id".to_string(),

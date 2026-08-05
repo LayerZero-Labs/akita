@@ -2,9 +2,9 @@ use super::*;
 
 #[test]
 fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
-    const D_A: usize = 64;
-    const D_B: usize = 32;
-    const D_D: usize = 32;
+    const D_A: usize = 128;
+    const D_B: usize = 64;
+    const D_D: usize = 64;
     let plan = finalize_test_plan(
         2,
         5,

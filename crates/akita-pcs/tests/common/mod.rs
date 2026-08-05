@@ -152,7 +152,7 @@ where
     FF: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
 {
     let mut transcript = AkitaTranscript::<FF>::new(b"akita/protocol-epoch/digest");
-    transcript.append_bytes(labels::ABSORB_PROVER_V, payload);
+    transcript.append_bytes(labels::ABSORB_OPENING_PAYLOAD, payload);
     transcript
         .challenge_scalar(labels::CHALLENGE_SUMCHECK_BATCH)
         .to_bytes_le_vec()

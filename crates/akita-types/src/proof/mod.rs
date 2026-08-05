@@ -9,6 +9,7 @@
 
 pub mod batch;
 pub mod commitment;
+pub mod compression_relation_weights;
 pub mod relation;
 pub mod relation_address;
 pub mod relation_range_image;
@@ -50,6 +51,9 @@ pub use batch::{
 pub use commitment::{
     AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,
 };
+pub use compression_relation_weights::{
+    build_compression_relation_weights, CompressionRelationWeights, NegativeBinarySupport,
+};
 pub use containers::{
     append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,
 };
@@ -60,12 +64,14 @@ pub use levels::{
     TerminalLevelProof,
 };
 pub use relation::{
-    assemble_relation_rhs, evaluation_trace_row_weight, generate_relation_rhs,
+    assemble_compressed_relation_rhs, assemble_relation_rhs,
+    compression_relation_claim_from_rhs_extension, evaluation_trace_row_weight,
+    generate_relation_rhs, relation_claim_from_compressed_rhs_extension,
     relation_claim_from_layout_extension, relation_claim_from_rows,
     relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
-    relation_rhs_row_count, RelationGroupRows, RelationRhsLayout,
+    relation_rhs_row_count, RelationGroupRows, RelationRhsLayout, RelationRowFamily,
 };
-pub use relation_address::RelationAddressGeometry;
+pub use relation_address::{CompressionRelationAddressGeometry, RelationAddressGeometry};
 pub use relation_range_image::{RelationRangeImageGroupPlan, RelationRangeImagePlan};
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,

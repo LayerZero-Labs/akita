@@ -1,13 +1,17 @@
 //! Preprocessing helpers for setup-prefix commitment artifacts (slice 02B).
 
 use crate::api::commitment::validate_commit_outer_input_nonempty;
-use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
+use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
+use crate::compute::{
+    CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan, OperationCtx,
+};
 use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_types::{
     dispatch_for_field, setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup,
-    PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
+    CompressionChainPlan, PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment,
+    SetupPrefixSlot,
 };
 
 /// Commit one padded flat prefix of the shared setup matrix.
@@ -30,7 +34,7 @@ pub fn commit_setup_prefix<F, const D: usize, B>(
     natural_len: usize,
 ) -> Result<SetupPrefixSlot<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
     B: CommitmentComputeBackend<F>,
 {
     if natural_len == 0 || natural_len > n_prefix {
@@ -86,7 +90,7 @@ where
 
     let n_b = level_params.layout.outer_commit_matrix.output_rank();
     let d_b = level_params.layout.outer_commit_matrix.ring_dimension();
-    let commitment_rows =
+    let raw_commitment =
         dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Outer), F, d_b, |D_B| {
             let blocks = recomposed_inner_rows
                 .iter()
@@ -124,15 +128,47 @@ where
             inner_coefficients.extend_from_slice(row.coefficients());
         }
     }
-    let hint =
-        AkitaCommitmentHint::singleton(RingVec::from_coeffs_with_ring_dim(inner_coefficients, D)?)?;
+    let plan = CompressionChainPlan::for_complete_source(
+        level_params
+            .layout
+            .outer_commit_matrix
+            .sis_table_key()
+            .modulus_profile,
+        raw_commitment.coeff_len(),
+    )?;
+    let ctx = OperationCtx::new(backend, prepared, expanded)?;
+    let (mut outputs, _) = execute_compression_chains(
+        &ctx,
+        vec![CompressionExecutionInput {
+            id: (),
+            plan,
+            coefficients: raw_commitment.into_coeffs(),
+        }],
+    )?;
+    let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
+    let terminal_ring_dim = output
+        .witness
+        .plan()
+        .maps()
+        .last()
+        .ok_or(AkitaError::InvalidProof)?
+        .ring_dimension();
+    let commitment_payload = RingVec::from_coeffs_with_ring_dim(
+        output.terminal.coefficients().to_vec(),
+        terminal_ring_dim,
+    )?;
+    let hint = AkitaCommitmentHint::singleton_with_outer_compression(
+        RingVec::from_coeffs_with_ring_dim(inner_coefficients, D)?,
+        &output.witness,
+        &output.quotients,
+    )?;
     let id = setup_prefix_slot_id(natural_len, level_params.clone());
     Ok(SetupPrefixSlot {
         id,
         natural_len,
         padded_len: n_prefix,
         commitment: SetupPrefixPublicCommitment {
-            rows: vec![commitment_rows],
+            rows: vec![commitment_payload],
         },
         hint,
     })
@@ -195,7 +231,7 @@ mod tests {
     use crate::compute::{ComputeBackendSetup, CpuBackend};
     use crate::AkitaProverSetup;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::Prime128Offset275 as F;
+    use akita_field::Prime128OffsetA7F7 as F;
     use akita_types::{
         active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
         OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId,
@@ -228,7 +264,19 @@ mod tests {
             .checked_mul(level_params.outer_commit_matrix.input_width())
             .and_then(|n| n.checked_mul(level_params.outer_commit_matrix.ring_dimension()))
             .expect("B setup capacity");
-        n_prefix.max(a_fields).max(b_fields)
+        let compression_source = level_params.outer_commit_matrix.output_rank()
+            * level_params.outer_commit_matrix.ring_dimension();
+        let compression_fields = CompressionChainPlan::for_complete_source(
+            level_params.outer_commit_matrix.sis_modulus_profile(),
+            compression_source,
+        )
+        .expect("compression plan")
+        .maps()
+        .iter()
+        .map(|map| map.input_width() * map.ring_dimension())
+        .max()
+        .expect("compression maps");
+        n_prefix.max(a_fields).max(b_fields).max(compression_fields)
     }
 
     fn test_setup<const D: usize>(
@@ -288,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_setup_prefix_does_not_back_zero_padding_with_shared_setup() {
+    fn commit_setup_prefix_uses_natural_len_with_shared_setup() {
         let level_params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             64,
@@ -309,7 +357,6 @@ mod tests {
         let mut setup = test_setup::<64>(&level_params, natural_len);
         let available_field_len = setup.expanded.shared_matrix().as_field_slice().len();
         assert!(available_field_len >= natural_len);
-        assert!(available_field_len < n_prefix);
 
         let backend = CpuBackend;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
@@ -366,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_setup_prefix_dispatches_smaller_outer_dimension() {
+    fn commit_setup_prefix_rejects_unsupported_outer_dimension() {
         let level_params = prefix_level_params(64);
         let witness_ring_slots = level_params
             .num_live_blocks
@@ -389,7 +436,7 @@ mod tests {
         let setup = test_setup::<64>(&level_params, n_prefix);
         let backend = CpuBackend;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
-        let slot = commit_setup_prefix::<F, 64, _>(
+        let error = commit_setup_prefix::<F, 64, _>(
             &setup.expanded,
             &backend,
             &prepared,
@@ -397,11 +444,7 @@ mod tests {
             n_prefix,
             n_prefix,
         )
-        .expect("commit mixed-D prefix");
-
-        assert_eq!(
-            slot.commitment.rows[0].coeff_len(),
-            prefix_params.layout.outer_commit_matrix.output_rank() * 32
-        );
+        .expect_err("ordinary outer D32 must reject");
+        assert!(error.to_string().contains("unsupported ring dimension 32"));
     }
 }

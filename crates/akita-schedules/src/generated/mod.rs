@@ -81,6 +81,7 @@ pub struct GeneratedSetupPrefixInput {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRecursiveFold {
+    pub payload_mode: akita_types::CommitmentPayloadMode,
     pub witness: GeneratedCommittedGroup,
     pub num_digits_fold: u32,
     pub open_commit_matrix: GeneratedOpenCommitMatrix,
@@ -183,7 +184,8 @@ pub use crate::{
     SelectionPolicyId, SisSecurityPolicyId, TensorChallengeShape,
 };
 pub use akita_types::{
-    CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+    CommitmentPayloadMode, CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
+    PolynomialGroupLayout,
 };
 pub use akita_types::{SisModulusProfileId, SisTableDigest};
 pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};

@@ -5,7 +5,7 @@
 //! mixed recursive experiment uses a dynamic D128 prefix that is outside that
 //! registry contract, so tests and the profile harness share this helper.
 
-use akita_field::{CanonicalField, FieldCore, RandomSampling};
+use akita_field::{CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_prover::{commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend};
 use akita_types::{dispatch_for_field, FoldSchedule};
 
@@ -20,7 +20,7 @@ pub fn materialize_schedule_setup_prefix_slots<F, B>(
     schedule: &FoldSchedule,
 ) -> Result<(), akita_field::AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
     B: CommitmentComputeBackend<F>,
 {
     for slot_id in schedule

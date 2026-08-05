@@ -251,8 +251,8 @@ pub const GADGET_COEFF_LINF_ANCHORS: &[u128] = &[3, 7, 15, 31, 63, 127, 255];
 /// [`sis_role_cell`].
 pub const A_ROLE_RING_DIMS: &[u32] = &[64, 128, 256];
 
-/// Current planner ring dimensions for B and D, including the Q128 d=32 case.
-pub const BD_ROLE_RING_DIMS: &[u32] = &[32, 64, 128, 256];
+/// Admitted B/D commitment-matrix dimensions.
+pub const BD_ROLE_RING_DIMS: &[u32] = &[64, 128, 256];
 
 /// Production matrix roles with checked-in coverage.
 pub const SIS_MATRIX_ROLES: &[SisMatrixRole] = &[

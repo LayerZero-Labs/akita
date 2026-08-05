@@ -49,10 +49,9 @@ macro_rules! protocol_dispatch_policy {
             ntt_max: $max32:literal
         }
     ) => {
-        /// All protocol dispatch arms across tiers and slots (sorted union for planner sync tests).
+        /// All A/B/D commitment-role dispatch arms across field tiers.
         #[allow(dead_code)]
-        pub(crate) const ALL_PROTOCOL_DISPATCH_ARMS: &[usize] =
-            &[16, 32, 64, 128, 256, 512, 1024, 2048];
+        pub(crate) const ALL_COMMITMENT_ROLE_DISPATCH_ARMS: &[usize] = &[64, 128, 256, 512];
 
         #[inline]
         #[must_use]
@@ -148,7 +147,7 @@ macro_rules! protocol_dispatch_policy {
             slot_dim_supported_for_tier(tier, ProtocolDispatchSlot::Role(role), d)
         }
 
-        /// Whether `d` is supported for diagnostic compression on `tier`.
+        /// Whether `d` is supported for production compression on `tier`.
         #[inline]
         #[must_use]
         pub fn compression_ring_dim_supported_for_tier(
@@ -238,10 +237,10 @@ macro_rules! __dispatch_for_field_outer {
     ($F:ty, $d:expr, |$D:ident| $body:expr) => {{
         match $crate::protocol_dispatch_tier::<$F>() {
             $crate::ProtocolRingDispatchTierId::Fp128 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128, 256 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
             }
             $crate::ProtocolRingDispatchTierId::Fp64 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128, 256 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
             }
             $crate::ProtocolRingDispatchTierId::Fp32 => {
                 $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
@@ -256,10 +255,10 @@ macro_rules! __dispatch_for_field_opening {
     ($F:ty, $d:expr, |$D:ident| $body:expr) => {{
         match $crate::protocol_dispatch_tier::<$F>() {
             $crate::ProtocolRingDispatchTierId::Fp128 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128, 256 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
             }
             $crate::ProtocolRingDispatchTierId::Fp64 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128, 256 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
             }
             $crate::ProtocolRingDispatchTierId::Fp32 => {
                 $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
@@ -277,7 +276,7 @@ macro_rules! __dispatch_for_field_uniform_policy {
                 $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256, 512 })
             }
             $crate::ProtocolRingDispatchTierId::Fp64 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128, 256 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
             }
             $crate::ProtocolRingDispatchTierId::Fp32 => {
                 $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
@@ -310,13 +309,13 @@ macro_rules! __dispatch_for_field_compression {
     ($F:ty, $d:expr, |$D:ident| $body:expr) => {{
         match $crate::protocol_dispatch_tier::<$F>() {
             $crate::ProtocolRingDispatchTierId::Fp128 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 8, 16, 32 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 8, 16 })
             }
             $crate::ProtocolRingDispatchTierId::Fp64 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 16, 32, 64 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 16, 32 })
             }
             $crate::ProtocolRingDispatchTierId::Fp32 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64 })
             }
         }
     }};
@@ -388,22 +387,22 @@ macro_rules! dispatch_for_field {
 protocol_dispatch_policy! {
     Fp128: {
         inner: [64, 128, 256, 512]
-        outer: [32, 64, 128, 256]
-        opening: [32, 64, 128, 256]
+        outer: [64, 128, 256]
+        opening: [64, 128, 256]
         uniform_policy: [64, 128, 256, 512]
         ntt: [16, 32, 64, 128, 256, 512]
-        compression: [8, 16, 32]
-        min_bd: 32
+        compression: [8, 16]
+        min_bd: 64
         ntt_max: 512
     }
     Fp64: {
         inner: [64, 128, 256]
-        outer: [32, 64, 128, 256]
-        opening: [32, 64, 128, 256]
-        uniform_policy: [32, 64, 128, 256]
+        outer: [64, 128, 256]
+        opening: [64, 128, 256]
+        uniform_policy: [64, 128, 256]
         ntt: [32, 64, 128, 256, 512, 1024]
-        compression: [16, 32, 64]
-        min_bd: 32
+        compression: [16, 32]
+        min_bd: 64
         ntt_max: 1024
     }
     Fp32: {
@@ -412,7 +411,7 @@ protocol_dispatch_policy! {
         opening: [64, 128, 256]
         uniform_policy: [64, 128, 256]
         ntt: [64, 128, 256, 512, 1024, 2048]
-        compression: [32, 64, 128]
+        compression: [32, 64]
         min_bd: 64
         ntt_max: 2048
     }
@@ -421,11 +420,15 @@ protocol_dispatch_policy! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::SUPPORTED_RING_DIMS;
+    use crate::layout::SUPPORTED_COMMITMENT_RING_DIMS;
+    use crate::{compression_ring_dimensions, SisModulusProfileId};
 
     #[test]
-    fn supported_ring_dims_matches_policy_union() {
-        assert_eq!(ALL_PROTOCOL_DISPATCH_ARMS, SUPPORTED_RING_DIMS);
+    fn supported_commitment_ring_dims_match_role_policy_union() {
+        assert_eq!(
+            ALL_COMMITMENT_ROLE_DISPATCH_ARMS,
+            SUPPORTED_COMMITMENT_RING_DIMS
+        );
     }
 
     #[test]
@@ -464,28 +467,28 @@ mod tests {
     }
 
     #[test]
-    fn compression_arms_cover_the_rank_one_ladder_for_each_tier() {
-        assert_eq!(
-            arms_for_slot(
+    fn compression_arms_are_exactly_the_two_profile_ladder_dimensions() {
+        for (tier, profile) in [
+            (
                 ProtocolRingDispatchTierId::Fp128,
-                ProtocolDispatchSlot::Compression
+                SisModulusProfileId::Q128OffsetA7F7,
             ),
-            &[8, 16, 32]
-        );
-        assert_eq!(
-            arms_for_slot(
+            (
                 ProtocolRingDispatchTierId::Fp64,
-                ProtocolDispatchSlot::Compression
+                SisModulusProfileId::Q64Offset59,
             ),
-            &[16, 32, 64]
-        );
-        assert_eq!(
-            arms_for_slot(
+            (
                 ProtocolRingDispatchTierId::Fp32,
-                ProtocolDispatchSlot::Compression
+                SisModulusProfileId::Q32Offset99,
             ),
-            &[32, 64, 128]
-        );
+        ] {
+            let mut canonical = compression_ring_dimensions(profile);
+            canonical.sort_unstable();
+            assert_eq!(
+                arms_for_slot(tier, ProtocolDispatchSlot::Compression),
+                canonical
+            );
+        }
     }
 
     #[test]
