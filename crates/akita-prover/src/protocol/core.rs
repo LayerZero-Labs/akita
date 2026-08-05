@@ -34,21 +34,20 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::dispatch_for_field;
 use akita_types::FpExtEncoding;
 use akita_types::{
-    append_claim_values_to_transcript, basis_weights, checked_table_len,
+    basis_weights, checked_table_len, derive_public_row_coefficients,
     derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, ensure_trace_stage2_supported, prepare_opening_point,
     proof::relation::evaluation_trace_row_weight, recover_ring_subfield_inner_product,
     relation_claim_from_layout_extension, relation_rhs_layout_for,
     ring_subfield_packed_extension_opening_point, root_input_witness_len,
-    root_tensor_projection_enabled, sample_public_row_coefficients,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
-    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, AkitaBatchedProof,
-    AkitaExpandedSetup, AkitaStage1Proof, AkitaStage2Proof, BasisMode, Commitment,
-    CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof, FoldLevelProof,
-    FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, PreparedOpeningPoint,
-    RecursiveFoldParams, RingMultiplierOpeningPoint, RingVec, RingView, SetupContributionMode,
-    SetupPrefixProverRegistry, SetupSumcheckProof, TerminalCommittedGroupParams,
-    TerminalFoldParams, TerminalLevelProof,
+    root_tensor_projection_enabled, tensor_equality_factor_eval_at_point,
+    tensor_equality_factor_evals, tensor_opening_split, tensor_reduction_claim_from_rows,
+    tensor_row_partials_from_columns, AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof,
+    AkitaStage2Proof, BasisMode, Commitment, CommittedGroupParams, EvaluationTraceInputs,
+    ExtensionOpeningReductionProof, FoldLevelProof, FoldSchedule, OpeningClaimsLayout,
+    PolynomialGroupLayout, PreparedOpeningPoint, RecursiveFoldParams, RingMultiplierOpeningPoint,
+    RingVec, RingView, SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof,
+    TerminalCommittedGroupParams, TerminalFoldParams, TerminalLevelProof,
 };
 use std::sync::Arc;
 

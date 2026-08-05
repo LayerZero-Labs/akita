@@ -29,7 +29,7 @@ mod tail_segments;
 mod tests;
 mod wire;
 pub use crate::opening_claims::{
-    sample_public_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
+    derive_public_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
     PolynomialGroupClaims, PolynomialGroupLayout,
 };
 pub(crate) use batch::root_tensor_projection_enabled_for_width;
