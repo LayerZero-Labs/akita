@@ -443,7 +443,6 @@ where
     if openings.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }
-    let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
     let prefix = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
@@ -459,6 +458,8 @@ where
             .map(|group_index| block_claims.group_point(group_index))
             .collect::<Result<Vec<_>, _>>()?;
         absorb_protocol_opening_points(&group_points, transcript);
+        let row_coefficients =
+            derive_public_row_coefficients::<F, E, T>(&opening_batch, &openings, transcript)?;
         let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, &openings)?;
         FoldPrefix {
             prepared_points,
@@ -467,6 +468,8 @@ where
             row_coefficients,
         }
     } else {
+        let row_coefficients =
+            derive_public_row_coefficients::<F, E, T>(&opening_batch, &openings, transcript)?;
         let group_points = (0..opening_batch.num_groups())
             .map(|group_index| block_claims.group_point(group_index))
             .collect::<Result<Vec<_>, _>>()?;

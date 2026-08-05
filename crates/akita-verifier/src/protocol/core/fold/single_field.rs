@@ -10,8 +10,8 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::ABSORB_EVALUATION_CLAIMS;
 use akita_transcript::{append_ext_field, Transcript};
 use akita_types::{
-    append_claim_values_to_transcript, dispatch_for_field, prepare_opening_point,
-    sample_public_row_coefficients, BasisMode, Commitment, CommittedGroupParams, FpExtEncoding,
+    append_claim_values_to_transcript, derive_public_row_coefficients, dispatch_for_field,
+    prepare_opening_point, BasisMode, Commitment, CommittedGroupParams, FpExtEncoding,
     OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, TerminalCommittedGroupParams,
 };
 
@@ -77,8 +77,8 @@ where
         )?;
         prepared_points.push(prepared);
     }
-    append_claim_values_to_transcript::<F, E, T>(openings, transcript);
-    let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
+    let row_coefficients =
+        derive_public_row_coefficients::<F, E, T>(opening_batch, openings, transcript)?;
     let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, openings)?;
     Ok(FoldPrefix {
         prepared_points,

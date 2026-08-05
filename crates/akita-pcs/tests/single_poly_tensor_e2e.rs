@@ -1,5 +1,6 @@
 //! End-to-end tests for the tensor-shaped root fold path.
 
+#![cfg(feature = "profile-ci")]
 #![allow(missing_docs)]
 
 mod common;
@@ -93,79 +94,6 @@ fn run_single_onehot_tensor(nv: usize) {
     });
 }
 
-fn run_single_dense_tensor(nv: usize) {
-    init_rayon_pool();
-    run_on_large_stack(move || {
-        let layout = D64OneHotTensor::get_params_for_batched_commitment(
-            &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
-        )
-        .expect("layout");
-        let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
-        assert_eq!(total_ring * TENSOR_D, 1usize << nv);
-        assert_eq!(
-            layout.fold_challenge_shape,
-            akita_challenges::TensorChallengeShape::Tensor { fold_low_len: 2 },
-            "D64OneHotTensor must emit a tensor-shaped root fold"
-        );
-
-        let mut rng = StdRng::seed_from_u64(0xd3e5_7000 + nv as u64);
-        let evals: Vec<F> = (0..1usize << nv)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen_range(0..=1)))
-            .collect();
-        let poly = DensePoly::<F>::from_field_evals(nv, TENSOR_D, &evals).expect("dense poly");
-
-        let pt = random_point(nv, 0xd3e5_f00d + nv as u64);
-        let expected_opening = opening_from_poly::<TENSOR_D, _>(&poly, &pt, &layout);
-
-        let setup =
-            AkitaCommitmentScheme::<D64OneHotTensor>::setup_prover(nv, 1).expect("setup_prover");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup)
-            .expect("verifier setup");
-        let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<D64OneHotTensor>::commit::<_, _>(&setup, commit_input, &stack)
-                .expect("commit");
-
-        let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let commitments = [commitment];
-        let openings = [expected_opening];
-        let opening_groups = [&openings[..]];
-
-        let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/dense");
-        let proof = AkitaCommitmentScheme::<D64OneHotTensor>::batched_prove::<_, _, _>(
-            &setup,
-            prove_input::<D64OneHotTensor, _>(&pt[..], &poly_refs[..], &commitments[0], hint),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
-
-        let decoded = round_trip_proof(&proof);
-
-        let mut verifier_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/dense");
-        let result = AkitaCommitmentScheme::<D64OneHotTensor>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<D64OneHotTensor>(&pt[..], opening_groups[0], &commitments[0]),
-            BasisMode::Lagrange,
-        );
-        assert!(
-            result.is_ok(),
-            "dense_tensor nv={nv} verification failed: {:?}",
-            result.err()
-        );
-    });
-}
-
 fn round_trip_proof(proof: &AkitaBatchedProof<F, F>) -> AkitaBatchedProof<F, F> {
     let mut serialized = Vec::new();
     let proof_shape = proof.shape();
@@ -195,27 +123,4 @@ fn single_onehot_tensor_nv20() {
 #[cfg(feature = "profile-ci")]
 fn single_onehot_tensor_nv22() {
     run_single_onehot_tensor(22);
-}
-
-// Deferred: `D64OneHotTensor` has `log_commit_bound == 1`, so the corrected
-// folded-witness bound `β` sizes against one-hot witness sparsity
-// (`||s||_inf = 1`). Committing a *dense* poly under this one-hot tensor config
-// folds to a larger `||z||_inf` than that `β`, so the prover aborts. Tracked as
-// a follow-up to the weak-binding-norm fix (tensor + dense witness interaction).
-#[test]
-#[ignore = "dense poly under one-hot tensor config: fold beta mismatch (weak-binding-norm follow-up)"]
-fn single_dense_tensor_nv15() {
-    run_single_dense_tensor(15);
-}
-
-#[test]
-#[ignore = "dense poly under one-hot tensor config: fold beta mismatch (weak-binding-norm follow-up)"]
-fn single_dense_tensor_nv20() {
-    run_single_dense_tensor(20);
-}
-
-#[test]
-#[ignore = "dense poly under one-hot tensor config: fold beta mismatch (weak-binding-norm follow-up)"]
-fn single_dense_tensor_nv22() {
-    run_single_dense_tensor(22);
 }

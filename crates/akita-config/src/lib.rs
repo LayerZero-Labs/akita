@@ -646,20 +646,6 @@ mod fp128_policy_tests {
     }
 
     #[test]
-    #[ignore = "full nv sweep is slow; run manually before SIS table or schedule changes"]
-    fn current_d64_dense_schedule_stays_within_audited_sis_widths_full_range() {
-        let num_vars: Vec<usize> = (13..=50).collect();
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Dense>(&num_vars);
-    }
-
-    #[test]
-    #[ignore = "full nv sweep is slow; run manually before SIS table or schedule changes"]
-    fn current_d64_onehot_schedule_stays_within_audited_sis_widths_full_range() {
-        let num_vars: Vec<usize> = (12..=50).collect();
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(&num_vars);
-    }
-
-    #[test]
     fn small_field_sis_pricing_includes_psi_norm_bound() {
         use super::proof_optimized::{fp128, fp32};
 

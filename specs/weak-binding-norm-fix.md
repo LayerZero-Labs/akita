@@ -701,9 +701,9 @@ Both fixes change `collision_inf` buckets and/or `δ_fold`, hence ranks, widths,
 and `total_bytes`, so every shipped table under
 `crates/akita-planner/src/generated/*.rs` must be regenerated with the
 `gen_schedule_tables` binary (owned by `akita-config`, per AGENTS.md). The
-existing `old_tables/` snapshots and `tests/regen_diff.rs` /
-`generated_tables.rs` machinery (already touched on this branch) diffs and
-re-pins the tables.
+`generated_schedule_tables_match_key_planner` drift guard in
+`tests/generated_tables.rs` compares the checked-in tables with fresh planner
+output.
 
 ## Evaluation
 
@@ -729,7 +729,8 @@ re-pins the tables.
 - [ ] `K` is plumbed via a `CommitmentConfig` hook and `PlannerPolicy`; every
   shipped preset sets it so `witness_block_l1_norm`'s `nonzeros` matches its
   actual sparsity (incl. any multi-chunk preset).
-- [ ] All `generated/*.rs` tables regenerated; `regen_diff` is clean.
+- [ ] All `generated/*.rs` tables regenerated;
+  `generated_schedule_tables_match_key_planner` is green.
 - [ ] A unit test pins `collision_inf` against a hand-computed Lemma-7 value for
   one-hot single-chunk, multi-chunk, and dense.
 
@@ -748,8 +749,9 @@ re-pins the tables.
   (`ajtai_a_width_bucket`) == `sis_offline` derivation bucket.
 - `cargo test` end-to-end (`akita-pcs`: `akita_e2e`, `single_poly_e2e`, `zk`)
   on at least one dense and one one-hot preset.
-- Regenerate tables; confirm `tests/generated_tables.rs` / `tests/regen_diff.rs`
-  pass.
+- Regenerate tables; confirm
+  `cargo test -p akita-config --features all-schedules generated_schedule_tables_match_key_planner`
+  passes.
 
 ### Performance / proof-size direction
 
