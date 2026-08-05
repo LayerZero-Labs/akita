@@ -1,5 +1,7 @@
 #[allow(unused_imports)]
 use super::*;
+#[cfg(feature = "catalog-gen")]
+use akita_types::extension_opening_reduction_level_bytes;
 
 #[cfg(test)]
 fn find_schedule(

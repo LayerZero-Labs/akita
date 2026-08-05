@@ -10,8 +10,6 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
-#[cfg(all(test, feature = "catalog-gen"))]
-use akita_types::extension_opening_reduction_level_bytes;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
@@ -36,9 +34,8 @@ pub(crate) mod mixed_search;
 mod objective;
 mod setup_score;
 mod suffix_dp;
-#[cfg(feature = "test-support")]
-pub(crate) mod test_support;
 #[cfg(test)]
+#[path = "test/unpruned_search.rs"]
 mod unpruned_search;
 
 pub use akita_types::suffix_opening_layout;
@@ -293,6 +290,48 @@ pub(crate) fn materialize_candidate_schedule(
         .filter(|fold| fold.params.incoming_setup_prefix.is_some())
         .count();
     Ok(PlannedFoldSchedule { schedule, estimate })
+}
+
+/// Inputs for setup-prefix commitment planning.
+pub struct SetupPrefixPlanRequest<'a> {
+    pub policy: &'a PlannerPolicy,
+    pub ring_challenge: &'a SparseChallengeConfig,
+    pub fold_shape: TensorChallengeShape,
+    pub log_basis_outer: u32,
+    pub log_basis_open: u32,
+    pub prefix_field_elements: usize,
+    pub num_chunks: usize,
+    pub outer_ring_dimension: usize,
+}
+
+/// Plan one setup-prefix commitment for a retained predecessor setup matrix.
+///
+/// # Errors
+///
+/// Returns an error for malformed policy or dimensions, or when no audited
+/// secure setup-prefix geometry exists.
+pub fn plan_setup_prefix_commitment(
+    request: SetupPrefixPlanRequest<'_>,
+) -> Result<PrecommittedLevelParams, AkitaError> {
+    validate_policy(request.policy)?;
+    candidate::derive_setup_prefix_group(
+        request.policy,
+        request.ring_challenge,
+        request.fold_shape,
+        request.log_basis_outer,
+        request.log_basis_open,
+        request.prefix_field_elements,
+        request.num_chunks,
+        request.outer_ring_dimension,
+    )?
+    .ok_or_else(|| {
+        AkitaError::UnsupportedSchedule(format!(
+            "no setup-prefix commitment at A{}/B{} for n_prefix={}",
+            request.policy.setup_prefix_inner_ring_dimension,
+            request.outer_ring_dimension,
+            request.prefix_field_elements
+        ))
+    })
 }
 
 pub(crate) fn candidate_schedule_descriptor_bytes(
@@ -703,4 +742,6 @@ pub fn plan_optimal_suffix(
     })
 }
 
+#[cfg(test)]
+#[path = "test/schedule_params.rs"]
 mod tests;

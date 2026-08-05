@@ -76,7 +76,6 @@ logging-transcript = [
 test-support = [
   "dep:akita-planner",
   "akita-config/test-support",
-  "akita-planner/test-support",
 ]
 
 [dependencies]

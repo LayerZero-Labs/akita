@@ -13,10 +13,5 @@ pub(super) use setup_prefix::derive_setup_prefix_group;
 pub(crate) use setup_prefix::planned_next_witness_len;
 
 #[cfg(test)]
-use recursive::{
-    recursive_candidate_order_key, recursive_split_lower_bound, seed_recursive_split_candidates,
-    RecursiveSplitLowerBoundInput,
-};
-
-#[cfg(test)]
+#[path = "../test/schedule_params_candidate.rs"]
 mod tests;
