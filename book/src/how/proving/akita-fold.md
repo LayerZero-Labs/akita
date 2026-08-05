@@ -404,14 +404,31 @@ segments to the public commitments $\mathbf u$ and $\mathbf v_D$.
 
 ### 1. Fold-evaluation consistency
 
-The purpose of this row is to bind the blockwise partial evaluations to the
-same random fold used for the polynomial blocks. Equation (8a) batches all
-partial-evaluation identities with the fresh challenges $c_b$. When every
-$E_b$ is correct, evaluating positions and folding blocks in either order
-produces $\sum_b c_bE_b$. If even one partial evaluation is inconsistent, it
-is unlikely that its error will cancel in this random combination. Moreover,
-the opening digits are committed through $\mathbf v_D$ before the challenges
-are sampled, so they cannot be adjusted after the $c_b$ values are known.
+For every block $b$, the partial evaluation $E_b$ must be computed from the
+same polynomial digits $\mathbf s_b$ that enter the fold. Equations (1) and
+(5) give the blockwise identity
+
+$$
+\boxed{
+E_b
+=
+\sum_p Q_pF_{p,b}
+=
+\sum_{p,a}Q_pG_a^{\mathrm{in}}s_{b,p,a}.
+}
+\tag{11}
+$$
+
+Rather than checking Equation (11) separately for every block, Equation (8a)
+uses the random challenges $c_b$ to batch them as
+$\sum_b c_bE_b=\sum_{p,a}Q_pG_a^{\mathrm{in}}z_{p,a}$. The left side folds
+the claimed partial evaluations, while the right side evaluates the same
+challenge-folded response $\mathbf z$. Thus one ring equation checks that
+evaluating positions and folding blocks give the same result. If any
+blockwise identity is inconsistent, its error is unlikely to cancel in this
+random combination. Moreover, the opening digits are committed through
+$\mathbf v_D$ before the challenges are sampled, so they cannot be adjusted
+after the $c_b$ values are known.
 
 To express Equation (8a) in terms of the next-fold witness, substitute the
 balanced digit representations of $E_b$ from Equation (6) and $\mathbf z$
@@ -425,7 +442,7 @@ c_bG_h^{\mathrm{open}}\hat e_{b,h}
 \sum_{p,a,f}
 Q_pG_a^{\mathrm{in}}G_f^{\mathrm{fold}}\hat z_{p,a,f}.
 }
-\tag{11}
+\tag{12}
 $$
 
 This row uses the random fold challenges $c_b$, not the block-opening weights
@@ -458,10 +475,10 @@ c_bG_h^{\mathrm{out}}\hat t_{b,\rho,h}
 \sum_{p,a,f}
 A_{\rho,(p,a)}G_f^{\mathrm{fold}}\hat z_{p,a,f}.
 }
-\tag{12}
+\tag{13}
 $$
 
-There is no factor $G_a^{\mathrm{in}}$ on the right of Equation (12):
+There is no factor $G_a^{\mathrm{in}}$ on the right of Equation (13):
 $\mathbf A$ already acts on the inner digit vector $\mathbf s_b$, whose
 columns are indexed by $(p,a)$.
 
@@ -478,7 +495,7 @@ $$
 =
 \mathbf u.
 }
-\tag{13}
+\tag{14}
 $$
 
 This is a direct commitment check and therefore does not use the fold
@@ -496,7 +513,7 @@ $$
 =
 \mathbf v_D.
 }
-\tag{14}
+\tag{15}
 $$
 
 This prevents the prover from changing the partial-evaluation digits after
@@ -515,7 +532,7 @@ $$
 \hat{\mathbf e}
 \;\Vert\;
 \hat{\mathbf t}.
-\tag{15}
+\tag{16}
 $$
 
 The four relation families can be written as one matrix equation
@@ -525,17 +542,17 @@ $$
 \mathbf M_0\mathbf w_0=\mathbf y
 \quad\text{over }R.
 }
-\tag{16}
+\tag{17}
 $$
 
 For one group, the physical row order and right-hand side are:
 
 | Physical rows | Meaning | Right-hand side |
 |---|---|---|
-| `consistency` | Equation (11) | $0$ |
-| $\mathbf A$ rows | Equation (12) | $\mathbf 0$ |
-| $\mathbf B$ rows | Equation (13) | $\mathbf u$ |
-| $\mathbf D$ rows | Equation (14) | $\mathbf v_D$ |
+| `consistency` | Equation (12) | $0$ |
+| $\mathbf A$ rows | Equation (13) | $\mathbf 0$ |
+| $\mathbf B$ rows | Equation (14) | $\mathbf u$ |
+| $\mathbf D$ rows | Equation (15) | $\mathbf v_D$ |
 
 Consequently,
 
@@ -549,7 +566,7 @@ $$
 \mathbf u
 \;\Vert\;
 \mathbf v_D.
-\tag{17}
+\tag{18}
 $$
 
 The matrix is usually not materialized as one dense object. Its entries come
@@ -559,7 +576,7 @@ contributions directly from the canonical witness layout.
 
 ## Lift the ring relation before sumcheck
 
-Equation (16) is an equality modulo $X^D+1$. Sumcheck, however, needs a field
+Equation (17) is an equality modulo $X^D+1$. Sumcheck, however, needs a field
 identity. Choose the canonical representatives of degree less than $D$ for
 all ring elements. There is then one quotient polynomial for every physical
 row:
@@ -570,7 +587,7 @@ $$
 \widetilde{\mathbf y}(X)
 =
 (X^D+1)\mathbf r(X).
-\tag{18}
+\tag{19}
 $$
 
 Digit-decompose the quotient vector:
@@ -579,7 +596,7 @@ $$
 \mathbf r(X)
 =
 \mathbf G_r\hat{\mathbf r}(X),
-\tag{19}
+\tag{20}
 $$
 
 and append its digits to the committed witness:
@@ -596,7 +613,7 @@ $$
 \;\Vert\;
 \hat{\mathbf r}.
 }
-\tag{20}
+\tag{21}
 $$
 
 Move the denominator term to the left and define
@@ -609,7 +626,7 @@ $$
 \;\middle|\;
 -(X^D+1)\mathbf G_r
 \right].
-\tag{21}
+\tag{22}
 $$
 
 The extended relation is the exact polynomial identity
@@ -620,24 +637,24 @@ $$
 =
 \widetilde{\mathbf y}(X).
 }
-\tag{22}
+\tag{23}
 $$
 
-This distinction is important: Equation (18) uses the quotient
-$\mathbf r$, while Equation (22) already includes the quotient digits
+This distinction is important: Equation (19) uses the quotient
+$\mathbf r$, while Equation (23) already includes the quotient digits
 $\hat{\mathbf r}$ inside $\mathbf w$. The denominator term must not be added
 to the right-hand side a second time.
 
-Ring switching now samples $\alpha$ and evaluates Equation (22):
+Ring switching now samples $\alpha$ and evaluates Equation (23):
 
 $$
 \mathbf M_{\mathrm{ext}}(\alpha)\mathbf w(\alpha)
 =
 \mathbf y(\alpha).
-\tag{23}
+\tag{24}
 $$
 
-Equation (23) is the field relation consumed by Stage 2. The
+Equation (24) is the field relation consumed by Stage 2. The
 [Sumcheck stages](./sumcheck-stages.md#stage-2-fused-relation-sumcheck) page
 explains how $\tau_1$ batches its physical rows and how the resulting relation
 is proved over the flat witness address.
@@ -660,7 +677,7 @@ is absent from $\mathbf M_0$, $\mathbf y$, and the quotient vector
 $\mathbf r$.
 
 [Sumcheck stages](./sumcheck-stages.md#stage-2-fused-relation-sumcheck)
-continues from Equation (23) and fuses the physical relation, the virtual
+continues from Equation (24) and fuses the physical relation, the virtual
 evaluation row, and the range-image binding into one Stage-2 sumcheck.
 
 ## Code reference
