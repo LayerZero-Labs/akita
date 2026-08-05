@@ -50,6 +50,15 @@ described on this page.
 
 ## Objects entering the fold
 
+Before deriving the four relation families, we first identify the secret
+objects on which they act. Starting from the digit vectors of the old
+polynomial blocks, the prover derives inner-image digits
+$\hat{\mathbf t}$ and partial-evaluation digits $\hat{\mathbf e}$, then folds
+the block digits into $\mathbf z$ and digitizes it as $\hat{\mathbf z}$. These
+three digit vectors become the main segments of the next committed witness.
+This section introduces them in dependency order, beginning with the bounded
+digit representation required by the commitment binding argument.
+
 ### Why the witness is digit-decomposed
 
 The witness committed for the next level must have bounded coefficients. This
