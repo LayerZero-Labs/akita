@@ -1,8 +1,10 @@
 //! Sparse compact-geometry relation and restricted-binary terms.
 
-use akita_algebra::UniPoly;
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
-use std::collections::BTreeMap;
+use akita_algebra::{poly::trim_trailing_zeros, UniPoly};
+use akita_field::unreduced::HasUnreducedOps;
+use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
+use akita_sumcheck::reduce_signed_accum;
+use std::cmp::Ordering;
 use std::ops::Range;
 
 #[derive(Clone, Copy)]
@@ -39,7 +41,7 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
                 actual: compact_witness.len(),
             });
         }
-        let mut combined = BTreeMap::<usize, (E, E)>::new();
+        let mut collapsed_linear = Vec::<(usize, E)>::with_capacity(linear_weights.len());
         for (index, value) in linear_weights {
             if index >= domain_len {
                 return Err(AkitaError::InvalidSize {
@@ -47,9 +49,23 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
                     actual: index.saturating_add(1),
                 });
             }
-            combined.entry(index).or_insert((E::zero(), E::zero())).0 += value;
+            if let Some((previous_index, previous_value)) = collapsed_linear.last_mut() {
+                if index < *previous_index {
+                    return Err(AkitaError::InvalidInput(
+                        "compression relation weights are not sorted".into(),
+                    ));
+                }
+                if index == *previous_index {
+                    *previous_value += value;
+                    continue;
+                }
+            }
+            collapsed_linear.push((index, value));
         }
+        collapsed_linear.retain(|(_, value)| !value.is_zero());
+
         let mut previous_end = 0usize;
+        let mut binary_support_len = 0usize;
         for interval in binary_intervals {
             if interval.start >= interval.end
                 || interval.start < previous_end
@@ -59,21 +75,74 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
                     "negative-binary support interval is malformed".into(),
                 ));
             }
-            for index in interval.clone() {
-                combined.entry(index).or_insert((E::zero(), E::zero())).1 += E::one();
-            }
+            binary_support_len = binary_support_len
+                .checked_add(interval.len())
+                .ok_or_else(|| AkitaError::InvalidSetup("binary support length overflow".into()))?;
             previous_end = interval.end;
         }
-        let weights = combined
-            .into_iter()
-            .filter_map(|(index, (linear, binary))| {
-                (!linear.is_zero() || !binary.is_zero()).then_some(SparseWeight {
-                    index,
-                    linear,
-                    binary,
-                })
-            })
-            .collect::<Vec<_>>();
+
+        // Both sources are already sorted. Merge them directly instead of
+        // paying one tree lookup and allocation per compression coordinate.
+        let capacity = collapsed_linear
+            .len()
+            .checked_add(binary_support_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("sparse weight capacity overflow".into()))?;
+        let mut weights = Vec::with_capacity(capacity);
+        let mut linear = collapsed_linear.into_iter().peekable();
+        let mut binary = binary_intervals
+            .iter()
+            .flat_map(|interval| interval.clone())
+            .peekable();
+        loop {
+            match (linear.peek(), binary.peek()) {
+                (Some(&(linear_index, _)), Some(&binary_index)) => {
+                    match linear_index.cmp(&binary_index) {
+                        Ordering::Less => {
+                            let (index, linear) = linear.next().ok_or(AkitaError::InvalidProof)?;
+                            weights.push(SparseWeight {
+                                index,
+                                linear,
+                                binary: E::zero(),
+                            });
+                        }
+                        Ordering::Equal => {
+                            let (index, linear) = linear.next().ok_or(AkitaError::InvalidProof)?;
+                            binary.next();
+                            weights.push(SparseWeight {
+                                index,
+                                linear,
+                                binary: E::one(),
+                            });
+                        }
+                        Ordering::Greater => {
+                            let index = binary.next().ok_or(AkitaError::InvalidProof)?;
+                            weights.push(SparseWeight {
+                                index,
+                                linear: E::zero(),
+                                binary: E::one(),
+                            });
+                        }
+                    }
+                }
+                (Some(_), None) => {
+                    weights.extend(linear.map(|(index, linear)| SparseWeight {
+                        index,
+                        linear,
+                        binary: E::zero(),
+                    }));
+                    break;
+                }
+                (None, Some(_)) => {
+                    weights.extend(binary.map(|index| SparseWeight {
+                        index,
+                        linear: E::zero(),
+                        binary: E::one(),
+                    }));
+                    break;
+                }
+                (None, None) => break,
+            }
+        }
         let input_claim = weights.iter().fold(E::zero(), |sum, weight| {
             let witness = compact_witness
                 .get(weight.index)
@@ -93,8 +162,14 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
         self.input_claim
     }
 
+    /// Compute the complete cubic directly in coefficient form.
+    ///
+    /// For one folded pair, write `w(t) = w0 + t dw`, and likewise for the
+    /// linear and binary weights. Expanding
+    /// `w(t) l(t) + rho b(t) w(t) (w(t) + 1)` once avoids four separate point
+    /// evaluations followed by generic interpolation.
     fn round_polynomial_with(&self, witness_at: impl Fn(usize) -> E) -> UniPoly<E> {
-        let mut evaluations = [E::zero(); 4];
+        let mut coefficients = [E::zero(); 4];
         let mut cursor = 0usize;
         while cursor < self.weights.len() {
             let parent = self.weights[cursor].index >> 1;
@@ -111,23 +186,39 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
             let dw = witness[1] - witness[0];
             let d_linear = linear[1] - linear[0];
             let d_binary = binary[1] - binary[0];
-            for (point, evaluation) in evaluations.iter_mut().enumerate() {
-                let t = E::from_u64(point as u64);
-                let witness_t = witness[0] + t * dw;
-                let linear_t = linear[0] + t * d_linear;
-                let binary_t = binary[0] + t * d_binary;
-                *evaluation += witness_t * linear_t
-                    + self.binary_batching * binary_t * witness_t * (witness_t + E::one());
-            }
+
+            let witness_square_constant = witness[0] * (witness[0] + E::one());
+            let witness_square_linear = dw * (witness[0] + witness[0] + E::one());
+            let witness_square_quadratic = dw * dw;
+            let batched_binary = self.binary_batching * binary[0];
+            let batched_binary_delta = self.binary_batching * d_binary;
+
+            coefficients[0] += witness[0] * linear[0] + batched_binary * witness_square_constant;
+            coefficients[1] += witness[0] * d_linear
+                + dw * linear[0]
+                + batched_binary * witness_square_linear
+                + batched_binary_delta * witness_square_constant;
+            coefficients[2] += dw * d_linear
+                + batched_binary * witness_square_quadratic
+                + batched_binary_delta * witness_square_linear;
+            coefficients[3] += batched_binary_delta * witness_square_quadratic;
         }
-        UniPoly::from_evals(&evaluations)
+        let mut coefficients = coefficients.to_vec();
+        trim_trailing_zeros(&mut coefficients);
+        UniPoly::from_coeffs(coefficients)
     }
 
     pub(crate) fn round_polynomial_compact(
         &self,
         compact_witness: &[i8],
         first_challenge: Option<E>,
-    ) -> UniPoly<E> {
+    ) -> UniPoly<E>
+    where
+        E: HasUnreducedOps,
+    {
+        if first_challenge.is_none() {
+            return self.round_polynomial_compact_initial(compact_witness);
+        }
         self.round_polynomial_with(|index| {
             let compact_value = |source_index| {
                 compact_witness
@@ -143,6 +234,85 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
         })
     }
 
+    /// First-round specialization while the witness is still signed bytes.
+    ///
+    /// The witness-dependent factors are small integers here. Accumulate their
+    /// products without reducing after every multiplication, matching the
+    /// compact ordinary-relation kernel used by the surrounding Stage 2 prover.
+    fn round_polynomial_compact_initial(&self, compact_witness: &[i8]) -> UniPoly<E>
+    where
+        E: HasUnreducedOps,
+    {
+        let mut coefficients = [E::MulU64Accum::zero(); 8];
+        let mut cursor = 0usize;
+        while cursor < self.weights.len() {
+            let parent = self.weights[cursor].index >> 1;
+            let mut linear = [E::zero(); 2];
+            let mut binary = [E::zero(); 2];
+            while cursor < self.weights.len() && self.weights[cursor].index >> 1 == parent {
+                let weight = self.weights[cursor];
+                let side = weight.index & 1;
+                linear[side] = weight.linear;
+                binary[side] = weight.binary;
+                cursor += 1;
+            }
+            let witness_at = |index| compact_witness.get(index).copied().map_or(0, i64::from);
+            let witness = witness_at(2 * parent);
+            let witness_delta = witness_at(2 * parent + 1) - witness;
+            let linear_delta = linear[1] - linear[0];
+            let binary_delta = binary[1] - binary[0];
+            let witness_square_constant = witness * (witness + 1);
+            let witness_square_linear = witness_delta * (2 * witness + 1);
+            let witness_square_quadratic = witness_delta * witness_delta;
+            let batched_binary = self.binary_batching * binary[0];
+            let batched_binary_delta = self.binary_batching * binary_delta;
+
+            super::accum_small_signed(&mut coefficients, 0, linear[0], witness);
+            super::accum_small_signed(
+                &mut coefficients,
+                0,
+                batched_binary,
+                witness_square_constant,
+            );
+            super::accum_small_signed(&mut coefficients, 2, linear_delta, witness);
+            super::accum_small_signed(&mut coefficients, 2, linear[0], witness_delta);
+            super::accum_small_signed(&mut coefficients, 2, batched_binary, witness_square_linear);
+            super::accum_small_signed(
+                &mut coefficients,
+                2,
+                batched_binary_delta,
+                witness_square_constant,
+            );
+            super::accum_small_signed(&mut coefficients, 4, linear_delta, witness_delta);
+            super::accum_small_signed(
+                &mut coefficients,
+                4,
+                batched_binary,
+                witness_square_quadratic,
+            );
+            super::accum_small_signed(
+                &mut coefficients,
+                4,
+                batched_binary_delta,
+                witness_square_linear,
+            );
+            super::accum_small_signed(
+                &mut coefficients,
+                6,
+                batched_binary_delta,
+                witness_square_quadratic,
+            );
+        }
+        let mut coefficients = vec![
+            reduce_signed_accum::<E>(coefficients[0], coefficients[1]),
+            reduce_signed_accum::<E>(coefficients[2], coefficients[3]),
+            reduce_signed_accum::<E>(coefficients[4], coefficients[5]),
+            reduce_signed_accum::<E>(coefficients[6], coefficients[7]),
+        ];
+        trim_trailing_zeros(&mut coefficients);
+        UniPoly::from_coeffs(coefficients)
+    }
+
     pub(crate) fn round_polynomial_folded(&self, folded_witness: &[E]) -> UniPoly<E> {
         self.round_polynomial_with(|index| {
             folded_witness.get(index).copied().unwrap_or_else(E::zero)
@@ -151,31 +321,33 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
 
     pub(crate) fn bind(&mut self, challenge: E) {
         let even_scale = E::one() - challenge;
-        let mut folded: Vec<SparseWeight<E>> = Vec::with_capacity(self.weights.len());
-        for weight in self.weights.drain(..) {
-            let scale = if weight.index & 1 == 0 {
-                even_scale
-            } else {
-                challenge
-            };
-            let parent = weight.index >> 1;
-            let linear = scale * weight.linear;
-            let binary = scale * weight.binary;
-            if let Some(last) = folded.last_mut() {
-                if last.index == parent {
-                    last.linear += linear;
-                    last.binary += binary;
-                    continue;
-                }
+        let mut read = 0usize;
+        let mut write = 0usize;
+        while read < self.weights.len() {
+            let parent = self.weights[read].index >> 1;
+            let mut linear = E::zero();
+            let mut binary = E::zero();
+            while read < self.weights.len() && self.weights[read].index >> 1 == parent {
+                let weight = self.weights[read];
+                let scale = if weight.index & 1 == 0 {
+                    even_scale
+                } else {
+                    challenge
+                };
+                linear += scale * weight.linear;
+                binary += scale * weight.binary;
+                read += 1;
             }
-            folded.push(SparseWeight {
-                index: parent,
-                linear,
-                binary,
-            });
+            if !linear.is_zero() || !binary.is_zero() {
+                self.weights[write] = SparseWeight {
+                    index: parent,
+                    linear,
+                    binary,
+                };
+                write += 1;
+            }
         }
-        folded.retain(|weight| !weight.linear.is_zero() || !weight.binary.is_zero());
-        self.weights = folded;
+        self.weights.truncate(write);
         self.domain_len /= 2;
     }
 
@@ -198,6 +370,42 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
 mod tests {
     use super::*;
     use akita_field::Prime128OffsetA7F7 as F;
+
+    fn reference_round_evaluation(
+        terms: &AdditionalRelationTerms<F>,
+        witness: &[i8],
+        point: F,
+    ) -> F {
+        let mut evaluation = F::zero();
+        let mut cursor = 0usize;
+        while cursor < terms.weights.len() {
+            let parent = terms.weights[cursor].index >> 1;
+            let mut linear = [F::zero(); 2];
+            let mut binary = [F::zero(); 2];
+            while cursor < terms.weights.len() && terms.weights[cursor].index >> 1 == parent {
+                let weight = terms.weights[cursor];
+                let side = weight.index & 1;
+                linear[side] = weight.linear;
+                binary[side] = weight.binary;
+                cursor += 1;
+            }
+            let witness_at = |index| {
+                witness
+                    .get(index)
+                    .map_or_else(F::zero, |&value| F::from_i64(i64::from(value)))
+            };
+            let left = witness_at(2 * parent);
+            let witness_at_point = left + point * (witness_at(2 * parent + 1) - left);
+            let linear_at_point = linear[0] + point * (linear[1] - linear[0]);
+            let binary_at_point = binary[0] + point * (binary[1] - binary[0]);
+            evaluation += witness_at_point * linear_at_point
+                + terms.binary_batching
+                    * binary_at_point
+                    * witness_at_point
+                    * (witness_at_point + F::one());
+        }
+        evaluation
+    }
 
     #[test]
     fn round_polynomial_matches_boolean_sum_and_fold() {
@@ -252,5 +460,71 @@ mod tests {
 
         let valid = AdditionalRelationTerms::new(&[-1, 0], 2, Vec::new(), support, rho).unwrap();
         assert_eq!(valid.input_claim(), F::zero());
+    }
+
+    #[test]
+    fn coefficient_kernel_matches_direct_cubic_evaluation() {
+        let witness = [-1, 0, 2, -2, 1, 3, -4, 0];
+        let linear = vec![
+            (0, F::from_u64(3)),
+            (1, F::from_u64(5)),
+            (3, F::from_u64(7)),
+            (6, F::from_u64(11)),
+        ];
+        let terms =
+            AdditionalRelationTerms::new(&witness, 8, linear, &[1..4, 6..8], F::from_u64(13))
+                .unwrap();
+        let polynomial = terms.round_polynomial_compact(&witness, None);
+        for point in 0..=5 {
+            let point = F::from_u64(point);
+            assert_eq!(
+                polynomial.evaluate(&point),
+                reference_round_evaluation(&terms, &witness, point)
+            );
+        }
+    }
+
+    #[test]
+    fn construction_linearly_merges_duplicates_and_binary_support() {
+        let terms = AdditionalRelationTerms::new(
+            &[0; 8],
+            8,
+            vec![
+                (0, F::from_u64(2)),
+                (0, F::from_u64(3)),
+                (3, F::from_u64(7)),
+                (7, F::from_u64(11)),
+            ],
+            &[1..4, 6..8],
+            F::from_u64(13),
+        )
+        .unwrap();
+        assert_eq!(
+            terms
+                .weights
+                .iter()
+                .map(|weight| (weight.index, weight.linear, weight.binary))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, F::from_u64(5), F::zero()),
+                (1, F::zero(), F::one()),
+                (2, F::zero(), F::one()),
+                (3, F::from_u64(7), F::one()),
+                (6, F::zero(), F::one()),
+                (7, F::from_u64(11), F::one()),
+            ]
+        );
+    }
+
+    #[test]
+    fn construction_rejects_unsorted_linear_weights() {
+        assert!(AdditionalRelationTerms::new(
+            &[0; 4],
+            4,
+            vec![(2, F::one()), (1, F::one())],
+            &[],
+            F::one(),
+        )
+        .is_err());
     }
 }
