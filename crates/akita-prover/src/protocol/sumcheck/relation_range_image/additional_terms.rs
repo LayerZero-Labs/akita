@@ -1,6 +1,6 @@
 //! Sparse compact-geometry relation and restricted-binary terms.
 
-use akita_algebra::{poly::trim_trailing_zeros, UniPoly};
+use akita_algebra::{offset_eq::OffsetEqWindow, poly::trim_trailing_zeros, UniPoly};
 use akita_field::unreduced::HasUnreducedOps;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::reduce_signed_accum;
@@ -33,12 +33,20 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
         domain_len: usize,
         linear_weights: Vec<(usize, E)>,
         binary_intervals: &[Range<usize>],
+        binary_equality_point: &[E],
         binary_batching: E,
     ) -> Result<Self, AkitaError> {
         if !domain_len.is_power_of_two() || compact_witness.len() > domain_len {
             return Err(AkitaError::InvalidSize {
                 expected: domain_len,
                 actual: compact_witness.len(),
+            });
+        }
+        let expected_equality_variables = domain_len.trailing_zeros() as usize;
+        if binary_equality_point.len() != expected_equality_variables {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_equality_variables,
+                actual: binary_equality_point.len(),
             });
         }
         let mut collapsed_linear = Vec::<(usize, E)>::with_capacity(linear_weights.len());
@@ -87,15 +95,17 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
             .len()
             .checked_add(binary_support_len)
             .ok_or_else(|| AkitaError::InvalidSetup("sparse weight capacity overflow".into()))?;
+        let binary_equality = OffsetEqWindow::new(binary_equality_point)?;
         let mut weights = Vec::with_capacity(capacity);
         let mut linear = collapsed_linear.into_iter().peekable();
         let mut binary = binary_intervals
             .iter()
             .flat_map(|interval| interval.clone())
+            .map(|index| (index, binary_equality.eval(index)))
             .peekable();
         loop {
             match (linear.peek(), binary.peek()) {
-                (Some(&(linear_index, _)), Some(&binary_index)) => {
+                (Some(&(linear_index, _)), Some(&(binary_index, _))) => {
                     match linear_index.cmp(&binary_index) {
                         Ordering::Less => {
                             let (index, linear) = linear.next().ok_or(AkitaError::InvalidProof)?;
@@ -107,19 +117,19 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
                         }
                         Ordering::Equal => {
                             let (index, linear) = linear.next().ok_or(AkitaError::InvalidProof)?;
-                            binary.next();
+                            let (_, binary) = binary.next().ok_or(AkitaError::InvalidProof)?;
                             weights.push(SparseWeight {
                                 index,
                                 linear,
-                                binary: E::one(),
+                                binary,
                             });
                         }
                         Ordering::Greater => {
-                            let index = binary.next().ok_or(AkitaError::InvalidProof)?;
+                            let (index, binary) = binary.next().ok_or(AkitaError::InvalidProof)?;
                             weights.push(SparseWeight {
                                 index,
                                 linear: E::zero(),
-                                binary: E::one(),
+                                binary,
                             });
                         }
                     }
@@ -133,10 +143,10 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
                     break;
                 }
                 (None, Some(_)) => {
-                    weights.extend(binary.map(|index| SparseWeight {
+                    weights.extend(binary.map(|(index, binary)| SparseWeight {
                         index,
                         linear: E::zero(),
-                        binary: E::one(),
+                        binary,
                     }));
                     break;
                 }
@@ -369,7 +379,14 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_algebra::offset_eq::eq_eval_at_index;
     use akita_field::Prime128OffsetA7F7 as F;
+
+    fn equality_point(domain_len: usize) -> Vec<F> {
+        (0..domain_len.trailing_zeros() as usize)
+            .map(|index| F::from_u64(2 + index as u64))
+            .collect()
+    }
 
     fn reference_round_evaluation(
         terms: &AdditionalRelationTerms<F>,
@@ -417,11 +434,16 @@ mod tests {
             (3, F::from_u64(11)),
         ];
         let rho = F::from_u64(13);
+        let equality_point = equality_point(4);
         let claim = witness.iter().zip([3, 5, 7, 11]).enumerate().fold(
             F::zero(),
             |sum, (index, (&witness, linear))| {
                 let witness = F::from_i64(i64::from(witness));
-                let binary = F::from_u64(u64::from(index < 2));
+                let binary = if index < 2 {
+                    eq_eval_at_index(&equality_point, index)
+                } else {
+                    F::zero()
+                };
                 sum + witness * F::from_u64(linear) + rho * binary * witness * (witness + F::one())
             },
         );
@@ -431,6 +453,7 @@ mod tests {
             4,
             linear,
             std::slice::from_ref(&binary_interval),
+            &equality_point,
             rho,
         )
         .unwrap();
@@ -455,10 +478,18 @@ mod tests {
         let rho = F::from_u64(13);
         let binary_interval = 0..1;
         let support = std::slice::from_ref(&binary_interval);
-        let invalid = AdditionalRelationTerms::new(&[2, 0], 2, Vec::new(), support, rho).unwrap();
-        assert_eq!(invalid.input_claim(), rho * F::from_u64(6));
+        let equality_point = equality_point(2);
+        let invalid =
+            AdditionalRelationTerms::new(&[2, 0], 2, Vec::new(), support, &equality_point, rho)
+                .unwrap();
+        assert_eq!(
+            invalid.input_claim(),
+            rho * eq_eval_at_index(&equality_point, 0) * F::from_u64(6)
+        );
 
-        let valid = AdditionalRelationTerms::new(&[-1, 0], 2, Vec::new(), support, rho).unwrap();
+        let valid =
+            AdditionalRelationTerms::new(&[-1, 0], 2, Vec::new(), support, &equality_point, rho)
+                .unwrap();
         assert_eq!(valid.input_claim(), F::zero());
     }
 
@@ -471,9 +502,15 @@ mod tests {
             (3, F::from_u64(7)),
             (6, F::from_u64(11)),
         ];
-        let terms =
-            AdditionalRelationTerms::new(&witness, 8, linear, &[1..4, 6..8], F::from_u64(13))
-                .unwrap();
+        let terms = AdditionalRelationTerms::new(
+            &witness,
+            8,
+            linear,
+            &[1..4, 6..8],
+            &equality_point(8),
+            F::from_u64(13),
+        )
+        .unwrap();
         let polynomial = terms.round_polynomial_compact(&witness, None);
         for point in 0..=5 {
             let point = F::from_u64(point);
@@ -486,6 +523,7 @@ mod tests {
 
     #[test]
     fn construction_linearly_merges_duplicates_and_binary_support() {
+        let equality_point = equality_point(8);
         let terms = AdditionalRelationTerms::new(
             &[0; 8],
             8,
@@ -496,6 +534,7 @@ mod tests {
                 (7, F::from_u64(11)),
             ],
             &[1..4, 6..8],
+            &equality_point,
             F::from_u64(13),
         )
         .unwrap();
@@ -507,11 +546,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 (0, F::from_u64(5), F::zero()),
-                (1, F::zero(), F::one()),
-                (2, F::zero(), F::one()),
-                (3, F::from_u64(7), F::one()),
-                (6, F::zero(), F::one()),
-                (7, F::from_u64(11), F::one()),
+                (1, F::zero(), eq_eval_at_index(&equality_point, 1)),
+                (2, F::zero(), eq_eval_at_index(&equality_point, 2)),
+                (3, F::from_u64(7), eq_eval_at_index(&equality_point, 3)),
+                (6, F::zero(), eq_eval_at_index(&equality_point, 6)),
+                (7, F::from_u64(11), eq_eval_at_index(&equality_point, 7)),
             ]
         );
     }
@@ -523,6 +562,7 @@ mod tests {
             4,
             vec![(2, F::one()), (1, F::one())],
             &[],
+            &equality_point(4),
             F::one(),
         )
         .is_err());

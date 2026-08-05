@@ -134,7 +134,8 @@ where
         ) {
             (Some(weights), Some(support), Some(binary_batching)) => {
                 let compression_relation_weight = weights.evaluate_at_point(challenges)?;
-                let binary_weight = support.evaluate_at_point(challenges)?;
+                let binary_weight = support
+                    .evaluate_restricted_equality_at_point(&self.stage1_point, challenges)?;
                 w_eval * compression_relation_weight
                     + binary_batching * binary_weight * w_eval * (w_eval + E::one())
             }

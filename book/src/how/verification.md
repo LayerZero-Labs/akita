@@ -25,9 +25,9 @@ At a high level:
 At each nonterminal fold, the verifier checks fixed 128-byte `p_H` and `p_F`
 payload shapes, reconstructs the B, D, F, and H relation right hand sides, and
 folds the compression relations at their native ring dimensions. It derives
-the negative-binary support from `WitnessLayout` and evaluates its indicator
-sparsely; compression roles never enlarge or shrink the ordinary A/B/D common
-address block.
+the negative-binary support from `WitnessLayout` and evaluates the stage-1
+equality table restricted to those intervals; compression roles never enlarge
+or shrink the ordinary A/B/D common address block.
 
 Root replay reads each commitment group's point directly from
 `PolynomialGroupClaims`.

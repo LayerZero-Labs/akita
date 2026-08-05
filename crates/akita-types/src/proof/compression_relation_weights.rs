@@ -1,7 +1,9 @@
 //! Shared compact F/H relation weights for prover materialization and verifier evaluation.
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::offset_eq::{eq_eval_at_index, OffsetEqWindow};
+use akita_algebra::offset_eq::{
+    eval_eq_pair_tensor_families, EqPairTensorAxis, EqPairTensorFamily, OffsetEqWindow,
+};
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_field::{
@@ -20,6 +22,15 @@ struct CompressionRelationEvent<E: FieldCore> {
     coefficient_count: usize,
     alpha_exponent_start: usize,
     scalar: E,
+}
+
+/// One alpha-evaluated prefix of the universal rank-one compression matrix.
+/// F and H rows with identical map geometry share this data.
+struct EvaluatedCompressionMatrix<E: FieldCore> {
+    input_width: usize,
+    ring_dimension: usize,
+    powers: Vec<E>,
+    columns: Vec<E>,
 }
 
 /// Canonical additive relation table for every F/H compression layer.
@@ -83,33 +94,39 @@ impl NegativeBinarySupport {
         &self.intervals
     }
 
-    /// Evaluate the support indicator MLE using a logarithmic dyadic cover.
+    /// Evaluate the equality table anchored at `equality_point`, restricted to
+    /// this support, at one full witness point.
+    ///
+    /// This is the single MLE
+    /// `sum_{index in support} eq(equality_point, index) * eq(point, index)`,
+    /// not the product of the two separately extended tables.
     #[tracing::instrument(skip_all, name = "negative_binary_support_mle")]
-    pub fn evaluate_at_point<E: FieldCore>(&self, point: &[E]) -> Result<E, AkitaError> {
-        if self.physical_field_len != 1usize.checked_shl(point.len() as u32).unwrap_or(0) {
+    pub fn evaluate_restricted_equality_at_point<E: FieldCore>(
+        &self,
+        equality_point: &[E],
+        point: &[E],
+    ) -> Result<E, AkitaError> {
+        if equality_point.len() != point.len()
+            || self.physical_field_len != 1usize.checked_shl(point.len() as u32).unwrap_or(0)
+        {
             return Err(AkitaError::InvalidSize {
                 expected: self.physical_field_len.trailing_zeros() as usize,
-                actual: point.len(),
+                actual: equality_point.len().max(point.len()),
             });
         }
-        let mut evaluation = E::zero();
-        for interval in &self.intervals {
-            let mut start = interval.start;
-            while start < interval.end {
-                let remaining = interval.end - start;
-                let remaining_bits = usize::BITS as usize - 1 - remaining.leading_zeros() as usize;
-                let alignment_bits = if start == 0 {
-                    remaining_bits
-                } else {
-                    start.trailing_zeros() as usize
-                };
-                let low_bits = alignment_bits.min(remaining_bits);
-                let high_point = point.get(low_bits..).ok_or(AkitaError::InvalidProof)?;
-                evaluation += eq_eval_at_index(high_point, start >> low_bits);
-                start += 1usize << low_bits;
-            }
-        }
-        Ok(evaluation)
+        let families = self
+            .intervals
+            .iter()
+            .map(|interval| {
+                EqPairTensorFamily::new(
+                    interval.start,
+                    interval.start,
+                    E::one(),
+                    vec![EqPairTensorAxis::unit(interval.len(), 1, 1)],
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        eval_eq_pair_tensor_families(equality_point, point, &families)
     }
 }
 
@@ -399,6 +416,7 @@ where
     };
     let field_bits = usize::try_from(F::modulus_bits())
         .map_err(|_| AkitaError::InvalidSetup("compression field width overflow".into()))?;
+    let mut evaluated_matrices = Vec::<EvaluatedCompressionMatrix<E>>::new();
 
     for (relation_group_index, group) in relation_layout.groups.iter().enumerate() {
         let (group_index, plan) = relation_layout.group_compression_plan(relation_group_index)?;
@@ -477,24 +495,51 @@ where
         };
         let map = span.map();
         let row_weight = *row_weights.get(row_index).ok_or(AkitaError::InvalidProof)?;
-        let matrix =
-            setup
-                .shared_matrix
-                .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
-        let matrix_row = matrix.row_flat(0)?;
-        let powers = scalar_powers(alpha, map.ring_dimension());
+        let matrix_index = if let Some(index) = evaluated_matrices.iter().position(|evaluated| {
+            evaluated.input_width == map.input_width()
+                && evaluated.ring_dimension == map.ring_dimension()
+        }) {
+            index
+        } else {
+            let matrix =
+                setup
+                    .shared_matrix
+                    .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
+            let matrix_row = matrix.row_flat(0)?;
+            let powers = scalar_powers(alpha, map.ring_dimension());
+            let columns = (0..map.input_width())
+                .map(|column| {
+                    let start = column * map.ring_dimension();
+                    let end = start + map.ring_dimension();
+                    Ok(eval_flat_ring_at_pows_fast(
+                        matrix_row.get(start..end).ok_or(AkitaError::InvalidProof)?,
+                        &powers,
+                    ))
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            evaluated_matrices.push(EvaluatedCompressionMatrix {
+                input_width: map.input_width(),
+                ring_dimension: map.ring_dimension(),
+                powers,
+                columns,
+            });
+            evaluated_matrices.len() - 1
+        };
+        let evaluated = evaluated_matrices
+            .get(matrix_index)
+            .ok_or(AkitaError::InvalidProof)?;
         for column in 0..map.input_width() {
             let start = column * map.ring_dimension();
-            let end = start + map.ring_dimension();
             weights.push(
                 span.range().start + start,
                 map.ring_dimension(),
                 0,
                 row_weight
-                    * eval_flat_ring_at_pows_fast(
-                        matrix_row.get(start..end).ok_or(AkitaError::InvalidProof)?,
-                        &powers,
-                    ),
+                    * evaluated
+                        .columns
+                        .get(column)
+                        .copied()
+                        .ok_or(AkitaError::InvalidProof)?,
             )?;
         }
         if map_index + 1 < crate::COMPRESSION_MAP_COUNT {
@@ -525,8 +570,13 @@ where
                 &row_weights,
             )?;
         }
-        let denominator =
-            powers.last().copied().ok_or(AkitaError::InvalidProof)? * alpha + E::one();
+        let denominator = evaluated
+            .powers
+            .last()
+            .copied()
+            .ok_or(AkitaError::InvalidProof)?
+            * alpha
+            + E::one();
         for (digit, gadget) in
             gadget_row_scalars::<F>(r_decomp_levels::<F>(lp.log_basis_open), lp.log_basis_open)
                 .into_iter()
@@ -572,17 +622,49 @@ mod tests {
     }
 
     #[test]
-    fn negative_binary_support_sparse_evaluation_matches_dense_table() {
+    fn negative_binary_support_restricted_equality_matches_dense_table() {
         let support = NegativeBinarySupport {
             intervals: vec![3..11, 16..31, 48..64],
             physical_field_len: 64,
         };
+        let equality_point = (0..6)
+            .map(|index| F::from_u64(11 + index as u64))
+            .collect::<Vec<_>>();
         let point = (0..6)
             .map(|index| F::from_u64(23 + index as u64))
             .collect::<Vec<_>>();
+        let equality = EqPolynomial::evals(&equality_point).unwrap();
+        let restricted = support
+            .materialize::<F>()
+            .into_iter()
+            .zip(equality)
+            .map(|(support, equality)| support * equality)
+            .collect::<Vec<_>>();
         assert_eq!(
-            support.evaluate_at_point(&point).unwrap(),
-            multilinear_eval(&support.materialize::<F>(), &point).unwrap()
+            support
+                .evaluate_restricted_equality_at_point(&equality_point, &point)
+                .unwrap(),
+            multilinear_eval(&restricted, &point).unwrap()
         );
+    }
+
+    #[test]
+    fn negative_binary_support_does_not_factor_restricted_equality() {
+        let support = NegativeBinarySupport {
+            intervals: std::iter::once(0..1).collect(),
+            physical_field_len: 2,
+        };
+        let equality_point = [F::from_u64(3)];
+        let point = [F::from_u64(5)];
+        let restricted = support
+            .evaluate_restricted_equality_at_point(&equality_point, &point)
+            .unwrap();
+        let factored = multilinear_eval(&support.materialize::<F>(), &point).unwrap()
+            * EqPolynomial::mle(&equality_point, &point).unwrap();
+        assert_eq!(
+            restricted,
+            (F::one() - equality_point[0]) * (F::one() - point[0])
+        );
+        assert_ne!(restricted, factored);
     }
 }

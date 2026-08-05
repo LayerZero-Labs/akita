@@ -676,6 +676,7 @@ where
                 compression_domain_len,
                 weights.into_sparse_entries()?,
                 binary_support.intervals(),
+                stage1_point,
                 binary_batching.ok_or(AkitaError::InvalidProof)?,
             )
         })
