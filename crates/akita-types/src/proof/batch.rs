@@ -607,7 +607,7 @@ pub fn validate_scalar_point_matches_poly_arity(
 ///
 /// # Errors
 ///
-/// Returns an error if the shared opening point exceeds setup capacity, the
+/// Returns an error if the group-local opening point exceeds setup capacity, the
 /// payload is empty, or the claim count exceeds setup capacity.
 pub fn validate_batched_inputs<F, E>(
     setup: &AkitaExpandedSetup<F>,
@@ -851,7 +851,7 @@ where
 /// Degree-one proof-scalar fields keep the original base-field folded-root
 /// path. For true extension proof-scalar fields, the folded path supports
 /// psi-packed inner slots plus ring-multiplier outer weights. Multiple claims
-/// at the same point are handled by one public row per point, with row-local
+/// in one group are handled by one public row per group, with row-local
 /// extension batching coefficients embedded into the ring relation.
 pub fn folded_root_supports_opening_shape<F, E, const D: usize>(
     opening_points: &[&[E]],
@@ -892,16 +892,14 @@ where
     true
 }
 
-/// Return whether root tensor projection can represent this field/ring shape.
-///
-/// `ring_d` is the schedule-derived root ring dimension (plain usize math —
-/// no typed ring work happens here).
-pub fn root_tensor_projection_enabled<F, E>(ring_d: usize, num_vars: usize) -> bool
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let width = E::EXT_DEGREE;
+/// Return whether root tensor projection can represent this extension width /
+/// ring shape. Shared by the typed gate and the planner-facing width twin.
+#[inline]
+pub(crate) fn root_tensor_projection_enabled_for_width(
+    width: usize,
+    ring_d: usize,
+    num_vars: usize,
+) -> bool {
     let Some(double_width) = width.checked_mul(2) else {
         return false;
     };
@@ -911,6 +909,18 @@ where
         && ring_d >= double_width
         && ring_d.is_multiple_of(width)
         && num_vars >= ring_d.trailing_zeros() as usize
+}
+
+/// Return whether root tensor projection can represent this field/ring shape.
+///
+/// `ring_d` is the schedule-derived root ring dimension (plain usize math —
+/// no typed ring work happens here).
+pub fn root_tensor_projection_enabled<F, E>(ring_d: usize, num_vars: usize) -> bool
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    root_tensor_projection_enabled_for_width(E::EXT_DEGREE, ring_d, num_vars)
 }
 
 #[cfg(test)]
@@ -1004,6 +1014,40 @@ mod tests {
     fn root_tensor_projection_gate_requires_room_for_signed_subfield_basis() {
         assert!(root_tensor_projection_enabled::<F, E>(8, 3));
         assert!(!root_tensor_projection_enabled::<F, E>(4, 2));
+    }
+
+    #[test]
+    fn eor_predicates_match_geometry_table() {
+        // Claim field coincides with coefficient field: never.
+        assert!(!root_tensor_projection_enabled::<F, F>(64, 10));
+        const { assert!(<F as ExtField<F>>::EXT_DEGREE <= 1) };
+
+        // Proper extension: suffix always; root follows tensor gate.
+        const { assert!(<E as ExtField<F>>::EXT_DEGREE > 1) };
+        assert!(root_tensor_projection_enabled::<F, E>(8, 3));
+        assert!(!root_tensor_projection_enabled::<F, E>(4, 2));
+
+        assert_eq!(
+            root_tensor_projection_enabled_for_width(4, 8, 3),
+            root_tensor_projection_enabled::<F, E>(8, 3)
+        );
+
+        // The width-based planner root gate must agree with the typed root gate
+        // across the whole boundary, not just at two sample points.
+        for ring_d in [1usize, 2, 4, 6, 8, 12, 16, 64, 128] {
+            for num_vars in [0usize, 1, 2, 3, 6, 7, 16] {
+                assert_eq!(
+                    root_tensor_projection_enabled_for_width(1, ring_d, num_vars),
+                    root_tensor_projection_enabled::<F, F>(ring_d, num_vars),
+                    "width-1 root disagreement at ring_d={ring_d} num_vars={num_vars}"
+                );
+                assert_eq!(
+                    root_tensor_projection_enabled_for_width(4, ring_d, num_vars),
+                    root_tensor_projection_enabled::<F, E>(ring_d, num_vars),
+                    "width-4 root disagreement at ring_d={ring_d} num_vars={num_vars}"
+                );
+            }
+        }
     }
 
     #[test]

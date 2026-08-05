@@ -54,22 +54,8 @@ pub struct RingOpeningPoint<F: FieldCore> {
 /// Returns an error if the implied weight table would overflow or exceed the
 /// verifier sequence bound.
 pub fn lagrange_weights<F: FieldCore>(point: &[F]) -> Result<Vec<F>, AkitaError> {
-    let len = basis_weight_len(point.len())?;
-    let mut weights = vec![F::zero(); len];
-    if weights.is_empty() {
-        return Ok(weights);
-    }
-    weights[0] = F::one();
-    for (level, &p) in point.iter().enumerate() {
-        let k = 1usize << level;
-        let one_minus_p = F::one() - p;
-        for i in (0..k).rev() {
-            let value = weights[i];
-            weights[i] = value * one_minus_p;
-            weights[i + k] = value * p;
-        }
-    }
-    Ok(weights)
+    basis_weight_len(point.len())?;
+    EqPolynomial::evals(point)
 }
 
 /// Multilinear monomial weights: `⊗ᵢ (1, xᵢ)`.
@@ -156,6 +142,26 @@ pub fn opening_domain_len(source_len: usize) -> Result<usize, AkitaError> {
     source_len
         .checked_next_power_of_two()
         .ok_or_else(|| AkitaError::InvalidSetup("opening domain length overflow".to_string()))
+}
+
+/// Committed coefficient length for an exact live witness prefix under a
+/// successor commitment ring dimension.
+pub fn witness_commitment_domain_len(
+    live_coeff_len: usize,
+    successor_ring_dim: usize,
+) -> Result<usize, AkitaError> {
+    if successor_ring_dim == 0 || !successor_ring_dim.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "successor commitment ring dimension must be a power of two".to_string(),
+        ));
+    }
+    let live_ring_len = live_coeff_len
+        .checked_add(successor_ring_dim - 1)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness commitment length overflow".into()))?
+        / successor_ring_dim;
+    opening_domain_len(live_ring_len)?
+        .checked_mul(successor_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness commitment domain overflow".into()))
 }
 
 /// Validate and return an index in the exact physical opening source.
@@ -264,6 +270,34 @@ mod tests {
     use akita_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
+
+    #[test]
+    fn lagrange_weights_match_direct_multilinear_basis() {
+        let x = F::from_u64(2);
+        let y = F::from_u64(3);
+        assert_eq!(lagrange_weights::<F>(&[]).unwrap(), vec![F::one()]);
+        assert_eq!(
+            lagrange_weights(&[x, y]).unwrap(),
+            vec![
+                (F::one() - x) * (F::one() - y),
+                x * (F::one() - y),
+                (F::one() - x) * y,
+                x * y,
+            ]
+        );
+    }
+
+    #[test]
+    fn lagrange_weights_preserve_the_verifier_sequence_bound() {
+        let point = vec![F::one(); DEFAULT_MAX_SEQUENCE_LEN.ilog2() as usize + 1];
+        assert!(matches!(
+            lagrange_weights(&point),
+            Err(AkitaError::InvalidSize {
+                expected: DEFAULT_MAX_SEQUENCE_LEN,
+                actual,
+            }) if actual > DEFAULT_MAX_SEQUENCE_LEN
+        ));
+    }
 
     #[test]
     fn opening_point_keeps_exact_live_block_prefix() {

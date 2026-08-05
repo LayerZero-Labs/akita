@@ -16,9 +16,9 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::PolynomialGroupLayout;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommittedGroupParams,
-    DecompositionParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixEnvelope,
-    SisModulusProfileId,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims,
+    CommittedGroupParams, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
+    SetupMatrixEnvelope, SisModulusProfileId,
 };
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
@@ -35,6 +35,8 @@ macro_rules! impl_multi_chunk_companion {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
             const D: usize = <$base as $crate::CommitmentConfig>::D;
+            const RING_DIMENSION_CANDIDATES: &'static [akita_types::CommitmentRingDims] =
+                <$base as $crate::CommitmentConfig>::RING_DIMENSION_CANDIDATES;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
 
             fn decomposition() -> akita_types::DecompositionParams {
@@ -68,8 +70,8 @@ macro_rules! impl_multi_chunk_companion {
             fn basis_range() -> (u32, u32) {
                 <$base as $crate::CommitmentConfig>::basis_range()
             }
-            fn onehot_chunk_size() -> usize {
-                <$base as $crate::CommitmentConfig>::onehot_chunk_size()
+            fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+                <$base as $crate::CommitmentConfig>::root_honest_fold_policy()
             }
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
                 $profile.cfg()
@@ -88,9 +90,9 @@ macro_rules! impl_multi_chunk_companion {
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
             ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
-                Self::runtime_schedule(
-                    $crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
-                )
+                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key(
+                    layout,
+                )?)
             }
         }
     };
@@ -105,7 +107,10 @@ pub mod tensor_verifier;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
-pub use precommitted_commitment::PrecommittedCommitmentConfig;
+pub use akita_schedules::ResolvedScheduleRow;
+pub use precommitted_commitment::{
+    committed_group_params, committed_group_profile, PrecommittedCommitmentConfig,
+};
 pub use proof_optimized::{ensure_schedule_fits_setup, setup_level_params_from_schedule};
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
@@ -117,28 +122,19 @@ pub use transcript_binding::bind_transcript_instance_descriptor;
 /// Every validation input is *derived* from the `Cfg` impl, so the `Cfg` impl
 /// stays the one source of truth for each preset's `(D, decomposition,
 /// sis_modulus_profile, ...)`.
-/// Build the canonical schedule key for a root opening batch under `Cfg`.
-///
-/// Scalar layouts yield an empty `precommitteds` vector. Multi-group layouts
-/// freeze each earlier group through the exact precommit adapter.
-pub fn opening_schedule_key<Cfg: CommitmentConfig>(
-    layout: &OpeningClaimsLayout,
-) -> Result<AkitaScheduleLookupKey, AkitaError> {
-    proof_optimized::proof_optimized_schedule_key::<Cfg>(layout)
-}
-
 pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     let recursive_setup_planning = Cfg::recursive_setup_planning();
     PlannerPolicy {
         cost_model: akita_schedules::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
-        selection_policy: if recursive_setup_planning {
-            akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-        } else {
-            akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
-        },
+        selection_policy: akita_schedules::SelectionPolicyId::for_policy(
+            recursive_setup_planning,
+            Cfg::D,
+            Cfg::RING_DIMENSION_CANDIDATES,
+        ),
         max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
         ring_dimension: Cfg::D,
+        ring_dimension_candidates: Cfg::RING_DIMENSION_CANDIDATES,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
@@ -147,10 +143,14 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
-        onehot_chunk_size: Cfg::onehot_chunk_size(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning,
     }
+}
+
+/// Root group's source-specific policy for offline schedule generation.
+pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::HonestFoldPolicySpec {
+    Cfg::root_honest_fold_policy()
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
@@ -201,6 +201,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
+
+    /// Canonically ordered A/B/D tuples admitted by offline schedule search.
+    ///
+    /// Uniform presets use their setup-generation dimension for every role.
+    /// Adaptive presets override this with their full audited search domain.
+    const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] =
+        &[CommitmentRingDims::uniform(Self::D)];
 
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;
@@ -279,23 +286,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     #[doc(hidden)]
     fn basis_range() -> (u32, u32);
 
-    /// One-hot chunk size `K` of the committed witnesses under this config.
-    ///
-    /// Bounds the committed one-hot witness L1 mass per ring element as
-    /// `nonzeros = ceil(D / K)`, which feeds the Hachi Lemma 7 weak-binding
-    /// collision norm and the folded-witness digit count. The value must be a
-    /// true worst case (the smallest `K`, i.e. the largest `nonzeros`, any
-    /// instance under this config may commit). It is only consulted for a root
-    /// level whose `log_commit_bound == 1` (one-hot commitment); dense configs
-    /// always use `nonzeros = D` regardless of this hook.
-    ///
-    /// The default `1` is the fully generic one-hot case: it safely covers every
-    /// valid chunking accepted by `OneHotPoly`, including `K < D` multi-chunk
-    /// roots. A config that publicly guarantees a larger minimum chunk size may
-    /// override this hook to recover tighter one-hot schedules.
-    fn onehot_chunk_size() -> usize {
-        1
-    }
+    /// Group-owned honest sizing rule used only during offline planning.
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec;
 
     /// Multi-chunk witness layout parameters for schedule planning and (future)
     /// prover orchestration.
@@ -350,6 +342,45 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Self::validate_sis_modulus_profile()?;
         akita_schedules::resolve_group_batch_schedule(
             &key,
+            &policy_of::<Self>(),
+            Self::ring_challenge_config,
+            Self::fold_challenge_shape_at_level,
+            Self::schedule_catalog(),
+        )
+    }
+
+    /// Select the generated row accepted for exact committed profiles.
+    ///
+    /// This is an honest-prover operation. Verification must instead resolve
+    /// the explicit public selection through [`Self::resolve_schedule_selection`].
+    fn select_schedule_for_profiles(
+        profiles: &akita_types::CommittedGroupBatchProfile,
+    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
+        Self::validate_sis_modulus_profile()?;
+        profiles.validate(Self::decomposition().field_bits())?;
+        akita_schedules::select_generated_schedule_row_for_profiles(
+            &AkitaScheduleLookupKey {
+                final_group: profiles.final_group.group,
+                precommitteds: profiles.precommitteds.clone(),
+            },
+            profiles,
+            &policy_of::<Self>(),
+            Self::ring_challenge_config,
+            Self::fold_challenge_shape_at_level,
+            Self::schedule_catalog(),
+        )
+    }
+
+    /// Resolve one explicit public selection in this config's generated catalog.
+    ///
+    /// This is the verifier boundary: it performs identity/digest lookup only
+    /// and never reconstructs a runtime key or invokes planner search.
+    fn resolve_schedule_selection(
+        selection: akita_types::OpeningScheduleSelection,
+    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
+        Self::validate_sis_modulus_profile()?;
+        akita_schedules::resolve_generated_schedule_selection(
+            selection,
             &policy_of::<Self>(),
             Self::ring_challenge_config,
             Self::fold_challenge_shape_at_level,
@@ -436,6 +467,15 @@ mod tests {
 
         fn basis_range() -> (u32, u32) {
             (3, 3)
+        }
+
+        fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+            akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
+                akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+                    32,
+                    akita_types::sis::FoldWitnessNorms::bounded(8, Self::D),
+                ),
+            )
         }
 
         fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError> {
@@ -691,32 +731,14 @@ mod precommit_tests {
                 &singleton,
             )
             .expect("precommitted group params");
-        let precommitted = akita_types::PrecommittedGroupDescriptor::from_params(group, &params);
-        let mut policy = policy_of::<fp128::D64OneHot>();
-        policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
-        policy.witness_chunk = ChunkedWitnessCfg::default();
-        let planned = akita_planner::find_group_batch_schedule(
-            &AkitaScheduleLookupKey::single(group),
-            &policy,
-            fp128::D64OneHot::ring_challenge_config,
-            fp128::D64OneHot::fold_challenge_shape_at_level,
-        )
-        .expect("singleton-basis planning probe");
-        let root = &planned.schedule.root.params.final_group.commitment;
-
-        assert_eq!(
-            precommitted,
-            akita_types::PrecommittedGroupDescriptor::from_params(group, root)
-        );
+        let precommitted = akita_types::CommittedGroupProfile::from_params(group, &params);
         let root_basis = fp128::D64OneHot::basis_range().0;
         assert_eq!(precommitted.log_basis_inner, root_basis);
         assert_eq!(precommitted.log_basis_outer, root_basis);
-        assert!(
-            precommitted.num_live_blocks >= 8,
-            "the frozen nv=16 precommit must remain distributable at a W8R2 root"
-        );
-        assert_ne!(precommitted.n_a, 0);
-        assert_ne!(precommitted.n_b, 0);
+        assert_eq!(precommitted.num_positions_per_block, 256);
+        assert_eq!(precommitted.num_live_blocks, 4);
+        assert_ne!(precommitted.inner_commit_matrix.output_rank(), 0);
+        assert_ne!(precommitted.outer_commit_matrix.output_rank(), 0);
     }
 
     #[test]

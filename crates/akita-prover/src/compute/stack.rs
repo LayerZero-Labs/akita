@@ -34,6 +34,7 @@ where
 {
     backend: &'a B,
     prepared: &'a B::PreparedSetup,
+    gen_ring_dim: usize,
     _field: PhantomData<fn() -> F>,
 }
 
@@ -58,6 +59,7 @@ where
         Ok(Self {
             backend,
             prepared,
+            gen_ring_dim: expanded.seed().gen_ring_dim,
             _field: PhantomData,
         })
     }
@@ -70,6 +72,11 @@ where
     /// Borrowed prepared setup for this operation cluster.
     pub fn prepared(&self) -> &'a B::PreparedSetup {
         self.prepared
+    }
+
+    /// Setup-time generation ring dimension backing this prepared context.
+    pub fn gen_ring_dim(&self) -> usize {
+        self.gen_ring_dim
     }
 
     /// Warm the full-envelope NTT slot for `ring_d` on this cluster's prepared setup.

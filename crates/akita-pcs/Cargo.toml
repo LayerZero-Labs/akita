@@ -46,6 +46,7 @@ parallel = [
 ]
 schedules-default = ["akita-config/schedules-default"]
 profile-ci = [
+  "akita-config/schedules-fp128-mixed-dim-onehot",
   "akita-config/schedules-fp32-d128-onehot",
   "akita-config/schedules-fp64-d128-onehot",
   "akita-config/schedules-fp128-d64-onehot",
@@ -69,10 +70,15 @@ logging-transcript = [
   "akita-transcript/logging-transcript",
   "akita-prover/logging-transcript",
 ]
+compression-diagnostics = ["akita-prover/compression-diagnostics"]
 # Test/example-only mixed ring-dimension schedule builders (relocated from
 # akita-config, which cannot depend on the offline planner without a cycle).
 # Enabled for this crate's own tests/examples via the self dev-dependency below.
-test-support = ["dep:akita-planner", "akita-config/test-support"]
+test-support = [
+  "dep:akita-planner",
+  "akita-config/test-support",
+  "akita-planner/test-support",
+]
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }

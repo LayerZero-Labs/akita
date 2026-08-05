@@ -67,7 +67,7 @@ fn event_stream_equality_small() {
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
         let proof = Scheme::batched_prove(
             &setup,
-            prove_input(
+            prove_input::<OneHotCfg, _>(
                 &point,
                 &poly_refs,
                 &commitments[0],
@@ -91,7 +91,7 @@ fn event_stream_equality_small() {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&point, &openings, &commitments[0]),
+            verify_input::<OneHotCfg>(&point, &openings, &commitments[0]),
             BasisMode::Lagrange,
         )
         .expect("verify");
@@ -301,7 +301,7 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
         let mut proof = Scheme::batched_prove(
             &setup,
-            prove_input(
+            prove_input::<OneHotCfg, _>(
                 &point,
                 &poly_refs,
                 &commitments[0],
@@ -319,7 +319,7 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&point, &openings, &commitments[0]),
+            verify_input::<OneHotCfg>(&point, &openings, &commitments[0]),
             BasisMode::Lagrange,
         )
         .expect_err("tampered terminal proof must reject");
@@ -378,7 +378,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/shape-mismatch");
         let proof = Scheme::batched_prove(
             &setup,
-            prove_input(&point, &poly_refs, &commitment, hint),
+            prove_input::<OneHotCfg, _>(&point, &poly_refs, &commitment, hint),
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,

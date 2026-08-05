@@ -1,8 +1,10 @@
 //! On-demand expansion of compact generated schedule steps into full
 //! [`CommittedGroupParams`].
 //!
-//! Generated rows store optimizer choices. Expansion derives all digit depths,
-//! matrix widths, collision buckets, and minimum SIS-secure output ranks.
+//! Generated rows store optimizer choices, including each exact fold digit
+//! depth. Expansion derives commitment digit depths, matrix widths, collision
+//! buckets, and minimum SIS-secure output ranks without rerunning honest fold
+//! sizing.
 //!
 //! This is verifier-reachable (config resolves levels through it on the
 //! replay path), so every fallible step returns [`AkitaError`] rather than
@@ -13,20 +15,21 @@ use akita_field::AkitaError;
 
 use crate::generated::{
     GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix,
-    GeneratedSetupPrefixInput, GeneratedTerminalFold,
+    GeneratedPrecommittedProfile, GeneratedSetupPrefixInput, GeneratedTerminalFold,
 };
 use crate::runtime::optimize_fold_challenge_shape;
 use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    fold_witness_digit_plan, min_secure_rank, num_digits_inner, num_digits_open,
-    num_digits_setup_prefix_commit, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
+    min_secure_rank, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
+    projected_role_ring_count, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
+    SisTableKey,
 };
 use akita_types::{
-    shared_d_digit_log_basis, CommittedGroupParams, DecompositionParams, InnerCommitMatrixParams,
-    OpenCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, PrecommittedLevelParams, TerminalCommittedGroupParams,
+    shared_d_digit_log_basis, validate_role_dims, CommitmentRingDims, CommittedGroupParams,
+    CommittedGroupProfile, DecompositionParams, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
+    TerminalCommittedGroupParams,
 };
 
 fn sis_key(
@@ -102,20 +105,6 @@ impl GeneratedSetupPrefixInput {
             ));
         }
         let prefix_num_vars = n_prefix.trailing_zeros() as usize;
-        let mut layout = PrecommittedGroupDescriptor {
-            group: PolynomialGroupLayout::singleton(prefix_num_vars),
-            num_live_ring_elements_per_claim,
-            num_positions_per_block,
-            num_live_blocks,
-            log_basis_inner: self.commitment.inner_commit_matrix.log_basis,
-            log_basis_outer: self.commitment.outer_commit_matrix.log_basis,
-            inner_ring_dimension: d,
-            outer_ring_dimension: d,
-            n_a: 1,
-            a_coeff_linf_bound: 1,
-            n_b: 1,
-            b_coeff_linf_bound: 1,
-        };
         let inner_decomp = DecompositionParams {
             log_basis: self.commitment.inner_commit_matrix.log_basis,
             ..policy.decomposition
@@ -140,7 +129,6 @@ impl GeneratedSetupPrefixInput {
                 log_basis_open
             ))
         };
-        layout.validate_root_geometry()?;
         if fold_shape != TensorChallengeShape::Flat {
             return Err(AkitaError::InvalidSetup(
                 "generated setup-prefix challenge shape mismatch".into(),
@@ -148,21 +136,26 @@ impl GeneratedSetupPrefixInput {
         }
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| no_layout("A"))?;
+        let num_digits_fold = usize::try_from(self.num_digits_fold).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated setup-prefix fold digit depth does not fit the target platform".into(),
+            )
+        })?;
+        if num_digits_fold == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated setup-prefix fold digit depth must be nonzero".into(),
+            ));
+        }
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
             policy.sis_table_digest,
             sis_modulus_profile,
             d,
-            inner_decomp,
             log_basis_open,
             ring_challenge_cfg,
             fold_shape,
-            false,
-            0,
+            num_digits_fold,
             policy.ring_subfield_norm_bound,
-            num_live_blocks,
-            1,
-            inner_width as u64,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(
@@ -213,40 +206,119 @@ impl GeneratedSetupPrefixInput {
             b_bucket,
             d,
         )?;
-        layout.n_a = n_a;
-        layout.n_b = n_b;
-        layout.a_coeff_linf_bound = a_bucket;
-        layout.b_coeff_linf_bound = b_bucket;
-        let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-            ring_challenge_cfg,
-            fold_shape,
-            d,
-            inner_width,
-        )?;
-        let challenge = FoldChallengeNorms {
-            infinity_norm: fold_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
-            l1_norm: fold_shape.effective_l1_mass(ring_challenge_cfg) as u128,
-        };
-        let (num_digits_fold_one, _) = fold_witness_digit_plan(
+        let layout = CommittedGroupProfile {
+            version: CommittedGroupProfile::VERSION,
+            group: PolynomialGroupLayout::singleton(prefix_num_vars),
+            num_live_ring_elements_per_claim,
+            num_positions_per_block,
             num_live_blocks,
-            1,
-            policy.decomposition.field_bits(),
-            log_basis_open,
-            challenge,
-            FoldWitnessNorms::new(self.commitment.inner_commit_matrix.log_basis, d, 1, false),
-            &fold_linf_cap_config,
-        )?;
+            log_basis_inner: self.commitment.inner_commit_matrix.log_basis,
+            num_digits_inner,
+            inner_commit_matrix,
+            log_basis_outer: self.commitment.outer_commit_matrix.log_basis,
+            num_digits_outer,
+            outer_commit_matrix,
+        };
+        layout.validate_root_geometry()?;
         Ok(PrecommittedLevelParams {
             layout,
-            inner_commit_matrix,
-            outer_commit_matrix,
             log_basis_open,
             fold_challenge_config: *ring_challenge_cfg,
-            num_digits_inner,
-            num_digits_outer,
             num_digits_open: num_digits_open_val,
-            num_digits_fold_one,
+            num_digits_fold,
         })
+    }
+}
+
+impl GeneratedPrecommittedProfile {
+    /// Expand this compact generated standalone precommit descriptor into its
+    /// canonical runtime profile.
+    pub fn expand_to_committed_profile(
+        self,
+        policy: &PlannerPolicy,
+    ) -> Result<CommittedGroupProfile, AkitaError> {
+        self.group.validate()?;
+        let geometry = self.commitment.geometry;
+        let num_live_ring_elements_per_claim = generated_count(
+            geometry.live_ring_elements_per_claim,
+            "live ring-element count",
+        )?;
+        let num_positions_per_block =
+            generated_count(geometry.positions_per_block, "positions per block")?;
+        let num_live_blocks = generated_count(geometry.live_blocks, "live block count")?;
+        let d_a = self.commitment.inner_commit_matrix.ring_dimension as usize;
+        let d_b = self.commitment.outer_commit_matrix.ring_dimension as usize;
+        validate_role_dims(CommitmentRingDims {
+            inner: d_a,
+            outer: d_b,
+            opening: d_b,
+        })?;
+        if self.commitment.outer_commit_matrix.slice_count != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "generated precommit B matrix must use one slice".to_string(),
+            ));
+        }
+        let num_digits_inner = generated_count(self.num_digits_inner as u64, "inner digit depth")?;
+        let num_digits_outer = generated_count(self.num_digits_outer as u64, "outer digit depth")?;
+        if num_digits_inner == 0 || num_digits_outer == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated precommit digit depths must be nonzero".to_string(),
+            ));
+        }
+        let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("generated precommit A width overflow".to_string())
+            })?;
+        let n_a = generated_count(self.inner_output_rank as u64, "A output rank")?;
+        let inner_commit_matrix = InnerCommitMatrixParams::try_new(
+            policy.sis_security_policy,
+            policy.sis_table_digest,
+            policy.sis_modulus_profile,
+            n_a,
+            inner_width,
+            self.inner_coeff_linf_bound,
+            d_a,
+        )?;
+        let native_outer_width = decomposed_t_ring_count(
+            n_a,
+            num_digits_outer,
+            num_live_blocks,
+            self.group.num_polynomials(),
+        )
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("generated precommit native B width overflow".to_string())
+        })?;
+        let outer_width =
+            projected_role_ring_count(d_a, d_b, native_outer_width).ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated precommit projected B width overflow".to_string(),
+                )
+            })?;
+        let n_b = generated_count(self.outer_output_rank as u64, "B output rank")?;
+        let outer_commit_matrix = OuterCommitMatrixParams::try_new(
+            policy.sis_security_policy,
+            policy.sis_table_digest,
+            policy.sis_modulus_profile,
+            n_b,
+            outer_width,
+            self.outer_coeff_linf_bound,
+            d_b,
+        )?;
+        let profile = CommittedGroupProfile {
+            version: CommittedGroupProfile::VERSION,
+            group: self.group,
+            num_live_ring_elements_per_claim,
+            num_positions_per_block,
+            num_live_blocks,
+            log_basis_inner: self.commitment.inner_commit_matrix.log_basis,
+            num_digits_inner,
+            inner_commit_matrix,
+            log_basis_outer: self.commitment.outer_commit_matrix.log_basis,
+            num_digits_outer,
+            outer_commit_matrix,
+        };
+        profile.validate_frozen_precommit(policy.decomposition.field_bits())?;
+        Ok(profile)
     }
 }
 
@@ -279,28 +351,38 @@ impl GeneratedCommittedGroup {
     ///
     /// # Errors
     ///
-    /// Returns an error when the stored ring dimension disagrees with the
-    /// policy, bucket/width resolution fails, or a generated rank fails its SIS
-    /// audit against the (batched) width.
+    /// Returns an error when the stored role dimensions are invalid for the
+    /// setup-generation policy, bucket/width resolution fails, or a generated
+    /// rank fails its SIS audit against the (batched) width.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn expand_to_level_params_with_setup(
         &self,
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_level: usize,
+        exact_num_digits_inner: Option<u32>,
+        generated_num_digits_fold: u32,
         input_witness_len: usize,
         fold_shape: TensorChallengeShape,
         num_claims: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
         setup_prefix_group: Option<GeneratedSetupPrefixInput>,
     ) -> Result<CommittedGroupParams, AkitaError> {
-        let ring_d = self.inner_commit_matrix.ring_dimension as usize;
-        if ring_d == 0 || ring_d != policy.ring_dimension {
-            return Err(AkitaError::InvalidSetup(format!(
-                "generated fold step ring dimension {ring_d} does not match policy D={}",
-                policy.ring_dimension
-            )));
+        let dimensions = CommitmentRingDims {
+            inner: self.inner_commit_matrix.ring_dimension as usize,
+            outer: self.outer_commit_matrix.ring_dimension as usize,
+            opening: open_commit_matrix.ring_dimension as usize,
+        };
+        validate_role_dims(dimensions)?;
+        for dimension in [dimensions.d_a(), dimensions.d_b(), dimensions.d_d()] {
+            if !policy.ring_dimension.is_multiple_of(dimension) {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "generated fold role dimension {dimension} does not divide setup D={}",
+                    policy.ring_dimension
+                )));
+            }
         }
+        let ring_d = dimensions.d_a();
         let is_root = fold_level == 0;
         let log_basis_inner = self.inner_commit_matrix.log_basis;
         let log_basis_outer = self.outer_commit_matrix.log_basis;
@@ -327,18 +409,14 @@ impl GeneratedCommittedGroup {
                     .to_string(),
             ));
         }
-        if input_witness_len == 0 || (!is_root && !input_witness_len.is_multiple_of(ring_d)) {
+        if input_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(
-                "witness length is not divisible by the ring dimension".to_string(),
+                "witness length must be nonzero".to_string(),
             ));
         }
-        // Root inputs may be shorter than one ring and are zero-padded inside
-        // that ring. Recursive witnesses are ring-aligned by contract.
-        let num_live_ring_elements_per_claim = if is_root {
-            input_witness_len.div_ceil(ring_d)
-        } else {
-            input_witness_len / ring_d
-        };
+        // Every exact live prefix may end in a partial ring. The commitment
+        // view supplies the one implicit-zero suffix.
+        let num_live_ring_elements_per_claim = input_witness_len.div_ceil(ring_d);
         let derived_num_live_blocks =
             num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
         if derived_num_live_blocks != num_live_blocks {
@@ -357,7 +435,7 @@ impl GeneratedCommittedGroup {
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited {role}-role layout for generated schedule \
-                 (profile={sis_modulus_profile:?}, d={ring_d}, inner={log_basis_inner}, outer={log_basis_outer}, open={log_basis_open})"
+                 (profile={sis_modulus_profile:?}, dims={dimensions:?}, inner={log_basis_inner}, outer={log_basis_outer}, open={log_basis_open})"
             ))
         };
         let outer_decomp = DecompositionParams {
@@ -366,34 +444,48 @@ impl GeneratedCommittedGroup {
         };
         let witness_decomp = DecompositionParams {
             log_basis: log_basis_inner,
-            ..policy.decomposition
+            log_commit_bound: policy.decomposition.field_bits(),
+            log_open_bound: Some(policy.decomposition.field_bits()),
         };
         let open_decomp = DecompositionParams {
             log_basis: log_basis_open,
             ..policy.decomposition
         };
         let ring_challenge_cfg = ring_challenge_config(ring_d)?;
-        let num_digits_inner = num_digits_inner(witness_decomp, is_root);
+        let num_digits_inner = if let Some(num_digits_inner) = exact_num_digits_inner {
+            usize::try_from(num_digits_inner).map_err(|_| {
+                AkitaError::InvalidSetup(
+                    "generated root inner digit depth does not fit the target platform".into(),
+                )
+            })?
+        } else {
+            num_digits_inner(witness_decomp, is_root)
+        };
         let num_digits_outer = num_digits_open(outer_decomp);
         let num_digits_open_val = num_digits_open(open_decomp);
 
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| no_layout("A"))?;
+        let num_digits_fold = usize::try_from(generated_num_digits_fold).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated fold digit depth does not fit the target platform".into(),
+            )
+        })?;
+        if num_digits_fold == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated fold digit depth must be nonzero".into(),
+            ));
+        }
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
             policy.sis_table_digest,
             sis_modulus_profile,
             ring_d,
-            witness_decomp,
             log_basis_open,
             &ring_challenge_cfg,
             fold_shape,
-            is_root,
-            policy.onehot_chunk_size,
+            num_digits_fold,
             policy.ring_subfield_norm_bound,
-            num_live_blocks,
-            num_claims,
-            inner_width as u64,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(
@@ -411,24 +503,30 @@ impl GeneratedCommittedGroup {
             sis_policy,
             sis_modulus_profile,
             akita_types::SisMatrixRole::Outer,
-            ring_d,
+            dimensions.d_b(),
             log_basis_outer,
         )
         .ok_or_else(|| no_layout("B"))?;
-        let outer_width =
+        let native_outer_width =
             decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, num_claims)
+                .ok_or_else(|| no_layout("B"))?;
+        let outer_width =
+            projected_role_ring_count(dimensions.d_a(), dimensions.d_b(), native_outer_width)
                 .ok_or_else(|| no_layout("B"))?;
 
         let d_bucket = rounded_up_collision_inf_norm(
             sis_policy,
             sis_modulus_profile,
             akita_types::SisMatrixRole::Open,
-            ring_d,
+            dimensions.d_d(),
             log_basis_open,
         )
         .ok_or_else(|| no_layout("D"))?;
-        let main_d_width =
+        let native_main_d_width =
             decomposed_w_ring_count(num_digits_open_val, num_live_blocks, num_claims)
+                .ok_or_else(|| no_layout("D"))?;
+        let main_d_width =
+            projected_role_ring_count(dimensions.d_a(), dimensions.d_d(), native_main_d_width)
                 .ok_or_else(|| no_layout("D"))?;
         let setup_prefix = if let Some(group) = setup_prefix_group {
             let commitment_params = group.expand_to_precommitted_group(
@@ -458,7 +556,7 @@ impl GeneratedCommittedGroup {
         let precommitted_groups = Vec::new();
         let precommitted_d_width = setup_prefix
             .as_ref()
-            .map(|prefix| prefix.commitment_params.d_segment_width(ring_d))
+            .map(|prefix| prefix.commitment_params.d_segment_width(dimensions.d_d()))
             .transpose()?
             .unwrap_or(0);
         let d_matrix_width = main_d_width
@@ -467,21 +565,13 @@ impl GeneratedCommittedGroup {
 
         let num_digits_open = num_digits_open_val;
 
-        // A one-hot root (`log_commit_bound == 1`) commits a sparse witness;
-        // recursive and dense levels are dense (`onehot_chunk_size = 0`).
-        let onehot_chunk_size = if is_root && policy.decomposition.log_commit_bound == 1 {
-            policy.onehot_chunk_size
-        } else {
-            0
-        };
-
         // Size the committed B matrix at the full outer width.
         let n_b = secure_rank(
             "b",
             sis_key(
                 policy,
                 akita_types::SisMatrixRole::Outer,
-                ring_d as u32,
+                dimensions.d_b() as u32,
                 b_bucket,
             ),
             outer_width,
@@ -491,7 +581,7 @@ impl GeneratedCommittedGroup {
             sis_key(
                 policy,
                 akita_types::SisMatrixRole::Open,
-                ring_d as u32,
+                dimensions.d_d() as u32,
                 d_bucket,
             ),
             d_matrix_width,
@@ -520,7 +610,7 @@ impl GeneratedCommittedGroup {
                 n_b,
                 outer_width,
                 b_bucket,
-                ring_d,
+                dimensions.d_b(),
             )?,
             open_commit_matrix: OpenCommitMatrixParams::try_new(
                 sis_policy,
@@ -529,7 +619,7 @@ impl GeneratedCommittedGroup {
                 n_d,
                 d_matrix_width,
                 d_bucket,
-                ring_d,
+                dimensions.d_d(),
             )?,
             num_live_ring_elements_per_claim,
             num_live_blocks,
@@ -539,21 +629,13 @@ impl GeneratedCommittedGroup {
             num_digits_inner,
             num_digits_outer,
             num_digits_open,
-            onehot_chunk_size,
-            fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(
-            ),
-            num_digits_fold_one: 1,
-            field_bits_hint: 0,
-            cached_num_digits_block_claims: 0,
-            cached_num_digits_fold_value: 1,
+            num_digits_fold,
             // The caller stamps the configured per-level chunk policy after
             // expansion; this neutral default keeps parameter construction pure.
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
             setup_prefix,
         };
-        let params =
-            params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)?;
         Ok(params)
     }
 
@@ -570,6 +652,8 @@ impl GeneratedCommittedGroup {
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_shape: TensorChallengeShape,
         main_num_polys: usize,
+        num_digits_inner: u32,
+        num_digits_fold: u32,
         precommitted_groups: Vec<PrecommittedLevelParams>,
         precommitted_d_width: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
@@ -621,36 +705,36 @@ impl GeneratedCommittedGroup {
             log_basis: log_basis_outer,
             ..policy.decomposition
         };
-        let witness_decomp = DecompositionParams {
-            log_basis: log_basis_inner,
-            ..policy.decomposition
-        };
         let open_decomp = DecompositionParams {
             log_basis: log_basis_open,
             ..policy.decomposition
         };
         let ring_challenge_cfg = ring_challenge_config(ring_d)?;
-        let num_digits_inner = num_digits_inner(witness_decomp, true);
+        let num_digits_inner = usize::try_from(num_digits_inner).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated root inner digit depth does not fit the target platform".into(),
+            )
+        })?;
         let num_digits_outer = num_digits_open(outer_decomp);
         let num_digits_open_val = num_digits_open(open_decomp);
 
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| no_layout("A"))?;
+        let num_digits_fold = usize::try_from(num_digits_fold).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated root fold digit depth does not fit the target platform".into(),
+            )
+        })?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
             policy.sis_table_digest,
             sis_modulus_profile,
             ring_d,
-            witness_decomp,
             log_basis_open,
             &ring_challenge_cfg,
             fold_shape,
-            true,
-            policy.onehot_chunk_size,
+            num_digits_fold,
             policy.ring_subfield_norm_bound,
-            num_live_blocks,
-            main_num_polys,
-            inner_width as u64,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(
@@ -693,12 +777,6 @@ impl GeneratedCommittedGroup {
             d_log_basis,
         )
         .ok_or_else(|| no_layout("D"))?;
-
-        let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
-            policy.onehot_chunk_size
-        } else {
-            0
-        };
 
         let n_b = secure_rank(
             "b",
@@ -754,7 +832,7 @@ impl GeneratedCommittedGroup {
             num_live_ring_elements_per_claim: num_live_blocks
                 .checked_mul(num_positions_per_block)
                 .ok_or_else(|| {
-                    AkitaError::InvalidSetup("generated root source length overflow".to_string())
+                    AkitaError::InvalidSetup("generated root group length overflow".to_string())
                 })?,
             num_live_blocks,
             num_positions_per_block,
@@ -763,19 +841,11 @@ impl GeneratedCommittedGroup {
             num_digits_inner,
             num_digits_outer,
             num_digits_open: num_digits_open_val,
-            onehot_chunk_size,
-            fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(
-            ),
-            num_digits_fold_one: 1,
-            field_bits_hint: 0,
-            cached_num_digits_block_claims: 0,
-            cached_num_digits_fold_value: 1,
+            num_digits_fold,
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
             setup_prefix: None,
         };
-        let params =
-            params.with_fold_linf_cap_config(policy.decomposition.field_bits(), main_num_polys)?;
         Ok(params)
     }
 }
@@ -787,19 +857,20 @@ impl GeneratedTerminalFold {
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         _fold_level: usize,
         input_witness_len: usize,
-    ) -> Result<(TerminalCommittedGroupParams, u128), AkitaError> {
+    ) -> Result<TerminalCommittedGroupParams, AkitaError> {
         let ring_dimension = self.inner_commit_matrix.ring_dimension as usize;
-        if ring_dimension == 0 || ring_dimension != policy.ring_dimension {
+        if ring_dimension == 0 || !policy.ring_dimension.is_multiple_of(ring_dimension) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "generated terminal inner ring dimension {ring_dimension} does not divide setup D={}",
+                policy.ring_dimension
+            )));
+        }
+        if input_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(
-                "generated terminal inner ring dimension does not match policy".to_string(),
+                "terminal witness length must be nonzero".to_string(),
             ));
         }
-        if input_witness_len == 0 || !input_witness_len.is_multiple_of(ring_dimension) {
-            return Err(AkitaError::InvalidSetup(
-                "terminal witness length is not inner-ring aligned".to_string(),
-            ));
-        }
-        let num_live_ring_elements_per_claim = input_witness_len / ring_dimension;
+        let num_live_ring_elements_per_claim = input_witness_len.div_ceil(ring_dimension);
         let num_positions_per_block =
             generated_count(self.geometry.positions_per_block, "positions per block")?;
         let num_live_blocks = generated_count(self.geometry.live_blocks, "live block count")?;
@@ -817,53 +888,36 @@ impl GeneratedTerminalFold {
             ));
         }
         let log_basis_inner = self.inner_commit_matrix.log_basis;
-        let witness_decomposition = DecompositionParams {
-            log_basis: log_basis_inner,
-            ..policy.decomposition
-        };
-        let num_digits_inner = num_digits_inner(witness_decomposition, false);
+        let num_digits_inner = usize::try_from(self.num_digits_inner).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated terminal inner digit depth does not fit the target platform".into(),
+            )
+        })?;
+        if num_digits_inner == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated terminal inner digit depth must be nonzero".into(),
+            ));
+        }
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal A width overflow".to_string()))?;
         let sparse = ring_challenge_config(ring_dimension)?;
-        let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-            &sparse,
-            TensorChallengeShape::Flat,
-            ring_dimension,
-            inner_width,
-        )?;
-        let collision_bucket = rounded_up_role_a_inf_norm(
-            policy.sis_security_policy,
-            policy.sis_table_digest,
-            policy.sis_modulus_profile,
-            ring_dimension,
-            witness_decomposition,
-            log_basis_inner,
-            &sparse,
-            TensorChallengeShape::Flat,
-            false,
-            0,
-            policy.ring_subfield_norm_bound,
-            num_live_blocks,
-            1,
-            inner_width as u64,
-        )
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("terminal A collision exceeds the SIS table".to_string())
+        let output_rank = usize::try_from(self.inner_output_rank).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated terminal inner rank does not fit the target platform".into(),
+            )
         })?;
-        let key = sis_key(
-            policy,
-            akita_types::SisMatrixRole::Inner,
-            ring_dimension as u32,
-            collision_bucket,
-        );
-        let output_rank = secure_rank("terminal A", key, inner_width)?;
+        if output_rank == 0 || self.inner_coeff_linf_bound == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated terminal matrix contract must be nonzero".into(),
+            ));
+        }
         let inner_commit_matrix = InnerCommitMatrixParams::try_new(
             policy.sis_security_policy,
             policy.sis_table_digest,
             policy.sis_modulus_profile,
             output_rank,
             inner_width,
-            collision_bucket,
+            self.inner_coeff_linf_bound,
             ring_dimension,
         )?;
         let terminal = TerminalCommittedGroupParams {
@@ -873,10 +927,17 @@ impl GeneratedTerminalFold {
             num_positions_per_block,
             num_live_blocks,
             num_digits_inner,
-            fold_linf_cap_config,
         };
-        let response_policy = terminal.response_linf_policy(&sparse)?;
-        Ok((terminal, response_policy.admission_cap))
+        if self.z_admission_linf_cap == 0
+            || self.z_admission_linf_cap > terminal.certified_response_linf_cap(&sparse)?
+            || self.z_rice_low_bits >= 64
+            || self.z_payload_bytes == 0
+        {
+            return Err(AkitaError::InvalidSetup(
+                "generated terminal response contract is invalid".into(),
+            ));
+        }
+        Ok(terminal)
     }
 }
 

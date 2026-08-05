@@ -22,9 +22,8 @@
 //!    - [`num_digits_inner`]: committed witness `s` (`log_commit_bound` at
 //!      the root, `log_basis` at recursive levels).
 //!    - [`num_digits_open`]: opening witnesses `t̂` / `ŵ` (`log_open_bound`).
-//!    - [`super::norm_bound::fold_witness_digit_plan`]: folded witness `z` — the
-//!      digit count for the norm-derived bound `β`, which is not a
-//!      [`DecompositionParams`] field.
+//!    - [`super::honest_fold_policy::HonestFoldPolicy`]: folded witness `z` — the
+//!      group-owned offline policy returns its exact scheduled digit count.
 //!
 //! 3. **Committed-matrix widths** — name the `checked_mul` products that turn a
 //!    digit depth plus block geometry into a matrix's ring-column count:
@@ -100,8 +99,7 @@ pub fn balanced_digit_abs_max(log_basis: u32, num_digits: usize) -> u128 {
 /// `2^(k-1) - 1`, since the balanced digit range `[-b/2, b/2 - 1]` reaches
 /// further on the negative side. This is *not* `2^log_bound - 1`: the leading
 /// bit is the sign, so callers that mean "magnitude up to `2^m`" must pass
-/// `log_bound = m + 1` (this is exactly what
-/// [`super::norm_bound::fold_witness_digit_plan`] does).
+/// `log_bound = m + 1`.
 ///
 /// The count is `ceil(log_bound / log_basis)`, plus one more digit when the
 /// balanced-digit positive reach `balanced_digit_max` still falls short of
@@ -239,6 +237,22 @@ pub fn decomposed_w_ring_count(
         .checked_mul(num_polynomials)
 }
 
+/// Convert an A-native ring-column count into the physical column count of a
+/// projected B- or D-native role.
+///
+/// The role dimension must divide the source dimension exactly.
+#[inline]
+pub fn projected_role_ring_count(
+    source_dimension: usize,
+    role_dimension: usize,
+    native_ring_count: usize,
+) -> Option<usize> {
+    if role_dimension == 0 || !source_dimension.is_multiple_of(role_dimension) {
+        return None;
+    }
+    native_ring_count.checked_mul(source_dimension / role_dimension)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,6 +339,10 @@ mod tests {
         assert_eq!(decomposed_t_ring_count(2, 3, 4, 5), Some(120));
         assert_eq!(decomposed_w_ring_count(3, 4, 5), Some(60));
         assert_eq!(decomposed_s_block_ring_count(usize::MAX, 2), None);
+        assert_eq!(projected_role_ring_count(256, 64, 7), Some(28));
+        assert_eq!(projected_role_ring_count(256, 128, 7), Some(14));
+        assert_eq!(projected_role_ring_count(128, 256, 7), None);
+        assert_eq!(projected_role_ring_count(256, 0, 7), None);
     }
 
     #[test]
@@ -337,9 +355,9 @@ mod tests {
             l1_norm: 54,
         };
         // dense: log_basis=3 ⇒ ||s||_inf = b/2 = 4, ||s||_1 = D·b/2 = 64·4.
-        let dense = FoldWitnessNorms::new(3, 64, 1, false);
+        let dense = FoldWitnessNorms::bounded(3, 64);
         // one-hot single-chunk: ||s||_inf = 1, ||s||_1 = 1.
-        let onehot = FoldWitnessNorms::new(3, 64, 64, true);
+        let onehot = FoldWitnessNorms::sparse_binary(64, 64).unwrap();
         let (dense_digits, _) = fold_witness_digit_plan(
             8,
             1,
@@ -382,7 +400,7 @@ mod tests {
             infinity_norm: 8,
             l1_norm: 54,
         };
-        let witness = FoldWitnessNorms::new(3, 64, 1, false);
+        let witness = FoldWitnessNorms::bounded(3, 64);
         // A fold must contain at least one live block.
         assert!(fold_witness_digit_plan(
             0,

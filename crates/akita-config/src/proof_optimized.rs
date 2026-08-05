@@ -3,14 +3,13 @@
 //! Presets are unit structs that bind [`CommitmentConfig`] hooks to
 //! [`akita_types`] SIS primitives and generated schedule tables.
 
-use super::{CommitmentConfig, PrecommittedCommitmentConfig};
+use super::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
-    accumulate_matrix_envelope_for_level, accumulate_terminal_matrix_envelope,
-    setup_matrix_envelope_for_schedule, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, SetupMatrixEnvelope,
+    setup_matrix_envelope_for_schedule, setup_matrix_field_elements_for_schedule,
+    AkitaExpandedSetup, AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule,
+    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope,
 };
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -26,6 +25,12 @@ use std::sync::{LazyLock, Mutex};
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 3;
 /// Maximum proof-optimized log-basis.
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
+/// Explicit sparse-binary chunk size used by standard one-hot presets.
+///
+/// Smaller/nonstandard chunking is represented by a separately named preset
+/// or application polynomial representation; it is never inferred as a
+/// fallback.
+pub const STANDARD_ONEHOT_CHUNK_SIZE: usize = 256;
 
 /// Bound setup preprocessing work before schedule resolution.
 ///
@@ -54,34 +59,17 @@ pub(crate) fn proof_optimized_ring_challenge_config(
     Ok(cfg)
 }
 
-pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
+pub(crate) fn proof_optimized_schedule_key(
     layout: &OpeningClaimsLayout,
 ) -> Result<AkitaScheduleLookupKey, AkitaError> {
     layout.check()?;
     let final_group = layout.root_final_group_layout()?;
-    if layout.num_groups() == 1 {
-        return Ok(AkitaScheduleLookupKey::single(final_group));
+    if layout.num_groups() != 1 {
+        return Err(AkitaError::InvalidInput(
+            "grouped schedule selection requires exact committed-group descriptors".to_string(),
+        ));
     }
-    let precommitteds = layout
-        .root_precommitted_group_layouts()?
-        .iter()
-        .copied()
-        .map(|group| {
-            group.validate()?;
-            let singleton =
-                OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
-            let params = <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-                &singleton,
-            )?;
-            Ok(PrecommittedGroupDescriptor::from_params(group, &params))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let key = AkitaScheduleLookupKey {
-        final_group,
-        precommitteds,
-    };
-    key.validate()?;
-    Ok(key)
+    Ok(AkitaScheduleLookupKey::single(final_group))
 }
 
 // ---------------------------------------------------------------------------
@@ -139,7 +127,7 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
         let Ok(schedule) = Cfg::get_params_for_prove(layout) else {
             continue;
         };
-        let entry_envelope = setup_matrix_envelope_for_schedule(&schedule)?;
+        let entry_envelope = setup_matrix_envelope_for_schedule(&schedule, Cfg::D)?;
         saw_supported_shape = true;
         envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
     }
@@ -165,7 +153,7 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
                 continue;
             }
             let schedule = Cfg::runtime_schedule(key)?;
-            let entry_envelope = setup_matrix_envelope_for_schedule(&schedule)?;
+            let entry_envelope = setup_matrix_envelope_for_schedule(&schedule, Cfg::D)?;
             saw_supported_shape = true;
             envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
         }
@@ -180,7 +168,7 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
         max_num_batched_polys,
     )? {
         let schedule = Cfg::runtime_schedule(key)?;
-        let entry_envelope = setup_matrix_envelope_for_schedule(&schedule)?;
+        let entry_envelope = setup_matrix_envelope_for_schedule(&schedule, Cfg::D)?;
         saw_supported_shape = true;
         envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
     }
@@ -293,46 +281,37 @@ pub fn ensure_schedule_fits_setup<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    for params in setup_level_params_from_schedule(schedule) {
-        let mut required_setup_len = 1;
-        accumulate_matrix_envelope_for_level(&params, &mut required_setup_len)?;
-        let available_setup_len = setup
-            .shared_matrix
-            .total_ring_elements_at_dyn(params.d_a())?;
-        ensure_required_setup_len(required_setup_len, available_setup_len, params.d_a())?;
-    }
-    let terminal = &schedule.terminal.params.witness;
-    let mut required_setup_len = 1;
-    accumulate_terminal_matrix_envelope(terminal, &mut required_setup_len)?;
-    let available_setup_len = setup
-        .shared_matrix
-        .total_ring_elements_at_dyn(terminal.d_a())?;
-    ensure_required_setup_len(required_setup_len, available_setup_len, terminal.d_a())?;
+    let available_setup_field_elements = setup.shared_matrix.as_field_slice().len();
+    let required_setup_field_elements = setup_matrix_field_elements_for_schedule(schedule)?;
+    ensure_required_setup_field_elements(
+        required_setup_field_elements,
+        available_setup_field_elements,
+    )?;
 
     let root_params = &schedule.root.params.final_group.commitment;
-    let required_setup_len = root_runtime_matrix_len_for_opening_batch(root_params, layout)?;
-    let available_setup_len = setup
-        .shared_matrix
-        .total_ring_elements_at_dyn(root_params.d_a())?;
-    ensure_required_setup_len(required_setup_len, available_setup_len, root_params.d_a())?;
+    let required_root_field_elements =
+        root_runtime_matrix_field_elements_for_opening_batch(root_params, layout)?;
+    ensure_required_setup_field_elements(
+        required_root_field_elements,
+        available_setup_field_elements,
+    )?;
     Ok(())
 }
 
-fn ensure_required_setup_len(
-    required_setup_len: usize,
-    available_setup_len: usize,
-    ring_dimension: usize,
+fn ensure_required_setup_field_elements(
+    required_field_elements: usize,
+    available_field_elements: usize,
 ) -> Result<(), AkitaError> {
-    if required_setup_len <= available_setup_len {
+    if required_field_elements <= available_field_elements {
         return Ok(());
     }
     Err(AkitaError::InvalidSetup(format!(
-        "schedule requires {required_setup_len} setup ring elements at D={ring_dimension}, but \
-         setup provides {available_setup_len}"
+        "schedule requires {required_field_elements} physical setup field elements, but setup \
+         provides {available_field_elements}"
     )))
 }
 
-fn root_runtime_matrix_len_for_opening_batch(
+fn root_runtime_matrix_field_elements_for_opening_batch(
     lp: &CommittedGroupParams,
     layout: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
@@ -352,29 +331,28 @@ fn root_runtime_matrix_len_for_opening_batch(
 
     for group in &lp.precommitted_groups {
         let a_coeff_len = matrix_coefficient_len(
-            group.inner_commit_matrix.output_rank(),
-            group.inner_commit_matrix.input_width(),
-            group.inner_commit_matrix.ring_dimension(),
+            group.layout.inner_commit_matrix.output_rank(),
+            group.layout.inner_commit_matrix.input_width(),
+            group.layout.inner_commit_matrix.ring_dimension(),
             "multi-group A",
         )?;
         let b_coeff_len = matrix_coefficient_len(
-            group.outer_commit_matrix.output_rank(),
-            group.outer_commit_matrix.input_width(),
-            group.outer_commit_matrix.ring_dimension(),
+            group.layout.outer_commit_matrix.output_rank(),
+            group.layout.outer_commit_matrix.input_width(),
+            group.layout.outer_commit_matrix.ring_dimension(),
             "multi-group B",
         )?;
         max_a_coeff_len = max_a_coeff_len.max(a_coeff_len);
         max_b_coeff_len = max_b_coeff_len.max(b_coeff_len);
     }
 
-    root_setup_len(
+    let d_coeff_len = matrix_coefficient_len(
         lp.open_commit_matrix.output_rank(),
         lp.open_commit_matrix.input_width(),
         lp.open_commit_matrix.ring_dimension(),
-        max_a_coeff_len,
-        max_b_coeff_len,
-        lp.d_a(),
-    )
+        "root D",
+    )?;
+    Ok(d_coeff_len.max(max_a_coeff_len).max(max_b_coeff_len))
 }
 
 fn matrix_coefficient_len(
@@ -386,29 +364,6 @@ fn matrix_coefficient_len(
     rows.checked_mul(columns)
         .and_then(|len| len.checked_mul(ring_dimension))
         .ok_or_else(|| AkitaError::InvalidSetup(format!("{label} setup envelope overflow")))
-}
-
-fn root_setup_len(
-    d_rows: usize,
-    d_width: usize,
-    d_ring_dim: usize,
-    max_a_coeff_len: usize,
-    max_b_coeff_len: usize,
-    envelope_ring_dim: usize,
-) -> Result<usize, AkitaError> {
-    if envelope_ring_dim == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "root setup envelope ring dimension is zero".into(),
-        ));
-    }
-    let d_coeff_len = d_rows
-        .checked_mul(d_width)
-        .and_then(|len| len.checked_mul(d_ring_dim))
-        .ok_or_else(|| AkitaError::InvalidSetup("root D setup envelope overflow".to_string()))?;
-    Ok(d_coeff_len
-        .max(max_a_coeff_len)
-        .max(max_b_coeff_len)
-        .div_ceil(envelope_ring_dim))
 }
 
 // ---------------------------------------------------------------------------
@@ -425,12 +380,6 @@ fn root_setup_len(
 /// `[PROOF_OPTIMIZED_LOG_BASIS_MIN, MAX]` basis range, so those are not
 /// parameters.
 macro_rules! impl_proof_optimized_preset {
-    (@onehot_chunk_size $onehot_chunk_size:expr) => {
-        $onehot_chunk_size
-    };
-    (@onehot_chunk_size) => {
-        1
-    };
     (@schedule_catalog none) => {};
     (@schedule_catalog ($feat:literal, $family:literal, $table:ident)) => {
         fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
@@ -444,23 +393,26 @@ macro_rules! impl_proof_optimized_preset {
             }
         }
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, 1, none);
+    (@ring_dimension_candidates) => {};
+    (@ring_dimension_candidates $candidates:expr) => {
+        const RING_DIMENSION_CANDIDATES: &'static [akita_types::CommitmentRingDims] = $candidates;
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, 1, table, $feat, $family_name, $table);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, none);
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, none);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table);
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, table, $feat, $family_name, $table);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), ring_dimension_candidates = $candidates:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, ring_dimension_candidates = $candidates);
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, none) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, none $(, ring_dimension_candidates = $candidates:expr)?) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
             const D: usize = $d;
+
+            impl_proof_optimized_preset!(@ring_dimension_candidates $($candidates)?);
 
             fn decomposition() -> akita_types::DecompositionParams {
                 akita_types::DecompositionParams {
@@ -501,14 +453,29 @@ macro_rules! impl_proof_optimized_preset {
                 )
             }
 
-            fn onehot_chunk_size() -> usize {
-                $onehot_chunk
+            fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+                let legacy_witness = $fold_norms;
+                if $log_commit_bound == 1 {
+                    akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
+                        akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
+                            $field_bits,
+                            legacy_witness,
+                        ),
+                    )
+                } else {
+                    akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
+                        akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+                            $field_bits,
+                            legacy_witness,
+                        ),
+                    )
+                }
             }
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
             ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
-                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key::<Self>(
+                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key(
                     layout,
                 )?)
             }
@@ -516,11 +483,13 @@ macro_rules! impl_proof_optimized_preset {
             impl_proof_optimized_preset!(@schedule_catalog none);
         }
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, table, $feat:literal, $family_name:literal, $table:ident) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, table, $feat:literal, $family_name:literal, $table:ident $(, ring_dimension_candidates = $candidates:expr)?) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
             const D: usize = $d;
+
+            impl_proof_optimized_preset!(@ring_dimension_candidates $($candidates)?);
 
             fn decomposition() -> akita_types::DecompositionParams {
                 akita_types::DecompositionParams {
@@ -561,14 +530,29 @@ macro_rules! impl_proof_optimized_preset {
                 )
             }
 
-            fn onehot_chunk_size() -> usize {
-                $onehot_chunk
+            fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+                let legacy_witness = $fold_norms;
+                if $log_commit_bound == 1 {
+                    akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
+                        akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
+                            $field_bits,
+                            legacy_witness,
+                        ),
+                    )
+                } else {
+                    akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
+                        akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+                            $field_bits,
+                            legacy_witness,
+                        ),
+                    )
+                }
             }
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
             ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
-                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key::<Self>(
+                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key(
                     layout,
                 )?)
             }

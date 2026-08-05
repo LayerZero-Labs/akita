@@ -47,10 +47,6 @@ where
     fn num_vars(&self) -> usize {
         self.num_vars
     }
-
-    fn onehot_chunk_size(&self) -> Option<usize> {
-        Some(self.onehot_k)
-    }
 }
 
 impl<F, const D: usize, I> RootPolyShape<F, D> for OneHotPoly<F, I>
@@ -838,12 +834,6 @@ where
             },
         )?;
 
-        let decomposed_inner_rows = crate::kernels::linear::decompose_commit_blocks_into::<F, D>(
-            &t,
-            plan.num_digits_outer,
-            plan.log_basis_outer,
-        )?;
-
-        CommitInnerWitness::from_parts(t, decomposed_inner_rows)
+        Ok(CommitInnerWitness::from_rows(t))
     }
 }

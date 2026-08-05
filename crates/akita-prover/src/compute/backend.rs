@@ -117,8 +117,51 @@ where
     }
 }
 
+/// Opt-in shadow-compression operations.
+#[cfg(feature = "compression-diagnostics")]
+pub trait CompressionDiagnosticBackend<F>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    /// Current byte footprint of backend-owned compression caches, when exposed.
+    ///
+    /// This is diagnostic metadata only and does not participate in protocol
+    /// sizing or setup validation.
+    fn compression_cache_bytes(&self, _prepared: &Self::PreparedSetup) -> Option<usize> {
+        None
+    }
+
+    /// Exact-shape rank-one negative-binary compression products over one matrix prefix.
+    ///
+    /// Compression-capable backends must implement this explicitly. There is no
+    /// default coefficient-form fallback that would hide missing support.
+    fn compression_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        digit_vectors: &[&[[i8; D]]],
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
+}
+
 /// Negacyclic digit mat-vec operations shared by commitment and protocol code.
+#[cfg(not(feature = "compression-diagnostics"))]
 pub trait DigitRowsComputeBackend<F>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    /// Negacyclic single-input digit mat-vec rows.
+    fn digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        row_len: usize,
+        digits: &[[i8; D]],
+        log_basis: u32,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+}
+
+/// Negacyclic digit mat-vec operations shared by commitment and protocol code.
+#[cfg(feature = "compression-diagnostics")]
+pub trait DigitRowsComputeBackend<F>:
+    ComputeBackendSetup<F> + CompressionDiagnosticBackend<F>
 where
     F: FieldCore + CanonicalField,
 {

@@ -9,10 +9,9 @@ use akita_field::{
 };
 use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{AkitaExpandedSetup, FpExtEncoding};
-use std::marker::PhantomData;
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
-pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
+pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore> {
     batching_coeff: E,
     range_image_evaluation: E,
     witness_eval: E,
@@ -26,10 +25,10 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     evaluation_trace: PreparedEvaluationTrace<E>,
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
-    _marker: PhantomData<([F; D], E)>,
+    _marker: std::marker::PhantomData<F>,
 }
 
-impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
+impl<'a, F, E> AkitaStage2Verifier<'a, F, E>
 where
     F: FieldCore + CanonicalField + HalvingField,
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
@@ -77,12 +76,12 @@ where
             evaluation_trace,
             evaluation_trace_row_weight,
             evaluation_trace_opening_claim,
-            _marker: PhantomData,
+            _marker: std::marker::PhantomData,
         })
     }
 }
 
-impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
+impl<'a, F, E> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E>
 where
     F: FieldCore + CanonicalField + HalvingField,
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
@@ -110,7 +109,7 @@ where
 
         let relation_weight = {
             let _span = tracing::info_span!("stage2_relation_weight").entered();
-            self.relation_matrix_evaluator.eval_flat_at_point::<F, D>(
+            self.relation_matrix_evaluator.eval_flat_at_point::<F>(
                 challenges,
                 self.setup,
                 self.alpha,
@@ -120,9 +119,8 @@ where
         let relation_oracle = w_eval * relation_weight;
         let trace_oracle = {
             let _span = tracing::info_span!("stage2_trace_oracle").entered();
-            self.evaluation_trace_row_weight
-                * w_eval
-                * self.evaluation_trace.evaluate_at_point(challenges)?
+            let trace_weight = self.evaluation_trace.evaluate_at_point(challenges)?;
+            self.evaluation_trace_row_weight * w_eval * trace_weight
         };
 
         // A zero batching challenge removes the virtual term. Avoid the

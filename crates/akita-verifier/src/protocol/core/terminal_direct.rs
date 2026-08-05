@@ -164,7 +164,9 @@ where
         .groups
         .first()
         .ok_or(AkitaError::InvalidProof)?;
-    let admission_cap = params.response_linf_policy(sparse)?.admission_cap;
+    if group_layout.z_admission_linf_cap > params.certified_response_linf_cap(sparse)? {
+        return Err(AkitaError::InvalidProof);
+    }
     dispatch_for_field!(
         akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
         F,
@@ -188,9 +190,7 @@ where
                 .entered();
                 let values = decode_terminal_z_golomb_payload(
                     witness.z_payloads.first().ok_or(AkitaError::InvalidProof)?,
-                    group_layout.z_coords,
-                    admission_cap,
-                    Some(group_layout.z_payload_bytes),
+                    group_layout,
                 )
                 .map_err(|error| {
                     AkitaError::InvalidInput(format!("terminal z decode failed: {error:?}"))

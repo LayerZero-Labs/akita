@@ -8,24 +8,34 @@ use akita_config::test_support::ring_plan_test_seed;
 use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_types::{
     validate_role_dispatch, validate_schedule_ring_dims, AkitaScheduleLookupKey,
-    OpeningClaimsLayout, PolynomialGroupLayout, RingRole,
+    CommittedGroupBatchProfile, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
+    RingRole,
 };
 
 #[test]
 fn batched_selection_preserves_typed_schedule_topology() {
     type Cfg = fp64::D128Dense;
     let nv = 14;
-    let expected = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(nv),
-    ))
-    .expect("runtime schedule");
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(nv));
+    let expected = Cfg::runtime_schedule(key.clone()).expect("runtime schedule");
     let batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
     let final_group_point = vec![<Cfg as CommitmentConfig>::ExtField::zero(); nv];
-    let actual =
-        effective_batched_schedule::<Cfg>(&batch, &final_group_point).expect("effective schedule");
-    assert_eq!(actual.recursive_folds.len(), expected.recursive_folds.len());
+    let profiles = CommittedGroupBatchProfile {
+        final_group: CommittedGroupProfile::from_params(
+            key.final_group,
+            &expected.root.params.final_group.commitment,
+        ),
+        precommitteds: Vec::new(),
+    };
+    let selected = Cfg::select_schedule_for_profiles(&profiles).expect("selected schedule");
+    let actual = effective_batched_schedule::<Cfg>(selected, &batch, &final_group_point)
+        .expect("effective schedule");
     assert_eq!(
-        actual.terminal.input_witness_len,
+        actual.schedule().recursive_folds.len(),
+        expected.recursive_folds.len()
+    );
+    assert_eq!(
+        actual.schedule().terminal.input_witness_len,
         expected.terminal.input_witness_len
     );
 }

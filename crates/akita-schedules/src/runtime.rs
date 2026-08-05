@@ -3,12 +3,12 @@
 use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::{
-    intermediate_w_ring_element_count_for_chunks, padded_setup_prefix_len, ChunkedWitnessCfg,
-    CommittedGroupParams, DecompositionParams, FoldSchedule, FoldScheduleEstimate,
-    OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout, RecursiveFoldParams,
-    RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    RootPrecommittedGroupParams, RootSource, SisModulusProfileId, SisSecurityPolicyId,
-    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessPartition,
+    padded_setup_prefix_len, ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams,
+    DecompositionParams, FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout,
+    PlannedFoldSchedule, PolynomialGroupLayout, RecursiveFoldParams, RecursiveFoldStep,
+    RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
+    RootPrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
+    TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
     DEFAULT_SIS_SECURITY_POLICY,
 };
 
@@ -42,14 +42,34 @@ pub enum SelectionPolicyId {
     MinEstimatedProofPayload,
     /// Pick the first direct setup footprint, then payload, within setup support.
     MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
+    /// Pick exact physical setup fields, then exact proof payload bytes.
+    MinSetupMatrixFieldElementsThenProofPayload,
 }
 
 impl SelectionPolicyId {
+    /// Canonical selection objective for one schedule policy shape.
+    pub fn for_policy(
+        recursive_setup_planning: bool,
+        setup_generation_dimension: usize,
+        ring_dimension_candidates: &[CommitmentRingDims],
+    ) -> Self {
+        if recursive_setup_planning {
+            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+        } else if ring_dimension_candidates
+            != [CommitmentRingDims::uniform(setup_generation_dimension)]
+        {
+            Self::MinSetupMatrixFieldElementsThenProofPayload
+        } else {
+            Self::MinEstimatedProofPayload
+        }
+    }
+
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
             Self::MinEstimatedProofPayload => 1,
             Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => 2,
+            Self::MinSetupMatrixFieldElementsThenProofPayload => 3,
         }
     }
 
@@ -59,6 +79,9 @@ impl SelectionPolicyId {
             Self::MinEstimatedProofPayload => "MinEstimatedProofPayload",
             Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => {
                 "MinFirstDirectSetupThenPayloadWithinSupportedEnvelope"
+            }
+            Self::MinSetupMatrixFieldElementsThenProofPayload => {
+                "MinSetupMatrixFieldElementsThenProofPayload"
             }
         }
     }
@@ -76,6 +99,11 @@ pub struct PlannerPolicy {
     pub max_setup_envelope_field_elements: usize,
     pub min_offloaded_witness_contraction: usize,
     pub ring_dimension: usize,
+    /// Canonically ordered A/B/D tuples admitted by offline schedule search.
+    ///
+    /// Generated catalog identity binds this complete domain, including tuples
+    /// that do not win any emitted row.
+    pub ring_dimension_candidates: &'static [CommitmentRingDims],
     pub decomposition: DecompositionParams,
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: SisSecurityPolicyId,
@@ -84,7 +112,6 @@ pub struct PlannerPolicy {
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),
-    pub onehot_chunk_size: usize,
     pub witness_chunk: ChunkedWitnessCfg,
     pub recursive_setup_planning: bool,
 }
@@ -93,12 +120,45 @@ pub struct PlannerPolicy {
 pub type RuntimeSchedulePolicy = PlannerPolicy;
 
 impl PlannerPolicy {
+    /// Validate extension-field geometry and return the challenge-field width.
+    ///
+    /// The checked conversion and multiplication keep malformed custom policy
+    /// values from truncating or overflowing in verifier-reachable pricing.
+    pub fn challenge_field_bits(&self) -> Result<u32, AkitaError> {
+        for (name, degree) in [
+            ("claim extension degree", self.claim_ext_degree),
+            ("challenge extension degree", self.chal_ext_degree),
+        ] {
+            if degree == 0 || !degree.is_power_of_two() {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "{name} must be a nonzero power of two, got {degree}"
+                )));
+            }
+        }
+        let challenge_degree = u32::try_from(self.chal_ext_degree).map_err(|_| {
+            AkitaError::InvalidSetup(format!(
+                "challenge extension degree {} exceeds u32",
+                self.chal_ext_degree
+            ))
+        })?;
+        self.decomposition
+            .field_bits()
+            .checked_mul(challenge_degree)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("challenge field bit width overflow".to_string())
+            })
+    }
+
     /// Direct-only counterpart used when scalar schedules are cataloged under
     /// the non-recursive family identity.
     pub fn direct_only(self) -> Self {
         Self {
             recursive_setup_planning: false,
-            selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
+            selection_policy: SelectionPolicyId::for_policy(
+                false,
+                self.ring_dimension,
+                self.ring_dimension_candidates,
+            ),
             ..self
         }
     }
@@ -145,12 +205,14 @@ impl PlannerPolicy {
 pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 
 /// Validate runtime policy values used by schedule expansion and validation.
-pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    let expected_selection_policy = if policy.recursive_setup_planning {
-        SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-    } else {
-        SelectionPolicyId::MinEstimatedProofPayload
-    };
+pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    policy.challenge_field_bits()?;
+    validate_ring_dimension_candidates(policy)?;
+    let expected_selection_policy = SelectionPolicyId::for_policy(
+        policy.recursive_setup_planning,
+        policy.ring_dimension,
+        policy.ring_dimension_candidates,
+    );
     if policy.selection_policy != expected_selection_policy {
         return Err(AkitaError::InvalidSetup(
             "schedule selection policy disagrees with recursive setup capability".to_string(),
@@ -176,8 +238,41 @@ pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> 
     Ok(())
 }
 
+fn validate_ring_dimension_candidates(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    if policy.ring_dimension == 0 || !policy.ring_dimension.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "setup generation dimension must be a nonzero power of two".to_string(),
+        ));
+    }
+    let candidates = policy.ring_dimension_candidates;
+    if candidates.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "ring-dimension candidate domain must be nonempty".to_string(),
+        ));
+    }
+    let key = |dims: CommitmentRingDims| (dims.d_a(), dims.d_b(), dims.d_d());
+    for (index, &dims) in candidates.iter().enumerate() {
+        dims.validate_role_projection()?;
+        for d in [dims.d_a(), dims.d_b(), dims.d_d()] {
+            if !policy.ring_dimension.is_multiple_of(d) {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "candidate dimension D{d} does not divide setup generation D{}",
+                    policy.ring_dimension
+                )));
+            }
+        }
+        if index > 0 && key(candidates[index - 1]) >= key(dims) {
+            return Err(AkitaError::InvalidSetup(
+                "ring-dimension candidate domain must be strictly sorted and duplicate-free"
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Resolve the tensor low length independently from the block split.
-pub(crate) fn optimize_fold_challenge_shape(
+pub fn optimize_fold_challenge_shape(
     requested: TensorChallengeShape,
     num_live_blocks: usize,
 ) -> Result<TensorChallengeShape, AkitaError> {
@@ -217,29 +312,30 @@ pub(crate) fn optimize_fold_challenge_shape(
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CandidateFoldStep {
-    pub(crate) params: CommittedGroupParams,
-    pub(crate) input_witness_len: usize,
-    pub(crate) output_witness_len: usize,
-    pub(crate) estimated_direct_payload_bytes: usize,
-    pub(crate) estimated_stage3_payload_bytes: usize,
+/// One fully priced non-terminal fold awaiting schedule materialization.
+pub struct CandidateFoldStep {
+    pub params: CommittedGroupParams,
+    pub input_witness_len: usize,
+    pub output_witness_len: usize,
+    pub estimated_direct_payload_bytes: usize,
+    pub estimated_stage3_payload_bytes: usize,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CandidateTerminalResponse {
-    pub(crate) params: akita_types::TerminalCommittedGroupParams,
-    pub(crate) sparse_challenge_config: akita_challenges::SparseChallengeConfig,
-    pub(crate) input_witness_len: usize,
-    pub(crate) estimated_direct_payload_bytes: usize,
-    pub(crate) response_shape: TerminalResponseShape,
-    pub(crate) estimated_payload_bytes: usize,
+/// Fully priced terminal response awaiting schedule materialization.
+pub struct CandidateTerminalResponse {
+    pub params: akita_types::TerminalCommittedGroupParams,
+    pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
+    pub input_witness_len: usize,
+    pub estimated_direct_payload_bytes: usize,
+    pub response_shape: TerminalResponseShape,
+    pub estimated_payload_bytes: usize,
 }
 
 /// Exact Stage-3 payload induced when `successor` consumes a setup prefix.
-pub(crate) fn stage3_payload_bytes_for_successor(
+pub fn stage3_payload_bytes_for_successor(
     policy: &PlannerPolicy,
     successor: Option<&CommittedGroupParams>,
-    output_witness_len: usize,
 ) -> Result<usize, AkitaError> {
     let Some(prefix) = successor.and_then(|params| params.setup_prefix.as_ref()) else {
         return Ok(usize::default());
@@ -250,24 +346,22 @@ pub(crate) fn stage3_payload_bytes_for_successor(
             "setup-prefix field length does not align with its ring dimension".to_string(),
         ));
     }
-    let challenge_field_bits = policy
-        .decomposition
-        .field_bits()
-        .checked_mul(policy.chal_ext_degree as u32)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("challenge field bit width overflow".to_string())
-        })?;
+    let challenge_field_bits = policy.challenge_field_bits()?;
     Ok(akita_types::proof_size::stage3_setup_product_bytes(
         challenge_field_bits,
         prefix.d_setup,
         n_prefix / prefix.d_setup,
-        output_witness_len,
     ))
 }
 
-pub(crate) fn materialize_candidate_schedule(
+/// Materialize and validate the schedule shared by offline search and generated replay.
+///
+/// `cached_setup_field_elements` is the exact physical field count. Conversion to
+/// setup-generation ring elements happens exactly once while constructing the estimate.
+pub fn materialize_candidate_schedule(
     cached_total: usize,
-    cached_setup_envelope: usize,
+    cached_setup_field_elements: usize,
+    setup_generation_dimension: usize,
     first_direct_setup_field_len: Option<usize>,
     mut folds: Vec<CandidateFoldStep>,
     terminal_response: CandidateTerminalResponse,
@@ -275,6 +369,11 @@ pub(crate) fn materialize_candidate_schedule(
     if folds.is_empty() {
         return Err(AkitaError::UnsupportedSchedule(
             "a fold schedule requires root and terminal folds".to_string(),
+        ));
+    }
+    if setup_generation_dimension == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "setup generation dimension must be nonzero".into(),
         ));
     }
     let root = folds.remove(0);
@@ -294,7 +393,8 @@ pub(crate) fn materialize_candidate_schedule(
             .checked_add(terminal_response.estimated_payload_bytes)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal estimate overflow".to_string()))?,
         estimated_terminal_response_payload_bytes: terminal_response.estimated_payload_bytes,
-        estimated_setup_envelope_ring_elements: cached_setup_envelope,
+        estimated_setup_envelope_ring_elements: cached_setup_field_elements
+            .div_ceil(setup_generation_dimension),
         first_direct_setup_field_len,
         selected_offload_edges: 0,
     };
@@ -308,7 +408,6 @@ pub(crate) fn materialize_candidate_schedule(
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: RootSource::from_commitment(&root.params),
                     challenge: match root.params.fold_challenge_shape {
                         TensorChallengeShape::Flat => RootFinalChallenge::Flat,
                         TensorChallengeShape::Tensor { fold_low_len } => {
@@ -327,7 +426,7 @@ pub(crate) fn materialize_candidate_schedule(
                         commitment,
                     })
                     .collect(),
-                open_commit_matrix: root.params.open_commit_matrix.clone(),
+                open_commit_matrix: root.params.open_commit_matrix,
                 sparse_challenge_config: root.params.fold_challenge_config,
                 witness_partition: witness_partition(root.params.witness_chunk.num_chunks),
             },
@@ -338,7 +437,7 @@ pub(crate) fn materialize_candidate_schedule(
             .into_iter()
             .map(|fold| RecursiveFoldStep {
                 params: RecursiveFoldParams {
-                    open_commit_matrix: fold.params.open_commit_matrix.clone(),
+                    open_commit_matrix: fold.params.open_commit_matrix,
                     sparse_challenge_config: fold.params.fold_challenge_config,
                     incoming_setup_prefix: fold.params.setup_prefix.clone(),
                     witness_partition: witness_partition(fold.params.witness_chunk.num_chunks),
@@ -358,11 +457,12 @@ pub(crate) fn materialize_candidate_schedule(
         },
     };
     schedule.validate_structure()?;
-    let recomputed_envelope =
-        akita_types::setup_matrix_envelope_for_schedule(&schedule)?.max_setup_len;
-    if recomputed_envelope != cached_setup_envelope {
+    let recomputed_setup_field_elements =
+        akita_types::setup_matrix_field_elements_for_schedule(&schedule)?;
+    if recomputed_setup_field_elements != cached_setup_field_elements {
         return Err(AkitaError::InvalidSetup(format!(
-            "cached setup envelope {cached_setup_envelope} disagrees with materialized envelope {recomputed_envelope}"
+            "cached setup field count {cached_setup_field_elements} disagrees with materialized \
+             count {recomputed_setup_field_elements}"
         )));
     }
     estimate.selected_offload_edges = schedule
@@ -381,7 +481,11 @@ fn witness_partition(num_chunks: usize) -> WitnessPartition {
     }
 }
 
-fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<usize, AkitaError> {
+/// Return the Boolean variable count after checked power-of-two padding.
+pub fn checked_power_of_two_vars(
+    field_len: usize,
+    context: &'static str,
+) -> Result<usize, AkitaError> {
     if field_len == 0 {
         return Err(AkitaError::InvalidSetup(format!(
             "{context} must be nonzero"
@@ -418,7 +522,8 @@ pub fn suffix_opening_layout(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn grouped_segment_rings(
+/// Count ring elements in one grouped witness segment with checked arithmetic.
+pub fn grouped_segment_rings(
     num_polys: usize,
     num_live_blocks: usize,
     num_chunks: usize,
@@ -450,80 +555,22 @@ fn grouped_segment_rings(
         .ok_or_else(|| AkitaError::InvalidSetup("group witness overflow".to_string()))
 }
 
-pub(crate) fn planned_next_witness_len(
+/// Derive the canonical next-witness field length for a scalar planner level.
+pub fn planned_next_witness_len(
     field_bits: u32,
     params: &CommittedGroupParams,
     final_num_polys: usize,
     num_chunks: usize,
 ) -> Result<usize, AkitaError> {
-    if !params.precommitted_groups.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "multi-group root witness sizing must use CommittedGroupParams::output_witness_len"
-                .to_string(),
-        ));
-    }
-    if params.setup_prefix.is_some() {
-        return grouped_setup_prefix_next_witness_len(
-            field_bits,
-            params,
-            final_num_polys,
-            num_chunks,
-        );
-    }
-
-    intermediate_w_ring_element_count_for_chunks(field_bits, params, final_num_polys, num_chunks)?
-        .checked_mul(params.d_a())
-        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".into()))
-}
-
-fn grouped_setup_prefix_next_witness_len(
-    field_bits: u32,
-    params: &CommittedGroupParams,
-    final_num_polys: usize,
-    num_chunks: usize,
-) -> Result<usize, AkitaError> {
-    let mut total = grouped_segment_rings(
-        final_num_polys,
-        params.num_live_blocks,
+    let opening_batch =
+        params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
+    let layout = WitnessLayout::new(
+        params,
+        &opening_batch,
         num_chunks,
-        params.num_positions_per_block,
-        params.inner_commit_matrix.output_rank(),
-        params.num_digits_inner,
-        params.num_digits_outer,
-        params.num_digits_open,
-        params.num_digits_fold(final_num_polys, field_bits)?,
+        akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open),
     )?;
-    for group in params.precommitted_group_iter() {
-        let group_rings = grouped_segment_rings(
-            group.layout.group.num_polynomials(),
-            group.layout.num_live_blocks,
-            num_chunks,
-            group.layout.num_positions_per_block,
-            group.inner_commit_matrix.output_rank(),
-            group.num_digits_inner,
-            group.num_digits_outer,
-            group.num_digits_open,
-            group.num_digits_fold_one,
-        )?;
-        total = total
-            .checked_add(group_rings)
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped witness overflow".to_string()))?;
-    }
-
-    let r_rows = params.relation_matrix_row_count(params.precommitted_group_count() + 1)?;
-    let r_count = r_rows
-        .checked_mul(akita_types::sis::compute_num_digits_field_width(
-            field_bits,
-            params.log_basis_open,
-        ))
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped r-tail witness overflow".to_string()))?;
-    let rings = total
-        .checked_add(r_count)
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped witness overflow".to_string()))?;
-
-    rings
-        .checked_mul(params.relation_witness_carrier_ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped next witness length overflow".to_string()))
+    Ok(layout.live_coeff_len())
 }
 
 /// Convenience policy used by config adapters.

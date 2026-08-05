@@ -12,12 +12,29 @@ directly `<Cfg>`-generic: it calls `CommitmentConfig` hooks and
 At a high level:
 
 1. **Bind the instance** and absorb the opening batch shape into the transcript.
-2. **Resolve the schedule** the prover used (`CommitmentConfig::runtime_schedule`), validating `num_vars` against setup capacity before any DP fallback.
+2. **Resolve the exact generated row** named by
+   `OpeningScheduleSelection`. Catalog and row digests are checked before the
+   ordered `CommittedGroupProfile` values are compared with the resolved row.
+   The verifier never runs planner search.
 3. **Replay the structural folds** in `protocol/core`: the root fold followed by
    every recursive fold, using the schedule-selected `LevelParams`.
 4. **Check the terminal witness directly** against its predecessor-bound `t`
    state. The terminal relation is `consistency | A`; it has no outer `u`, B
    block, D block, or quotient sumcheck.
+
+Root replay reads each commitment group's point directly from
+`PolynomialGroupClaims`.
+The verifier prepares the per-group relation and extension-opening factors from
+that complete point, without reconstructing a common point.
+When EOR is required, the groups enter one batched reduction but retain their
+own public points and native arities.
+
+At a recursive boundary, Stage 2 supplies the next-witness claim
+`(stage2_point, stage2_next_w_eval)`.
+Stage 3 independently proves the setup product and supplies
+`(stage3_setup_point, stage3_setup_prefix_eval)`.
+The successor consumes these as separate witness and setup groups.
+Stage 3 does not re-randomize, project, or serialize the witness claim.
 
 The terminal `A * z` check accepts exactly the signed-i16 coefficient class.
 Decoded coefficients outside `[-32768, 32767]` are rejected before arithmetic;
@@ -39,6 +56,28 @@ prepared state.
 The verifier never constructs prover-only polynomial backends or setup expansion
 kernels.
 
+### Schedule and profile admission
+
+Verifier admission uses one canonical row audit. Before setup access or proof
+replay, it:
+
+1. validates the generated catalog identity against the active policy and
+   runtime challenge hooks;
+2. resolves the fixed-width row digest by bounded lookup;
+3. checks every ordered public committed profile against the resolved row;
+4. re-audits every A, B, D, recursive, and terminal SIS matrix against the
+   canonical security table, role, modulus, rank, width, bound, and ring
+   dimension;
+5. checks root, recursive, setup-prefix, challenge, witness-partition, terminal
+   response, and full terminal infinity-norm-cap geometry;
+6. checks that the schedule fits the setup envelope; and only then
+7. binds the instance descriptor and replays the proof.
+
+Private polynomial representations and honest-prover witness models are absent
+from this path. The public selection is one digest of the exact ordered
+profiles and expanded row. Catalog policy metadata is validated internally
+before that digest is admitted.
+
 ## The verifier no-panic contract
 
 Verifier-reachable execution is a **no-panic boundary**.
@@ -51,10 +90,8 @@ commitment, direct witness, or transcript input must be rejected with
 - `akita-verifier`
 - Verifier-reachable paths in `akita-types`, `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, and verifier-used `akita-field` code
 - `akita-config` (every `CommitmentConfig` method reachable from `batched_verify`)
-- `akita-planner` (schedule-search DP on table miss, reachable through `runtime_schedule`)
-
-The verifier must validate `key.num_vars` against setup capacity **before**
-invoking the DP so a malformed proof cannot blow up the search state space.
+- `akita-schedules` generated-catalog identity, row resolution, and canonical
+  resolved-row audit paths
 
 ### Rules for contributors
 

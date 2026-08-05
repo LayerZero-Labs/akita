@@ -1,5 +1,13 @@
 # Spec: Folded-Witness ∞-Norm Rejection (digit-count tightening)
 
+> **Architecture revision for #338.** This specification remains the regression
+> baseline for the existing balanced signed digit formulas and snap ratios.
+> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md)
+> supersedes its ownership of intermediate infinity norm caps, field-selected
+> policy inputs, terminal Golomb-Rice parameters, and ZK probe order. Under the
+> revised contract, an intermediate group policy emits `num_digits_fold`, and
+> the terminal response shape owns raw admission and wire parameters.
+
 | Field       | Value                                                     |
 |-------------|-----------------------------------------------------------|
 | Author(s)   | Quang Dao                                                 |
@@ -43,6 +51,22 @@ This is orthogonal to the L2-MSIS cutover (#155): that stack prices the **A-role
 binding rank** (challenge L1 mass `ω` + Euclidean MSIS); this spec tightens the
 **fold digit count** that sizes the **next-level width**. The two never touch the
 same quantity.
+
+### Field-specific snap policy
+
+The digit-boundary snap floor is part of the protocol identity, not an
+implementation default. Formula tag `4` in `FoldLinfProtocolBinding` serializes
+both ratios: Fp32 (`field_bits == 32`) retains at least `3/4 · t*`, while every
+other supported field width, including Fp64 and Fp128, retains at least
+`1/2 · t*`. Fp32 has the tighter floor because its coarse digit boundaries make
+the general floor produce pathological grind behavior. The selector uses the
+base challenge-field width, so Fp32 extension-claim schedules use the Fp32
+policy as well.
+
+This policy can change `K`, proof sizing, and the A-role digit-envelope price.
+Planner/runtime schedule tables and affected pricing must therefore be
+regenerated from the same bound after a policy change; the policy is not
+covered by the group-local point cutover's no-pricing-drift invariant.
 
 The sub-Gaussian tail argument for the approved flat-family cutover is reproduced in
 the Design section below. This spec is self-contained and consistent with the
@@ -120,8 +144,9 @@ The feature introduces or modifies:
    deserialization tests.
 6. **Descriptor binding.** The active threshold policy (formula identity,
    descriptor-bound `p_grind`, certified-family set, per-family `challenge_l2_sq_max`,
-   attempt cap, grind-nonce presence) is bound into `AkitaInstanceDescriptor`; a proof
-   produced under the rejection policy must not verify under the legacy `β_inf` policy.
+   attempt cap, grind-nonce presence, and the Fp32/wide snap ratios) is bound into
+   `AkitaInstanceDescriptor`; a proof produced under the rejection policy must not
+   verify under the legacy `β_inf` policy or a different snap policy.
    Protected by: pinned descriptor-bytes test.
 
 ### Non-Goals
@@ -193,6 +218,9 @@ New tests:
 - `akita-prover`: reroll-loop termination (statistical, sampled re-fold count);
   capped-loop error path; `LoggingTranscript` equality.
 - `akita-verifier`: malformed-nonce / shape rejection (no panic).
+- Schedule topology validation derives each predecessor Stage 2 arity and
+  accepts `n <= N` while rejecting `n > N`; no synthetic strict-short E2E is
+  required for this contract.
 - e2e: digit-bound tamper test; ZK parity if the feature is enabled.
 
 Feature combinations: default, `--no-default-features`, `--features zk`,
@@ -211,8 +239,10 @@ Expected direction: **smaller proofs**, no prover slowdown of note.
   challenge derivation + one fold pass), a small constant overhead, only on
   levels where `t* < β_inf` crosses a digit boundary.
 - No verifier cost beyond consuming one extra nonce per fold level.
-- A-role rank and setup size are unchanged by this spec (collision pricing is a
-  separate concern in `norm_bound.rs`).
+- The Fp32 snap floor is intentionally protocol-visible. It can change `K`,
+  proof size, and the A-role digit-envelope rank; affected planner tables and
+  pricing are regenerated together. This is separate from the group-local point
+  ownership cutover.
 
 ## Design
 
@@ -284,11 +314,12 @@ because the cardinality is fixed at one `u32` per fold level. `level_proof_bytes
 adds exactly four bytes for every fold level (`RelationMatrixRowLayout::WithDBlock` and
 `RelationMatrixRowLayout::WithoutDBlock`).
 
-The nonce is one per `sample_folding_challenges` call. Under the single-point
-opening batch contract (#186), a batched root uses one shared opening point and
-one nonce for the whole witness fold round: the prover samples one challenge
-object, builds the folded witness, and accepts only if every emitted coefficient
-is at most `t*`. Flat recursive intermediate folds use the same one-nonce rule.
+The nonce is one per `sample_folding_challenges` call. A batched root may contain
+groups with distinct opening points; the call still uses one nonce and one
+challenge stream for the whole witness fold round. The prover samples one
+challenge object, builds the folded witness, and accepts only if every emitted
+coefficient is at most `t*`. Flat recursive intermediate folds use the same
+one-nonce rule.
 Tensor folds do not reroll in this first cut, so they serialize nonce `0` and the
 descriptor marks the tensor threshold policy as `WorstCaseBetaOnly`.
 
@@ -543,8 +574,8 @@ worst-case path is generalized in place):
 
 - Instance-descriptor binding: `FoldLinfProtocolBinding` in the setup section
   (formula tag, `p_grind`, certified-family set, per-family `challenge_l2_sq_max`,
-  attempt cap, grind-nonce wire bytes, probe-order tag); pinned digest tests in
-  `instance_descriptor/tests.rs`.
+  attempt cap, grind-nonce wire bytes, probe-order tag, and Fp32/wide snap ratios);
+  pinned digest tests in `instance_descriptor/tests.rs`.
 
 ### Alternatives Considered
 

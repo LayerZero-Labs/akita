@@ -1,7 +1,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::{AkitaError, FieldCore};
-use akita_types::CommittedGroupParams;
+use akita_types::{CommittedGroupParams, CommittedGroupProfile};
 
 // ===========================================================================
 // Open, source-typed operation boundary (PO1)
@@ -42,12 +42,8 @@ pub struct CommitInnerPlan {
     pub num_positions_per_block: usize,
     /// Number of balanced digits used for the A-side commit.
     pub num_digits_inner: usize,
-    /// Number of balanced digits used when opening (recomposition width).
-    pub num_digits_outer: usize,
     /// Logarithm of the committed source-witness gadget basis.
     pub log_basis_inner: u32,
-    /// Logarithm of the committed `t_hat` gadget basis.
-    pub log_basis_outer: u32,
 }
 
 impl CommitInnerPlan {
@@ -57,9 +53,17 @@ impl CommitInnerPlan {
             n_a: params.inner_commit_matrix.output_rank(),
             num_positions_per_block: params.num_positions_per_block,
             num_digits_inner: params.num_digits_inner,
-            num_digits_outer: params.num_digits_outer,
             log_basis_inner: params.log_basis_inner,
-            log_basis_outer: params.log_basis_outer,
+        }
+    }
+
+    /// Build inner-commit parameters from a frozen standalone precommit profile.
+    pub fn from_profile(profile: &CommittedGroupProfile) -> Self {
+        Self {
+            n_a: profile.inner_commit_matrix.output_rank(),
+            num_positions_per_block: profile.num_positions_per_block,
+            num_digits_inner: profile.num_digits_inner,
+            log_basis_inner: profile.log_basis_inner,
         }
     }
 }

@@ -1,12 +1,11 @@
 //! Recursive setup-offloading config adapter.
 
-use crate::{CommitmentConfig, PrecommittedCommitmentConfig};
+use crate::CommitmentConfig;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
-    FoldSchedule, OpeningClaimsLayout, PrecommittedGroupDescriptor, SetupMatrixEnvelope,
-    SisModulusProfileId, SETUP_OFFLOAD_D_SETUP,
+    AkitaScheduleInputs, ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, FoldSchedule,
+    OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusProfileId, SETUP_OFFLOAD_D_SETUP,
 };
 #[cfg(any(
     feature = "schedules-fp128-d64-onehot-recursive",
@@ -24,6 +23,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     type ExtField = Cfg::ExtField;
 
     const D: usize = Cfg::D;
+    const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] = Cfg::RING_DIMENSION_CANDIDATES;
 
     fn decomposition() -> DecompositionParams {
         Cfg::decomposition()
@@ -59,8 +59,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Cfg::onehot_chunk_size()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Cfg::root_honest_fold_policy()
     }
 
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {
@@ -110,38 +110,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     }
 
     fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError> {
-        Self::runtime_schedule(recursive_schedule_key::<Self>(layout)?)
+        Self::runtime_schedule(crate::proof_optimized::proof_optimized_schedule_key(
+            layout,
+        )?)
     }
-}
-
-fn recursive_schedule_key<Cfg: CommitmentConfig>(
-    layout: &OpeningClaimsLayout,
-) -> Result<AkitaScheduleLookupKey, AkitaError> {
-    layout.check()?;
-    let final_group = layout.root_final_group_layout()?;
-    if layout.num_groups() == 1 {
-        return Ok(AkitaScheduleLookupKey::single(final_group));
-    }
-    let precommitteds = layout
-        .root_precommitted_group_layouts()?
-        .iter()
-        .copied()
-        .map(|group| {
-            group.validate()?;
-            let singleton =
-                OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
-            let params = <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-                &singleton,
-            )?;
-            Ok(PrecommittedGroupDescriptor::from_params(group, &params))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let key = AkitaScheduleLookupKey {
-        final_group,
-        precommitteds,
-    };
-    key.validate()?;
-    Ok(key)
 }
 
 #[cfg(all(
@@ -152,9 +124,11 @@ fn recursive_schedule_key<Cfg: CommitmentConfig>(
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
+    use crate::PrecommittedCommitmentConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        r_decomp_levels, shared_setup_fold_gadget, PolynomialGroupLayout, RelationAddressGeometry,
+        r_decomp_levels, shared_setup_fold_gadget, AkitaScheduleLookupKey, CommittedGroupProfile,
+        PolynomialGroupLayout, PreparedRelationAddress, RelationAddressGeometry,
         SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
     };
 
@@ -183,7 +157,7 @@ mod tests {
         let params =
             PrecommittedCommitmentConfig::<Cfg>::get_params_for_batched_commitment(&singleton)
                 .expect("recursive-catalog precommit params");
-        let descriptor = PrecommittedGroupDescriptor::from_params(precommitted, &params);
+        let descriptor = CommittedGroupProfile::from_params(precommitted, &params);
         let key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![descriptor, descriptor],
@@ -199,16 +173,16 @@ mod tests {
 
         let precommitted = PolynomialGroupLayout::new(16, 1);
         let final_group = PolynomialGroupLayout::new(32, 2);
-        let layout =
-            OpeningClaimsLayout::from_root_groups(&[precommitted, precommitted], final_group)
-                .expect("multi-group layout");
-        let schedule = Cfg::get_params_for_prove(&layout).expect("recursive schedule");
-
         let singleton = OpeningClaimsLayout::new(16, 1).expect("singleton precommit layout");
         let params =
             PrecommittedCommitmentConfig::<Cfg>::get_params_for_batched_commitment(&singleton)
                 .expect("recursive-catalog precommit params");
-        let expected = PrecommittedGroupDescriptor::from_params(precommitted, &params);
+        let expected = CommittedGroupProfile::from_params(precommitted, &params);
+        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey {
+            final_group,
+            precommitteds: vec![expected, expected],
+        })
+        .expect("recursive schedule");
 
         assert_eq!(schedule.root.params.precommitted_groups.len(), 2);
         assert!(schedule
@@ -220,20 +194,17 @@ mod tests {
     }
 
     #[test]
-    fn profiling_schedule_deferred_setup_weights_match_the_full_plan() {
+    fn profiling_schedule_tensor_setup_weights_match_dense_materialization() {
         let (schedule, opening_batch) = profiling_schedule();
         let params = &schedule.root.params.final_group.commitment;
-        let rows = params
-            .relation_matrix_row_count(opening_batch.num_groups())
-            .expect("relation rows");
         let witness_layout = WitnessLayout::new(
             params,
             &opening_batch,
             params.witness_chunk.num_chunks,
-            rows,
             r_decomp_levels::<Prime128OffsetA7F7>(params.log_basis_open),
         )
         .expect("root witness layout");
+        let rows = witness_layout.r_rows().len();
         let order = opening_batch.root_group_order().expect("relation order");
         let groups = order
             .iter()
@@ -245,13 +216,7 @@ mod tests {
                 SetupContributionGroupInputs {
                     group_id,
                     num_claims: group_layout.num_polynomials(),
-                    depth_fold: params
-                        .num_digits_fold_for_params(
-                            group_params,
-                            group_layout.num_polynomials(),
-                            params.field_bits_for_cache(),
-                        )
-                        .expect("group fold depth"),
+                    depth_fold: group_params.num_digits_fold(),
                     a_row_start: params
                         .a_row_range(&opening_batch, group_id)
                         .expect("A rows")
@@ -264,9 +229,12 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let next_d = schedule.recursive_folds[0].params.witness.d_a();
-        let address_geometry =
-            RelationAddressGeometry::new(params.role_dims(), next_d, witness_layout.total_len())
-                .expect("relation address geometry");
+        let address_geometry = RelationAddressGeometry::new(
+            params.role_dims(),
+            next_d,
+            witness_layout.live_coeff_len(),
+        )
+        .expect("relation address geometry");
         let address_point = (0..address_geometry.relation_lane_variable_count())
             .map(|index| scalar(101 + index as u128))
             .collect::<Vec<_>>();
@@ -276,46 +244,32 @@ mod tests {
         let alpha = scalar(3);
         let fold_gadget =
             shared_setup_fold_gadget::<Prime128OffsetA7F7>(params, &opening_batch, &groups);
-        let full = SetupContributionPlan::prepare::<Prime128OffsetA7F7>(
-            params,
-            &opening_batch,
-            eq_tau1.clone().into(),
-            &witness_layout,
-            &groups,
-            &address_point,
-            fold_gadget.as_deref(),
-            address_geometry,
-            alpha,
-        )
-        .expect("full setup plan");
-        let deferred = SetupContributionPlan::prepare_deferred::<Prime128OffsetA7F7>(
+        let plan = SetupContributionPlan::prepare::<Prime128OffsetA7F7>(
             params,
             &opening_batch,
             eq_tau1.into(),
             &witness_layout,
             &groups,
-            &address_point,
+            PreparedRelationAddress::new(&address_point).expect("relation address"),
             fold_gadget.as_deref(),
             address_geometry,
-            alpha,
         )
-        .expect("deferred setup plan");
-        let setup_idx_bits = full.required().next_power_of_two().trailing_zeros() as usize;
+        .expect("setup tensor plan");
+        let setup_idx_bits = plan.required().next_power_of_two().trailing_zeros() as usize;
         let rho = (0..setup_idx_bits)
             .map(|index| scalar(401 + index as u128))
             .collect::<Vec<_>>();
-        let dense_mle = full
+        let dense_mle = plan
             .materialize_setup_index_weights(alpha)
-            .expect("full setup weights")
+            .expect("dense setup weights")
             .into_iter()
             .enumerate()
             .fold(Prime128OffsetA7F7::zero(), |acc, (index, weight)| {
                 acc + eq_at_index(&rho, index) * weight
             });
         assert_eq!(
-            deferred
-                .evaluate_setup_index_weight_mle(&rho, alpha)
-                .expect("deferred setup weight MLE"),
+            plan.evaluate_setup_index_weight_mle(&rho, alpha)
+                .expect("tensor setup weight MLE"),
             dense_mle
         );
     }

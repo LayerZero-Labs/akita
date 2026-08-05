@@ -47,7 +47,7 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         num_claims,
         num_t_vectors,
     } = opening_counts;
-    let depth_fold = lp.num_digits_fold(num_t_vectors, lp.field_bits_for_cache())?;
+    let depth_fold = lp.num_digits_fold();
     if depth_open == 0 || depth_inner == 0 || depth_outer == 0 || depth_fold == 0 {
         return Err(AkitaError::InvalidSetup(
             "prepared ring-switch layout has zero width".to_string(),
@@ -392,8 +392,8 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     /// with compact `[z | e | t]` ranges; `num_chunks = W` lays out `W`
     /// contiguous `[zᵢ | eᵢ | tᵢ]` ownership units (`zᵢ` replicated,
     /// `eᵢ`/`tᵢ` partitioned) followed by one shared `r` tail sized at the
-    /// single-machine row count. Pass `witness_ring_len = Some(witness_len / D)` to
-    /// enforce the no-panic capacity bound at this boundary.
+    /// single-machine row count. Pass `witness_coeff_len = Some(witness_len)`
+    /// to enforce the no-panic capacity bound at this boundary.
     ///
     /// # Errors
     ///
@@ -403,7 +403,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     pub fn segment_layout(
         &self,
         lp: &CommittedGroupParams,
-        witness_ring_len: Option<usize>,
+        witness_coeff_len: Option<usize>,
     ) -> Result<WitnessLayout, AkitaError> {
         lp.witness_chunk.validate()?;
         let num_chunks = lp.witness_chunk.num_chunks;
@@ -419,21 +419,13 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         }
         // `EvaluationTrace` is a logical relation row used by Stage 2. It is
         // not materialized in the quotient witness's shared `r` tail.
-        let relation_rhs_rows =
-            crate::proof::relation::relation_rhs_row_count(&relation_rhs_layout);
         let r_levels = r_decomp_levels::<F>(lp.log_basis_open);
-        let layout = WitnessLayout::new(
-            lp,
-            &self.opening_batch,
-            num_chunks,
-            relation_rhs_rows,
-            r_levels,
-        )?;
-        if let Some(capacity) = witness_ring_len {
-            if layout.total_len() > capacity {
+        let layout = WitnessLayout::new(lp, &self.opening_batch, num_chunks, r_levels)?;
+        if let Some(capacity) = witness_coeff_len {
+            if layout.live_coeff_len() > capacity {
                 return Err(AkitaError::InvalidSetup(format!(
-                    "resolved witness layout requires {} ring columns but only {capacity} are committed",
-                    layout.total_len(),
+                    "resolved witness layout requires {} coefficients but only {capacity} are committed",
+                    layout.live_coeff_len(),
                 )));
             }
         }
@@ -445,6 +437,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
 mod tests {
     use super::*;
     use crate::layout::PrecommittedLevelParams;
+    use crate::DigitBlocks;
     use crate::{
         emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
         InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
@@ -456,24 +449,29 @@ mod tests {
     const D: usize = 32;
     const MULTI_GROUP_D: usize = 64;
 
-    fn marker(index: usize) -> [i8; 2] {
+    fn marker<const N: usize>(index: usize) -> [i8; N] {
         let value = (index % 100 + 1) as i8;
-        [value, -value]
+        std::array::from_fn(|coefficient| {
+            if coefficient.is_multiple_of(2) {
+                value
+            } else {
+                -value
+            }
+        })
     }
 
-    fn flatten_markers(markers: impl IntoIterator<Item = [i8; 2]>) -> Vec<i8> {
+    fn flatten_markers<const N: usize>(markers: impl IntoIterator<Item = [i8; N]>) -> Vec<i8> {
         markers.into_iter().flatten().collect()
     }
 
     fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
-        const BOUND: u128 = 1;
         lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
             lp.inner_commit_matrix.security_policy(),
             lp.inner_commit_matrix.sis_table_key().table_digest,
             lp.inner_commit_matrix.sis_modulus_profile(),
             lp.inner_commit_matrix.output_rank(),
             lp.inner_commit_matrix.input_width(),
-            BOUND,
+            2,
             lp.d_a(),
         );
         lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
@@ -482,7 +480,7 @@ mod tests {
             lp.outer_commit_matrix.sis_modulus_profile(),
             lp.outer_commit_matrix.output_rank(),
             lp.outer_commit_matrix.input_width(),
-            BOUND,
+            3,
             lp.d_a(),
         );
     }
@@ -498,8 +496,8 @@ mod tests {
         }
     }
 
-    fn test_level_params() -> CommittedGroupParams {
-        CommittedGroupParams::params_only(
+    fn test_level_params(_num_fold_claims: usize) -> CommittedGroupParams {
+        let mut params = CommittedGroupParams::params_only(
             crate::SisModulusProfileId::Q32Offset99,
             D,
             2,
@@ -509,7 +507,9 @@ mod tests {
             fold_challenge_config(),
         )
         .with_decomp(4, 8, 1, 2, 2)
-        .expect("test params")
+        .expect("test params");
+        params.num_digits_fold = 3;
+        params
     }
 
     fn test_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenges {
@@ -530,7 +530,7 @@ mod tests {
 
     #[test]
     fn relation_instance_rejects_empty_y() {
-        let lp = test_level_params();
+        let lp = test_level_params(1);
         let opening_batch = OpeningClaimsLayout::new(2, 1).expect("valid opening batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
@@ -553,9 +553,12 @@ mod tests {
         );
     }
 
-    fn chunk_test_level_params(block_index_bits: usize) -> CommittedGroupParams {
+    fn chunk_test_level_params(
+        block_index_bits: usize,
+        _num_fold_claims: usize,
+    ) -> CommittedGroupParams {
         // num_live_blocks = 2^block_index_bits, num_positions_per_block = 2^position_index_bits, single-tier.
-        CommittedGroupParams::params_only(
+        let mut params = CommittedGroupParams::params_only(
             crate::SisModulusProfileId::Q32Offset99,
             D,
             2,
@@ -565,7 +568,9 @@ mod tests {
             fold_challenge_config(),
         )
         .with_decomp(4, 1usize << (2 + block_index_bits), 1, 2, 2)
-        .expect("test params")
+        .expect("test params");
+        params.num_digits_fold = 3;
+        params
     }
 
     /// Build a minimal non-terminal relation instance whose layout-relevant
@@ -596,10 +601,10 @@ mod tests {
 
     #[test]
     fn resolve_single_chunk_matches_legacy_offsets() {
-        let lp = chunk_test_level_params(1);
-        assert_eq!(lp.witness_chunk.num_chunks, 1);
         let num_claims = 3;
-        let lens = ring_relation_segment_lengths::<F>(
+        let lp = chunk_test_level_params(1, num_claims);
+        assert_eq!(lp.witness_chunk.num_chunks, 1);
+        let _lens = ring_relation_segment_lengths::<F>(
             &lp,
             RingRelationOpeningCounts {
                 num_claims,
@@ -615,13 +620,10 @@ mod tests {
         let unit = &resolved.units()[0];
         // Single-unit compact offsets: z first, then e, t, and the shared r tail.
         assert_eq!(unit.z_range().start, 0);
-        assert_eq!(unit.e_range().start, lens.z_len);
-        assert_eq!(unit.t_range().start, lens.z_len + lens.e_len);
+        assert_eq!(unit.e_range().start, unit.z_range().end);
+        assert_eq!(unit.t_range().start, unit.e_range().end);
         // The shared r tail follows the unit's compact z, e, and t ranges.
-        assert_eq!(
-            resolved.r_range().start,
-            lens.z_len + lens.e_len + lens.t_len
-        );
+        assert_eq!(resolved.r_range().start, unit.t_range().end);
         assert_eq!(unit.global_block_start(), 0);
         assert_eq!(unit.num_live_blocks(), lp.num_live_blocks);
     }
@@ -630,21 +632,13 @@ mod tests {
     fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
         let num_claims = 2;
         for w in [1usize, 2, 4, 8] {
-            let mut lp = chunk_test_level_params(3); // num_live_blocks = 8
+            let mut lp = chunk_test_level_params(3, num_claims); // num_live_blocks = 8
             if w > 1 {
                 lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
                     num_chunks: w,
                     num_activated_levels: 1,
                 };
             }
-            let lens = ring_relation_segment_lengths::<F>(
-                &lp,
-                RingRelationOpeningCounts {
-                    num_claims,
-                    num_t_vectors: num_claims,
-                },
-            )
-            .expect("lengths");
             let layout = build_instance(&lp, num_claims, 4)
                 .segment_layout(&lp, None)
                 .expect("layout");
@@ -654,19 +648,32 @@ mod tests {
             // Partitioned e/t lengths sum to the single-machine totals; z replicated.
             let e_sum: usize = layout.units().iter().map(|unit| unit.e_range().len()).sum();
             let t_sum: usize = layout.units().iter().map(|unit| unit.t_range().len()).sum();
-            assert_eq!(e_sum, lens.e_len);
-            assert_eq!(t_sum, lens.t_len);
+            assert_eq!(
+                e_sum,
+                lp.num_digits_open * lp.num_live_blocks * num_claims * D
+            );
+            assert_eq!(
+                t_sum,
+                lp.num_digits_outer
+                    * lp.inner_commit_matrix.output_rank()
+                    * lp.num_live_blocks
+                    * num_claims
+                    * D
+            );
             for unit in layout.units() {
-                assert_eq!(unit.z_range().len(), lens.z_len);
+                assert_eq!(
+                    unit.z_range().len(),
+                    lp.num_positions_per_block * lp.num_digits_inner * lp.num_digits_fold() * D
+                );
             }
 
             // Ownership units are contiguous and z-first; the shared r tail follows all units.
-            let stride = lens.z_len + lens.e_len / w + lens.t_len / w;
+            let stride = layout.units()[0].t_range().end;
             for (j, unit) in layout.units().iter().enumerate() {
                 let base = j * stride;
                 assert_eq!(unit.z_range().start, base);
-                assert_eq!(unit.e_range().start, base + lens.z_len);
-                assert_eq!(unit.t_range().start, base + lens.z_len + lens.e_len / w);
+                assert_eq!(unit.e_range().start, unit.z_range().end);
+                assert_eq!(unit.t_range().start, unit.e_range().end);
                 assert_eq!(unit.global_block_start(), j * blocks_per_chunk);
             }
             assert_eq!(layout.r_range().start, w * stride);
@@ -682,7 +689,7 @@ mod tests {
     fn resolve_rejects_bad_chunk_count() {
         let num_claims = 2;
         // num_chunks = 3 is not a power of two.
-        let mut lp = chunk_test_level_params(3);
+        let mut lp = chunk_test_level_params(3, num_claims);
         lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
             num_chunks: 3,
             num_activated_levels: 1,
@@ -692,7 +699,7 @@ mod tests {
             .is_err());
 
         // num_chunks = 16 exceeds num_live_blocks = 8.
-        let mut lp = chunk_test_level_params(3);
+        let mut lp = chunk_test_level_params(3, num_claims);
         lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
             num_chunks: 16,
             num_activated_levels: 1,
@@ -705,7 +712,7 @@ mod tests {
     #[test]
     fn resolve_rejects_capacity_overflow() {
         let num_claims = 2;
-        let lp = chunk_test_level_params(3);
+        let lp = chunk_test_level_params(3, num_claims);
         // A witness ring capacity of 1 is far smaller than offset_r + r_len.
         assert!(
             build_instance(&lp, num_claims, 4)
@@ -723,7 +730,7 @@ mod tests {
     fn relation_segment_layout_uses_same_axis_contract() {
         use crate::proof::relation::RelationRhsLayout;
 
-        let lp = test_level_params();
+        let lp = test_level_params(3);
         let opening_batch = OpeningClaimsLayout::new(2, 3).expect("valid batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
@@ -752,26 +759,18 @@ mod tests {
 
         let layout = instance.segment_layout(&lp, None).expect("layout");
         let unit = &layout.units()[0];
-        let lens = ring_relation_segment_lengths::<F>(
-            &lp,
-            RingRelationOpeningCounts {
-                num_claims: instance.opening_batch().num_total_polynomials(),
-                num_t_vectors: instance.opening_batch().num_total_polynomials(),
-            },
-        )
-        .expect("segment lengths");
         assert_eq!(layout.num_chunks_for_group(0), 1);
         assert_eq!(unit.z_range().start, 0);
-        assert_eq!(unit.e_range().start, lens.z_len);
-        assert_eq!(unit.t_range().start, lens.z_len + lens.e_len);
-        assert_eq!(layout.r_range().start, lens.z_len + lens.e_len + lens.t_len);
+        assert_eq!(unit.e_range().start, unit.z_range().end);
+        assert_eq!(unit.t_range().start, unit.e_range().end);
+        assert_eq!(layout.r_range().start, unit.t_range().end);
         instance
             .check_v_shape_for_level(&lp)
             .expect("v rows match layout");
     }
 
     fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout) {
-        use crate::schedule::PrecommittedGroupDescriptor;
+        use crate::schedule::CommittedGroupProfile;
         let fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(MULTI_GROUP_D)
             .expect("multi-group test ring dimension has a production challenge");
         let lp = CommittedGroupParams::params_only(
@@ -798,18 +797,14 @@ mod tests {
         .expect("multi-group precommit params");
         certify_test_sis_bounds(&mut precommit_lp);
         let precommit = PrecommittedLevelParams {
-            layout: PrecommittedGroupDescriptor::from_params(
+            layout: CommittedGroupProfile::from_params(
                 PolynomialGroupLayout::new(4, 1),
                 &precommit_lp,
             ),
-            inner_commit_matrix: precommit_lp.inner_commit_matrix.clone(),
-            outer_commit_matrix: precommit_lp.outer_commit_matrix.clone(),
             log_basis_open: precommit_lp.log_basis_open,
             fold_challenge_config: precommit_lp.fold_challenge_config,
-            num_digits_inner: precommit_lp.num_digits_inner,
-            num_digits_outer: precommit_lp.num_digits_outer,
             num_digits_open: precommit_lp.num_digits_open,
-            num_digits_fold_one: precommit_lp.num_digits_fold_one,
+            num_digits_fold: precommit_lp.num_digits_fold,
         };
         let mut multi_group_lp = lp;
         multi_group_lp.precommitted_groups = vec![precommit];
@@ -857,10 +852,15 @@ mod tests {
             .segment_layout(&lp, None)
             .expect("multi-group segment layout");
         let num_groups = opening_batch.num_groups();
-        // Group-major: one ownership unit per group, each holding a contiguous
-        // `[z_g | e_g | t_g]` stride; only the shared `r` tail follows all units.
+        // With one chunk, authenticated group order gives one contiguous
+        // `[z_g | e_g | t_g]` unit per group before the shared R tail.
         assert_eq!(layout.units().len(), num_groups);
-        let r_len_total = relation_rhs_rows * r_decomp_levels::<F>(lp.log_basis_open);
+        let quotient_depth = r_decomp_levels::<F>(lp.log_basis_open);
+        let r_len_total = layout
+            .r_rows()
+            .iter()
+            .map(|row| row.ring_dim() * quotient_depth)
+            .sum::<usize>();
 
         let mut base = 0usize;
         for (p, unit) in layout.units().iter().enumerate() {
@@ -877,11 +877,10 @@ mod tests {
             base += z_g + e_g + t_g;
         }
 
-        let witness_ring_cols = base + r_len_total;
         let expected_witness_len = lp
             .output_witness_len::<F>(&opening_batch)
             .expect("next w len");
-        assert_eq!(witness_ring_cols * MULTI_GROUP_D, expected_witness_len);
+        assert_eq!(base + r_len_total, expected_witness_len);
     }
 
     #[test]
@@ -927,13 +926,16 @@ mod tests {
                 .iter()
                 .map(|unit| (unit.group_index(), unit.chunk_index()))
                 .collect::<Vec<_>>(),
-            vec![(1, 0), (1, 1), (0, 0), (0, 1)]
+            vec![(1, 0), (0, 0), (1, 1), (0, 1)]
         );
         for group_index in [1, 0] {
-            let units = layout.units_for_group(group_index).expect("group units");
-            assert_eq!(units[0].global_block_range(), 0..2);
-            assert_eq!(units[1].global_block_range(), 2..4);
-            assert_eq!(units[0].t_range().end, units[1].z_range().start);
+            let mut units = layout.units_for_group(group_index).expect("group units");
+            let first = units.next().expect("first group unit");
+            let second = units.next().expect("second group unit");
+            assert!(units.next().is_none());
+            assert_eq!(first.global_block_range(), 0..2);
+            assert_eq!(second.global_block_range(), 2..4);
+            assert!(first.t_range().end < second.z_range().start);
         }
         assert_eq!(
             layout.units().last().expect("last unit").t_range().end,
@@ -942,7 +944,7 @@ mod tests {
 
         // Independent dense emitter oracle: each physical range must contain
         // the corresponding semantic source planes in digit-innermost order.
-        let mut emitted = vec![0i8; layout.total_len() * 2];
+        let mut emitted = vec![0i8; layout.live_coeff_len()];
         for group_index in [1, 0] {
             let params = lp
                 .group_params(instance.opening_batch(), group_index)
@@ -958,41 +960,55 @@ mod tests {
             let depth_open = params.num_digits_open();
             let n_a = params.a_rows_len();
             let e_source = (0..num_claims * num_live_blocks * depth_open)
-                .map(|index| marker(100 * group_index + index))
+                .map(|index| marker::<MULTI_GROUP_D>(100 * group_index + index))
                 .collect::<Vec<_>>();
             let t_source = (0..num_claims * num_live_blocks * n_a * depth_commit)
-                .map(|index| marker(300 * group_index + index))
+                .map(|index| marker::<MULTI_GROUP_D>(300 * group_index + index))
                 .collect::<Vec<_>>();
-            emit_witness_e_planes(
+            let e_digits = DigitBlocks::new(
+                e_source.as_flattened().to_vec(),
+                vec![depth_open; num_claims * num_live_blocks],
+                MULTI_GROUP_D,
+            )
+            .expect("E digits");
+            let t_digits = DigitBlocks::new(
+                t_source.as_flattened().to_vec(),
+                vec![n_a * depth_commit; num_claims * num_live_blocks],
+                MULTI_GROUP_D,
+            )
+            .expect("T digits");
+            emit_witness_e_planes::<MULTI_GROUP_D, MULTI_GROUP_D>(
                 &mut emitted,
                 &layout,
                 group_index,
                 num_claims,
                 depth_open,
-                &e_source,
+                &e_digits,
                 num_live_blocks,
             )
             .expect("emit E");
-            emit_witness_t_planes::<2, 2>(
+            emit_witness_t_planes::<MULTI_GROUP_D, MULTI_GROUP_D>(
                 &mut emitted,
                 &layout,
                 group_index,
                 num_claims,
                 n_a,
                 depth_commit,
-                &t_source,
+                &t_digits,
                 num_live_blocks,
             )
             .expect("emit T");
 
-            let depth_fold = lp
-                .num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())
-                .expect("fold depth");
+            let depth_fold = params.num_digits_fold();
             for unit in layout.units_for_group(group_index).expect("units") {
                 let z_source = (0..params.num_positions_per_block() * depth_witness * depth_fold)
-                    .map(|index| marker(500 * group_index + 100 * unit.chunk_index() + index))
+                    .map(|index| {
+                        marker::<MULTI_GROUP_D>(
+                            500 * group_index + 100 * unit.chunk_index() + index,
+                        )
+                    })
                     .collect::<Vec<_>>();
-                emit_witness_z_planes::<2, 2>(
+                emit_witness_z_planes::<MULTI_GROUP_D>(
                     &mut emitted,
                     unit,
                     params.num_positions_per_block(),
@@ -1002,10 +1018,7 @@ mod tests {
                 )
                 .expect("emit Z");
                 let z_range = unit.z_range();
-                assert_eq!(
-                    &emitted[z_range.start * 2..z_range.end * 2],
-                    flatten_markers(z_source).as_slice()
-                );
+                assert_eq!(&emitted[z_range], flatten_markers(z_source).as_slice());
 
                 let mut expected_e = Vec::new();
                 for claim in 0..num_claims {
@@ -1019,19 +1032,16 @@ mod tests {
                     }
                 }
                 let e_range = unit.e_range();
-                assert_eq!(
-                    &emitted[e_range.start * 2..e_range.end * 2],
-                    flatten_markers(expected_e).as_slice()
-                );
+                assert_eq!(&emitted[e_range], flatten_markers(expected_e).as_slice());
 
                 let mut expected_t = Vec::new();
                 for claim in 0..num_claims {
                     for block_idx in unit.global_block_range() {
                         for a_row in 0..n_a {
-                            for digit in 0..depth_open {
+                            for digit in 0..depth_commit {
                                 expected_t.push(
                                     t_source[((claim * num_live_blocks + block_idx) * n_a + a_row)
-                                        * depth_open
+                                        * depth_commit
                                         + digit],
                                 );
                             }
@@ -1039,21 +1049,15 @@ mod tests {
                     }
                 }
                 let t_range = unit.t_range();
-                assert_eq!(
-                    &emitted[t_range.start * 2..t_range.end * 2],
-                    flatten_markers(expected_t).as_slice()
-                );
+                assert_eq!(&emitted[t_range], flatten_markers(expected_t).as_slice());
             }
         }
         let quotient_depth = r_decomp_levels::<F>(lp.log_basis_open);
-        let r_source = (0..layout.r_range().len())
-            .map(|index| marker(900 + index))
+        let r_source = (0..layout.r_rows().len() * quotient_depth)
+            .map(|index| marker::<MULTI_GROUP_D>(900 + index))
             .collect::<Vec<_>>();
         emit_witness_r_planes(&mut emitted, &layout, quotient_depth, &r_source).expect("emit R");
         let r_range = layout.r_range();
-        assert_eq!(
-            &emitted[r_range.start * 2..r_range.end * 2],
-            flatten_markers(r_source).as_slice()
-        );
+        assert_eq!(&emitted[r_range], flatten_markers(r_source).as_slice());
     }
 }

@@ -1,43 +1,46 @@
 use super::*;
 use crate::RecursiveWitnessFlat;
-use akita_config::{proof_optimized::fp128::D64OneHot, CommitmentConfig};
-use akita_field::{Fp32, FpExt2, NegOneNr};
+use akita_config::{
+    proof_optimized::fp128::D64OneHot, CommitmentConfig, PrecommittedCommitmentConfig,
+};
+use akita_field::{Fp32, FpExt2, TwoNr};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
-    PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
 };
 
 type F = Fp32<251>;
-type E = FpExt2<F, NegOneNr>;
+type E = FpExt2<F, TwoNr>;
 
 #[test]
 fn recursive_extension_opening_reduction_pads_to_opening_cube() {
-    let logical_w = RecursiveWitnessFlat::from_i8_digits(vec![1, -1, 2, 0, 3, -2]);
+    let mut digits = vec![0; 3 * 64];
+    digits[..6].copy_from_slice(&[1, -1, 2, 0, 3, -2]);
+    let logical_w = RecursiveWitnessFlat::from_i8_digits(digits);
     let point = [
         E::new(F::from_u64(2), F::from_u64(3)),
         E::new(F::from_u64(5), F::from_u64(7)),
         E::new(F::from_u64(11), F::from_u64(13)),
+        E::new(F::from_u64(17), F::from_u64(19)),
+        E::new(F::from_u64(23), F::from_u64(29)),
+        E::new(F::from_u64(31), F::from_u64(37)),
+        E::new(F::from_u64(41), F::from_u64(43)),
+        E::new(F::from_u64(47), F::from_u64(53)),
     ];
     let logical_polys = [&logical_w];
+    let logical_group = PreparedProverGroup::from_refs(&logical_polys).expect("logical group");
 
     let mut transcript =
         AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
-    let opening_batch = OpeningClaims::from_groups(
-        point.to_vec(),
-        vec![PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(point.len(), point.len()).expect("point vars"),
-            vec![E::zero()],
-            (),
-        )
-        .expect("group claims")],
-    )
-    .expect("opening batch");
-    let proved = prove_extension_opening_reduction::<F, E, _, RecursiveWitnessFlat, _, 2>(
+    let groups = vec![ExtensionOpeningGroupInput {
+        group: &logical_group,
+        point: &point,
+        ring_dimension: 64,
+    }];
+    let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
         &crate::compute::CpuBackend,
         None,
-        &logical_polys,
-        &opening_batch,
+        &groups,
         true,
         &mut transcript,
         "recursive",
@@ -52,6 +55,53 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 }
 
 #[test]
+fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
+    let short_witness = RecursiveWitnessFlat::from_i8_digits(vec![1; 64]);
+    let mut long_digits = vec![0; 3 * 64];
+    long_digits[..6].copy_from_slice(&[1, -1, 2, 0, 3, -2]);
+    let long_witness = RecursiveWitnessFlat::from_i8_digits(long_digits);
+    let short_point = (0..6)
+        .map(|index| E::new(F::from_u64(index + 2), F::from_u64(index + 11)))
+        .collect::<Vec<_>>();
+    let long_point = (0..8)
+        .map(|index| E::new(F::from_u64(index + 3), F::from_u64(index + 17)))
+        .collect::<Vec<_>>();
+    let polys = [&short_witness, &long_witness];
+    let prepared_groups = [
+        PreparedProverGroup::from_ref_vec(vec![polys[0]]).expect("short group"),
+        PreparedProverGroup::from_ref_vec(vec![polys[1]]).expect("long group"),
+    ];
+    let groups = vec![
+        ExtensionOpeningGroupInput {
+            group: &prepared_groups[0],
+            point: &short_point,
+            ring_dimension: 64,
+        },
+        ExtensionOpeningGroupInput {
+            group: &prepared_groups[1],
+            point: &long_point,
+            ring_dimension: 64,
+        },
+    ];
+    let mut transcript = AkitaTranscript::<F>::new(b"test/grouped-extension-opening-reduction");
+
+    let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
+        &crate::compute::CpuBackend,
+        None,
+        &groups,
+        true,
+        &mut transcript,
+        "recursive",
+    )
+    .expect("all groups should reduce through one sumcheck");
+
+    assert_eq!(proved.protocol_points.len(), 2);
+    assert_eq!(proved.reduction.final_factors.len(), 2);
+    assert_eq!(proved.row_coefficients, vec![E::one(); 2]);
+    assert_eq!(proved.reduction.proof.num_rounds(), long_point.len() - 1);
+}
+
+#[test]
 fn proof_schedule_from_layout_includes_entire_batch() {
     let batch = OpeningClaimsLayout::from_groups(vec![
         PolynomialGroupLayout::new(16, 1),
@@ -60,7 +110,17 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     ])
     .expect("multi-group shape");
     assert_eq!(batch.num_groups(), 3);
-    let schedule = D64OneHot::get_params_for_prove(&batch).expect("multi-group schedule");
+    let pre_layout = OpeningClaimsLayout::new(16, 1).expect("precommit layout");
+    let pre_params =
+        PrecommittedCommitmentConfig::<D64OneHot>::get_params_for_batched_commitment(&pre_layout)
+            .expect("precommit params");
+    let precommitted =
+        CommittedGroupProfile::from_params(PolynomialGroupLayout::new(16, 1), &pre_params);
+    let schedule = D64OneHot::runtime_schedule(AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(32, 2),
+        precommitteds: vec![precommitted, precommitted],
+    })
+    .expect("multi-group schedule");
     let root_params = schedule.root.params.final_group.commitment.clone();
     assert_eq!(root_params.precommitted_groups.len(), 2);
     for precommitted in &root_params.precommitted_groups {

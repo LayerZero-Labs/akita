@@ -66,6 +66,22 @@ where
     Ok(Some(ExtensionOpeningReductionProof { partials, sumcheck }))
 }
 
+/// Reject EOR payloads when the claim field coincides with the coefficient field.
+fn reject_eor_when_single_field<F, E>(
+    extension_opening_reduction: &Option<ExtensionOpeningReductionProof<E>>,
+) -> Result<(), SerializationError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    if E::EXT_DEGREE == 1 && extension_opening_reduction.is_some() {
+        return Err(SerializationError::InvalidData(
+            "extension-opening reduction is forbidden when ExtField::EXT_DEGREE is 1".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn deserialize_fold_grind_nonce<R: Read>(
     reader: R,
     compress: Compress,
@@ -248,9 +264,6 @@ where
             .setup_prefix_eval
             .serialize_with_mode(&mut writer, compress)?;
         stage3_sumcheck
-            .next_w_eval
-            .serialize_with_mode(&mut writer, compress)?;
-        stage3_sumcheck
             .sumcheck
             .serialize_with_mode(&mut writer, compress)?;
     }
@@ -267,7 +280,6 @@ where
     stage3_sumcheck.map_or(0, |stage3_sumcheck| {
         stage3_sumcheck.claim.serialized_size(compress)
             + stage3_sumcheck.setup_prefix_eval.serialized_size(compress)
-            + stage3_sumcheck.next_w_eval.serialized_size(compress)
             + stage3_sumcheck.sumcheck.serialized_size(compress)
     })
 }
@@ -288,13 +300,11 @@ where
     shape.check()?;
     let claim = E::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let setup_prefix_eval = E::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let next_w_eval = E::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let sumcheck =
         SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, &shape.sumcheck)?;
     Ok(Some(SetupSumcheckProof {
         claim,
         setup_prefix_eval,
-        next_w_eval,
         sumcheck,
     }))
 }
@@ -337,7 +347,7 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for TerminalLevelProof<F,
 
 impl<
         F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-        E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+        E: FieldCore + Valid + AkitaDeserialize<Context = ()> + ExtField<F>,
     > AkitaDeserialize for TerminalLevelProof<F, E>
 {
     type Context = TerminalLevelProofShape;
@@ -355,6 +365,7 @@ impl<
                 validate,
                 ctx.extension_opening_reduction.as_ref(),
             )?;
+        reject_eor_when_single_field::<F, E>(&extension_opening_reduction)?;
         let terminal_response = TerminalResponse::deserialize_with_mode(
             &mut reader,
             compress,
@@ -453,7 +464,7 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for FoldLevelProof<F, E> 
         stage2.sumcheck_proof.check()?;
         if let Some(stage3_sumcheck) = &self.stage3_sumcheck_proof {
             stage3_sumcheck.claim.check()?;
-            stage3_sumcheck.next_w_eval.check()?;
+            stage3_sumcheck.setup_prefix_eval.check()?;
             stage3_sumcheck.sumcheck.check()?;
         }
         check_next_witness_binding(&stage2.next_witness_binding)?;
@@ -463,7 +474,7 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for FoldLevelProof<F, E> 
 
 impl<
         F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-        E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+        E: FieldCore + Valid + AkitaDeserialize<Context = ()> + ExtField<F>,
     > AkitaDeserialize for FoldLevelProof<F, E>
 {
     type Context = LevelProofShape;
@@ -482,6 +493,7 @@ impl<
                 ctx.extension_opening_reduction.as_ref(),
                 &ctx.v_coeffs,
             )?;
+        reject_eor_when_single_field::<F, E>(&extension_opening_reduction)?;
         let mut stage1_stages = Vec::new();
         reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {
@@ -585,7 +597,7 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedProof<F, 
 
 impl<
         F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-        E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+        E: FieldCore + Valid + AkitaDeserialize<Context = ()> + ExtField<F>,
     > AkitaDeserialize for AkitaBatchedProof<F, E>
 {
     type Context = AkitaBatchedProofShape;

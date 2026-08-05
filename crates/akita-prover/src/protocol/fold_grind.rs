@@ -4,18 +4,15 @@ use crate::compute::{
     OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource, RuntimeOpeningProveBackendFor,
 };
 use akita_challenges::{
-    grind_probe_permutation, witness_fold_challenge_labels, Challenges, FoldDraw, LiveFoldDraw,
-    PreviewFoldDraw,
+    witness_fold_challenge_labels, Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw,
 };
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
-    golomb_rice_flat_admit_terminal_wire, golomb_rice_rows_admit_terminal_wire,
-    sis::{FoldWitnessGrindBatchContract, FoldWitnessGrindContract, FoldWitnessLinfCapPolicy},
+    golomb_rice_total_wire_bits, golomb_rice_values_within_cap, golomb_rice_zigzag_width,
     CommittedGroupParams, FoldLinfProtocolBinding, LevelParamsLike, OpeningClaimsLayout,
-    TerminalCommittedGroupParams, TerminalResponseShape, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
-    FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
+    TerminalCommittedGroupParams, TerminalResponseShape,
 };
 
 use super::ring_relation::{
@@ -49,24 +46,15 @@ where
 }
 
 struct FoldGrindAcceptanceCtx {
-    check_grind_cap: bool,
-    check_golomb: bool,
-    witness_linf_cap: u128,
     digit_negative_abs_bound: u128,
     digit_positive_bound: u128,
 }
 
 fn fold_grind_acceptance_ctx(
-    contract: &FoldWitnessGrindContract,
-    witness_linf_cap: u128,
     digit_negative_abs_bound: u128,
     digit_positive_bound: u128,
-    tail_t_vectors: Option<usize>,
 ) -> FoldGrindAcceptanceCtx {
     FoldGrindAcceptanceCtx {
-        check_grind_cap: contract.policy != FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
-        check_golomb: tail_t_vectors.is_some(),
-        witness_linf_cap,
         digit_negative_abs_bound,
         digit_positive_bound,
     }
@@ -80,6 +68,7 @@ fn coeff_within_digit_bounds(coeff: i32, ctx: &FoldGrindAcceptanceCtx) -> bool {
     }
 }
 
+#[cfg(test)]
 fn accepts_fold_witness<F: CanonicalField, const D: usize>(
     ctx: &FoldGrindAcceptanceCtx,
     witness: &DecomposeFoldWitness<F>,
@@ -93,112 +82,38 @@ fn accepts_fold_witness<F: CanonicalField, const D: usize>(
         if !coeff_within_digit_bounds(*coeff, ctx) {
             return false;
         }
-        if ctx.check_grind_cap && u128::from(coeff.unsigned_abs()) > ctx.witness_linf_cap {
-            return false;
-        }
     }
-    if ctx.check_grind_cap && u128::from(witness.centered_inf_norm) > ctx.witness_linf_cap {
-        return false;
-    }
-    if ctx.check_golomb
-        && golomb_rice_rows_admit_terminal_wire(
-            witness.centered_coeffs_trusted::<D>(),
-            ctx.witness_linf_cap,
-        )
-        .is_err()
-    {
-        return false;
-    }
-    if ctx.check_golomb
-        && z_folded_centered_per_chunk
-            .iter()
-            .any(|chunk| golomb_rice_rows_admit_terminal_wire(chunk, ctx.witness_linf_cap).is_err())
-    {
-        return false;
-    }
+    let _ = witness;
     true
 }
 
-pub(crate) fn grind_probe_nonces(
-    contract: &FoldWitnessGrindBatchContract,
-    binding: &FoldLinfProtocolBinding,
-    transcript: &dyn FoldChallengeSeedPreview,
-    root_lp: &CommittedGroupParams,
-    groups: &[(&dyn LevelParamsLike, usize)],
-) -> Result<Vec<u32>, AkitaError> {
-    let cap = contract.max_nonce_exclusive();
-    match binding.grind_probe_order {
-        FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN => Ok((0..cap).collect()),
-        FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE if contract.allows_grind() => {
-            let absorb_buf = fold_grind_probe_order_absorb_buf(root_lp, groups)?;
-            let seed = transcript.preview_challenge_bytes_after_absorb(&absorb_buf, 32);
-            Ok(grind_probe_permutation(&seed, cap))
-        }
-        FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE => Ok(vec![0]),
-        other => Err(AkitaError::InvalidSetup(format!(
-            "unsupported fold grind probe order tag {other}"
-        ))),
-    }
-}
-
-fn fold_grind_probe_order_absorb_buf(
-    root_lp: &CommittedGroupParams,
-    groups: &[(&dyn LevelParamsLike, usize)],
-) -> Result<Vec<u8>, AkitaError> {
-    fn push_usize(buf: &mut Vec<u8>, value: usize, name: &str) -> Result<(), AkitaError> {
-        let value = u64::try_from(value)
-            .map_err(|_| AkitaError::InvalidSetup(format!("{name} exceeds u64")))?;
-        buf.extend_from_slice(&value.to_le_bytes());
-        Ok(())
-    }
-
-    let mut buf = Vec::with_capacity(24 + 72 * groups.len());
-    buf.extend_from_slice(akita_types::sis::FOLD_GRIND_PROBE_ORDER_ABSORB);
-    push_usize(&mut buf, root_lp.d_a(), "fold grind ring dimension")?;
-    push_usize(&mut buf, groups.len(), "fold grind group count")?;
-    for (group_index, (params, num_claims)) in groups.iter().copied().enumerate() {
-        push_usize(&mut buf, group_index, "fold grind group index")?;
-        buf.extend_from_slice(&params.log_basis_open().to_le_bytes());
-        push_usize(
-            &mut buf,
-            params.num_live_ring_elements_per_claim(),
-            "fold grind source length",
-        )?;
-        push_usize(
-            &mut buf,
-            params.num_positions_per_block(),
-            "fold grind position count",
-        )?;
-        push_usize(
-            &mut buf,
-            params.num_live_blocks(),
-            "fold grind num_live_blocks",
-        )?;
-        push_usize(&mut buf, params.a_col_len(), "fold grind A width")?;
-        push_usize(&mut buf, num_claims, "fold grind claim count")?;
-        match params.fold_challenge_shape() {
-            akita_challenges::TensorChallengeShape::Flat => {
-                buf.push(0);
-                push_usize(&mut buf, 0, "fold grind flat low length")?;
-            }
-            akita_challenges::TensorChallengeShape::Tensor { fold_low_len } => {
-                buf.push(1);
-                push_usize(&mut buf, fold_low_len, "fold grind tensor low length")?;
-            }
+fn accepts_fold_witness_flat<F: CanonicalField>(
+    ctx: &FoldGrindAcceptanceCtx,
+    witness: &DecomposeFoldWitness<F>,
+    centered_per_chunk: &[Vec<Vec<i32>>],
+) -> bool {
+    let coefficients = centered_per_chunk
+        .iter()
+        .flat_map(|chunk| chunk.iter())
+        .flat_map(|row| row.iter());
+    for &coefficient in coefficients {
+        if !coeff_within_digit_bounds(coefficient, ctx) {
+            return false;
         }
     }
-    Ok(buf)
+    let _ = witness;
+    true
 }
 
-pub(crate) struct FoldGrindGroup<'params, 'poly, P> {
+pub(crate) struct FoldGrindGroup<'params, 'group, G> {
     pub(crate) group_index: usize,
-    pub(crate) polys: &'poly [&'poly P],
+    pub(crate) group: &'group G,
     pub(crate) params: &'params dyn LevelParamsLike,
 }
 
-impl<P> Copy for FoldGrindGroup<'_, '_, P> {}
+impl<G> Copy for FoldGrindGroup<'_, '_, G> {}
 
-impl<P> Clone for FoldGrindGroup<'_, '_, P> {
+impl<G> Clone for FoldGrindGroup<'_, '_, G> {
     fn clone(&self) -> Self {
         *self
     }
@@ -238,7 +153,6 @@ where
     B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
-    let admission_cap = params.response_linf_policy(sparse)?.admission_cap;
     let expected_group =
         shape.layout.groups.first().ok_or_else(|| {
             AkitaError::InvalidSetup("terminal response shape has no group".into())
@@ -254,80 +168,65 @@ where
             "terminal response shape does not match terminal A width".into(),
         ));
     }
+    let admission_cap = expected_group.z_admission_linf_cap;
+    if admission_cap > params.certified_response_linf_cap(sparse)? {
+        return Err(AkitaError::InvalidSetup(
+            "terminal response cap exceeds its fixed matrix capacity".into(),
+        ));
+    }
     let binding = FoldLinfProtocolBinding::CURRENT;
-    let max_nonce = params
-        .fold_linf_cap_config
-        .policy
-        .max_nonce_exclusive(binding.max_grind_attempts);
-    let probe_nonces = match binding.grind_probe_order {
-        FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN => (0..max_nonce).collect::<Vec<_>>(),
-        FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE
-            if params.fold_linf_cap_config.policy.allows_grind() =>
-        {
-            let mut absorb = Vec::new();
-            absorb.extend_from_slice(akita_types::sis::FOLD_GRIND_PROBE_ORDER_ABSORB);
-            absorb.extend_from_slice(&(params.d_a() as u64).to_le_bytes());
-            absorb
-                .extend_from_slice(&(params.num_live_ring_elements_per_claim as u64).to_le_bytes());
-            absorb.extend_from_slice(&(params.num_positions_per_block as u64).to_le_bytes());
-            absorb.extend_from_slice(&(params.num_live_blocks as u64).to_le_bytes());
-            absorb.extend_from_slice(&(params.inner_width() as u64).to_le_bytes());
-            let seed = transcript.preview_challenge_bytes_after_absorb(&absorb, 32);
-            grind_probe_permutation(&seed, max_nonce)
-        }
-        FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE => vec![0],
-        other => {
-            return Err(AkitaError::InvalidSetup(format!(
-                "unsupported fold grind probe order tag {other}"
-            )))
-        }
-    };
     let labels = witness_fold_challenge_labels();
     let polys = [poly];
     let point_indices = [0usize];
-    let (nonce, (witness, challenges)) = first_jointly_accepted_nonce(&probe_nonces, |nonce| {
-        let mut preview = PreviewFoldDraw::new(transcript);
-        let challenges = preview.draw_folding_challenges(
-            params.d_a(),
-            0,
-            params.num_live_blocks,
-            1,
-            sparse,
-            &akita_challenges::TensorChallengeShape::Flat,
-            labels,
-            nonce,
-        )?;
-        let witness = dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-            F,
-            params.d_a(),
-            |D| {
-                build_point_decompose_fold_witness::<F, P, B, D>(
-                    backend,
-                    prepared,
-                    &challenges,
-                    &polys,
-                    &point_indices,
-                    params.num_positions_per_block,
-                    params.num_digits_inner,
-                    params.log_basis_inner,
-                )
+    let (nonce, (witness, challenges)) =
+        first_jointly_accepted_nonce(binding.max_grind_attempts, |nonce| {
+            let mut preview = PreviewFoldDraw::new(transcript);
+            let challenges = preview.draw_folding_challenges(
+                params.d_a(),
+                0,
+                params.num_live_blocks,
+                1,
+                sparse,
+                &akita_challenges::TensorChallengeShape::Flat,
+                labels,
+                nonce,
+            )?;
+            let witness = dispatch_for_field!(
+                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+                F,
+                params.d_a(),
+                |D| {
+                    build_point_decompose_fold_witness::<F, P, B, D>(
+                        backend,
+                        prepared,
+                        &challenges,
+                        &polys,
+                        &point_indices,
+                        params.num_positions_per_block,
+                        params.num_digits_inner,
+                        params.log_basis_inner,
+                    )
+                }
+            )?;
+            let centered = witness
+                .centered_coeffs_flat()
+                .iter()
+                .map(|&value| i64::from(value))
+                .collect::<Vec<_>>();
+            if golomb_rice_values_within_cap(&centered, admission_cap).is_err() {
+                return Ok(None);
             }
-        )?;
-        if u128::from(witness.centered_inf_norm) > admission_cap {
-            return Ok(None);
-        }
-        let centered = witness
-            .centered_coeffs_flat()
-            .iter()
-            .map(|&value| i64::from(value))
-            .collect::<Vec<_>>();
-        let wire_ok = golomb_rice_flat_admit_terminal_wire(&centered, admission_cap);
-        if wire_ok.is_err() {
-            return Ok(None);
-        }
-        Ok(Some((witness, challenges)))
-    })?;
+            let zigzag_width = golomb_rice_zigzag_width(admission_cap);
+            let wire_bits = golomb_rice_total_wire_bits(
+                &centered,
+                expected_group.z_rice_low_bits,
+                zigzag_width,
+            )?;
+            if wire_bits > expected_group.z_payload_bytes.saturating_mul(8) {
+                return Ok(None);
+            }
+            Ok(Some((witness, challenges)))
+        })?;
     let mut live = LiveFoldDraw::<F, T>::new(transcript);
     let live_challenges = live.draw_folding_challenges(
         params.d_a(),
@@ -347,10 +246,9 @@ where
     Ok(TerminalFoldGrindOutput { witness, nonce })
 }
 
-struct PreparedFoldGrindGroup<'params, 'poly, P> {
-    input: FoldGrindGroup<'params, 'poly, P>,
+struct PreparedFoldGrindGroup<'params, 'group, G> {
+    input: FoldGrindGroup<'params, 'group, G>,
     acceptance: FoldGrindAcceptanceCtx,
-    point_indices: Vec<usize>,
 }
 
 /// One fold probe: returns the global folded witness and the per-window centered
@@ -363,7 +261,7 @@ struct PreparedFoldGrindGroup<'params, 'poly, P> {
 /// coefficient-wise sum of the windows (`Σ_i z_i = z`), so grind acceptance on
 /// the global L∞ is identical to a standalone global fold over all blocks.
 #[allow(clippy::type_complexity)]
-fn fold_probe_witness_kernel<F, P, B, const D: usize>(
+pub(in crate::protocol) fn fold_probe_witness_kernel<F, P, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     challenges: &Challenges,
@@ -424,40 +322,38 @@ where
 }
 
 fn first_jointly_accepted_nonce<T>(
-    probe_nonces: &[u32],
+    max_grind_attempts: u32,
     mut probe: impl FnMut(u32) -> Result<Option<T>, AkitaError>,
 ) -> Result<(u32, T), AkitaError> {
-    for &nonce in probe_nonces {
+    for nonce in 0..max_grind_attempts {
         if let Some(value) = probe(nonce)? {
             return Ok((nonce, value));
         }
     }
     Err(AkitaError::InvalidInput(format!(
         "fold grind exceeded {} joint attempts",
-        probe_nonces.len()
+        max_grind_attempts
     )))
 }
 
 /// Probe every group at its native A dimension as one transcript transaction
 /// for each candidate nonce.
 #[allow(clippy::too_many_arguments)]
-fn sample_multi_group_fold_decompose_witnesses_native<F, P, B, T>(
-    backend: &B,
-    prepared: Option<&B::PreparedSetup>,
+fn sample_multi_group_fold_decompose_witnesses_native<F, E, G, B, T>(
+    opening_ctx: &crate::compute::OperationCtx<'_, F, B>,
     transcript: &mut T,
     root_lp: &CommittedGroupParams,
-    groups: &[PreparedFoldGrindGroup<'_, '_, P>],
-    probe_nonces: &[u32],
+    groups: &[PreparedFoldGrindGroup<'_, '_, G>],
+    max_grind_attempts: u32,
 ) -> Result<(Vec<FoldGrindGroupOutput<F>>, u32), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    P: RootOpeningSource<F, 32>
-        + RootOpeningSource<F, 64>
-        + RootOpeningSource<F, 128>
-        + RootOpeningSource<F, 256>
-        + RootOpeningSource<F, 512>,
-    B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
+    E: akita_types::FpExtEncoding<F>
+        + akita_field::ExtField<F>
+        + akita_serialization::AkitaSerialize,
+    G: crate::protocol::core::RootProverGroupOpening<F, E, B>,
+    B: crate::compute::ComputeBackendSetup<F> + crate::DigitRowsComputeBackend<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
     if groups.is_empty() {
@@ -466,64 +362,42 @@ where
         ));
     }
     let labels = witness_fold_challenge_labels();
-    let (nonce, mut candidate_outputs) = first_jointly_accepted_nonce(probe_nonces, |nonce| {
-        let mut candidate_outputs = Vec::with_capacity(groups.len());
-        {
-            let mut preview = PreviewFoldDraw::new(transcript);
-            for prepared_group in groups {
-                let group = &prepared_group.input;
-                let ring_d = group.params.inner_commit_matrix_params().ring_dimension();
-                let candidate = dispatch_for_field!(
-                    akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-                    F,
-                    ring_d,
-                    |D| {
-                        let challenges = preview.draw_folding_challenges(
-                            D,
-                            group.group_index,
-                            group.params.num_live_blocks(),
-                            group.polys.len(),
-                            &group.params.fold_challenge_config(),
-                            &group.params.fold_challenge_shape(),
-                            labels,
-                            nonce,
-                        )?;
-                        let (witness, z_per_chunk) = fold_probe_witness_kernel::<F, P, B, D>(
-                            backend,
-                            prepared,
-                            &challenges,
-                            group.polys,
-                            &prepared_group.point_indices,
-                            root_lp,
-                            group.params,
-                        )?;
-                        if accepts_fold_witness::<F, D>(
-                            &prepared_group.acceptance,
-                            &witness,
-                            &z_per_chunk,
-                        ) {
-                            let centered_per_chunk = z_per_chunk
-                                .into_iter()
-                                .map(|chunk| chunk.into_iter().map(|row| row.to_vec()).collect())
-                                .collect();
-                            Ok::<_, AkitaError>(Some(FoldGrindGroupOutput {
-                                witness,
-                                centered_per_chunk,
-                                challenges,
-                            }))
-                        } else {
-                            Ok::<_, AkitaError>(None)
-                        }
-                    }
-                )?;
-                let Some(candidate) = candidate else {
-                    return Ok(None);
-                };
-                candidate_outputs.push(candidate);
+    let (nonce, mut candidate_outputs) =
+        first_jointly_accepted_nonce(max_grind_attempts, |nonce| {
+            let mut candidate_outputs = Vec::with_capacity(groups.len());
+            {
+                let mut preview = PreviewFoldDraw::new(transcript);
+                for prepared_group in groups {
+                    let group = &prepared_group.input;
+                    let ring_d = group.params.inner_commit_matrix_params().ring_dimension();
+                    let challenges = preview.draw_folding_challenges(
+                        ring_d,
+                        group.group_index,
+                        group.params.num_live_blocks(),
+                        group.group.num_polynomials(),
+                        &group.params.fold_challenge_config(),
+                        &group.params.fold_challenge_shape(),
+                        labels,
+                        nonce,
+                    )?;
+                    let output =
+                        group
+                            .group
+                            .probe_fold(opening_ctx, &challenges, root_lp, group.params)?;
+                    let candidate = accepts_fold_witness_flat(
+                        &prepared_group.acceptance,
+                        &output.witness,
+                        &output.centered_per_chunk,
+                    )
+                    .then_some(output);
+                    let Some(candidate) = candidate else {
+                        return Ok(None);
+                    };
+                    candidate_outputs.push(candidate);
+                }
             }
-        }
-        Ok(Some(candidate_outputs))
-    })?;
+            Ok(Some(candidate_outputs))
+        })?;
 
     let mut live = LiveFoldDraw::<F, T>::new(transcript);
     for (prepared_group, output) in groups.iter().zip(candidate_outputs.iter_mut()) {
@@ -533,7 +407,7 @@ where
             ring_d,
             group.group_index,
             group.params.num_live_blocks(),
-            group.polys.len(),
+            group.group.num_polynomials(),
             &group.params.fold_challenge_config(),
             &group.params.fold_challenge_shape(),
             labels,
@@ -550,73 +424,48 @@ where
 
 /// Probe all root groups off-sponge and commit the first jointly accepted nonce.
 ///
-/// Plain presets probe `nonce = 0, 1, …` (minimum accepting nonce). ZK presets
-/// with tail-bound grind use a transcript-seeded uniform permutation of the same
-/// range; see `specs/fold-linf-rejection.md` (*ZK: grind probe order*).
-///
-/// When `tail_t_vectors` is set, presets reject witnesses whose centered coefficients do not
-/// fit the terminal Golomb planner budget at wire low bits (including `WorstCaseBetaOnly`
-/// presets that do not reroll on linf cap).
+/// Every preset probes `nonce = 0, 1, …` and commits the minimum accepting nonce.
+/// When `tail_t_vectors` is set, the terminal response must fit the exact cap
+/// and Golomb-Rice byte budget carried by its scheduled response shape.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, P, B, T>(
-    backend: &B,
-    prepared: Option<&B::PreparedSetup>,
+pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, G, B, T>(
+    opening_ctx: &crate::compute::OperationCtx<'_, F, B>,
     transcript: &mut T,
     root_lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
-    groups: &[FoldGrindGroup<'_, '_, P>],
-    tail_t_vectors: Option<usize>,
+    groups: &[FoldGrindGroup<'_, '_, G>],
+    _tail_t_vectors: Option<usize>,
 ) -> Result<(Vec<FoldGrindGroupOutput<F>>, u32), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    P: RootOpeningSource<F, 32>
-        + RootOpeningSource<F, 64>
-        + RootOpeningSource<F, 128>
-        + RootOpeningSource<F, 256>
-        + RootOpeningSource<F, 512>,
-    B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
+    E: akita_types::FpExtEncoding<F>
+        + akita_field::ExtField<F>
+        + akita_serialization::AkitaSerialize,
+    G: crate::protocol::core::RootProverGroupOpening<F, E, B>,
+    B: crate::compute::ComputeBackendSetup<F> + crate::DigitRowsComputeBackend<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
     let binding = FoldLinfProtocolBinding::CURRENT;
-    let contract =
-        root_lp.fold_witness_grind_batch_contract(opening_batch, binding.max_grind_attempts)?;
-    if groups.len() != contract.group_contracts().len() {
+    if groups.len() != opening_batch.num_groups() {
         return Err(AkitaError::InvalidSetup(
-            "fold grind groups do not match the batch contract".to_string(),
+            "fold grind groups do not match the opening batch".to_string(),
         ));
     }
     let mut prepared_groups = Vec::with_capacity(groups.len());
-    for (expected_group_index, (group, group_contract)) in
-        groups.iter().zip(contract.group_contracts()).enumerate()
-    {
+    for (expected_group_index, group) in groups.iter().enumerate() {
         let expected_claims = opening_batch
             .group_layout(expected_group_index)?
             .num_polynomials();
         if group.group_index != expected_group_index
-            || group.polys.is_empty()
-            || group.polys.len() != expected_claims
+            || group.group.num_polynomials() == 0
+            || group.group.num_polynomials() != expected_claims
         {
             return Err(AkitaError::InvalidSetup(
                 "fold grind group descriptor is malformed".to_string(),
             ));
         }
-        let challenge = akita_types::sis::FoldChallengeNorms::new(
-            &group.params.fold_challenge_config(),
-            group.params.fold_challenge_shape(),
-        );
-        let cap_config = root_lp.fold_witness_linf_cap_config_for_params(group.params)?;
-        let witness_norms = root_lp.fold_witness_norms_for_params(group.params);
-        let sizing_claims = tail_t_vectors.unwrap_or(group.polys.len());
-        let (delta_fold, witness_linf_cap) = akita_types::sis::fold_witness_digit_plan(
-            group.params.num_live_blocks(),
-            sizing_claims,
-            root_lp.field_bits_for_cache(),
-            group.params.log_basis_open(),
-            challenge,
-            witness_norms,
-            &cap_config,
-        )?;
+        let delta_fold = group.params.num_digits_fold();
         let (digit_negative_abs_bound, digit_positive_bound) =
             akita_types::sis::fold_witness_representable_linf_bounds(
                 group.params.log_basis_open(),
@@ -624,30 +473,15 @@ where
             );
         prepared_groups.push(PreparedFoldGrindGroup {
             input: *group,
-            acceptance: fold_grind_acceptance_ctx(
-                group_contract,
-                witness_linf_cap,
-                digit_negative_abs_bound,
-                digit_positive_bound,
-                tail_t_vectors,
-            ),
-            point_indices: (0..group.polys.len()).collect(),
+            acceptance: fold_grind_acceptance_ctx(digit_negative_abs_bound, digit_positive_bound),
         });
     }
-    let group_geometries = prepared_groups
-        .iter()
-        .map(|group| (group.input.params, group.input.polys.len()))
-        .collect::<Vec<_>>();
-    let probe_nonces =
-        grind_probe_nonces(&contract, &binding, transcript, root_lp, &group_geometries)?;
-
-    sample_multi_group_fold_decompose_witnesses_native::<F, P, B, T>(
-        backend,
-        prepared,
+    sample_multi_group_fold_decompose_witnesses_native::<F, E, G, B, T>(
+        opening_ctx,
         transcript,
         root_lp,
         &prepared_groups,
-        &probe_nonces,
+        binding.max_grind_attempts,
     )
 }
 
@@ -655,48 +489,14 @@ where
 mod tests {
     use super::*;
     use akita_algebra::CyclotomicRing;
-    use akita_challenges::SparseChallengeConfig;
-    use akita_transcript::AkitaTranscript;
-    use akita_types::sis::{FoldWitnessGrindContract, FoldWitnessLinfCapPolicy};
-    use akita_types::SisModulusProfileId;
 
     type F = akita_field::Prime128Offset275;
-
-    fn sample_level() -> CommittedGroupParams {
-        CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
-            64,
-            3,
-            2,
-            4,
-            3,
-            SparseChallengeConfig::pm1_only(3),
-        )
-    }
-
-    #[test]
-    fn transcript_shuffle_order_differs_from_sequential() {
-        let lp = sample_level();
-        let group_contract = FoldWitnessGrindContract {
-            policy: FoldWitnessLinfCapPolicy::TailBoundWithGrind,
-            witness_linf_cap: 1_000,
-        };
-        let contract = FoldWitnessGrindBatchContract::new(vec![group_contract], 64).unwrap();
-        let transcript = AkitaTranscript::<F>::prover(b"grind/order", b"instance");
-        let mut binding = FoldLinfProtocolBinding::CURRENT;
-        binding.grind_probe_order = FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE;
-        let groups = [(&lp as &dyn LevelParamsLike, 1)];
-        let shuffled = grind_probe_nonces(&contract, &binding, &transcript, &lp, &groups)
-            .expect("shuffle order");
-        let sequential = (0..contract.max_nonce_exclusive()).collect::<Vec<_>>();
-        assert_ne!(shuffled, sequential);
-    }
 
     #[test]
     fn joint_grind_skips_different_group_first_nonces() {
         let group_accepts = [[0, 2], [1, 2]];
         let mut probed = Vec::new();
-        let (nonce, ()) = first_jointly_accepted_nonce(&[0, 1, 2, 3], |nonce| {
+        let (nonce, ()) = first_jointly_accepted_nonce(4, |nonce| {
             probed.push(nonce);
             Ok(group_accepts
                 .iter()
@@ -710,44 +510,16 @@ mod tests {
     }
 
     #[test]
-    fn worst_case_beta_only_still_rejects_golomb_inadmissible_terminal_tail() {
+    fn grind_rejects_chunk_payload_outside_digit_interval() {
         const D: usize = 4;
-        let cap = 1008u128;
-        let contract = FoldWitnessGrindContract {
-            policy: FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
-            witness_linf_cap: cap,
-        };
-        let witness = DecomposeFoldWitness::from_parts::<D>(
-            vec![CyclotomicRing::<F, D>::zero()],
-            vec![[cap as i32; D]],
-            cap as u32,
-        );
-        let chunks = vec![witness.centered_coeffs_owned::<D>()];
-        let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(4, 2);
-        let acceptance = fold_grind_acceptance_ctx(&contract, cap, neg_bound, pos_bound, Some(1));
-        assert!(!accepts_fold_witness::<F, D>(
-            &acceptance,
-            &witness,
-            &chunks,
-        ));
-    }
-
-    #[test]
-    fn grind_rejects_chunk_payload_outside_snapped_cap() {
-        const D: usize = 4;
-        let cap = 32u128;
-        let contract = FoldWitnessGrindContract {
-            policy: FoldWitnessLinfCapPolicy::TailBoundWithGrind,
-            witness_linf_cap: cap,
-        };
         let witness = DecomposeFoldWitness::from_parts::<D>(
             vec![CyclotomicRing::<F, D>::zero()],
             vec![[12; D]],
             12,
         );
-        let chunks = vec![vec![[33, 0, 0, 0]], vec![[-12; D]]];
+        let chunks = vec![vec![[129, 0, 0, 0]], vec![[-12; D]]];
         let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(4, 2);
-        let acceptance = fold_grind_acceptance_ctx(&contract, cap, neg_bound, pos_bound, None);
+        let acceptance = fold_grind_acceptance_ctx(neg_bound, pos_bound);
         assert!(!accepts_fold_witness::<F, D>(
             &acceptance,
             &witness,
@@ -758,10 +530,6 @@ mod tests {
     #[test]
     fn grind_rejects_positive_coefficients_past_balanced_digit_reach() {
         const D: usize = 4;
-        let contract = FoldWitnessGrindContract {
-            policy: FoldWitnessLinfCapPolicy::TailBoundWithGrind,
-            witness_linf_cap: 2080,
-        };
         let witness = DecomposeFoldWitness::from_parts::<D>(
             vec![CyclotomicRing::<F, D>::zero()],
             vec![[2022, 0, 0, 0]],
@@ -771,11 +539,25 @@ mod tests {
         let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(6, 2);
         assert_eq!(neg_bound, 2080);
         assert_eq!(pos_bound, 2015);
-        let acceptance = fold_grind_acceptance_ctx(&contract, 2080, neg_bound, pos_bound, None);
+        let acceptance = fold_grind_acceptance_ctx(neg_bound, pos_bound);
         assert!(!accepts_fold_witness::<F, D>(
             &acceptance,
             &witness,
             &chunks
         ));
+    }
+
+    #[test]
+    fn digit_interval_accepts_both_endpoints_and_rejects_neighbors() {
+        let (negative_abs, positive) =
+            akita_types::sis::fold_witness_representable_linf_bounds(4, 2);
+        let acceptance = fold_grind_acceptance_ctx(negative_abs, positive);
+        let negative_abs = i32::try_from(negative_abs).unwrap();
+        let positive = i32::try_from(positive).unwrap();
+
+        assert!(coeff_within_digit_bounds(-negative_abs, &acceptance));
+        assert!(coeff_within_digit_bounds(positive, &acceptance));
+        assert!(!coeff_within_digit_bounds(-negative_abs - 1, &acceptance));
+        assert!(!coeff_within_digit_bounds(positive + 1, &acceptance));
     }
 }

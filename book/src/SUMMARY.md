@@ -25,6 +25,7 @@
     - [Basic relations in an Akita fold](./how/proving/akita-fold.md)
     - [Advanced relation layouts](./how/proving/advanced-relation-layouts.md)
     - [Opening points and digit-innermost layout](./how/proving/opening-points-layout.md)
+    - [Fold path and field geometry](./how/proving/fold-path.md)
     - [Root fold and ring switching](./how/proving/root-fold-ring-switch.md)
     - [Sumcheck stages](./how/proving/sumcheck-stages.md)
     - [Extension-opening reduction](./how/proving/extension-opening-reduction.md)

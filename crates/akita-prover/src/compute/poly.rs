@@ -35,13 +35,6 @@ where
 
     /// Total number of variables (representation-derived, D-independent).
     fn num_vars(&self) -> usize;
-
-    /// One-hot chunk size for sparse one-hot backends.
-    ///
-    /// `None` means this backend is not a one-hot root representation.
-    fn onehot_chunk_size(&self) -> Option<usize> {
-        None
-    }
 }
 
 /// Shape metadata every root polynomial exposes, keyed on the const ring
@@ -978,9 +971,5 @@ where
 
     fn num_vars(&self) -> usize {
         RootPolyMeta::num_vars(*self)
-    }
-
-    fn onehot_chunk_size(&self) -> Option<usize> {
-        RootPolyMeta::onehot_chunk_size(*self)
     }
 }

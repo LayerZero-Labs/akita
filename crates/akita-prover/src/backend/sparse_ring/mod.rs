@@ -18,7 +18,6 @@ use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_ch
 use crate::compute::{
     CommitInnerPlan, CommitmentComputeBackend, FlatBlockTable, SparseRingCommitRowsPlan,
 };
-use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
 mod ops;
@@ -558,9 +557,7 @@ where
             plan.num_positions_per_block,
             plan.num_digits_inner,
         )?;
-        let decomposed_inner_rows =
-            decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_outer, plan.log_basis_outer)?;
-        CommitInnerWitness::from_parts(t, decomposed_inner_rows)
+        Ok(CommitInnerWitness::from_rows(t))
     }
 
     pub(crate) fn tensor_extension_column_partials<E>(

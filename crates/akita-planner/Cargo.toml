@@ -25,10 +25,16 @@ akita-types = { version = "0.1.0", path = "../akita-types" }
 [features]
 default = []
 catalog-gen = ["dep:akita-config"]
+test-support = []
 
 [[bin]]
 name = "gen_schedule_tables"
 path = "src/bin/gen_schedule_tables.rs"
+required-features = ["catalog-gen"]
+
+[[example]]
+name = "mixed_dimension_search"
+path = "examples/mixed_dimension_search.rs"
 required-features = ["catalog-gen"]
 
 [lints]

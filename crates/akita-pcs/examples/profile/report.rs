@@ -161,21 +161,18 @@ fn terminal_response_z_fold_stats<FF: FieldCore>(
     field_bits: u32,
 ) -> Result<ZFoldEncodingStats, akita_field::AkitaError> {
     let params = &schedule.terminal.params.witness;
-    let sparse = &schedule.terminal.params.sparse_challenge_config;
     let group = witness
         .layout
         .groups
         .first()
         .ok_or(akita_field::AkitaError::InvalidProof)?;
-    let admission_cap = params.response_linf_policy(sparse)?.admission_cap;
+    let admission_cap = group.z_admission_linf_cap;
     let z_values = akita_types::decode_terminal_z_golomb_payload(
         witness
             .z_payloads
             .first()
             .ok_or(akita_field::AkitaError::InvalidProof)?,
-        group.z_coords,
-        admission_cap,
-        Some(group.z_payload_bytes),
+        group,
     )?;
     let log_cap = u128::BITS - admission_cap.leading_zeros();
     let hypothetical_digits =
@@ -197,12 +194,7 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
     field_bits: u32,
     actual_z_payload_bytes: usize,
 ) {
-    let params = &schedule.terminal.params.witness;
-    let sparse = &schedule.terminal.params.sparse_challenge_config;
     let Some(group) = witness.layout.groups.first() else {
-        return;
-    };
-    let Ok(response_policy) = params.response_linf_policy(sparse) else {
         return;
     };
     let Ok(z_values) = akita_types::decode_terminal_z_golomb_payload(
@@ -211,9 +203,7 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
             .first()
             .map(Vec::as_slice)
             .unwrap_or_default(),
-        group.z_coords,
-        response_policy.admission_cap,
-        Some(group.z_payload_bytes),
+        group,
     ) else {
         return;
     };
@@ -318,14 +308,14 @@ pub(crate) fn emit_runtime_schedule_summary(
     label: &str,
     schedule: &FoldSchedule,
     root_num_claims: usize,
+    setup_generation_dimension: usize,
     field_bits: u32,
 ) {
     let levels = schedule.num_fold_levels();
-    let setup_envelope_ring_elements = akita_types::setup_matrix_envelope_for_schedule(schedule)
-        .map(|envelope| envelope.max_setup_len)
-        .unwrap_or(0);
-    let setup_envelope_field_elements = setup_envelope_ring_elements
-        .saturating_mul(schedule.root.params.final_group.commitment.d_a());
+    let setup_envelope_field_elements =
+        akita_types::setup_matrix_field_elements_for_schedule(schedule).unwrap_or(0);
+    let setup_envelope_ring_elements =
+        setup_envelope_field_elements.div_ceil(setup_generation_dimension);
     let setup_envelope_bytes =
         setup_envelope_field_elements.saturating_mul(field_bits.div_ceil(8) as usize);
     let selected_offload_edges = schedule
@@ -368,7 +358,6 @@ pub(crate) fn emit_runtime_schedule_summary(
     );
     for (level_idx, lp, input_witness_len, output_witness_len, current_w_groups) in nonterminal {
         let role_dims = lp.role_dims();
-        let num_claims = if level_idx == 0 { root_num_claims } else { 1 };
         let current_w_len = current_w_groups;
         let next_w_len = output_witness_len;
         let setup_prefix = schedule
@@ -402,7 +391,7 @@ pub(crate) fn emit_runtime_schedule_summary(
             num_digits_inner = lp.num_digits_inner,
             num_digits_outer = lp.num_digits_outer,
             num_digits_open = lp.num_digits_open,
-            delta_fold = lp.num_digits_fold(num_claims, field_bits).unwrap_or(0),
+            delta_fold = lp.num_digits_fold(),
             input_witness_len,
             output_witness_len,
             current_w_len,
@@ -495,7 +484,6 @@ fn stage3_sumcheck_size<E: FieldCore + AkitaSerialize>(
     proof.map_or(0, |proof| {
         proof.claim.serialized_size(Compress::No)
             + proof.setup_prefix_eval.serialized_size(Compress::No)
-            + proof.next_w_eval.serialized_size(Compress::No)
             + proof.sumcheck.serialized_size(Compress::No)
     })
 }
@@ -524,10 +512,11 @@ fn fold_grind_nonce_wire_bytes() -> usize {
     0u32.serialized_size(Compress::No)
 }
 
-fn print_akita_level_breakdown<FF, E, const D: usize>(
+fn print_akita_level_breakdown<FF, E>(
     label: &str,
     level_idx: usize,
     level: &FoldLevelProof<FF, E>,
+    ring_d: usize,
 ) -> usize
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
@@ -543,8 +532,8 @@ where
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
-        ring_elem_count(level.v.coeff_len(), D),
-        D,
+        ring_elem_count(level.v.coeff_len(), ring_d),
+        ring_d,
     );
     let stage1 = &level.stage1;
     let stage1_sumcheck_size = stage1
@@ -578,7 +567,7 @@ where
     tracing::info!(
         label,
         level = level_idx,
-        d = D,
+        d = ring_d,
         total_bytes = total,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
@@ -626,11 +615,12 @@ where
     total
 }
 
-fn print_terminal_level_breakdown<FF, E, const D: usize>(
+fn print_terminal_level_breakdown<FF, E>(
     label: &str,
     level_idx: usize,
     level: &TerminalLevelProof<FF, E>,
     root_variant: &'static str,
+    ring_d: usize,
 ) -> usize
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
@@ -656,7 +646,7 @@ where
     tracing::info!(
         label,
         level = level_idx,
-        d = D,
+        d = ring_d,
         total_bytes = total,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
@@ -694,6 +684,7 @@ where
 pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     label: &str,
     proof: &AkitaBatchedProof<FF, E>,
+    schedule: Option<&FoldSchedule>,
 ) where
     FF: FieldCore + CanonicalField + AkitaSerialize,
     E: FieldCore + AkitaSerialize,
@@ -734,19 +725,31 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
         proof.size(),
         "[{label}] proof accounting must exactly match serialized proof size"
     );
-    print_akita_level_breakdown::<FF, E, D>(label, 0, &proof.root);
+    let level_ring_dimension = |level_idx: usize| {
+        schedule.map_or(D, |schedule| {
+            if level_idx == 0 {
+                schedule.root.params.final_group.commitment.d_a()
+            } else if let Some(fold) = schedule.recursive_folds.get(level_idx - 1) {
+                fold.params.witness.d_a()
+            } else {
+                schedule.terminal.params.witness.d_a()
+            }
+        })
+    };
+    print_akita_level_breakdown(label, 0, &proof.root, level_ring_dimension(0));
     for (i, step) in proof.recursive_folds.iter().enumerate() {
-        print_akita_level_breakdown::<FF, E, D>(label, i + 1, step);
+        print_akita_level_breakdown(label, i + 1, step, level_ring_dimension(i + 1));
     }
-    print_terminal_level_breakdown::<FF, E, D>(
+    print_terminal_level_breakdown(
         label,
         proof.num_fold_levels() - 1,
         &proof.terminal,
         "fold",
+        level_ring_dimension(proof.num_fold_levels() - 1),
     );
 }
 
-pub(crate) fn print_layout(layout: &CommittedGroupParams, num_claims: usize, field_bits: u32) {
+pub(crate) fn print_layout(layout: &CommittedGroupParams, _num_claims: usize, _field_bits: u32) {
     tracing::debug!(
         position_index_bits = layout.position_index_bits(),
         block_index_bits = layout.block_index_bits(),
@@ -757,7 +760,7 @@ pub(crate) fn print_layout(layout: &CommittedGroupParams, num_claims: usize, fie
         num_digits_inner = layout.num_digits_inner,
         num_digits_outer = layout.num_digits_outer,
         num_digits_open = layout.num_digits_open,
-        delta_fold = layout.num_digits_fold(num_claims, field_bits).unwrap_or(0),
+        delta_fold = layout.num_digits_fold(),
         log_basis_inner = layout.log_basis_inner,
         log_basis_outer = layout.log_basis_outer,
         log_basis_open = layout.log_basis_open,

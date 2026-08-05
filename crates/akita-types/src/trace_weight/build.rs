@@ -21,15 +21,24 @@ where
 {
     let ring_len = layout.ring_len();
     debug_assert_eq!(block_rows.len(), layout.num_live_blocks * ring_len);
+    let role_subcolumns = layout.source_ring_dim / layout.opening_ring_dim;
     for (plane, gadget_scalar) in gadget_scalars.iter().enumerate() {
         let gadget = E::lift_base(*gadget_scalar);
         for block in 0..layout.num_live_blocks {
-            let col = layout.opening_digit_col_index(block, plane)?;
             let row_base = block * ring_len;
-            for ring_coord in 0..ring_len {
-                let idx = layout.witness_index(col, ring_coord);
-                *table.get_mut(idx).ok_or(AkitaError::InvalidProof)? =
-                    gadget * block_rows[row_base + ring_coord];
+            for role_subcolumn in 0..role_subcolumns {
+                for role_coefficient in 0..layout.opening_ring_dim {
+                    let idx = layout.opening_digit_coefficient_index(
+                        block,
+                        role_subcolumn,
+                        plane,
+                        role_coefficient,
+                    )?;
+                    let source =
+                        row_base + role_subcolumn * layout.opening_ring_dim + role_coefficient;
+                    *table.get_mut(idx).ok_or(AkitaError::InvalidProof)? =
+                        gadget * block_rows[source];
+                }
             }
         }
     }
@@ -56,9 +65,14 @@ fn block_has_live_opening_digit(
     block: usize,
     live_x_cols: usize,
 ) -> Result<bool, AkitaError> {
-    for plane in 0..layout.num_digits_open {
-        if layout.opening_digit_col_index(block, plane)? < live_x_cols {
-            return Ok(true);
+    let role_subcolumns = layout.source_ring_dim / layout.opening_ring_dim;
+    for role_subcolumn in 0..role_subcolumns {
+        for plane in 0..layout.num_digits_open {
+            let coefficient =
+                layout.opening_digit_coefficient_index(block, role_subcolumn, plane, 0)?;
+            if coefficient / layout.ring_len() < live_x_cols {
+                return Ok(true);
+            }
         }
     }
     Ok(false)
@@ -79,15 +93,25 @@ where
 {
     let ring_len = layout.ring_len();
     debug_assert_eq!(row.len(), ring_len);
+    let role_subcolumns = layout.source_ring_dim / layout.opening_ring_dim;
     for (plane, gadget_scalar) in gadget_scalars.iter().enumerate() {
-        let col = layout.opening_digit_col_index(block, plane)?;
-        if col >= live_x_cols {
-            continue;
-        }
         let gadget = output_scale * E::lift_base(*gadget_scalar);
-        let dst_base = col * ring_len;
-        for (dst, value) in compact[dst_base..dst_base + ring_len].iter_mut().zip(row) {
-            *dst += gadget * *value;
+        for role_subcolumn in 0..role_subcolumns {
+            for role_coefficient in 0..layout.opening_ring_dim {
+                let destination = layout.opening_digit_coefficient_index(
+                    block,
+                    role_subcolumn,
+                    plane,
+                    role_coefficient,
+                )?;
+                if destination / ring_len >= live_x_cols {
+                    continue;
+                }
+                let source = role_subcolumn * layout.opening_ring_dim + role_coefficient;
+                *compact
+                    .get_mut(destination)
+                    .ok_or(AkitaError::InvalidProof)? += gadget * row[source];
+            }
         }
     }
     Ok(())
@@ -181,18 +205,27 @@ where
         for (local_block, block_weight) in term.live_block_weights.iter().enumerate() {
             let block = term.block_offset + local_block;
             let block_weight_e = output_scale * E::lift_base(*block_weight);
+            let role_subcolumns = layout.source_ring_dim / layout.opening_ring_dim;
             for (plane, gadget_scalar) in gadget_scalars.iter().enumerate() {
-                let col = layout.opening_digit_col_index(block, plane)?;
-                if col >= live_x_cols {
-                    continue;
-                }
                 let scale = block_weight_e * E::lift_base(*gadget_scalar);
-                let values = inner_coeffs
-                    .iter()
-                    .take(ring_len)
-                    .map(|&coeff| scale * E::lift_base(coeff))
-                    .collect();
-                columns.push(TraceSparseColumn { col, values });
+                for role_subcolumn in 0..role_subcolumns {
+                    let start =
+                        layout.opening_digit_coefficient_index(block, role_subcolumn, plane, 0)?;
+                    let col = start / ring_len;
+                    if col >= live_x_cols {
+                        continue;
+                    }
+                    let coordinate = start % ring_len;
+                    let mut values = vec![E::zero(); ring_len];
+                    for role_coefficient in 0..layout.opening_ring_dim {
+                        values[coordinate + role_coefficient] = scale
+                            * E::lift_base(
+                                inner_coeffs
+                                    [role_subcolumn * layout.opening_ring_dim + role_coefficient],
+                            );
+                    }
+                    columns.push(TraceSparseColumn { col, values });
+                }
             }
         }
     }
