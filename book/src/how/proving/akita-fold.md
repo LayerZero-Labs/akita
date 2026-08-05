@@ -318,53 +318,44 @@ the resulting $\mathbf z$ fits that scheduled bound. This grinding helps the
 honest prover find a compact response; the range check on its committed digits
 is what certifies the bound in the protocol.
 
-Before digitizing $\mathbf z$, the two challenge-dependent relations already
-follow directly from linearity. For the partial evaluations,
+Before digitizing $\mathbf z$, linearity already gives two
+challenge-dependent identities among the recomposed ring elements. For the
+partial evaluations, Equations (1), (5), and (8) give
 
 $$
 \begin{aligned}
 \sum_b c_bE_b
 &=
-\sum_b c_b\sum_pQ_pF_{p,b}\\
+\sum_{b,p}c_bQ_pF_{p,b}\\
 &=
 \sum_{p,a}Q_pG_a^{\mathrm{in}}
-\left(\sum_bc_bs_{b,p,a}\right)\\
+\left(\sum_b c_bs_{b,p,a}\right)\\
 &=
 \sum_{p,a}Q_pG_a^{\mathrm{in}}z_{p,a}.
 \end{aligned}
+\tag{8a}
 $$
 
-Using the opening digits from Equation (6), this is
+Similarly, Equations (2) and (8) imply, for every row $\rho$ of $\mathbf A$,
 
 $$
-\sum_{b,h}c_bG_h^{\mathrm{open}}\hat e_{b,h}
-=
-\sum_{p,a}Q_pG_a^{\mathrm{in}}z_{p,a}.
-$$
-
-Similarly, $\mathbf t_b=\mathbf A\mathbf s_b$ implies
-
-$$
-\sum_bc_b\mathbf t_b
-=
-\mathbf A\left(\sum_bc_b\mathbf s_b\right)
-=
-\mathbf A\mathbf z.
-$$
-
-For row $\rho$ of $\mathbf A$, and using the outer digits from Equation (3),
-this becomes
-
-$$
-\sum_{b,h}c_bG_h^{\mathrm{out}}\hat t_{b,\rho,h}
-=
+\begin{aligned}
+\sum_b c_bt_{b,\rho}
+&=
+\sum_{p,a}A_{\rho,(p,a)}
+\left(\sum_b c_bs_{b,p,a}\right)\\
+&=
 \sum_{p,a}A_{\rho,(p,a)}z_{p,a}.
+\end{aligned}
+\tag{8b}
 $$
 
-These identities explain the relations in terms of the raw folded response.
-The next-level committed witness, however, must again consist of bounded
-digits so that its shortness is certified for the Module-SIS binding argument.
-Akita therefore decomposes $\mathbf z$ once more:
+Equations (8a) and (8b) are identities among the recomposed values; they do not
+yet use the opening digits $\hat{\mathbf e}$ or outer digits
+$\hat{\mathbf t}$. The next-level committed witness also contains bounded
+digits rather than $\mathbf z$ itself so that its shortness is certified for
+the Module-SIS binding argument. Akita therefore decomposes $\mathbf z$ once
+more:
 
 $$
 z_{p,a}(X)
@@ -394,32 +385,37 @@ They have different origins:
 
 ## The four physical relation families
 
-The verifier must check that the three segments in Equation (10) describe the
-same original polynomial and commitment. Akita expresses the checks as four
-families of linear equations over $R$.
+Equation (10) assembles three digit segments, but placing them next to one
+another does not yet show that they describe the same polynomial opening.
+Equations (8a) and (8b) establish this consistency among the recomposed values.
+The committed witness instead contains $\hat{\mathbf e}$,
+$\hat{\mathbf t}$, and $\hat{\mathbf z}$. Substituting Equations (3), (6), and
+(9), then adding the two commitment equations from the previous section,
+gives four families of linear equations over
+
+$$
+R=F[X]/(X^D+1).
+$$
+
+Every sum, product, and equality in this section is computed in $R$; vector
+equations are interpreted coordinatewise in $R$. The first two families
+connect the private witness segments to one another. The last two anchor those
+segments to the public commitments $\mathbf u$ and $\mathbf v_D$.
 
 ### 1. Fold-evaluation consistency
 
-Fold the recomposed partial evaluations using the same challenges as in
-Equation (8):
+The purpose of this row is to bind the blockwise partial evaluations to the
+same random fold used for the polynomial blocks. Equation (8a) batches all
+partial-evaluation identities with the fresh challenges $c_b$. When every
+$E_b$ is correct, evaluating positions and folding blocks in either order
+produces $\sum_b c_bE_b$. If even one partial evaluation is inconsistent, it
+is unlikely that its error will cancel in this random combination. Moreover,
+the opening digits are committed through $\mathbf v_D$ before the challenges
+are sampled, so they cannot be adjusted after the $c_b$ values are known.
 
-$$
-\sum_{b,h}
-c_bG_h^{\mathrm{open}}\hat e_{b,h}.
-\tag{11}
-$$
-
-Alternatively, first fold the original digit blocks into $\hat z$, recompose
-them with Equation (9), and then apply the position weights:
-
-$$
-\sum_{p,a,f}
-Q_pG_a^{\mathrm{in}}G_f^{\mathrm{fold}}\hat z_{p,a,f}.
-\tag{12}
-$$
-
-Both expressions equal $\sum_bc_bE_b$. The first physical row therefore
-checks
+To express Equation (8a) in terms of the next-fold witness, substitute the
+balanced digit representations of $E_b$ from Equation (6) and $\mathbf z$
+from Equation (9). This gives the `consistency` row
 
 $$
 \boxed{
@@ -429,38 +425,30 @@ c_bG_h^{\mathrm{open}}\hat e_{b,h}
 \sum_{p,a,f}
 Q_pG_a^{\mathrm{in}}G_f^{\mathrm{fold}}\hat z_{p,a,f}.
 }
-\tag{13}
+\tag{11}
 $$
 
-This is called the `consistency` row in the code. It binds the partial
-evaluation digits $\hat e$ to the folded response $\hat z$. It does **not**
-contain the scalar opening target $v_{\mathrm{tr}}$.
-
-Notice that this row uses the random fold challenges $c_b$, not the block
-opening weights $B_b$ from the previous page. The $B_b$ weights belong to the
-separate evaluation-correctness relation on $\hat e$.
+This row uses the random fold challenges $c_b$, not the block-opening weights
+$B_b$. The latter belong to the separate field-valued evaluation relation on
+$\hat{\mathbf e}$. In particular, this ring relation does not contain the
+scalar target $v_{\mathrm{tr}}$.
 
 ### 2. Inner-commitment consistency
 
-For every row $\rho$ of $\mathbf A$, fold the corresponding recomposed inner
-images:
+For every block $b$, the inner commitment defines the basic relation
+$\mathbf t_b=\mathbf A\mathbf s_b$. The goal is to check this entire family of
+blockwise relations. Checking them one by one would retain a separate vector
+equation for every block. Instead, Equation (8b) uses the challenges $c_b$ to
+batch them as
+$\sum_b c_b\mathbf t_b=\mathbf A(\sum_b c_b\mathbf s_b)=\mathbf A\mathbf z$.
+This leaves one vector relation across the blocks: the challenges batch the
+block index $b$, while every row $\rho$ of $\mathbf A$ is still checked. It
+connects the folded response to the commitment-side $\mathbf t_b$ values,
+which the outer-commitment rows below anchor to $\mathbf u$.
 
-$$
-\sum_{b,h}
-c_bG_h^{\mathrm{out}}\hat t_{b,\rho,h}.
-\tag{14}
-$$
-
-By linearity of $\mathbf A$, this must equal row $\rho$ of $\mathbf A$ applied
-to the folded response:
-
-$$
-\sum_{p,a,f}
-A_{\rho,(p,a)}G_f^{\mathrm{fold}}\hat z_{p,a,f}.
-\tag{15}
-$$
-
-Thus every $\mathbf A$ row checks
+The next-fold witness stores the balanced digits rather than the recomposed
+values. Substitute Equation (3) for $\mathbf t_b$ and Equation (9) for
+$\mathbf z$. For every row $\rho$ of $\mathbf A$, this gives
 
 $$
 \boxed{
@@ -470,17 +458,19 @@ c_bG_h^{\mathrm{out}}\hat t_{b,\rho,h}
 \sum_{p,a,f}
 A_{\rho,(p,a)}G_f^{\mathrm{fold}}\hat z_{p,a,f}.
 }
-\tag{16}
+\tag{12}
 $$
 
-There is no factor $G_a^{\mathrm{in}}$ on the right of Equation (16):
+There is no factor $G_a^{\mathrm{in}}$ on the right of Equation (12):
 $\mathbf A$ already acts on the inner digit vector $\mathbf s_b$, whose
 columns are indexed by $(p,a)$.
 
 ### 3. Outer-commitment consistency
 
-The $\hat t$ segment must still open the public commitment that entered this
-fold:
+The first two families compare private witness segments but do not yet tie
+them to the commitment seen by the verifier. The outer-commitment rows provide
+that public anchor by requiring $\hat{\mathbf t}$ to open the commitment that
+entered this fold:
 
 $$
 \boxed{
@@ -488,15 +478,17 @@ $$
 =
 \mathbf u.
 }
-\tag{17}
+\tag{13}
 $$
 
-Unlike Equations (13) and (16), this relation does not use the fold
-challenges. It checks the existing outer commitment directly.
+This is a direct commitment check and therefore does not use the fold
+challenges.
 
 ### 4. Opening-commitment consistency
 
-The $\hat e$ segment is bound by the opening commitment from Equation (7):
+Finally, the opening-commitment rows anchor $\hat{\mathbf e}$ to the public
+ring vector $\mathbf v_D$ that was absorbed before the fold challenges were
+sampled:
 
 $$
 \boxed{
@@ -504,12 +496,12 @@ $$
 =
 \mathbf v_D.
 }
-\tag{18}
+\tag{14}
 $$
 
-This relation also does not use the fold challenges. It prevents the prover
-from changing the partial-evaluation digits after $\mathbf v_D$ has been
-absorbed.
+This prevents the prover from changing the partial-evaluation digits after
+$\mathbf v_D$ has been fixed. Like the other three families, it is a relation
+over $R$; it is distinct from the field-valued scalar evaluation claim.
 
 ## Assemble the ring relation
 
@@ -523,7 +515,7 @@ $$
 \hat{\mathbf e}
 \;\Vert\;
 \hat{\mathbf t}.
-\tag{19}
+\tag{15}
 $$
 
 The four relation families can be written as one matrix equation
@@ -533,17 +525,17 @@ $$
 \mathbf M_0\mathbf w_0=\mathbf y
 \quad\text{over }R.
 }
-\tag{20}
+\tag{16}
 $$
 
 For one group, the physical row order and right-hand side are:
 
 | Physical rows | Meaning | Right-hand side |
 |---|---|---|
-| `consistency` | Equation (13) | $0$ |
-| $\mathbf A$ rows | Equation (16) | $\mathbf 0$ |
-| $\mathbf B$ rows | Equation (17) | $\mathbf u$ |
-| $\mathbf D$ rows | Equation (18) | $\mathbf v_D$ |
+| `consistency` | Equation (11) | $0$ |
+| $\mathbf A$ rows | Equation (12) | $\mathbf 0$ |
+| $\mathbf B$ rows | Equation (13) | $\mathbf u$ |
+| $\mathbf D$ rows | Equation (14) | $\mathbf v_D$ |
 
 Consequently,
 
@@ -557,7 +549,7 @@ $$
 \mathbf u
 \;\Vert\;
 \mathbf v_D.
-\tag{21}
+\tag{17}
 $$
 
 The matrix is usually not materialized as one dense object. Its entries come
@@ -567,7 +559,7 @@ contributions directly from the canonical witness layout.
 
 ## Lift the ring relation before sumcheck
 
-Equation (20) is an equality modulo $X^D+1$. Sumcheck, however, needs a field
+Equation (16) is an equality modulo $X^D+1$. Sumcheck, however, needs a field
 identity. Choose the canonical representatives of degree less than $D$ for
 all ring elements. There is then one quotient polynomial for every physical
 row:
@@ -578,7 +570,7 @@ $$
 \widetilde{\mathbf y}(X)
 =
 (X^D+1)\mathbf r(X).
-\tag{22}
+\tag{18}
 $$
 
 Digit-decompose the quotient vector:
@@ -587,7 +579,7 @@ $$
 \mathbf r(X)
 =
 \mathbf G_r\hat{\mathbf r}(X),
-\tag{23}
+\tag{19}
 $$
 
 and append its digits to the committed witness:
@@ -604,7 +596,7 @@ $$
 \;\Vert\;
 \hat{\mathbf r}.
 }
-\tag{24}
+\tag{20}
 $$
 
 Move the denominator term to the left and define
@@ -617,7 +609,7 @@ $$
 \;\middle|\;
 -(X^D+1)\mathbf G_r
 \right].
-\tag{25}
+\tag{21}
 $$
 
 The extended relation is the exact polynomial identity
@@ -628,24 +620,24 @@ $$
 =
 \widetilde{\mathbf y}(X).
 }
-\tag{26}
+\tag{22}
 $$
 
-This distinction is important: Equation (22) uses the quotient
-$\mathbf r$, while Equation (26) already includes the quotient digits
+This distinction is important: Equation (18) uses the quotient
+$\mathbf r$, while Equation (22) already includes the quotient digits
 $\hat{\mathbf r}$ inside $\mathbf w$. The denominator term must not be added
 to the right-hand side a second time.
 
-Ring switching now samples $\alpha$ and evaluates Equation (26):
+Ring switching now samples $\alpha$ and evaluates Equation (22):
 
 $$
 \mathbf M_{\mathrm{ext}}(\alpha)\mathbf w(\alpha)
 =
 \mathbf y(\alpha).
-\tag{27}
+\tag{23}
 $$
 
-Equation (27) is the field relation consumed by Stage 2. The
+Equation (23) is the field relation consumed by Stage 2. The
 [Sumcheck stages](./sumcheck-stages.md#stage-2-fused-relation-sumcheck) page
 explains how $\tau_1$ batches its physical rows and how the resulting relation
 is proved over the flat witness address.
@@ -668,7 +660,7 @@ is absent from $\mathbf M_0$, $\mathbf y$, and the quotient vector
 $\mathbf r$.
 
 [Sumcheck stages](./sumcheck-stages.md#stage-2-fused-relation-sumcheck)
-continues from Equation (27) and fuses the physical relation, the virtual
+continues from Equation (23) and fuses the physical relation, the virtual
 evaluation row, and the range-image binding into one Stage-2 sumcheck.
 
 ## Code reference
