@@ -6,19 +6,14 @@ use akita_config::{
 use akita_planner::{find_group_batch_schedule, find_schedule, RingDimensionSearchDomain};
 use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
 
-fn print_schedule(
-    label: &str,
-    setup_generation_dimension: usize,
-    planned: &akita_types::PlannedFoldSchedule,
-) {
+fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
     let schedule = &planned.schedule;
     let physical_setup = akita_types::setup_matrix_field_elements_for_schedule(schedule)
-        .expect("physical setup envelope");
+        .expect("physical setup capacity");
     println!("{label}");
     println!(
-        "  objective: setup={} generated D{} ring elements ({} physical field elements), proof={} bytes",
-        planned.estimate.estimated_setup_envelope_ring_elements,
-        setup_generation_dimension,
+        "  objective: setup={} field elements ({} recomputed field elements), proof={} bytes",
+        planned.estimate.estimated_num_setup_field_elements,
         physical_setup,
         planned
             .estimate
@@ -85,10 +80,8 @@ fn main() -> Result<(), akita_field::AkitaError> {
         .unwrap_or(36);
     let direct_policy = policy_of::<MixedDimFp128OneHot>();
     let direct_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
-    let direct_domain = RingDimensionSearchDomain::new(
-        direct_policy.ring_dimension,
-        direct_policy.ring_dimension_candidates.iter().copied(),
-    )?;
+    let direct_domain =
+        RingDimensionSearchDomain::new(direct_policy.ring_dimension_candidates.iter().copied())?;
     let direct = find_schedule(
         direct_key.final_group,
         &direct_policy,
@@ -99,7 +92,6 @@ fn main() -> Result<(), akita_field::AkitaError> {
     )?;
     print_schedule(
         &format!("direct scalar mixed-D search (nv={num_vars})"),
-        direct_policy.ring_dimension,
         &direct,
     );
 
@@ -107,37 +99,27 @@ fn main() -> Result<(), akita_field::AkitaError> {
     let mixed_recursive_policy = policy_of::<MixedRecursive>();
     let mixed_recursive_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(32, 2));
     let recursive_domain = RingDimensionSearchDomain::new(
-        mixed_recursive_policy.ring_dimension,
         mixed_recursive_policy
             .ring_dimension_candidates
             .iter()
             .copied(),
     )?;
-    let mixed_recursive = find_schedule(
+    let mixed_recursive_error = find_schedule(
         mixed_recursive_key.final_group,
         &mixed_recursive_policy,
         MixedRecursive::root_honest_fold_policy(),
         &recursive_domain,
         MixedRecursive::ring_challenge_config,
         MixedRecursive::fold_challenge_shape_at_level,
-    )?;
-    println!("recursive policy scalar dispatch through grouped planner:");
-    println!(
-        "  setup={} D{} ring elements, proof={} bytes",
-        mixed_recursive
-            .estimate
-            .estimated_setup_envelope_ring_elements,
-        mixed_recursive_policy.ring_dimension,
-        mixed_recursive.estimate.estimated_proof_payload_bytes()?,
-    );
+    )
+    .expect_err("mixed-D recursive planning is intentionally deferred");
+    println!("recursive mixed-D planner deferred as expected: {mixed_recursive_error}");
 
     let precommit_layout = PolynomialGroupLayout::singleton(16);
     let precommit_key = AkitaScheduleLookupKey::single(precommit_layout);
     let precommit_policy = policy_of::<D64OneHot>();
-    let precommit_domain = RingDimensionSearchDomain::new(
-        precommit_policy.ring_dimension,
-        precommit_policy.ring_dimension_candidates.iter().copied(),
-    )?;
+    let precommit_domain =
+        RingDimensionSearchDomain::new(precommit_policy.ring_dimension_candidates.iter().copied())?;
     let precommit = find_schedule(
         precommit_key.final_group,
         &precommit_policy,
@@ -171,7 +153,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
     println!("preserved recursive grouped planner:");
     println!(
         "  setup={} D64 ring elements, proof={} bytes, levels={}, offload_edges={}",
-        preserved.estimate.estimated_setup_envelope_ring_elements,
+        preserved.estimate.estimated_num_setup_field_elements,
         preserved.estimate.estimated_proof_payload_bytes()?,
         preserved.schedule.recursive_folds.len() + 2,
         preserved.estimate.selected_offload_edges,

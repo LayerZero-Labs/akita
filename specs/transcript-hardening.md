@@ -262,7 +262,7 @@ pub struct SetupSection {
     // TODO (transcript-hardening-v2): if Akita ever adds a per-deployment
     // salt for the transparent setup PRG (so different deployments have
     // different Ajtai matrices for the same params), add it to
-    // `AkitaSetupSeed` or another canonical setup-identity field and bind it
+    // `AkitaSetupDescriptor` or another canonical setup-identity field and bind it
     // through this section.
 }
 

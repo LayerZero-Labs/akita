@@ -510,7 +510,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         level,
         eor_key,
         current_witness_len,
-        policy.ring_dimension,
+        policy.uniform_ring_dimension,
     )?
     else {
         let result = empty_suffix_result();
@@ -562,7 +562,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
             (current_opening_layout, candidates, true)
         } else {
             let mut candidates = Vec::new();
-            let dimensions = CommitmentRingDims::uniform(policy.ring_dimension);
+            let dimensions = CommitmentRingDims::uniform(policy.uniform_ring_dimension);
             let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
                 continue;
             };

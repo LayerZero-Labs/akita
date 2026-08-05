@@ -75,7 +75,6 @@ pub struct GeneratedRootFold {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedSetupPrefixInput {
     pub natural_len: u64,
-    pub d_setup: u32,
     pub num_digits_fold: u32,
     pub commitment: GeneratedCommittedGroup,
 }
@@ -141,12 +140,13 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub protocol_epoch: u32,
     pub cost_model: crate::PlannerCostModelId,
     pub selection_policy: crate::SelectionPolicyId,
-    pub max_setup_envelope_field_elements: usize,
+    pub setup_field_budget: Option<usize>,
     pub min_offloaded_witness_contraction: usize,
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: akita_types::SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,
-    pub ring_dimension: usize,
+    pub uniform_ring_dimension: usize,
+    pub setup_prefix_inner_ring_dimension: usize,
     pub decomposition: akita_types::DecompositionParams,
     pub ring_subfield_norm_bound: u32,
     pub claim_ext_degree: usize,

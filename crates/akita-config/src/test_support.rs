@@ -67,12 +67,11 @@ where
 
 /// Minimal setup seed for schedule ring-dimension integration tests.
 #[must_use]
-pub fn ring_plan_test_seed(gen_ring_dim: usize) -> akita_types::AkitaSetupSeed {
-    akita_types::AkitaSetupSeed {
+pub fn ring_plan_test_seed() -> akita_types::AkitaSetupDescriptor {
+    akita_types::AkitaSetupDescriptor {
         max_num_vars: 20,
         max_num_batched_polys: 1,
-        gen_ring_dim,
-        max_setup_len: 1 << 20,
-        public_matrix_seed: [0u8; 32],
+        num_field_elements: 1 << 20,
+        setup_seed: [0u8; 32].into(),
     }
 }

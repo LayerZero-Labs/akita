@@ -10,8 +10,8 @@ mod runtime;
 
 pub use akita_challenges::TensorChallengeShape;
 pub use akita_types::{
-    ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, SisModulusProfileId,
-    SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
+    suffix_opening_layout, ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams,
+    SisModulusProfileId, SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
 };
 pub use catalog_identity::{
     expected_catalog_identity, identity_digest, key_digest, policy_digest,
@@ -25,8 +25,8 @@ pub use resolve::{
     ResolvedScheduleRow,
 };
 pub use runtime::{
-    default_sis_security_policy, suffix_opening_layout, PlannerCostModelId, PlannerPolicy,
-    RuntimeSchedulePolicy, SelectionPolicyId,
+    default_sis_security_policy, PlannerCostModelId, PlannerPolicy, RuntimeSchedulePolicy,
+    SelectionPolicyId,
 };
 
 /// Shared schedule-construction primitives used by offline search and generated-row replay.
@@ -37,9 +37,8 @@ pub mod planner_support {
         sis_key_at_dimension,
     };
     pub use crate::runtime::{
-        checked_power_of_two_vars, grouped_segment_rings, materialize_candidate_schedule,
-        optimize_fold_challenge_shape, planned_next_witness_len,
-        stage3_payload_bytes_for_successor, validate_policy, CandidateFoldStep,
-        CandidateTerminalResponse,
+        grouped_segment_rings, materialize_candidate_schedule, optimize_fold_challenge_shape,
+        planned_next_witness_len, stage3_payload_bytes_for_successor, validate_policy,
+        CandidateFoldStep, CandidateTerminalResponse,
     };
 }

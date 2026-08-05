@@ -30,15 +30,16 @@ mod kernels;
 mod operation_plans;
 mod plans;
 mod poly;
+mod requirements;
 mod stack;
 
 #[cfg(feature = "compression-diagnostics")]
 pub use backend::CompressionDiagnosticBackend;
 pub use backend::{
     CommitmentComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
-    DigitRowsComputeBackend, ProverComputeBackend, RingSwitchComputeBackend,
+    DigitRowsComputeBackend, NttCacheOwnerId, ProverComputeBackend, RingSwitchComputeBackend,
 };
-pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile};
+pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile, PreparedNttCacheMetric};
 pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
 pub(crate) use dispatch::tensor_root_projection;
 pub use kernels::{
@@ -55,6 +56,7 @@ pub use plans::{
     OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
+pub use requirements::{NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement};
 
 pub use poly::{
     CommitBackendFor, OpeningProveBackendFor, ProjectBackendFor, ProveBackendFor,
@@ -68,5 +70,6 @@ pub use poly::{
     RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use stack::{
-    LevelProveStacks, OperationCtx, ProverComputeStack, TieredProveStacks, UniformProverStack,
+    planned_ntt_cache_metrics, prewarm_ntt_requirements, LevelProveStacks, OperationCtx,
+    PlannedNttCacheOwnerMetric, ProverComputeStack, TieredProveStacks, UniformProverStack,
 };

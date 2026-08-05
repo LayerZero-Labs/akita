@@ -7,9 +7,9 @@
 //!
 //! ## Descriptor version policy
 //!
-//! Akita is under active development, so the descriptor remains version 1
-//! until the protocol is frozen. Integrators must pin an exact revision; there
-//! is no compatibility guarantee between revisions that both identify as v1.
+//! Akita is under active development. The version changes whenever a cutover
+//! intentionally changes descriptor-bound protocol semantics; integrators must
+//! pin an exact revision because no backward compatibility is guaranteed.
 
 mod fold_linf_binding;
 #[cfg(test)]
@@ -32,12 +32,12 @@ use blake2::{Blake2b, Digest};
 use std::io::{Read, Write};
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 1;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 2;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
 
-/// Compute the descriptor digest for a deterministic setup seed.
+/// Compute the descriptor digest for a public matrix identity.
 ///
 /// The expanded shared matrix and NTT views are deterministic caches derived
 /// from the setup seed, so the transcript descriptor binds the seed and the
@@ -96,14 +96,12 @@ impl AkitaInstanceDescriptor {
     }
 }
 
-/// Algebraic substrate that determines the ring and field towers.
+/// Algebraic substrate that determines the field towers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlgebraSection {
     /// Characteristic `p` of the base prime field, big-endian and 32-byte
     /// padded.
     pub prime_modulus_be: [u8; 32],
-    /// Cyclotomic index `D` defining the ring.
-    pub ring_dimension_d: u32,
     /// Extension degree of the message field over the base prime field.
     pub field_extension_degree: u8,
     /// Extension degree of the protocol extension field over the base prime field.
@@ -111,21 +109,19 @@ pub struct AlgebraSection {
 }
 
 impl AlgebraSection {
-    /// Build the algebra section for base field `F` and extension field `E` in
-    /// cyclotomic ring dimension `D`.
+    /// Build the algebra section for base field `F` and extension field `E`.
     ///
     /// # Errors
     ///
-    /// Returns an error if `D` or an extension degree does not fit the
-    /// descriptor's fixed-width integer fields.
-    pub fn for_fields<F, E, const D: usize>() -> Result<Self, AkitaError>
+    /// Returns an error if an extension degree does not fit the descriptor's
+    /// fixed-width integer fields.
+    pub fn for_fields<F, E>() -> Result<Self, AkitaError>
     where
         F: CanonicalField,
         E: ExtField<F>,
     {
         Ok(Self {
             prime_modulus_be: modulus_be_32::<F>(),
-            ring_dimension_d: usize_to_u32(D, "ring dimension")?,
             field_extension_degree: usize_to_u8(1, "field extension degree")?,
             extension_degree: usize_to_u8(E::EXT_DEGREE, "extension degree")?,
         })
@@ -157,7 +153,7 @@ pub struct SetupSection {
     pub decomposition: DecompositionParams,
     /// SIS modulus family used for security sizing.
     pub sis_modulus_profile: SisModulusProfileId,
-    /// Digest of the canonical `AkitaSetupSeed` bytes.
+    /// Digest of the canonical [`AkitaSetupSeed`] bytes.
     pub setup_seed_digest: DescriptorDigest,
     /// Protocol-affecting feature mode (transparent-only after zk-strip).
     pub protocol_features: ProtocolFeatureSet,
@@ -171,8 +167,7 @@ impl SetupSection {
     /// The per-level `CommittedGroupParams` are intentionally *not* digested here: the
     /// per-proof effective schedule (`PlanSection`) already binds every
     /// expanded fold `CommittedGroupParams`, and
-    /// `setup_seed_digest` pins the shared-matrix capacity, so a separate
-    /// setup-level digest would be redundant.
+    /// the public-matrix identity is bound separately from local provisioning.
     ///
     /// # Errors
     ///
@@ -355,11 +350,6 @@ impl AkitaDeserialize for AkitaInstanceDescriptor {
 
 impl Valid for AlgebraSection {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.ring_dimension_d == 0 {
-            return Err(SerializationError::InvalidData(
-                "descriptor ring dimension must be non-zero".to_string(),
-            ));
-        }
         if self.field_extension_degree == 0 || self.extension_degree == 0 {
             return Err(SerializationError::InvalidData(
                 "descriptor extension degrees must be non-zero".to_string(),
@@ -376,8 +366,6 @@ impl AkitaSerialize for AlgebraSection {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         writer.write_all(&self.prime_modulus_be)?;
-        self.ring_dimension_d
-            .serialize_with_mode(&mut writer, compress)?;
         self.field_extension_degree
             .serialize_with_mode(&mut writer, compress)?;
         self.extension_degree
@@ -386,8 +374,7 @@ impl AkitaSerialize for AlgebraSection {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        32 + self.ring_dimension_d.serialized_size(compress)
-            + self.field_extension_degree.serialized_size(compress)
+        32 + self.field_extension_degree.serialized_size(compress)
             + self.extension_degree.serialized_size(compress)
     }
 }
@@ -405,7 +392,6 @@ impl AkitaDeserialize for AlgebraSection {
         reader.read_exact(&mut prime_modulus_be)?;
         let out = Self {
             prime_modulus_be,
-            ring_dimension_d: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
             field_extension_degree: u8::deserialize_with_mode(
                 &mut reader,
                 compress,

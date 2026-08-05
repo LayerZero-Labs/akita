@@ -20,7 +20,7 @@ Before setup access or transcript replay, it validates catalog identity and
 runtime hooks, resolves the public row digest, compares every ordered public
 `CommittedGroupProfile`, re-audits every A/B/D/recursive/terminal SIS matrix,
 checks challenge and full terminal cap geometry, and confirms the schedule fits
-the setup envelope. Private polynomial representations and honest-prover
+the setup field capacity. Private polynomial representations and honest-prover
 witness models are not verifier inputs.
 
 The accepted proof topology is structural: a root fold, at least one suffix

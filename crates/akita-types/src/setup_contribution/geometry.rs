@@ -352,10 +352,10 @@ pub fn ensure_setup_envelope<F: FieldCore>(
     required: usize,
     fold_ring_d: usize,
 ) -> Result<(), AkitaError> {
-    let setup_len = expanded
-        .shared_matrix()
-        .total_ring_elements_at_dyn(fold_ring_d)?;
-    if required > setup_len {
+    let required_fields = required
+        .checked_mul(fold_ring_d)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup capacity requirement overflow".into()))?;
+    if required_fields > expanded.shared_matrix().num_field_elements() {
         return Err(AkitaError::InvalidSetup(
             "shared matrix is too small for selected setup product".into(),
         ));
@@ -372,14 +372,13 @@ mod tests {
 
     #[test]
     fn ensure_setup_envelope_rejects_undersized_matrix() {
-        let seed = crate::AkitaSetupSeed {
+        let seed = crate::AkitaSetupDescriptor {
             max_num_vars: 32,
             max_num_batched_polys: 1,
-            gen_ring_dim: 32,
-            max_setup_len: 1,
-            public_matrix_seed: [1u8; 32],
+            num_field_elements: 32,
+            setup_seed: [1u8; 32].into(),
         };
-        let shared = crate::derive_public_matrix_flat::<F, 32>(1, &seed.public_matrix_seed);
+        let shared = crate::derive_public_matrix_prefix::<F>(32, &seed.setup_seed);
         let expanded =
             crate::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared);
         let err = ensure_setup_envelope(&expanded, 2, 32).expect_err("undersized");

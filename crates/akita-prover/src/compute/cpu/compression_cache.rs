@@ -120,20 +120,19 @@ mod tests {
     };
     use crate::AkitaProverSetup;
     use akita_field::Prime64Offset59;
-    use akita_types::{NttCacheKey, SetupMatrixEnvelope};
+    use akita_types::{NttCacheKey, SetupMatrixCapacity};
 
     type F = Prime64Offset59;
     const D: usize = 64;
 
-    fn setup_envelope(max_setup_len: usize) -> SetupMatrixEnvelope {
-        SetupMatrixEnvelope { max_setup_len }
+    fn setup_envelope(num_field_elements: usize) -> SetupMatrixCapacity {
+        SetupMatrixCapacity { num_field_elements }
     }
 
     fn empty_prepared() -> CpuPreparedSetup<F> {
-        let setup =
-            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_envelope(D)).unwrap();
         CpuBackend
-            .prepare_expanded::<D>(setup.expanded)
+            .prepare_expanded(setup.expanded)
             .expect("empty prepared setup")
     }
 
@@ -169,14 +168,17 @@ mod tests {
         let compression_digits = vec![[0i8; D]; envelope_width];
         CpuBackend
             .compression_rows::<D>(&prepared, &[compression_digits.as_slice()])
-            .expect("compression cache at full envelope length");
+            .expect("compression cache at the full materialized prefix length");
         assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
 
-        let envelope_key =
-            NttCacheKey::from_envelope(prepared.expanded.as_ref(), D).expect("envelope key");
+        let envelope_key = NttCacheKey {
+            ring_d: D,
+            num_ring_elements: envelope_width,
+            domain: NttTransformDomain::Cyclic,
+        };
         CpuBackend
             .ensure_ntt_slot(&prepared, envelope_key)
-            .expect("independent both-transform envelope cache");
+            .expect("independent cyclic envelope cache");
         assert!(prepared.shared_ntt_cache_bytes() > 0);
         let cyclic_digits = vec![[0i8; D]; envelope_width];
         CpuBackend

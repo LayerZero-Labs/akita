@@ -8,7 +8,7 @@ use crate::compute::{
 use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{CommitInnerWitness, RootTensorProjectionPoly};
-use akita_config::{ensure_schedule_fits_setup, CommitmentConfig};
+use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
@@ -128,7 +128,7 @@ where
         .output_rank()
         .checked_mul(params.inner_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
-    let a_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_a())?;
+    let a_available = setup.shared_matrix.num_field_elements() / dims.d_a();
     if a_required > a_available {
         return Err(AkitaError::InvalidSetup(format!(
             "A-role commit params require {a_required} setup ring elements at d={}, but setup has {a_available}",
@@ -140,7 +140,7 @@ where
         .output_rank()
         .checked_mul(params.outer_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
-    let b_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_b())?;
+    let b_available = setup.shared_matrix.num_field_elements() / dims.d_b();
     if b_required > b_available {
         return Err(AkitaError::InvalidSetup(format!(
             "B-role commit params require {b_required} setup ring elements at d={}, but setup has {b_available}",
@@ -183,7 +183,7 @@ where
         .output_rank()
         .checked_mul(profile.inner_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
-    let a_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_a())?;
+    let a_available = setup.shared_matrix.num_field_elements() / dims.d_a();
     if a_required > a_available {
         return Err(AkitaError::InvalidSetup(format!(
             "A-role precommit profile requires {a_required} setup ring elements at d={}, but setup has {a_available}",
@@ -195,7 +195,7 @@ where
         .output_rank()
         .checked_mul(profile.outer_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
-    let b_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_b())?;
+    let b_available = setup.shared_matrix.num_field_elements() / dims.d_b();
     if b_required > b_available {
         return Err(AkitaError::InvalidSetup(format!(
             "B-role precommit profile requires {b_required} setup ring elements at d={}, but setup has {b_available}",
@@ -320,17 +320,6 @@ where
     let n_a = params.inner_commit_matrix.output_rank();
     let num_digits_open = params.num_digits_outer;
     let log_basis = params.log_basis_outer;
-    let gen_ring_dim = backend
-        .prepared_expanded_setup(prepared)
-        .seed()
-        .gen_ring_dim;
-    let mut warmed_ring_dim = gen_ring_dim;
-    for ring_dim in [dims.d_a(), dims.d_b()] {
-        if ring_dim != gen_ring_dim && ring_dim != warmed_ring_dim {
-            ctx.ensure_envelope_ntt(backend.prepared_expanded_setup(prepared), ring_dim)?;
-            warmed_ring_dim = ring_dim;
-        }
-    }
     let n_b = params.outer_commit_matrix.output_rank();
     let (commitment, inner_rows) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -425,17 +414,6 @@ where
     let n_a = profile.inner_commit_matrix.output_rank();
     let num_digits_open = profile.num_digits_outer;
     let log_basis = profile.log_basis_outer;
-    let gen_ring_dim = backend
-        .prepared_expanded_setup(prepared)
-        .seed()
-        .gen_ring_dim;
-    let mut warmed_ring_dim = gen_ring_dim;
-    for ring_dim in [dims.d_a(), dims.d_b()] {
-        if ring_dim != gen_ring_dim && ring_dim != warmed_ring_dim {
-            ctx.ensure_envelope_ntt(backend.prepared_expanded_setup(prepared), ring_dim)?;
-            warmed_ring_dim = ring_dim;
-        }
-    }
     let n_b = profile.outer_commit_matrix.output_rank();
     let (commitment, inner_rows) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -812,7 +790,7 @@ where
         final_group_key_from_polys::<Cfg, P>(polys, expanded, precommitteds.clone())?;
     let schedule = Cfg::runtime_schedule(schedule_key.clone())?;
     let opening_layout = schedule_key.opening_layout()?;
-    ensure_schedule_fits_setup::<Cfg>(expanded, &schedule, &opening_layout)?;
+    ensure_prover_schedule_fits_setup::<Cfg>(expanded, &schedule, &opening_layout)?;
     let params = schedule.root_fold().params.final_group.commitment.clone();
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
     let (commitment, hint) =
@@ -931,7 +909,7 @@ mod tests {
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp64;
-    use akita_types::{OpenCommitMatrixParams, SetupMatrixEnvelope, SisModulusProfileId};
+    use akita_types::{OpenCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId};
 
     type F = Fp64<4294967197>;
     const D: usize = 64;
@@ -973,8 +951,9 @@ mod tests {
         let expanded = AkitaProverSetup::<F>::generate_with_capacity(
             5,
             1,
-            D,
-            SetupMatrixEnvelope { max_setup_len: 8 },
+            SetupMatrixCapacity {
+                num_field_elements: D,
+            },
         )
         .unwrap()
         .expanded;
@@ -1001,8 +980,9 @@ mod tests {
         let expanded = AkitaProverSetup::<F>::generate_with_capacity(
             5,
             1,
-            D,
-            SetupMatrixEnvelope { max_setup_len: 8 },
+            SetupMatrixCapacity {
+                num_field_elements: D,
+            },
         )
         .unwrap()
         .expanded;

@@ -52,18 +52,16 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
     );
     let setup_ring_elements = plan.required().div_ceil(D_A / D_D);
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupSeed {
+        AkitaSetupDescriptor {
             max_num_vars: 0,
             max_num_batched_polys: 0,
-            gen_ring_dim: D_A,
-            max_setup_len: setup_ring_elements,
-            public_matrix_seed: [0u8; 32],
+            num_field_elements: setup_ring_elements * D_A,
+            setup_seed: [0u8; 32].into(),
         },
         FlatMatrix::from_flat_data(
             (0..setup_ring_elements * D_A)
                 .map(|idx| test_scalar(211 + idx as u128))
                 .collect(),
-            D_A,
         ),
     );
     let alpha = test_scalar(3);

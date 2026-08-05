@@ -19,7 +19,7 @@ use akita_planner::find_group_batch_schedule;
 use akita_schedules::resolve_schedule;
 use akita_schedules::{
     resolve_generated_schedule_selection, select_generated_schedule_row, PlannerCostModelId,
-    PlannerPolicy, ResolvedScheduleRow, SelectionPolicyId,
+    PlannerPolicy, ResolvedScheduleRow,
 };
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
@@ -305,7 +305,7 @@ fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
 }
 
 #[test]
-fn adapters_forward_ring_dimension_candidates() {
+fn adapters_forward_mixed_dimension_policy() {
     type Base = fp128::MixedDimFp128OneHot;
     assert_eq!(
         <RecursiveCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
@@ -315,20 +315,25 @@ fn adapters_forward_ring_dimension_candidates() {
         <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
         Base::RING_DIMENSION_CANDIDATES,
     );
+    assert_eq!(
+        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::selection_policy(),
+        Base::selection_policy(),
+    );
+    akita_schedules::planner_support::validate_policy(&policy_of::<
+        PrecommittedCommitmentConfig<Base>,
+    >())
+    .expect("precommitted mixed-dimension policy must remain valid");
 }
 
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
         cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
-        selection_policy: SelectionPolicyId::for_policy(
-            Cfg::recursive_setup_planning(),
-            Cfg::D,
-            Cfg::RING_DIMENSION_CANDIDATES,
-        ),
-        max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+        selection_policy: Cfg::selection_policy(),
+        setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
-        ring_dimension: Cfg::D,
+        uniform_ring_dimension: Cfg::D,
+        setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),
         ring_dimension_candidates: Cfg::RING_DIMENSION_CANDIDATES,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
@@ -385,6 +390,7 @@ fn policy_bridge_matches_cfg_hooks() {
     assert_policy_matches_cfg::<fp128::D64Dense>();
     assert_policy_matches_cfg::<fp128::D128Dense>();
     assert_policy_matches_cfg::<fp128::D64OneHot>();
+    assert_policy_matches_cfg::<fp128::MixedDimFp128OneHot>();
     assert_policy_matches_cfg::<fp32::D64OneHot>();
 }
 

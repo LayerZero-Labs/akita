@@ -15,10 +15,10 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
+    AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupDescriptor,
     AkitaVerifierSetup, CommittedGroup, FlatMatrix, GroupBatchStatement, OpeningClaims,
     OpeningScheduleSelection, PolynomialGroupClaims, SetupPrefixVerifierRegistry,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
 
@@ -277,14 +277,7 @@ where
     }
 
     fn setup_matrix_encoded_len(matrix_fields: usize) -> Result<usize, SerializationError> {
-        let header_len = 0usize
-            .serialized_size(BLOB_COMPRESS)
-            .checked_mul(2)
-            .ok_or_else(|| {
-                SerializationError::InvalidData(
-                    "akita-jolt setup matrix header length overflow".to_string(),
-                )
-            })?;
+        let header_len = 0usize.serialized_size(BLOB_COMPRESS);
         let payload_len = Self::encoded_field_payload_len(matrix_fields)?;
         header_len.checked_add(payload_len).ok_or_else(|| {
             SerializationError::InvalidData(
@@ -309,20 +302,14 @@ where
 
     fn decode_seed_and_matrix(
         rest: &mut &[u8],
-    ) -> Result<(AkitaSetupSeed, FlatMatrix<F>), SerializationError> {
+    ) -> Result<(AkitaSetupDescriptor, FlatMatrix<F>), SerializationError> {
         let seed =
-            AkitaSetupSeed::deserialize_with_mode(&mut *rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
-        if seed.gen_ring_dim != D {
-            return Err(SerializationError::InvalidData(format!(
-                "akita-jolt setup D={} does not match guest D={D}",
-                seed.gen_ring_dim
-            )));
-        }
-        let matrix_fields = seed.matrix_field_elements()?;
-        if matrix_fields > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
+            AkitaSetupDescriptor::deserialize_with_mode(&mut *rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+        let matrix_fields = seed.num_field_elements;
+        if matrix_fields > MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS {
             return Err(SerializationError::LengthLimitExceeded {
                 len: u64::try_from(matrix_fields).unwrap_or(u64::MAX),
-                max: MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+                max: MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
             });
         }
         Self::check_setup_matrix_bytes_available(rest, matrix_fields)?;
@@ -330,9 +317,8 @@ where
             &mut *rest,
             BLOB_COMPRESS,
             BLOB_VALIDATE,
-            seed.max_setup_len,
-            seed.gen_ring_dim,
-            MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+            seed.num_field_elements,
+            MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
         )?;
         Ok((seed, shared_matrix))
     }
@@ -439,13 +425,14 @@ where
     ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
         let (seed, shared_matrix) = Self::decode_seed_and_matrix(rest)?;
         let prefix_slots = Self::decode_prefix_slots(rest)?;
-        Ok(AkitaVerifierSetup::from_parts(
+        AkitaVerifierSetup::from_parts(
             Arc::new(AkitaExpandedSetup::from_verified_parts(
                 seed,
                 shared_matrix,
             )?),
             prefix_slots,
-        ))
+        )
+        .map_err(|err| SerializationError::InvalidData(err.to_string()))
     }
 
     /// Strictly decode the bundle from bytes produced by [`Self::write_to_bytes`].
@@ -476,20 +463,21 @@ where
     ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
         let (seed, shared_matrix) = Self::decode_seed_and_matrix(rest)?;
         let prefix_slots = Self::decode_prefix_slots(rest)?;
-        Ok(AkitaVerifierSetup::from_parts(
+        AkitaVerifierSetup::from_parts(
             Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix),
             ),
             prefix_slots,
-        ))
+        )
+        .map_err(|err| SerializationError::InvalidData(err.to_string()))
     }
 
     /// Decode a host-produced recursion artifact while trusting the cached
     /// setup matrix.
     ///
     /// This is a benchmark/profile fast path, not a general recursion security
-    /// boundary. It still validates the blob magic, ring dimension, serialized
-    /// structure, field elements, and seed/matrix shape equality, but it
+    /// boundary. It still validates the blob magic, serialized structure,
+    /// field elements, and seed/matrix shape equality, but it
     /// deliberately skips checking that the expanded setup matrix coefficients
     /// equal the matrix derived from the seed.
     pub fn read_trusted_host_artifact_bytes(bytes: &[u8]) -> Result<Self, SerializationError> {
@@ -509,7 +497,7 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275;
     use akita_types::{
-        derive_public_matrix_flat, sample_public_matrix_seed, setup_prefix_slot_id,
+        derive_public_matrix_prefix, sample_akita_setup_seed, setup_prefix_slot_id,
         CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
         PolynomialGroupLayout, PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment,
         SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
@@ -631,19 +619,18 @@ mod tests {
 
     #[test]
     fn strict_setup_decoder_preserves_prefix_slots() {
-        let public_matrix_seed = sample_public_matrix_seed();
-        let seed = AkitaSetupSeed {
+        let setup_seed = sample_akita_setup_seed();
+        let seed = AkitaSetupDescriptor {
             max_num_vars: 8,
             max_num_batched_polys: 1,
-            gen_ring_dim: TEST_D,
-            max_setup_len: 2,
-            public_matrix_seed,
+            num_field_elements: 2 * TEST_D,
+            setup_seed: setup_seed.clone(),
         };
-        let shared_matrix = derive_public_matrix_flat::<TestF, TEST_D>(2, &public_matrix_seed);
+        let shared_matrix = derive_public_matrix_prefix::<TestF>(2 * TEST_D, &setup_seed);
         let commitment_params = prefix_commitment_params();
         let commitment_rows = commitment_params.layout.outer_commit_matrix.output_rank();
-        let id = setup_prefix_slot_id(PREFIX_D, 1, commitment_params);
-        let mut prefix_slots = SetupPrefixVerifierRegistry::new();
+        let id = setup_prefix_slot_id(1, commitment_params);
+        let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed.clone());
         prefix_slots
             .insert(SetupPrefixVerifierSlot {
                 id: id.clone(),

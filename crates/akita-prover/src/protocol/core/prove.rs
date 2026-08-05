@@ -1,15 +1,18 @@
 use super::*;
 use crate::backend::RecursiveFoldSource;
 use crate::compute::{
-    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    prewarm_ntt_requirements, CommitmentComputeBackend, ComputeBackendSetup,
+    DigitRowsComputeBackend, LevelProveStacks, NttExecutionRequirements,
     RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
     SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
-use akita_config::{effective_batched_schedule, ensure_schedule_fits_setup, CommitmentConfig};
+use akita_config::{
+    effective_batched_schedule, ensure_prover_schedule_fits_setup, CommitmentConfig,
+};
 use akita_field::unreduced::ReduceTo;
 use akita_field::{AdditiveGroup, CanonicalField};
-use akita_types::{dispatch_for_field, OpeningScheduleSelection};
+use akita_types::OpeningScheduleSelection;
 
 /// Drive batched proving end-to-end under config `Cfg`.
 ///
@@ -86,28 +89,16 @@ where
     let resolved = Cfg::resolve_schedule_selection(selection)?;
     let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)?;
     let schedule = resolved.schedule();
-    ensure_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, &opening_batch)?;
-    // The transcript instance descriptor binds the setup-wide root ring
-    // dimension (`gen_ring_dim`), NOT the root stack's const `D`. For uniform-D
-    // presets `gen_ring_dim == Cfg::D == D`, so the descriptor bytes are
-    // unchanged today; binding `gen_ring_dim` (via the canonical dispatcher,
-    // exactly as the verifier's `batched_verify` does) keeps the prover and
-    // verifier descriptors byte-identical under a future mixed-D preset. This is
-    // the one absorption-parity point the compiler cannot check (S7/S9 caveat).
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Envelope,
-        Cfg::Field,
-        expanded.seed().gen_ring_dim,
-        |GEN_D| {
-            bind_transcript_instance_descriptor::<Cfg::Field, T, GEN_D, Cfg>(
-                expanded.as_ref(),
-                &opening_batch,
-                selection,
-                schedule,
-                basis,
-                transcript,
-            )
-        }
+    ensure_prover_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, &opening_batch)?;
+    let ntt_requirements = NttExecutionRequirements::from_prove_schedule(schedule)?;
+    prewarm_ntt_requirements::<Cfg::Field, _>(stacks, &ntt_requirements)?;
+    bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
+        expanded.as_ref(),
+        &opening_batch,
+        selection,
+        schedule,
+        basis,
+        transcript,
     )?;
 
     prove::<Cfg, T, P, C, O, TS, R>(
@@ -194,23 +185,7 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
-    // Role dims were validated against the setup seed at batched_prove entry;
-    // NTT pre-warm reads the same schedule-owned dims per level.
     let root_params = &schedule.root.params.final_group.commitment;
-    stacks
-        .prove_stack_at_level(0)
-        .ensure_fold_level_role_ntt(expanded.as_ref(), root_params.role_dims())?;
-    for (offset, step) in schedule.recursive_folds.iter().enumerate() {
-        stacks
-            .prove_stack_at_level(offset + 1)
-            .ensure_fold_level_role_ntt(expanded.as_ref(), step.params.witness.role_dims())?;
-    }
-    stacks
-        .prove_stack_at_level(schedule.num_fold_levels() - 1)
-        .ensure_fold_level_envelope_ntt(
-            expanded.as_ref(),
-            schedule.terminal.params.witness.d_a(),
-        )?;
     {
         // §6 invariant — commitment vector length == num_rings · ring_dim.
         // The flat `Commitment` stores raw coefficients; validate its ring count

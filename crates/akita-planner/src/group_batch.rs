@@ -31,7 +31,7 @@ fn sis_key(
         table_digest: policy.sis_table_digest,
         modulus_profile: policy.sis_modulus_profile,
         role,
-        ring_dimension: policy.ring_dimension as u32,
+        ring_dimension: policy.uniform_ring_dimension as u32,
         coeff_linf_bound,
     }
 }
@@ -250,7 +250,7 @@ fn precommitted_groups_for_open_basis(
     let mut d_width = 0usize;
     for group in &groups {
         d_width = d_width
-            .checked_add(group.d_segment_width(policy.ring_dimension)?)
+            .checked_add(group.d_segment_width(policy.uniform_ring_dimension)?)
             .ok_or_else(|| AkitaError::InvalidSetup("multi-group D width overflow".to_string()))?;
     }
     Ok((groups, d_width))
@@ -285,7 +285,7 @@ pub(crate) fn multi_group_root_level_candidates_for_basis(
     candidate_log_basis: u32,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     let field_bits = policy.decomposition.field_bits();
-    let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
+    let alpha = (policy.uniform_ring_dimension as u32).trailing_zeros() as usize;
     let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
     if reduced_vars == 0 {
         return Err(AkitaError::UnsupportedSchedule(format!(
@@ -373,7 +373,7 @@ fn multi_group_root_main_level_params_candidate(
     precommitted_d_width: usize,
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
     let policy = ctx.policy;
-    let d = policy.ring_dimension;
+    let d = policy.uniform_ring_dimension;
     let family = policy.sis_modulus_profile;
     let decomp = ctx.policy.decomposition;
     let level_decomp = DecompositionParams {
@@ -532,12 +532,6 @@ pub fn find_group_batch_schedule(
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_challenge_shape_at_level = &fold_challenge_shape_at_level;
     if policy.recursive_setup_planning && !key.precommitteds.is_empty() {
-        let setup_field_budget = policy.max_setup_envelope_field_elements;
-        if setup_field_budget == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "supported setup envelope is empty".to_string(),
-            ));
-        }
         return find_group_batch_schedule_inner(
             key,
             final_honest_fold_policy,
@@ -545,7 +539,7 @@ pub fn find_group_batch_schedule(
             policy,
             ring_challenge_config,
             fold_challenge_shape_at_level,
-            Some(setup_field_budget),
+            policy.setup_field_budget,
         );
     }
     find_group_batch_schedule_inner(
@@ -574,7 +568,6 @@ fn find_group_batch_schedule_inner(
         // must not enter recursion-enabled grouped planning.
         let scalar_policy = policy.direct_only();
         let dimensions = crate::schedule_params::RingDimensionSearchDomain::new(
-            scalar_policy.ring_dimension,
             scalar_policy.ring_dimension_candidates.iter().copied(),
         )?;
         return find_schedule(
@@ -591,7 +584,7 @@ fn find_group_batch_schedule_inner(
         .ok_or_else(|| {
             AkitaError::InvalidSetup("multi-group root-fold witness length overflow".to_string())
         })?;
-    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
+    let ring_challenge_cfg = ring_challenge_config(policy.uniform_ring_dimension)?;
     let suffix_ctx = SuffixCtx {
         policy,
         default_ring_challenge_cfg: &ring_challenge_cfg,
@@ -621,7 +614,12 @@ fn find_group_batch_schedule_inner(
             .best_by_payload_per_lb
             .values()
             .min_by_key(|candidate| candidate.total_bytes),
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => suffix
+        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
+            return Err(AkitaError::UnsupportedSchedule(
+                "mixed ring-dimension selection is not supported for multi-group roots".to_string(),
+            ));
+        }
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => suffix
             .best_by_first_direct_setup_per_lb
             .values()
             .min_by_key(|candidate| {
@@ -630,11 +628,6 @@ fn find_group_batch_schedule_inner(
                     candidate.total_bytes,
                 )
             }),
-        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
-            return Err(AkitaError::UnsupportedSchedule(
-                "mixed ring-dimension selection is not supported for multi-group roots".to_string(),
-            ));
-        }
     };
 
     let Some(best) = best.cloned() else {
@@ -655,7 +648,6 @@ fn find_group_batch_schedule_inner(
     materialize_candidate_schedule(
         best.total_bytes,
         best.setup_field_elements,
-        policy.ring_dimension,
         first_direct_setup_field_len,
         best.folds,
         best.terminal,

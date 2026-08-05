@@ -1,7 +1,7 @@
 //! Recursive mixed ring-dimension transition E2E.
 //!
 //! Synthetic profile geometry (not planner output):
-//! - L0: A/B/D = `256/128/128` with a D128 setup-prefix handoff
+//! - L0: A/B/D = `256/128/128` with an independently committed D64 setup prefix
 //! - L1: A/B/D = `128/64/64`
 //! - L2+: uniform D64
 //!
@@ -25,14 +25,17 @@ use akita_pcs::test_support::{
     materialize_schedule_setup_prefix_slots, RecursiveRingDimensionTransitionConfig,
 };
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{commit_setup_prefix, ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly};
+use akita_prover::{
+    commit_setup_prefix, planned_ntt_cache_metrics, ComputeBackendSetup, CpuBackend,
+    NttExecutionRequirements, NttOperationCluster, OneHotIndex, OneHotPoly,
+};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
     active_setup_field_len, dispatch_for_field, lagrange_weights, padded_setup_prefix_len,
     AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, CommitmentRingDims,
-    CommittedGroupProfile, FoldSchedule, GroupBatchStatement, NttCacheKey, OpeningClaims,
-    PolynomialGroupClaims, PolynomialGroupLayout, WitnessPartition,
+    CommittedGroupProfile, FoldSchedule, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
+    PolynomialGroupLayout, WitnessPartition,
 };
 use common::*;
 use rand::rngs::StdRng;
@@ -136,15 +139,19 @@ fn assert_mixed_recursive_geometry(schedule: &FoldSchedule) {
         .incoming_setup_prefix
         .as_ref()
         .expect("L1 must carry a setup prefix");
-    assert_eq!(prefix.d_setup, 128, "setup prefix must use D128");
+    assert_eq!(
+        prefix.d_setup(),
+        64,
+        "setup prefix must use independent D64 A"
+    );
     assert_eq!(
         prefix
             .commitment_params
             .layout
             .inner_commit_matrix
             .ring_dimension(),
-        128,
-        "setup-prefix A dimension must be 128"
+        64,
+        "setup-prefix A dimension must be 64"
     );
     assert_eq!(
         prefix
@@ -190,9 +197,14 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
 
         let mut setup =
             Scheme::<ProofCfg>::setup_prover(FINAL_NV, TOTAL_GROUP_SIZE).expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
-        materialize_schedule_setup_prefix_slots(&mut setup, &CpuBackend, &prepared, &schedule)
-            .expect("materialize mixed setup-prefix slots");
+        let preprocessing_prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+        materialize_schedule_setup_prefix_slots(
+            &mut setup,
+            &CpuBackend,
+            &preprocessing_prepared,
+            &schedule,
+        )
+        .expect("materialize mixed setup-prefix slots");
         let prefix_id = schedule.recursive_folds[0]
             .params
             .incoming_setup_prefix
@@ -215,9 +227,9 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
             setup.expanded.shared_matrix().as_field_slice().len() >= natural_len,
             "prepared setup must cover the canonical natural prefix"
         );
-        let stack = akita_prover::UniformProverStack::uniform(
+        let preprocessing_stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
-            &prepared,
+            &preprocessing_prepared,
             setup.expanded.as_ref(),
         )
         .expect("stack");
@@ -228,9 +240,12 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         for group_idx in 0..PRE_GROUPS {
             let poly =
                 make_layout_onehot_poly(&pre_layout, 0x0bee_fcaf_3340_0000 + group_idx as u64);
-            let (commitment, hint) =
-                Precommitted::commit_group(&setup, std::slice::from_ref(&poly), &stack)
-                    .expect("precommit group");
+            let (commitment, hint) = Precommitted::commit_group(
+                &setup,
+                std::slice::from_ref(&poly),
+                &preprocessing_stack,
+            )
+            .expect("precommit group");
             assert_eq!(commitment.profile, pre_frozen);
             pre_polys_by_group.push(vec![poly]);
             pre_commitments.push(commitment);
@@ -245,7 +260,7 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         let (final_commitment, final_hint, selection) = Scheme::<ProofCfg>::commit_final_group(
             &setup,
             &final_polys,
-            &stack,
+            &preprocessing_stack,
             pre_commitments.iter().map(|group| group.profile).collect(),
         )
         .expect("final mixed commitment");
@@ -255,7 +270,7 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         materialize_schedule_setup_prefix_slots(
             &mut setup,
             &CpuBackend,
-            &prepared,
+            &preprocessing_prepared,
             &selected_schedule,
         )
         .expect("materialize selected mixed setup-prefix slots");
@@ -315,16 +330,84 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
             prover_polys,
         );
         let selection = prover_claims.0;
+        let prove_prepared = CpuBackend
+            .prepare_setup(&setup)
+            .expect("prove prepared setup");
+        let prove_stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prove_prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("prove stack");
 
         let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
         let proof = Scheme::<ProofCfg>::batched_prove(
             &setup,
             prover_claims,
-            &stack,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
         .expect("mixed recursive proof");
+        let requirements = NttExecutionRequirements::from_prove_schedule(&selected_schedule)
+            .expect("NTT requirements");
+        let prefix_layout = &selected_schedule.recursive_folds[0]
+            .params
+            .incoming_setup_prefix
+            .as_ref()
+            .expect("L1 setup prefix")
+            .commitment_params
+            .layout;
+        let expected_prefix_a = akita_types::NttCacheKey::from_matrix_shape(
+            prefix_layout.inner_commit_matrix.ring_dimension(),
+            prefix_layout.inner_commit_matrix.output_rank(),
+            prefix_layout.inner_commit_matrix.input_width(),
+            akita_types::NttTransformDomain::Cyclic,
+        )
+        .expect("prefix A requirement");
+        let expected_prefix_commit_a = akita_types::NttCacheKey::from_matrix_shape(
+            prefix_layout.inner_commit_matrix.ring_dimension(),
+            prefix_layout.inner_commit_matrix.output_rank(),
+            prefix_layout.inner_commit_matrix.input_width(),
+            akita_types::NttTransformDomain::Negacyclic,
+        )
+        .expect("prefix commitment A requirement");
+        let expected_prefix_commit_b = akita_types::NttCacheKey::from_matrix_shape(
+            prefix_layout.outer_commit_matrix.ring_dimension(),
+            prefix_layout.outer_commit_matrix.output_rank(),
+            prefix_layout.outer_commit_matrix.input_width(),
+            akita_types::NttTransformDomain::Negacyclic,
+        )
+        .expect("prefix commitment B requirement");
+        assert!(requirements.entries().iter().any(|requirement| {
+            requirement.fold_level == 1
+                && requirement.cluster == NttOperationCluster::RingSwitch
+                && requirement.key.ring_d == expected_prefix_a.ring_d
+                && requirement.key.domain == expected_prefix_a.domain
+                && requirement.key.num_ring_elements >= expected_prefix_a.num_ring_elements
+        }));
+        for expected in [expected_prefix_commit_a, expected_prefix_commit_b] {
+            assert!(requirements.entries().iter().any(|requirement| {
+                requirement.fold_level == 1
+                    && requirement.cluster == NttOperationCluster::Commit
+                    && requirement.key.ring_d == expected.ring_d
+                    && requirement.key.domain == expected.domain
+                    && requirement.key.num_ring_elements >= expected.num_ring_elements
+            }));
+        }
+        let metrics = planned_ntt_cache_metrics::<F, _>(&prove_stack, &requirements)
+            .expect("planned NTT metrics");
+        assert_eq!(metrics.len(), 1, "uniform stack must have one cache owner");
+        assert_eq!(
+            prove_prepared.shared_ntt_cache_bytes(),
+            metrics[0].cache_bytes,
+            "recursive mixed-D lazy kernels diverged from the prewarm compiler: requirements={:?}, planned={:?}, resident={:?}",
+            requirements.entries(),
+            metrics[0].keys,
+            prove_prepared
+                .shared_ntt_cache_metrics()
+                .expect("resident NTT metrics")
+        );
         assert!(
             proof_has_recursive_setup_sumcheck(&proof),
             "mixed recursive proof must carry stage-3 setup sumcheck evidence"
@@ -341,7 +424,12 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         )
         .expect("deserialize mixed recursive proof");
 
-        let verifier_setup = setup.verifier_setup().expect("verifier setup");
+        let verifier_setup = Scheme::<ProofCfg>::setup_verifier_for_schedule(
+            &setup,
+            &selected_schedule,
+            &opening_layout,
+        )
+        .expect("verifier setup");
         let verify_claims = |final_openings: Vec<F>| {
             let mut verifier_groups = Vec::new();
             for (group_idx, openings) in pre_openings.iter().enumerate() {
@@ -395,7 +483,7 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
 }
 
 #[test]
-fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
+fn recursive_mixed_d_prefix_commit_lazily_builds_exact_ntt_slots() {
     let _serial = RECURSIVE_E2E_LOCK.lock().expect("recursive E2E lock");
     init_rayon_pool();
     run_on_large_stack(|| {
@@ -416,17 +504,11 @@ fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
         let setup = AkitaCommitmentScheme::<PlainCfg>::setup_prover(FINAL_NV, TOTAL_GROUP_SIZE)
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
-        let source_ntt =
-            NttCacheKey::from_envelope(&setup.expanded, prefix.d_setup).expect("source NTT key");
-        CpuBackend
-            .ensure_ntt_slot(&prepared, source_ntt)
-            .expect("warm only source NTT slot");
-
         let n_prefix = prefix.n_prefix().expect("padded prefix length");
-        let error = dispatch_for_field!(
+        dispatch_for_field!(
             akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
             F,
-            prefix.d_setup,
+            prefix.d_setup(),
             |D_SETUP| {
                 commit_setup_prefix::<F, D_SETUP, _>(
                     &setup.expanded,
@@ -438,11 +520,7 @@ fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
                 )
             }
         )
-        .expect_err("missing D64 outer NTT slot must reject");
-        assert!(
-            error.to_string().contains("NTT slot not warmed"),
-            "unexpected missing-slot error: {error}"
-        );
+        .expect("setup-prefix commitment lazily acquires its exact NTT prefixes");
     });
 }
 

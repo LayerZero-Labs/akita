@@ -1,9 +1,9 @@
 #![allow(missing_docs)]
 
 mod modes;
+mod ntt_prewarm;
 mod parallel;
 mod report;
-mod schedule_setup;
 #[cfg_attr(feature = "profile-onehot-fp128-d64", allow(dead_code))]
 mod workload;
 

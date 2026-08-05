@@ -1,8 +1,9 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, FoldSchedule, RootFinalChallenge, RootFinalGroupParams, RootFoldParams,
-    RootFoldStep, TailSegmentGroupLayout, TailSegmentLayout, TerminalCommittedGroupParams,
-    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessPartition,
+    CommittedGroupParams, FoldSchedule, RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge,
+    RootFinalGroupParams, RootFoldParams, RootFoldStep, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
+    WitnessPartition,
 };
 use akita_challenges::SparseChallengeConfig;
 
@@ -63,29 +64,71 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
     }
 }
 
-fn seed(gen_ring_dim: usize) -> AkitaSetupSeed {
-    AkitaSetupSeed {
-        max_num_vars: 0,
-        max_num_batched_polys: 0,
-        gen_ring_dim,
-        max_setup_len: 0,
-        public_matrix_seed: [0; 32],
-    }
-}
-
 #[test]
 fn accepts_typed_root_and_terminal_ring_dimensions() {
     let schedule = schedule(committed(128), committed(64));
-    validate_schedule_ring_dims(&schedule, &seed(256)).expect("128 and 64 divide setup D");
+    validate_schedule_ring_dims(&schedule).expect("mixed dimensions are valid");
 }
 
 #[test]
-fn rejects_terminal_dimension_not_dividing_setup_dimension() {
-    let schedule = schedule(committed(128), committed(64));
-    assert!(matches!(
-        validate_schedule_ring_dims(&schedule, &seed(96)),
-        Err(AkitaError::InvalidSetup(_))
-    ));
+fn rejects_recursive_shared_d_matrix_mismatch() {
+    let root_params = committed(128);
+    let recursive_params = committed(64);
+    let terminal_params = committed(64);
+    let terminal_witness =
+        TerminalCommittedGroupParams::from_expanded_group(terminal_params.clone());
+    let recursive_input_len = recursive_params.d_a();
+    let schedule = FoldSchedule {
+        root: RootFoldStep {
+            params: RootFoldParams {
+                final_group: RootFinalGroupParams {
+                    challenge: RootFinalChallenge::Flat,
+                    commitment: root_params.clone(),
+                },
+                precommitted_groups: Vec::new(),
+                open_commit_matrix: root_params.open_commit_matrix,
+                sparse_challenge_config: root_params.fold_challenge_config,
+                witness_partition: WitnessPartition::Single,
+            },
+            input_witness_len: root_params.d_a(),
+            output_witness_len: recursive_input_len,
+        },
+        recursive_folds: vec![RecursiveFoldStep {
+            params: RecursiveFoldParams {
+                witness: recursive_params.clone(),
+                open_commit_matrix: root_params.open_commit_matrix,
+                sparse_challenge_config: recursive_params.fold_challenge_config,
+                incoming_setup_prefix: None,
+                witness_partition: WitnessPartition::Single,
+            },
+            input_witness_len: recursive_input_len,
+            output_witness_len: terminal_witness.d_a(),
+        }],
+        terminal: TerminalFoldStep {
+            params: TerminalFoldParams {
+                witness: terminal_witness,
+                sparse_challenge_config: terminal_params.fold_challenge_config,
+                response_shape: TerminalResponseShape {
+                    layout: TailSegmentLayout {
+                        ring_dimension: terminal_params.d_a(),
+                        groups: vec![TailSegmentGroupLayout {
+                            z_coords: terminal_params.d_a(),
+                            e_field_elems: terminal_params.d_a(),
+                            t_field_elems: terminal_params.d_a(),
+                            z_admission_linf_cap: 1,
+                            z_payload_bytes: 1,
+                            z_rice_low_bits: 0,
+                        }],
+                        logical_num_elems: 3 * terminal_params.d_a(),
+                    },
+                },
+            },
+            input_witness_len: terminal_params.d_a(),
+        },
+    };
+    let err = validate_schedule_ring_dims(&schedule)
+        .expect_err("recursive shared D mismatch must reject");
+    assert!(err.to_string().contains("shared D matrix disagrees"));
 }
 
 #[test]

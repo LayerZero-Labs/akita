@@ -21,6 +21,13 @@ const-generic at kernel and backend leaf boundaries, but the protocol shape is
 field vectors plus schedule-owned dimensions, not `CyclotomicRing<F, D>` at the
 API boundary.
 
+> **Scoped revision (stacked follow-up to PR #334):** The schedule-ownership
+> decision remains authoritative. The phase-1 setup generation dimension and
+> full-envelope NTT preparation described later in this document are superseded by
+> [`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
+> Public setup is now specified as a dimension-free field stream and NTT state
+> as exact backend-derived prefixes.
+
 ## Intent
 
 ### Goal

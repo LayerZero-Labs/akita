@@ -57,13 +57,7 @@ where
         )));
     }
 
-    let available_field_len = expanded
-        .shared_matrix()
-        .total_ring_elements_at::<D>()?
-        .checked_mul(D)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("setup matrix field length overflow".to_string())
-        })?;
+    let available_field_len = expanded.shared_matrix().num_field_elements();
     if natural_len > available_field_len {
         return Err(AkitaError::InvalidSetup(
             "setup prefix natural length exceeds shared matrix capacity".to_string(),
@@ -132,7 +126,7 @@ where
     }
     let hint =
         AkitaCommitmentHint::singleton(RingVec::from_coeffs_with_ring_dim(inner_coefficients, D)?)?;
-    let id = setup_prefix_slot_id(D, natural_len, level_params.clone());
+    let id = setup_prefix_slot_id(natural_len, level_params.clone());
     Ok(SetupPrefixSlot {
         id,
         natural_len,
@@ -204,8 +198,7 @@ mod tests {
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
         active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
-        NttCacheKey, OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixEnvelope,
-        SisModulusProfileId,
+        OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId,
     };
 
     fn prefix_level_params(ring_dimension: usize) -> CommittedGroupParams {
@@ -223,19 +216,19 @@ mod tests {
     }
 
     fn setup_capacity_for(level_params: &CommittedGroupParams, n_prefix: usize) -> usize {
-        n_prefix.max(
-            level_params
-                .outer_commit_matrix
-                .output_rank()
-                .checked_mul(
-                    level_params
-                        .num_live_blocks
-                        .checked_mul(level_params.inner_commit_matrix.output_rank())
-                        .and_then(|n| n.checked_mul(level_params.num_digits_open))
-                        .expect("b input shape"),
-                )
-                .expect("setup capacity"),
-        )
+        let a_fields = level_params
+            .inner_commit_matrix
+            .output_rank()
+            .checked_mul(level_params.inner_commit_matrix.input_width())
+            .and_then(|n| n.checked_mul(level_params.inner_commit_matrix.ring_dimension()))
+            .expect("A setup capacity");
+        let b_fields = level_params
+            .outer_commit_matrix
+            .output_rank()
+            .checked_mul(level_params.outer_commit_matrix.input_width())
+            .and_then(|n| n.checked_mul(level_params.outer_commit_matrix.ring_dimension()))
+            .expect("B setup capacity");
+        n_prefix.max(a_fields).max(b_fields)
     }
 
     fn test_setup<const D: usize>(
@@ -245,9 +238,8 @@ mod tests {
         AkitaProverSetup::<F>::generate_with_capacity(
             8,
             1,
-            D,
-            SetupMatrixEnvelope {
-                max_setup_len: setup_capacity_for(level_params, n_prefix).max(1),
+            SetupMatrixCapacity {
+                num_field_elements: setup_capacity_for(level_params, n_prefix).max(1),
             },
         )
         .expect("setup")
@@ -260,12 +252,13 @@ mod tests {
         let setup = AkitaProverSetup::<F>::generate_with_capacity(
             8,
             1,
-            64,
-            SetupMatrixEnvelope { max_setup_len: 3 },
+            SetupMatrixCapacity {
+                num_field_elements: natural_len,
+            },
         )
         .expect("setup");
         let fields = setup.expanded.shared_matrix().as_field_slice();
-        assert_eq!(fields.len(), 192);
+        assert_eq!(fields.len(), natural_len);
         assert!(fields.len() < padded_ring_slots * 64);
 
         let ring_elems = extract_setup_prefix_ring_elems::<F, 64>(
@@ -313,7 +306,7 @@ mod tests {
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
         let natural_len = n_prefix / 2 + 1;
-        let mut setup = test_setup::<64>(&level_params, natural_len.div_ceil(64));
+        let mut setup = test_setup::<64>(&level_params, natural_len);
         let available_field_len = setup.expanded.shared_matrix().as_field_slice().len();
         assert!(available_field_len >= natural_len);
         assert!(available_field_len < n_prefix);
@@ -396,10 +389,6 @@ mod tests {
         let setup = test_setup::<64>(&level_params, n_prefix);
         let backend = CpuBackend;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
-        let ntt_key = NttCacheKey::from_envelope(&setup.expanded, 32).expect("D32 NTT key");
-        backend
-            .ensure_ntt_slot(&prepared, ntt_key)
-            .expect("warm D32 NTT slot");
         let slot = commit_setup_prefix::<F, 64, _>(
             &setup.expanded,
             &backend,

@@ -12,30 +12,6 @@ fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<
     Ok(padded.trailing_zeros() as usize)
 }
 
-pub fn suffix_opening_layout(
-    current_witness_len: usize,
-    incoming_setup_prefix: Option<usize>,
-) -> Result<OpeningClaimsLayout, AkitaError> {
-    let witness_vars = checked_power_of_two_vars(current_witness_len, "suffix witness length")?;
-    let witness_group = PolynomialGroupLayout::singleton(witness_vars);
-    match incoming_setup_prefix {
-        Some(natural_len) => {
-            let n_prefix = padded_setup_prefix_len(natural_len);
-            if n_prefix == 0 || !n_prefix.is_power_of_two() {
-                return Err(AkitaError::InvalidSetup(
-                    "incoming setup prefix length must be a nonzero power of two".to_string(),
-                ));
-            }
-            let prefix_vars = checked_power_of_two_vars(n_prefix, "incoming setup prefix length")?;
-            OpeningClaimsLayout::from_groups(vec![
-                PolynomialGroupLayout::singleton(prefix_vars),
-                witness_group,
-            ])
-        }
-        None => OpeningClaimsLayout::from_groups(vec![witness_group]),
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn grouped_segment_rings(
     num_polys: usize,
@@ -105,7 +81,9 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
 ) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
     if outer_ring_dimension == 0
         || !outer_ring_dimension.is_power_of_two()
-        || !policy.ring_dimension.is_multiple_of(outer_ring_dimension)
+        || !policy
+            .setup_prefix_inner_ring_dimension
+            .is_multiple_of(outer_ring_dimension)
     {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix B dimension must be a power-of-two divisor of its A dimension"
@@ -117,7 +95,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
             "setup prefix length must be a nonzero power of two".to_string(),
         ));
     }
-    if !n_prefix.is_multiple_of(policy.ring_dimension) {
+    if !n_prefix.is_multiple_of(policy.setup_prefix_inner_ring_dimension) {
         return Err(AkitaError::InvalidSetup(
             "setup prefix length must be a multiple of the ring dimension".to_string(),
         ));
@@ -127,11 +105,11 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
             "setup-prefix checkpoint requires one consuming inner/outer/open basis".to_string(),
         ));
     }
-    let ring_slots = n_prefix / policy.ring_dimension;
+    let ring_slots = n_prefix / policy.setup_prefix_inner_ring_dimension;
     let reduced_vars = checked_power_of_two_vars(ring_slots, "setup prefix ring slots")?;
     let prefix_num_vars = checked_power_of_two_vars(n_prefix, "setup prefix field length")?;
     let family = policy.sis_modulus_profile;
-    let d = policy.ring_dimension;
+    let d = policy.setup_prefix_inner_ring_dimension;
     let outer_decomp = DecompositionParams {
         log_basis: log_basis_outer,
         ..policy.decomposition
@@ -209,7 +187,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
             sis_key_at_dimension(
                 policy,
                 akita_types::SisMatrixRole::Inner,
-                policy.ring_dimension,
+                policy.setup_prefix_inner_ring_dimension,
                 norm_s,
             ),
             width_s,

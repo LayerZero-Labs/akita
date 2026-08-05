@@ -68,8 +68,9 @@ fixed job: A carries the relation witness, B commits the next witness, and D
 commits the opening digits. The matrices do not switch roles when their ring
 dimensions change. User-facing prose therefore calls a non-uniform tuple such
 as `128/64/32` **per-matrix ring dimensions** and a change between levels a
-**ring-dimension transition**. [`validate_schedule_ring_dims`] checks
-every level dimension against the setup's generation dimension.
+**ring-dimension transition**. [`validate_schedule_ring_dims`] checks every
+scheduled dimension directly against the field's dispatch and NTT support.
+The public setup is one flat field stream with no ring dimension.
 
 Every function on the prove/verify path has one of two roles:
 
@@ -100,7 +101,7 @@ Mixed-dimension execution is exercised end-to-end by
 | Type | Role |
 |------|------|
 | `AkitaCommitmentScheme<Cfg>` | Top-level PCS `commit` / `prove` / `verify` orchestration (`akita-pcs`) |
-| `AkitaProverSetup<F>` | Prover setup wrapper; `gen_ring_dim` is runtime shape metadata |
+| `AkitaProverSetup<F>` | Prover setup wrapper around a materialized prefix of the dimension-free public field stream |
 | `Commitment<F>`, `RingVec<F>` | protocol commitment and field-vector storage |
 | `CommitmentRingDims`, `validate_schedule_ring_dims` | A/B/D commitment-matrix ring dimensions and schedule validation |
 | `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, exact SIS profile, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |

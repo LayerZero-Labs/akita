@@ -213,7 +213,6 @@ pub(super) fn find_schedule(
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
     validate_policy(policy)?;
-    dimensions.validate_for_policy(policy)?;
 
     let field_bits = policy.decomposition.field_bits();
     let input_witness_len = 1usize.checked_shl(key.num_vars() as u32).ok_or_else(|| {
@@ -352,12 +351,9 @@ pub(super) fn find_schedule(
 
     let mut scored = complete
         .into_iter()
-        .filter(|candidate| {
-            candidate.setup_field_elements <= policy.max_setup_envelope_field_elements
-        })
+        .filter(|candidate| policy.admits_setup_field_elements(candidate.setup_field_elements))
         .map(|candidate| {
-            let descriptor =
-                candidate_schedule_descriptor_bytes(&candidate, policy.ring_dimension)?;
+            let descriptor = candidate_schedule_descriptor_bytes(&candidate)?;
             Ok((
                 candidate.setup_field_elements,
                 candidate.total_bytes,
@@ -375,7 +371,6 @@ pub(super) fn find_schedule(
     materialize_candidate_schedule(
         selected.total_bytes,
         selected.setup_field_elements,
-        policy.ring_dimension,
         None,
         selected.folds,
         selected.terminal,

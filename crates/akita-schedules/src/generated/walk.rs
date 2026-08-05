@@ -295,7 +295,6 @@ pub(crate) fn walk_generated_schedule_entry(
     let planned_schedule = materialize_candidate_schedule(
         total_bytes,
         setup_field_elements,
-        policy.ring_dimension,
         first_direct_setup_field_len,
         folds,
         CandidateTerminalResponse {

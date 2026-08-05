@@ -3,7 +3,7 @@ use akita_algebra::ring::scalar_powers;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{Fp32, Prime128OffsetA7F7};
 use akita_types::{
-    r_decomp_levels, AkitaSetupSeed, CommitmentRingDims, FlatMatrix, OpenCommitMatrixParams,
+    r_decomp_levels, AkitaSetupDescriptor, CommitmentRingDims, FlatMatrix, OpenCommitMatrixParams,
     OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress,
     SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId,
 };
@@ -156,18 +156,16 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
     };
     let setup_ring_elements = 1 << 14;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupSeed {
+        AkitaSetupDescriptor {
             max_num_vars: 16,
             max_num_batched_polys: 1,
-            gen_ring_dim: D_INNER,
-            max_setup_len: setup_ring_elements,
-            public_matrix_seed: [7; 32],
+            num_field_elements: setup_ring_elements,
+            setup_seed: [7; 32].into(),
         },
         FlatMatrix::from_flat_data(
             (0..setup_ring_elements * D_INNER)
                 .map(|index| MixedF::from_u64(101 + index as u64))
                 .collect(),
-            D_INNER,
         ),
     );
     let point = (0..relation_address_geometry.relation_point_variable_count())

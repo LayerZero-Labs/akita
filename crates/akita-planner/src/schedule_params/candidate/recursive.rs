@@ -310,11 +310,6 @@ fn prepare_recursive_level_search(
 
     let setup_prefix = match incoming_setup_prefix {
         Some(natural_len) => {
-            if dimensions != CommitmentRingDims::uniform(akita_types::SETUP_OFFLOAD_D_SETUP) {
-                return Err(AkitaError::InvalidSetup(
-                    "recursive setup planning requires uniform D64".to_string(),
-                ));
-            }
             let n_prefix = padded_setup_prefix_len(natural_len);
             let Some(group) = derive_setup_prefix_group(
                 policy,
@@ -329,11 +324,7 @@ fn prepare_recursive_level_search(
             else {
                 return Ok(None);
             };
-            Some(akita_types::setup_prefix_slot_id(
-                dimensions.d_a(),
-                natural_len,
-                group,
-            ))
+            Some(akita_types::setup_prefix_slot_id(natural_len, group))
         }
         None => None,
     };

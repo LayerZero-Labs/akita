@@ -10,7 +10,7 @@ use akita_pcs::test_support::{
 };
 use akita_types::sis::{decomposed_t_ring_count, decomposed_w_ring_count};
 use akita_types::{
-    setup_matrix_envelope_for_schedule, CommitmentRingDims, CommittedGroupParams, FoldSchedule,
+    setup_matrix_capacity_for_schedule, CommitmentRingDims, CommittedGroupParams, FoldSchedule,
     OpeningClaimsLayout, PolynomialGroupLayout, SisTableDigest, WitnessPartition,
 };
 
@@ -154,15 +154,14 @@ fn d512_root_uses_additive_a_matrix_sis_table() {
         root.flat_field_len().expect("root flat length"),
         1usize << NUM_VARS
     );
-    let required = setup_matrix_envelope_for_schedule(&schedule, fp128::D512OneHot::D)
-        .expect("schedule envelope");
+    let required = setup_matrix_capacity_for_schedule(&schedule).expect("schedule envelope");
     let configured = <ThreeBandRingDimensionTransitionConfig<
         fp128::D512OneHot,
         fp128::D128OneHot,
         fp128::D64OneHot,
         128,
         64,
-    > as CommitmentConfig>::max_setup_matrix_size(NUM_VARS, 1)
+    > as CommitmentConfig>::setup_matrix_capacity(NUM_VARS, 1)
     .expect("configured envelope");
     assert_eq!(configured, required);
 }
@@ -189,11 +188,10 @@ fn per_matrix_ring_dims_root_replans_its_complete_suffix() {
         root.log_basis_open,
     );
 
-    let required = setup_matrix_envelope_for_schedule(&schedule, fp128::D128OneHot::D)
-        .expect("schedule envelope");
+    let required = setup_matrix_capacity_for_schedule(&schedule).expect("schedule envelope");
     let configured =
         <PerMatrixRingDimsRootConfig<fp128::D128OneHot, 32, 64> as CommitmentConfig>::
-            max_setup_matrix_size(NUM_VARS, 1)
+            setup_matrix_capacity(NUM_VARS, 1)
             .expect("configured envelope");
     assert_eq!(configured, required);
 }
@@ -251,14 +249,14 @@ where
         .incoming_setup_prefix
         .as_ref()
         .expect("root setup prefix");
-    assert_eq!(prefix.d_setup, 128);
+    assert_eq!(prefix.d_setup(), 64);
     assert_eq!(
         prefix
             .commitment_params
             .layout
             .inner_commit_matrix
             .ring_dimension(),
-        128
+        64
     );
     assert_eq!(
         prefix
@@ -282,22 +280,22 @@ fn recursive_transition_supports_ci_and_profile_setup_capacities() {
     type Suffix = fp128::D64OneHot;
     type Cfg = RecursiveRingDimensionTransitionConfig<Root, Mid, Suffix, Suffix, 128, 64>;
 
-    let ci = <Cfg as CommitmentConfig>::max_setup_matrix_size(24, 3)
+    let ci = <Cfg as CommitmentConfig>::setup_matrix_capacity(24, 3)
         .expect("CI fixture envelope (24,3)");
-    let profile = <Cfg as CommitmentConfig>::max_setup_matrix_size(32, 4)
+    let profile = <Cfg as CommitmentConfig>::setup_matrix_capacity(32, 4)
         .expect("profile fixture envelope (32,4)");
     assert!(
-        profile.max_setup_len >= ci.max_setup_len,
+        profile.num_field_elements >= ci.num_field_elements,
         "profile capacity must cover at least the CI fixture envelope"
     );
     assert!(
-        <Cfg as CommitmentConfig>::max_setup_matrix_size(24, 4).is_err(),
+        <Cfg as CommitmentConfig>::setup_matrix_capacity(24, 4).is_err(),
         "unsupported capacities must stay fail-closed"
     );
 }
 
 #[test]
-fn recursive_transition_supports_dynamic_d128_setup_prefix() {
+fn recursive_transition_supports_independent_d64_setup_prefix() {
     let schedule = recursive_transition_schedule::<fp128::D64OneHot>();
     assert_eq!(
         schedule.recursive_folds[0].params.witness_partition,

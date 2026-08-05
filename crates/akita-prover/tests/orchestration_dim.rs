@@ -4,7 +4,6 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp64};
-use akita_config::test_support::ring_plan_test_seed;
 use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_types::{
     validate_role_dispatch, validate_schedule_ring_dims, AkitaScheduleLookupKey,
@@ -56,13 +55,11 @@ fn real_presets_validate_against_setup_ring_dimension() {
         PolynomialGroupLayout::singleton(14),
     ))
     .expect("fp64 schedule");
-    validate_schedule_ring_dims(&fp64_schedule, &ring_plan_test_seed(128))
-        .expect("D128 schedule envelope");
+    validate_schedule_ring_dims(&fp64_schedule).expect("D128 schedule envelope");
 
     let fp128_schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(13),
     ))
     .expect("fp128 schedule");
-    validate_schedule_ring_dims(&fp128_schedule, &ring_plan_test_seed(64))
-        .expect("D64 schedule envelope");
+    validate_schedule_ring_dims(&fp128_schedule).expect("D64 schedule envelope");
 }

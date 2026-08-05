@@ -1,9 +1,9 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, OpeningScheduleSelection,
-    RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep, ScheduleRowDigest,
-    TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
-    WitnessPartition,
+    CommittedGroupParams, FoldSchedule, InnerCommitMatrixParams, OpeningClaimsLayout,
+    OpeningScheduleSelection, RootFinalChallenge, RootFinalGroupParams, RootFoldParams,
+    RootFoldStep, ScheduleRowDigest, TerminalCommittedGroupParams, TerminalFoldParams,
+    TerminalFoldStep, TerminalResponseShape, WitnessPartition,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime32Offset99;
@@ -55,7 +55,7 @@ fn sample_selection() -> OpeningScheduleSelection {
 fn sample_descriptor() -> AkitaInstanceDescriptor {
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("valid opening batch");
     AkitaInstanceDescriptor::new(
-        AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99, 64>().expect("algebra"),
+        AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99>().expect("algebra"),
         SetupSection {
             decomposition: DecompositionParams {
                 log_basis: 3,
@@ -190,6 +190,37 @@ fn terminal_sparse_sampler_changes_plan_binding() {
     let first = sample_schedule();
     let mut second = first.clone();
     second.terminal.params.sparse_challenge_config = SparseChallengeConfig::pm1_only(4);
+    assert_ne!(
+        PlanSection::from_schedule(sample_selection(), &first),
+        PlanSection::from_schedule(sample_selection(), &second)
+    );
+}
+
+#[test]
+fn role_local_ring_dimension_changes_plan_binding() {
+    let first = sample_schedule();
+    let mut second = first.clone();
+    let matrix = &second
+        .root
+        .params
+        .final_group
+        .commitment
+        .inner_commit_matrix;
+    second
+        .root
+        .params
+        .final_group
+        .commitment
+        .inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+        matrix.security_policy(),
+        matrix.sis_table_key().table_digest,
+        matrix.sis_modulus_profile(),
+        matrix.output_rank(),
+        matrix.input_width(),
+        matrix.coeff_linf_bound(),
+        matrix.ring_dimension() * 2,
+    );
+
     assert_ne!(
         PlanSection::from_schedule(sample_selection(), &first),
         PlanSection::from_schedule(sample_selection(), &second)

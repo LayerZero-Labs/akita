@@ -128,23 +128,23 @@ pub(in crate::protocol::core) fn prepare_single_field_suffix_groups<F, E>(
     block_claims: &OpeningClaims<'_, E>,
     lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
-    role_d_a: usize,
-    alpha_bits: usize,
 ) -> Result<Vec<PreparedOpeningPoint<F, E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
 {
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        role_d_a,
-        |D| {
-            let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
-            let final_group_index = opening_batch.root_final_group_index()?;
-            for group_index in 0..opening_batch.num_groups() {
-                let group_lp = lp.group_params(opening_batch, group_index)?;
-                let target_len = alpha_bits
+    let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
+    let final_group_index = opening_batch.root_final_group_index()?;
+    for group_index in 0..opening_batch.num_groups() {
+        let group_lp = lp.group_params(opening_batch, group_index)?;
+        let group_dims = lp.group_role_dims(opening_batch, group_index)?;
+        let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
+        let prepared = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            group_dims.d_a(),
+            |D| {
+                let target_len = group_alpha_bits
                     .checked_add(group_lp.position_index_bits())
                     .and_then(|n| n.checked_add(group_lp.block_index_bits()))
                     .ok_or_else(|| {
@@ -165,15 +165,16 @@ where
                         group_protocol_point.len()
                     )));
                 }
-                prepared_points.push(prepare_opening_point::<F, E, D>(
+                prepare_opening_point::<F, E, D>(
                     group_protocol_point,
                     BasisMode::Lagrange,
                     group_lp.num_positions_per_block(),
                     group_lp.num_live_blocks(),
-                    alpha_bits,
-                )?);
+                    group_alpha_bits,
+                )
             }
-            Ok(prepared_points)
-        }
-    )
+        )?;
+        prepared_points.push(prepared);
+    }
+    Ok(prepared_points)
 }

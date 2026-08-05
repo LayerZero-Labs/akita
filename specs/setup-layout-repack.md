@@ -28,6 +28,13 @@ compares direct and offloaded successors at every supported nonterminal edge,
 uses the exact active prefix dictated by packed setup geometry, and may select
 zero, one, or several offloaded levels.
 
+The packed overlapping-prefix layout remains authoritative here. Public-matrix
+derivation, capacity units, setup-prefix source padding, and NTT-cache sizing
+are superseded by
+[`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
+In particular, `S[lambda]` below is historical ring-chunk notation; the target
+public object is a dimension-free field stream that schedule-local matrices
+reshape as needed.
 The witness and setup role order in
 [`digit-innermost-layout.md`](digit-innermost-layout.md) supersedes the older
 root and recursive order recorded by the first version of this spec. Every fold
@@ -133,7 +140,7 @@ ring_view::<D>(num_rows, num_cols)
 The global stride is imposed by setup metadata and call sites:
 
 ```text
-AkitaSetupSeed {
+AkitaSetupDescriptor {
     max_stride,
     ...
 }
@@ -234,7 +241,7 @@ Do not add ZK blinding tail widths to `max_setup_len`. Under
 Change:
 
 ```text
-AkitaSetupSeed {
+AkitaSetupDescriptor {
     max_stride,
     ...
 }
@@ -243,7 +250,7 @@ AkitaSetupSeed {
 to:
 
 ```text
-AkitaSetupSeed {
+AkitaSetupDescriptor {
     max_setup_len,
     max_zk_b_len,            // feature = "zk"
     max_zk_d_len,            // feature = "zk"

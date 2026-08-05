@@ -1,5 +1,5 @@
 use akita_field::{CanonicalField, FieldCore};
-use akita_prover::PreparedCrtNttProfile;
+use akita_prover::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
     golomb_rice::{
@@ -8,8 +8,8 @@ use akita_types::{
     },
     layout::proof_size::field_bytes,
     sis::num_digits_for_bound,
-    AkitaBatchedProof, CommittedGroupParams, FoldLevelProof, FoldSchedule, SetupSumcheckProof,
-    TerminalLevelProof, ZFoldEncodingStats,
+    AkitaBatchedProof, CommittedGroupParams, FoldLevelProof, FoldSchedule, NttTransformDomain,
+    SetupSumcheckProof, TerminalLevelProof, ZFoldEncodingStats,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -253,26 +253,50 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
     }
 }
 
-/// Surface the prepared-setup memory footprint: the plain shared setup vector
-/// (`Vec<F>`) versus the NTT slot cache built from it. The cache stores both
-/// negacyclic and cyclic CRT-NTT forms, so it is several times larger than the
-/// vector; reporting both makes that expansion visible in the bench report.
+/// Surface the public setup prefix and every initialized exact NTT cache slot.
 pub(crate) fn report_setup_sizes(
     label: &str,
-    setup_ring_elements: usize,
+    num_setup_field_elements: usize,
     setup_vector_bytes: usize,
-    setup_ntt_cache_bytes: usize,
+    ntt_cache_metrics: &[PreparedNttCacheMetric],
 ) {
+    let setup_ntt_cache_bytes = ntt_cache_metrics
+        .iter()
+        .map(|metric| metric.cache_bytes)
+        .sum::<usize>();
     tracing::info!(
         label,
-        setup_ring_elements,
+        num_setup_field_elements,
         setup_vector_bytes,
         setup_ntt_cache_bytes,
         "setup sizes"
     );
     eprintln!(
-        "[{label}] setup sizes: ring_elems={setup_ring_elements}, vector={setup_vector_bytes} bytes, ntt_cache={setup_ntt_cache_bytes} bytes"
+        "[{label}] setup sizes: field_elems={num_setup_field_elements}, vector={setup_vector_bytes} bytes, ntt_cache={setup_ntt_cache_bytes} bytes"
     );
+    for metric in ntt_cache_metrics {
+        let domain = match metric.key.domain {
+            NttTransformDomain::Negacyclic => "negacyclic",
+            NttTransformDomain::Cyclic => "cyclic",
+        };
+        tracing::info!(
+            label,
+            ntt_cluster = "shared_cpu",
+            ntt_ring_dimension = metric.key.ring_d,
+            ntt_domain = domain,
+            ntt_prefix_ring_elements = metric.key.num_ring_elements,
+            ntt_prefix_field_elements = metric.key.num_ring_elements * metric.key.ring_d,
+            ntt_cache_bytes = metric.cache_bytes,
+            "exact NTT cache slot"
+        );
+        eprintln!(
+            "[{label}] ntt cache: cluster=shared_cpu D={} domain={domain} ring_elems={} field_elems={} bytes={}",
+            metric.key.ring_d,
+            metric.key.num_ring_elements,
+            metric.key.num_ring_elements * metric.key.ring_d,
+            metric.cache_bytes,
+        );
+    }
 }
 
 pub(crate) fn report_verifier_ntt_cache_size(label: &str, verifier_ntt_cache_bytes: usize) {
@@ -308,16 +332,12 @@ pub(crate) fn emit_runtime_schedule_summary(
     label: &str,
     schedule: &FoldSchedule,
     root_num_claims: usize,
-    setup_generation_dimension: usize,
     field_bits: u32,
 ) {
     let levels = schedule.num_fold_levels();
-    let setup_envelope_field_elements =
+    let num_setup_field_elements =
         akita_types::setup_matrix_field_elements_for_schedule(schedule).unwrap_or(0);
-    let setup_envelope_ring_elements =
-        setup_envelope_field_elements.div_ceil(setup_generation_dimension);
-    let setup_envelope_bytes =
-        setup_envelope_field_elements.saturating_mul(field_bits.div_ceil(8) as usize);
+    let num_setup_bytes = num_setup_field_elements.saturating_mul(field_bits.div_ceil(8) as usize);
     let selected_offload_edges = schedule
         .recursive_folds
         .iter()
@@ -327,9 +347,8 @@ pub(crate) fn emit_runtime_schedule_summary(
         label,
         levels,
         selected_offload_edges,
-        setup_envelope_ring_elements,
-        setup_envelope_field_elements,
-        setup_envelope_bytes,
+        num_setup_field_elements,
+        num_setup_bytes,
         "runtime schedule"
     );
 

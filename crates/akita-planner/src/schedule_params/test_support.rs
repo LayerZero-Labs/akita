@@ -35,7 +35,7 @@ pub fn plan_setup_prefix_commitment(
     .ok_or_else(|| {
         AkitaError::UnsupportedSchedule(format!(
             "no setup-prefix commitment at A{}/B{} for n_prefix={}",
-            request.policy.ring_dimension,
+            request.policy.setup_prefix_inner_ring_dimension,
             request.outer_ring_dimension,
             request.prefix_field_elements
         ))

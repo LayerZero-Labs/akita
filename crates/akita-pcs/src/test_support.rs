@@ -23,7 +23,7 @@ use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims,
     CommittedGroupBatchProfile, CommittedGroupParams, DecompositionParams, FoldSchedule,
     OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout, RecursiveFoldParams,
-    RecursiveFoldStep, RootFoldStep, SetupMatrixEnvelope, SisMatrixRole, SisModulusProfileId,
+    RecursiveFoldStep, RootFoldStep, SetupMatrixCapacity, SisMatrixRole, SisModulusProfileId,
     SisTableDigest, TerminalFoldParams, TerminalFoldStep, WitnessLayout, WitnessPartition,
 };
 use std::{
@@ -167,9 +167,9 @@ fn synthetic_schedule_key(profiles: &CommittedGroupBatchProfile) -> AkitaSchedul
 /// Test config for a multi-group root whose precommitted groups use
 /// `Envelope::D` while the final group and recursive suffix use `Final::D`.
 ///
-/// `Self::D` remains the setup-generation envelope. Exact grouped runtime keys
+/// `Self::D` remains the uniform planner default. Exact grouped runtime keys
 /// select schedules under `Final`, retaining each preceding group's frozen
-/// native descriptor.
+/// native descriptor. Public setup storage remains flat and dimension-free.
 #[derive(Debug)]
 pub struct EnvelopeFinalGroupConfig<Envelope, Final>(PhantomData<fn() -> (Envelope, Final)>);
 
@@ -218,20 +218,17 @@ where
             .max(Final::ring_subfield_embedding_norm_bound())
     }
 
-    fn max_setup_matrix_size(
+    fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError> {
-        let envelope =
-            Envelope::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?.max_setup_len;
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
+        let envelope_field_elements =
+            Envelope::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?
+                .num_field_elements;
         let final_field_elements =
-            Final::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?
-                .max_setup_len
-                .checked_mul(Final::D)
-                .ok_or_else(|| AkitaError::InvalidSetup("final setup envelope overflow".into()))?;
-        let final_at_envelope = final_field_elements.div_ceil(Envelope::D);
-        Ok(SetupMatrixEnvelope {
-            max_setup_len: envelope.max(final_at_envelope),
+            Final::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?.num_field_elements;
+        Ok(SetupMatrixCapacity {
+            num_field_elements: envelope_field_elements.max(final_field_elements),
         })
     }
 
@@ -363,8 +360,9 @@ where
                 ));
             }
             let envelope_policy = policy_of::<EnvelopeCfg>();
-            let envelope_domain =
-                akita_planner::RingDimensionSearchDomain::uniform(envelope_policy.ring_dimension)?;
+            let envelope_domain = akita_planner::RingDimensionSearchDomain::uniform(
+                envelope_policy.uniform_ring_dimension,
+            )?;
             let envelope_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
                 num_vars,
                 num_polynomials,
@@ -448,9 +446,10 @@ where
 
 /// Config adapter that opens through a mixed ring-dimension-per-level schedule:
 /// levels `[0, SWITCH_AT_FOLD)` at `Env`'s ring dimension, later levels at
-/// `Suffix`'s ring dimension. Delegates every policy hook to `Env` (so
-/// `Env::D` sets the setup's `gen_ring_dim`) and overrides schedule resolution
-/// to build the mixed schedule via [`mixed_d_per_level_schedule`].
+/// `Suffix`'s ring dimension. Delegates policy hooks to `Env` and overrides
+/// schedule resolution to build the mixed schedule via
+/// [`mixed_d_per_level_schedule`]. Setup provisioning remains a flat field
+/// prefix independent of both dimensions.
 #[derive(Debug)]
 pub struct MixedDConfig<Env, Suffix, const SWITCH_AT_FOLD: usize>(
     PhantomData<fn() -> (Env, Suffix)>,
@@ -503,19 +502,20 @@ where
         Env::ring_subfield_embedding_norm_bound()
     }
 
-    fn max_setup_matrix_size(
+    fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError> {
-        let mut envelope = SetupMatrixEnvelope::minimum();
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
+        let mut envelope = SetupMatrixCapacity::minimum();
         for num_polynomials in 1..=max_num_batched_polys.max(1) {
             let schedule = mixed_d_per_level_schedule::<Env, Suffix>(
                 max_num_vars,
                 num_polynomials,
                 SWITCH_AT_FOLD,
             )?;
-            let required = akita_types::setup_matrix_envelope_for_schedule(&schedule, Env::D)?;
-            envelope.max_setup_len = envelope.max_setup_len.max(required.max_setup_len);
+            let required = akita_types::setup_matrix_capacity_for_schedule(&schedule)?;
+            envelope.num_field_elements =
+                envelope.num_field_elements.max(required.num_field_elements);
         }
         Ok(envelope)
     }
@@ -597,8 +597,9 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
         },
         || {
             let root_policy = policy_of::<Env>();
-            let root_domain =
-                akita_planner::RingDimensionSearchDomain::uniform(root_policy.ring_dimension)?;
+            let root_domain = akita_planner::RingDimensionSearchDomain::uniform(
+                root_policy.uniform_ring_dimension,
+            )?;
             let root_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
                 num_vars,
                 num_polynomials,
@@ -807,10 +808,10 @@ where
         Env::ring_subfield_embedding_norm_bound()
     }
 
-    fn max_setup_matrix_size(
+    fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError> {
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
         if max_num_batched_polys > 1 {
             return Err(AkitaError::InvalidSetup(
                 "ring-dimension transition requires a singleton batch".into(),
@@ -830,7 +831,7 @@ where
                 opening: MID_BD_RING_DIM,
             },
         )?;
-        akita_types::setup_matrix_envelope_for_schedule(&schedule, Env::D)
+        akita_types::setup_matrix_capacity_for_schedule(&schedule)
     }
 
     fn basis_range() -> (u32, u32) {
@@ -1015,10 +1016,10 @@ where
             // candidate, so temporarily start from D256 root geometry and promote A.
             let mut root_policy = policy_of::<Root>();
             let planned_root_d = if Root::D == 512 { 256 } else { Root::D };
+            root_policy.uniform_ring_dimension = planned_root_d;
             if Root::D != planned_root_d {
                 root_policy.ring_dimension_candidates = D256_PLANNER_CANDIDATES;
             }
-            root_policy.ring_dimension = planned_root_d;
             let root_domain = akita_planner::RingDimensionSearchDomain::uniform(planned_root_d)?;
             let root_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
                 num_vars,
@@ -1189,8 +1190,8 @@ pub use setup_prefix_slots::materialize_schedule_setup_prefix_slots;
 /// Config adapter for [`ring_dimension_transition_schedule`].
 ///
 /// `Root`/`Mid`/`Suffix` set the A-matrix dimensions; `ROOT_BD_RING_DIM` and
-/// `L1_BD_RING_DIM` set both B and D at L0/L1. `Root::D` sets the setup
-/// generation dimension.
+/// `L1_BD_RING_DIM` set both B and D at L0/L1. Public setup provisioning is
+/// independent of all three preset dimensions.
 #[derive(Debug)]
 #[allow(clippy::type_complexity)]
 pub struct ThreeBandRingDimensionTransitionConfig<
@@ -1254,10 +1255,10 @@ where
         Root::ring_subfield_embedding_norm_bound()
     }
 
-    fn max_setup_matrix_size(
+    fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError> {
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
         if max_num_batched_polys > 1 {
             return Err(AkitaError::InvalidSetup(
                 "three-band ring-dimension transition requires a singleton batch".into(),
@@ -1277,7 +1278,7 @@ where
                 opening: L1_BD_RING_DIM,
             },
         )?;
-        akita_types::setup_matrix_envelope_for_schedule(&schedule, Root::D)
+        akita_types::setup_matrix_capacity_for_schedule(&schedule)
     }
 
     fn basis_range() -> (u32, u32) {
@@ -1405,14 +1406,14 @@ where
         Env::ring_subfield_embedding_norm_bound()
     }
 
-    fn max_setup_matrix_size(
+    fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError> {
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
         // Smaller B/D rings widen those matrices, so size the setup from the
         // actual per-matrix ring-dimension schedule rather than the uniform
         // envelope.
-        let mut max_setup_len = 1usize;
+        let mut num_field_elements = 1usize;
         for num_polys in 1..=max_num_batched_polys.max(1) {
             let schedule = per_matrix_ring_dims_root_schedule::<Env>(
                 max_num_vars,
@@ -1420,10 +1421,10 @@ where
                 B_RING_DIM,
                 D_RING_DIM,
             )?;
-            let required = akita_types::setup_matrix_envelope_for_schedule(&schedule, Env::D)?;
-            max_setup_len = max_setup_len.max(required.max_setup_len);
+            let required = akita_types::setup_matrix_capacity_for_schedule(&schedule)?;
+            num_field_elements = num_field_elements.max(required.num_field_elements);
         }
-        Ok(SetupMatrixEnvelope { max_setup_len })
+        Ok(SetupMatrixCapacity { num_field_elements })
     }
 
     fn basis_range() -> (u32, u32) {
@@ -1432,6 +1433,10 @@ where
 
     fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
         Env::root_honest_fold_policy()
+    }
+
+    fn selection_policy() -> akita_planner::SelectionPolicyId {
+        akita_planner::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {

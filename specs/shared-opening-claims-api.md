@@ -54,7 +54,7 @@ loose `usize`.
 **No intermediate types.** This refactor introduces exactly five opening-claims types —
 the four `akita-types` types above plus `ProverOpeningData`. No bridge, summary, view, or
 derived-limits types are added; existing helper bags such as `OpeningBatchLimits` are
-**removed** in favor of passing the already-validated `AkitaSetupSeed` envelope.
+**removed** in favor of passing the already-validated `AkitaSetupDescriptor` envelope.
 
 **Schedule type unification.** `PolynomialGroupLayout` is shared between opening layout
 and schedule lookup (replacing `CommitmentGroupScheduleKey`). Frozen precommit metadata
@@ -159,7 +159,7 @@ constructors and read through accessor methods only.
 | `ProverCommitmentGroup` | accessors on `ProverOpeningData` |
 | `OpeningBatchShape` | **`OpeningClaimsLayout`** (layout) + claims accessors (data) |
 | `OpeningGroupShape` | **`PolynomialGroupLayout`** |
-| `OpeningBatchLimits` | removed — `OpeningClaims::validate(&AkitaSetupSeed)` reads `max_num_vars` / `max_num_batched_polys` directly |
+| `OpeningBatchLimits` | removed — `OpeningClaims::validate(&AkitaSetupDescriptor)` reads `max_num_vars` / `max_num_batched_polys` directly |
 | `CommitmentGroupScheduleKey` | **`PolynomialGroupLayout`** |
 | schedule `CommitmentGroupLayout` | **`CommittedGroupProfile`** |
 | `GeneratedCommitmentGroupScheduleKey` | **`PolynomialGroupLayout`** (in static tables) |
@@ -330,8 +330,8 @@ impl OpeningClaimsLayout {
 
     /// Worst-case envelope from prover setup seed (one full-point group).
     /// Fallible like the other constructors so it never panics on a malformed seed
-    /// (verifier no-panic contract); a valid `AkitaSetupSeed` always succeeds.
-    pub fn from_setup_seed(seed: &AkitaSetupSeed) -> Result<Self, AkitaError>;
+    /// (verifier no-panic contract); a valid `AkitaSetupDescriptor` always succeeds.
+    pub fn from_setup_seed(seed: &AkitaSetupDescriptor) -> Result<Self, AkitaError>;
 
     /// Maximum active point-variable count across groups.
     pub fn max_num_vars(&self) -> usize {
@@ -546,7 +546,7 @@ Inventory from the current codebase (~60 references):
 | `CommitmentGroupScheduleKey::new_from_opening_batch` | `&OpeningBatchShape` | `AkitaScheduleLookupKey::single(group, source)` |
 | `AkitaScheduleLookupKey::single(key)` | `CommitmentGroupScheduleKey` | `PolynomialGroupLayout` |
 
-**C. Setup / setup-prefix** → `OpeningClaimsLayout` (built from the `AkitaSetupSeed` envelope)
+**C. Setup / setup-prefix** → `OpeningClaimsLayout` (built from the `AkitaSetupDescriptor` envelope)
 
 | Location | Today | Next |
 |----------|-------|------|
@@ -584,7 +584,7 @@ binds descriptor via `opening_claims.layout()` at entry.
 - **No backward compatibility** — old names and generated mirror structs are deleted outright.
 - **No new wrapper structs** — `PolynomialGroupLayout` is the single per-group key/layout type; do not reintroduce a scalar-only schedule key sibling.
 
-`AkitaSetupSeed` (`max_num_vars`, `max_num_batched_polys`) remains the stored
+`AkitaSetupDescriptor` (`max_num_vars`, `max_num_batched_polys`) remains the stored
 **capacity envelope**; `OpeningClaimsLayout::from_setup_seed` is the typed view
 for schedule/setup code that today synthesizes `OpeningBatchShape::new(seed.max_num_vars, seed.max_num_batched_polys)`.
 
@@ -669,7 +669,7 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
 ### Acceptance Criteria
 
 - [ ] `OpeningClaims`, `PolynomialGroupClaims`, `OpeningClaimsLayout`, and `PolynomialGroupLayout` in `akita-types/src/opening_claims.rs`, all with private fields + constructor/accessor APIs (except `Copy` schedule-visible fields on `PolynomialGroupLayout`).
-- [ ] `OpeningClaims` exposes `check()` and `validate(&AkitaSetupSeed)` (returns `()`); structural views come from `layout()`.
+- [ ] `OpeningClaims` exposes `check()` and `validate(&AkitaSetupDescriptor)` (returns `()`); structural views come from `layout()`.
 - [ ] `ProverOpeningData` in `akita-prover/src/types/` with private fields, `new(...)`, accessors, and intrinsic alignment checks.
 - [ ] Exactly five opening-claims types ship; `OpeningBatchLimits` and all other intermediate/bridge types are removed.
 - [ ] Batch-level count API is `num_total_polynomials()` **only** — no `num_claims()` or `num_polynomials()` on `OpeningClaims`.
@@ -765,7 +765,7 @@ impl<'a, F, C> OpeningClaims<'a, F, C> {
     /// Validate internal consistency plus public capacity against the setup
     /// envelope (`seed.max_num_vars`, `seed.max_num_batched_polys`). Returns
     /// `()`; callers obtain the structural view via `layout()`.
-    pub fn validate(&self, seed: &AkitaSetupSeed) -> Result<(), AkitaError>;
+    pub fn validate(&self, seed: &AkitaSetupDescriptor) -> Result<(), AkitaError>;
 
     pub fn point(&self) -> &[F];
     pub fn num_vars(&self) -> usize;
@@ -803,7 +803,7 @@ impl OpeningClaimsLayout {
     pub fn new(num_vars: usize, num_total_polynomials: usize) -> Result<Self, AkitaError>;
     pub fn from_group_sizes(num_vars: usize, polynomials_per_group: &[usize]) -> Result<Self, AkitaError>;
     pub fn from_groups(groups: Vec<PolynomialGroupLayout>) -> Result<Self, AkitaError>;
-    pub fn from_setup_seed(seed: &AkitaSetupSeed) -> Result<Self, AkitaError>;
+    pub fn from_setup_seed(seed: &AkitaSetupDescriptor) -> Result<Self, AkitaError>;
 
     pub fn max_num_vars(&self) -> usize;
     pub fn groups(&self) -> &[PolynomialGroupLayout];

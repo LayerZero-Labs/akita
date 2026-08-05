@@ -2,9 +2,9 @@ use akita_config::CommitmentConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend, ComputeBackendSetup,
-    CpuBackend,
+    CpuBackend, NttExecutionRequirements,
 };
-use akita_types::{dispatch_for_field, SetupPrefixSlotId, SETUP_OFFLOAD_D_SETUP};
+use akita_types::{dispatch_for_field, SetupPrefixSlotId};
 use std::collections::BTreeSet;
 
 fn commit_setup_prefix_slot<F, B>(
@@ -17,11 +17,6 @@ where
     F: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<F>,
 {
-    if id.d_setup != SETUP_OFFLOAD_D_SETUP {
-        return Err(AkitaError::InvalidSetup(
-            "setup prefix slot must use the recursive offload dimension".to_string(),
-        ));
-    }
     if setup.prefix_slots.get(id).is_some() {
         return Ok(());
     }
@@ -29,7 +24,7 @@ where
     let slot = dispatch_for_field!(
         akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
         F,
-        SETUP_OFFLOAD_D_SETUP,
+        id.d_setup(),
         |D| {
             commit_setup_prefix::<F, D, B>(
                 &setup.expanded,
@@ -55,6 +50,15 @@ where
     F: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<F>,
 {
+    let mut requirements = NttExecutionRequirements::default();
+    for slot_id in slot_ids {
+        if setup.prefix_slots.get(slot_id).is_none() {
+            requirements.add_setup_prefix_commitment(0, slot_id)?;
+        }
+    }
+    for requirement in requirements.entries() {
+        backend.ensure_ntt_slot(prepared, requirement.key)?;
+    }
     for slot_id in slot_ids {
         commit_setup_prefix_slot(setup, backend, prepared, slot_id)?;
     }
@@ -89,13 +93,6 @@ where
     if !Cfg::recursive_setup_planning() {
         return Ok(());
     }
-    let gen_ring_dim = setup.expanded.seed().gen_ring_dim;
-    if gen_ring_dim != SETUP_OFFLOAD_D_SETUP {
-        return Err(AkitaError::InvalidSetup(
-            "recursive setup planning requires setup generation at D64".to_string(),
-        ));
-    }
-
     let required_ids = akita_config::setup_prefix_slot_ids_for_capacity::<Cfg>(
         max_num_vars,
         max_num_batched_polys,
