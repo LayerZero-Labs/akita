@@ -33,9 +33,10 @@ described on this page.
 
 ## Contents
 
-- [Objects entering the fold](#objects-entering-the-fold)
-  - [Why the witness is digit-decomposed](#why-the-witness-is-digit-decomposed)
-  - [Polynomial blocks and inner digits](#polynomial-blocks-and-inner-digits)
+- [Inputs and objects derived in the fold](#inputs-and-objects-derived-in-the-fold)
+  - [The committed polynomial and opening query](#the-committed-polynomial-and-opening-query)
+  - [Balanced digit representations](#balanced-digit-representations)
+  - [Polynomial blocks and commitment hint](#polynomial-blocks-and-commitment-hint)
   - [Partial evaluations and opening digits](#partial-evaluations-and-opening-digits)
   - [The folded response and its digitization](#the-folded-response-and-its-digitization)
 - [The four physical relation families](#the-four-physical-relation-families)
@@ -48,65 +49,147 @@ described on this page.
 - [The scalar opening claim is a virtual row](#the-scalar-opening-claim-is-a-virtual-row)
 - [Code reference](#code-reference)
 
-## Objects entering the fold
+## Inputs and objects derived in the fold
 
-Before deriving the four relation families, we first identify the secret
-objects on which they act. Starting from the digit vectors of the old
-polynomial blocks, the prover derives inner-image digits
-$\hat{\mathbf t}$ and partial-evaluation digits $\hat{\mathbf e}$, then folds
-the block digits into $\mathbf z$ and digitizes it as $\hat{\mathbf z}$. These
-three digit vectors become the main segments of the next committed witness.
-This section introduces them in dependency order, beginning with the bounded
-digit representation required by the commitment binding argument.
-
-### Why the witness is digit-decomposed
-
-The witness committed for the next level must have bounded coefficients. This
-shortness condition is essential for the Module-SIS binding argument: two
-different bounded openings of the same linear commitment would give a short,
-nonzero vector in the kernel of its commitment matrix.
-
-Gadget decomposition provides the bounded representation. For a power-of-two
-base $g$ and digit depth $\delta$, define
+A fold starts from a public opening claim
 
 $$
-\mathbf G_{g,n}
-=
-\mathbf I_n\otimes(1,g,\ldots,g^{\delta-1}).
+\widetilde f(r)=v
 $$
 
-A balanced decomposition of $\mathbf x$ is a digit vector $\hat{\mathbf x}$
-such that
+for a polynomial whose commitment $\mathbf u$ is already fixed. At a recursive
+level, $\mathbf u$ is the next-witness commitment produced by the preceding
+level; at the root, the original polynomial commitment plays the same role.
 
-$$
-\mathbf x=\mathbf G_{g,n}\hat{\mathbf x},
-\qquad
-\hat x_i\in
-\{-g/2,\ldots,g/2-1\}.
-$$
+The prover and verifier have different views of these inputs. The prover holds
+the polynomial blocks, their inner-digit representation, the commitment hint
+generated when $\mathbf u$ was formed, and the public commitment itself. The
+verifier knows $\mathbf u$ and the opening claim, but receives neither the
+blocks nor the hint.
 
-The decomposition specifies this small-digit representation; the protocol's
-range check proves that the committed coordinates really lie in the required
-range. Akita may use different bases and depths for the inner, outer, opening,
-fold-response, and quotient decompositions. Below, $G_a^{\mathrm{in}}$,
-$G_h^{\mathrm{out}}$, $G_h^{\mathrm{open}}$, and $G_f^{\mathrm{fold}}$ denote
-the scalar gadget weights used to decompose $F_{p,b}$, $\mathbf t_b$, $E_b$,
-and $\mathbf z$, respectively. They are entries of the corresponding gadget
-rows defined above. We omit the role-specific base and depth from this notation
-for simplicity.
+From these inputs, the current fold derives two new representations of the
+committed polynomial. The opening point determines partial evaluations $E_b$
+inside each block, while fresh transcript challenges fold the old block digits
+into a response $\mathbf z$. Both are digit-decomposed before entering the next
+committed witness. The four relation families later prove that these derived
+objects are consistent with the same hidden opening of $\mathbf u$.
 
-### Polynomial blocks and inner digits
+### The committed polynomial and opening query
 
 As in the previous page, split the ring-valued polynomial table into blocks.
-Let $b$ index a live block and $p$ a position inside the block. Write the ring
-at that location as
+Let $b$ index a live block and $p$ a position inside that block. Pack the inner
+coefficient axis into the ring element
 
 $$
 F_{p,b}(X)\in R.
 $$
 
-Digit-decompose each ring with public inner gadget weights
-$G_a^{\mathrm{in}}$:
+The [field-to-ring evaluation
+reduction](./field-ring-reduction.md#the-evaluation-problem) splits $r$ into
+inner, position, and block coordinates and defines their interpolation weights
+$I_\ell$, $Q_p$, and $B_b$. We reuse those definitions here rather than
+deriving them again. The position weights $Q_p$ produce $E_b$ below, while the
+block weights $B_b$ and inner weights $I_\ell$ belong to the field-valued
+evaluation relation. The opening claim enters this page with target $v$. The
+evaluation reduction later writes its trace-form target as
+$v_{\mathrm{tr}}$; for the single base-field claim considered here, the valid
+relation has $v_{\mathrm{tr}}=v$.
+
+### Balanced digit representations
+
+Both the existing commitment opening and the next committed witness must have
+bounded coefficients. This shortness condition is what lets commitment binding
+reduce to Module-SIS: two distinct bounded openings of the same linear
+commitment would yield a short, nonzero kernel vector.
+
+Akita obtains these bounded representations by decomposing ring coefficients
+into balanced base-$g$ digits. Let $g$ be an even power of two, let $\delta$ be
+the digit depth, and let
+$\mathbf x=(x_0,\ldots,x_{n-1})\in R^n$. A balanced decomposition of
+$\mathbf x$ consists of digit rings $\hat x_{i,h}(X)\in R$, indexed by
+$0\le i<n$ and $0\le h<\delta$, such that
+
+$$
+x_i(X)
+=
+\sum_{h=0}^{\delta-1}g^h\hat x_{i,h}(X),
+\qquad
+[\hat x_{i,h}]_\ell
+\in
+\{-g/2,\ldots,g/2-1\}
+$$
+
+for every coefficient position $0\le \ell<D$. Stack the digit rings with $h$
+innermost into $\hat{\mathbf x}\in R^{n\delta}$. Define the gadget row and its
+block-diagonal recomposition matrix by
+
+$$
+\mathbf g_{g,\delta}
+=
+(1,g,\ldots,g^{\delta-1}),
+\qquad
+\mathbf G_{g,n}
+=
+\mathbf I_n\otimes\mathbf g_{g,\delta}
+\in R^{n\times n\delta}.
+$$
+
+The coefficientwise identities then become the vector equation
+
+$$
+\boxed{
+\mathbf x
+=
+\mathbf G_{g,n}\hat{\mathbf x}.
+}
+$$
+
+The entries of $\mathbf G_{g,n}$ are public scalars embedded as constant ring
+elements. Thus $\mathbf G_{g,n}$ is a deterministic **recomposition matrix**,
+not a commitment matrix such as $\mathbf A$, $\mathbf B$, or $\mathbf D$.
+Digit decomposition produces $\hat{\mathbf x}$; multiplication by
+$\mathbf G_{g,n}$ reconstructs $\mathbf x$. The protocol's range check
+certifies that the committed coefficients of $\hat{\mathbf x}$ lie in the
+balanced digit range.
+
+Akita chooses separate bases and depths for different witness roles. To keep
+the derivation readable, write $G_a^{\mathrm{in}}$,
+$G_h^{\mathrm{out}}$, $G_h^{\mathrm{open}}$, and
+$G_f^{\mathrm{fold}}$ for the corresponding scalar gadget weights. The four
+recomposition identities used on this page are
+
+$$
+\begin{aligned}
+F_{p,b}(X)
+&=
+\sum_a G_a^{\mathrm{in}}s_{b,p,a}(X),
+\\
+t_{b,\rho}(X)
+&=
+\sum_h G_h^{\mathrm{out}}\hat t_{b,\rho,h}(X),
+\\
+E_b(X)
+&=
+\sum_h G_h^{\mathrm{open}}\hat e_{b,h}(X),
+\\
+z_{p,a}(X)
+&=
+\sum_f G_f^{\mathrm{fold}}\hat z_{p,a,f}(X).
+\end{aligned}
+$$
+
+The first two identities describe commitment-side data already fixed by
+$\mathbf u$: $\mathbf s_b$ is the incoming inner-digit representation, and
+$\hat{\mathbf t}$ is reconstructed from the incoming hint. The latter two
+digit families, $\hat{\mathbf e}$ and $\hat{\mathbf z}$, are newly derived from
+the opening point and fold challenges. We now place each identity in its
+protocol context.
+
+### Polynomial blocks and commitment hint
+
+The commitment-side inputs are fixed before the polynomial is queried. For
+each block, the prover has the inner digit rings $s_{b,p,a}$ and can therefore
+recompose the polynomial rings as
 
 $$
 F_{p,b}(X)
@@ -115,8 +198,9 @@ F_{p,b}(X)
 \tag{1}
 $$
 
-For one block, collect all digit rings $s_{b,p,a}$ into a vector
-$\mathbf{s}_b$. The inner commitment matrix $\mathbf A$ maps that vector to
+For one block, collect the digit rings $s_{b,p,a}$ into a vector
+$\mathbf{s}_b$. The inner commitment matrix $\mathbf A$ maps this block vector
+to an inner image
 
 $$
 \mathbf t_b
@@ -125,18 +209,19 @@ $$
 \tag{2}
 $$
 
-Each coordinate of $\mathbf t_b$ is decomposed again, now with the outer
-gadget weights $G_h^{\mathrm{out}}$:
+Each coordinate of $\mathbf t_b$ is itself represented by balanced outer
+digits:
 
 $$
 t_{b,\rho}(X)
 =
-\sum_hG_h^{\mathrm{out}}\hat t_{b,\rho,h}(X),
+\sum_h G_h^{\mathrm{out}}\hat t_{b,\rho,h}(X),
 \tag{3}
 $$
 
-where $\rho$ selects a row of $\mathbf A$. Stack the $\hat t$ digits from all
-blocks. The public outer commitment is
+where $\rho$ selects a row of $\mathbf A$. Stack these digits over all blocks
+to obtain $\hat{\mathbf t}$. The outer commitment matrix $\mathbf B$ then gives
+the public commitment
 
 $$
 \mathbf u
@@ -145,20 +230,27 @@ $$
 \tag{4}
 $$
 
-The matrices $\mathbf A$ and $\mathbf B$ therefore serve different purposes:
-$\mathbf A$ creates an inner image for each block, while $\mathbf B$ commits
-the digit-decomposed inner images across all blocks.
+The two matrices have distinct roles: $\mathbf A$ forms one inner image per
+block, whereas $\mathbf B$ commits the digit-decomposed inner images across all
+blocks. The prover's commitment hint stores the recomposed inner images
+$\mathbf t_b$; this fold decomposes them to recover $\hat{\mathbf t}$. At a
+recursive level, the polynomial blocks, hint, and $\mathbf u$ were produced by
+the preceding level. At the root, they come from the original commitment. The
+verifier receives only $\mathbf u$ from this commitment-side data. Equations
+(1)--(4) describe the hidden opening that the later relation rows bind to that
+public value.
 
 ### Partial evaluations and opening digits
 
-Let $Q_p$ be the position weight derived from the opening point. For the
-base-field setting of the previous page, $Q_p\in F$ acts as a constant in
-$R$. Evaluate the position coordinate inside each block:
+The first new witness object derived in this fold comes from the opening point.
+Use its position weights $Q_p$ to evaluate the position coordinate inside each
+block. In the base-field setting of the previous page, $Q_p\in F$ acts as a
+constant in $R$:
 
 $$
 E_b(X)
 =
-\sum_pQ_pF_{p,b}(X).
+\sum_p Q_pF_{p,b}(X).
 \tag{5}
 $$
 
@@ -168,7 +260,7 @@ $G_h^{\mathrm{open}}$:
 $$
 E_b(X)
 =
-\sum_hG_h^{\mathrm{open}}\hat e_{b,h}(X).
+\sum_h G_h^{\mathrm{open}}\hat e_{b,h}(X).
 \tag{6}
 $$
 
@@ -182,16 +274,17 @@ $$
 \tag{7}
 $$
 
-The subscript in $\mathbf v_D$ distinguishes this ring vector from the scalar
-opening target $v_{\mathrm{tr}}$. Equation (7) is a commitment relation; it
-does not prove that the multilinear evaluation equals
-$v_{\mathrm{tr}}$.
+The subscript in $\mathbf v_D$ distinguishes this ring-vector commitment from
+the scalar opening target $v$ and its trace-form counterpart
+$v_{\mathrm{tr}}$. Equation (7) binds the newly derived opening digits; it does
+not by itself prove the scalar evaluation claim.
 
 ### The folded response and its digitization
 
-After the relevant data is fixed, the transcript samples one sparse
-ring-valued fold challenge $c_b(X)$ for each live block. The prover folds the
-original block digits:
+Once the opening digits have been committed through $\mathbf v_D$, the
+transcript samples one sparse ring-valued challenge $c_b(X)$ for each live
+block. These challenges are separate from the query weights $B_b$. The prover
+uses them to fold the original block digits:
 
 $$
 z_{p,a}(X)
@@ -276,11 +369,11 @@ Akita therefore decomposes $\mathbf z$ once more:
 $$
 z_{p,a}(X)
 =
-\sum_fG_f^{\mathrm{fold}}\hat z_{p,a,f}(X).
+\sum_f G_f^{\mathrm{fold}}\hat z_{p,a,f}(X).
 \tag{9}
 $$
 
-The three main digit segments produced so far are therefore
+The three main digit segments assembled for the next witness are therefore
 
 $$
 \hat{\mathbf z}
