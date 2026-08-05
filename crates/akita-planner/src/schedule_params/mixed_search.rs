@@ -271,7 +271,7 @@ fn suffix_frontier(
     Ok(frontier)
 }
 
-pub(super) fn find_schedule(
+pub(crate) fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     honest_fold_policy: HonestFoldPolicySpec,

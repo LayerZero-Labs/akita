@@ -628,7 +628,11 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 current_witness_len,
                 lb,
             )?;
-            (current_opening_layout, candidates, true)
+            (
+                current_opening_layout,
+                candidates,
+                !root_key.precommitteds.is_empty(),
+            )
         } else if level_zero_is_root && level == 0 {
             let mut candidates = Vec::new();
             let dimensions = CommitmentRingDims::uniform(policy.uniform_ring_dimension);

@@ -2,7 +2,7 @@
 //! grouped scheduling additionally minimizes the first direct setup footprint
 //! before proof size.
 //!
-//! Public entry: [`find_schedule`]. The search is `Cfg`-free: every
+//! Public entry: [`crate::find_schedule`]. The search is `Cfg`-free: every
 //! per-preset input is carried by the plain-value [`PlannerPolicy`] plus
 //! the `ring_challenge_config` / `fold_challenge_shape_at_level` closures,
 //! exactly the shape generated catalog emission consumes. This keeps the DP a
@@ -32,7 +32,7 @@ use akita_types::{
 use crate::PlannerPolicy;
 
 mod candidate;
-mod mixed_search;
+pub(crate) mod mixed_search;
 mod objective;
 mod setup_score;
 mod suffix_dp;
@@ -52,8 +52,8 @@ pub(crate) use setup_score::{
 };
 pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
 
-const MIXED_SEARCH_FOLD_LEVELS: usize = 2;
-const MIXED_SEARCH_SUFFIX_RING_DIMENSION: usize = 64;
+pub(crate) const MIXED_SEARCH_FOLD_LEVELS: usize = 2;
+pub(crate) const MIXED_SEARCH_SUFFIX_RING_DIMENSION: usize = 64;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CandidateFoldStep {
@@ -115,7 +115,7 @@ impl RingDimensionSearchDomain {
         &self.candidates
     }
 
-    fn validate_for_policy(&self, policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    pub(crate) fn validate_for_policy(&self, policy: &PlannerPolicy) -> Result<(), AkitaError> {
         if self.candidates.as_slice() != policy.ring_dimension_candidates {
             if policy.ring_dimension_candidates.len() == 1 {
                 return Ok(());
@@ -128,7 +128,7 @@ impl RingDimensionSearchDomain {
         Ok(())
     }
 
-    fn is_uniform_policy_domain(&self, policy: &PlannerPolicy) -> bool {
+    pub(crate) fn is_uniform_policy_domain(&self, policy: &PlannerPolicy) -> bool {
         self.candidates.as_slice() == [CommitmentRingDims::uniform(policy.uniform_ring_dimension)]
     }
 }
@@ -555,94 +555,6 @@ pub fn derive_standalone_precommit_profile(
 // memo state without changing emitted tables.
 pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 
-/// Find the optimal scalar schedule using the dimension domain bound in
-/// `policy`.
-///
-/// The result is a pure,
-/// deterministic function of `(policy, key, dimensions)` (plus the `ring_challenge_config` /
-/// `fold_challenge_shape_at_level` closures, which presets derive from the same hooks the
-/// generated tables were emitted from), so the prover and verifier
-/// regenerate identical schedules on a table miss.
-///
-/// # Errors
-///
-/// Returns an error if vector counts are invalid or if the witness length
-/// overflows. The function never panics on malformed input — it is
-/// verifier-reachable and audited under the no-panic contract.
-pub(crate) fn find_schedule_singular(
-    key: PolynomialGroupLayout,
-    policy: &PlannerPolicy,
-    honest_fold_policy: HonestFoldPolicySpec,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<PlannedFoldSchedule, AkitaError> {
-    key.validate()?;
-    validate_policy(policy)?;
-    let dimensions =
-        RingDimensionSearchDomain::new(policy.ring_dimension_candidates.iter().copied())?;
-    dimensions.validate_for_policy(policy)?;
-    if dimensions.is_uniform_policy_domain(policy) {
-        if policy.selection_policy
-            == crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-        {
-            return Err(AkitaError::InvalidSetup(
-                "setup-field mixed selection requires an explicit mixed dimension domain"
-                    .to_string(),
-            ));
-        }
-        return find_schedule_inner(
-            key,
-            policy,
-            honest_fold_policy,
-            ring_challenge_config,
-            fold_challenge_shape_at_level,
-        );
-    }
-    if policy.selection_policy
-        != crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-    {
-        return Err(AkitaError::InvalidSetup(
-            "mixed-D search requires MinSetupMatrixFieldElementsThenProofPayload".into(),
-        ));
-    }
-    if policy.recursive_setup_planning {
-        return Err(AkitaError::InvalidSetup(
-            "mixed-D search does not yet support recursive setup planning".into(),
-        ));
-    }
-    if policy.witness_chunk.uses_multi_chunk() {
-        return Err(AkitaError::InvalidSetup(
-            "mixed-D search does not yet support direct multi-chunk planning".into(),
-        ));
-    }
-    let suffix_dimensions = CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
-    if !dimensions.candidates().contains(&suffix_dimensions) {
-        return Err(AkitaError::InvalidSetup(format!(
-            "mixed-D search requires the D{MIXED_SEARCH_SUFFIX_RING_DIMENSION} uniform candidate \
-             used from fold level {MIXED_SEARCH_FOLD_LEVELS} onward"
-        )));
-    }
-    if dimensions.candidates().iter().any(|dims| {
-        dims.d_a() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
-            || dims.d_b() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
-            || dims.d_d() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
-    }) {
-        return Err(AkitaError::InvalidSetup(format!(
-            "mixed-D candidates must be component-wise at least \
-             D{MIXED_SEARCH_SUFFIX_RING_DIMENSION} so the schedule can return monotonically to \
-             uniform D{MIXED_SEARCH_SUFFIX_RING_DIMENSION}"
-        )));
-    }
-    mixed_search::find_schedule(
-        key,
-        policy,
-        honest_fold_policy,
-        &dimensions,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
-    )
-}
-
 fn componentwise_dimensions_at_most(
     dimensions: CommitmentRingDims,
     ceiling: CommitmentRingDims,
@@ -789,84 +701,6 @@ pub fn plan_optimal_suffix(
         },
         total_bytes: best.total_bytes,
     })
-}
-
-fn find_schedule_inner(
-    key: PolynomialGroupLayout,
-    policy: &PlannerPolicy,
-    honest_fold_policy: HonestFoldPolicySpec,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<PlannedFoldSchedule, AkitaError> {
-    let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
-    let fold_shape = &fold_challenge_shape_at_level;
-
-    let default_ring_challenge_cfg = ring_challenge_config(policy.uniform_ring_dimension)?;
-    let suffix_ctx = SuffixCtx {
-        policy,
-        default_ring_challenge_cfg: &default_ring_challenge_cfg,
-        ring_challenge_config,
-        fold_challenge_shape_at_level: fold_shape,
-        num_vars: key.num_vars(),
-        key,
-        setup_field_budget: policy.setup_field_budget,
-        root_lookup_key: None,
-        root_honest_fold_policy: Some(honest_fold_policy),
-        precommitted_honest_fold_policies: &[],
-        level_zero_is_root: true,
-    };
-
-    if policy.recursive_setup_planning {
-        return Err(AkitaError::InvalidSetup(
-            "recursive setup planning requires the grouped-batch scheduler".to_string(),
-        ));
-    }
-    let witness_len = 1usize
-        .checked_shl(key.num_vars() as u32)
-        .ok_or_else(|| AkitaError::InvalidSetup("witness too large".into()))?;
-
-    let mut memo = ScheduleMemo::new();
-    let suffix = derive_optimal_suffix_schedule(
-        &suffix_ctx,
-        &mut memo,
-        SuffixState {
-            level: 0,
-            current_witness_len: witness_len,
-            current_lb: 0,
-            incoming_setup_prefix: None,
-            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-        },
-        0,
-    )?;
-    let best = match policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayload => {
-            select_complete_candidate(policy, suffix.best_by_payload_per_lb.values())?
-        }
-        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
-            return Err(AkitaError::UnsupportedSchedule(
-                "mixed ring-dimension selection is not supported for singular schedules"
-                    .to_string(),
-            ));
-        }
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
-            select_complete_candidate(policy, suffix.best_by_first_direct_setup_per_lb.values())?
-        }
-    };
-
-    let Some(best) = best.cloned() else {
-        return Err(AkitaError::UnsupportedSchedule(format!(
-            "no schedule with at least two folds for num_vars={}, num_polynomials={}",
-            key.num_vars(),
-            key.num_polynomials()
-        )));
-    };
-    materialize_candidate_schedule(
-        best.total_bytes,
-        best.setup_field_elements,
-        best.first_direct_setup_field_len,
-        best.folds,
-        best.terminal,
-    )
 }
 
 mod tests;
