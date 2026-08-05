@@ -310,10 +310,8 @@ Required durable coverage includes:
 - serial and parallel schedules and supported field/extension combinations;
 - malformed topology, child count/order, degree, point width, and serialized length;
 - exact serialized size versus sizing formulas;
-- `digit_range_protocol_epoch` for proof bytes, transcript events, point, and final
-  evaluation; and
-- `fold_protocol_epoch` to ensure direct/recursive envelopes and #311 terminals did not
-  conceal a Stage 1 delta.
+- prover/verifier transcript equality and structural transcript-ordering checks; and
+- direct, recursive, terminal, and malformed-proof integration coverage around Stage 1.
 
 The one-off allocation harness used during development was deliberately removed. The
 checked-in benchmark, profile CI, coarse tracing, and protocol oracles are the durable
@@ -327,7 +325,7 @@ artifacts.
 | `akita-types::proof::stage1` and sizing | topology, descriptive proof fields, validation, byte accounting |
 | `akita-verifier::stages::stage1` | checked plan replay and malformed-shape rejection |
 | Stage 2 call boundary | mechanical range-image naming/output adaptation only |
-| PCS tests/benches/profile | epochs, differential tests, durable basis benchmark, report names |
+| PCS tests/benches/profile | structural transcript checks, differential tests, durable basis benchmark, report names |
 | transcript labels/book/spec | semantic range-image naming and Stage 1 documentation |
 
 Not in the intended surface: relation provider construction, Stage 2 kernel selection,
