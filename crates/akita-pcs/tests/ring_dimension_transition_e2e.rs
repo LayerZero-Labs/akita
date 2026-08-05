@@ -10,10 +10,10 @@
 #![allow(missing_docs)]
 
 mod common;
+mod support;
 
 use akita_config::proof_optimized::fp128;
 use akita_field::AkitaError;
-use akita_pcs::test_support::RingDimensionTransitionConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::AkitaTranscript;
@@ -21,6 +21,7 @@ use akita_types::{
     validate_schedule_ring_dims, CommitmentRingDims, CommittedGroup, OpeningClaimsLayout, RingVec,
 };
 use common::*;
+use support::RingDimensionTransitionConfig;
 
 type Envelope = fp128::D128Dense;
 type Suffix = fp128::D64Dense;

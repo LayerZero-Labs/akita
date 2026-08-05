@@ -1521,7 +1521,8 @@ The D64 controls were built with the exact CI profiler feature graph:
 
 At measurement time, the experimental mixed modes were intentionally not linked
 into `profile-ci`, because they used offline-planner schedule fixtures through
-`akita-pcs` test-support. They were built from the same source with:
+the former `akita-pcs` test-support path. They were built from the same source
+with:
 
 ```text
 --no-default-features --features parallel
@@ -1623,7 +1624,8 @@ kernels fixed at `2f0c35b66`.
 
 Use the default profile feature set for production-supported profile modes.
 Synthetic mixed-D PCS profile modes that depended on `akita-pcs` test-support
-have been removed from the profile example.
+have been removed from the profile example; the remaining mixed-D fixtures live
+under `akita-pcs/tests/support`.
 
 ```bash
 AKITA_NUM_VARS=36 \

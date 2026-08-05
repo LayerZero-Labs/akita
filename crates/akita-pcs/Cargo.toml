@@ -70,14 +70,6 @@ logging-transcript = [
   "akita-transcript/logging-transcript",
   "akita-prover/logging-transcript",
 ]
-# Integration-test-only mixed ring-dimension schedule builders (relocated from
-# akita-config, which cannot depend on the offline planner without a cycle).
-# Enabled for this crate's own integration tests via the self dev-dependency below.
-test-support = [
-  "dep:akita-planner",
-  "akita-config/test-support",
-]
-
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
@@ -90,9 +82,6 @@ akita-types = { version = "0.1.0", path = "../akita-types" }
 akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
 akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }
 akita-setup = { version = "0.1.0", path = "../akita-setup", default-features = false }
-# Offline planner, pulled in only by the `test-support` feature for the mixed-D
-# schedule builders (e.g. `plan_optimal_suffix`); normal builds do not link it.
-akita-planner = { version = "0.1.0", path = "../akita-planner", optional = true }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
@@ -108,10 +97,6 @@ akita-config = { version = "0.1.0", path = "../akita-config", default-features =
   "test-support",
 ] }
 akita-planner = { version = "0.1.0", path = "../akita-planner" }
-# Self dev-dependency: turns on `test-support` for this crate's own integration
-# tests so `akita_pcs::test_support` (the mixed-D schedule builders) is
-# available without enabling it for production/library builds.
-akita-pcs = { version = "0.1.0", path = ".", features = ["test-support"] }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }

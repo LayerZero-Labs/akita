@@ -1,11 +1,13 @@
-//! Test-only mixed ring-dimension schedule builders.
+//! Test-local mixed ring-dimension schedule builders.
 //!
 //! Relocated from `akita-config`: after the runtime-resolution move (#327),
 //! `akita-planner` depends on `akita-config`, so `akita-config` can no longer
 //! depend on the offline planner ([`akita_planner::plan_optimal_suffix`])
 //! without a dependency cycle. These builders live here (a crate above both)
-//! and are gated behind the `test-support` Cargo feature, which production
-//! builds never enable.
+//! Integration tests import this module directly from `tests/support`; crate
+//! unit tests include it under `cfg(test)`. Production builds never compile it.
+
+#![allow(dead_code, unreachable_pub, unused_imports)]
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_config::{committed_group_profile, policy_of, CommitmentConfig};
@@ -974,7 +976,7 @@ fn finish_schedule(
 /// remains a temporary test-only promotion from D256 planner geometry; all
 /// promoted A/B/D matrices are nevertheless rebuilt and priced from their
 /// final dimensions. Native per-matrix ring-dimension root planning is
-/// required before this D512 experiment can leave `test-support`.
+/// required before this D512 experiment can leave test-local fixtures.
 ///
 /// # Errors
 ///

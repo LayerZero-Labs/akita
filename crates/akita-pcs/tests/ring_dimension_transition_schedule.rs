@@ -2,17 +2,19 @@
 
 #![allow(missing_docs)]
 
+mod support;
+
 use akita_config::{policy_of, proof_optimized::fp128, CommitmentConfig};
-use akita_pcs::test_support::{
-    mixed_d_per_level_schedule, per_matrix_ring_dims_root_schedule,
-    ring_dimension_transition_schedule, PerMatrixRingDimsRootConfig,
-    RecursiveRingDimensionTransitionConfig, ThreeBandRingDimensionTransitionConfig,
-};
 use akita_types::sis::{decomposed_t_ring_count, decomposed_w_ring_count};
 use akita_types::{
     setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey, CommitmentRingDims,
     CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, SisTableDigest,
     WitnessPartition,
+};
+use support::{
+    mixed_d_per_level_schedule, per_matrix_ring_dims_root_schedule,
+    ring_dimension_transition_schedule, PerMatrixRingDimsRootConfig,
+    RecursiveRingDimensionTransitionConfig, ThreeBandRingDimensionTransitionConfig,
 };
 
 const NUM_VARS: usize = 36;

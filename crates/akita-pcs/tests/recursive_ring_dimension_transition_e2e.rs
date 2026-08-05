@@ -16,13 +16,11 @@
 #![allow(missing_docs)]
 
 mod common;
+mod support;
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{
     committed_group_params, committed_group_profile, CommitmentConfig, PrecommittedCommitmentConfig,
-};
-use akita_pcs::test_support::{
-    materialize_schedule_setup_prefix_slots, RecursiveRingDimensionTransitionConfig,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
@@ -41,6 +39,7 @@ use common::*;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::sync::Mutex;
+use support::{materialize_schedule_setup_prefix_slots, RecursiveRingDimensionTransitionConfig};
 
 type Root = fp128::D256OneHot;
 type Mid = fp128::D128OneHot;

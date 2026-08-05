@@ -16,10 +16,10 @@
 #![allow(missing_docs)]
 
 mod common;
+mod support;
 
 use akita_config::proof_optimized::fp128;
 use akita_field::AkitaError;
-use akita_pcs::test_support::{mixed_d_per_level_schedule, MixedDConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -30,6 +30,7 @@ use akita_types::{
     OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout, RingVec,
 };
 use common::*;
+use support::{mixed_d_per_level_schedule, MixedDConfig};
 
 /// Root preset: leading levels at `D = 128`.
 type Envelope = fp128::D128Dense;

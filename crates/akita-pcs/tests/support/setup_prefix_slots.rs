@@ -3,7 +3,7 @@
 //!
 //! Catalog recursive configs populate D64 slots during `setup_prover`. The
 //! mixed recursive experiment uses a dynamic D128 prefix that is outside that
-//! registry contract, so tests and the profile harness share this helper.
+//! registry contract, so the transition tests materialize it explicitly.
 
 use akita_field::{CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_prover::{commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend};
