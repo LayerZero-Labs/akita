@@ -1,4 +1,5 @@
 use super::*;
+use akita_types::CompressionChainPlan;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
@@ -286,6 +287,24 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
             )?;
             let score =
                 layout_candidate_score(physical_width, num_live_blocks, num_chunks, fold_shape)?;
+            let compression_source_coefficients = params
+                .layout
+                .outer_commit_matrix
+                .output_rank()
+                .checked_mul(params.layout.outer_commit_matrix.ring_dimension())
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "setup-prefix outer compression source overflow".into(),
+                    )
+                })?;
+            if CompressionChainPlan::try_for_complete_source(
+                params.layout.outer_commit_matrix.sis_modulus_profile(),
+                compression_source_coefficients,
+            )?
+            .is_none()
+            {
+                continue;
+            }
             let setup_fields = akita_types::setup_prefix_slot_field_elements(
                 &akita_types::setup_prefix_slot_id(n_prefix, params.clone()),
             )?;

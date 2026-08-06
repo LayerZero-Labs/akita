@@ -96,3 +96,34 @@ fn recursive_candidate_order_preserves_exhaustive_tie_break() {
         "the exact layout score must remain the primary objective"
     );
 }
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
+    use akita_config::{
+        policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+    };
+
+    type Recursive = RecursiveCommitmentConfig<D64OneHot>;
+    let policy = policy_of::<Recursive>();
+    let challenge = Recursive::ring_challenge_config(64).expect("challenge config");
+    for log_prefix in 12..=20 {
+        let groups = derive_setup_prefix_groups(
+            &policy,
+            &challenge,
+            TensorChallengeShape::Flat,
+            3,
+            1usize << log_prefix,
+            1,
+            64,
+        )
+        .expect("setup-prefix frontier");
+        for params in groups {
+            akita_types::setup_prefix_slot_field_elements(&akita_types::setup_prefix_slot_id(
+                1usize << log_prefix,
+                params,
+            ))
+            .expect("frontier candidate must support its compression source");
+        }
+    }
+}

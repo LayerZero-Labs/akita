@@ -104,18 +104,17 @@ fn freeze_precommitted_group_layout(
 /// Materialize a frozen precommitted group for a candidate multi-group root
 /// `log_basis_open`. This is the phase that assigns the opening basis, recomputes
 /// open/fold digit depths from that basis, and checks the frozen A/B bounds still
-/// cover the chosen response-basis envelopes.
+/// cover the chosen response-basis envelopes. The frozen inner basis is an
+/// independent commitment choice and need not be bounded by the opening basis.
 fn materialize_precommitted_group_for_open_basis(
     group: &PrecommittedGroupSeed,
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,
     log_basis_open: u32,
 ) -> Result<PrecommittedLevelParams, AkitaError> {
-    if log_basis_open < group.layout.log_basis_inner
-        || log_basis_open < group.layout.log_basis_outer
-    {
+    if log_basis_open < group.layout.log_basis_outer {
         return Err(AkitaError::InvalidSetup(
-            "certified opening basis must dominate precommitted inner/outer bases".to_string(),
+            "certified opening basis must dominate the precommitted outer basis".to_string(),
         ));
     }
     let open_decomp = DecompositionParams {
@@ -699,4 +698,44 @@ pub fn find_schedule(
         best.folds,
         best.terminal,
     )
+}
+
+#[cfg(all(test, feature = "catalog-gen"))]
+mod tests {
+    use super::*;
+    use akita_config::{policy_of, proof_optimized::fp128::D64Dense, CommitmentConfig};
+
+    #[test]
+    fn precommitted_inner_basis_may_exceed_opening_basis() {
+        let group = PolynomialGroupLayout::new(15, 2);
+        let policy = policy_of::<D64Dense>();
+        let profile = crate::derive_standalone_precommit_profile(
+            group,
+            &policy,
+            D64Dense::root_honest_fold_policy(),
+            D64Dense::ring_challenge_config,
+            D64Dense::fold_challenge_shape_at_level,
+        )
+        .expect("dense profile");
+        assert!(profile.log_basis_inner > profile.log_basis_outer);
+
+        let seed = freeze_precommitted_group_layout(
+            &profile,
+            D64Dense::root_honest_fold_policy(),
+            &policy,
+        )
+        .expect("frozen precommitted group");
+        let challenge =
+            D64Dense::ring_challenge_config(profile.inner_commit_matrix.ring_dimension())
+                .expect("challenge config");
+
+        let materialized = materialize_precommitted_group_for_open_basis(
+            &seed,
+            &policy,
+            &challenge,
+            profile.log_basis_outer,
+        )
+        .expect("opening below the independent inner basis");
+        assert_eq!(materialized.log_basis_open, profile.log_basis_outer);
+    }
 }
