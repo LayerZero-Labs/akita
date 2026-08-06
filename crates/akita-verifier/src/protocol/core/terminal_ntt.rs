@@ -297,6 +297,31 @@ mod tests {
     }
 
     #[test]
+    fn covering_cache_preserves_smaller_flat_matrix_geometry() {
+        let matrix = matrix();
+        let setup = verifier_setup(&matrix);
+        let wide_rhs = (0..5)
+            .map(|column| {
+                std::array::from_fn(|coefficient| ((column * 7 + coefficient) % 17) as i16 - 8)
+            })
+            .collect::<Vec<_>>();
+        centered_rows(&setup, 2, &wide_rhs, 10).expect("wide cached product");
+        let wide_cache_bytes = setup.verifier_ntt_cache_bytes().expect("wide cache bytes");
+
+        let narrow_rhs = &wide_rhs[..3];
+        assert_eq!(
+            centered_rows(&setup, 2, narrow_rhs, 6).expect("narrow cached product"),
+            expected(&matrix[..6], &centered_rings(narrow_rhs)),
+        );
+        assert_eq!(
+            setup
+                .verifier_ntt_cache_bytes()
+                .expect("reused cache bytes"),
+            wide_cache_bytes,
+        );
+    }
+
+    #[test]
     fn base_and_tail_requests_share_one_strongest_prefix() {
         let setup = verifier_setup(&matrix());
         let ProtocolCrtNttParams::Q128(params) =

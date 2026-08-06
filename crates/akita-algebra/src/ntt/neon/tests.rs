@@ -30,7 +30,7 @@ fn random_mont_array_i16<const D: usize>(prime: NttPrime<i16>, seed: u64) -> [Mo
 }
 
 const TEST_PRIME_I32: i32 = 1073707009;
-const TEST_PRIME_I16: i16 = 13697;
+const TEST_PRIME_I16: i16 = crate::ntt::tables::I16_TAIL_PRIME.p;
 
 #[test]
 fn neon_balanced_i16_range_checks_vector_and_tail() {
@@ -60,11 +60,10 @@ fn neon_balanced_i16_range_checks_vector_and_tail() {
     assert!(!i16_values_in_balanced_range(&[], 0));
 }
 
-#[test]
-fn neon_forward_ntt_i32_matches_scalar() {
+fn assert_neon_ntt_i32_matches_scalar<const D: usize>() {
     let prime = NttPrime::compute(TEST_PRIME_I32);
-    let tw = NttTwiddles::<i32, 512>::compute(prime);
-    let input = random_mont_array_i32::<512>(prime, 0xCAFE);
+    let tw = NttTwiddles::<i32, D>::compute(prime);
+    let input = random_mont_array_i32::<D>(prime, 0xCAFE);
 
     let mut neon_result = input;
     unsafe { forward_ntt_i32(&mut neon_result, prime, &tw) };
@@ -72,18 +71,11 @@ fn neon_forward_ntt_i32_matches_scalar() {
     let mut scalar_result = input;
     scalar_forward_ntt(&mut scalar_result, prime, &tw, NttKernelPlan::Scalar);
 
-    for i in 0..512 {
+    for i in 0..D {
         let n = prime.to_canonical(neon_result[i]);
         let s = prime.to_canonical(scalar_result[i]);
-        assert_eq!(n, s, "mismatch at index {i}: neon={n}, scalar={s}");
+        assert_eq!(n, s, "D={D} forward mismatch at {i}: neon={n}, scalar={s}");
     }
-}
-
-#[test]
-fn neon_inverse_ntt_i32_matches_scalar() {
-    let prime = NttPrime::compute(TEST_PRIME_I32);
-    let tw = NttTwiddles::<i32, 512>::compute(prime);
-    let input = random_mont_array_i32::<512>(prime, 0xBEEF);
 
     let mut neon_result = input;
     unsafe { inverse_ntt_i32(&mut neon_result, prime, &tw) };
@@ -91,11 +83,20 @@ fn neon_inverse_ntt_i32_matches_scalar() {
     let mut scalar_result = input;
     scalar_inverse_ntt(&mut scalar_result, prime, &tw, NttKernelPlan::Scalar);
 
-    for i in 0..512 {
+    for i in 0..D {
         let n = prime.to_canonical(neon_result[i]);
         let s = prime.to_canonical(scalar_result[i]);
-        assert_eq!(n, s, "mismatch at index {i}: neon={n}, scalar={s}");
+        assert_eq!(n, s, "D={D} inverse mismatch at {i}: neon={n}, scalar={s}");
     }
+}
+
+#[test]
+fn neon_ntt_i32_matches_scalar_at_target_dimensions() {
+    assert_neon_ntt_i32_matches_scalar::<64>();
+    assert_neon_ntt_i32_matches_scalar::<128>();
+    assert_neon_ntt_i32_matches_scalar::<256>();
+    assert_neon_ntt_i32_matches_scalar::<512>();
+    assert_neon_ntt_i32_matches_scalar::<1024>();
 }
 
 #[test]
@@ -318,11 +319,10 @@ fn neon_add_reduce_i32_handles_scalar_tail() {
     assert_eq!(neon_acc, scalar_acc);
 }
 
-#[test]
-fn neon_forward_ntt_i16_matches_scalar() {
+fn assert_neon_ntt_i16_matches_scalar<const D: usize>() {
     let prime = NttPrime::compute(TEST_PRIME_I16);
-    let tw = NttTwiddles::<i16, 64>::compute(prime);
-    let input = random_mont_array_i16::<64>(prime, 0xABCD);
+    let tw = NttTwiddles::<i16, D>::compute(prime);
+    let input = random_mont_array_i16::<D>(prime, 0xABCD);
 
     let mut neon_result = input;
     unsafe { forward_ntt_i16(&mut neon_result, prime, &tw) };
@@ -330,18 +330,14 @@ fn neon_forward_ntt_i16_matches_scalar() {
     let mut scalar_result = input;
     scalar_forward_ntt(&mut scalar_result, prime, &tw, NttKernelPlan::Scalar);
 
-    for i in 0..64 {
+    for i in 0..D {
         let n = prime.to_canonical(neon_result[i]);
         let s = prime.to_canonical(scalar_result[i]);
-        assert_eq!(n, s, "i16 forward mismatch at {i}: neon={n}, scalar={s}");
+        assert_eq!(
+            n, s,
+            "D={D} i16 forward mismatch at {i}: neon={n}, scalar={s}"
+        );
     }
-}
-
-#[test]
-fn neon_inverse_ntt_i16_matches_scalar() {
-    let prime = NttPrime::compute(TEST_PRIME_I16);
-    let tw = NttTwiddles::<i16, 64>::compute(prime);
-    let input = random_mont_array_i16::<64>(prime, 0xFEED);
 
     let mut neon_result = input;
     unsafe { inverse_ntt_i16(&mut neon_result, prime, &tw) };
@@ -349,11 +345,22 @@ fn neon_inverse_ntt_i16_matches_scalar() {
     let mut scalar_result = input;
     scalar_inverse_ntt(&mut scalar_result, prime, &tw, NttKernelPlan::Scalar);
 
-    for i in 0..64 {
+    for i in 0..D {
         let n = prime.to_canonical(neon_result[i]);
         let s = prime.to_canonical(scalar_result[i]);
-        assert_eq!(n, s, "i16 inverse mismatch at {i}: neon={n}, scalar={s}");
+        assert_eq!(
+            n, s,
+            "D={D} i16 inverse mismatch at {i}: neon={n}, scalar={s}"
+        );
     }
+}
+
+#[test]
+fn neon_ntt_i16_matches_scalar_at_target_dimensions() {
+    assert_neon_ntt_i16_matches_scalar::<64>();
+    assert_neon_ntt_i16_matches_scalar::<128>();
+    assert_neon_ntt_i16_matches_scalar::<256>();
+    assert_neon_ntt_i16_matches_scalar::<512>();
 }
 
 #[test]
