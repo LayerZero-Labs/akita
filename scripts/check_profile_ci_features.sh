@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Hard gate: every CI profile bench mode must be covered by akita-pcs profile-ci.
+# Hard gate: every profile bench mode must be covered by both its matrix feature
+# and the backward-compatible akita-pcs profile-ci union.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,19 +33,28 @@ MODE_FEATURE = {
 MODE_NUM_POLYS = {mode: {1, 4} for mode in MODE_FEATURE}
 
 text = pcs.read_text(encoding="utf-8")
-match = re.search(r"^profile-ci\s*=\s*\[(.*?)\]", text, flags=re.MULTILINE | re.DOTALL)
-if not match:
-    print("profile-ci feature not found in akita-pcs/Cargo.toml", file=sys.stderr)
-    raise SystemExit(1)
+def feature_members(feature: str) -> set[str]:
+    match = re.search(
+        rf"^{re.escape(feature)}\s*=\s*\[(.*?)\]",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if not match:
+        print(f"{feature} feature not found in akita-pcs/Cargo.toml", file=sys.stderr)
+        raise SystemExit(1)
 
-profile_ci: set[str] = set()
-for line in match.group(1).splitlines():
-    line = line.strip().rstrip(",")
-    if not line or line.startswith("#"):
-        continue
-    if "/" in line:
-        line = line.split("/", 1)[1]
-    profile_ci.add(line.strip('"'))
+    members: set[str] = set()
+    for line in match.group(1).splitlines():
+        line = line.strip().rstrip(",")
+        if not line or line.startswith("#"):
+            continue
+        if "/" in line:
+            line = line.split("/", 1)[1]
+        members.add(line.strip('"'))
+    return members
+
+
+profile_ci = feature_members("profile-ci")
 
 wf = workflow.read_text(encoding="utf-8")
 case_line = re.compile(r"^([^:]+:\d+:\d+(?::[^:\s]+)?)\s*$")
@@ -66,15 +76,24 @@ def cases_after_pipe(start: int) -> list[str]:
             break
     return cases
 
-bench_cases: list[str] = []
-for anchor in re.finditer(r"^\s+cases:\s*\|\s*\n", wf, flags=re.MULTILINE):
-    bench_cases.extend(cases_after_pipe(anchor.end()))
+bench_cases: list[tuple[str, str, str]] = []
+group_pattern = re.compile(
+    r"^\s+- name:\s*(\S+)\s*\n"
+    r"\s+profile_feature:\s*(\S+)\s*\n"
+    r"\s+cases:\s*\|\s*\n",
+    flags=re.MULTILINE,
+)
+for group in group_pattern.finditer(wf):
+    group_name, profile_feature = group.group(1, 2)
+    for case_spec in cases_after_pipe(group.end()):
+        bench_cases.append((group_name, profile_feature, case_spec))
 
 if not bench_cases:
     print("No matrix bench cases found in profile-bench.yml", file=sys.stderr)
     raise SystemExit(1)
 failed = False
-for case_spec in bench_cases:
+matrix_features: dict[str, set[str]] = {}
+for group_name, profile_feature, case_spec in bench_cases:
     mode, num_vars, num_polys_s, *setup_mode = case_spec.split(":")
     num_polys = int(num_polys_s)
     if setup_mode and setup_mode[0] not in {"direct", "recursive"}:
@@ -88,6 +107,16 @@ for case_spec in bench_cases:
         failed = True
         continue
     required = MODE_FEATURE[mode]
+    if profile_feature not in matrix_features:
+        matrix_features[profile_feature] = feature_members(profile_feature)
+    selected = matrix_features[profile_feature]
+    if required not in selected:
+        print(
+            f"matrix group '{group_name}' feature '{profile_feature}' does not enable "
+            f"required feature '{required}' for bench mode '{mode}'",
+            file=sys.stderr,
+        )
+        failed = True
     if required not in profile_ci:
         print(
             f"profile-ci does not enable required feature '{required}' for bench mode '{mode}'",
@@ -104,5 +133,5 @@ for case_spec in bench_cases:
 if failed:
     raise SystemExit(1)
 
-print("profile-ci feature coverage check passed.")
+print("profile benchmark feature coverage check passed.")
 PY
