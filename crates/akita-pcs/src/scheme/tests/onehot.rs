@@ -632,7 +632,7 @@ fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
     const PRE_NV: usize = 14;
     const FINAL_NV: usize = 24;
     type ProtocolCfg =
-        crate::test_support::EnvelopeFinalGroupConfig<fp128::D128OneHot, fp128::D64OneHot>;
+        crate::test_support::EnvelopeFinalGroupConfig<fp128::D256OneHot, fp128::D64OneHot>;
 
     let pre_layout = OpeningClaimsLayout::new(PRE_NV, 1).expect("precommit layout");
     let pre_params =
@@ -640,7 +640,7 @@ fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
             get_params_for_batched_commitment(&pre_layout)
                 .expect("precommit params");
     let test_pre_params =
-        <PrecommittedCommitmentConfig<fp128::D128OneHot> as CommitmentConfig>::
+        <PrecommittedCommitmentConfig<fp128::D256OneHot> as CommitmentConfig>::
             get_params_for_batched_commitment(&pre_layout)
                 .expect("test precommit params");
     assert_eq!(
@@ -659,9 +659,9 @@ fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
     let schedule = ProtocolCfg::runtime_schedule(key).expect("descending-A schedule");
     let root = multi_group_root_params(&schedule);
     assert_eq!(root.d_a(), 64);
-    assert_eq!(root.group_role_dims(&opening_layout, 0).unwrap().d_a(), 128);
+    assert_eq!(root.group_role_dims(&opening_layout, 0).unwrap().d_a(), 256);
 
-    multi_group_root_round_trip_onehot::<fp128::D128OneHot, ProtocolCfg>(
+    multi_group_root_round_trip_onehot::<fp128::D256OneHot, ProtocolCfg>(
         PRE_NV,
         FINAL_NV,
         &[1],

@@ -15,7 +15,7 @@ a newcomer should reach for first.
 
 - `crates/akita-pcs/tests/single_poly_e2e.rs` (smallest E2E template).
 - `AGENTS.md` (Essential Commands); `crates/akita-pcs/examples/profile/main.rs`
-  (`AKITA_MODE=onehot_fp128_d64`, `AKITA_NUM_VARS=32`).
+  (`AKITA_MODE=onehot_fp128_mixed_dim`, `AKITA_NUM_VARS=32`).
 
 ## Choosing a configuration
 
@@ -23,20 +23,21 @@ How the `fp32` / `fp64` / `fp128` preset families differ, when to choose one-hot
 vs dense, and how ring dimension `D` trades proof size against prover time
 and setup memory.
 
-**Paper framing (§3.5 `sec:akita-params`).** Production uses **d=64** with the
-signed-sparse challenge family. **d=128** remains a comparison / legacy profile;
-**d=32** is not a valid A-role fold degree (`d_a ≥ 64`).
+**Paper framing (§3.5 `sec:akita-params`).** The uniform production profile uses
+**d=64** with the signed-sparse challenge family. The default direct fp128
+one-hot preset now chooses dimensions per fold from generated adaptive tables;
+**d=32** remains invalid for the A-role fold degree (`d_a ≥ 64`).
 
 **Proof-size / CI reality (committed-fold A-role SIS pricing).**
 
 | Field | Typical production choice | Notes |
 |-------|---------------------------|--------|
-| **fp128** | **D64 one-hot** (`onehot_fp128_d64`) | **Production default** (Paper §3.5 signed-sparse at d=64). Planner picks **D64 over D128** (~20% smaller proof); both fold securely. Shipped tables: D128 dense/onehot, D64 dense/onehot. Jolt recursion and profile defaults pin **`fp128::D64OneHot`**. |
+| **fp128** | **Adaptive one-hot** (`fp128::OneHot`, explicitly `fp128::AdaptiveOneHot`) | **Default direct one-hot preset.** The generated schedule adapts the first two fold levels and uses D64 afterward. Explicit uniform `fp128::D64OneHot` remains available, and Jolt/recursive presets remain pinned to D64. Shipped tables include adaptive and D64 one-hot plus D64/D128 dense. |
 | **fp32 / fp64** | **D128 one-hot** | D32/D64 are **not securable** under the reprice and unsupported schedules fail fast. CI benches at **nv=28** (eq-table memory budget). Shipped: fp32 D128/D256 onehot; fp64 D128 dense/onehot and D256 onehot. |
 
 Use `akita_config::proof_optimized::fp128::best_onehot_schedule` /
-`best_dense_schedule` to compare fp128 **D64 vs D128** for a lookup key. Every preset
-falls back to the verifier-reachable DP on table miss.
+`best_dense_schedule` to compare the available fp128 presets for a lookup key.
+Every preset falls back to the verifier-reachable planner on table miss.
 
 **Test harness vs profile defaults.** `crates/akita-pcs/tests/common/mod.rs` uses
 `fp128::D64OneHot` (one-hot) and `fp128::D64Dense` (dense tests); profile/CI

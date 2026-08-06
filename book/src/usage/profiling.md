@@ -14,6 +14,10 @@ AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 \
 Run from `crates/akita-pcs/`. The harness refuses debug builds unless
 `AKITA_ALLOW_DEBUG_PROFILE=1`.
 
+This feature-pruned command intentionally measures the explicit uniform-D64
+baseline. With the normal default feature set, omitting `AKITA_MODE` selects
+`onehot_fp128_mixed_dim` at `nv=32`, the adaptive fp128 one-hot default.
+
 Always use the feature-pruned command above when profiling this path or
 measuring its binary size/codegen time. An unpruned default-feature build of
 the `profile` example retains every locally supported profile mode; it is a
@@ -23,9 +27,11 @@ normal release link look like a verifier regression.
 
 ## Presets and ring degrees
 
-Under committed-fold A-role SIS pricing, **fp128** production is **D=64**
-(signed-sparse; ~20% smaller than D128).
-Shipped tables: `fp128_d64_onehot`, `fp128_d64_dense`, `fp128_d128_*`.
+The default direct **fp128** one-hot preset is adaptive: generated tables choose
+the first two fold levels and use D64 for the uniform suffix. The explicit
+uniform `fp128_d64_onehot` baseline remains available, and recursive presets
+remain D64. Shipped tables include `fp128_mixed_dim_onehot`,
+`fp128_d64_onehot`, `fp128_d64_dense`, and `fp128_d128_dense`.
 **fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
 `D32OneHot` preset.
 **fp32/fp64** D32/D64 are not securable; smallest secure choice is **D128
@@ -39,8 +45,8 @@ Compare ring degrees with
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `AKITA_MODE` | `onehot_fp128_d64` | Preset family and representation |
-| `AKITA_NUM_VARS` | `25` in code (`32` in canonical command above) | Witness size |
+| `AKITA_MODE` | `onehot_fp128_mixed_dim` normally; `onehot_fp128_d64` in the feature-pruned command | Preset family and representation |
+| `AKITA_NUM_VARS` | `32` normally; `25` in the feature-pruned D64 binary | Witness size |
 | `AKITA_NUM_POLYS` | `1` | Batched opening count |
 | `AKITA_PROFILE_TRACE` | `1` | Chrome/Perfetto trace output |
 | `AKITA_PROFILE_LOG` | `trace` | `tracing` filter |

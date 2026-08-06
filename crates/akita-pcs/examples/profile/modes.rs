@@ -233,6 +233,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_d64,
     },
     ProfileMode {
+        name: "onehot_fp128_mixed_dim",
+        run: run_profile_onehot_fp128_mixed_dim,
+    },
+    ProfileMode {
         name: "onehot_fp128_d64_multi_group_recursive",
         run: run_profile_onehot_fp128_d64_multi_group_recursive,
     },
@@ -243,10 +247,6 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "dense_fp128_d128",
         run: run_profile_dense_fp128_d128,
-    },
-    ProfileMode {
-        name: "onehot_fp128_d128",
-        run: run_profile_onehot_fp128_d128,
     },
     ProfileMode {
         name: "onehot_fp128_d64_tensor",
@@ -319,7 +319,6 @@ const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     // default `all` smoke sweep (they are still selectable by explicit
     // `AKITA_MODE=` and drive the profile-bench matrix).
     "dense_fp128_d128",
-    "onehot_fp128_d128",
     "dense_fp32_d128",
     "onehot_fp32_d128",
     "onehot_fp64_d128",
@@ -389,9 +388,9 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64", &title, nv, num_polys);
 }
 
-#[cfg(feature = "profile-ci")]
+#[cfg(not(feature = "profile-onehot-fp128-d64"))]
 fn run_profile_onehot_fp128_mixed_dim(nv: usize, num_polys: usize) {
-    type Cfg = fp128::MixedDimFp128OneHot;
+    type Cfg = fp128::AdaptiveOneHot;
     assert!(
         matches!(nv, 32 | 36),
         "mixed-dimension profile supports generated nv=32 and nv=36 rows"
@@ -557,13 +556,6 @@ fn run_profile_dense_fp128_d128(nv: usize, num_polys: usize) {
         ),
         nv,
     );
-}
-
-#[cfg(not(feature = "profile-ci"))]
-fn run_profile_onehot_fp128_d128(nv: usize, num_polys: usize) {
-    type Cfg = fp128::D128OneHot;
-    let title = fp128_onehot_title(128, nv, num_polys);
-    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d128", &title, nv, num_polys);
 }
 
 #[cfg(not(feature = "profile-ci"))]

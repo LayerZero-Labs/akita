@@ -88,7 +88,7 @@ The implementation has the following shape:
 - Generated catalog identity stores the complete enum value and all three
   ordered adaptive capability lists. Challenge-hook identity covers every A
   candidate, including non-winners.
-- `MixedDimFp128OneHot` uses two searched levels, a D64 uniform suffix, A
+- `AdaptiveOneHot` uses two searched levels, a D64 uniform suffix, A
   candidates `[64, 128, 256]`, and B/D candidates `[64, 128]`.
 - Adaptive direct multi-chunk and recursive-setup planning remain rejected as
   specified. Scalar dispatch through a recursive adapter first applies its
@@ -134,7 +134,7 @@ This revision makes the following decisions:
 3. Keep dimension search bounded by configuration rather than planner constants.
 4. Preserve canonical security sizing and verifier-visible schedule data.
 5. Admit both D256 direct and D256 three-band paths naturally.
-6. Remove planner logic specialized to the name `MixedDimFp128OneHot`.
+6. Keep planner logic independent of the concrete `AdaptiveOneHot` preset name.
 7. Preserve deterministic generation across machines and executions.
 
 ## Non-goals
@@ -921,7 +921,7 @@ optional internal consolidation. `mixed_search.rs` may be removed only when:
 3. the common frontier implements per-path preprocessing-first semantics;
 4. uniform regressions remain unchanged where policy is unchanged;
 5. adaptive selections agree with a bounded unpruned reference traversal; and
-6. no planner branch refers to `MixedDimFp128OneHot` by name.
+6. no planner branch refers to `AdaptiveOneHot` by name.
 
 Simply moving the current module's contents into another file is not
 consolidation.
@@ -954,10 +954,10 @@ generated catalog
 Environment variables must not alter catalog-bound policy during proving or
 verification.
 
-### Removing MixedDimFp128OneHot special-casing
+### Avoiding AdaptiveOneHot special-casing
 
 The planner must dispatch on `RingDimensionScheduleMode`, not on the type name
-`MixedDimFp128OneHot`.
+`AdaptiveOneHot`.
 
 Whether the marker type remains temporarily as a concrete catalog/setup policy
 identity is a separate cleanup decision. The requirement is one canonical
@@ -1016,10 +1016,10 @@ The repository currently exercises mixed dimensions through distinct paths.
 
 | Experiment                           | Effective config                                                                     | Schedule source                     |
 | ------------------------------------ | ------------------------------------------------------------------------------------ | ----------------------------------- |
-| Stock `onehot_fp128_mixed_dim`, nv32 | `MixedDimFp128OneHot`                                                                | Generated runtime catalog           |
-| Planner diagnostic, nv18–nv40        | Policy derived from `MixedDimFp128OneHot`                                            | Direct offline `find_schedule` call |
+| Stock `onehot_fp128_mixed_dim`, nv32 | `AdaptiveOneHot`                                                                     | Generated runtime catalog           |
+| Planner diagnostic, nv18–nv40        | Policy derived from `AdaptiveOneHot`                                                 | Direct offline `find_schedule` call |
 | D256 direct timing profile           | `MixedDConfig<D256OneHot, D64OneHot, 1>`                                             | Synthetic test-support builder      |
-| D256 three-band timing profile       | `ThreeBandRingDimensionTransitionConfig<D256OneHot, D128OneHot, D64OneHot, 128, 64>` | Synthetic test-support builder      |
+| Historical D256 three-band profile   | D256 root, uniform-D128 middle policy, D64 suffix                                    | Synthetic test-support builder      |
 
 
 ### Native generated adaptive benchmark
@@ -1030,14 +1030,14 @@ The stock mode:
 AKITA_MODE=onehot_fp128_mixed_dim
 ```
 
-uses `fp128::MixedDimFp128OneHot`, fixes nv32, calls
+uses `fp128::AdaptiveOneHot`, fixes nv32, calls
 `Cfg::runtime_schedule`, and gives that exact generated row to the PCS prover
 and verifier.
 
 ### Direct offline diagnostics
 
 The `mixed_dimension_search` example derives policy from
-`MixedDimFp128OneHot` but calls the offline planner directly. The nv18, nv24,
+`AdaptiveOneHot` but calls the offline planner directly. The nv18, nv24,
 nv32, nv36, and diagnostic over-cap nv40 results discussed in this design
 review came from this path and are not current runtime catalog rows.
 
@@ -1215,7 +1215,7 @@ The first implementation is complete when:
    256/128/128 -> 64/64/64 -> D64
    256/128/128 -> 128/64/64 -> D64
   ```
-10. Planner logic contains no branch keyed on `MixedDimFp128OneHot`.
+10. Planner logic contains no branch keyed on `AdaptiveOneHot`.
 11. Runtime remains generated-catalog-only.
 
 ## Remaining implementation questions

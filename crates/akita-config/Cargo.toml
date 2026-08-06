@@ -21,8 +21,8 @@ default = ["schedules-default"]
 test-support = []
 schedules-default = [
   "schedules-fp128-d64-onehot",
+  "schedules-fp128-mixed-dim-onehot",
   "schedules-fp128-d64-dense",
-  "schedules-fp128-d128-onehot",
   "schedules-fp128-d128-dense",
   "schedules-fp128-d256-onehot",
   "schedules-fp32-d128-onehot",
@@ -33,7 +33,6 @@ schedules-default = [
 ]
 all-schedules = [
   "schedules-default",
-  "schedules-fp128-mixed-dim-onehot",
   "schedules-fp128-d64-onehot-recursive",
   "schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2",
   "schedules-fp128-d64-onehot-tensor",
@@ -51,7 +50,6 @@ schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2 = [
   "akita-schedules/fp128-d64-onehot-recursive-multi-chunk-w8r2",
 ]
 schedules-fp128-d64-dense = ["akita-schedules/fp128-d64-dense"]
-schedules-fp128-d128-onehot = ["akita-schedules/fp128-d128-onehot"]
 schedules-fp128-d128-dense = ["akita-schedules/fp128-d128-dense"]
 schedules-fp128-d256-onehot = ["akita-schedules/fp128-d256-onehot"]
 schedules-fp128-d64-onehot-tensor = ["akita-schedules/fp128-d64-onehot-tensor"]

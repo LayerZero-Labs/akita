@@ -22,28 +22,27 @@ pub struct D64OneHot;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHotK16;
 
-/// Binary onehot `D=128`, `K=256` preset for planner-backed experiments.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D128OneHot;
-
 /// Binary onehot `D=256` tableless preset for mixed-ring experiments.
 /// fp128 certifies all three commitment roles at this dimension.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D256OneHot;
 
-/// Binary onehot preset with a D256 uniform planner policy and planner-selected
+/// Binary onehot preset with D256 setup generation and planner-selected
 /// per-level commitment dimensions.
 ///
 /// Mixed-dimension planning is an offline generation step. Runtime proving
 /// and verification resolve the exact generated catalog row.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct MixedDimFp128OneHot;
+pub struct AdaptiveOneHot;
 
-impl MixedDimFp128OneHot {
+impl AdaptiveOneHot {
     pub const A_RING_DIMENSIONS: [usize; 3] = [64, 128, 256];
     pub const B_RING_DIMENSIONS: [usize; 2] = [64, 128];
     pub const D_RING_DIMENSIONS: [usize; 2] = [64, 128];
 }
+
+/// Default fp128 binary onehot preset.
+pub type OneHot = AdaptiveOneHot;
 
 /// Tableless policy marker for a `D = 512` inner (A-role) root.
 ///
@@ -84,21 +83,6 @@ impl_proof_optimized_preset!(
         "schedules-fp128-d128-dense",
         "fp128_d128_dense",
         fp128_d128_dense_table
-    )
-);
-impl_proof_optimized_preset!(
-    D128OneHot,
-    Field,
-    Field,
-    akita_types::SisModulusProfileId::Q128OffsetA7F7,
-    128,
-    128,
-    1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
-    schedules = (
-        "schedules-fp128-d128-onehot",
-        "fp128_d128_onehot",
-        fp128_d128_onehot_table
     )
 );
 impl_proof_optimized_preset!(
@@ -157,7 +141,7 @@ impl_proof_optimized_preset!(
     )
 );
 impl_proof_optimized_preset!(
-    MixedDimFp128OneHot,
+    AdaptiveOneHot,
     Field,
     Field,
     akita_types::SisModulusProfileId::Q128OffsetA7F7,
@@ -173,9 +157,9 @@ impl_proof_optimized_preset!(
     ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
         num_search_levels: 2,
         uniform_suffix_dimension: 64,
-        potential_a_dimensions: &MixedDimFp128OneHot::A_RING_DIMENSIONS,
-        potential_b_dimensions: &MixedDimFp128OneHot::B_RING_DIMENSIONS,
-        potential_d_dimensions: &MixedDimFp128OneHot::D_RING_DIMENSIONS,
+        potential_a_dimensions: &AdaptiveOneHot::A_RING_DIMENSIONS,
+        potential_b_dimensions: &AdaptiveOneHot::B_RING_DIMENSIONS,
+        potential_d_dimensions: &AdaptiveOneHot::D_RING_DIMENSIONS,
     }
 );
 impl_proof_optimized_preset!(
@@ -227,23 +211,23 @@ pub enum Fp128Preset {
     D128Dense,
     /// Binary onehot generated `D=64` preset.
     D64OneHot,
-    /// Binary onehot `D=128` preset (comparison / legacy; D64 is smaller under
-    /// committed-fold A-role pricing).
-    D128OneHot,
+    /// Binary onehot preset with adaptive per-level ring dimensions.
+    AdaptiveOneHot,
 }
 
 impl Fp128Preset {
-    /// Ring dimension used by this preset.
+    /// Setup-generation ring dimension used by this preset.
     pub const fn ring_dimension(self) -> usize {
         match self {
             Self::D64Dense | Self::D64OneHot => 64,
-            Self::D128Dense | Self::D128OneHot => 128,
+            Self::D128Dense => 128,
+            Self::AdaptiveOneHot => 256,
         }
     }
 
     /// Whether this preset is onehot-oriented.
     pub const fn is_onehot(self) -> bool {
-        matches!(self, Self::D64OneHot | Self::D128OneHot)
+        matches!(self, Self::D64OneHot | Self::AdaptiveOneHot)
     }
 
     /// Stable human-readable preset name.
@@ -252,7 +236,7 @@ impl Fp128Preset {
             Self::D64Dense => "D64Dense",
             Self::D128Dense => "D128Dense",
             Self::D64OneHot => "D64OneHot",
-            Self::D128OneHot => "D128OneHot",
+            Self::AdaptiveOneHot => "AdaptiveOneHot",
         }
     }
 }
@@ -343,7 +327,7 @@ pub fn best_dense_schedule(
 /// Select the best onehot fp128 preset for a schedule lookup key.
 ///
 /// A genuine planner failure propagates as an error; for any valid key every
-/// preset yields a schedule, so the best one is always returned.
+/// supported preset yields a schedule, so the best available one is returned.
 ///
 /// # Errors
 ///
@@ -354,6 +338,6 @@ pub fn best_onehot_schedule(
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
     Ok(best_by_exact_bytes([
         candidate::<D64OneHot>(Fp128Preset::D64OneHot, key)?,
-        candidate::<D128OneHot>(Fp128Preset::D128OneHot, key)?,
+        candidate::<AdaptiveOneHot>(Fp128Preset::AdaptiveOneHot, key)?,
     ]))
 }

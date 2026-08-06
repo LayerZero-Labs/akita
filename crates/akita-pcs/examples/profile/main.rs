@@ -40,16 +40,23 @@ fn main() {
         std::process::exit(2);
     }
 
+    let default_nv = if cfg!(feature = "profile-onehot-fp128-d64") {
+        25
+    } else {
+        32
+    };
     let nv: usize = env::var("AKITA_NUM_VARS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(25);
+        .unwrap_or(default_nv);
     let num_polys = env_usize("AKITA_NUM_POLYS", 1);
 
-    // Keep the default explicit: adaptive `dense`/`onehot` selectors are
-    // intentionally not part of the profile surface. D64 is the default fp128
-    // profile preset (`onehot_fp128_d64`); use best_*_schedule to compare D64 vs D128.
-    let mode = env::var("AKITA_MODE").unwrap_or_else(|_| "onehot_fp128_d64".to_string());
+    let default_mode = if cfg!(feature = "profile-onehot-fp128-d64") {
+        "onehot_fp128_d64"
+    } else {
+        "onehot_fp128_mixed_dim"
+    };
+    let mode = env::var("AKITA_MODE").unwrap_or_else(|_| default_mode.to_string());
     let enable_trace = env_flag("AKITA_PROFILE_TRACE", true);
     let enable_ansi = env_flag("AKITA_PROFILE_ANSI", true);
     let span_events = if env_flag("AKITA_PROFILE_SPAN_CLOSES", true) {

@@ -1,6 +1,6 @@
 use akita_config::{
     policy_of,
-    proof_optimized::fp128::{D64OneHot, MixedDimFp128OneHot},
+    proof_optimized::fp128::{AdaptiveOneHot, D64OneHot},
     CommitmentConfig, RecursiveCommitmentConfig,
 };
 use akita_planner::find_schedule;
@@ -78,22 +78,22 @@ fn main() -> Result<(), akita_field::AkitaError> {
         .nth(1)
         .and_then(|value| value.parse().ok())
         .unwrap_or(36);
-    let direct_policy = policy_of::<MixedDimFp128OneHot>();
+    let direct_policy = policy_of::<AdaptiveOneHot>();
     let direct_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
     let direct = find_schedule(
         &direct_key,
-        MixedDimFp128OneHot::root_honest_fold_policy(),
+        AdaptiveOneHot::root_honest_fold_policy(),
         &[],
         &direct_policy,
-        MixedDimFp128OneHot::ring_challenge_config,
-        MixedDimFp128OneHot::fold_challenge_shape_at_level,
+        AdaptiveOneHot::ring_challenge_config,
+        AdaptiveOneHot::fold_challenge_shape_at_level,
     )?;
     print_schedule(
         &format!("direct scalar mixed-D search (nv={num_vars})"),
         &direct,
     );
 
-    type MixedRecursive = RecursiveCommitmentConfig<MixedDimFp128OneHot>;
+    type MixedRecursive = RecursiveCommitmentConfig<AdaptiveOneHot>;
     let mixed_recursive_policy = policy_of::<MixedRecursive>();
     let mixed_recursive_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(32, 2));
     let mixed_recursive_error = find_schedule(
