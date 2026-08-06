@@ -4,7 +4,7 @@ use std::array::from_fn;
 
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::crt::GarnerData;
-use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
+use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
 use crate::{CanonicalField, CrtCapacity, FieldCore, NttKernelPlan};
 
 /// CRT+NTT-domain representation of a cyclotomic ring element.
@@ -84,6 +84,17 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     #[must_use]
     pub const fn kernel_plan(&self) -> NttKernelPlan {
         self.kernel_plan
+    }
+
+    /// Number of contiguous products the prepared backend can reduce as one
+    /// pointwise dot batch. A value of one preserves column-at-a-time traversal.
+    #[must_use]
+    pub const fn pointwise_dot_batch_size(&self) -> usize {
+        if self.uses_lazy_i32_dot() {
+            I32_LAZY_DOT_BATCH
+        } else {
+            1
+        }
     }
 
     pub(crate) const fn uses_lazy_i32_dot(&self) -> bool {

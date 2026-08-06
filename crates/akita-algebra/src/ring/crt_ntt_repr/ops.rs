@@ -127,15 +127,27 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         Ok(accumulators)
     }
 
+    /// Accumulate a short pointwise dot product in CRT+NTT domain.
+    ///
+    /// The prepared backend chooses whether to fuse the products or apply the
+    /// canonical single-product primitive repeatedly.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the slices differ in length or exceed the backend-independent
+    /// six-product arithmetic ceiling.
     #[inline(always)]
-    fn add_assign_pointwise_dot(
+    pub fn add_assign_pointwise_dot(
         &mut self,
         lhs: &[Self],
         rhs: &[Self],
         params: &CrtNttParamSet<W, K, D>,
     ) {
-        debug_assert_eq!(lhs.len(), rhs.len());
-        debug_assert!(lhs.len() <= I32_LAZY_DOT_BATCH);
+        assert_eq!(lhs.len(), rhs.len(), "pointwise dot length mismatch");
+        assert!(
+            lhs.len() <= I32_LAZY_DOT_BATCH,
+            "pointwise dot exceeds lazy reduction bound"
+        );
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         if params.uses_lazy_i32_dot() {

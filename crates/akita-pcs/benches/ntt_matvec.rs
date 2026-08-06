@@ -417,14 +417,16 @@ fn bench_q32_exact(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_q32_one_core_traversal_shape<const D: usize>(group: &mut BenchmarkGroup<'_, WallTime>) {
-    const RANK: usize = 4;
+fn bench_q32_one_core_traversal_shape<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    rank: usize,
+) {
     const WIDTH: usize = 128;
     const BLOCKS: usize = 64;
-    let matrix = sample_q32_matrix::<D>(RANK, WIDTH);
+    let matrix = sample_q32_matrix::<D>(rank, WIDTH);
     let flat = FlatMatrix::from_ring_slice(&matrix);
     let cache = prepare_ntt_cache(
-        flat.ring_view::<D>(RANK, WIDTH)
+        flat.ring_view::<D>(rank, WIDTH)
             .expect("Q32 traversal matrix view"),
         NttCacheMode::BothTransforms,
     )
@@ -439,13 +441,13 @@ fn bench_q32_one_core_traversal_shape<const D: usize>(group: &mut BenchmarkGroup
         })
         .collect();
     let blocks: Vec<&[[i8; D]]> = digit_blocks.iter().map(Vec::as_slice).collect();
-    group.throughput(Throughput::Elements((BLOCKS * RANK * WIDTH * D) as u64));
-    group.bench_function(format!("d{D}_b{BLOCKS}_r{RANK}_w{WIDTH}"), |bench| {
+    group.throughput(Throughput::Elements((BLOCKS * rank * WIDTH * D) as u64));
+    group.bench_function(format!("d{D}_b{BLOCKS}_r{rank}_w{WIDTH}"), |bench| {
         bench.iter(|| {
             black_box(
                 mat_vec_mul_ntt_digits_i8::<Prime32Offset99, D>(
                     &cache,
-                    RANK,
+                    rank,
                     WIDTH,
                     black_box(&blocks),
                     6,
@@ -458,10 +460,17 @@ fn bench_q32_one_core_traversal_shape<const D: usize>(group: &mut BenchmarkGroup
 
 fn bench_q32_one_core_traversal(c: &mut Criterion) {
     let mut group = c.benchmark_group("ntt_matvec_q32/one_core_traversal/b64_r4_w128");
-    bench_q32_one_core_traversal_shape::<64>(&mut group);
-    bench_q32_one_core_traversal_shape::<128>(&mut group);
-    bench_q32_one_core_traversal_shape::<256>(&mut group);
-    bench_q32_one_core_traversal_shape::<512>(&mut group);
+    bench_q32_one_core_traversal_shape::<64>(&mut group, 4);
+    bench_q32_one_core_traversal_shape::<128>(&mut group, 4);
+    bench_q32_one_core_traversal_shape::<256>(&mut group, 4);
+    bench_q32_one_core_traversal_shape::<512>(&mut group, 4);
+    group.finish();
+
+    let mut group = c.benchmark_group("ntt_matvec_q32/one_core_traversal/b64_r11_w128");
+    bench_q32_one_core_traversal_shape::<64>(&mut group, 11);
+    bench_q32_one_core_traversal_shape::<128>(&mut group, 11);
+    bench_q32_one_core_traversal_shape::<256>(&mut group, 11);
+    bench_q32_one_core_traversal_shape::<512>(&mut group, 11);
     group.finish();
 }
 
