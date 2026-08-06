@@ -1,5 +1,6 @@
 //! Coefficient-first storage for materialized sumcheck evaluations.
 
+use akita_field::unreduced::HasOptimizedFold;
 use akita_field::{AkitaError, ExtField, FieldCore};
 use core::fmt;
 use core::marker::PhantomData;
@@ -17,6 +18,46 @@ pub struct EvaluationTable<F, E> {
     len: usize,
     stride: usize,
     marker: PhantomData<fn() -> E>,
+}
+
+/// Fold a dense evaluation table by binding its first variable to `challenge`.
+///
+/// This is the portable scalar reference for runtime-selected prover kernels.
+/// Dense tables are already in binding order, so row `i` is paired with row
+/// `i + len / 2`. The result replaces the first half of every coefficient slab,
+/// and the table's live length is halved without reallocating.
+///
+/// # Panics
+///
+/// Panics if the live table length is not a power of two or has fewer than two
+/// rows. Prover construction establishes these dense-table invariants.
+pub fn fold_first_variable_scalar<F, E>(table: &mut EvaluationTable<F, E>, challenge: E)
+where
+    F: FieldCore,
+    E: ExtField<F> + HasOptimizedFold,
+{
+    assert!(
+        table.len().is_power_of_two(),
+        "evaluation table length must be a power of two"
+    );
+    assert!(
+        table.len() >= 2,
+        "evaluation table must have at least two rows"
+    );
+
+    let half = table.len() / 2;
+    let context = E::precompute_fold(challenge);
+    for row in 0..half {
+        let folded = E::fold_one(
+            &context,
+            table.evaluation(row),
+            table.evaluation(row + half),
+        );
+        for coefficient in 0..<E as ExtField<F>>::EXT_DEGREE {
+            table.coefficient_slice_mut(coefficient)[row] = folded.base_coefficient(coefficient);
+        }
+    }
+    table.truncate(half);
 }
 
 impl<F, E> EvaluationTable<F, E>
@@ -268,7 +309,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::EvaluationTable;
+    use super::{fold_first_variable_scalar, EvaluationTable};
+    use akita_algebra::poly::fold_evals_in_place;
     use akita_field::{Ext2, ExtField, FpExt4, FpExt8, Prime32Offset99};
 
     type F = Prime32Offset99;
@@ -340,6 +382,45 @@ mod tests {
         for (stored_row, logical_row) in logical_rows.into_iter().enumerate() {
             assert_eq!(from_slice.evaluation(stored_row), evaluations[logical_row]);
         }
+    }
+
+    #[test]
+    fn scalar_fold_matches_logical_order_for_every_round() {
+        let mut logical: Vec<_> = (0..16).map(value).collect();
+        let mut table = EvaluationTable::<F, E>::from_multilinear_evaluations(&logical)
+            .expect("valid multilinear length");
+        let challenges = [value(31), value(37), value(41), value(43)];
+
+        for challenge in challenges {
+            fold_evals_in_place(&mut logical, challenge);
+            fold_first_variable_scalar(&mut table, challenge);
+
+            assert_eq!(table.len(), logical.len());
+            for stored_row in 0..table.len() {
+                let logical_row = EvaluationTable::<F, E>::logical_row(stored_row, table.len());
+                assert_eq!(table.evaluation(stored_row), logical[logical_row]);
+            }
+        }
+
+        assert_eq!(table.len(), 1);
+        assert_eq!(table.evaluation(0), logical[0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "evaluation table must have at least two rows")]
+    fn scalar_fold_rejects_one_row_table() {
+        let mut table = EvaluationTable::<F, E>::from_multilinear_evaluation_fn(1, value)
+            .expect("valid one-row multilinear table");
+        fold_first_variable_scalar(&mut table, value(3));
+    }
+
+    #[test]
+    #[should_panic(expected = "evaluation table length must be a power of two")]
+    fn scalar_fold_rejects_truncated_non_power_of_two_table() {
+        let mut table = EvaluationTable::<F, E>::from_multilinear_evaluation_fn(4, value)
+            .expect("valid multilinear table");
+        table.truncate(3);
+        fold_first_variable_scalar(&mut table, value(3));
     }
 
     #[test]

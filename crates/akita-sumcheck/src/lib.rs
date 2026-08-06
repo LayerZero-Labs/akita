@@ -27,7 +27,7 @@ pub use drivers::{
     advance_eq_factored_claim, check_sumcheck_output_claim, EqFactoredSumcheckInstanceProverExt,
     EqFactoredSumcheckInstanceVerifierExt, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
 };
-pub use evaluation_table::EvaluationTable;
+pub use evaluation_table::{fold_first_variable_scalar, EvaluationTable};
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,
     EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,
