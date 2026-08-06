@@ -256,7 +256,7 @@ fn bench_shape<const D: usize>(
         bench.iter(|| black_box(i8_matvec(&i8_cache, rank, width, black_box(&i8_digits), 8)))
     });
 
-    for log_basis in [8, 10, 11] {
+    for log_basis in [8, 10, 11, 16] {
         let cache = prepare(
             &matrix,
             NttCacheMode::ExactNegacyclic {
@@ -305,7 +305,7 @@ fn bench_exact_profile_shape<Field: FieldCore + CanonicalField, const D: usize>(
     let matrix = sample_matrix_for::<Field, D>(rank, width);
     group.throughput(Throughput::Elements((rank * width * D) as u64));
 
-    for log_basis in [8, 11] {
+    for log_basis in [8, 11, 16] {
         let cache = prepare_for(
             &matrix,
             NttCacheMode::ExactNegacyclic {

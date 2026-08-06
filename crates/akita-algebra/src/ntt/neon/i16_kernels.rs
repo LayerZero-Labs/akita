@@ -476,6 +476,35 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
     }
 }
 
+/// Return whether every signed value lies in `[-bound, bound)`.
+///
+/// # Safety
+///
+/// `values` must be valid for `len` readable elements and `bound` must be
+/// positive.
+pub(crate) unsafe fn all_i16_in_balanced_range(values: *const i16, len: usize, bound: i16) -> bool {
+    let lower_q = vdupq_n_s16(-bound);
+    let upper_q = vdupq_n_s16(bound);
+    let mut i = 0usize;
+    while i + 8 <= len {
+        let value = vld1q_s16(values.add(i));
+        let below = vcltq_s16(value, lower_q);
+        let above = vcgeq_s16(value, upper_q);
+        if vmaxvq_u16(vorrq_u16(below, above)) != 0 {
+            return false;
+        }
+        i += 8;
+    }
+    while i < len {
+        let value = *values.add(i);
+        if value < -bound || value >= bound {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
 /// 8-wide add-and-reduce for a single CRT limb (i16).
 ///
 /// # Safety

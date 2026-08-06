@@ -33,6 +33,34 @@ const TEST_PRIME_I32: i32 = 1073707009;
 const TEST_PRIME_I16: i16 = 13697;
 
 #[test]
+fn neon_balanced_i16_range_checks_vector_and_tail() {
+    let mut values = [-128i16; 19];
+    values[7] = 127;
+    values[18] = 0;
+    assert!(i16_values_in_balanced_range(&values, 128));
+
+    values[8] = 128;
+    assert!(!i16_values_in_balanced_range(&values, 128));
+    values[8] = 0;
+    values[18] = -129;
+    assert!(!i16_values_in_balanced_range(&values, 128));
+
+    for bound in [1i16, 2, 128, 1024, 16384] {
+        for len in 0..35 {
+            let values = (0..len)
+                .map(|index| {
+                    let span = i32::from(bound) * 2;
+                    ((index * 137 + 19) % span - i32::from(bound)) as i16
+                })
+                .collect::<Vec<_>>();
+            let scalar = values.iter().all(|&value| value >= -bound && value < bound);
+            assert_eq!(i16_values_in_balanced_range(&values, bound), scalar);
+        }
+    }
+    assert!(!i16_values_in_balanced_range(&[], 0));
+}
+
+#[test]
 fn neon_forward_ntt_i32_matches_scalar() {
     let prime = NttPrime::compute(TEST_PRIME_I32);
     let tw = NttTwiddles::<i32, 512>::compute(prime);

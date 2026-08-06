@@ -779,11 +779,15 @@ fn validate_i16_rhs<const D: usize>(log_basis: u32, rhs: &[[i16; D]]) -> Result<
     if log_basis == 16 {
         return Ok(bound as u64);
     }
-    if rhs
+    #[cfg(target_arch = "aarch64")]
+    let digits_valid =
+        akita_algebra::ntt::neon::i16_values_in_balanced_range(rhs.as_flattened(), bound as i16);
+    #[cfg(not(target_arch = "aarch64"))]
+    let digits_valid = rhs
         .iter()
         .flatten()
-        .any(|&digit| !(-bound..bound).contains(&i32::from(digit)))
-    {
+        .all(|&digit| (-bound..bound).contains(&i32::from(digit)));
+    if !digits_valid {
         return Err(AkitaError::InvalidProof);
     }
     Ok(bound as u64)

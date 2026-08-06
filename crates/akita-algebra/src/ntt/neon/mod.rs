@@ -30,5 +30,21 @@ pub fn use_neon_ntt() -> bool {
     *ENABLED.get_or_init(|| std::env::var("AKITA_SCALAR_NTT").map_or(true, |v| v != "1"))
 }
 
+/// Return whether every signed value lies in `[-bound, bound)`.
+///
+/// Uses NEON comparisons when the SIMD path is active and retains a scalar
+/// fallback for `AKITA_SCALAR_NTT=1` measurements.
+#[must_use]
+pub fn i16_values_in_balanced_range(values: &[i16], bound: i16) -> bool {
+    if bound <= 0 {
+        return false;
+    }
+    if !use_neon_ntt() {
+        return values.iter().all(|&value| value >= -bound && value < bound);
+    }
+    // SAFETY: the slice pointer is valid for `values.len()` elements.
+    unsafe { i16_kernels::all_i16_in_balanced_range(values.as_ptr(), values.len(), bound) }
+}
+
 #[cfg(test)]
 mod tests;
