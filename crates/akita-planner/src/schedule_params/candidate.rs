@@ -1,6 +1,6 @@
 use super::*;
 
-use akita_schedules::planner_support::{projected_collision_role_price, sis_key_at_dimension};
+use akita_schedules::planner_support::{sis_key_at_dimension, RingDimensionCandidate};
 
 mod recursive;
 mod setup_prefix;

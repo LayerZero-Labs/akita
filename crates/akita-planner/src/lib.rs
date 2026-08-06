@@ -16,8 +16,9 @@
 //! preset-free.
 
 pub use akita_schedules::{
-    ChunkedWitnessCfg, DecompositionParams, PlannerCostModelId, PlannerPolicy, SelectionPolicyId,
-    SisModulusProfileId, SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
+    ChunkedWitnessCfg, DecompositionParams, PlannerCostModelId, PlannerPolicy,
+    RingDimensionScheduleMode, SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId,
+    DEFAULT_SIS_SECURITY_POLICY,
 };
 
 pub mod emit;
@@ -39,6 +40,4 @@ pub use emit::{
     write_precommitted_profiles_module, EmitSpec,
 };
 pub use planner::find_schedule;
-pub use schedule_params::{
-    derive_standalone_precommit_profile, suffix_opening_layout, RingDimensionSearchDomain,
-};
+pub use schedule_params::{derive_standalone_precommit_profile, suffix_opening_layout};

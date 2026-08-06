@@ -972,18 +972,12 @@ mod tests {
     use std::cell::RefCell;
 
     use super::*;
-    use crate::{PlannerCostModelId, SelectionPolicyId};
+    use crate::{PlannerCostModelId, RingDimensionScheduleMode, SelectionPolicyId};
     use akita_types::{
-        ChunkedWitnessCfg, CommitmentRingDims, SisModulusProfileId, SisSecurityPolicyId,
-        SisTableDigest,
+        ChunkedWitnessCfg, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
     };
 
     fn recursive_fp128_policy() -> PlannerPolicy {
-        static CANDIDATES: [CommitmentRingDims; 1] = [CommitmentRingDims {
-            inner: 64,
-            outer: 64,
-            opening: 64,
-        }];
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
@@ -991,7 +985,9 @@ mod tests {
             min_offloaded_witness_contraction: 3,
             uniform_ring_dimension: 64,
             setup_prefix_inner_ring_dimension: 128,
-            ring_dimension_candidates: &CANDIDATES,
+            ring_dimension_schedule_mode: RingDimensionScheduleMode::UniformDimension {
+                ring_dimension: 64,
+            },
             decomposition: DecompositionParams {
                 log_basis: 3,
                 log_commit_bound: 1,

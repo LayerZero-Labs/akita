@@ -27,14 +27,44 @@ fn policy_for_domain(
     mut policy: PlannerPolicy,
     domain: &RingDimensionSearchDomain,
 ) -> PlannerPolicy {
-    policy.ring_dimension_candidates = Box::leak(domain.candidates().to_vec().into_boxed_slice());
     let is_uniform =
         domain.candidates() == [CommitmentRingDims::uniform(policy.uniform_ring_dimension)];
-    policy.selection_policy = if is_uniform {
-        crate::SelectionPolicyId::MinEstimatedProofPayload
+    policy.ring_dimension_schedule_mode = if is_uniform {
+        crate::RingDimensionScheduleMode::UniformDimension {
+            ring_dimension: policy.uniform_ring_dimension,
+        }
     } else {
-        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+        let mut a = domain
+            .candidates()
+            .iter()
+            .map(|dims| dims.d_a())
+            .collect::<Vec<_>>();
+        let mut b = domain
+            .candidates()
+            .iter()
+            .map(|dims| dims.d_b())
+            .collect::<Vec<_>>();
+        let mut d = domain
+            .candidates()
+            .iter()
+            .map(|dims| dims.d_d())
+            .collect::<Vec<_>>();
+        for dimensions in [&mut a, &mut b, &mut d] {
+            dimensions.sort_unstable();
+            dimensions.dedup();
+        }
+        crate::RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels: 2,
+            uniform_suffix_dimension: 64,
+            potential_a_dimensions: Box::leak(a.into_boxed_slice()),
+            potential_b_dimensions: Box::leak(b.into_boxed_slice()),
+            potential_d_dimensions: Box::leak(d.into_boxed_slice()),
+        }
     };
+    policy.selection_policy = crate::SelectionPolicyId::for_policy(
+        policy.recursive_setup_planning,
+        policy.ring_dimension_schedule_mode,
+    );
     policy
 }
 
@@ -133,8 +163,8 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     let uniform = RingDimensionSearchDomain::uniform(dimensions[0].d_a()).unwrap();
     let mut uniform_policy = policy_of::<D256OneHot>();
     uniform_policy.uniform_ring_dimension = dimensions[0].d_a();
-    uniform_policy.ring_dimension_candidates =
-        Box::leak(uniform.candidates().to_vec().into_boxed_slice());
+    uniform_policy.ring_dimension_schedule_mode =
+        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
     uniform_policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
     let candidate = find_schedule(
         key,
@@ -210,7 +240,6 @@ fn grouped_scalar_fallback_preserves_mixed_domain() {
         key.final_group,
         &policy,
         D256OneHot::root_honest_fold_policy(),
-        &domain,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
@@ -228,7 +257,7 @@ fn grouped_scalar_fallback_preserves_mixed_domain() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn pruned_mixed_search_matches_unpruned_traversal_and_is_canonical() {
+fn adaptive_mixed_search_is_canonical() {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<D256OneHot>();
@@ -252,15 +281,6 @@ fn pruned_mixed_search_matches_unpruned_traversal_and_is_canonical() {
         D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
-    let unpruned = unpruned_search::find_schedule(
-        key,
-        &policy,
-        D256OneHot::root_honest_fold_policy(),
-        &canonical,
-        D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
-    )
-    .unwrap();
     let repeated = find_schedule(
         key,
         &policy,
@@ -271,20 +291,10 @@ fn pruned_mixed_search_matches_unpruned_traversal_and_is_canonical() {
     )
     .unwrap();
 
-    assert_eq!(
-        (
-            selected.estimate.estimated_num_setup_field_elements,
-            selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        ),
-        (
-            unpruned.estimate.estimated_num_setup_field_elements,
-            unpruned.estimate.estimated_proof_payload_bytes().unwrap(),
-        )
-    );
     let selected_descriptor = selected.schedule.canonical_descriptor_bytes();
     assert_eq!(
         selected_descriptor,
-        unpruned.schedule.canonical_descriptor_bytes()
+        repeated.schedule.canonical_descriptor_bytes()
     );
     assert_eq!(
         selected_descriptor,
@@ -475,7 +485,7 @@ fn mixed_search_skips_an_unsupported_sis_candidate_and_keeps_its_sibling() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
+fn adaptive_nv36_selects_minimum_rank_a_path() {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<D256OneHot>();
@@ -526,7 +536,11 @@ fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
             .params
             .witness
             .role_dims(),
-        CommitmentRingDims::uniform(64)
+        CommitmentRingDims {
+            inner: 256,
+            outer: 64,
+            opening: 64,
+        }
     );
     assert_eq!(
         selected
@@ -537,7 +551,7 @@ fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        90_312
+        91_128
     );
     assert_eq!(rank_one_capped_root.inner_commit_matrix.output_rank(), 3);
     assert_eq!(selected_root.inner_commit_matrix.output_rank(), 1);
@@ -572,9 +586,7 @@ fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
         D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("requires the D64 uniform candidate"));
+    assert!(error.to_string().contains("must contain suffix D64"));
 
     let below_d64 = RingDimensionSearchDomain::new([
         CommitmentRingDims::uniform(64),
@@ -595,7 +607,7 @@ fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
         D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap_err();
-    assert!(error.to_string().contains("component-wise at least D64"));
+    assert!(error.to_string().contains("must be at least suffix D64"));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -671,7 +683,9 @@ fn dimension_domain_is_independent_of_setup_generation_dimension() {
     let mut policy = policy_of::<D128OneHot>();
     let domain = RingDimensionSearchDomain::uniform(256).unwrap();
     policy.uniform_ring_dimension = 256;
-    policy.ring_dimension_candidates = Box::leak(domain.candidates().to_vec().into_boxed_slice());
+    policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
+        ring_dimension: 256,
+    };
     policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
     domain.validate_for_policy(&policy).unwrap();
 }

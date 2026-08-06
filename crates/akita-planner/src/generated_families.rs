@@ -117,8 +117,10 @@ const FP128_D256_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(16),
 ];
 
-const FP128_MIXED_DIM_ONEHOT_KEYS: &[PolynomialGroupLayout] =
-    &[PolynomialGroupLayout::singleton(32)];
+const FP128_MIXED_DIM_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
+    PolynomialGroupLayout::singleton(32),
+    PolynomialGroupLayout::singleton(36),
+];
 
 const FP128_D64_ONEHOT_TENSOR_KEYS: &[PolynomialGroupLayout] =
     &[PolynomialGroupLayout::singleton(26)];

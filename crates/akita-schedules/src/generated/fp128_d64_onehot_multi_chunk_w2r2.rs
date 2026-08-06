@@ -8,8 +8,8 @@ use super::{
     GeneratedRootFinalGroup, GeneratedRootFold, GeneratedRootPrecommittedGroup,
     GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput, GeneratedTerminalFold,
     GeneratedWitnessPartition, InnerCommitMatrixParams, OuterCommitMatrixParams,
-    PlannerCostModelId, PolynomialGroupLayout, SelectionPolicyId, SisModulusProfileId,
-    SisSecurityPolicyId, SisTableDigest, TensorChallengeShape,
+    PlannerCostModelId, PolynomialGroupLayout, RingDimensionScheduleMode, SelectionPolicyId,
+    SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, TensorChallengeShape,
 };
 
 #[rustfmt::skip]
@@ -51,8 +51,6 @@ pub(crate) static FP128_D64_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES: &[GeneratedFoldSc
 ];
 
 #[rustfmt::skip]
-pub(crate) static CATALOG_RING_DIMENSION_CANDIDATES: &[CommitmentRingDims] = &[CommitmentRingDims { inner: 64, outer: 64, opening: 64 }];
-#[rustfmt::skip]
 pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
@@ -75,7 +73,7 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     witness_chunk: ChunkedWitnessCfg { num_chunks: 2, num_activated_levels: 2 },
     recursive_setup_planning: false,
     root_fold_shape: TensorChallengeShape::Flat,
-    ring_dimension_candidates: CATALOG_RING_DIMENSION_CANDIDATES,
+    ring_dimension_schedule_mode: RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 },
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 12477507731232336810,
     key_count: 2,

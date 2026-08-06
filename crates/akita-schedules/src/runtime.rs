@@ -39,8 +39,8 @@ impl PlannerCostModelId {
 pub enum SelectionPolicyId {
     /// Pick proof bytes, then physical setup fields, then canonical descriptor.
     MinEstimatedProofPayload,
-    /// Pick physical setup fields, then proof bytes, then canonical descriptor.
-    MinSetupMatrixFieldElementsThenProofPayload,
+    /// Pick per-level A rank/dimension, then setup fields and proof payload.
+    MinAdaptiveARankDimensionThenSetupAndProof,
     /// Pick first direct setup, proof bytes, total setup, then descriptor.
     MinFirstDirectSetupThenPayload,
 }
@@ -49,14 +49,15 @@ impl SelectionPolicyId {
     /// Canonical selection objective for one schedule policy shape.
     pub fn for_policy(
         recursive_setup_planning: bool,
-        uniform_ring_dimension: usize,
-        ring_dimension_candidates: &[CommitmentRingDims],
+        ring_dimension_schedule_mode: RingDimensionScheduleMode,
     ) -> Self {
         if recursive_setup_planning {
             Self::MinFirstDirectSetupThenPayload
-        } else if ring_dimension_candidates != [CommitmentRingDims::uniform(uniform_ring_dimension)]
-        {
-            Self::MinSetupMatrixFieldElementsThenProofPayload
+        } else if matches!(
+            ring_dimension_schedule_mode,
+            RingDimensionScheduleMode::AdaptiveDimension { .. }
+        ) {
+            Self::MinAdaptiveARankDimensionThenSetupAndProof
         } else {
             Self::MinEstimatedProofPayload
         }
@@ -67,7 +68,7 @@ impl SelectionPolicyId {
         match self {
             Self::MinEstimatedProofPayload => 1,
             Self::MinFirstDirectSetupThenPayload => 2,
-            Self::MinSetupMatrixFieldElementsThenProofPayload => 3,
+            Self::MinAdaptiveARankDimensionThenSetupAndProof => 4,
         }
     }
 
@@ -75,10 +76,48 @@ impl SelectionPolicyId {
     pub const fn name(self) -> &'static str {
         match self {
             Self::MinEstimatedProofPayload => "MinEstimatedProofPayload",
-            Self::MinSetupMatrixFieldElementsThenProofPayload => {
-                "MinSetupMatrixFieldElementsThenProofPayload"
+            Self::MinAdaptiveARankDimensionThenSetupAndProof => {
+                "MinAdaptiveARankDimensionThenSetupAndProof"
             }
             Self::MinFirstDirectSetupThenPayload => "MinFirstDirectSetupThenPayload",
+        }
+    }
+}
+
+/// Catalog-bound ring-dimension schedule policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RingDimensionScheduleMode {
+    /// Use one uniform A/B/D dimension from root through terminal.
+    UniformDimension { ring_dimension: usize },
+    /// Search A over a bounded prefix, derive B/D by minimum rank, then use a uniform suffix.
+    AdaptiveDimension {
+        num_search_levels: usize,
+        uniform_suffix_dimension: usize,
+        potential_a_dimensions: &'static [usize],
+        potential_b_dimensions: &'static [usize],
+        potential_d_dimensions: &'static [usize],
+    },
+}
+
+impl RingDimensionScheduleMode {
+    #[must_use]
+    pub const fn uniform_dimensions(self) -> Option<CommitmentRingDims> {
+        match self {
+            Self::UniformDimension { ring_dimension } => {
+                Some(CommitmentRingDims::uniform(ring_dimension))
+            }
+            Self::AdaptiveDimension { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn potential_a_dimensions(self) -> &'static [usize] {
+        match self {
+            Self::UniformDimension { .. } => &[],
+            Self::AdaptiveDimension {
+                potential_a_dimensions,
+                ..
+            } => potential_a_dimensions,
         }
     }
 }
@@ -100,11 +139,8 @@ pub struct PlannerPolicy {
     pub uniform_ring_dimension: usize,
     /// A-matrix ring dimension used to commit offloaded setup prefixes.
     pub setup_prefix_inner_ring_dimension: usize,
-    /// Canonically ordered A/B/D tuples admitted by offline schedule search.
-    ///
-    /// Generated catalog identity binds this complete domain, including tuples
-    /// that do not win any emitted row.
-    pub ring_dimension_candidates: &'static [CommitmentRingDims],
+    /// Uniform or bounded-adaptive ring-dimension schedule policy.
+    pub ring_dimension_schedule_mode: RingDimensionScheduleMode,
     pub decomposition: DecompositionParams,
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: SisSecurityPolicyId,
@@ -166,8 +202,7 @@ impl PlannerPolicy {
             recursive_setup_planning: false,
             selection_policy: SelectionPolicyId::for_policy(
                 false,
-                self.uniform_ring_dimension,
-                self.ring_dimension_candidates,
+                self.ring_dimension_schedule_mode,
             ),
             ..self
         }
@@ -217,11 +252,10 @@ pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 /// Validate runtime policy values used by schedule expansion and validation.
 pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     policy.challenge_field_bits()?;
-    validate_ring_dimension_candidates(policy)?;
+    validate_ring_dimension_schedule_mode(policy)?;
     let expected_selection_policy = SelectionPolicyId::for_policy(
         policy.recursive_setup_planning,
-        policy.uniform_ring_dimension,
-        policy.ring_dimension_candidates,
+        policy.ring_dimension_schedule_mode,
     );
     if policy.selection_policy != expected_selection_policy {
         return Err(AkitaError::InvalidSetup(
@@ -261,21 +295,86 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     Ok(())
 }
 
-fn validate_ring_dimension_candidates(policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    let candidates = policy.ring_dimension_candidates;
-    if candidates.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "ring-dimension candidate domain must be nonempty".to_string(),
-        ));
+fn validate_ring_dimension_schedule_mode(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    match policy.ring_dimension_schedule_mode {
+        RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+            validate_dimension(policy.uniform_ring_dimension, "uniform", ring_dimension)?;
+            if ring_dimension != policy.uniform_ring_dimension {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "uniform schedule D{ring_dimension} must equal configured D{}",
+                    policy.uniform_ring_dimension
+                )));
+            }
+        }
+        RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels,
+            uniform_suffix_dimension,
+            potential_a_dimensions,
+            potential_b_dimensions,
+            potential_d_dimensions,
+        } => {
+            if num_search_levels == 0 || num_search_levels > MAX_RECURSION_DEPTH {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "adaptive search levels must be in 1..={MAX_RECURSION_DEPTH}"
+                )));
+            }
+            validate_dimension(
+                policy.uniform_ring_dimension,
+                "uniform suffix",
+                uniform_suffix_dimension,
+            )?;
+            for (role, dimensions) in [
+                ("A", potential_a_dimensions),
+                ("B", potential_b_dimensions),
+                ("D", potential_d_dimensions),
+            ] {
+                validate_dimension_list(policy.uniform_ring_dimension, role, dimensions)?;
+                if !dimensions.contains(&uniform_suffix_dimension) {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "adaptive {role} domain must contain suffix D{uniform_suffix_dimension}"
+                    )));
+                }
+                if dimensions.iter().any(|&d| d < uniform_suffix_dimension) {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "adaptive {role} dimensions must be at least suffix D{uniform_suffix_dimension}"
+                    )));
+                }
+            }
+        }
     }
-    let key = |dims: CommitmentRingDims| (dims.d_a(), dims.d_b(), dims.d_d());
-    for (index, &dims) in candidates.iter().enumerate() {
-        dims.validate_role_projection()?;
-        if index > 0 && key(candidates[index - 1]) >= key(dims) {
-            return Err(AkitaError::InvalidSetup(
-                "ring-dimension candidate domain must be strictly sorted and duplicate-free"
-                    .to_string(),
-            ));
+    Ok(())
+}
+
+fn validate_dimension(
+    setup_dimension: usize,
+    label: &str,
+    dimension: usize,
+) -> Result<(), AkitaError> {
+    if dimension == 0 || !dimension.is_power_of_two() || !setup_dimension.is_multiple_of(dimension)
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{label} D{dimension} must be a nonzero power of two dividing setup D{setup_dimension}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_dimension_list(
+    setup_dimension: usize,
+    role: &str,
+    dimensions: &[usize],
+) -> Result<(), AkitaError> {
+    if dimensions.is_empty() {
+        return Err(AkitaError::InvalidSetup(format!(
+            "adaptive {role} domain must be nonempty"
+        )));
+    }
+    for (index, &dimension) in dimensions.iter().enumerate() {
+        validate_dimension(setup_dimension, role, dimension)?;
+        if index > 0 && dimensions[index - 1] >= dimension {
+            return Err(AkitaError::InvalidSetup(format!(
+                "adaptive {role} domain must be strictly sorted and duplicate-free"
+            )));
         }
     }
     Ok(())

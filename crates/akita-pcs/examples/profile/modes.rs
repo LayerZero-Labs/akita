@@ -392,7 +392,10 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
 #[cfg(feature = "profile-ci")]
 fn run_profile_onehot_fp128_mixed_dim(nv: usize, num_polys: usize) {
     type Cfg = fp128::MixedDimFp128OneHot;
-    assert_eq!(nv, 32, "mixed-dimension profile fixes nv=32");
+    assert!(
+        matches!(nv, 32 | 36),
+        "mixed-dimension profile supports generated nv=32 and nv=36 rows"
+    );
     assert_singleton_mode("onehot_fp128_mixed_dim", num_polys);
 
     let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(

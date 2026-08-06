@@ -35,7 +35,7 @@ pub(crate) fn complete_schedule_score(
             setup_field_elements: candidate.setup_field_elements,
             descriptor,
         }),
-        SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
+        SelectionPolicyId::MinAdaptiveARankDimensionThenSetupAndProof => {
             Ok(CompleteScheduleScore::MixedDimension {
                 setup_field_elements: candidate.setup_field_elements,
                 proof_bytes: candidate.total_bytes,

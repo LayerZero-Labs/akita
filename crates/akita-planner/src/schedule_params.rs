@@ -37,7 +37,6 @@ mod suffix_dp;
 #[cfg(test)]
 #[path = "test/unpruned_search.rs"]
 mod unpruned_search;
-
 pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
     derive_candidate_level_params, derive_candidate_level_params_all_splits,
@@ -48,7 +47,9 @@ pub(crate) use setup_score::{
 };
 pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
 
+#[cfg(test)]
 pub(crate) const MIXED_SEARCH_FOLD_LEVELS: usize = 2;
+#[cfg(test)]
 pub(crate) const MIXED_SEARCH_SUFFIX_RING_DIMENSION: usize = 64;
 
 #[derive(Clone, Debug)]
@@ -75,16 +76,18 @@ pub(crate) struct CandidateTerminalResponse {
 /// The planner policy's uniform ring dimension defines only the implicit
 /// singleton domain used by [`crate::find_schedule`]. Mixed-dimension search supplies
 /// this explicit set of schedule-owned A/B/D tuples.
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RingDimensionSearchDomain {
+pub(crate) struct RingDimensionSearchDomain {
     candidates: Vec<CommitmentRingDims>,
 }
 
+#[cfg(test)]
 impl RingDimensionSearchDomain {
     /// Construct and canonicalize a non-empty dimension domain.
     ///
     /// Every tuple must satisfy the schedule-local A-carrier invariant.
-    pub fn new(
+    pub(crate) fn new(
         candidates: impl IntoIterator<Item = CommitmentRingDims>,
     ) -> Result<Self, AkitaError> {
         let mut candidates = candidates.into_iter().collect::<Vec<_>>();
@@ -102,31 +105,29 @@ impl RingDimensionSearchDomain {
     }
 
     /// Construct the explicit singleton domain used by a uniform policy.
-    pub fn uniform(ring_dimension: usize) -> Result<Self, AkitaError> {
+    pub(crate) fn uniform(ring_dimension: usize) -> Result<Self, AkitaError> {
         Self::new([CommitmentRingDims::uniform(ring_dimension)])
     }
 
     /// Canonically ordered admitted A/B/D tuples.
-    pub fn candidates(&self) -> &[CommitmentRingDims] {
+    pub(crate) fn candidates(&self) -> &[CommitmentRingDims] {
         &self.candidates
     }
 
+    #[cfg(test)]
     pub(crate) fn validate_for_policy(&self, policy: &PlannerPolicy) -> Result<(), AkitaError> {
-        if self.candidates.as_slice() != policy.ring_dimension_candidates {
-            if policy.ring_dimension_candidates.len() == 1 {
-                return Ok(());
-            }
-            return Err(AkitaError::InvalidSetup(
-                "ring-dimension search domain disagrees with the catalog-bound policy domain"
-                    .to_string(),
-            ));
-        }
-        Ok(())
+        validate_policy(policy)
     }
+}
 
-    pub(crate) fn is_uniform_policy_domain(&self, policy: &PlannerPolicy) -> bool {
-        self.candidates.as_slice() == [CommitmentRingDims::uniform(policy.uniform_ring_dimension)]
-    }
+#[cfg(test)]
+fn componentwise_dimensions_at_most(
+    dimensions: CommitmentRingDims,
+    ceiling: CommitmentRingDims,
+) -> bool {
+    dimensions.d_a() <= ceiling.d_a()
+        && dimensions.d_b() <= ceiling.d_b()
+        && dimensions.d_d() <= ceiling.d_d()
 }
 
 #[derive(Clone, Debug)]
@@ -157,6 +158,30 @@ impl ScheduleCandidate {
             self.total_bytes,
             self.setup_field_elements,
         )
+    }
+
+    pub(crate) fn adaptive_a_rank_dimension_key(
+        &self,
+        num_search_levels: usize,
+    ) -> Vec<(usize, usize)> {
+        self.folds
+            .iter()
+            .take(num_search_levels)
+            .map(|fold| {
+                (
+                    fold.params.inner_commit_matrix.output_rank(),
+                    fold.params.role_dims().d_a(),
+                )
+            })
+            .collect()
+    }
+
+    pub(crate) fn adaptive_a_dimension_key(&self, num_search_levels: usize) -> Vec<usize> {
+        self.folds
+            .iter()
+            .take(num_search_levels)
+            .map(|fold| fold.params.role_dims().d_a())
+            .collect()
     }
 }
 
@@ -305,6 +330,46 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
     .canonical_descriptor_bytes())
 }
 
+pub(crate) fn select_adaptive_candidate(
+    candidates: Vec<ScheduleCandidate>,
+    num_search_levels: usize,
+) -> Result<Option<ScheduleCandidate>, AkitaError> {
+    let mut per_path = candidates
+        .into_iter()
+        .map(|candidate| {
+            let descriptor = candidate_schedule_descriptor_bytes(&candidate)?;
+            Ok((
+                candidate.adaptive_a_dimension_key(num_search_levels),
+                MixedScore {
+                    setup_field_elements: candidate.setup_field_elements,
+                    proof_bytes: candidate.total_bytes,
+                },
+                descriptor,
+                candidate,
+            ))
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    per_path
+        .sort_by(|left, right| (&left.0, &left.1, &left.2).cmp(&(&right.0, &right.1, &right.2)));
+    per_path.dedup_by(|left, right| left.0 == right.0);
+    let mut winners = per_path
+        .into_iter()
+        .map(|(_, score, descriptor, candidate)| {
+            (
+                candidate.adaptive_a_rank_dimension_key(num_search_levels),
+                score,
+                descriptor,
+                candidate,
+            )
+        })
+        .collect::<Vec<_>>();
+    winners.sort_by(|left, right| (&left.0, &left.1, &left.2).cmp(&(&right.0, &right.1, &right.2)));
+    Ok(winners
+        .into_iter()
+        .next()
+        .map(|(_, _, _, candidate)| candidate))
+}
+
 fn witness_partition(num_chunks: usize) -> WitnessPartition {
     if num_chunks == 1 {
         WitnessPartition::Single
@@ -324,27 +389,7 @@ fn witness_partition(num_chunks: usize) -> WitnessPartition {
 /// Returns [`AkitaError::InvalidSetup`] for an invalid [`akita_types::ChunkedWitnessCfg`], or
 /// `num_activated_levels` beyond the planner recursion cap. Verifier-reachable: never panics.
 pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    policy.challenge_field_bits()?;
-    let expected_selection_policy = if policy.recursive_setup_planning {
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
-    } else if policy.ring_dimension_candidates.len() > 1 {
-        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-    } else {
-        match policy.selection_policy {
-            crate::SelectionPolicyId::MinEstimatedProofPayload
-            | crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
-                policy.selection_policy
-            }
-            crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
-                crate::SelectionPolicyId::MinEstimatedProofPayload
-            }
-        }
-    };
-    if policy.selection_policy != expected_selection_policy {
-        return Err(AkitaError::InvalidSetup(
-            "planner selection policy disagrees with recursive setup capability".to_string(),
-        ));
-    }
+    akita_schedules::planner_support::validate_policy(policy)?;
     if policy.setup_field_budget == Some(0) {
         return Err(AkitaError::InvalidSetup(
             "explicit setup field budget must be positive".to_string(),
@@ -494,12 +539,36 @@ pub fn derive_standalone_precommit_profile(
     let mut best: Option<(usize, CommittedGroupParams)> = None;
     let schedule_key = AkitaScheduleLookupKey::single(key);
 
+    let dimension_candidates = match direct_policy.ring_dimension_schedule_mode {
+        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => vec![
+            akita_schedules::planner_support::RingDimensionCandidate::Fixed(
+                CommitmentRingDims::uniform(ring_dimension),
+            ),
+        ],
+        crate::RingDimensionScheduleMode::AdaptiveDimension {
+            potential_a_dimensions,
+            potential_b_dimensions,
+            potential_d_dimensions,
+            ..
+        } => potential_a_dimensions
+            .iter()
+            .copied()
+            .map(
+                |inner| akita_schedules::planner_support::RingDimensionCandidate::Adaptive {
+                    inner,
+                    outer_dimensions: potential_b_dimensions,
+                    opening_dimensions: potential_d_dimensions,
+                    ceiling: CommitmentRingDims::uniform(direct_policy.uniform_ring_dimension),
+                },
+            )
+            .collect(),
+    };
     for candidate_log_basis in min_log_basis..=max_log_basis {
-        for dimensions in direct_policy.ring_dimension_candidates.iter().copied() {
-            let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
+        for dimensions in dimension_candidates.iter().copied() {
+            let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.inner()) else {
                 continue;
             };
-            let alpha = (dimensions.d_a() as u32).trailing_zeros() as usize;
+            let alpha = (dimensions.inner() as u32).trailing_zeros() as usize;
             let reduced_vars = key.num_vars().saturating_sub(alpha);
             if reduced_vars == 0 {
                 continue;
@@ -539,15 +608,6 @@ pub fn derive_standalone_precommit_profile(
 // more than this many recursive fold levels; deeper search only blows up
 // memo state without changing emitted tables.
 pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
-
-fn componentwise_dimensions_at_most(
-    dimensions: CommitmentRingDims,
-    ceiling: CommitmentRingDims,
-) -> bool {
-    dimensions.d_a() <= ceiling.d_a()
-        && dimensions.d_b() <= ceiling.d_b()
-        && dimensions.d_d() <= ceiling.d_d()
-}
 
 #[cfg(test)]
 #[path = "test/schedule_params.rs"]

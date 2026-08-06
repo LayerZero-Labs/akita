@@ -308,12 +308,12 @@ fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
 fn adapters_forward_mixed_dimension_policy() {
     type Base = fp128::MixedDimFp128OneHot;
     assert_eq!(
-        <RecursiveCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
-        Base::RING_DIMENSION_CANDIDATES,
+        <RecursiveCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
+        Base::RING_DIMENSION_SCHEDULE_MODE,
     );
     assert_eq!(
-        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
-        Base::RING_DIMENSION_CANDIDATES,
+        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
+        Base::RING_DIMENSION_SCHEDULE_MODE,
     );
     assert_eq!(
         <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::selection_policy(),
@@ -334,7 +334,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         min_offloaded_witness_contraction: 3,
         uniform_ring_dimension: Cfg::D,
         setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),
-        ring_dimension_candidates: Cfg::RING_DIMENSION_CANDIDATES,
+        ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,

@@ -438,14 +438,44 @@ where
 
     let low_vars = onehot_k.trailing_zeros() as usize;
     let low_weights = lagrange_weights(&point[..low_vars]).expect("valid low opening point");
-    let high_weights = lagrange_weights(&point[low_vars..]).expect("valid high opening point");
-    poly.indices()
+    let high_point = &point[low_vars..];
+    let mut high_weight = high_point
         .iter()
-        .enumerate()
-        .filter_map(|(chunk_idx, hot_idx)| {
-            hot_idx.map(|hot_idx| high_weights[chunk_idx] * low_weights[hot_idx.as_usize()])
+        .copied()
+        .map(|r| E::one() - r)
+        .fold(E::one(), |acc, value| acc * value);
+    let transitions = high_point
+        .iter()
+        .copied()
+        .map(|r| {
+            let one_minus_r = E::one() - r;
+            let to_one = r * one_minus_r
+                .inverse()
+                .expect("non-Boolean random opening point");
+            let to_zero = one_minus_r * r.inverse().expect("non-Boolean random opening point");
+            (to_one, to_zero)
         })
-        .fold(E::zero(), |acc, weight| acc + weight)
+        .collect::<Vec<_>>();
+    let mut opening = E::zero();
+    let mut gray_index = 0usize;
+    for step in 0..poly.indices().len() {
+        if let Some(hot_idx) = poly.indices()[gray_index] {
+            opening += high_weight * low_weights[hot_idx.as_usize()];
+        }
+        let next_step = step + 1;
+        if next_step == poly.indices().len() {
+            break;
+        }
+        let next_gray = next_step ^ (next_step >> 1);
+        let flipped_bit = (gray_index ^ next_gray).trailing_zeros() as usize;
+        high_weight *= if next_gray & (1usize << flipped_bit) == 0 {
+            transitions[flipped_bit].1
+        } else {
+            transitions[flipped_bit].0
+        };
+        gray_index = next_gray;
+    }
+    opening
 }
 
 fn opening_from_poly<'a, FF, const D: usize, P>(

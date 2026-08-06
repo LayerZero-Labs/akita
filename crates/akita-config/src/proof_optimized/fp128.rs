@@ -40,21 +40,9 @@ pub struct D256OneHot;
 pub struct MixedDimFp128OneHot;
 
 impl MixedDimFp128OneHot {
-    /// Audited commitment-role dimension candidates used by offline planning.
-    pub const RING_DIMENSION_CANDIDATES: [akita_types::CommitmentRingDims; 4] = [
-        akita_types::CommitmentRingDims::uniform(64),
-        akita_types::CommitmentRingDims {
-            inner: 128,
-            outer: 64,
-            opening: 64,
-        },
-        akita_types::CommitmentRingDims::uniform(128),
-        akita_types::CommitmentRingDims {
-            inner: 256,
-            outer: 128,
-            opening: 128,
-        },
-    ];
+    pub const A_RING_DIMENSIONS: [usize; 3] = [64, 128, 256];
+    pub const B_RING_DIMENSIONS: [usize; 2] = [64, 128];
+    pub const D_RING_DIMENSIONS: [usize; 2] = [64, 128];
 }
 
 /// Tableless policy marker for a `D = 512` inner (A-role) root.
@@ -182,9 +170,13 @@ impl_proof_optimized_preset!(
         "fp128_mixed_dim_onehot",
         fp128_mixed_dim_onehot_table
     ),
-    selection_policy =
-        akita_schedules::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload,
-    ring_dimension_candidates = &MixedDimFp128OneHot::RING_DIMENSION_CANDIDATES
+    ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels: 2,
+        uniform_suffix_dimension: 64,
+        potential_a_dimensions: &MixedDimFp128OneHot::A_RING_DIMENSIONS,
+        potential_b_dimensions: &MixedDimFp128OneHot::B_RING_DIMENSIONS,
+        potential_d_dimensions: &MixedDimFp128OneHot::D_RING_DIMENSIONS,
+    }
 );
 impl_proof_optimized_preset!(
     D512OneHot,
