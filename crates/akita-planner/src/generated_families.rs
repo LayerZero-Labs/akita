@@ -70,6 +70,8 @@ const FP128_D64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(50),
 ];
 
+const FP128_DENSE_KEYS: &[PolynomialGroupLayout] = FP128_D64_DENSE_KEYS;
+
 const FP128_D64_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(10),
     PolynomialGroupLayout::singleton(12),
@@ -242,6 +244,20 @@ fn regen_fp128_onehot(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaE
         honest_fold_policy_of::<Cfg>(),
         &[],
         &policy,
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )?
+    .schedule)
+}
+
+/// Offline regeneration for the catalog-backed default fp128 dense profile.
+fn regen_fp128_dense(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
+    type Cfg = fp128::Dense;
+    Ok(find_schedule(
+        &AkitaScheduleLookupKey::single(key),
+        honest_fold_policy_of::<Cfg>(),
+        &[],
+        &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )?
@@ -763,6 +779,23 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         FP128_D64_DENSE_KEYS,
         fp128::D64Dense
     ),
+    GeneratedFamily {
+        module_name: "fp128_dense",
+        const_name: "FP128_DENSE_SCHEDULES",
+        schedule_feature: "fp128-dense",
+        scalar_keys: FP128_DENSE_KEYS,
+        regen: regen_fp128_dense,
+        regen_group_batch: regen_group_batch::<fp128::Dense>,
+        emit_group_batch: false,
+        group_batch_keys: group_batch_keys::<fp128::Dense>,
+        table_backed: table_backed::<fp128::Dense>,
+        policy: family_policy::<fp128::Dense>,
+        ring_challenge_config: <fp128::Dense as CommitmentConfig>::ring_challenge_config,
+        fold_challenge_shape_at_level:
+            <fp128::Dense as CommitmentConfig>::fold_challenge_shape_at_level,
+        precommitted_profiles: precommitted_profiles::<fp128::Dense>,
+        explicit_precommitted_group: explicit_precommitted_group::<fp128::Dense>,
+    },
     family_row!(
         group_batch,
         "fp128_d64_onehot_tensor",

@@ -493,6 +493,10 @@ pub mod fp128_d64_onehot_recursive_precommitted;
 pub mod fp128_d64_onehot_tensor;
 #[cfg(feature = "fp128-d64-onehot-tensor")]
 pub mod fp128_d64_onehot_tensor_precommitted;
+#[cfg(feature = "fp128-dense")]
+pub mod fp128_dense;
+#[cfg(feature = "fp128-dense")]
+pub mod fp128_dense_precommitted;
 #[cfg(feature = "fp128-onehot")]
 pub mod fp128_onehot;
 #[cfg(feature = "fp128-onehot")]
@@ -598,6 +602,16 @@ pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
         entries: fp128_d64_onehot_tensor::FP128_D64_ONEHOT_TENSOR_SCHEDULES,
         precommitted_profiles: fp128_d64_onehot_tensor_precommitted::FP128_D64_ONEHOT_TENSOR_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_d64_onehot_tensor::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-dense")]
+pub fn fp128_dense_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_dense::FP128_DENSE_SCHEDULES,
+        precommitted_profiles:
+            fp128_dense_precommitted::FP128_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp128_dense::CATALOG_IDENTITY,
     }
 }
 

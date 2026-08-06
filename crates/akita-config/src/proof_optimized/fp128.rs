@@ -10,6 +10,17 @@ pub type Field = Prime128OffsetA7F7;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64Dense;
 
+/// Default dense preset with D256 setup generation and planner-selected
+/// per-level commitment dimensions.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Dense;
+
+impl Dense {
+    pub const A_RING_DIMENSIONS: [usize; 3] = [64, 128, 256];
+    pub const B_RING_DIMENSIONS: [usize; 2] = [64, 128];
+    pub const D_RING_DIMENSIONS: [usize; 2] = [64, 128];
+}
+
 /// Binary onehot generated `D=64` preset.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHot;
@@ -77,6 +88,24 @@ impl_proof_optimized_preset!(
         "fp128_d64_dense",
         fp128_d64_dense_table
     )
+);
+impl_proof_optimized_preset!(
+    Dense,
+    Field,
+    Field,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    256,
+    128,
+    128,
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64),
+    schedules = ("schedules-fp128-dense", "fp128_dense", fp128_dense_table),
+    ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels: 2,
+        uniform_suffix_dimension: 64,
+        potential_a_dimensions: &Dense::A_RING_DIMENSIONS,
+        potential_b_dimensions: &Dense::B_RING_DIMENSIONS,
+        potential_d_dimensions: &Dense::D_RING_DIMENSIONS,
+    }
 );
 impl_proof_optimized_preset!(
     D64OneHot,
@@ -173,8 +202,10 @@ impl_multi_chunk_companion!(
 /// Concrete fp128 preset selected by a schedule-family query.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fp128Preset {
-    /// Dense adaptive `D=64` preset.
+    /// Dense uniform `D=64` preset.
     D64Dense,
+    /// Dense preset with adaptive per-level ring dimensions.
+    Dense,
     /// Binary onehot generated `D=64` preset.
     D64OneHot,
     /// Binary onehot preset with adaptive per-level ring dimensions.
@@ -186,7 +217,7 @@ impl Fp128Preset {
     pub const fn ring_dimension(self) -> usize {
         match self {
             Self::D64Dense | Self::D64OneHot => 64,
-            Self::OneHot => 256,
+            Self::Dense | Self::OneHot => 256,
         }
     }
 
@@ -199,6 +230,7 @@ impl Fp128Preset {
     pub const fn name(self) -> &'static str {
         match self {
             Self::D64Dense => "D64Dense",
+            Self::Dense => "Dense",
             Self::D64OneHot => "D64OneHot",
             Self::OneHot => "OneHot",
         }

@@ -73,6 +73,7 @@ fn group_batch_emission_matches_supported_policy_shape() {
 fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
     match family.module_name {
         "fp128_onehot" => fp128::OneHot::schedule_catalog().is_some(),
+        "fp128_dense" => fp128::Dense::schedule_catalog().is_some(),
         "fp128_d64_onehot" => fp128::D64OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot_recursive" => {
             <akita_config::RecursiveCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::schedule_catalog()
@@ -344,6 +345,7 @@ fn family_catalog(
 ) -> akita_schedules::GeneratedScheduleTable {
     match family.module_name {
         "fp128_onehot" => prepare_family_catalog::<fp128::OneHot>(family, keys),
+        "fp128_dense" => prepare_family_catalog::<fp128::Dense>(family, keys),
         "fp128_d64_onehot" => prepare_family_catalog::<fp128::D64OneHot>(family, keys),
         "fp128_d64_onehot_recursive" => prepare_family_catalog::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
@@ -402,6 +404,9 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, requests: &[Gro
     match family.module_name {
         "fp128_onehot" => {
             assert_group_batch_table_hits::<fp128::OneHot>(family.module_name, requests)
+        }
+        "fp128_dense" => {
+            assert_group_batch_table_hits::<fp128::Dense>(family.module_name, requests)
         }
         "fp128_d64_onehot" => {
             assert_group_batch_table_hits::<fp128::D64OneHot>(family.module_name, requests)
@@ -493,6 +498,7 @@ fn resolve_family_group_batch_schedule(
 ) -> Result<FoldSchedule, AkitaError> {
     match family.module_name {
         "fp128_onehot" => table_backed_group_batch_schedule::<fp128::OneHot>(request),
+        "fp128_dense" => table_backed_group_batch_schedule::<fp128::Dense>(request),
         "fp128_d64_onehot" => table_backed_group_batch_schedule::<fp128::D64OneHot>(request),
         "fp128_d64_onehot_recursive" => table_backed_group_batch_schedule::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
