@@ -30,20 +30,42 @@ pub trait MulBase<F: FieldCore>: FieldCore {
 
 /// An algebraic extension of base field `F`.
 ///
-/// Provides the extension degree and a constructor from a slice of base-field
-/// coefficients (in the canonical basis `{1, u, u^2, ...}`).
+/// Provides allocation-free coefficient access in the canonical basis
+/// `{1, u, u^2, ...}`. Slice/vector helpers are derived from that canonical
+/// access so coefficient-oriented storage has one source of truth.
 pub trait ExtField<F: FieldCore>: FieldCore + LiftBase<F> + MulBase<F> + FromPrimitiveInt {
     /// Extension degree: `[Self : F]`.
     const EXT_DEGREE: usize;
+
+    /// Construct from a base-coefficient generator.
+    fn from_base_fn<G>(f: G) -> Self
+    where
+        G: FnMut(usize) -> F;
+
+    /// Return coefficient `index` in the canonical basis.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= Self::EXT_DEGREE`.
+    fn base_coefficient(&self, index: usize) -> F;
 
     /// Construct from a coefficient slice `[c0, c1, ..., c_{d-1}]`.
     ///
     /// # Panics
     /// Panics if `coeffs.len() != Self::EXT_DEGREE`.
-    fn from_base_slice(coeffs: &[F]) -> Self;
+    #[inline]
+    fn from_base_slice(coeffs: &[F]) -> Self {
+        assert_eq!(coeffs.len(), Self::EXT_DEGREE);
+        Self::from_base_fn(|index| coeffs[index])
+    }
 
     /// Return base-field coefficients in the canonical basis.
-    fn to_base_vec(&self) -> Vec<F>;
+    #[inline]
+    fn to_base_vec(&self) -> Vec<F> {
+        (0..Self::EXT_DEGREE)
+            .map(|index| self.base_coefficient(index))
+            .collect()
+    }
 }
 
 /// Deferred-reduction extension-times-base multiply.
@@ -283,14 +305,17 @@ impl<F: FieldCore + FromPrimitiveInt> ExtField<F> for F {
     const EXT_DEGREE: usize = 1;
 
     #[inline]
-    fn from_base_slice(coeffs: &[F]) -> Self {
-        assert_eq!(coeffs.len(), 1);
-        coeffs[0]
+    fn from_base_fn<G>(mut f: G) -> Self
+    where
+        G: FnMut(usize) -> F,
+    {
+        f(0)
     }
 
     #[inline]
-    fn to_base_vec(&self) -> Vec<F> {
-        vec![*self]
+    fn base_coefficient(&self, index: usize) -> F {
+        assert_eq!(index, 0);
+        *self
     }
 }
 
@@ -302,14 +327,16 @@ where
     const EXT_DEGREE: usize = 2;
 
     #[inline]
-    fn from_base_slice(coeffs: &[F]) -> Self {
-        assert_eq!(coeffs.len(), 2);
-        Self::new(coeffs[0], coeffs[1])
+    fn from_base_fn<G>(mut f: G) -> Self
+    where
+        G: FnMut(usize) -> F,
+    {
+        Self::new(f(0), f(1))
     }
 
     #[inline]
-    fn to_base_vec(&self) -> Vec<F> {
-        vec![self.coeffs[0], self.coeffs[1]]
+    fn base_coefficient(&self, index: usize) -> F {
+        self.coeffs[index]
     }
 }
 
@@ -320,14 +347,16 @@ where
     const EXT_DEGREE: usize = 4;
 
     #[inline]
-    fn from_base_slice(coeffs: &[F]) -> Self {
-        assert_eq!(coeffs.len(), 4);
-        Self::new([coeffs[0], coeffs[1], coeffs[2], coeffs[3]])
+    fn from_base_fn<G>(f: G) -> Self
+    where
+        G: FnMut(usize) -> F,
+    {
+        Self::new(std::array::from_fn(f))
     }
 
     #[inline]
-    fn to_base_vec(&self) -> Vec<F> {
-        self.coeffs.to_vec()
+    fn base_coefficient(&self, index: usize) -> F {
+        self.coeffs[index]
     }
 }
 
@@ -338,16 +367,16 @@ where
     const EXT_DEGREE: usize = 8;
 
     #[inline]
-    fn from_base_slice(coeffs: &[F]) -> Self {
-        assert_eq!(coeffs.len(), 8);
-        Self::new([
-            coeffs[0], coeffs[1], coeffs[2], coeffs[3], coeffs[4], coeffs[5], coeffs[6], coeffs[7],
-        ])
+    fn from_base_fn<G>(f: G) -> Self
+    where
+        G: FnMut(usize) -> F,
+    {
+        Self::new(std::array::from_fn(f))
     }
 
     #[inline]
-    fn to_base_vec(&self) -> Vec<F> {
-        self.coeffs.to_vec()
+    fn base_coefficient(&self, index: usize) -> F {
+        self.coeffs[index]
     }
 }
 

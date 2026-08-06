@@ -8,6 +8,7 @@ pub mod accum;
 pub mod batched_sumcheck;
 pub mod compact_fold;
 pub mod drivers;
+pub mod evaluation_table;
 pub mod traits;
 pub mod types;
 
@@ -26,6 +27,7 @@ pub use drivers::{
     advance_eq_factored_claim, check_sumcheck_output_claim, EqFactoredSumcheckInstanceProverExt,
     EqFactoredSumcheckInstanceVerifierExt, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
 };
+pub use evaluation_table::EvaluationTable;
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,
     EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,

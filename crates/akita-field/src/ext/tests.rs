@@ -345,6 +345,26 @@ fn ext_field_from_base_slice() {
 }
 
 #[test]
+fn ext_field_coefficient_primitives_round_trip() {
+    fn check<E: ExtField<F>>() {
+        let value = E::from_base_fn(|index| F::from_u64((index + 3) as u64));
+        let expected: Vec<_> = (0..E::EXT_DEGREE)
+            .map(|index| F::from_u64((index + 3) as u64))
+            .collect();
+
+        assert_eq!(value.to_base_vec(), expected);
+        for (index, expected) in expected.into_iter().enumerate() {
+            assert_eq!(value.base_coefficient(index), expected);
+        }
+    }
+
+    check::<F>();
+    check::<E2>();
+    check::<E4>();
+    check::<R8>();
+}
+
+#[test]
 fn extension_fields_are_array_layouts() {
     assert_eq!(core::mem::size_of::<E2>(), core::mem::size_of::<[F; 2]>());
     assert_eq!(core::mem::align_of::<E2>(), core::mem::align_of::<[F; 2]>());
