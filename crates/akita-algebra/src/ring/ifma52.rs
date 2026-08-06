@@ -98,6 +98,12 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
         })
     }
 
+    /// Whether this profile includes an exactness-only i16 CRT limb.
+    #[must_use]
+    pub const fn has_i16_tail(&self) -> bool {
+        self.i16_tail.is_some()
+    }
+
     #[inline]
     fn reconstruct<F: FieldCore + CanonicalField>(
         &self,

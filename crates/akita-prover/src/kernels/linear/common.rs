@@ -176,6 +176,7 @@ pub(super) fn capacity_safe_i8_chunk_width(
 }
 
 #[inline]
+#[cfg(feature = "parallel")]
 pub(super) fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
     acc: &mut CyclotomicCrtNtt<W, K, D>,
     other: &CyclotomicCrtNtt<W, K, D>,
