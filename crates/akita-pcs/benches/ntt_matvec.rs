@@ -99,7 +99,13 @@ fn bench_shape<const D: usize>(
     });
 
     for log_basis in [8, 10, 11] {
-        let cache = prepare(&matrix, NttCacheMode::ExactNegacyclic { width, log_basis });
+        let cache = prepare(
+            &matrix,
+            NttCacheMode::ExactNegacyclic {
+                width,
+                rhs_abs_bound: 1 << (log_basis - 1),
+            },
+        );
         let digits = if log_basis == 8 {
             i8_digits
                 .iter()
@@ -149,7 +155,13 @@ fn bench_equal_output_shape<const D: usize>(
             .map(|ring| ring.map(i16::from))
             .collect::<Vec<_>>();
         let i8_reference = i8_matvec(&i8_cache, rank, width, &i8_digits, log_basis);
-        let cache = prepare(&matrix, NttCacheMode::ExactNegacyclic { width, log_basis });
+        let cache = prepare(
+            &matrix,
+            NttCacheMode::ExactNegacyclic {
+                width,
+                rhs_abs_bound: 1 << (log_basis - 1),
+            },
+        );
         let layout = if cache.has_i16_tail() { "tail" } else { "base" };
         assert_eq!(
             cache
@@ -189,7 +201,13 @@ fn bench_equal_output_shape<const D: usize>(
 
     for log_basis in [10, 11] {
         let digits = sample_i16_digits::<D>(width, log_basis);
-        let cache = prepare(&matrix, NttCacheMode::ExactNegacyclic { width, log_basis });
+        let cache = prepare(
+            &matrix,
+            NttCacheMode::ExactNegacyclic {
+                width,
+                rhs_abs_bound: 1 << (log_basis - 1),
+            },
+        );
         let layout = if cache.has_i16_tail() { "tail" } else { "base" };
         group.bench_function(
             BenchmarkId::new(format!("i16_l{log_basis}_{layout}"), &shape),

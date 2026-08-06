@@ -30,7 +30,7 @@ fn build_negacyclic_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
         matrix,
         NttCacheMode::ExactNegacyclic {
             width: 1,
-            log_basis: 8,
+            rhs_abs_bound: 1 << 7,
         },
     )
 }

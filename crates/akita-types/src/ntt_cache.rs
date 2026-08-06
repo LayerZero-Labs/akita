@@ -256,9 +256,9 @@ pub enum NttCacheMode {
     Cyclic,
     /// Materialize the base-profile negacyclic and cyclic transforms.
     BothTransforms,
-    /// Materialize the minimum exact negacyclic representation for balanced
-    /// base-`2^log_basis` signed coefficients.
-    ExactNegacyclic { width: usize, log_basis: u32 },
+    /// Materialize the minimum exact negacyclic representation for signed
+    /// coefficients whose absolute value is at most `rhs_abs_bound`.
+    ExactNegacyclic { width: usize, rhs_abs_bound: u64 },
 }
 
 /// Optional homogeneous i16 tail attached to one prepared base profile.
@@ -545,29 +545,35 @@ where
 }
 
 fn validate_cache_mode(mode: NttCacheMode) -> Result<(), AkitaError> {
-    if let NttCacheMode::ExactNegacyclic { width, log_basis } = mode {
+    if let NttCacheMode::ExactNegacyclic {
+        width,
+        rhs_abs_bound,
+    } = mode
+    {
         if width == 0 {
             return Err(AkitaError::InvalidSetup(
                 "exact negacyclic NTT width must be nonzero".into(),
             ));
         }
-        if !(1..=16).contains(&log_basis) {
+        if rhs_abs_bound == 0 {
             return Err(AkitaError::InvalidSetup(
-                "exact negacyclic log_basis must be in 1..=16".into(),
+                "exact negacyclic RHS absolute bound must be nonzero".into(),
             ));
         }
     }
     Ok(())
 }
 
-/// Return whether an exact balanced-digit request requires the i16 tail.
+/// Return whether an exact signed-coefficient request requires the i16 tail.
 pub fn ntt_cache_requires_i16_tail<F: CanonicalField, const D: usize>(
     width: usize,
-    log_basis: u32,
+    rhs_abs_bound: u64,
 ) -> Result<bool, AkitaError> {
-    let mode = NttCacheMode::ExactNegacyclic { width, log_basis };
+    let mode = NttCacheMode::ExactNegacyclic {
+        width,
+        rhs_abs_bound,
+    };
     validate_cache_mode(mode)?;
-    let rhs_abs_bound = 1u64 << (log_basis - 1);
     Ok(match select_crt_ntt_params::<F, D>()? {
         ProtocolCrtNttParams::Q32(params) => {
             required_profile_for_params::<F, _, Q32_NUM_PRIMES, D>(&params, width, rhs_abs_bound)?
@@ -664,8 +670,10 @@ fn prepare_ntt_cache_with_tail_prefix<F: FieldCore + CanonicalField, const D: us
                         exact: false,
                     }
                 }
-                NttCacheMode::ExactNegacyclic { width, log_basis } => {
-                    let rhs_abs_bound = 1u64 << (log_basis - 1);
+                NttCacheMode::ExactNegacyclic {
+                    width,
+                    rhs_abs_bound,
+                } => {
                     let needs_tail =
                         required_profile_for_params::<F, _, $k, D>(&params, width, rhs_abs_bound)?;
                     let neg = cfg_iter!(matrix.as_slice())
@@ -801,7 +809,11 @@ impl VerifierNttCache {
         tail_prefix_len: usize,
         mode: NttCacheMode,
     ) -> Result<Arc<PreparedNttCache<D>>, AkitaError> {
-        let NttCacheMode::ExactNegacyclic { width, log_basis } = mode else {
+        let NttCacheMode::ExactNegacyclic {
+            width,
+            rhs_abs_bound,
+        } = mode
+        else {
             return Err(AkitaError::InvalidSetup(
                 "verifier NTT cache requires exact negacyclic mode".into(),
             ));
@@ -812,7 +824,7 @@ impl VerifierNttCache {
                 matrix.ring_d
             )));
         }
-        let with_i16_tail = ntt_cache_requires_i16_tail::<F, D>(width, log_basis)?;
+        let with_i16_tail = ntt_cache_requires_i16_tail::<F, D>(width, rhs_abs_bound)?;
         if with_i16_tail != (tail_prefix_len > 0) {
             return Err(AkitaError::InvalidSetup(
                 "verifier tail prefix disagrees with exactness requirement".into(),
@@ -934,7 +946,7 @@ mod tests {
             view,
             NttCacheMode::ExactNegacyclic {
                 width: 5,
-                log_basis: 16,
+                rhs_abs_bound: 1 << 15,
             },
         )
         .expect("base negacyclic");
@@ -948,7 +960,7 @@ mod tests {
             view,
             NttCacheMode::ExactNegacyclic {
                 width: 5,
-                log_basis: 16,
+                rhs_abs_bound: 1 << 15,
             },
         )
         .expect("tail negacyclic");
@@ -961,21 +973,17 @@ mod tests {
     }
 
     #[test]
-    fn exact_mode_rejects_invalid_balanced_bounds() {
+    fn exact_mode_rejects_invalid_bounds() {
         const D: usize = 64;
         let flat = flat_zeros::<Prime64Offset59, D>(1);
         for mode in [
             NttCacheMode::ExactNegacyclic {
                 width: 0,
-                log_basis: 10,
+                rhs_abs_bound: 1,
             },
             NttCacheMode::ExactNegacyclic {
                 width: 1,
-                log_basis: 0,
-            },
-            NttCacheMode::ExactNegacyclic {
-                width: 1,
-                log_basis: 17,
+                rhs_abs_bound: 0,
             },
         ] {
             let view = flat.ring_view::<D>(1, 1).expect("matrix view");
@@ -998,8 +1006,8 @@ mod tests {
             .crt_capacity()
             .max_safe_width::<Prime128Offset275, D>(1 << 15)
             .expect("one term fits");
-        assert!(!ntt_cache_requires_i16_tail::<Prime128Offset275, D>(safe, 16).unwrap());
-        assert!(ntt_cache_requires_i16_tail::<Prime128Offset275, D>(safe + 1, 16).unwrap());
+        assert!(!ntt_cache_requires_i16_tail::<Prime128Offset275, D>(safe, 1 << 15).unwrap());
+        assert!(ntt_cache_requires_i16_tail::<Prime128Offset275, D>(safe + 1, 1 << 15).unwrap());
     }
 
     #[test]
@@ -1041,7 +1049,7 @@ mod tests {
             flat.ring_view::<D>(1, 2).expect("matrix view"),
             NttCacheMode::ExactNegacyclic {
                 width: 2,
-                log_basis: 10,
+                rhs_abs_bound: 1 << 9,
             },
         )
         .expect("cache");
@@ -1060,7 +1068,7 @@ mod tests {
             flat.ring_view::<D>(1, 1).expect("matrix view"),
             NttCacheMode::ExactNegacyclic {
                 width: 1,
-                log_basis: 10,
+                rhs_abs_bound: 1 << 9,
             },
         )
         .expect("short cache");
@@ -1079,7 +1087,7 @@ mod tests {
                 flat.ring_view::<D>(1, 1).expect("matrix view"),
                 NttCacheMode::ExactNegacyclic {
                     width: 1,
-                    log_basis: 8,
+                    rhs_abs_bound: 1 << 7,
                 },
             )
             .expect("cache"),

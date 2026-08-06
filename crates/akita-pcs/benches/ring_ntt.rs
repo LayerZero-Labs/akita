@@ -571,7 +571,7 @@ fn bench_ntt_cache_construction_d64_q128a7f7(c: &mut Criterion) {
                     view,
                     NttCacheMode::ExactNegacyclic {
                         width: 64,
-                        log_basis: 10,
+                        rhs_abs_bound: 1 << 9,
                     },
                 )
                 .expect("base cache"),
@@ -588,7 +588,7 @@ fn bench_ntt_cache_construction_d64_q128a7f7(c: &mut Criterion) {
                     view,
                     NttCacheMode::ExactNegacyclic {
                         width: 128,
-                        log_basis: 10,
+                        rhs_abs_bound: 1 << 9,
                     },
                 )
                 .expect("tail cache"),

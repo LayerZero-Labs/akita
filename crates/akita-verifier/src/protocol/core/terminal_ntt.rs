@@ -7,6 +7,7 @@ use akita_types::{
 };
 
 pub(super) const TERMINAL_I16_LOG_BASIS: u32 = 16;
+const TERMINAL_I16_ABS_BOUND: u64 = 1 << (TERMINAL_I16_LOG_BASIS - 1);
 
 /// Warm every exact terminal i16 representation selected by a validated schedule.
 pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
@@ -29,7 +30,7 @@ pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
                     "terminal A cache prefix length overflow".into(),
                 ))?;
             let tail_prefix_len =
-                if ntt_cache_requires_i16_tail::<F, D>(max_width, TERMINAL_I16_LOG_BASIS)? {
+                if ntt_cache_requires_i16_tail::<F, D>(max_width, TERMINAL_I16_ABS_BOUND)? {
                     base_prefix_len
                 } else {
                     0
@@ -39,7 +40,7 @@ pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
                     base_prefix_len,
                     tail_prefix_len,
                     max_width,
-                    TERMINAL_I16_LOG_BASIS,
+                    TERMINAL_I16_ABS_BOUND,
                 )?;
             }
             Ok::<(), AkitaError>(())
@@ -80,7 +81,7 @@ where
     let slot = {
         let _span = tracing::info_span!("terminal_ntt_a_i16_cache_lookup").entered();
         let tail_prefix_len =
-            if ntt_cache_requires_i16_tail::<F, D>(rhs.len(), TERMINAL_I16_LOG_BASIS)? {
+            if ntt_cache_requires_i16_tail::<F, D>(rhs.len(), TERMINAL_I16_ABS_BOUND)? {
                 prepared_prefix_len
             } else {
                 0
@@ -89,7 +90,7 @@ where
             prepared_prefix_len,
             tail_prefix_len,
             rhs.len(),
-            TERMINAL_I16_LOG_BASIS,
+            TERMINAL_I16_ABS_BOUND,
         )?
     };
     let _span = tracing::info_span!("terminal_ntt_a_i16_accumulate").entered();
@@ -179,7 +180,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(
-            ntt_cache_requires_i16_tail::<F, D>(5, TERMINAL_I16_LOG_BASIS)
+            ntt_cache_requires_i16_tail::<F, D>(5, TERMINAL_I16_ABS_BOUND)
                 .expect("tail capability")
         );
         assert_eq!(
@@ -229,7 +230,7 @@ mod tests {
         .expect("matching public-matrix identity");
         let rhs = vec![[i16::MAX; D]; 5];
         assert!(
-            !ntt_cache_requires_i16_tail::<F32, D>(rhs.len(), TERMINAL_I16_LOG_BASIS)
+            !ntt_cache_requires_i16_tail::<F32, D>(rhs.len(), TERMINAL_I16_ABS_BOUND)
                 .expect("q32 terminal capability")
         );
         centered_rows(&setup, 2, &rhs, 10).expect("q32 i16 terminal matvec");
@@ -279,12 +280,12 @@ mod tests {
         assert!(safe_width < 4);
 
         let initial_tail = setup
-            .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_LOG_BASIS)
+            .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_ABS_BOUND)
             .expect("tail prefix");
         assert!(initial_tail.has_i16_tail());
 
         let combined = setup
-            .prepared_verifier_ntt_prefix::<D>(10, 0, safe_width, TERMINAL_I16_LOG_BASIS)
+            .prepared_verifier_ntt_prefix::<D>(10, 0, safe_width, TERMINAL_I16_ABS_BOUND)
             .expect("larger base-only prefix");
         assert!(combined.has_i16_tail());
         assert_eq!(
@@ -293,12 +294,12 @@ mod tests {
                 + 4 * D * core::mem::size_of::<i16>()
         );
         let reused_other_basis = setup
-            .prepared_verifier_ntt_prefix::<D>(10, 0, 1, 15)
+            .prepared_verifier_ntt_prefix::<D>(10, 0, 1, 1 << 14)
             .expect("same physical cache for another exact bound");
         assert!(Arc::ptr_eq(&combined, &reused_other_basis));
 
         let reused_tail = setup
-            .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_LOG_BASIS)
+            .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_ABS_BOUND)
             .expect("reused tail prefix");
         assert!(Arc::ptr_eq(&combined, &reused_tail));
     }
