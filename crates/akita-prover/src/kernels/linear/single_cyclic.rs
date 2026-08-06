@@ -133,7 +133,7 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
         n_a,
         vec_len,
         chunk_width,
-        base_tile_width::<W, K, D>(),
+        base_tile_width::<W, K, D>(n_a),
         chunk_width,
         params,
         |accs, start, end| {
@@ -184,7 +184,7 @@ pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
         n_a,
         vec_len,
         chunk_width,
-        base_tile_width::<W, K, D>(),
+        base_tile_width::<W, K, D>(n_a),
         chunk_width,
         params,
         |accs, start, end| {

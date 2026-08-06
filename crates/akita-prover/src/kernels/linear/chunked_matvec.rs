@@ -1,9 +1,20 @@
 use super::*;
 
 /// L2-cache-sized column tile width for the one-shot CRT accumulation path.
+///
+/// One logical matrix column contains one CRT ring for every output row. The
+/// row count must therefore participate in the byte budget; otherwise a
+/// nominal one-cache tile grows by `num_rows` at the wide root matrices.
 #[inline]
-pub(super) fn base_tile_width<W: PrimeWidth, const K: usize, const D: usize>() -> usize {
-    (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1)
+pub(super) fn base_tile_width<W: PrimeWidth, const K: usize, const D: usize>(
+    num_rows: usize,
+) -> usize {
+    let bytes_per_column = num_rows
+        .max(1)
+        .saturating_mul(K)
+        .saturating_mul(D)
+        .saturating_mul(size_of::<W>());
+    (TARGET_L2_CACHE_BYTES / bytes_per_column).max(1)
 }
 
 /// Shared one-shot/chunked driver for block-shaped CRT matvecs that produce

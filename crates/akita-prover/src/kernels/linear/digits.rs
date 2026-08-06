@@ -93,7 +93,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
         n_a,
         inner_width,
         safe_width,
-        base_tile_width::<W, K, D>(),
+        base_tile_width::<W, K, D>(n_a),
         safe_width,
         params,
         |accs, start, end| {
@@ -193,7 +193,7 @@ pub(super) fn mat_vec_mul_raw_digits_i8_with_params<
         n_a,
         inner_width,
         safe_width,
-        base_tile_width::<W, K, D>(),
+        base_tile_width::<W, K, D>(n_a),
         safe_width,
         params,
         |accs, start, end| {
