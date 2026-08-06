@@ -122,7 +122,6 @@ fn audit_precommitted_group(
             &params.fold_challenge_config,
             akita_challenges::TensorChallengeShape::Flat,
             params.num_digits_fold,
-            policy.ring_subfield_norm_bound,
         ),
     )?;
     audit_bound(
@@ -234,7 +233,6 @@ fn audit_committed_params(
             &params.fold_challenge_config,
             params.fold_challenge_shape,
             params.num_digits_fold,
-            policy.ring_subfield_norm_bound,
         ),
     )?;
     audit_bound(

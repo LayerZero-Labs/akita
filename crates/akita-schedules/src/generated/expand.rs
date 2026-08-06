@@ -165,7 +165,6 @@ impl GeneratedSetupPrefixInput {
             &ring_challenge_cfg,
             fold_shape,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(
@@ -490,7 +489,6 @@ impl GeneratedCommittedGroup {
             &ring_challenge_cfg,
             fold_shape,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(
@@ -739,7 +737,6 @@ impl GeneratedCommittedGroup {
             &ring_challenge_cfg,
             fold_shape,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(

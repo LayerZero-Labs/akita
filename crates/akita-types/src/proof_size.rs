@@ -178,6 +178,8 @@ mod tests {
     };
 
     type F = Prime128OffsetA7F7;
+    // `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
+    const TEST_TERMINAL_A_BUCKET: u128 = 4_095;
 
     fn terminal_response_fixture(
         lp: &CommittedGroupParams,
@@ -635,7 +637,7 @@ mod tests {
         let num_claims = 3;
 
         for log_basis in 2..=6 {
-            let lp = CommittedGroupParams::params_only(
+            let mut lp = CommittedGroupParams::params_only(
                 SisModulusProfileId::Q128OffsetA7F7,
                 D,
                 log_basis,
@@ -646,6 +648,16 @@ mod tests {
             )
             .with_decomp(1, 1, 1, 1, 1)
             .unwrap();
+            let inner = lp.inner_commit_matrix;
+            lp.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+                inner.security_policy(),
+                inner.sis_table_key().table_digest,
+                inner.sis_modulus_profile(),
+                inner.output_rank(),
+                inner.input_width(),
+                TEST_TERMINAL_A_BUCKET,
+                inner.ring_dimension(),
+            );
 
             let (terminal_response, witness_shape) = terminal_response_fixture(&lp, num_claims);
             let terminal_response_bytes_runtime = terminal_response.serialized_size(Compress::No);

@@ -101,7 +101,6 @@ fn materialize_precommitted_group_for_open_basis(
         ring_challenge_cfg,
         challenge_shape,
         num_digits_fold,
-        policy.ring_subfield_norm_bound,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("no precommitted A-role norm".to_string()))?;
     if required_a_bound > group.inner_commit_matrix.coeff_linf_bound() {

@@ -182,7 +182,6 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
             ring_challenge_cfg,
             fold_shape,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         ) else {
             continue;
         };

@@ -194,6 +194,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "rayon",
+ "sha2",
  "thiserror",
 ]
 

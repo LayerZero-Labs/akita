@@ -411,31 +411,20 @@ impl CommittedGroupParams {
                 "terminal response requires an A-role inner matrix".to_string(),
             ));
         }
-        let collision_capacity =
-            inner_commit_matrix
-                .max_secure_collision_linf()
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "terminal inner matrix has no supported SIS collision capacity".to_string(),
-                    )
-                })?;
+        // Bind the terminal wire to the selected SIS bucket. A larger bucket
+        // that the same rank happens to support is unused schedule slack.
+        let collision_capacity = inner_commit_matrix.coeff_linf_bound();
         let challenge = crate::sis::FoldChallengeNorms::new(
             &self.fold_challenge_config,
             params.fold_challenge_shape(),
         );
-        crate::sis::max_response_linf_for_role_a_collision(
-            collision_capacity,
-            challenge.l1_norm,
-            inner_commit_matrix
-                .sis_modulus_profile()
-                .ring_subfield_embedding_norm_bound(),
-        )
-        .filter(|&limit| limit > 0)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "terminal inner matrix cannot certify a nonzero folded response".to_string(),
-            )
-        })
+        crate::sis::max_response_linf_for_role_a_collision(collision_capacity, challenge.l1_norm)
+            .filter(|&limit| limit > 0)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "terminal inner matrix cannot certify a nonzero folded response".to_string(),
+                )
+            })
     }
 
     /// Number of Boolean coordinates in the block-index domain.

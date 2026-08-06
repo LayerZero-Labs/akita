@@ -7,7 +7,8 @@ import subprocess
 from pathlib import Path
 
 # malb/lattice-estimator#217 head; strict descendant of malb#213 @ 27a581b.
-# Euclidean (BDGL16, norm=2) output is unchanged from 27a581b; infinity needs #217.
+# Euclidean geometry is unchanged from 27a581b; Akita prices its required BKZ
+# block size with ADPS16 quantum. Infinity needs #217.
 PINNED_LATTICE_ESTIMATOR_SHA = "c667a48546f140c3a5454c7503c3ca44a264cce2"
 
 

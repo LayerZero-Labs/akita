@@ -75,7 +75,6 @@ pub(crate) fn recursive_fold_level_params_candidate(
         ring_challenge_cfg,
         fold_challenge_shape,
         num_digits_fold,
-        policy.ring_subfield_norm_bound,
     ) else {
         return Ok(None);
     };
