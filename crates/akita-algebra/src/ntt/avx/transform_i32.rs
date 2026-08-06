@@ -8,8 +8,8 @@ use super::montgomery::{
     mont_mul_8x_i32_avx2, reduce_range_4x_i32_avx2, reduce_range_8x_i32_avx2,
 };
 use super::{d32, wide512};
+use crate::ntt::batched_four_point_eligible;
 use crate::ntt::butterfly::NttTwiddles;
-use crate::ntt::forward_dif_tail_eligible;
 use crate::ntt::prime::{MontCoeff, NttPrime};
 
 /// Fuse two adjacent forward DIF stages while their four data quarters are in
@@ -351,7 +351,7 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
         len /= 2;
     }
 
-    if forward_dif_tail_eligible::<D>() {
+    if batched_four_point_eligible::<D>(4) {
         // SAFETY: guaranteed by this function's safety contract.
         unsafe {
             forward_dif_tail_i32_avx2::<D>(
@@ -630,7 +630,7 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
         len /= 2;
     }
 
-    if forward_dif_tail_eligible::<D>() {
+    if batched_four_point_eligible::<D>(4) {
         // SAFETY: guaranteed by this function's safety contract.
         unsafe {
             forward_dif_tail_i32_avx2::<D>(

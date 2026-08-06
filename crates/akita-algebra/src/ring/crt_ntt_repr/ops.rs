@@ -11,7 +11,8 @@ use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
 use crate::{AkitaError, CanonicalField, CyclotomicRing, FieldCore};
 
-use super::{CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut};
+use super::convert::CenteredI16NttConverter;
+use super::{CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut};
 
 impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// The additive identity (all zeros in every CRT limb).
@@ -63,34 +64,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             return Ok(vec![Self::zero(); num_rows]);
         }
 
-        #[cfg(target_arch = "aarch64")]
-        let use_direct_i16 = params.kernel_plan.uses_neon()
-            && (size_of::<W>() == size_of::<i16>() || size_of::<W>() == size_of::<i32>());
-        #[cfg(not(target_arch = "aarch64"))]
-        let use_direct_i16 = false;
-        let lut = if use_direct_i16 {
-            None
-        } else {
-            let rhs_abs_bound = rhs
-                .iter()
-                .flatten()
-                .map(|&digit| i32::from(digit).unsigned_abs())
-                .max()
-                .unwrap_or(0) as i32;
-            Some(CenteredMontLut::new(params, rhs_abs_bound))
-        };
+        let converter = CenteredI16NttConverter::new(params, rhs);
         let mut accumulators = vec![Self::zero(); num_rows];
         if !params.uses_lazy_i32_dot() {
             for (column, digits) in rhs.iter().enumerate() {
                 if digits.iter().all(|&digit| digit == 0) {
                     continue;
                 }
-                let transformed = if let Some(lut) = &lut {
-                    let centered = digits.map(i32::from);
-                    Self::from_centered_i32_with_lut(&centered, params, lut)
-                } else {
-                    Self::from_centered_i16_with_params(digits, params)
-                };
+                let transformed = converter.transform(digits);
                 for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
                 {
                     let matrix_entry = row.get(column).ok_or_else(|| {
@@ -111,12 +92,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 if digits.iter().all(|&digit| digit == 0) {
                     break;
                 }
-                let transformed_rhs = if let Some(lut) = &lut {
-                    let centered = digits.map(i32::from);
-                    Self::from_centered_i32_with_lut(&centered, params, lut)
-                } else {
-                    Self::from_centered_i16_with_params(digits, params)
-                };
+                let transformed_rhs = converter.transform(digits);
                 transformed.push(transformed_rhs);
             }
 
@@ -136,12 +112,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 if digits.iter().all(|&digit| digit == 0) {
                     continue;
                 }
-                let transformed = if let Some(lut) = &lut {
-                    let centered = digits.map(i32::from);
-                    Self::from_centered_i32_with_lut(&centered, params, lut)
-                } else {
-                    Self::from_centered_i16_with_params(digits, params)
-                };
+                let transformed = converter.transform(digits);
                 let column = batch_start + offset;
                 for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
                 {

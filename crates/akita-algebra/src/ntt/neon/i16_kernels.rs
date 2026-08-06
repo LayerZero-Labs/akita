@@ -1,5 +1,6 @@
 use std::arch::aarch64::*;
 
+use crate::ntt::batched_four_point_eligible;
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::prime::{MontCoeff, NttPrime};
 
@@ -219,7 +220,7 @@ pub(crate) unsafe fn forward_ntt_i16<const D: usize>(
         len /= 2;
     }
 
-    if D.is_multiple_of(32) {
+    if batched_four_point_eligible::<D>(8) {
         forward_dif_tail_i16::<D>(a_ptr, tw.fwd_twiddles.as_ptr() as *const i16, p_q, pinv_q);
     } else {
         while len > 0 {
@@ -257,7 +258,7 @@ pub(crate) unsafe fn inverse_ntt_i16<const D: usize>(
     let pinv_q = vdupq_n_s16(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i16;
 
-    let mut len = if D.is_multiple_of(32) {
+    let mut len = if batched_four_point_eligible::<D>(8) {
         inverse_dit_head_i16::<D>(a_ptr, tw.inv_twiddles.as_ptr() as *const i16, p_q, pinv_q);
         4usize
     } else {

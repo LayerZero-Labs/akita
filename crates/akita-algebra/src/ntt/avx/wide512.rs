@@ -24,8 +24,8 @@ use super::{
     mont_mul_16x_i32_avx512, mont_mul_4x_i32_avx2, mont_mul_8x_i32_avx2,
     reduce_range_16x_i32_avx512, reduce_range_4x_i32_avx2, reduce_range_8x_i32_avx2,
 };
+use crate::ntt::batched_four_point_eligible;
 use crate::ntt::butterfly::NttTwiddles;
-use crate::ntt::forward_dif_tail_eligible;
 use crate::ntt::prime::{MontCoeff, NttPrime};
 
 /// Forward DIF butterfly stages over the cyclic NTT, width-aware.
@@ -110,7 +110,7 @@ unsafe fn forward_dif_stages<const D: usize>(
         len /= 2;
     }
 
-    if forward_dif_tail_eligible::<D>() {
+    if batched_four_point_eligible::<D>(4) {
         // SAFETY: AVX2 proven by this function's safety contract.
         unsafe { forward_dif_tail_i32_avx2::<D>(a_ptr, tw_ptr, p128, pinv128) };
     } else {
@@ -346,7 +346,7 @@ pub(super) unsafe fn forward_ntt_i32<const D: usize>(
     unsafe {
         mont_mul_table(a, prime, &tw.psi_pows);
         forward_dif_stages(a, prime, tw);
-        if !forward_dif_tail_eligible::<D>() {
+        if !batched_four_point_eligible::<D>(4) {
             reduce_range_all(a, prime);
         }
     }
@@ -384,7 +384,7 @@ pub(super) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
     // SAFETY: feature contract forwarded to each helper.
     unsafe {
         forward_dif_stages(a, prime, tw);
-        if !forward_dif_tail_eligible::<D>() {
+        if !batched_four_point_eligible::<D>(4) {
             reduce_range_all(a, prime);
         }
     }

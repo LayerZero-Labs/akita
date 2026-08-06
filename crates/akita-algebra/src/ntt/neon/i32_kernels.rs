@@ -1,7 +1,7 @@
 use std::arch::aarch64::*;
 
+use crate::ntt::batched_four_point_eligible;
 use crate::ntt::butterfly::NttTwiddles;
-use crate::ntt::forward_dif_tail_policy::forward_dif_tail_eligible;
 use crate::ntt::prime::{MontCoeff, NttPrime};
 
 /// True 4-wide signed Montgomery multiply for i32 primes.
@@ -220,7 +220,7 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
     // Final two stages (len = 2, 1). The vectorized tail already normalizes its
     // outputs to [0, p), so the closing reduce_range pass is only needed on the
     // scalar fallback (D not a multiple of 16).
-    if forward_dif_tail_eligible::<D>() {
+    if batched_four_point_eligible::<D>(4) {
         forward_dif_tail_i32::<D>(a_ptr, tw.fwd_twiddles.as_ptr() as *const i32, p_q, pinv_q);
     } else {
         while len > 0 {
@@ -256,7 +256,7 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
 
     // DIT butterfly stages. The first two stages are deinterleaved across four
     // independent size-4 sub-transforms when the degree permits it.
-    let mut len = if forward_dif_tail_eligible::<D>() {
+    let mut len = if batched_four_point_eligible::<D>(4) {
         inverse_dit_head_i32::<D>(a_ptr, tw.inv_twiddles.as_ptr() as *const i32, p_q, pinv_q);
         4
     } else {
@@ -346,7 +346,7 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
         len /= 2;
     }
 
-    if forward_dif_tail_eligible::<D>() {
+    if batched_four_point_eligible::<D>(4) {
         forward_dif_tail_i32::<D>(a_ptr, tw.fwd_twiddles.as_ptr() as *const i32, p_q, pinv_q);
     } else {
         while len > 0 {
@@ -380,7 +380,7 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
     let pinv_q = vdupq_n_s32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
 
-    let mut len = if forward_dif_tail_eligible::<D>() {
+    let mut len = if batched_four_point_eligible::<D>(4) {
         inverse_dit_head_i32::<D>(a_ptr, tw.inv_twiddles.as_ptr() as *const i32, p_q, pinv_q);
         4
     } else {

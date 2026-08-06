@@ -119,8 +119,8 @@ This is a full deletion across multiple crates, with the main ownership boundari
 - `akita-algebra`
   - Removes the Q16-specific CRT/NTT tables and Garner constants (`Q16_PRIMES`, `Q16_NUM_PRIMES`, `Q16_MODULUS`, `q16_garner` in `crates/akita-algebra/src/ntt/tables.rs`) and the Q16 prime-table tests.
   - Keeps the generic `i16` NTT prime width.
-    `PrimeWidth`'s `i16` implementation (`crates/akita-algebra/src/ntt/prime.rs`), the i16 butterfly/Montgomery/NEON/AVX kernels (`ntt/neon.rs`, `ntt/butterfly.rs`, `ntt/avx/*`), and the `size_of::<W>() == size_of::<i16>()` dispatch in `ring/crt_ntt_repr/ops.rs` stay in place.
-    They lose their only shipped consumer once Q16 is gone, but they remain referenced by the generic NTT dispatch and exercised by their synthetic-prime unit tests (e.g. `ntt/avx/tests.rs` builds primes via `NttPrime::compute(15361_i16)`, not `Q16_PRIMES`), so they continue to build cleanly under `-D warnings`.
+    `PrimeWidth`'s `i16` implementation (`crates/akita-algebra/src/ntt/prime.rs`), the i16 butterfly/Montgomery/NEON/AVX kernels (`ntt/neon/`, `ntt/butterfly.rs`, `ntt/avx/*`), and width dispatch in `ring/crt_ntt_repr/` stay in place.
+    Q16 was their only field-profile consumer at the time of this deletion. The later exact-cache infrastructure uses the same width for its production 12289 tail prime and tests it against scalar arithmetic, so these kernels remain an active supported path and continue to build cleanly under `-D warnings`.
 
 - `akita-prover`
   - Removes the Q16 CRT/NTT protocol parameter variant (`ProtocolCrtNttParams::Q16`) and the `NttSlotCache::Q16` cache variant in `crates/akita-prover/src/kernels/crt_ntt.rs`, plus any Q16 kernel dispatch.
