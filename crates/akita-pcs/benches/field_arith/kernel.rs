@@ -6,7 +6,9 @@ use akita_field::{
     CanonicalField, FieldCore, FpExt4, Prime128Offset275, Prime32Offset99, RandomSampling, Zero,
 };
 use akita_prover::kernels::sumcheck::SumcheckKernelPlan;
-use akita_sumcheck::{compute_product_round_scalar, EvaluationTable};
+use akita_sumcheck::{
+    compute_product_round_scalar, fold_and_compute_product_round_scalar, EvaluationTable,
+};
 use criterion::{black_box, BatchSize, Criterion, Throughput};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -272,6 +274,36 @@ fn bench_fp32_ext4_sumcheck_fold(c: &mut Criterion) {
         })
     });
 
+    group.bench_function("scalar_fused_fold_product_round_evaluation_tables", |b| {
+        b.iter_batched(
+            || (runtime_table.clone(), product_factor.clone()),
+            |(mut witness, mut factor)| {
+                black_box(fold_and_compute_product_round_scalar(
+                    &mut witness,
+                    &mut factor,
+                    challenge,
+                ));
+                black_box((witness, factor));
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    group.bench_function("runtime_fused_fold_product_round_evaluation_tables", |b| {
+        b.iter_batched(
+            || (runtime_table.clone(), product_factor.clone()),
+            |(mut witness, mut factor)| {
+                black_box(runtime_plan.fold_and_compute_product_round_fp32(
+                    &mut witness,
+                    &mut factor,
+                    challenge,
+                ));
+                black_box((witness, factor));
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
     #[cfg(target_arch = "x86_64")]
     if std::is_x86_feature_detected!("avx2") {
         group.bench_function("runtime_avx2_evaluation_table", |b| {
@@ -292,6 +324,23 @@ fn bench_fp32_ext4_sumcheck_fold(c: &mut Criterion) {
                 ))
             })
         });
+        group.bench_function(
+            "runtime_avx2_fused_fold_product_round_evaluation_tables",
+            |b| {
+                b.iter_batched(
+                    || (runtime_table.clone(), product_factor.clone()),
+                    |(mut witness, mut factor)| {
+                        black_box(bench_fused_product_round_fp32_avx2(
+                            &mut witness,
+                            &mut factor,
+                            challenge,
+                        ));
+                        black_box((witness, factor));
+                    },
+                    BatchSize::SmallInput,
+                )
+            },
+        );
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -317,6 +366,23 @@ fn bench_fp32_ext4_sumcheck_fold(c: &mut Criterion) {
                 ))
             })
         });
+        group.bench_function(
+            "runtime_avx512_ifma_fused_fold_product_round_evaluation_tables",
+            |b| {
+                b.iter_batched(
+                    || (runtime_table.clone(), product_factor.clone()),
+                    |(mut witness, mut factor)| {
+                        black_box(bench_fused_product_round_fp32_avx512_ifma(
+                            &mut witness,
+                            &mut factor,
+                            challenge,
+                        ));
+                        black_box((witness, factor));
+                    },
+                    BatchSize::SmallInput,
+                )
+            },
+        );
     }
 
     group.throughput(Throughput::Elements((2 * half) as u64));
@@ -358,22 +424,11 @@ fn bench_fold_fp32_avx2<const P: u32>(
     challenge: FpExt4<Fp32<P>>,
 ) {
     let half = table.len() / 2;
-    let [coefficient_0, coefficient_1, coefficient_2, coefficient_3] =
-        table.coefficient_slices_mut::<4>();
-    let (left_0, right_0) = coefficient_0.split_at_mut(half);
-    let (left_1, right_1) = coefficient_1.split_at_mut(half);
-    let (left_2, right_2) = coefficient_2.split_at_mut(half);
-    let (left_3, right_3) = coefficient_3.split_at_mut(half);
+    let (left, right) = bench_coefficient_halves_mut(table);
 
     // SAFETY: the benchmark only calls this helper after detecting AVX2. Its
     // fixed power-of-two input gives every coefficient equal complete halves.
-    unsafe {
-        akita_field::packed::runtime_x86::fold_fp_ext4_fp32_avx2(
-            [left_0, left_1, left_2, left_3],
-            [right_0, right_1, right_2, right_3],
-            challenge,
-        )
-    };
+    unsafe { akita_field::packed::runtime_x86::fold_fp_ext4_fp32_avx2(left, right, challenge) };
     table.truncate(half);
 }
 
@@ -383,22 +438,13 @@ fn bench_fold_fp32_avx512_ifma<const P: u32>(
     challenge: FpExt4<Fp32<P>>,
 ) {
     let half = table.len() / 2;
-    let [coefficient_0, coefficient_1, coefficient_2, coefficient_3] =
-        table.coefficient_slices_mut::<4>();
-    let (left_0, right_0) = coefficient_0.split_at_mut(half);
-    let (left_1, right_1) = coefficient_1.split_at_mut(half);
-    let (left_2, right_2) = coefficient_2.split_at_mut(half);
-    let (left_3, right_3) = coefficient_3.split_at_mut(half);
+    let (left, right) = bench_coefficient_halves_mut(table);
 
     // SAFETY: the benchmark only calls this helper after detecting AVX-512F,
     // AVX-512DQ, and AVX-512IFMA. Its fixed power-of-two input gives every
     // coefficient equal complete halves.
     unsafe {
-        akita_field::packed::runtime_x86::fold_fp_ext4_fp32_avx512_ifma(
-            [left_0, left_1, left_2, left_3],
-            [right_0, right_1, right_2, right_3],
-            challenge,
-        )
+        akita_field::packed::runtime_x86::fold_fp_ext4_fp32_avx512_ifma(left, right, challenge)
     };
     table.truncate(half);
 }
@@ -445,6 +491,74 @@ fn bench_product_round_fp32_avx512_ifma<const P: u32>(
             witness_0, witness_1, factor_0, factor_1,
         )
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn bench_fused_product_round_fp32_avx2<const P: u32>(
+    witness: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    factor: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    challenge: FpExt4<Fp32<P>>,
+) -> (FpExt4<Fp32<P>>, FpExt4<Fp32<P>>) {
+    let half = witness.len() / 2;
+    let (witness_left, witness_right) = bench_coefficient_halves_mut(witness);
+    let (factor_left, factor_right) = bench_coefficient_halves_mut(factor);
+    // SAFETY: the benchmark only calls this helper after detecting AVX2. All
+    // slices come from equal halves of same-length power-of-two tables.
+    let round = unsafe {
+        akita_field::packed::runtime_x86::fold_and_compute_product_round_fp_ext4_fp32_avx2(
+            witness_left,
+            witness_right,
+            factor_left,
+            factor_right,
+            challenge,
+        )
+    };
+    witness.truncate(half);
+    factor.truncate(half);
+    round
+}
+
+#[cfg(target_arch = "x86_64")]
+fn bench_fused_product_round_fp32_avx512_ifma<const P: u32>(
+    witness: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    factor: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    challenge: FpExt4<Fp32<P>>,
+) -> (FpExt4<Fp32<P>>, FpExt4<Fp32<P>>) {
+    let half = witness.len() / 2;
+    let (witness_left, witness_right) = bench_coefficient_halves_mut(witness);
+    let (factor_left, factor_right) = bench_coefficient_halves_mut(factor);
+    // SAFETY: the benchmark only calls this helper after detecting AVX-512F,
+    // AVX-512DQ, and AVX-512IFMA. All slices come from equal halves of
+    // same-length power-of-two tables.
+    let round = unsafe {
+        akita_field::packed::runtime_x86::fold_and_compute_product_round_fp_ext4_fp32_avx512_ifma(
+            witness_left,
+            witness_right,
+            factor_left,
+            factor_right,
+            challenge,
+        )
+    };
+    witness.truncate(half);
+    factor.truncate(half);
+    round
+}
+
+#[cfg(target_arch = "x86_64")]
+fn bench_coefficient_halves_mut<const P: u32>(
+    table: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+) -> ([&mut [Fp32<P>]; 4], [&[Fp32<P>]; 4]) {
+    let half = table.len() / 2;
+    let [coefficient_0, coefficient_1, coefficient_2, coefficient_3] =
+        table.coefficient_slices_mut::<4>();
+    let (left_0, right_0) = coefficient_0.split_at_mut(half);
+    let (left_1, right_1) = coefficient_1.split_at_mut(half);
+    let (left_2, right_2) = coefficient_2.split_at_mut(half);
+    let (left_3, right_3) = coefficient_3.split_at_mut(half);
+    (
+        [left_0, left_1, left_2, left_3],
+        [right_0, right_1, right_2, right_3],
+    )
 }
 
 fn bench_packed_sumcheck_mix(c: &mut Criterion) {

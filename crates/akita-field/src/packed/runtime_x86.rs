@@ -175,6 +175,77 @@ pub unsafe fn compute_product_round_fp_ext4_fp32_avx512_ifma<const P: u32>(
     }
 }
 
+/// Fold two fp32 quartic-extension tables and compute the next product round
+/// eight rows at a time.
+///
+/// Each left and right table contains one binding-order half for the variable
+/// being folded. All sixteen coefficient slices must have the same even length.
+/// Half of that length must be a multiple of eight.
+///
+/// # Panics
+///
+/// Panics if the slice shapes do not satisfy these requirements.
+///
+/// # Safety
+///
+/// The caller must establish that AVX2 is available on the current CPU.
+#[target_feature(enable = "avx2")]
+pub unsafe fn fold_and_compute_product_round_fp_ext4_fp32_avx2<const P: u32>(
+    witness_left: [&mut [Fp32<P>]; 4],
+    witness_right: CoefficientSlices<'_, P>,
+    factor_left: [&mut [Fp32<P>]; 4],
+    factor_right: CoefficientSlices<'_, P>,
+    challenge: FpExt4<Fp32<P>>,
+) -> (FpExt4<Fp32<P>>, FpExt4<Fp32<P>>) {
+    // SAFETY: the target feature above matches the packed backend, and the
+    // generic loop validates every input and output before accessing it.
+    unsafe {
+        fold_and_compute_product_round_packed::<P, PackedFp32Avx2<P>>(
+            witness_left,
+            witness_right,
+            factor_left,
+            factor_right,
+            challenge,
+        )
+    }
+}
+
+/// Fold two fp32 quartic-extension tables and compute the next product round
+/// sixteen rows at a time.
+///
+/// Each left and right table contains one binding-order half for the variable
+/// being folded. All sixteen coefficient slices must have the same even length.
+/// Half of that length must be a multiple of sixteen.
+///
+/// # Panics
+///
+/// Panics if the slice shapes do not satisfy these requirements.
+///
+/// # Safety
+///
+/// The caller must establish that AVX-512F, AVX-512DQ, and AVX-512IFMA are
+/// available on the current CPU.
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+pub unsafe fn fold_and_compute_product_round_fp_ext4_fp32_avx512_ifma<const P: u32>(
+    witness_left: [&mut [Fp32<P>]; 4],
+    witness_right: CoefficientSlices<'_, P>,
+    factor_left: [&mut [Fp32<P>]; 4],
+    factor_right: CoefficientSlices<'_, P>,
+    challenge: FpExt4<Fp32<P>>,
+) -> (FpExt4<Fp32<P>>, FpExt4<Fp32<P>>) {
+    // SAFETY: the target features above match the packed backend, and the
+    // generic loop validates every input and output before accessing it.
+    unsafe {
+        fold_and_compute_product_round_packed::<P, PackedFp32Avx512<P>>(
+            witness_left,
+            witness_right,
+            factor_left,
+            factor_right,
+            challenge,
+        )
+    }
+}
+
 #[inline(always)]
 unsafe fn compute_product_round_packed<const P: u32, PF>(
     witness_0: CoefficientSlices<'_, P>,
@@ -206,13 +277,69 @@ where
         quadratic = quadratic + (witness_1 - witness_0) * (factor_1 - factor_0);
     }
 
-    let mut constant_sum = zero;
-    let mut quadratic_sum = zero;
-    for lane in 0..PF::WIDTH {
-        constant_sum += constant.extract(lane);
-        quadratic_sum += quadratic.extract(lane);
+    sum_product_round_lanes(constant, quadratic)
+}
+
+#[inline(always)]
+unsafe fn fold_and_compute_product_round_packed<const P: u32, PF>(
+    witness_left: [&mut [Fp32<P>]; 4],
+    witness_right: CoefficientSlices<'_, P>,
+    factor_left: [&mut [Fp32<P>]; 4],
+    factor_right: CoefficientSlices<'_, P>,
+    challenge: FpExt4<Fp32<P>>,
+) -> (FpExt4<Fp32<P>>, FpExt4<Fp32<P>>)
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let len = validate_fused_product_round_slices(
+        &witness_left,
+        &witness_right,
+        &factor_left,
+        &factor_right,
+        PF::WIDTH,
+    );
+    let quarter = len / 2;
+    let witness_left = witness_left.map(|slice| slice.as_mut_ptr());
+    let witness_right = witness_right.map(|slice| slice.as_ptr());
+    let factor_left = factor_left.map(|slice| slice.as_mut_ptr());
+    let factor_right = factor_right.map(|slice| slice.as_ptr());
+    let witness_left_read = witness_left.map(|pointer| pointer.cast_const());
+    let factor_left_read = factor_left.map(|pointer| pointer.cast_const());
+    let challenge = PackedFpExt4::<Fp32<P>, PF>::broadcast(challenge);
+    let zero = FpExt4::<Fp32<P>>::zero();
+    let mut constant = PackedFpExt4::<Fp32<P>, PF>::broadcast(zero);
+    let mut quadratic = PackedFpExt4::<Fp32<P>, PF>::broadcast(zero);
+
+    for row in (0..quarter).step_by(PF::WIDTH) {
+        // SAFETY: validation establishes complete chunks at `row` and
+        // `row + quarter` in every coefficient slice.
+        let witness_00 = unsafe { read_packed_fp_ext4::<P, PF>(witness_left_read, row) };
+        let witness_01 = unsafe { read_packed_fp_ext4::<P, PF>(witness_right, row) };
+        let witness_10 = unsafe { read_packed_fp_ext4::<P, PF>(witness_left_read, row + quarter) };
+        let witness_11 = unsafe { read_packed_fp_ext4::<P, PF>(witness_right, row + quarter) };
+        let factor_00 = unsafe { read_packed_fp_ext4::<P, PF>(factor_left_read, row) };
+        let factor_01 = unsafe { read_packed_fp_ext4::<P, PF>(factor_right, row) };
+        let factor_10 = unsafe { read_packed_fp_ext4::<P, PF>(factor_left_read, row + quarter) };
+        let factor_11 = unsafe { read_packed_fp_ext4::<P, PF>(factor_right, row + quarter) };
+
+        let witness_0 = witness_00 + (witness_01 - witness_00) * challenge;
+        let witness_1 = witness_10 + (witness_11 - witness_10) * challenge;
+        let factor_0 = factor_00 + (factor_01 - factor_00) * challenge;
+        let factor_1 = factor_10 + (factor_11 - factor_10) * challenge;
+        constant = constant + witness_0 * factor_0;
+        quadratic = quadratic + (witness_1 - witness_0) * (factor_1 - factor_0);
+
+        // SAFETY: the same validation covers both output chunks, and each
+        // packed value is written only after all source values were loaded.
+        unsafe {
+            write_packed_fp_ext4(witness_left, row, witness_0);
+            write_packed_fp_ext4(witness_left, row + quarter, witness_1);
+            write_packed_fp_ext4(factor_left, row, factor_0);
+            write_packed_fp_ext4(factor_left, row + quarter, factor_1);
+        }
     }
-    (constant_sum, quadratic_sum)
+
+    sum_product_round_lanes(constant, quadratic)
 }
 
 #[inline(always)]
@@ -232,6 +359,44 @@ where
     }))
 }
 
+#[inline(always)]
+unsafe fn write_packed_fp_ext4<const P: u32, PF>(
+    coefficients: [*mut Fp32<P>; 4],
+    row: usize,
+    value: PackedFpExt4<Fp32<P>, PF>,
+) where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    for (coefficient, packed) in value.coeffs.into_iter().enumerate() {
+        for lane in 0..PF::WIDTH {
+            // SAFETY: the caller validated the full output chunk starting at
+            // `row` for every coefficient pointer.
+            unsafe {
+                coefficients[coefficient]
+                    .add(row + lane)
+                    .write(packed.extract(lane))
+            };
+        }
+    }
+}
+
+#[inline(always)]
+fn sum_product_round_lanes<const P: u32, PF>(
+    constant: PackedFpExt4<Fp32<P>, PF>,
+    quadratic: PackedFpExt4<Fp32<P>, PF>,
+) -> (FpExt4<Fp32<P>>, FpExt4<Fp32<P>>)
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let mut constant_sum = FpExt4::<Fp32<P>>::zero();
+    let mut quadratic_sum = FpExt4::<Fp32<P>>::zero();
+    for lane in 0..PF::WIDTH {
+        constant_sum += constant.extract(lane);
+        quadratic_sum += quadratic.extract(lane);
+    }
+    (constant_sum, quadratic_sum)
+}
+
 fn validate_product_round_slices<const P: u32>(
     tables: &[&CoefficientSlices<'_, P>; 4],
     width: usize,
@@ -246,6 +411,28 @@ fn validate_product_round_slices<const P: u32>(
     assert!(
         len.is_multiple_of(width),
         "fp32 product round slice length must be a multiple of the SIMD width"
+    );
+    len
+}
+
+fn validate_fused_product_round_slices<const P: u32>(
+    witness_left: &[&mut [Fp32<P>]; 4],
+    witness_right: &CoefficientSlices<'_, P>,
+    factor_left: &[&mut [Fp32<P>]; 4],
+    factor_right: &CoefficientSlices<'_, P>,
+    width: usize,
+) -> usize {
+    let len = witness_left[0].len();
+    assert!(
+        witness_left.iter().all(|slice| slice.len() == len)
+            && witness_right.iter().all(|slice| slice.len() == len)
+            && factor_left.iter().all(|slice| slice.len() == len)
+            && factor_right.iter().all(|slice| slice.len() == len),
+        "fp32 fused product round slices must have equal lengths"
+    );
+    assert!(
+        len.is_multiple_of(2 * width),
+        "half the fp32 fused product round slice length must be a multiple of the SIMD width"
     );
     len
 }

@@ -1,7 +1,10 @@
 //! Runtime-selected kernels over canonical sumcheck evaluation tables.
 
 use akita_field::{Fp32, FpExt4};
-use akita_sumcheck::{compute_product_round_scalar, fold_first_variable_scalar, EvaluationTable};
+use akita_sumcheck::{
+    compute_product_round_scalar, fold_and_compute_product_round_scalar,
+    fold_first_variable_scalar, EvaluationTable,
+};
 
 /// Host-detected operation choices for sumcheck tables.
 ///
@@ -11,6 +14,7 @@ use akita_sumcheck::{compute_product_round_scalar, fold_first_variable_scalar, E
 pub struct SumcheckKernelPlan {
     fp32_fold: Fp32Kernel,
     fp32_product_round: Fp32Kernel,
+    fp32_fold_and_product_round: Fp32Kernel,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,6 +33,7 @@ impl SumcheckKernelPlan {
         Self {
             fp32_fold: fp32,
             fp32_product_round: fp32,
+            fp32_fold_and_product_round: fp32,
         }
     }
 
@@ -131,22 +136,74 @@ impl SumcheckKernelPlan {
         }
     }
 
+    /// Fold two fp32 tables and compute their next product round.
+    pub fn fold_and_compute_product_round_fp32<const P: u32>(
+        self,
+        witness: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+        factor: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+        challenge: FpExt4<Fp32<P>>,
+    ) -> (FpExt4<Fp32<P>>, FpExt4<Fp32<P>>) {
+        assert_eq!(
+            witness.len(),
+            factor.len(),
+            "product round tables must have equal lengths"
+        );
+        assert!(
+            witness.len().is_power_of_two(),
+            "product round table length must be a power of two"
+        );
+        assert!(
+            witness.len() >= 4,
+            "fused product round tables must have at least four rows"
+        );
+
+        match self.fp32_fold_and_product_round {
+            Fp32Kernel::Scalar => fold_and_compute_product_round_scalar(witness, factor, challenge),
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx2 => {
+                if witness.len() / 4 < 8 {
+                    fold_and_compute_product_round_scalar(witness, factor, challenge)
+                } else {
+                    // SAFETY: only `detect` constructs production plans, and
+                    // it selects this variant after checking AVX2 support.
+                    unsafe { fold_and_compute_product_round_fp32_avx2(witness, factor, challenge) }
+                }
+            }
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx512Ifma => {
+                if witness.len() / 4 < 16 {
+                    fold_and_compute_product_round_scalar(witness, factor, challenge)
+                } else {
+                    // SAFETY: only `detect` constructs production plans, and
+                    // it selects this variant after checking AVX-512F, DQ,
+                    // and IFMA.
+                    unsafe {
+                        fold_and_compute_product_round_fp32_avx512_ifma(witness, factor, challenge)
+                    }
+                }
+            }
+        }
+    }
+
     #[cfg(test)]
     const SCALAR: Self = Self {
         fp32_fold: Fp32Kernel::Scalar,
         fp32_product_round: Fp32Kernel::Scalar,
+        fp32_fold_and_product_round: Fp32Kernel::Scalar,
     };
 
     #[cfg(all(test, target_arch = "x86_64"))]
     const AVX2: Self = Self {
         fp32_fold: Fp32Kernel::Avx2,
         fp32_product_round: Fp32Kernel::Avx2,
+        fp32_fold_and_product_round: Fp32Kernel::Avx2,
     };
 
     #[cfg(all(test, target_arch = "x86_64"))]
     const AVX512_IFMA: Self = Self {
         fp32_fold: Fp32Kernel::Avx512Ifma,
         fp32_product_round: Fp32Kernel::Avx512Ifma,
+        fp32_fold_and_product_round: Fp32Kernel::Avx512Ifma,
     };
 }
 
@@ -185,22 +242,11 @@ unsafe fn fold_fp32_avx2<const P: u32>(
     challenge: FpExt4<Fp32<P>>,
 ) {
     let half = table.len() / 2;
-    let [coefficient_0, coefficient_1, coefficient_2, coefficient_3] =
-        table.coefficient_slices_mut::<4>();
-    let (left_0, right_0) = coefficient_0.split_at_mut(half);
-    let (left_1, right_1) = coefficient_1.split_at_mut(half);
-    let (left_2, right_2) = coefficient_2.split_at_mut(half);
-    let (left_3, right_3) = coefficient_3.split_at_mut(half);
+    let (left, right) = coefficient_halves_mut(table);
 
     // SAFETY: this function requires AVX2, and every left/right pair comes
     // from equal halves of a power-of-two table with `half >= 8`.
-    unsafe {
-        akita_field::packed::runtime_x86::fold_fp_ext4_fp32_avx2(
-            [left_0, left_1, left_2, left_3],
-            [right_0, right_1, right_2, right_3],
-            challenge,
-        )
-    };
+    unsafe { akita_field::packed::runtime_x86::fold_fp_ext4_fp32_avx2(left, right, challenge) };
     table.truncate(half);
 }
 
@@ -211,24 +257,85 @@ unsafe fn fold_fp32_avx512_ifma<const P: u32>(
     challenge: FpExt4<Fp32<P>>,
 ) {
     let half = table.len() / 2;
+    let (left, right) = coefficient_halves_mut(table);
+
+    // SAFETY: this function requires AVX-512F, DQ, and IFMA, and every
+    // left/right pair comes from equal halves of a power-of-two table with
+    // `half >= 16`.
+    unsafe {
+        akita_field::packed::runtime_x86::fold_fp_ext4_fp32_avx512_ifma(left, right, challenge)
+    };
+    table.truncate(half);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn fold_and_compute_product_round_fp32_avx2<const P: u32>(
+    witness: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    factor: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    challenge: FpExt4<Fp32<P>>,
+) -> (FpExt4<Fp32<P>>, FpExt4<Fp32<P>>) {
+    let half = witness.len() / 2;
+    let (witness_left, witness_right) = coefficient_halves_mut(witness);
+    let (factor_left, factor_right) = coefficient_halves_mut(factor);
+    // SAFETY: this function requires AVX2. Both tables have equal power-of-two
+    // lengths, and each next-round half has at least eight rows.
+    let round = unsafe {
+        akita_field::packed::runtime_x86::fold_and_compute_product_round_fp_ext4_fp32_avx2(
+            witness_left,
+            witness_right,
+            factor_left,
+            factor_right,
+            challenge,
+        )
+    };
+    witness.truncate(half);
+    factor.truncate(half);
+    round
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+unsafe fn fold_and_compute_product_round_fp32_avx512_ifma<const P: u32>(
+    witness: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    factor: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    challenge: FpExt4<Fp32<P>>,
+) -> (FpExt4<Fp32<P>>, FpExt4<Fp32<P>>) {
+    let half = witness.len() / 2;
+    let (witness_left, witness_right) = coefficient_halves_mut(witness);
+    let (factor_left, factor_right) = coefficient_halves_mut(factor);
+    // SAFETY: this function requires AVX-512F, DQ, and IFMA. Both tables have
+    // equal power-of-two lengths, and each next-round half has at least sixteen
+    // rows.
+    let round = unsafe {
+        akita_field::packed::runtime_x86::fold_and_compute_product_round_fp_ext4_fp32_avx512_ifma(
+            witness_left,
+            witness_right,
+            factor_left,
+            factor_right,
+            challenge,
+        )
+    };
+    witness.truncate(half);
+    factor.truncate(half);
+    round
+}
+
+#[cfg(target_arch = "x86_64")]
+fn coefficient_halves_mut<const P: u32>(
+    table: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+) -> ([&mut [Fp32<P>]; 4], [&[Fp32<P>]; 4]) {
+    let half = table.len() / 2;
     let [coefficient_0, coefficient_1, coefficient_2, coefficient_3] =
         table.coefficient_slices_mut::<4>();
     let (left_0, right_0) = coefficient_0.split_at_mut(half);
     let (left_1, right_1) = coefficient_1.split_at_mut(half);
     let (left_2, right_2) = coefficient_2.split_at_mut(half);
     let (left_3, right_3) = coefficient_3.split_at_mut(half);
-
-    // SAFETY: this function requires AVX-512F, DQ, and IFMA, and every
-    // left/right pair comes from equal halves of a power-of-two table with
-    // `half >= 16`.
-    unsafe {
-        akita_field::packed::runtime_x86::fold_fp_ext4_fp32_avx512_ifma(
-            [left_0, left_1, left_2, left_3],
-            [right_0, right_1, right_2, right_3],
-            challenge,
-        )
-    };
-    table.truncate(half);
+    (
+        [left_0, left_1, left_2, left_3],
+        [right_0, right_1, right_2, right_3],
+    )
 }
 
 #[cfg(test)]
@@ -271,10 +378,46 @@ mod tests {
         }
     }
 
+    fn compare_fused_product_round_plan(plan: SumcheckKernelPlan) {
+        for len in [4, 8, 16, 32, 64, 256] {
+            let witness = EvaluationTable::<F, E>::from_multilinear_evaluation_fn(len, value)
+                .expect("valid witness table");
+            let factor = EvaluationTable::<F, E>::from_multilinear_evaluation_fn(len, |row| {
+                value(row + len + 31)
+            })
+            .expect("valid factor table");
+            let challenge = value(len + 73);
+            let mut expected_witness = witness.clone();
+            let mut expected_factor = factor.clone();
+            let expected = SumcheckKernelPlan::SCALAR.fold_and_compute_product_round_fp32(
+                &mut expected_witness,
+                &mut expected_factor,
+                challenge,
+            );
+            let mut actual_witness = witness;
+            let mut actual_factor = factor;
+            let actual = plan.fold_and_compute_product_round_fp32(
+                &mut actual_witness,
+                &mut actual_factor,
+                challenge,
+            );
+            assert_eq!(actual, expected, "fused round mismatch at len={len}");
+            assert_eq!(
+                actual_witness, expected_witness,
+                "fused witness mismatch at len={len}"
+            );
+            assert_eq!(
+                actual_factor, expected_factor,
+                "fused factor mismatch at len={len}"
+            );
+        }
+    }
+
     #[test]
     fn detected_fp32_fold_matches_scalar() {
         compare_plan(SumcheckKernelPlan::detect());
         compare_product_round_plan(SumcheckKernelPlan::detect());
+        compare_fused_product_round_plan(SumcheckKernelPlan::detect());
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -283,6 +426,7 @@ mod tests {
         if std::is_x86_feature_detected!("avx2") {
             compare_plan(SumcheckKernelPlan::AVX2);
             compare_product_round_plan(SumcheckKernelPlan::AVX2);
+            compare_fused_product_round_plan(SumcheckKernelPlan::AVX2);
         }
         if std::is_x86_feature_detected!("avx512f")
             && std::is_x86_feature_detected!("avx512dq")
@@ -290,6 +434,7 @@ mod tests {
         {
             compare_plan(SumcheckKernelPlan::AVX512_IFMA);
             compare_product_round_plan(SumcheckKernelPlan::AVX512_IFMA);
+            compare_fused_product_round_plan(SumcheckKernelPlan::AVX512_IFMA);
         }
     }
 }
