@@ -7,7 +7,7 @@
 //! proof-byte totals.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{AkitaError, Prime128OffsetA7F7};
+use akita_field::AkitaError;
 use akita_types::{
     extension_opening_reduction_level_bytes, level_proof_bytes, terminal_response_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, PlannedFoldSchedule, PolynomialGroupLayout,
@@ -122,7 +122,17 @@ pub(crate) fn walk_generated_schedule_entry(
     root_params.witness_chunk =
         partition_to_chunk(entry.root.witness_partition, distributed_levels)?;
     let root_output_len = if is_multi_group {
-        root_params.output_witness_len::<Prime128OffsetA7F7>(&key.opening_layout()?)?
+        // The residual decomposition depth depends on the catalog family's
+        // field width; a concrete field type is not available here, so pass
+        // the policy's width (hardcoding a 128-bit field silently inflated
+        // the recomputed multi-group root output for 32/64-bit families and
+        // rejected their valid generated rows).
+        root_params.output_witness_len_for_field_bits(
+            &key.opening_layout()?,
+            u32::try_from(field_bits).map_err(|_| {
+                AkitaError::InvalidSetup("field width does not fit u32".to_string())
+            })?,
+        )?
     } else {
         planned_next_witness_len(
             field_bits,

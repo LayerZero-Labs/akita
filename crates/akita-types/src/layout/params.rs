@@ -952,6 +952,24 @@ impl CommittedGroupParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
+        let modulus = crate::detect_field_modulus::<F>();
+        let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
+        self.output_witness_len_for_field_bits(opening_batch, field_bits)
+    }
+
+    /// [`Self::output_witness_len`] with the field width supplied as a value.
+    ///
+    /// Catalog expansion validates generated rows without naming a concrete
+    /// field type; the residual decomposition depth depends only on the
+    /// family's field width, so passing the policy's `field_bits` keeps the
+    /// recomputed layout identical to the runtime layout for every field
+    /// width (a hardcoded 128-bit field silently inflates the residual depth
+    /// for 32/64-bit families).
+    pub fn output_witness_len_for_field_bits(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        field_bits: u32,
+    ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
         self.witness_chunk.validate()?;
         self.validate_opening_batch(opening_batch)?;
@@ -959,7 +977,7 @@ impl CommittedGroupParams {
             self,
             opening_batch,
             self.witness_chunk.num_chunks,
-            crate::r_decomp_levels::<F>(self.log_basis_open),
+            crate::sis::compute_num_digits_field_width(field_bits, self.log_basis_open),
         )?;
         Ok(witness_layout.live_coeff_len())
     }
