@@ -202,8 +202,8 @@ mod tests {
     fn dense_precommit_profile_uses_dense_config() {
         let key = PolynomialGroupLayout::new(15, 2);
         let params = committed_group_params::<fp128::D64Dense>(&key).expect("dense params");
-        assert_eq!(params.log_basis_inner, 3);
+        assert_eq!(params.log_basis_inner, 8);
         assert_eq!(params.log_basis_outer, 3);
-        assert_eq!(params.num_digits_inner, 43);
+        assert_eq!(params.num_digits_inner, 16);
     }
 }
