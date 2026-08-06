@@ -10,7 +10,7 @@ use akita_types::{
     CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout, TerminalResponseShape,
 };
 
-use crate::{group_batch::multi_group_root_level_candidates_for_basis, PlannerPolicy};
+use crate::{planner::root_level_candidates_for_basis, PlannerPolicy};
 
 use super::{
     derive_candidate_level_params, level_setup_field_elements, stage3_payload_bytes_for_successor,
@@ -43,12 +43,6 @@ pub(crate) struct SuffixResult {
 pub(crate) struct FirstFoldKey {
     log_basis: u32,
     outer_payload_bytes: usize,
-}
-
-impl SuffixResult {
-    pub(crate) fn is_empty(&self) -> bool {
-        self.best_by_first_direct_setup_per_lb.is_empty()
-    }
 }
 
 /// Like [`terminal_direct_suffix_cost`], but returns `None` when the fold at
@@ -346,6 +340,7 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) root_lookup_key: Option<&'a AkitaScheduleLookupKey>,
     pub(crate) root_honest_fold_policy: Option<akita_types::sis::HonestFoldPolicySpec>,
     pub(crate) precommitted_honest_fold_policies: &'a [akita_types::sis::HonestFoldPolicySpec],
+    pub(crate) level_zero_is_root: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -396,7 +391,10 @@ fn price_level_candidate_with_children(
     // There is no alternative terminal-shaped predecessor output: the
     // predecessor produces one canonical witness, and the terminal inner
     // commitment consumes that exact witness.
-    if state.incoming_setup_prefix.is_none() && !candidate_params.has_precommitted_groups() {
+    if !(ctx.level_zero_is_root && state.level == 0)
+        && state.incoming_setup_prefix.is_none()
+        && !candidate_params.has_precommitted_groups()
+    {
         let field_bits = policy.decomposition.field_bits();
         if let Some((mut direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
             state.current_witness_len,
@@ -509,11 +507,12 @@ pub(crate) fn derive_optimal_suffix_schedule(
         ring_challenge_config,
         fold_challenge_shape_at_level,
         num_vars,
-        key: _,
+        key,
         setup_field_budget: _,
         root_lookup_key,
         root_honest_fold_policy,
         precommitted_honest_fold_policies,
+        level_zero_is_root,
     } = *ctx;
     let SuffixState {
         level,
@@ -541,7 +540,12 @@ pub(crate) fn derive_optimal_suffix_schedule(
     let root_level_key = root_lookup_key.filter(|_| level == 0);
     if root_level_key.is_some() && incoming_setup_prefix.is_some() {
         return Err(AkitaError::InvalidSetup(
-            "multi-group root cannot consume an incoming setup prefix".to_string(),
+            "root batch cannot consume an incoming setup prefix".to_string(),
+        ));
+    }
+    if level_zero_is_root && level == 0 && root_level_key.is_none() {
+        return Err(AkitaError::InvalidSetup(
+            "root-level suffix state is missing its opening lookup key".to_string(),
         ));
     }
     if payload_phase == akita_types::CommitmentPayloadPhase::RawSuffix
@@ -561,7 +565,13 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 .map(|total_polys| PolynomialGroupLayout::new(root_key.max_num_vars(), total_polys))
         })
         .transpose()?;
-    let eor_key = root_eor_key.unwrap_or_else(|| PolynomialGroupLayout::singleton(num_vars));
+    let eor_key = root_eor_key.unwrap_or_else(|| {
+        if level_zero_is_root && level == 0 {
+            key
+        } else {
+            PolynomialGroupLayout::singleton(num_vars)
+        }
+    });
     let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
         policy.challenge_field_bits()?,
         policy.claim_ext_degree,
@@ -575,13 +585,13 @@ pub(crate) fn derive_optimal_suffix_schedule(
         memo.insert(memo_key, Arc::clone(&result));
         return Ok(result);
     };
-    let scalar_opening_layout = if root_level_key.is_none() {
+    let scalar_opening_layout = if root_level_key.is_some() {
+        None
+    } else {
         Some(suffix_opening_layout(
             current_witness_len,
             incoming_setup_prefix,
         )?)
-    } else {
-        None
     };
     let requested_fold_shape = fold_challenge_shape_at_level(akita_types::AkitaScheduleInputs {
         num_vars,
@@ -600,24 +610,31 @@ pub(crate) fn derive_optimal_suffix_schedule(
             root_level_key
         {
             let current_opening_layout = root_opening_layout.as_ref().ok_or_else(|| {
-                AkitaError::InvalidSetup("multi-group root opening layout is missing".to_string())
+                AkitaError::InvalidSetup("root batch opening layout is missing".to_string())
             })?;
-            let candidates = multi_group_root_level_candidates_for_basis(
+            let dimensions = CommitmentRingDims::uniform(policy.uniform_ring_dimension);
+            let candidates = root_level_candidates_for_basis(
                 root_key,
                 root_honest_fold_policy.ok_or_else(|| {
                     AkitaError::InvalidSetup(
-                        "multi-group root is missing its honest fold policy".to_string(),
+                        "root batch is missing its honest fold policy".to_string(),
                     )
                 })?,
                 precommitted_honest_fold_policies,
                 policy,
+                dimensions,
                 default_ring_challenge_cfg,
                 ring_challenge_config,
                 requested_fold_shape,
                 current_witness_len,
                 lb,
+                true,
             )?;
-            (current_opening_layout, candidates, true)
+            (
+                current_opening_layout,
+                candidates,
+                !root_key.precommitteds.is_empty(),
+            )
         } else {
             let mut candidates = Vec::new();
             let dimensions = CommitmentRingDims::uniform(policy.uniform_ring_dimension);
@@ -767,25 +784,5 @@ pub(crate) fn derive_optimal_suffix_schedule(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::offloaded_witness_contracts;
-
-    #[test]
-    fn offloaded_contraction_accepts_exact_threefold_boundary() {
-        assert!(offloaded_witness_contracts(300, 2, 0, 128, 100, 2, 3).unwrap());
-        assert!(!offloaded_witness_contracts(299, 2, 0, 128, 100, 2, 3).unwrap());
-        assert!(!offloaded_witness_contracts(300, 2, 0, 128, 100, 2, 4).unwrap());
-    }
-
-    #[test]
-    fn offloaded_contraction_prices_changed_digit_basis() {
-        assert!(offloaded_witness_contracts(900, 2, 0, 128, 100, 6, 3).unwrap());
-        assert!(!offloaded_witness_contracts(899, 2, 0, 128, 100, 6, 3).unwrap());
-    }
-
-    #[test]
-    fn offloaded_contraction_includes_full_field_setup_prefix() {
-        assert!(offloaded_witness_contracts(100, 2, 100, 128, 1000, 4, 3).unwrap());
-        assert!(!offloaded_witness_contracts(100, 2, 90, 128, 1000, 4, 3).unwrap());
-    }
-}
+#[path = "../test/suffix_dp.rs"]
+mod tests;

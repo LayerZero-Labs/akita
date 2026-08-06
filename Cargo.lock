@@ -95,7 +95,6 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-field",
- "akita-pcs",
  "akita-planner",
  "akita-prover",
  "akita-schedules",

@@ -98,9 +98,8 @@ names the per-matrix ring dimensions; prove/verify hot paths dispatch on
 
 The normative contract (discriminator rule, forbidden facade/level-
 monomorphization patterns) lives in `specs/runtime-ring-cutover.md`.
-Mixed-dimension execution is exercised end-to-end by
-`crates/akita-pcs/tests/mixed_d_per_level_e2e.rs` and
-`crates/akita-verifier/tests/mixed_d_rejections.rs` through the normal public API.
+Mixed-dimension malformed proof rejection is covered by
+`crates/akita-verifier/tests/mixed_d_rejections.rs` through the verifier API.
 
 ## Core types
 

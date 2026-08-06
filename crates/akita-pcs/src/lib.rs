@@ -39,8 +39,9 @@
 #![warn(unreachable_pub)]
 
 mod scheme;
-#[cfg(feature = "test-support")]
-pub mod test_support;
+#[cfg(all(test, any(feature = "schedules-default", feature = "profile-ci")))]
+#[path = "../tests/support/mod.rs"]
+mod test_support;
 
 pub use akita_algebra::Module;
 pub use akita_field::AkitaError;

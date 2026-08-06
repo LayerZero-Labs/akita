@@ -1,5 +1,26 @@
-#[allow(unused_imports)]
 use super::*;
+#[cfg(feature = "catalog-gen")]
+use akita_types::extension_opening_reduction_level_bytes;
+
+#[cfg(test)]
+fn find_schedule(
+    key: PolynomialGroupLayout,
+    policy: &PlannerPolicy,
+    honest_fold_policy: HonestFoldPolicySpec,
+    dimensions: &RingDimensionSearchDomain,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<PlannedFoldSchedule, AkitaError> {
+    dimensions.validate_for_policy(policy)?;
+    crate::planner::find_schedule(
+        &akita_types::AkitaScheduleLookupKey::single(key),
+        honest_fold_policy,
+        &[],
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+    )
+}
 
 #[cfg(test)]
 fn policy_for_domain(
@@ -176,7 +197,7 @@ fn grouped_scalar_fallback_preserves_mixed_domain() {
     let policy = policy_for_domain(base_policy, &domain);
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
 
-    let grouped = crate::find_group_batch_schedule(
+    let grouped = crate::find_schedule(
         &key,
         D256OneHot::root_honest_fold_policy(),
         &[],
@@ -185,7 +206,7 @@ fn grouped_scalar_fallback_preserves_mixed_domain() {
         D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
-    let direct = find_schedule(
+    let direct = mixed_search::find_schedule(
         key.final_group,
         &policy,
         D256OneHot::root_honest_fold_policy(),
@@ -305,54 +326,6 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
         selected.schedule.canonical_descriptor_bytes(),
         unpruned.schedule.canonical_descriptor_bytes()
     );
-}
-
-#[test]
-fn independent_suffix_preserves_raw_predecessor_phase() {
-    use akita_config::{policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig};
-
-    let policy = policy_of::<D64OneHot>();
-    let domain = RingDimensionSearchDomain::uniform(64).unwrap();
-    let schedule = find_schedule(
-        PolynomialGroupLayout::singleton(32),
-        &policy,
-        D64OneHot::root_honest_fold_policy(),
-        &domain,
-        D64OneHot::ring_challenge_config,
-        D64OneHot::fold_challenge_shape_at_level,
-    )
-    .unwrap()
-    .schedule;
-    let (raw_index, raw_predecessor) = schedule
-        .recursive_folds
-        .iter()
-        .enumerate()
-        .find(|(index, fold)| {
-            fold.params.witness.payload_mode == akita_types::CommitmentPayloadMode::Raw
-                && index + 1 < schedule.recursive_folds.len()
-        })
-        .expect("fixture must have a raw recursive fold with a recursive successor");
-
-    let suffix = plan_optimal_suffix(
-        &policy,
-        D64OneHot::ring_challenge_config,
-        D64OneHot::fold_challenge_shape_at_level,
-        32,
-        SuffixPlanStart {
-            level: raw_index + 2,
-            witness_len: raw_predecessor.output_witness_len,
-            log_basis: raw_predecessor.params.witness.log_basis_open,
-            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix
-                .after(raw_predecessor.params.witness.payload_mode),
-        },
-    )
-    .unwrap();
-
-    assert!(!suffix.folds.is_empty());
-    assert!(suffix
-        .folds
-        .iter()
-        .all(|fold| fold.params.payload_mode == akita_types::CommitmentPayloadMode::Raw));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -803,7 +776,7 @@ fn recursive_exact_cutover_proof_size_is_documented() {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],
     };
-    let planned = crate::find_group_batch_schedule(
+    let planned = crate::find_schedule(
         &key,
         Recursive::root_honest_fold_policy(),
         &[

@@ -15,7 +15,7 @@ use akita_config::proof_optimized::{fp128, fp32};
 use akita_config::{
     policy_of, CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig,
 };
-use akita_planner::find_group_batch_schedule;
+use akita_planner::find_schedule;
 use akita_schedules::resolve_schedule;
 use akita_schedules::{
     resolve_generated_schedule_selection, select_generated_schedule_row, PlannerCostModelId,
@@ -412,7 +412,7 @@ fn offline_planner_admits_dense_multi_group_roots() {
         precommitteds: vec![CommittedGroupProfile::from_params(pre_group, &pre_params)],
     };
     let precommitted_honest_fold_policies = vec![Cfg::root_honest_fold_policy()];
-    let planned = find_group_batch_schedule(
+    let planned = find_schedule(
         &key,
         Cfg::root_honest_fold_policy(),
         &precommitted_honest_fold_policies,
@@ -495,7 +495,7 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
             ),
         ),
     ];
-    let planned = find_group_batch_schedule(
+    let planned = find_schedule(
         &key,
         Cfg::root_honest_fold_policy(),
         &precommitted_honest_fold_policies,
