@@ -41,7 +41,7 @@ fn main() {
     }
 
     let default_nv = if cfg!(feature = "profile-onehot-fp128-d64") {
-        25
+        32
     } else {
         32
     };
@@ -52,7 +52,7 @@ fn main() {
     let num_polys = env_usize("AKITA_NUM_POLYS", 1);
 
     let default_mode = if cfg!(feature = "profile-onehot-fp128-d64") {
-        "onehot_fp128_d64"
+        "onehot_fp128"
     } else {
         "onehot_fp128"
     };

@@ -88,11 +88,11 @@ class CaseMetadata:
 # (`akita_config::generated_families::ALL_GENERATED_FAMILIES`). Modes outside
 # this map still render via the `case_metadata` fallback below.
 CASE_METADATA: dict[str, CaseMetadata] = {
-    # fp128 ships default and D64 one-hot presets, plus D64 tensor and dense.
-    "onehot_fp128_d64": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
+    # Direct fp128 one-hot and dense use adaptive generated schedules.
     "onehot_fp128": CaseMetadata(
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "mixed D256 to D64"
     ),
+    "dense_fp128": CaseMetadata("fp128", "dense", "dense", "mixed D256 to D64"),
     "onehot_fp128_d64_multi_group_recursive": CaseMetadata(
         "fp128", "onehot", "multi-group one-hot", "D64 recursive multi-group"
     ),

@@ -100,7 +100,7 @@ where
 mod tests {
     use super::*;
     use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES};
-    use akita_config::{proof_optimized::fp128::D64OneHot, CommitmentConfig};
+    use akita_config::{proof_optimized::fp128::OneHot, CommitmentConfig};
     use akita_field::{Prime128Offset275 as F, Prime32Offset99 as F32};
     use akita_types::{
         max_safe_crt_accumulation_width, select_crt_ntt_params, AkitaExpandedSetup,
@@ -243,8 +243,8 @@ mod tests {
     #[test]
     fn schedule_warm_builds_terminal_cache_once_before_arithmetic() {
         let group = PolynomialGroupLayout::new(15, 1);
-        let schedule = D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(group))
-            .expect("D64 schedule");
+        let schedule = OneHot::runtime_schedule(AkitaScheduleLookupKey::single(group))
+            .expect("adaptive schedule");
         let params = &schedule.terminal.params.witness;
         let prefix_len = params
             .inner_commit_matrix

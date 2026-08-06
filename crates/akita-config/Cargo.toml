@@ -20,10 +20,8 @@ readme = "../../README.md"
 default = ["schedules-default"]
 test-support = []
 schedules-default = [
-  "schedules-fp128-d64-onehot",
   "schedules-fp128-onehot",
   "schedules-fp128-dense",
-  "schedules-fp128-d64-dense",
   "schedules-fp32-d128-onehot",
   "schedules-fp32-d256-onehot",
   "schedules-fp64-d128-dense",
@@ -40,7 +38,6 @@ all-schedules = [
   "schedules-fp128-d64-onehot-multi-chunk-w4r2",
   "schedules-fp128-d64-dense-multi-chunk",
 ]
-schedules-fp128-d64-onehot = ["akita-schedules/fp128-d64-onehot"]
 schedules-fp128-onehot = ["akita-schedules/fp128-onehot"]
 schedules-fp128-dense = ["akita-schedules/fp128-dense"]
 schedules-fp128-d64-onehot-recursive = [
@@ -49,7 +46,6 @@ schedules-fp128-d64-onehot-recursive = [
 schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2 = [
   "akita-schedules/fp128-d64-onehot-recursive-multi-chunk-w8r2",
 ]
-schedules-fp128-d64-dense = ["akita-schedules/fp128-d64-dense"]
 schedules-fp128-d64-onehot-tensor = ["akita-schedules/fp128-d64-onehot-tensor"]
 schedules-fp128-d64-onehot-multi-chunk = [
   "akita-schedules/fp128-d64-onehot-multi-chunk",
@@ -87,7 +83,7 @@ akita-planner = { version = "0.1.0", path = "../akita-planner", features = [
 [[test]]
 name = "schedule_catalog_miswire"
 path = "tests/schedule_catalog_miswire.rs"
-required-features = ["schedules-fp128-d64-onehot", "schedules-fp128-d64-dense"]
+required-features = ["schedules-fp128-onehot", "schedules-fp128-dense"]
 
 [[test]]
 name = "generated_tables"

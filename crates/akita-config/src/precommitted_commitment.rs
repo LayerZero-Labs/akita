@@ -189,8 +189,8 @@ mod tests {
     #[test]
     fn same_layout_can_resolve_config_specific_profiles() {
         let key = PolynomialGroupLayout::new(16, 1);
-        let dense = committed_group_params::<fp128::D64Dense>(&key).expect("dense params");
-        let one_hot = committed_group_params::<fp128::D64OneHot>(&key).expect("one-hot params");
+        let dense = committed_group_params::<fp128::Dense>(&key).expect("dense params");
+        let one_hot = committed_group_params::<fp128::OneHot>(&key).expect("one-hot params");
         assert_ne!(
             CommittedGroupProfile::from_params(key, &dense),
             CommittedGroupProfile::from_params(key, &one_hot),
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn dense_precommit_profile_uses_dense_config() {
         let key = PolynomialGroupLayout::new(15, 2);
-        let params = committed_group_params::<fp128::D64Dense>(&key).expect("dense params");
+        let params = committed_group_params::<fp128::Dense>(&key).expect("dense params");
         assert_eq!(params.log_basis_inner, 3);
         assert_eq!(params.log_basis_outer, 3);
         assert_eq!(params.num_digits_inner, 43);

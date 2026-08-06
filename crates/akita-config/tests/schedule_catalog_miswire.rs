@@ -9,17 +9,17 @@ use akita_types::PolynomialGroupLayout;
 
 #[test]
 fn miswired_catalog_rejects_before_lookup() {
-    let wrong_catalog = akita_schedules::fp128_d64_onehot_table();
+    let wrong_catalog = akita_schedules::fp128_onehot_table();
     let key = PolynomialGroupLayout::new(28, 1);
 
     let err = resolve_schedule(
         key,
-        &policy_of::<fp128::D64Dense>(),
-        fp128::D64Dense::ring_challenge_config,
-        fp128::D64Dense::fold_challenge_shape_at_level,
+        &policy_of::<fp128::Dense>(),
+        fp128::Dense::ring_challenge_config,
+        fp128::Dense::fold_challenge_shape_at_level,
         Some(wrong_catalog),
     )
-    .expect_err("D64 dense preset must reject D64 one-hot catalog");
+    .expect_err("adaptive dense preset must reject adaptive one-hot catalog");
 
     assert!(
         matches!(err, akita_field::AkitaError::InvalidSetup(_)),

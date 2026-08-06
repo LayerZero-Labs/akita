@@ -91,7 +91,7 @@ Terminal: D64
 
 The generated table currently contains direct one-hot rows for `nv = 32` and `nv = 36`.
 
-The explicit uniform `fp128::D64OneHot` preset remains available as a baseline.
+The former standalone uniform D64 one-hot catalog has been removed.
 
 ### Default fp128 dense configuration
 
@@ -102,8 +102,8 @@ bounds and honest-fold policy.
 
 The generated `fp128_dense` catalog covers the existing fp128 dense scalar and
 batched key set. `fp128_dense_precommitted` stores the corresponding standalone
-precommitted descriptors. The explicit uniform `fp128::D64Dense` preset and its
-catalog remain available as a baseline and for existing multi-chunk paths.
+precommitted descriptors. The former standalone uniform D64 dense catalog has
+been removed; existing multi-chunk paths retain their dedicated D64 catalogs.
 
 ### Generated catalog identity
 
@@ -180,7 +180,7 @@ Users of the old fp128 D128/D256 one-hot generated families or the `fp128_mixed_
 akita_config::proof_optimized::fp128::OneHot
 ```
 
-Use `fp128::D64OneHot` when an explicitly uniform D64 direct schedule is required.
+Standalone direct fp128 use should select `fp128::OneHot` or `fp128::Dense`.
 
 ## Validation
 

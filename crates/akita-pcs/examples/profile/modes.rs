@@ -177,12 +177,8 @@ struct ProfileMode {
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), feature = "profile-ci"))]
 const PROFILE_CI_MODES: &[ProfileMode] = &[
     ProfileMode {
-        name: "dense_fp128_d64",
-        run: run_profile_dense_fp128_d64,
-    },
-    ProfileMode {
-        name: "onehot_fp128_d64",
-        run: run_profile_onehot_fp128_d64,
+        name: "dense_fp128",
+        run: run_profile_dense_fp128,
     },
     ProfileMode {
         name: "onehot_fp128",
@@ -225,12 +221,8 @@ const PROFILE_CI_MODES: &[ProfileMode] = &[
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
 const PROFILE_ALL_MODES: &[ProfileMode] = &[
     ProfileMode {
-        name: "dense_fp128_d64",
-        run: run_profile_dense_fp128_d64,
-    },
-    ProfileMode {
-        name: "onehot_fp128_d64",
-        run: run_profile_onehot_fp128_d64,
+        name: "dense_fp128",
+        run: run_profile_dense_fp128,
     },
     ProfileMode {
         name: "onehot_fp128",
@@ -326,18 +318,6 @@ fn assert_singleton_mode(mode: &str, num_polys: usize) {
     );
 }
 
-fn fp128_onehot_title(d: usize, nv: usize, num_polys: usize) -> String {
-    let onehot_k = onehot_k_for_num_vars(nv);
-    let prime = fp128_prime_label();
-    if num_polys == 1 {
-        format!("=== onehot_fp128_d{d} (fp128, {prime}, D={d}, 1-of-{onehot_k}, log_commit_bound=1) ===")
-    } else {
-        format!(
-            "=== onehot_fp128_d{d} batched (fp128, {prime}, D={d}, 1-of-{onehot_k}, log_commit_bound=1, same-point batch={num_polys}) ==="
-        )
-    }
-}
-
 fn small_field_schedule_source(d: usize) -> &'static str {
     if d >= 128 {
         "runtime DP schedule (no shipped D128 table)"
@@ -366,24 +346,17 @@ fn small_field_dense_title(field_label: &str, d: usize) -> String {
     format!("=== dense_{field_label}_d{d} ({field_label}, D={d}, {schedule}) ===")
 }
 
-fn run_profile_dense_fp128_d64(nv: usize, num_polys: usize) {
-    type Cfg = fp128::D64Dense;
-    assert_singleton_mode("dense_fp128_d64", num_polys);
+fn run_profile_dense_fp128(nv: usize, num_polys: usize) {
+    type Cfg = fp128::Dense;
+    assert_singleton_mode("dense_fp128", num_polys);
     let prime = fp128_prime_label();
     run_dense_mode::<{ Cfg::D }, Cfg>(
-        "dense_fp128_d64",
-        &format!("=== dense_fp128_d64 (fp128, {prime}, D=64 dense, log_commit_bound=128) ==="),
+        "dense_fp128",
+        &format!("=== dense_fp128 (fp128, {prime}, generated per-level dimensions) ==="),
         nv,
     );
 }
 
-fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
-    type Cfg = fp128::D64OneHot;
-    let title = fp128_onehot_title(64, nv, num_polys);
-    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64", &title, nv, num_polys);
-}
-
-#[cfg(not(feature = "profile-onehot-fp128-d64"))]
 fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
     type Cfg = fp128::OneHot;
     assert!(
@@ -621,14 +594,14 @@ fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(nv: usize) -> Committed
 #[cfg(feature = "profile-onehot-fp128-d64")]
 pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
     assert_eq!(
-        mode, "onehot_fp128_d64",
-        "profile-onehot-fp128-d64 only supports AKITA_MODE=onehot_fp128_d64",
+        mode, "onehot_fp128",
+        "profile-onehot-fp128-d64 only supports AKITA_MODE=onehot_fp128",
     );
     assert_eq!(
         num_polys, 1,
         "profile-onehot-fp128-d64 only supports singleton commitments"
     );
-    run_profile_onehot_fp128_d64(nv, num_polys);
+    run_profile_onehot_fp128(nv, num_polys);
 }
 
 pub(crate) fn log_active_fp128_prime_probe() {

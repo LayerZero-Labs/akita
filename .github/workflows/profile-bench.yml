@@ -68,13 +68,13 @@ jobs:
         # (large m_vars), so the public setup matrix grows ~4x per +2 nv: ~1 GiB
         # at nv=26, ~4 GiB at nv=28, and ~72 GiB at nv=32 (which OOM-aborts the
         # runner during setup). nv=26 keeps the tensor setup vector (~1 GiB) and
-        # peak RSS on par with the flat onehot_fp128_d64 nv=32 cell that already
+        # peak RSS on par with the flat onehot_fp128 nv=32 cell that already
         # passes here, while still exercising the tensor root fold plus multiple
         # recursive flat folds.
         group:
           - name: 1-fp128-dense
             cases: |
-              dense_fp128_d64:24:1
+              dense_fp128:24:1
           - name: 2-fp128-tensor
             cases: |
               onehot_fp128_d64_tensor:26:1
@@ -82,9 +82,7 @@ jobs:
             cases: |
               onehot_fp32_d128:28:1
               onehot_fp64_d128:28:1
-              onehot_fp128_d64:32:1
               onehot_fp128:32:1
-              onehot_fp128_d64:30:4
           - name: 4-multi-group-recursive-direct
             cases: |
               onehot_fp128_d64_multi_group_recursive:32:4:direct

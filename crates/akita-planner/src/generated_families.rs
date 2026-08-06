@@ -72,7 +72,7 @@ const FP128_D64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
 
 const FP128_DENSE_KEYS: &[PolynomialGroupLayout] = FP128_D64_DENSE_KEYS;
 
-const FP128_D64_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
+const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(10),
     PolynomialGroupLayout::singleton(12),
     PolynomialGroupLayout::singleton(14),
@@ -89,14 +89,10 @@ const FP128_D64_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::new(30, 4),
     PolynomialGroupLayout::singleton(32),
     PolynomialGroupLayout::new(32, 4),
+    PolynomialGroupLayout::singleton(36),
     PolynomialGroupLayout::singleton(40),
     PolynomialGroupLayout::singleton(44),
     PolynomialGroupLayout::singleton(50),
-];
-
-const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
-    PolynomialGroupLayout::singleton(32),
-    PolynomialGroupLayout::singleton(36),
 ];
 
 const FP128_D64_ONEHOT_TENSOR_KEYS: &[PolynomialGroupLayout] =
@@ -726,14 +722,6 @@ fn explicit_precommitted_group<Cfg: CommitmentConfig + 'static>(
 /// here; both the table emitter and the drift-guard test pick it up
 /// automatically.
 pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
-    family_row!(
-        group_batch,
-        "fp128_d64_onehot",
-        "FP128_D64_ONEHOT_SCHEDULES",
-        "fp128-d64-onehot",
-        FP128_D64_ONEHOT_KEYS,
-        fp128::D64OneHot
-    ),
     GeneratedFamily {
         module_name: "fp128_onehot",
         const_name: "FP128_ONEHOT_SCHEDULES",
@@ -771,13 +759,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         &[],
         RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
         fp128::D64OneHotMultiChunk
-    ),
-    family_row!(
-        "fp128_d64_dense",
-        "FP128_D64_DENSE_SCHEDULES",
-        "fp128-d64-dense",
-        FP128_D64_DENSE_KEYS,
-        fp128::D64Dense
     ),
     GeneratedFamily {
         module_name: "fp128_dense",

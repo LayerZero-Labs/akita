@@ -37,14 +37,14 @@ pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 // Bare presets: test-only non-singleton batched opening shapes
 // fall through to the offline DP planner on table miss via the default
 // `runtime_schedule` fallback.
-pub(super) type OneHotCfg = fp128::D64OneHot;
+pub(super) type OneHotCfg = fp128::OneHot;
 pub(super) const ONEHOT_D: usize = OneHotCfg::D;
-// `fp128::D64OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
+// `fp128::OneHot` requires K=256 one-hot schedules
 // ring elements), so the committed poly has `2^nv / K` chunks, not one chunk
 // per ring element.
 pub(super) const ONEHOT_K: usize = 256;
 
-pub(super) type DenseCfg = fp128::D64Dense;
+pub(super) type DenseCfg = fp128::Dense;
 pub(super) const DENSE_D: usize = DenseCfg::D;
 
 static INIT_RAYON: Once = Once::new();
@@ -342,13 +342,14 @@ where
 pub(super) fn make_onehot_poly(layout: &CommittedGroupParams, seed: u64) -> OneHotPoly<F, u8> {
     // `2^nv = (num_live_blocks · num_positions_per_block) · D` field elements, grouped into
     // `2^nv / K` one-hot chunks of size `K`.
-    let total_field = layout.num_live_blocks * layout.num_positions_per_block * ONEHOT_D;
+    let root_d = layout.d_a();
+    let total_field = layout.num_live_blocks * layout.num_positions_per_block * root_d;
     let total_chunks = total_field / ONEHOT_K;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
         .collect();
-    OneHotPoly::<F, u8>::new(ONEHOT_K, ONEHOT_D, indices).expect("onehot poly")
+    OneHotPoly::<F, u8>::new(ONEHOT_K, root_d, indices).expect("onehot poly")
 }
 
 pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {

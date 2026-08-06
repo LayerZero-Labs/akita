@@ -32,31 +32,6 @@ fn table_miss_key(num_vars: usize) -> PolynomialGroupLayout {
     PolynomialGroupLayout::new(num_vars, 3)
 }
 
-fn assert_schedule_eq(
-    label: &str,
-    lhs: &akita_types::FoldSchedule,
-    rhs: &akita_types::FoldSchedule,
-) {
-    assert_eq!(
-        format!("{:?}", lhs.root),
-        format!("{:?}", rhs.root),
-        "{label}: root diverges"
-    );
-    assert_eq!(
-        format!("{:?}", lhs.recursive_folds),
-        format!("{:?}", rhs.recursive_folds),
-        "{label}: recursive folds diverge"
-    );
-    assert_eq!(
-        lhs.terminal.input_witness_len, rhs.terminal.input_witness_len,
-        "{label}: terminal witness lengths diverge"
-    );
-    assert_eq!(
-        lhs.terminal.params.response_shape, rhs.terminal.params.response_shape,
-        "{label}: terminal witness shapes diverge"
-    );
-}
-
 fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
     let key = table_miss_key(num_vars);
 
@@ -84,14 +59,14 @@ fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
 
 #[test]
 fn catalog_miss_rejects_non_shipped_keys() {
-    check_table_miss_rejection::<fp128::D64OneHot>(14);
-    check_table_miss_rejection::<fp128::D64Dense>(16);
+    check_table_miss_rejection::<fp128::OneHot>(27);
+    check_table_miss_rejection::<fp128::Dense>(27);
     check_table_miss_rejection::<fp32::D128OneHot>(16);
 }
 
 #[test]
 fn fixed_width_selection_resolves_the_same_exact_generated_row() {
-    type Cfg = fp128::D64Dense;
+    type Cfg = fp128::Dense;
 
     let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
     let entry = catalog.entries.first().expect("nonempty generated catalog");
@@ -136,7 +111,7 @@ fn fixed_width_selection_resolves_the_same_exact_generated_row() {
 
 #[test]
 fn cached_catalog_rows_do_not_bypass_runtime_hook_validation() {
-    type Cfg = fp128::D64Dense;
+    type Cfg = fp128::Dense;
 
     let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
     let entry = catalog.entries.first().expect("nonempty generated catalog");
@@ -188,7 +163,7 @@ fn assert_mutated_row_is_rejected<Cfg: CommitmentConfig>(
 
 #[test]
 fn resolved_row_audit_rejects_low_rank_root_d_and_terminal_a() {
-    type Cfg = fp128::D64Dense;
+    type Cfg = fp128::Dense;
 
     let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
     let entry = catalog.entries.first().expect("nonempty generated catalog");
@@ -249,7 +224,7 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_terminal_a() {
 
 #[test]
 fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
-    type Cfg = fp128::D64Dense;
+    type Cfg = fp128::Dense;
 
     let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
     let entry = catalog.entries.first().expect("nonempty generated catalog");
@@ -295,13 +270,12 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
 }
 
 #[test]
-fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
+fn removed_d64_scalar_catalog_rejects_through_recursive_adapter() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(18));
-    let ordinary = fp128::D64OneHot::runtime_schedule(key.clone())
-        .expect("ordinary scalar schedule must resolve");
-    let recursive = RecursiveCommitmentConfig::<fp128::D64OneHot>::runtime_schedule(key)
-        .expect("recursive adapter scalar schedule must resolve");
-    assert_schedule_eq("recursive scalar delegation", &ordinary, &recursive);
+    assert!(matches!(
+        RecursiveCommitmentConfig::<fp128::D64OneHot>::runtime_schedule(key),
+        Err(akita_field::AkitaError::UnsupportedSchedule(_))
+    ));
 }
 
 #[test]
@@ -387,15 +361,14 @@ fn runtime_rejects_malformed_extension_geometry_without_panicking() {
 
 #[test]
 fn policy_bridge_matches_cfg_hooks() {
-    assert_policy_matches_cfg::<fp128::D64Dense>();
-    assert_policy_matches_cfg::<fp128::D64OneHot>();
+    assert_policy_matches_cfg::<fp128::Dense>();
     assert_policy_matches_cfg::<fp128::OneHot>();
     assert_policy_matches_cfg::<fp32::D64OneHot>();
 }
 
 #[test]
-fn offline_planner_admits_dense_multi_group_roots() {
-    type Cfg = fp128::D64Dense;
+fn adaptive_dense_rejects_multi_group_roots() {
+    type Cfg = fp128::Dense;
     const PRE_NV: usize = 16;
     const FINAL_NV: usize = 20;
 
@@ -411,7 +384,7 @@ fn offline_planner_admits_dense_multi_group_roots() {
         precommitteds: vec![CommittedGroupProfile::from_params(pre_group, &pre_params)],
     };
     let precommitted_honest_fold_policies = vec![Cfg::root_honest_fold_policy()];
-    let planned = find_schedule(
+    let error = find_schedule(
         &key,
         Cfg::root_honest_fold_policy(),
         &precommitted_honest_fold_policies,
@@ -419,21 +392,16 @@ fn offline_planner_admits_dense_multi_group_roots() {
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )
-    .expect("dense multi-group schedule");
-
-    assert_eq!(
-        planned.schedule.root.params.precommitted_groups.len(),
-        key.precommitteds.len()
-    );
-    planned
-        .schedule
-        .validate_structure()
-        .expect("dense grouped schedule structure");
+    .expect_err("adaptive dense multi-group planning is deferred");
+    assert!(matches!(
+        error,
+        akita_field::AkitaError::UnsupportedSchedule(_)
+    ));
 }
 
 #[test]
 fn root_basis_is_derived_from_existing_policy_inputs() {
-    let fp128 = policy_of::<fp128::D64OneHot>();
+    let fp128 = policy_of::<fp128::OneHot>();
     assert_eq!(fp128.basis_range, (3, 6));
     assert_eq!(fp128.decomposition.log_basis, 3);
     assert_eq!(fp128.log_basis_search_range_at_level(0), (3, 3));
@@ -458,69 +426,6 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
     ];
     for key in adversarial {
         // Must return without panicking; either branch (Ok/Err) is fine.
-        let _ = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key));
+        let _ = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key));
     }
-}
-
-fn committed_descriptor<Cfg: CommitmentConfig>(
-    group: PolynomialGroupLayout,
-) -> CommittedGroupProfile {
-    let params = akita_config::committed_group_params::<Cfg>(&group)
-        .expect("heterogeneous group must resolve");
-    CommittedGroupProfile::from_params(group, &params)
-}
-
-#[test]
-fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order() {
-    type Cfg = fp128::D64OneHot;
-    let onehot_16 = committed_descriptor::<Cfg>(PolynomialGroupLayout::new(14, 1));
-    let dense = committed_descriptor::<fp128::D64Dense>(PolynomialGroupLayout::new(15, 2));
-    let key = AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::new(16, 1),
-        precommitteds: vec![onehot_16, dense],
-    };
-
-    let precommitted_honest_fold_policies = vec![
-        akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-            akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
-                Cfg::decomposition().field_bits(),
-                akita_types::sis::FoldWitnessNorms::new(1, 4),
-            ),
-        ),
-        akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-            akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
-                Cfg::decomposition().field_bits(),
-                akita_types::sis::FoldWitnessNorms::bounded(3, Cfg::D),
-            ),
-        ),
-    ];
-    let planned = find_schedule(
-        &key,
-        Cfg::root_honest_fold_policy(),
-        &precommitted_honest_fold_policies,
-        &policy_of::<Cfg>(),
-        Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
-    )
-    .expect("heterogeneous group batch must plan offline");
-
-    let runtime = Cfg::runtime_schedule(key.clone()).expect("curated mixed catalog row");
-    assert_schedule_eq("curated mixed row replay", &runtime, &planned.schedule);
-
-    let reordered = AkitaScheduleLookupKey {
-        precommitteds: vec![dense, onehot_16],
-        ..key
-    };
-    assert_ne!(
-        key.canonical_descriptor_bytes(),
-        reordered.canonical_descriptor_bytes(),
-        "ordered per-group contracts must be part of catalog identity"
-    );
-    assert!(
-        matches!(
-            Cfg::runtime_schedule(reordered),
-            Err(akita_field::AkitaError::UnsupportedSchedule(_))
-        ),
-        "an unlisted mixed ordering must reject without runtime planner search"
-    );
 }

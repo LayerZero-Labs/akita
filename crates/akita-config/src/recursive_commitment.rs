@@ -112,11 +112,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     }
 }
 
-#[cfg(all(
-    test,
-    feature = "schedules-fp128-d64-onehot",
-    feature = "schedules-fp128-d64-onehot-recursive"
-))]
+#[cfg(all(test, feature = "schedules-fp128-d64-onehot-recursive"))]
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;

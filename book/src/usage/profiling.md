@@ -6,7 +6,7 @@ traces, and the CI benchmark matrix.
 ## Canonical command
 
 ```bash
-AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 \
+AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
   cargo run --release --no-default-features \
   --features parallel,profile-onehot-fp128-d64 --example profile
 ```
@@ -14,39 +14,36 @@ AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 \
 Run from `crates/akita-pcs/`. The harness refuses debug builds unless
 `AKITA_ALLOW_DEBUG_PROFILE=1`.
 
-This feature-pruned command intentionally measures the explicit uniform-D64
-baseline. With the normal default feature set, omitting `AKITA_MODE` selects
-`onehot_fp128` at `nv=32`, the default fp128 one-hot profile.
+This feature-pruned command measures the adaptive `onehot_fp128` catalog. With
+the normal default feature set, omitting `AKITA_MODE` selects the same profile.
 
 Always use the feature-pruned command above when profiling this path or
 measuring its binary size/codegen time. An unpruned default-feature build of
 the `profile` example retains every locally supported profile mode; it is a
-multi-mode developer artifact, not a like-for-like onehot fp128/D64 binary.
+multi-mode developer artifact, not a like-for-like fp128 one-hot binary.
 Mixing the two build surfaces can roughly double the example binary and make a
 normal release link look like a verifier regression.
 
 ## Presets and ring degrees
 
 The default direct **fp128** one-hot preset is adaptive: generated tables choose
-the first two fold levels and use D64 for the uniform suffix. The explicit
-uniform `fp128_d64_onehot` baseline remains available, and recursive presets
-remain D64. Shipped tables include `fp128_onehot`,
-`fp128_d64_onehot` and `fp128_d64_dense`.
+the first two fold levels and use D64 for the uniform suffix. Direct dense uses
+the same adaptive policy. Recursive, tensor, and multi-chunk companion presets
+remain D64. Shipped direct tables are `fp128_onehot` and `fp128_dense`.
 **fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
 `D32OneHot` preset.
 **fp32/fp64** D32/D64 are not securable; smallest secure choice is **D128
 one-hot** (CI benches at `nv=28`).
 
-Compare one-hot schedules with
-`akita_config::proof_optimized::fp128::best_onehot_schedule`. Dense fp128 uses
-the single `D64Dense` runtime catalog.
+The direct configs are `akita_config::proof_optimized::fp128::OneHot` and
+`akita_config::proof_optimized::fp128::Dense`.
 
 ## Environment knobs
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `AKITA_MODE` | `onehot_fp128` normally; `onehot_fp128_d64` in the feature-pruned command | Preset family and representation |
-| `AKITA_NUM_VARS` | `32` normally; `25` in the feature-pruned D64 binary | Witness size |
+| `AKITA_MODE` | `onehot_fp128` | Preset family and representation |
+| `AKITA_NUM_VARS` | `32` | Witness size |
 | `AKITA_NUM_POLYS` | `1` | Batched opening count |
 | `AKITA_PROFILE_TRACE` | `1` | Chrome/Perfetto trace output |
 | `AKITA_PROFILE_LOG` | `trace` | `tracing` filter |
@@ -61,7 +58,7 @@ Implementation: `crates/akita-pcs/examples/profile/main.rs`.
 Disable parallel while retaining the same pruned workload:
 
 ```bash
-AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 \
+AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
   cargo run --release --no-default-features \
   --features profile-onehot-fp128-d64 --example profile
 ```
@@ -79,10 +76,9 @@ Committed-fold A-role pricing (every cell folds securely):
 |------|----|----|------------|
 | `onehot_fp32_d128` | 28 | 1 | `direct` |
 | `onehot_fp64_d128` | 28 | 1 | `direct` |
-| `dense_fp128_d64` | 24 | 1 | `direct` |
+| `dense_fp128` | 24 | 1 | `direct` |
 | `onehot_fp128_d64_tensor` | 26 | 1 | `direct` |
-| `onehot_fp128_d64` | 32 | 1 | `direct` |
-| `onehot_fp128_d64` | 30 | 4 | `direct` |
+| `onehot_fp128` | 32 | 1 | `direct` |
 | `onehot_fp128_d64_multi_group_recursive` | 32 | 4 | `direct` |
 | `onehot_fp128_d64_multi_group_recursive` | 32 | 4 | `recursive` |
 | `onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2` | 32 | 4 | `recursive` |

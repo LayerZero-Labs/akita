@@ -43,8 +43,7 @@ use akita_planner::generated_families::{
     emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
 };
 use akita_types::{
-    sis::HonestFoldPolicySpec, AkitaScheduleLookupKey, CommitmentRingDims, FoldSchedule,
-    PolynomialGroupLayout,
+    sis::HonestFoldPolicySpec, AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout,
 };
 
 type GroupBatchCandidate = (AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>);
@@ -74,7 +73,6 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
     match family.module_name {
         "fp128_onehot" => fp128::OneHot::schedule_catalog().is_some(),
         "fp128_dense" => fp128::Dense::schedule_catalog().is_some(),
-        "fp128_d64_onehot" => fp128::D64OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot_recursive" => {
             <akita_config::RecursiveCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::schedule_catalog()
                 .is_some()
@@ -83,7 +81,6 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
             <akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk> as CommitmentConfig>::schedule_catalog()
                 .is_some()
         }
-        "fp128_d64_dense" => fp128::D64Dense::schedule_catalog().is_some(),
         "fp128_d64_onehot_tensor" => {
             tensor_verifier::fp128::D64OneHotTensor::schedule_catalog().is_some()
         }
@@ -212,13 +209,13 @@ fn assert_precommit_registry<Cfg: CommitmentConfig>(
 #[cfg(feature = "all-schedules")]
 #[test]
 fn catalog_identity_rejects_non_v1_protocol_epoch() {
-    let mut catalog = fp128::D64Dense::schedule_catalog().expect("generated catalog");
+    let mut catalog = fp128::Dense::schedule_catalog().expect("generated catalog");
     catalog.identity.protocol_epoch -= 1;
     let error = validate_catalog_identity(
         &catalog,
-        &policy_of::<fp128::D64Dense>(),
-        fp128::D64Dense::ring_challenge_config,
-        fp128::D64Dense::fold_challenge_shape_at_level,
+        &policy_of::<fp128::Dense>(),
+        fp128::Dense::ring_challenge_config,
+        fp128::Dense::fold_challenge_shape_at_level,
     )
     .expect_err("non-v1 protocol epoch must not validate");
     assert!(error.to_string().contains("catalog identity mismatch"));
@@ -227,14 +224,14 @@ fn catalog_identity_rejects_non_v1_protocol_epoch() {
 #[cfg(feature = "all-schedules")]
 #[test]
 fn catalog_identity_rejects_planner_policy_changes() {
-    let policy = policy_of::<fp128::D64Dense>();
-    let catalog = fp128::D64Dense::schedule_catalog().expect("generated catalog");
+    let policy = policy_of::<fp128::Dense>();
+    let catalog = fp128::Dense::schedule_catalog().expect("generated catalog");
     let assert_rejected = |label: &str, mutated: akita_schedules::GeneratedScheduleTable| {
         let error = validate_catalog_identity(
             &mutated,
             &policy,
-            fp128::D64Dense::ring_challenge_config,
-            fp128::D64Dense::fold_challenge_shape_at_level,
+            fp128::Dense::ring_challenge_config,
+            fp128::Dense::fold_challenge_shape_at_level,
         )
         .expect_err("planner-policy mismatch must not validate");
         assert!(
@@ -260,7 +257,7 @@ fn catalog_identity_rejects_planner_policy_changes() {
 #[cfg(feature = "all-schedules")]
 #[test]
 fn equal_lookup_keys_form_one_contiguous_candidate_range() {
-    let catalog = fp128::D64Dense::schedule_catalog().expect("generated catalog");
+    let catalog = fp128::Dense::schedule_catalog().expect("generated catalog");
     let entry = *catalog.entries.first().expect("nonempty generated catalog");
     let entries = Box::leak(vec![entry, entry].into_boxed_slice());
     let duplicate_table = akita_schedules::GeneratedScheduleTable {
@@ -277,19 +274,11 @@ fn equal_lookup_keys_form_one_contiguous_candidate_range() {
 
 #[cfg(feature = "all-schedules")]
 #[test]
-fn mixed_catalog_identity_binds_nonwinning_dimensions() {
+fn mixed_catalog_identity_binds_candidate_dimensions() {
     static WITHOUT_NONWINNER: &[usize] = &[64, 256];
 
     let policy = policy_of::<fp128::OneHot>();
     let catalog = fp128::OneHot::schedule_catalog().expect("fp128 one-hot catalog");
-    assert!(catalog.entries.iter().all(|entry| entry
-        .root
-        .final_group
-        .commitment
-        .inner_commit_matrix
-        .ring_dimension
-        != 128));
-
     let mut mutated = catalog;
     let akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
         num_search_levels,
@@ -346,14 +335,12 @@ fn family_catalog(
     match family.module_name {
         "fp128_onehot" => prepare_family_catalog::<fp128::OneHot>(family, keys),
         "fp128_dense" => prepare_family_catalog::<fp128::Dense>(family, keys),
-        "fp128_d64_onehot" => prepare_family_catalog::<fp128::D64OneHot>(family, keys),
         "fp128_d64_onehot_recursive" => prepare_family_catalog::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
         >(family, keys),
         "fp128_d64_onehot_recursive_multi_chunk_w8r2" => prepare_family_catalog::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
         >(family, keys),
-        "fp128_d64_dense" => prepare_family_catalog::<fp128::D64Dense>(family, keys),
         "fp128_d64_onehot_tensor" => {
             prepare_family_catalog::<tensor_verifier::fp128::D64OneHotTensor>(family, keys)
         }
@@ -408,18 +395,12 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, requests: &[Gro
         "fp128_dense" => {
             assert_group_batch_table_hits::<fp128::Dense>(family.module_name, requests)
         }
-        "fp128_d64_onehot" => {
-            assert_group_batch_table_hits::<fp128::D64OneHot>(family.module_name, requests)
-        }
         "fp128_d64_onehot_recursive" => assert_group_batch_table_hits::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
         >(family.module_name, requests),
         "fp128_d64_onehot_recursive_multi_chunk_w8r2" => assert_group_batch_table_hits::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
         >(family.module_name, requests),
-        "fp128_d64_dense" => {
-            assert_group_batch_table_hits::<fp128::D64Dense>(family.module_name, requests)
-        }
         "fp128_d64_onehot_tensor" => assert_group_batch_table_hits::<
             tensor_verifier::fp128::D64OneHotTensor,
         >(family.module_name, requests),
@@ -499,14 +480,12 @@ fn resolve_family_group_batch_schedule(
     match family.module_name {
         "fp128_onehot" => table_backed_group_batch_schedule::<fp128::OneHot>(request),
         "fp128_dense" => table_backed_group_batch_schedule::<fp128::Dense>(request),
-        "fp128_d64_onehot" => table_backed_group_batch_schedule::<fp128::D64OneHot>(request),
         "fp128_d64_onehot_recursive" => table_backed_group_batch_schedule::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
         >(request),
         "fp128_d64_onehot_recursive_multi_chunk_w8r2" => table_backed_group_batch_schedule::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
         >(request),
-        "fp128_d64_dense" => table_backed_group_batch_schedule::<fp128::D64Dense>(request),
         "fp128_d64_onehot_tensor" => {
             table_backed_group_batch_schedule::<tensor_verifier::fp128::D64OneHotTensor>(request)
         }

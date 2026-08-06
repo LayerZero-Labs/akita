@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn compact_trace_matches_dense_definition_across_coefficient_blocks() {
-        type Cfg = fp128::D64Dense;
+        type Cfg = fp128::Dense;
         type F = fp128::Field;
         type E = F;
         const D: usize = Cfg::D;

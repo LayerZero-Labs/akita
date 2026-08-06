@@ -14,7 +14,7 @@ use akita_types::{ntt_cache_requires_i16_tail, AkitaScheduleLookupKey, Polynomia
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_levels_are_exactly_root_and_recursive_folds() {
-    let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(30),
     ))
     .expect("generated fp128 schedule");
@@ -29,7 +29,7 @@ fn setup_levels_are_exactly_root_and_recursive_folds() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn generated_schedule_has_explicit_terminal_inner_only_topology() {
-    let schedule = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(32),
     ))
     .expect("generated one-hot schedule");
@@ -48,7 +48,7 @@ fn generated_schedule_has_explicit_terminal_inner_only_topology() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_capacity_includes_terminal_inner_matrix() {
-    let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(28),
     ))
     .expect("generated fp128 schedule");
@@ -136,8 +136,7 @@ fn fp128_adaptive_onehot_catalog_freezes_root_fold_digits() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_envelope_scan_includes_multi_polynomial_precommitted_groups() {
-    let layouts =
-        setup_capacity_scan_layouts::<fp128::D64OneHot>(14, 3).expect("setup scan layouts");
+    let layouts = setup_capacity_scan_layouts::<fp128::OneHot>(14, 3).expect("setup scan layouts");
 
     assert!(layouts.iter().any(|layout| {
         layout.groups()

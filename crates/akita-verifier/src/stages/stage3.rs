@@ -290,7 +290,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::{committed_group_params, proof_optimized::fp128::D64Dense};
+    use akita_config::{committed_group_params, proof_optimized::fp128::Dense};
     use akita_field::Prime128OffsetA7F7;
     use akita_transcript::AkitaTranscript;
     use akita_types::{
@@ -345,9 +345,8 @@ mod tests {
 
     #[test]
     fn offloaded_setup_ignores_shared_matrix_divisibility() {
-        let level_params =
-            committed_group_params::<D64Dense>(&PolynomialGroupLayout::singleton(16))
-                .expect("level parameters");
+        let level_params = committed_group_params::<Dense>(&PolynomialGroupLayout::singleton(16))
+            .expect("level parameters");
         let natural_field_len = RING_D + 1;
         let (setup, offloaded_params) =
             verifier_setup_with_unaligned_matrix(level_params.clone(), natural_field_len);

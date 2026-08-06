@@ -585,7 +585,7 @@ mod tests {
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
     use akita_types::SetupMatrixCapacity;
 
-    type Cfg = fp128::D64Dense;
+    type Cfg = fp128::Dense;
     type TestF = fp128::Field;
 
     #[test]
@@ -619,7 +619,7 @@ mod tests {
     fn setup_accepts_field_coupled_presets() {
         // The D64 catalog begins at nv=14, the first singleton shape with the
         // required root and suffix folds.
-        new_prover_setup::<fp128::Field, fp128::D64Dense>(14, 1)
+        new_prover_setup::<fp128::Field, fp128::Dense>(14, 1)
             .expect("fp128 dense preset should accept the default field");
     }
 

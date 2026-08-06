@@ -82,12 +82,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     128,
-    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64),
-    schedules = (
-        "schedules-fp128-d64-dense",
-        "fp128_d64_dense",
-        fp128_d64_dense_table
-    )
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64)
 );
 impl_proof_optimized_preset!(
     Dense,
@@ -115,12 +110,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
-    schedules = (
-        "schedules-fp128-d64-onehot",
-        "fp128_d64_onehot",
-        fp128_d64_onehot_table
-    )
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1)
 );
 impl_proof_optimized_preset!(
     D64OneHotK16,
@@ -202,12 +192,8 @@ impl_multi_chunk_companion!(
 /// Concrete fp128 preset selected by a schedule-family query.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fp128Preset {
-    /// Dense uniform `D=64` preset.
-    D64Dense,
     /// Dense preset with adaptive per-level ring dimensions.
     Dense,
-    /// Binary onehot generated `D=64` preset.
-    D64OneHot,
     /// Binary onehot preset with adaptive per-level ring dimensions.
     OneHot,
 }
@@ -216,22 +202,19 @@ impl Fp128Preset {
     /// Setup-generation ring dimension used by this preset.
     pub const fn ring_dimension(self) -> usize {
         match self {
-            Self::D64Dense | Self::D64OneHot => 64,
             Self::Dense | Self::OneHot => 256,
         }
     }
 
     /// Whether this preset is onehot-oriented.
     pub const fn is_onehot(self) -> bool {
-        matches!(self, Self::D64OneHot | Self::OneHot)
+        matches!(self, Self::OneHot)
     }
 
     /// Stable human-readable preset name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::D64Dense => "D64Dense",
             Self::Dense => "Dense",
-            Self::D64OneHot => "D64OneHot",
             Self::OneHot => "OneHot",
         }
     }
@@ -312,8 +295,8 @@ where
 pub fn best_onehot_schedule(
     key: PolynomialGroupLayout,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    Ok(best_by_exact_bytes([
-        candidate::<D64OneHot>(Fp128Preset::D64OneHot, key)?,
-        candidate::<OneHot>(Fp128Preset::OneHot, key)?,
-    ]))
+    Ok(best_by_exact_bytes([candidate::<OneHot>(
+        Fp128Preset::OneHot,
+        key,
+    )?]))
 }
