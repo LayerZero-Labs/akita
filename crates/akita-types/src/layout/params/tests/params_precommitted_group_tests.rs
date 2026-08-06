@@ -19,7 +19,7 @@ fn multi_group_m_row_count_matches_canonical_layout() {
 
     assert_eq!(
         lp.relation_matrix_row_count(2).unwrap(),
-        1 + n_a_final + n_b_final + 1 + n_a_pre + n_b_pre + n_d
+        1 + n_a_final + n_b_final + 1 + n_a_pre + n_b_pre + n_d + 6
     );
 }
 
@@ -82,9 +82,9 @@ fn group_role_dims_use_group_a_b_and_level_shared_d() {
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
         outer.output_rank(),
-        outer.input_width() * 2,
+        outer.input_width(),
         outer.coeff_linf_bound(),
-        32,
+        64,
     );
     let dims = lp
         .group_role_dims(&batch, 0)
@@ -93,7 +93,7 @@ fn group_role_dims_use_group_a_b_and_level_shared_d() {
         dims,
         CommitmentRingDims {
             inner: 64,
-            outer: 32,
+            outer: 64,
             opening: 64,
         }
     );
@@ -253,10 +253,10 @@ fn address_oracle_precommit(
 fn address_oracle_fixture(group_count: usize) -> (CommittedGroupParams, OpeningClaimsLayout) {
     let (final_dims, precommitted) = match group_count {
         1 => ((64, 64, 64, 8, 2), Vec::new()),
-        2 => ((64, 64, 32, 8, 2), vec![(128, 64, 32, 16, 1)]),
+        2 => ((64, 64, 64, 8, 2), vec![(128, 64, 64, 16, 1)]),
         3 => (
-            (64, 32, 64, 8, 2),
-            vec![(128, 32, 64, 16, 1), (64, 64, 64, 8, 3)],
+            (64, 64, 64, 8, 2),
+            vec![(128, 64, 64, 16, 1), (64, 64, 64, 8, 3)],
         ),
         _ => panic!("address-oracle fixture supports one to three groups"),
     };
@@ -441,6 +441,8 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     }
                 }
             }
+            let relation_layout =
+                crate::relation_rhs_layout_for(&lp, &batch).expect("compression relation layout");
             assert_eq!(layout.r_range().start, cursor);
             let mut expected_r_dims = Vec::new();
             for &group_index in &group_order {
@@ -455,9 +457,33 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 lp.role_dims().d_d(),
                 lp.open_commit_matrix.output_rank(),
             ));
+            for map_index in 0..crate::COMPRESSION_MAP_COUNT {
+                for relation_group_index in 0..group_order.len() {
+                    expected_r_dims.push(
+                        relation_layout
+                            .group_compression_plan(relation_group_index)
+                            .expect("F plan")
+                            .1
+                            .maps()[map_index]
+                            .ring_dimension(),
+                    );
+                }
+                expected_r_dims.push(
+                    relation_layout
+                        .opening_compression_plan()
+                        .expect("H plan")
+                        .maps()[map_index]
+                        .ring_dimension(),
+                );
+            }
             assert_eq!(layout.r_rows().len(), expected_r_dims.len());
-            for (row_index, (&ring_dim, row)) in
-                expected_r_dims.iter().zip(layout.r_rows()).enumerate()
+            let compression_row_count = crate::COMPRESSION_MAP_COUNT * (group_order.len() + 1);
+            let ordinary_row_count = expected_r_dims.len() - compression_row_count;
+            for (row_index, (&ring_dim, row)) in expected_r_dims
+                .iter()
+                .zip(layout.r_rows())
+                .take(ordinary_row_count)
+                .enumerate()
             {
                 assert_eq!(row.ring_dim(), ring_dim);
                 assert_eq!(row.range(), cursor..cursor + quotient_depth * ring_dim);
@@ -473,6 +499,78 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 }
                 cursor += quotient_depth * ring_dim;
             }
+            let support = layout.negative_binary_support_intervals();
+            assert_eq!(support.len(), crate::COMPRESSION_MAP_COUNT);
+            let prefix_alignment = cursor..support[0].start;
+            if !prefix_alignment.is_empty() {
+                assert!(layout
+                    .compression_alignment_ranges()
+                    .contains(&prefix_alignment));
+            }
+            assert_eq!(
+                layout.compression_layers().len(),
+                crate::COMPRESSION_MAP_COUNT
+            );
+            for (map_index, support_interval) in support.iter().enumerate() {
+                let layer_alignment = cursor..support_interval.start;
+                if !layer_alignment.is_empty() {
+                    assert!(layout
+                        .compression_alignment_ranges()
+                        .contains(&layer_alignment));
+                }
+                cursor = support_interval.start;
+                let layer = &layout.compression_layers()[map_index];
+                assert_eq!(layer.map_index(), map_index);
+                assert_eq!(layer.f_spans().len(), group_order.len());
+                for (relation_group_index, &group_index) in group_order.iter().enumerate() {
+                    let (planned_group_index, plan) = relation_layout
+                        .group_compression_plan(relation_group_index)
+                        .expect("group compression plan");
+                    assert_eq!(planned_group_index, group_index);
+                    let (span_group_index, span) = &layer.f_spans()[relation_group_index];
+                    assert_eq!(*span_group_index, group_index);
+                    assert_eq!(span.map(), plan.maps()[map_index]);
+                    assert_eq!(
+                        span.range(),
+                        cursor..cursor + span.map().padded_digit_count()
+                    );
+                    cursor += span.map().padded_digit_count();
+                }
+                let h_map = relation_layout
+                    .opening_compression_plan()
+                    .expect("H plan")
+                    .maps()[map_index];
+                assert_eq!(layer.h_span().map(), h_map);
+                assert_eq!(
+                    layer.h_span().range(),
+                    cursor..cursor + h_map.padded_digit_count()
+                );
+                cursor += h_map.padded_digit_count();
+                assert_eq!(support_interval.end, cursor);
+                for &(group_index, row_index) in layer.f_quotient_rows() {
+                    assert!(group_order.contains(&group_index));
+                    let row = &layout.r_rows()[row_index];
+                    assert_eq!(
+                        row.range(),
+                        cursor..cursor + quotient_depth * row.ring_dim()
+                    );
+                    cursor = row.range().end;
+                }
+                let h_row = &layout.r_rows()[layer.h_quotient_row()];
+                assert_eq!(
+                    h_row.range(),
+                    cursor..cursor + quotient_depth * h_row.ring_dim()
+                );
+                cursor = h_row.range().end;
+            }
+            let suffix_alignment = cursor..layout.live_coeff_len();
+            if !suffix_alignment.is_empty() {
+                assert!(layout
+                    .compression_alignment_ranges()
+                    .contains(&suffix_alignment));
+            }
+            cursor = layout.live_coeff_len();
+            assert_eq!(layout.r_range().end, cursor);
             assert_eq!(layout.live_coeff_len(), cursor);
             assert_eq!(
                 lp.output_witness_len::<Prime128OffsetA7F7>(&batch)

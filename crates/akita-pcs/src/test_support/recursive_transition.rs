@@ -103,9 +103,12 @@ where
                 Mid::ring_challenge_config,
                 Mid::fold_challenge_shape_at_level,
                 key.final_group.num_vars(),
-                1,
-                root_out,
-                root_lb,
+                akita_planner::SuffixPlanStart {
+                    level: 1,
+                    witness_len: root_out,
+                    log_basis: root_lb,
+                    payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+                },
             )?;
             let mut l1_step = planned_fold_step(mid.folds.first().ok_or_else(|| {
                 AkitaError::InvalidSetup(
@@ -173,9 +176,13 @@ where
                 Suffix::ring_challenge_config,
                 Suffix::fold_challenge_shape_at_level,
                 key.final_group.num_vars(),
-                2,
-                l1_out,
-                l1_lb,
+                akita_planner::SuffixPlanStart {
+                    level: 2,
+                    witness_len: l1_out,
+                    log_basis: l1_lb,
+                    payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix
+                        .after(l1_step.params.witness.payload_mode),
+                },
             )?;
             finish_schedule(root, vec![l1_step], suffix, &opening_layout)
         },

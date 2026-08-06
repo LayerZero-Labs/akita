@@ -656,7 +656,7 @@ mod fp128_policy_tests {
     }
 
     /// Spot-check keys aligned with `specs/sis-euclidean-estimator.md` plus table max.
-    const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[13, 16, 28, 30, 44, 50];
+    const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
 
     #[test]
     fn current_d64_dense_schedule_stays_within_audited_sis_widths() {

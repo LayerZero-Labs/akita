@@ -389,38 +389,38 @@ mod tests {
     fn projection_geometry_uses_common_base() {
         let geometry = SetupProjectionGeometry::from_role_footprints(
             CommitmentRingDims {
-                inner: 64,
-                outer: 32,
-                opening: 32,
+                inner: 128,
+                outer: 64,
+                opening: 64,
             },
             7,
             11,
             13,
         )
         .expect("common-base geometry");
-        assert_eq!(geometry.base_ring_dim(), 32);
+        assert_eq!(geometry.base_ring_dim(), 64);
         assert_eq!(geometry.a_ratio(), 2);
         assert_eq!(geometry.b_ratio(), 1);
         assert_eq!(geometry.d_ratio(), 1);
         assert_eq!(geometry.required(), 14);
-        assert_eq!(geometry.alpha_power_len(), 32);
-        assert_eq!(geometry.natural_field_len(), 14 * 32);
+        assert_eq!(geometry.alpha_power_len(), 64);
+        assert_eq!(geometry.natural_field_len(), 14 * 64);
     }
 
     #[test]
     fn projection_geometry_accepts_reversed_b_d_order() {
         let geometry = SetupProjectionGeometry::from_role_footprints(
             CommitmentRingDims {
-                inner: 128,
-                outer: 32,
-                opening: 64,
+                inner: 256,
+                outer: 64,
+                opening: 128,
             },
             1,
             1,
             1,
         )
         .expect("role ordering is irrelevant to common-base projection");
-        assert_eq!(geometry.base_ring_dim(), 32);
+        assert_eq!(geometry.base_ring_dim(), 64);
         assert_eq!(geometry.a_ratio(), 4);
         assert_eq!(geometry.b_ratio(), 1);
         assert_eq!(geometry.d_ratio(), 2);
@@ -438,7 +438,11 @@ mod tests {
             3,
             &[
                 SetupProjectionGroupGeometry {
-                    role_dims: CommitmentRingDims::uniform(64),
+                    role_dims: CommitmentRingDims {
+                        inner: 128,
+                        outer: 64,
+                        opening: 64,
+                    },
                     a_rows: 2,
                     a_cols: 5,
                     b_rows: 3,
@@ -447,8 +451,8 @@ mod tests {
                 },
                 SetupProjectionGroupGeometry {
                     role_dims: CommitmentRingDims {
-                        inner: 128,
-                        outer: 32,
+                        inner: 256,
+                        outer: 64,
                         opening: 64,
                     },
                     a_rows: 2,
@@ -461,10 +465,10 @@ mod tests {
         )
         .expect("mixed-group geometry");
 
-        assert_eq!(geometry.base_ring_dim(), 32);
+        assert_eq!(geometry.base_ring_dim(), 64);
         assert_eq!(geometry.a_projection_width(), 40);
-        assert_eq!(geometry.b_projection_width(), 42);
-        assert_eq!(geometry.d_projection_width(), 6);
-        assert_eq!(geometry.required(), 42);
+        assert_eq!(geometry.b_projection_width(), 21);
+        assert_eq!(geometry.d_projection_width(), 3);
+        assert_eq!(geometry.required(), 40);
     }
 }

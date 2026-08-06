@@ -151,10 +151,21 @@ fn expected_same_point_batched_shape(
     );
 
     let root_successor = schedule.recursive_folds.first();
+    let opening_payload_coeffs = |params: &akita_types::CommittedGroupParams| {
+        params
+            .opening_payload_geometry()
+            .expect("opening payload geometry")
+            .transmitted_coefficients()
+    };
+    let commitment_payload_coeffs = |params: &akita_types::CommittedGroupParams| {
+        params
+            .outer_payload_geometry()
+            .expect("commitment payload geometry")
+            .transmitted_coefficients()
+    };
     let root_shape = LevelProofShape {
         extension_opening_reduction: None,
-        v_coeffs: root_step.params.open_commit_matrix.output_rank()
-            * root_step.params.open_commit_matrix.ring_dimension(),
+        opening_payload_coeffs: opening_payload_coeffs(root_params),
         stage1_stages: DigitRangePlan::new(1usize << root_params.log_basis_open)
             .expect("scheduled root range basis")
             .stage_shapes(root_rounds),
@@ -163,9 +174,8 @@ fn expected_same_point_batched_shape(
         next_witness_binding: match root_successor {
             Some(successor) => {
                 let next_level_params = &successor.params.witness;
-                NextWitnessBindingShape::OuterCommitment {
-                    coeffs: next_level_params.outer_commit_matrix.output_rank()
-                        * next_level_params.outer_commit_matrix.ring_dimension(),
+                NextWitnessBindingShape::OuterPayload {
+                    coeffs: commitment_payload_coeffs(next_level_params),
                 }
             }
             None => NextWitnessBindingShape::TerminalInnerState,
@@ -183,8 +193,7 @@ fn expected_same_point_batched_shape(
         let rounds = batched_shape_rounds(level_params.d_a(), output_witness_len);
         recursive_folds.push(LevelProofShape {
             extension_opening_reduction: None,
-            v_coeffs: step.params.open_commit_matrix.output_rank()
-                * step.params.open_commit_matrix.ring_dimension(),
+            opening_payload_coeffs: opening_payload_coeffs(level_params),
             stage1_stages: DigitRangePlan::new(1usize << level_params.log_basis_open)
                 .expect("scheduled range basis")
                 .stage_shapes(rounds),
@@ -193,9 +202,8 @@ fn expected_same_point_batched_shape(
             next_witness_binding: match schedule.recursive_folds.get(index + 1) {
                 Some(successor) => {
                     let next_level_params = &successor.params.witness;
-                    NextWitnessBindingShape::OuterCommitment {
-                        coeffs: next_level_params.outer_commit_matrix.output_rank()
-                            * next_level_params.outer_commit_matrix.ring_dimension(),
+                    NextWitnessBindingShape::OuterPayload {
+                        coeffs: commitment_payload_coeffs(next_level_params),
                     }
                 }
                 None => NextWitnessBindingShape::TerminalInnerState,

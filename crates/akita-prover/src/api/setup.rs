@@ -239,11 +239,11 @@ mod tests {
     #[test]
     fn prover_setup_check_validates_prefix_slots() {
         use akita_types::{
-            setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile,
-            InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-            PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
-            SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
-            DEFAULT_SIS_SECURITY_POLICY,
+            setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile, CompressionChainPlan,
+            CompressionChainWitness, InnerCommitMatrixParams, OuterCommitMatrixParams,
+            PackedNegativeBinary, PolynomialGroupLayout, PrecommittedLevelParams, RingVec,
+            SetupPrefixPublicCommitment, SetupPrefixSlot, SisMatrixRole, SisModulusProfileId,
+            SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
         };
 
         let mut setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
@@ -254,7 +254,6 @@ mod tests {
         .expect("generate setup");
         let decomposed =
             RingVec::from_coeffs_with_ring_dim(Vec::new(), 64).expect("empty A-native hint");
-        let hint = AkitaCommitmentHint::singleton(decomposed).expect("empty A-native hint");
         let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
             SisTableKey {
                 policy: DEFAULT_SIS_SECURITY_POLICY,
@@ -280,6 +279,37 @@ mod tests {
         )
         .expect("audited prefix B matrix");
         let commitment_rows = outer_commit_matrix.output_rank();
+        let compression_plan = CompressionChainPlan::for_complete_source(
+            SisModulusProfileId::Q128OffsetA7F7,
+            commitment_rows * 64,
+        )
+        .expect("prefix compression plan");
+        let compression_stages = compression_plan
+            .maps()
+            .iter()
+            .map(|map| PackedNegativeBinary::from_bytes(*map, vec![0; map.packed_digit_bytes()]))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("zero compression stages");
+        let compression_witness =
+            CompressionChainWitness::new(compression_plan.clone(), compression_stages)
+                .expect("zero compression witness");
+        let compression_quotients = compression_plan
+            .maps()
+            .iter()
+            .map(|map| {
+                RingVec::from_coeffs_with_ring_dim(
+                    vec![Prime128Offset275::default(); map.output_coefficients()],
+                    map.ring_dimension(),
+                )
+                .expect("zero compression quotient")
+            })
+            .collect::<Vec<_>>();
+        let hint = AkitaCommitmentHint::singleton_with_outer_compression(
+            decomposed,
+            &compression_witness,
+            &compression_quotients,
+        )
+        .expect("compression-valid A-native hint");
         let commitment_params = PrecommittedLevelParams {
             layout: CommittedGroupProfile {
                 version: CommittedGroupProfile::VERSION,

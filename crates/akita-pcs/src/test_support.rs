@@ -385,6 +385,10 @@ where
             // Envelope prefix kept at the envelope ring dimension: root + the recursive
             // folds before the switch point.
             let recursive_prefix = envelope.recursive_folds[..keep_recursive].to_vec();
+            let suffix_payload_phase = recursive_prefix.iter().fold(
+                akita_types::CommitmentPayloadPhase::CompressedPrefix,
+                |phase, fold| phase.after(fold.params.witness.payload_mode),
+            );
             let (prefix_output_len, prefix_lb) = match recursive_prefix.last() {
                 Some(last) => (last.output_witness_len, last.params.witness.log_basis_open),
                 None => (
@@ -399,9 +403,12 @@ where
                 SuffixCfg::ring_challenge_config,
                 SuffixCfg::fold_challenge_shape_at_level,
                 num_vars,
-                switch_at_fold,
-                prefix_output_len,
-                prefix_lb,
+                akita_planner::SuffixPlanStart {
+                    level: switch_at_fold,
+                    witness_len: prefix_output_len,
+                    log_basis: prefix_lb,
+                    payload_phase: suffix_payload_phase,
+                },
             )?;
 
             let mut recursive_folds = recursive_prefix;
@@ -635,9 +642,12 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
                 Env::ring_challenge_config,
                 Env::fold_challenge_shape_at_level,
                 num_vars,
-                1,
-                root_out,
-                root.params.final_group.commitment.log_basis_open,
+                akita_planner::SuffixPlanStart {
+                    level: 1,
+                    witness_len: root_out,
+                    log_basis: root.params.final_group.commitment.log_basis_open,
+                    payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+                },
             )?;
             finish_schedule(root, Vec::new(), suffix, &opening_layout)
         },
@@ -1138,9 +1148,12 @@ where
                 Mid::ring_challenge_config,
                 Mid::fold_challenge_shape_at_level,
                 num_vars,
-                1,
-                root_out,
-                root_lb,
+                akita_planner::SuffixPlanStart {
+                    level: 1,
+                    witness_len: root_out,
+                    log_basis: root_lb,
+                    payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+                },
             )?;
             let l1 = mid.folds.first().ok_or_else(|| {
                 AkitaError::InvalidSetup(
@@ -1171,9 +1184,13 @@ where
                 Suffix::ring_challenge_config,
                 Suffix::fold_challenge_shape_at_level,
                 num_vars,
-                2,
-                l1_out,
-                l1_lb,
+                akita_planner::SuffixPlanStart {
+                    level: 2,
+                    witness_len: l1_out,
+                    log_basis: l1_lb,
+                    payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix
+                        .after(l1_step.params.witness.payload_mode),
+                },
             )?;
             let opening_layout = OpeningClaimsLayout::new(num_vars, num_polynomials)?;
             finish_schedule(root, vec![l1_step], suffix, &opening_layout)

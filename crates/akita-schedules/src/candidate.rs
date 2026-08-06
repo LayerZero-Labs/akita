@@ -148,6 +148,7 @@ pub fn scalar_root_fold_level_params_candidate(
         return Ok(None);
     };
     Ok(Some(CommittedGroupParams {
+        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
         log_basis_inner: witness_decomp.log_basis,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,

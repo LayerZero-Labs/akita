@@ -32,8 +32,17 @@ use super::{
 ///   setup-size objective.
 #[derive(Clone)]
 pub(crate) struct SuffixResult {
-    pub(crate) best_by_first_direct_setup_per_lb: BTreeMap<u32, ScheduleCandidate>,
-    pub(crate) best_by_payload_per_lb: BTreeMap<u32, ScheduleCandidate>,
+    pub(crate) best_by_first_direct_setup_per_lb: BTreeMap<FirstFoldKey, ScheduleCandidate>,
+    pub(crate) best_by_payload_per_lb: BTreeMap<FirstFoldKey, ScheduleCandidate>,
+}
+
+/// Parent-visible first-fold class. A parent edge prices the child's outgoing
+/// commitment payload, so suffixes with different first payload sizes are not
+/// interchangeable even when they use the same digit basis.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct FirstFoldKey {
+    log_basis: u32,
+    outer_payload_bytes: usize,
 }
 
 impl SuffixResult {
@@ -118,7 +127,16 @@ pub(crate) fn terminal_direct_suffix_cost(
     Ok((direct, terminal_bytes))
 }
 
-pub(crate) type ScheduleMemo = HashMap<(usize, usize, u32, usize), Arc<SuffixResult>>;
+pub(crate) type ScheduleMemo = HashMap<
+    (
+        usize,
+        usize,
+        u32,
+        usize,
+        akita_types::CommitmentPayloadPhase,
+    ),
+    Arc<SuffixResult>,
+>;
 
 fn offloaded_witness_contracts(
     input_witness_len: usize,
@@ -167,36 +185,63 @@ struct ChildObjectives {
 
 fn consider_child_suffixes(
     edge: &ChildEdge<'_>,
-    child_candidates: &BTreeMap<u32, ScheduleCandidate>,
+    child_candidates: &BTreeMap<FirstFoldKey, ScheduleCandidate>,
     objectives: ChildObjectives,
-    best_by_setup: &mut Option<ScheduleCandidate>,
-    best_by_payload: &mut Option<ScheduleCandidate>,
+    best_by_setup: &mut BTreeMap<usize, ScheduleCandidate>,
+    best_by_payload: &mut BTreeMap<usize, ScheduleCandidate>,
 ) -> Result<(), AkitaError> {
     for suffix in child_candidates.values() {
         let Some(candidate) = child_choice(edge, suffix)? else {
             continue;
         };
-        let improves_setup = objectives.first_direct_setup_then_payload
-            && best_by_setup.as_ref().is_none_or(|best| {
-                (
-                    candidate.first_direct_setup_field_len_or_max(),
-                    candidate.total_bytes,
-                ) < (best.first_direct_setup_field_len_or_max(), best.total_bytes)
-            });
-        let improves_payload = objectives.payload
-            && best_by_payload
-                .as_ref()
-                .is_none_or(|best| candidate.total_bytes < best.total_bytes);
-        if !improves_setup && !improves_payload {
-            continue;
-        }
+        update_candidate_frontiers(
+            edge.policy,
+            candidate,
+            objectives,
+            best_by_setup,
+            best_by_payload,
+        )?;
+    }
+    Ok(())
+}
 
-        if improves_setup {
-            *best_by_setup = Some(candidate.clone());
-        }
-        if improves_payload {
-            *best_by_payload = Some(candidate);
-        }
+fn first_outer_payload_bytes(
+    policy: &PlannerPolicy,
+    candidate: &ScheduleCandidate,
+) -> Result<usize, AkitaError> {
+    let Some(first) = candidate.first_fold_params() else {
+        return Ok(0);
+    };
+    first
+        .outer_payload_geometry()?
+        .transmitted_coefficients()
+        .checked_mul(akita_types::layout::field_bytes(
+            policy.decomposition.field_bits(),
+        ))
+        .ok_or_else(|| AkitaError::InvalidSetup("first-fold payload size overflow".into()))
+}
+
+fn update_candidate_frontiers(
+    policy: &PlannerPolicy,
+    candidate: ScheduleCandidate,
+    objectives: ChildObjectives,
+    best_by_setup: &mut BTreeMap<usize, ScheduleCandidate>,
+    best_by_payload: &mut BTreeMap<usize, ScheduleCandidate>,
+) -> Result<(), AkitaError> {
+    let outer_payload_bytes = first_outer_payload_bytes(policy, &candidate)?;
+    let improves_setup = objectives.first_direct_setup_then_payload
+        && best_by_setup.get(&outer_payload_bytes).is_none_or(|best| {
+            candidate.recursive_setup_frontier_score() < best.recursive_setup_frontier_score()
+        });
+    let improves_payload = objectives.payload
+        && best_by_payload
+            .get(&outer_payload_bytes)
+            .is_none_or(|best| candidate.direct_frontier_score() < best.direct_frontier_score());
+    if improves_setup {
+        best_by_setup.insert(outer_payload_bytes, candidate.clone());
+    }
+    if improves_payload {
+        best_by_payload.insert(outer_payload_bytes, candidate);
     }
     Ok(())
 }
@@ -227,7 +272,7 @@ fn child_choice(
         Some(if child_is_terminal {
             akita_types::NextWitnessBindingPolicy::TerminalInnerState
         } else {
-            akita_types::NextWitnessBindingPolicy::OuterCommitment
+            akita_types::NextWitnessBindingPolicy::OuterPayload
         }),
     )?
     .checked_add(edge.eor_bytes)
@@ -309,15 +354,25 @@ pub(crate) struct SuffixState {
     pub(crate) current_witness_len: usize,
     pub(crate) current_lb: u32,
     pub(crate) incoming_setup_prefix: Option<usize>,
+    pub(crate) payload_phase: akita_types::CommitmentPayloadPhase,
 }
 
 impl SuffixState {
-    fn memo_key(self) -> (usize, usize, u32, usize) {
+    fn memo_key(
+        self,
+    ) -> (
+        usize,
+        usize,
+        u32,
+        usize,
+        akita_types::CommitmentPayloadPhase,
+    ) {
         (
             self.level,
             self.current_witness_len,
             self.current_lb,
             self.incoming_setup_prefix.unwrap_or(0),
+            self.payload_phase,
         )
     }
 }
@@ -333,8 +388,8 @@ fn price_level_candidate_with_children(
     direct_child: &SuffixResult,
     offloaded_child: Option<&SuffixResult>,
     require_child_fold: bool,
-    best_for_this_lb: &mut Option<ScheduleCandidate>,
-    best_payload_for_this_lb: &mut Option<ScheduleCandidate>,
+    best_for_this_lb: &mut BTreeMap<usize, ScheduleCandidate>,
+    best_payload_for_this_lb: &mut BTreeMap<usize, ScheduleCandidate>,
 ) -> Result<(), AkitaError> {
     let policy = ctx.policy;
     // Branch A: terminate directly on the witness entering this state.
@@ -365,22 +420,16 @@ fn price_level_candidate_with_children(
                 folds: Vec::new(),
                 terminal: direct_step,
             };
-            if best_for_this_lb
-                .as_ref()
-                .map(|best| {
-                    (natural_len, total)
-                        < (best.first_direct_setup_field_len_or_max(), best.total_bytes)
-                })
-                .unwrap_or(true)
-            {
-                *best_for_this_lb = Some(candidate.clone());
-            }
-            if best_payload_for_this_lb
-                .as_ref()
-                .is_none_or(|best| total < best.total_bytes)
-            {
-                *best_payload_for_this_lb = Some(candidate);
-            }
+            update_candidate_frontiers(
+                policy,
+                candidate,
+                ChildObjectives {
+                    first_direct_setup_then_payload: true,
+                    payload: true,
+                },
+                best_for_this_lb,
+                best_payload_for_this_lb,
+            )?;
         }
     }
 
@@ -471,6 +520,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         current_witness_len,
         current_lb,
         incoming_setup_prefix,
+        payload_phase,
     } = state;
     let memo_key = state.memo_key();
     if depth <= MAX_RECURSION_DEPTH {
@@ -485,12 +535,20 @@ pub(crate) fn derive_optimal_suffix_schedule(
         return Ok(result);
     }
 
-    let mut best_by_first_direct_setup_per_lb: BTreeMap<u32, ScheduleCandidate> = BTreeMap::new();
-    let mut best_by_payload_per_lb: BTreeMap<u32, ScheduleCandidate> = BTreeMap::new();
+    let mut best_by_first_direct_setup_per_lb: BTreeMap<FirstFoldKey, ScheduleCandidate> =
+        BTreeMap::new();
+    let mut best_by_payload_per_lb: BTreeMap<FirstFoldKey, ScheduleCandidate> = BTreeMap::new();
     let root_level_key = root_lookup_key.filter(|_| level == 0);
     if root_level_key.is_some() && incoming_setup_prefix.is_some() {
         return Err(AkitaError::InvalidSetup(
             "multi-group root cannot consume an incoming setup prefix".to_string(),
+        ));
+    }
+    if payload_phase == akita_types::CommitmentPayloadPhase::RawSuffix
+        && incoming_setup_prefix.is_some()
+    {
+        return Err(AkitaError::InvalidSetup(
+            "raw commitment suffix cannot consume a recursive setup prefix".to_string(),
         ));
     }
     let root_opening_layout = root_level_key
@@ -535,8 +593,8 @@ pub(crate) fn derive_optimal_suffix_schedule(
         if lb < current_lb {
             continue;
         }
-        let mut best_for_this_lb: Option<ScheduleCandidate> = None;
-        let mut best_payload_for_this_lb: Option<ScheduleCandidate> = None;
+        let mut best_for_this_lb = BTreeMap::<usize, ScheduleCandidate>::new();
+        let mut best_payload_for_this_lb = BTreeMap::<usize, ScheduleCandidate>::new();
 
         let (current_opening_layout, candidates, require_child_fold) = if let Some(root_key) =
             root_level_key
@@ -566,20 +624,21 @@ pub(crate) fn derive_optimal_suffix_schedule(
             let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
                 continue;
             };
-            let Some(candidate) = derive_candidate_level_params(
-                policy,
-                &ring_challenge_cfg,
-                dimensions,
-                current_witness_len,
-                lb,
-                level,
-                incoming_setup_prefix,
-                requested_fold_shape,
-            )?
-            else {
-                continue;
-            };
-            candidates.push(candidate);
+            for &mode in payload_phase.candidate_modes(level, incoming_setup_prefix.is_some()) {
+                if let Some(candidate) = derive_candidate_level_params(
+                    policy,
+                    mode,
+                    &ring_challenge_cfg,
+                    dimensions,
+                    current_witness_len,
+                    lb,
+                    level,
+                    incoming_setup_prefix,
+                    requested_fold_shape,
+                )? {
+                    candidates.push(candidate);
+                }
+            }
             if candidates.is_empty() {
                 continue;
             }
@@ -616,10 +675,13 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     current_witness_len: next_witness_len,
                     current_lb: lb,
                     incoming_setup_prefix: None,
+                    payload_phase: payload_phase.after(candidate_params.payload_mode),
                 },
                 depth + 1,
             )?;
-            let offloaded_child = if policy.recursive_setup_planning {
+            let offloaded_child = if policy.recursive_setup_planning
+                && candidate_params.payload_mode.is_compressed()
+            {
                 Some(derive_optimal_suffix_schedule(
                     ctx,
                     memo,
@@ -628,6 +690,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                         current_witness_len: next_witness_len,
                         current_lb: lb,
                         incoming_setup_prefix: Some(natural_len),
+                        payload_phase,
                     },
                     depth + 1,
                 )?)
@@ -649,7 +712,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
             )?;
         }
 
-        if let Some(choice) = best_for_this_lb {
+        for (outer_payload_bytes, choice) in best_for_this_lb {
             let ScheduleCandidate {
                 first_direct_setup_field_len,
                 total_bytes,
@@ -658,7 +721,10 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 terminal,
             } = choice;
             best_by_first_direct_setup_per_lb.insert(
-                lb,
+                FirstFoldKey {
+                    log_basis: lb,
+                    outer_payload_bytes,
+                },
                 ScheduleCandidate {
                     total_bytes,
                     setup_field_elements,
@@ -668,7 +734,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 },
             );
         }
-        if let Some(choice) = best_payload_for_this_lb {
+        for (outer_payload_bytes, choice) in best_payload_for_this_lb {
             let ScheduleCandidate {
                 first_direct_setup_field_len,
                 total_bytes,
@@ -677,7 +743,10 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 terminal,
             } = choice;
             best_by_payload_per_lb.insert(
-                lb,
+                FirstFoldKey {
+                    log_basis: lb,
+                    outer_payload_bytes,
+                },
                 ScheduleCandidate {
                     total_bytes,
                     setup_field_elements,

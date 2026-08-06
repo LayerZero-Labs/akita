@@ -543,16 +543,17 @@ where
 {
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
-    let v_size = level.v.serialized_size(Compress::No);
+    let opening_payload_size = level.opening_payload.serialized_size(Compress::No);
+    let opening_payload_d = level.opening_payload.coeff_len();
     let total = level.serialized_size(Compress::No);
     let stage2_intermediate = &level.stage2;
 
     eprintln!("[{label}]   akita_fold L{level_idx}: total={total} bytes");
     eprintln!(
-        "[{label}]     v={} bytes ({} ring elems, D={})",
-        v_size,
-        ring_elem_count(level.v.coeff_len(), ring_d),
-        ring_d,
+        "[{label}]     p_H={} bytes ({} ring elems, D={})",
+        opening_payload_size,
+        ring_elem_count(level.opening_payload.coeff_len(), opening_payload_d),
+        opening_payload_d,
     );
     let stage1 = &level.stage1;
     let stage1_sumcheck_size = stage1
@@ -572,11 +573,11 @@ where
         .sumcheck_proof
         .serialized_size(Compress::No);
     let stage3_sumcheck_size = stage3_sumcheck_size(level.stage3_sumcheck_proof.as_ref());
-    let next_w_commitment = stage2_intermediate.next_witness_binding.outer_commitment();
-    let next_w_commitment_size = next_w_commitment
-        .map(|commitment| commitment.serialized_size(Compress::No))
+    let next_w_payload = stage2_intermediate.next_witness_binding.outer_payload();
+    let next_w_payload_size = next_w_payload
+        .map(|payload| payload.serialized_size(Compress::No))
         .unwrap_or(0);
-    let next_w_commitment_coeffs = next_w_commitment.map_or(0, akita_types::RingVec::coeff_len);
+    let next_w_payload_coeffs = next_w_payload.map_or(0, akita_types::RingVec::coeff_len);
     let next_w_eval_size = stage2_intermediate
         .next_w_eval()
         .serialized_size(Compress::No);
@@ -590,7 +591,7 @@ where
         total_bytes = total,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
-        v_bytes = v_size,
+        opening_payload_bytes = opening_payload_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
         grind_nonce,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
@@ -598,7 +599,7 @@ where
         stage1_range_image_evaluation_bytes = stage1_range_image_evaluation_size,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
         stage3_sumcheck_bytes = stage3_sumcheck_size,
-        next_w_commitment_bytes = next_w_commitment_size,
+        next_w_payload_bytes = next_w_payload_size,
         next_w_eval_bytes = next_w_eval_size,
         "proof fold level"
     );
@@ -613,22 +614,22 @@ where
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
-        "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
-        next_w_commitment_coeffs,
+        "[{label}]     next_w_payload={next_w_payload_size} bytes ({} coeffs)",
+        next_w_payload_coeffs,
     );
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     assert_eq!(
         total,
         extension_opening_partials_size
             + extension_opening_sumcheck_size
-            + v_size
+            + opening_payload_size
             + fold_grind_nonce_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
             + stage1_range_image_evaluation_size
             + stage2_sumcheck_size
             + stage3_sumcheck_size
-            + next_w_commitment_size
+            + next_w_payload_size
             + next_w_eval_size
     );
     total

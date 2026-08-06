@@ -1,5 +1,5 @@
 use akita_config::CommitmentConfig;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend, ComputeBackendSetup,
     CpuBackend, NttExecutionRequirements,
@@ -14,7 +14,7 @@ fn commit_setup_prefix_slot<F, B>(
     id: &SetupPrefixSlotId,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
     B: CommitmentComputeBackend<F>,
 {
     if setup.prefix_slots.get(id).is_some() {
@@ -47,7 +47,7 @@ pub(crate) fn materialize_setup_prefix_slots<F, B>(
     slot_ids: &[SetupPrefixSlotId],
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
     B: CommitmentComputeBackend<F>,
 {
     let mut requirements = NttExecutionRequirements::default();
@@ -87,7 +87,7 @@ pub(crate) fn populate_required_setup_prefix_slots<F, Cfg>(
     max_num_batched_polys: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
     Cfg: CommitmentConfig<Field = F>,
 {
     if !Cfg::recursive_setup_planning() {

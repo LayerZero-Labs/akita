@@ -4,8 +4,8 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-23 |
-| Status        | proposed |
-| PR            | |
+| Status        | partially implemented |
+| PR            | #327; remaining runtime policy split deferred to a stacked PR after #343 |
 | Supersedes    | Runtime-fallback portions of [`archive/2026-Q2/planner-refactor.md`](archive/2026-Q2/planner-refactor.md) and [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md) |
 | Superseded-by | |
 | Book-chapter  | book/src/how/configuration.md |
@@ -28,9 +28,9 @@ This specification replaces that cache contract with a finite support
 contract:
 
 1. Runtime code constructs a semantic schedule request.
-2. `akita-schedule` performs strict catalog lookup.
-3. `akita-schedule` expands the compact row.
-4. `akita-schedule` validates the expanded schedule.
+2. `akita-schedules` performs strict catalog lookup.
+3. `akita-schedules` expands the compact row.
+4. `akita-schedules` validates the expanded schedule.
 5. Prover and verifier consume the resulting `ValidatedSchedule`.
 
 A missing row is unsupported input and is rejected. No runtime path searches
@@ -38,7 +38,7 @@ for a replacement schedule.
 
 Only two schedule-specific crates remain:
 
-- `akita-schedule`: runtime schemas, catalogs, expansion, and validation;
+- `akita-schedules`: runtime schemas, catalogs, expansion, and validation;
 - `akita-planner`: offline search and catalog emission.
 
 Planner modularity and the two distinct precommitment mechanisms are specified
@@ -46,19 +46,15 @@ separately in [`modular-planner-and-precommit-roles.md`](modular-planner-and-pre
 
 ## Status and baseline
 
-This design was written against `origin/main` commit
-`af482ab7c2d8d3edcdc901f0c3950378f954787a`, informed by the PR 323 mirror at
-`75d7a6ddc246a97c9da86b03c0ac0ac5356d14a1`.
+PR 327 implemented strict catalog lookup, runtime expansion without the planner, and
+the verifier dependency boundary in the `akita-schedules` crate. A missing row
+is now unsupported input rather than a request to run planner search.
 
-At the baseline:
-
-- `akita-verifier` depends on `akita-config`;
-- `akita-config` depends unconditionally on `akita-planner`;
-- generated schedule types and validation live partly in `akita-planner`;
-- `CommitmentConfig::runtime_schedule` can fall back to planner DP;
-- grouped schedule-key construction invokes planner logic;
-- the generated catalog is treated as an optimization rather than the
-  definition of runtime support.
+One separation remains incomplete: `PlannerPolicy` still contains both runtime
+validation inputs and offline search objectives. The stacked planner unification
+PR will split those roles without restoring runtime fallback. Until then,
+generated catalog identity binds the exact search policy that selected each
+row.
 
 The implementation is complete only when the dependency rule holds under
 default features, no default features, and all features. Removing a direct
@@ -99,7 +95,7 @@ prover and verifier.
 
 1. `akita-verifier` **MUST NOT** depend directly or transitively on
    `akita-planner` under any supported feature graph.
-2. `akita-config` and `akita-schedule` **MUST NOT** depend on `akita-planner`
+2. `akita-config` and `akita-schedules` **MUST NOT** depend on `akita-planner`
    under any supported feature graph.
 3. Runtime verifier entry points **MUST NOT** search, enumerate, optimize, or
    invoke planner DP.
@@ -115,14 +111,14 @@ The intended dependency direction is:
 ```text
 akita-types
     ↑
-akita-schedule
+akita-schedules
     ↑              ↑
 akita-config       akita-planner
     ↑
 akita-prover / akita-verifier
 ```
 
-`akita-planner` may depend on `akita-schedule` to reuse the canonical compact
+`akita-planner` may depend on `akita-schedules` to reuse the canonical compact
 schema, expansion, and validation. The reverse dependency is forbidden.
 
 #### Resolution boundary
@@ -187,7 +183,7 @@ This specification does not:
 
 ### Crate ownership
 
-`akita-schedule` owns:
+`akita-schedules` owns:
 
 - the semantic request and catalog-key types;
 - the root-precommit recipe schema used at runtime;
@@ -332,7 +328,7 @@ Configuration selects an enabled catalog family and supplies runtime capability
 values. It **MUST NOT** assemble `PlannerPolicy` or expose planner objectives.
 
 `CommitmentConfig` may provide a method that returns or identifies a catalog,
-but schedule resolution itself belongs to `akita-schedule`. Configuration
+but schedule resolution itself belongs to `akita-schedules`. Configuration
 adapters **SHOULD** delegate only semantic runtime policy and capability data.
 
 ### Setup sizing
@@ -354,7 +350,7 @@ repository **SHOULD** expose it as a feature-gated planner binary:
 cargo run --release -p akita-planner \
   --features catalog-gen \
   --bin gen_schedule_tables -- \
-  crates/akita-schedule/src/generated
+  crates/akita-schedules/src/generated
 ```
 
 The implementation need not introduce an `xtask` framework. The generator
@@ -363,7 +359,7 @@ The implementation need not introduce an `xtask` framework. The generator
 1. enumerate the configured semantic request domain;
 2. generate canonical root-precommit recipes where required;
 3. search for complete schedules;
-4. expand and validate every emitted row through `akita-schedule`;
+4. expand and validate every emitted row through `akita-schedules`;
 5. check catalog-wide recipe and identity invariants;
 6. write deterministic source;
 7. fail on required missing requests or drift in check mode.
@@ -377,7 +373,7 @@ feature is enabled. Generation features belong to `akita-planner`.
 
 #### Dependency and runtime behavior
 
-- [ ] `akita-verifier`, `akita-config`, and `akita-schedule` have no direct or
+- [ ] `akita-verifier`, `akita-config`, and `akita-schedules` have no direct or
   transitive `akita-planner` dependency under every supported feature graph.
 - [ ] Repository dependency checks enforce the exclusion.
 - [ ] No verifier-reachable symbol calls planner search or enumeration.
@@ -436,8 +432,8 @@ For every currently shipped request, a migration fixture **SHOULD** compare:
 The work is intentionally staged:
 
 1. Freeze representative expanded schedules and failure behavior.
-2. Establish `akita-schedule` with compact schemas, expansion, and validation.
-3. Move generated catalogs into `akita-schedule`.
+2. Establish `akita-schedules` with compact schemas, expansion, and validation.
+3. Move generated catalogs into `akita-schedules`.
 4. Replace operational grouped keys with semantic requests.
 5. make catalog lookup strict for prover and verifier.
 6. Remove every runtime dependency on `akita-planner`.

@@ -50,12 +50,15 @@ pub(crate) fn planned_next_witness_len(
     params: &CommittedGroupParams,
     final_num_polys: usize,
     num_chunks: usize,
-) -> Result<usize, AkitaError> {
+) -> Result<Option<usize>, AkitaError> {
     if !params.precommitted_groups.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "multi-group root witness sizing must use CommittedGroupParams::output_witness_len"
                 .to_string(),
         ));
+    }
+    if !params.compression_sources_supported()? {
+        return Ok(None);
     }
     let opening_batch =
         params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
@@ -65,7 +68,7 @@ pub(crate) fn planned_next_witness_len(
         num_chunks,
         akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open),
     )?;
-    Ok(layout.live_coeff_len())
+    Ok(Some(layout.live_coeff_len()))
 }
 
 #[allow(clippy::too_many_arguments)]

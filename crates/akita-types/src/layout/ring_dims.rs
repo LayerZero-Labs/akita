@@ -14,10 +14,11 @@ pub const MAX_FOLD_LEVELS: usize = 16;
 pub const SUPPORTED_CHALLENGE_RING_DIMS: &[usize] =
     akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS;
 
-/// Ring dimensions implemented by the shared ring and NTT layers.
+/// Ring dimensions admitted for A/B/D commitment matrices.
 ///
-/// Protocol field tiers may impose a higher role-specific floor.
-pub const SUPPORTED_RING_DIMS: [usize; 8] = [16, 32, 64, 128, 256, 512, 1024, 2048];
+/// Compression maps and NTT kernels have separate, field-profile-specific
+/// dispatch domains. Their smaller dimensions must not enter role admission.
+pub const SUPPORTED_COMMITMENT_RING_DIMS: [usize; 4] = [64, 128, 256, 512];
 
 /// Minimum `d_a` for sparse fold ring challenges (no sampler below this).
 pub const MIN_A_ROLE_FOLD_CHALLENGE_RING_D: usize = 64;
@@ -263,7 +264,7 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
     let terminal = &schedule.terminal.params.witness;
     let terminal_d = terminal.d_a();
     if terminal_d == 0
-        || !SUPPORTED_RING_DIMS.contains(&terminal_d)
+        || !SUPPORTED_COMMITMENT_RING_DIMS.contains(&terminal_d)
         || !schedule
             .terminal
             .input_witness_len
@@ -308,22 +309,22 @@ pub fn validate_role_dims_match_keys(lp: &crate::CommittedGroupParams) -> Result
 
 pub fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
     dims.validate_role_projection()?;
+    for (role, d) in [
+        (RingRole::Inner, dims.inner),
+        (RingRole::Outer, dims.outer),
+        (RingRole::Opening, dims.opening),
+    ] {
+        if !SUPPORTED_COMMITMENT_RING_DIMS.contains(&d) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "unsupported {role:?} commitment-matrix ring dimension {d}; A/B/D dimensions must be at least 64"
+            )));
+        }
+    }
     if !SUPPORTED_CHALLENGE_RING_DIMS.contains(&dims.inner) {
         return Err(AkitaError::InvalidSetup(format!(
             "A-role ring dimension d_a={} is unsupported for sparse fold challenges (need d_a >= {MIN_A_ROLE_FOLD_CHALLENGE_RING_D})",
             dims.inner
         )));
-    }
-    for (role, d) in [
-        (RingRole::Outer, dims.outer),
-        (RingRole::Opening, dims.opening),
-    ] {
-        if !SUPPORTED_RING_DIMS.contains(&d) {
-            return Err(AkitaError::InvalidSetup(format!(
-                "unsupported {:?} ring dimension {d}",
-                role
-            )));
-        }
     }
     Ok(())
 }

@@ -42,6 +42,7 @@ pub use group_batch::find_group_batch_schedule;
 pub use schedule_params::{
     derive_standalone_precommit_profile, find_schedule, plan_optimal_suffix, suffix_opening_layout,
     PlannedSuffix, PlannedSuffixFold, PlannedSuffixTerminal, RingDimensionSearchDomain,
+    SuffixPlanStart,
 };
 
 /// Helpers available only to synthetic schedule fixtures and profile experiments.

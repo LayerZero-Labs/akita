@@ -40,27 +40,25 @@ where
                                 next_params: Option<&CommittedGroupParams>,
                                 binding: akita_types::NextWitnessBindingPolicy|
      -> Result<(), AkitaError> {
-        let expected_v_coeffs = params
-            .open_commit_matrix
-            .output_rank()
-            .checked_mul(params.role_dims().d_d())
-            .ok_or(AkitaError::InvalidProof)?;
-        if fold.v.coeff_len() != expected_v_coeffs {
+        if fold.opening_payload.coeff_len()
+            != params
+                .opening_payload_geometry()?
+                .transmitted_coefficients()
+        {
             return Err(AkitaError::InvalidProof);
         }
 
         match (binding, &fold.stage2.next_witness_binding) {
             (
-                akita_types::NextWitnessBindingPolicy::OuterCommitment,
-                akita_types::NextWitnessBinding::OuterCommitment(commitment),
+                akita_types::NextWitnessBindingPolicy::OuterPayload,
+                akita_types::NextWitnessBinding::OuterPayload(commitment),
             ) => {
                 let next_params = next_params.ok_or(AkitaError::InvalidProof)?;
-                let expected_coeffs = next_params
-                    .outer_commit_matrix
-                    .output_rank()
-                    .checked_mul(next_params.role_dims().d_b())
-                    .ok_or(AkitaError::InvalidProof)?;
-                if commitment.coeff_len() != expected_coeffs {
+                if commitment.coeff_len()
+                    != next_params
+                        .outer_payload_geometry()?
+                        .transmitted_coefficients()
+                {
                     return Err(AkitaError::InvalidProof);
                 }
             }
@@ -81,7 +79,7 @@ where
         |step| {
             (
                 Some(&step.params.witness),
-                akita_types::NextWitnessBindingPolicy::OuterCommitment,
+                akita_types::NextWitnessBindingPolicy::OuterPayload,
             )
         },
     );
@@ -105,7 +103,7 @@ where
             |next| {
                 (
                     Some(&next.params.witness),
-                    akita_types::NextWitnessBindingPolicy::OuterCommitment,
+                    akita_types::NextWitnessBindingPolicy::OuterPayload,
                 )
             },
         );
@@ -174,9 +172,12 @@ where
             step.params.witness.d_a()
         }),
         root_t_state.as_deref(),
-    )?;
+    )
+    .map_err(|error| {
+        AkitaError::InvalidInput(format!("compressed root replay failed: {error:?}"))
+    })?;
 
-    let root_next_commitment = proof.root.next_w_commitment();
+    let root_next_commitment = proof.root.next_w_payload();
     let root_witness = match (root_next_commitment, root_t_state) {
         (Some(commitment), None) => SuffixWitnessState::Commitment(commitment),
         (None, Some(t_state)) => SuffixWitnessState::TerminalT(t_state),
@@ -261,12 +262,19 @@ where
         descriptor
             .validate_frozen_precommit(Cfg::decomposition().field_bits())
             .map_err(|_| AkitaError::InvalidProof)?;
-        let expected_coeffs = descriptor
+        let source_coefficients = descriptor
             .outer_commit_matrix
             .output_rank()
             .checked_mul(descriptor.outer_commit_matrix.ring_dimension())
             .ok_or(AkitaError::InvalidProof)?;
-        if committed.commitment().rows().coeff_len() != expected_coeffs {
+        let plan = akita_types::CompressionChainPlan::for_complete_source(
+            descriptor
+                .outer_commit_matrix
+                .sis_table_key()
+                .modulus_profile,
+            source_coefficients,
+        )?;
+        if committed.commitment().rows().coeff_len() != plan.terminal_coefficients() {
             return Err(AkitaError::InvalidProof);
         }
     }
@@ -315,7 +323,11 @@ where
     schedule
         .validate_structure()
         .map_err(|_| AkitaError::InvalidProof)?;
-    validate_proof_against_schedule(proof, schedule)?;
+    validate_proof_against_schedule(proof, schedule).map_err(|error| {
+        AkitaError::InvalidInput(format!(
+            "proof does not match the selected compressed schedule: {error:?}"
+        ))
+    })?;
 
     // Schedule resolution is the earliest point at which the terminal ring
     // dimension, A widths, and exact base-versus-i16-tail capabilities are all
@@ -350,6 +362,9 @@ where
     let raw_claims =
         OpeningClaims::from_groups(raw_groups).map_err(|_| AkitaError::InvalidProof)?;
     verify::<Cfg::Field, Cfg::ExtField, T>(proof, setup, transcript, raw_claims, basis, schedule)
+        .map_err(|error| {
+            AkitaError::InvalidInput(format!("compressed proof replay failed: {error:?}"))
+        })
 }
 
 #[cfg(test)]

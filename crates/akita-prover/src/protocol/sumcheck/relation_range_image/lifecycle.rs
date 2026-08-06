@@ -18,6 +18,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         relation_claim: E,
         evaluation_trace: PreparedProverEvaluationTrace<E>,
         trace_opening_claim: E,
+        additional_relation_terms: Option<AdditionalRelationTerms<E>>,
     ) -> Result<Self, AkitaError> {
         let w_evals_compact = w_evals_compact.into();
         let num_vars = lane_bits.checked_add(coefficient_bits).ok_or_else(|| {
@@ -101,7 +102,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         }
 
         let relation_trace_claim = relation_claim + trace_opening_claim;
-        let input_claim = batching_coeff * range_image_evaluation + relation_trace_claim;
+        let additional_claim = additional_relation_terms
+            .as_ref()
+            .map_or_else(E::zero, AdditionalRelationTerms::input_claim);
+        let input_claim =
+            batching_coeff * range_image_evaluation + relation_trace_claim + additional_claim;
+        let use_two_round_prefix = can_use_stage2_two_round_prefix(coefficient_bits, b);
 
         Ok(Self {
             witness_state: WitnessState::CompactPrefix(w_evals_compact),
@@ -112,6 +118,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
             common_alpha_factor,
             relation_lane_weights,
+            additional_relation_terms,
             evaluation_trace,
             live_lane_count,
             lane_bits,
@@ -119,8 +126,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             relation_trace_claim,
             prev_norm_claim: batching_coeff * range_image_evaluation,
             prev_norm_poly: None,
-            compact_prefix_stage1_point: can_use_stage2_two_round_prefix(coefficient_bits, b)
-                .then(|| stage1_point.to_vec()),
+            compact_prefix_stage1_point: use_two_round_prefix.then(|| stage1_point.to_vec()),
             deferred_compact_prefix: None,
             cached_round_poly: None,
             scan_time_total: 0.0,
@@ -144,6 +150,44 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 panic!("witness remained in compact-prefix state after final fold")
             }
         }
+    }
+
+    pub(crate) fn expected_final_claim(&self) -> Result<E, AkitaError> {
+        if self.common_alpha_factor.len() != 1 || self.relation_lane_weights.len() != 1 {
+            return Err(AkitaError::InvalidProof);
+        }
+        let witness = self.final_w_eval();
+        let virtual_claim = self.split_eq.current_scalar() * witness * (witness + E::one());
+        let ordinary_relation =
+            witness * self.common_alpha_factor[0] * self.relation_lane_weights[0];
+        let trace_claim = witness * self.evaluation_trace.final_value()?;
+        let additional = self
+            .additional_relation_terms
+            .as_ref()
+            .map_or(Ok(E::zero()), |terms| terms.final_claim(witness))?;
+        Ok(virtual_claim + ordinary_relation + trace_claim + additional)
+    }
+
+    pub(super) fn additional_round_polynomial(&self) -> Option<UniPoly<E>> {
+        let additional = self.additional_relation_terms.as_ref()?;
+        Some(match &self.witness_state {
+            WitnessState::CompactPrefix(compact_witness) => {
+                let first_challenge = if self.rounds_completed == 0 {
+                    None
+                } else {
+                    Some(
+                        self.deferred_compact_prefix
+                            .as_ref()
+                            .and_then(|prefix| prefix.first_challenge)
+                            .expect("compact round 1 requires the first prefix challenge"),
+                    )
+                };
+                additional.round_polynomial_compact(compact_witness, first_challenge)
+            }
+            WitnessState::FoldedSuffix(folded_witness) => {
+                additional.round_polynomial_folded(folded_witness)
+            }
+        })
     }
 
     #[inline]

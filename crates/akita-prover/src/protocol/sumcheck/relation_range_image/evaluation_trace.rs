@@ -152,6 +152,13 @@ pub(crate) struct PreparedProverEvaluationTrace<E: FieldCore> {
 }
 
 impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
+    pub(crate) fn final_value(&self) -> Result<E, AkitaError> {
+        if self.live_lane_count != 1 || self.coeff_count != 1 {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(self.get(0, 0, 1))
+    }
+
     #[cfg(test)]
     pub(crate) fn from_dense(dense: Vec<E>, live_lane_count: usize, coeff_count: usize) -> Self {
         assert_eq!(dense.len(), live_lane_count * coeff_count);

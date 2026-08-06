@@ -37,12 +37,6 @@ impl TestSetupInputs {
     fn n_a(&self) -> usize {
         self.level_params.inner_commit_matrix.output_rank()
     }
-    fn num_claims(&self) -> usize {
-        self.opening_batch.num_total_polynomials()
-    }
-    fn num_live_blocks(&self) -> usize {
-        self.level_params.num_live_blocks
-    }
     fn num_positions_per_block(&self) -> usize {
         self.level_params.num_positions_per_block
     }
@@ -174,7 +168,7 @@ fn test_inputs_for_group_sizes(
     depth_commit: usize,
     depth_fold: usize,
     log_basis: u32,
-    eq_tau1: Vec<F>,
+    mut eq_tau1: Vec<F>,
 ) -> TestSetupInputs {
     let num_claims: usize = group_sizes.iter().copied().sum();
     let mut lp = CommittedGroupParams::params_only(
@@ -271,6 +265,10 @@ fn test_inputs_for_group_sizes(
     }
     let opening_batch =
         OpeningClaimsLayout::from_group_sizes(0, group_sizes).expect("test opening batch");
+    let relation_rows = lp
+        .relation_matrix_row_count(opening_batch.num_groups())
+        .expect("test relation rows");
+    eq_tau1.resize(relation_rows, F::zero());
     TestSetupInputs {
         level_params: lp,
         opening_batch,
@@ -596,7 +594,7 @@ fn structured_weight_fixture_with_outgoing(
         })
         .collect();
     let layout = WitnessLayout::new_for_test(ownership_units, r_rows, depth_fold);
-    let tau1 = (0..3)
+    let tau1 = (0..4)
         .map(|idx| test_scalar(31 + idx as u128))
         .collect::<Vec<_>>();
     let mut inputs = test_inputs(
@@ -690,7 +688,12 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         (1usize, 1usize, 1usize, 1usize, 1usize),
         (0usize, 1usize, 1usize, 1usize, 1usize),
     ];
-    let tau1 = vec![test_scalar(31), test_scalar(32), test_scalar(33)];
+    let tau1 = vec![
+        test_scalar(31),
+        test_scalar(32),
+        test_scalar(33),
+        test_scalar(34),
+    ];
     let mut inputs = test_inputs_for_group_sizes(
         1,
         1,
@@ -712,51 +715,14 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             opening: 64,
         },
     );
-    retarget_precommitted_test_role_dims(&mut inputs.level_params, 0, 64, 32);
-    let mut cursor = 0usize;
-    let units = group_shapes
-        .iter()
-        .map(
-            |&(group_id, num_claims, num_live_blocks, depth_open, depth_commit)| {
-                let source_ring_dimension = inputs
-                    .level_params
-                    .group_role_dims(&inputs.opening_batch, group_id)
-                    .unwrap()
-                    .d_a();
-                let z_len = 2 * depth_commit * quotient_depth * source_ring_dimension;
-                let z_range = cursor..cursor + z_len;
-                let e_range = z_range.end
-                    ..z_range.end
-                        + num_claims * num_live_blocks * depth_open * source_ring_dimension;
-                let t_range = e_range.end
-                    ..e_range.end
-                        + num_claims * num_live_blocks * depth_commit * source_ring_dimension;
-                cursor = t_range.end;
-                WitnessUnitLayout::new_for_test(
-                    group_id,
-                    0,
-                    0,
-                    num_live_blocks,
-                    z_range,
-                    e_range,
-                    t_range,
-                )
-            },
-        )
-        .collect();
-    let row_ring_dims = crate::relation_rhs_layout_for(&inputs.level_params, &inputs.opening_batch)
-        .unwrap()
-        .row_ring_dims()
-        .unwrap();
-    let r_rows = row_ring_dims
-        .into_iter()
-        .map(|ring_dim| {
-            let range = cursor..cursor + quotient_depth * ring_dim;
-            cursor = range.end;
-            WitnessQuotientRowLayout::new_for_test(ring_dim, range)
-        })
-        .collect();
-    let witness_layout = WitnessLayout::new_for_test(units, r_rows, quotient_depth);
+    retarget_precommitted_test_role_dims(&mut inputs.level_params, 0, 64, 64);
+    let witness_layout = WitnessLayout::new(
+        &inputs.level_params,
+        &inputs.opening_batch,
+        1,
+        quotient_depth,
+    )
+    .unwrap();
     let opening_source_len = witness_layout.live_coeff_len();
     let groups: Vec<_> = group_shapes
         .iter()
@@ -881,8 +847,8 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
     let commit_gadget = gadget_row_scalars::<F>(depth_commit, log_basis);
     let inputs = test_inputs(
         1,
-        0,
-        0,
+        1,
+        1,
         1,
         4,
         num_positions_per_block,
@@ -892,24 +858,17 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         log_basis,
         vec![test_scalar(11), test_scalar(12)],
     );
-    let layout = test_witness_layout(
-        inputs.num_claims(),
-        inputs.num_live_blocks(),
-        inputs.num_positions_per_block(),
-        inputs.depth_open(),
-        inputs.depth_commit(),
-        inputs.depth_fold().unwrap(),
-        inputs.n_a(),
-        1,
+    let layout = WitnessLayout::new(
+        &inputs.level_params,
+        &inputs.opening_batch,
         1,
         inputs.depth_fold().unwrap(),
-    );
-    let relation_geometry = crate::RelationAddressGeometry::new(
-        CommitmentRingDims::uniform(TEST_D),
-        TEST_D,
-        layout.live_coeff_len(),
     )
     .unwrap();
+    let relation_geometry = inputs
+        .level_params
+        .relation_address_geometry(&inputs.opening_batch, TEST_D, layout.live_coeff_len())
+        .unwrap();
     let full_vec_randomness = (0..relation_geometry.relation_lane_variable_count())
         .map(|idx| test_scalar(701 + idx as u128))
         .collect::<Vec<_>>();
@@ -1207,9 +1166,9 @@ fn multi_group_packed_direct_matches_row_fallback() {
 }
 #[test]
 fn packed_direct_matches_row_fallback_with_nested_role_dims() {
-    const D: usize = 64;
-    const D_B: usize = 32;
-    const D_D: usize = 32;
+    const D: usize = 128;
+    const D_B: usize = 64;
+    const D_D: usize = 64;
     let plan = finalize_test_plan(
         2,
         5,
@@ -1265,9 +1224,9 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
 
 #[test]
 fn packed_direct_rejects_non_decomposable_role_alpha_pows() {
-    const D_A: usize = 64;
-    const D_B: usize = 32;
-    const D_D: usize = 32;
+    const D_A: usize = 128;
+    const D_B: usize = 64;
+    const D_D: usize = 64;
     let plan = finalize_test_plan(
         2,
         5,
@@ -1323,9 +1282,9 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
     // D-role columns are counted at d_d; comparing `required` against
     // total_ring_elements_at_dyn(d_a) falsely rejects valid setups when
     // d_d < d_a and the D footprint dominates.
-    const D_A: usize = 64;
-    const D_B: usize = 64;
-    const D_D: usize = 32;
+    const D_A: usize = 128;
+    const D_B: usize = 128;
+    const D_D: usize = 64;
     let plan = finalize_test_plan(
         2,
         11,

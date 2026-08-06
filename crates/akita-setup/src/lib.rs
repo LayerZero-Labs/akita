@@ -8,7 +8,7 @@ mod recursive_prefixes;
 
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::HasWide;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_prover::AkitaProverSetup;
 use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]
@@ -77,7 +77,7 @@ pub fn new_prover_setup<F, Cfg>(
     max_num_batched_polys: usize,
 ) -> Result<AkitaProverSetup<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasWide + Valid,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
     if max_num_batched_polys == 0 {
@@ -415,7 +415,7 @@ pub(crate) fn save_prover_setup<
 
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn load_prover_setup<
-    F: FieldCore + Valid + CanonicalField + RandomSampling + AkitaSerialize,
+    F: FieldCore + Valid + CanonicalField + RandomSampling + HalvingField + AkitaSerialize,
     Cfg: CommitmentConfig<Field = F>,
 >(
     max_num_vars: usize,
@@ -590,7 +590,7 @@ mod tests {
 
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
-        let prover_setup = new_prover_setup::<TestF, Cfg>(13, 3).unwrap();
+        let prover_setup = new_prover_setup::<TestF, Cfg>(14, 3).unwrap();
         let capacity = SetupMatrixCapacity {
             num_field_elements: prover_setup.expanded.shared_matrix().num_field_elements() / 2,
         };
@@ -617,11 +617,11 @@ mod tests {
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
-        // Both folded-only catalogs begin at nv=13, the first singleton shape
-        // with the required root and suffix folds.
+        // The D128 catalog begins at nv=13; the D64 catalog begins at nv=14,
+        // the first singleton shapes with the required root and suffix folds.
         new_prover_setup::<fp128::Field, fp128::D128Dense>(13, 1)
             .expect("default fp128 D=128 preset should accept the fp128 field");
-        new_prover_setup::<fp128::Field, fp128::D64Dense>(13, 1)
+        new_prover_setup::<fp128::Field, fp128::D64Dense>(14, 1)
             .expect("small-D fp128 preset should accept the default field");
     }
 
@@ -668,7 +668,7 @@ mod tests {
         #[test]
         fn save_and_load_roundtrips() {
             with_test_cache_dir("roundtrip", || {
-                const MAX_VARS: usize = 13;
+                const MAX_VARS: usize = 14;
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
@@ -729,12 +729,13 @@ mod tests {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
                     setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile,
-                    InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+                    CompressionChainPlan, CompressionChainWitness, InnerCommitMatrixParams,
+                    OuterCommitMatrixParams, PackedNegativeBinary, PolynomialGroupLayout,
                     PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
                     SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
                 };
 
-                const MAX_VARS: usize = 13;
+                const MAX_VARS: usize = 14;
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
@@ -783,10 +784,50 @@ mod tests {
                     num_digits_open: 1,
                     num_digits_fold: 1,
                 };
-                let id = setup_prefix_slot_id(1, commitment_params);
-                let hint = AkitaCommitmentHint::singleton(
+                let id = setup_prefix_slot_id(1, commitment_params.clone());
+                let compression_plan = CompressionChainPlan::for_complete_source(
+                    commitment_params
+                        .layout
+                        .outer_commit_matrix
+                        .sis_modulus_profile(),
+                    commitment_params.layout.outer_commit_matrix.output_rank() * TEST_D,
+                )
+                .expect("compression plan");
+                let compression_stages = compression_plan
+                    .maps()
+                    .iter()
+                    .map(|map| {
+                        PackedNegativeBinary::from_bytes(*map, vec![0; map.packed_digit_bytes()])
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .expect("zero compression stages");
+                let compression_witness =
+                    CompressionChainWitness::new(compression_plan, compression_stages)
+                        .expect("zero compression witness");
+                let compression_quotients = compression_witness
+                    .plan()
+                    .maps()
+                    .iter()
+                    .map(|map| {
+                        RingVec::from_coeffs_with_ring_dim(
+                            vec![TestF::zero(); map.output_coefficients()],
+                            map.ring_dimension(),
+                        )
+                        .expect("zero compression quotient")
+                    })
+                    .collect::<Vec<_>>();
+                let terminal_map = compression_witness
+                    .plan()
+                    .maps()
+                    .last()
+                    .expect("terminal compression map");
+                let commitment_row =
+                    RingVec::from_coeffs(vec![TestF::zero(); terminal_map.output_coefficients()]);
+                let hint = AkitaCommitmentHint::singleton_with_outer_compression(
                     RingVec::from_coeffs_with_ring_dim(vec![TestF::zero(); TEST_D], TEST_D)
                         .expect("inner rows"),
+                    &compression_witness,
+                    &compression_quotients,
                 )
                 .expect("hint");
                 setup
@@ -796,10 +837,7 @@ mod tests {
                         natural_len: 1,
                         padded_len: TEST_D,
                         commitment: SetupPrefixPublicCommitment {
-                            rows: vec![
-                                RingVec::from_coeffs(vec![TestF::zero(); TEST_D]);
-                                commitment_rows
-                            ],
+                            rows: vec![commitment_row; commitment_rows],
                         },
                         hint,
                     })
@@ -816,7 +854,7 @@ mod tests {
         #[test]
         fn setup_uses_cache_on_second_call() {
             with_test_cache_dir("second-call", || {
-                const MAX_VARS: usize = 13;
+                const MAX_VARS: usize = 14;
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
@@ -833,8 +871,8 @@ mod tests {
         #[test]
         fn larger_public_prefix_covers_smaller_provisioning_request() {
             with_test_cache_dir("covering-prefix", || {
-                const LARGE_VARS: usize = 14;
-                const SMALL_VARS: usize = 13;
+                const LARGE_VARS: usize = 15;
+                const SMALL_VARS: usize = 14;
 
                 cleanup_setup_file_shape(LARGE_VARS, 1);
                 if let Some(path) = get_prefix_registry_storage_path::<Cfg>(SMALL_VARS, 1) {
@@ -870,8 +908,8 @@ mod tests {
         #[test]
         fn concurrent_public_matrix_writers_join_at_largest_prefix() {
             with_test_cache_dir("concurrent-prefix-writers", || {
-                const SMALL_VARS: usize = 13;
-                const LARGE_VARS: usize = 14;
+                const SMALL_VARS: usize = 14;
+                const LARGE_VARS: usize = 15;
 
                 cleanup_setup_file_shape(LARGE_VARS, 1);
                 if let Some(path) = get_prefix_registry_storage_path::<Cfg>(SMALL_VARS, 1) {
@@ -923,7 +961,7 @@ mod tests {
             with_test_cache_dir("corrupt-matrix", || {
                 use akita_types::FlatMatrix;
 
-                const MAX_VARS: usize = 13;
+                const MAX_VARS: usize = 14;
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
@@ -955,7 +993,7 @@ mod tests {
             with_test_cache_dir("trailing-bytes", || {
                 use std::io::Write;
 
-                const MAX_VARS: usize = 13;
+                const MAX_VARS: usize = 14;
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
 

@@ -77,9 +77,9 @@ fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {
 #[test]
 fn mixed_current_roles_ignore_outgoing_repacking() {
     let role_dims = CommitmentRingDims {
-        inner: 64,
-        outer: 32,
-        opening: 32,
+        inner: 128,
+        outer: 64,
+        opening: 64,
     };
     let alpha = test_scalar(3);
     let mut expected = None;
@@ -87,7 +87,7 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
         let (inputs, groups, witness_layout, plan, _, address_point, fold_gadget) =
             structured_weight_fixture_with_outgoing(8, &[3, 5], role_dims, outgoing_ring_dim);
         let geometry = plan.relation_address_geometry();
-        assert_eq!(geometry.relation_coefficient_block_len(), 32);
+        assert_eq!(geometry.relation_coefficient_block_len(), 64);
         assert_eq!(geometry.role_relation_lane_count(RingRole::Inner), 2);
         assert_eq!(geometry.role_relation_lane_count(RingRole::Outer), 1);
         assert_eq!(geometry.role_relation_lane_count(RingRole::Opening), 1);
@@ -96,7 +96,7 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
             witness_layout.live_coeff_len()
         );
 
-        let lane_alpha = [F::one(), scalar_powers(alpha, 33)[32]];
+        let lane_alpha = [F::one(), scalar_powers(alpha, 65)[64]];
         let lane_weight = |lane_start: usize, lane_count: usize| {
             (0..lane_count)
                 .map(|lane| eq_eval_at_index(&address_point, lane_start + lane) * lane_alpha[lane])

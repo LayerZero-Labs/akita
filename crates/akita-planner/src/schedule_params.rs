@@ -33,11 +33,12 @@ use crate::PlannerPolicy;
 
 mod candidate;
 mod mixed_search;
+mod objective;
 mod setup_score;
 mod suffix_dp;
 #[cfg(feature = "test-support")]
 pub(crate) mod test_support;
-#[cfg(all(test, feature = "catalog-gen"))]
+#[cfg(test)]
 mod unpruned_search;
 
 pub use akita_types::suffix_opening_layout;
@@ -45,6 +46,7 @@ pub(crate) use candidate::{
     derive_candidate_level_params, derive_candidate_level_params_all_splits,
     planned_next_witness_len, scalar_root_fold_level_params_candidate,
 };
+pub(crate) use objective::{complete_schedule_score, select_complete_candidate};
 pub(crate) use setup_score::{
     level_setup_field_elements, terminal_setup_field_elements, MixedScore,
 };
@@ -147,6 +149,18 @@ impl ScheduleCandidate {
 
     pub(crate) fn first_direct_setup_field_len_or_max(&self) -> usize {
         self.first_direct_setup_field_len.unwrap_or(usize::MAX)
+    }
+
+    pub(crate) fn direct_frontier_score(&self) -> (usize, usize) {
+        (self.total_bytes, self.setup_field_elements)
+    }
+
+    pub(crate) fn recursive_setup_frontier_score(&self) -> (usize, usize, usize) {
+        (
+            self.first_direct_setup_field_len_or_max(),
+            self.total_bytes,
+            self.setup_field_elements,
+        )
     }
 }
 
@@ -281,7 +295,9 @@ pub(crate) fn materialize_candidate_schedule(
     Ok(PlannedFoldSchedule { schedule, estimate })
 }
 
-fn candidate_schedule_descriptor_bytes(choice: &ScheduleCandidate) -> Result<Vec<u8>, AkitaError> {
+pub(crate) fn candidate_schedule_descriptor_bytes(
+    choice: &ScheduleCandidate,
+) -> Result<Vec<u8>, AkitaError> {
     Ok(materialize_candidate_schedule(
         choice.total_bytes,
         choice.setup_field_elements,
@@ -509,12 +525,15 @@ pub fn derive_standalone_precommit_profile(
                 else {
                     continue;
                 };
-                let next_witness_len = planned_next_witness_len(
+                let Some(next_witness_len) = planned_next_witness_len(
                     field_bits,
                     &candidate_params,
                     key.num_polynomials(),
                     direct_policy.chunks_at_level(0),
-                )?;
+                )?
+                else {
+                    continue;
+                };
                 match &best {
                     Some((best_len, _)) if *best_len <= next_witness_len => {}
                     _ => best = Some((next_witness_len, candidate_params)),
@@ -674,6 +693,19 @@ pub struct PlannedSuffix {
     pub total_bytes: usize,
 }
 
+/// Boundary state for an independently planned recursive suffix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SuffixPlanStart {
+    /// Absolute fold level of the first suffix fold.
+    pub level: usize,
+    /// Field-element witness length entering the suffix.
+    pub witness_len: usize,
+    /// Predecessor fold's `log_basis` lower bound.
+    pub log_basis: u32,
+    /// Monotone compression phase after the retained predecessor prefix.
+    pub payload_phase: akita_types::CommitmentPayloadPhase,
+}
+
 /// Plan the proof-size-optimal recursive suffix that folds a witness of
 /// `start_witness_len` field elements (produced by some predecessor fold at
 /// `start_level - 1`) down to a cleartext terminal, at `policy.uniform_ring_dimension`.
@@ -681,10 +713,13 @@ pub struct PlannedSuffix {
 /// This is the exact suffix DP [`find_schedule`] runs after choosing a root,
 /// exposed so callers can splice an optimal suffix onto a differently sized
 /// predecessor — e.g. a mixed ring-dimension-per-level schedule whose root
-/// folds at a larger ring dimension than the suffix. `start_lb` is the
+/// folds at a larger ring dimension than the suffix. `start.log_basis` is the
 /// predecessor level's `log_basis` (fold `log_basis` is non-decreasing), and
-/// `num_vars` is the opening arity (used for the singleton opening layout the
-/// suffix prices against).
+/// `start.payload_phase` is the monotone compression phase after the retained
+/// predecessor prefix. A raw predecessor must use
+/// [`akita_types::CommitmentPayloadPhase::RawSuffix`] so the independent suffix
+/// cannot resume compression. `num_vars` is the opening arity (used for the
+/// singleton opening layout the suffix prices against).
 ///
 /// # Errors
 ///
@@ -695,9 +730,7 @@ pub fn plan_optimal_suffix(
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     num_vars: usize,
-    start_level: usize,
-    start_witness_len: usize,
-    start_lb: u32,
+    start: SuffixPlanStart,
 ) -> Result<PlannedSuffix, AkitaError> {
     validate_policy(policy)?;
     if policy.recursive_setup_planning {
@@ -713,7 +746,7 @@ pub fn plan_optimal_suffix(
         fold_challenge_shape_at_level: &fold_challenge_shape_at_level,
         num_vars,
         key: PolynomialGroupLayout::singleton(num_vars),
-        setup_field_budget: None,
+        setup_field_budget: policy.setup_field_budget,
         root_lookup_key: None,
         root_honest_fold_policy: None,
         precommitted_honest_fold_policies: &[],
@@ -723,20 +756,22 @@ pub fn plan_optimal_suffix(
         &ctx,
         &mut memo,
         SuffixState {
-            level: start_level,
-            current_witness_len: start_witness_len,
-            current_lb: start_lb,
+            level: start.level,
+            current_witness_len: start.witness_len,
+            current_lb: start.log_basis,
             incoming_setup_prefix: None,
+            payload_phase: start.payload_phase,
         },
         0,
     )?;
     let best = result
         .best_by_payload_per_lb
         .values()
-        .min_by_key(|suffix| suffix.total_bytes)
+        .min_by_key(|suffix| suffix.direct_frontier_score())
         .ok_or_else(|| {
             AkitaError::UnsupportedSchedule(format!(
-                "no terminating suffix for witness_len={start_witness_len} at level {start_level}"
+                "no terminating suffix for witness_len={} at level {}",
+                start.witness_len, start.level
             ))
         })?;
     Ok(PlannedSuffix {
@@ -777,7 +812,7 @@ fn find_schedule_inner(
         fold_challenge_shape_at_level: fold_shape,
         num_vars: key.num_vars(),
         key,
-        setup_field_budget: None,
+        setup_field_budget: policy.setup_field_budget,
         root_lookup_key: None,
         root_honest_fold_policy: None,
         precommitted_honest_fold_policies: &[],
@@ -834,12 +869,15 @@ fn find_schedule_inner(
                     continue;
                 };
 
-                let output_witness_len = planned_next_witness_len(
+                let Some(output_witness_len) = planned_next_witness_len(
                     field_bits,
                     &candidate_params,
                     key.num_polynomials(),
                     root_num_chunks,
-                )?;
+                )?
+                else {
+                    continue;
+                };
                 let initial_witness_len_bits = witness_len
                     .checked_mul(field_bits as usize)
                     .ok_or_else(|| {
@@ -880,6 +918,7 @@ fn find_schedule_inner(
                     current_witness_len: output_witness_len,
                     current_lb: candidate_log_basis,
                     incoming_setup_prefix: None,
+                    payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
                 },
                 0,
             )?;
@@ -891,7 +930,7 @@ fn find_schedule_inner(
                 let next_witness_binding = if suffix_fold.folds.is_empty() {
                     akita_types::NextWitnessBindingPolicy::TerminalInnerState
                 } else {
-                    akita_types::NextWitnessBindingPolicy::OuterCommitment
+                    akita_types::NextWitnessBindingPolicy::OuterPayload
                 };
                 let root_proof_size = level_proof_bytes(
                     field_bits,
@@ -904,6 +943,9 @@ fn find_schedule_inner(
                 let total = root_proof_size + suffix_fold.total_bytes;
                 let root_envelope = level_setup_field_elements(&candidate_params)?;
                 let setup_envelope = root_envelope.max(suffix_fold.setup_field_elements);
+                if !policy.admits_setup_field_elements(setup_envelope) {
+                    continue;
+                }
                 let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
                 folds.push(CandidateFoldStep {
                     params: candidate_params.clone(),
@@ -920,9 +962,10 @@ fn find_schedule_inner(
                     folds,
                     terminal: suffix_fold.terminal.clone(),
                 };
+                let candidate_score = complete_schedule_score(policy, &candidate)?;
                 let replace = match &best {
                     None => true,
-                    Some(current) => candidate.total_bytes < current.total_bytes,
+                    Some(current) => candidate_score < complete_schedule_score(policy, current)?,
                 };
                 if replace {
                     best = Some(candidate);

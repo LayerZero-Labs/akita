@@ -156,6 +156,7 @@ fn precommit_profile_as_commit_params<Cfg: CommitmentConfig>(
         d_open,
     );
     Ok(CommittedGroupParams {
+        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
         log_basis_inner: profile.log_basis_inner,
         log_basis_outer: profile.log_basis_outer,
         log_basis_open: profile.log_basis_outer,

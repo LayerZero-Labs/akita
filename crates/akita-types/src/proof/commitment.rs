@@ -6,7 +6,9 @@ use crate::sis::{
     SisSecurityPolicyId, SisTableDigest,
 };
 use crate::transcript::AppendToTranscript;
-use crate::{detect_field_modulus, CommittedGroupProfile, PolynomialGroupLayout};
+use crate::{
+    detect_field_modulus, CommittedGroupProfile, CompressionChainPlan, PolynomialGroupLayout,
+};
 
 type MatrixFields = (
     SisSecurityPolicyId,
@@ -108,14 +110,12 @@ where
     }
 }
 
-/// D-free protocol commitment storage: a flat ring-coefficient buffer.
+/// D-free public commitment payload stored as flat field coefficients.
 ///
-/// This is the protocol-facing replacement for the former
-/// `RingCommitment<F, D>` storage. It carries the outer commitment vector
-/// `u in R_q^{n_B}` as raw field coefficients (a [`RingVec`]), with the ring
-/// dimension supplied at runtime from the schedule rather than a const generic.
-/// Transcript absorption goes through the flat coefficient encoder; the bytes
-/// are identical to the former typed path (proven by the S2 byte-identity test).
+/// For a committed polynomial group this carries the terminal compressed
+/// payload `p_F`. Its native compression dimension is derived from the frozen
+/// modulus profile and supplied at the transcript boundary rather than encoded
+/// as a const generic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Commitment<F: FieldCore>(pub RingVec<F>);
 
@@ -140,8 +140,8 @@ impl<F: FieldCore> Commitment<F> {
         self.0
     }
 
-    /// Absorb this commitment into `transcript` using the canonical flat
-    /// coefficient encoding under the schedule-derived `ring_dim`.
+    /// Absorb this payload using its canonical flat coefficient encoding under
+    /// the caller-derived terminal compression `ring_dim`.
     ///
     /// # Errors
     ///
@@ -170,7 +170,7 @@ impl<F: FieldCore> Commitment<F> {
 pub struct CommittedGroup<F: FieldCore> {
     /// Exact public algebraic profile and commitment geometry.
     pub profile: CommittedGroupProfile,
-    /// Outer SIS commitment rows.
+    /// Terminal compressed `p_F` payload.
     pub commitment: Commitment<F>,
 }
 
@@ -188,12 +188,12 @@ impl<F: FieldCore> CommittedGroup<F> {
         &self.profile
     }
 
-    /// Borrow the underlying SIS commitment.
+    /// Borrow the terminal compressed commitment payload.
     pub fn commitment(&self) -> &Commitment<F> {
         &self.commitment
     }
 
-    /// Borrow the underlying flat commitment rows.
+    /// Borrow the terminal payload coefficients.
     pub fn rows(&self) -> &RingVec<F> {
         self.commitment.rows()
     }
@@ -206,7 +206,7 @@ impl<F: FieldCore + CanonicalField + Valid> Valid for CommittedGroup<F> {
             .validate_frozen_precommit(field_bits)
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         self.commitment.check()?;
-        let expected_coeffs = self
+        let source_coefficients = self
             .profile
             .outer_commit_matrix
             .output_rank()
@@ -216,6 +216,15 @@ impl<F: FieldCore + CanonicalField + Valid> Valid for CommittedGroup<F> {
                     "committed-group coefficient count overflow".to_string(),
                 )
             })?;
+        let expected_coeffs = CompressionChainPlan::for_complete_source(
+            self.profile
+                .outer_commit_matrix
+                .sis_table_key()
+                .modulus_profile,
+            source_coefficients,
+        )
+        .map_err(|error| SerializationError::InvalidData(error.to_string()))?
+        .terminal_coefficients();
         if self.commitment.rows().coeff_len() != expected_coeffs {
             return Err(SerializationError::InvalidData(
                 "committed-group rows do not match the frozen descriptor".to_string(),
@@ -443,7 +452,7 @@ where
         descriptor
             .validate_frozen_precommit(field_bits)
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
-        let num_coeffs = descriptor
+        let source_coefficients = descriptor
             .outer_commit_matrix
             .output_rank()
             .checked_mul(descriptor.outer_commit_matrix.ring_dimension())
@@ -452,6 +461,15 @@ where
                     "committed-group coefficient count overflow".to_string(),
                 )
             })?;
+        let num_coeffs = CompressionChainPlan::for_complete_source(
+            descriptor
+                .outer_commit_matrix
+                .sis_table_key()
+                .modulus_profile,
+            source_coefficients,
+        )
+        .map_err(|error| SerializationError::InvalidData(error.to_string()))?
+        .terminal_coefficients();
         if num_coeffs > MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS {
             return Err(SerializationError::InvalidData(format!(
                 "committed-group coefficient count {num_coeffs} exceeds allocation cap \
@@ -536,25 +554,29 @@ mod committed_group_tests {
             outer_width,
         )
         .expect("audited B profile");
+        let profile = CommittedGroupProfile {
+            version: CommittedGroupProfile::VERSION,
+            group: PolynomialGroupLayout::new(11, 1),
+            num_live_ring_elements_per_claim: 32,
+            num_positions_per_block: 32,
+            num_live_blocks: 1,
+            log_basis_inner: 1,
+            num_digits_inner: 1,
+            inner_commit_matrix,
+            log_basis_outer: 1,
+            num_digits_outer: 1,
+            outer_commit_matrix,
+        };
+        let source_coefficients = outer_commit_matrix.output_rank() * 64;
+        let payload_coefficients = crate::CompressionChainPlan::for_complete_source(
+            outer_commit_matrix.sis_modulus_profile(),
+            source_coefficients,
+        )
+        .expect("compression plan")
+        .terminal_coefficients();
         CommittedGroup::new(
-            CommittedGroupProfile {
-                version: CommittedGroupProfile::VERSION,
-                group: PolynomialGroupLayout::new(11, 1),
-                num_live_ring_elements_per_claim: 32,
-                num_positions_per_block: 32,
-                num_live_blocks: 1,
-                log_basis_inner: 1,
-                num_digits_inner: 1,
-                inner_commit_matrix,
-                log_basis_outer: 1,
-                num_digits_outer: 1,
-                outer_commit_matrix,
-            },
-            Commitment::new(RingVec::from_coeffs(vec![
-                F::zero();
-                outer_commit_matrix.output_rank()
-                    * 64
-            ])),
+            profile,
+            Commitment::new(RingVec::from_coeffs(vec![F::zero(); payload_coefficients])),
         )
     }
 
@@ -579,6 +601,16 @@ mod committed_group_tests {
         unknown_version[0] = CommittedGroupProfile::VERSION + 1;
         assert!(CommittedGroup::<F>::deserialize_with_mode(
             unknown_version.as_slice(),
+            Compress::Yes,
+            Validate::Yes,
+            &(),
+        )
+        .is_err());
+
+        let mut previous_version = bytes.clone();
+        previous_version[0] = CommittedGroupProfile::VERSION - 1;
+        assert!(CommittedGroup::<F>::deserialize_with_mode(
+            previous_version.as_slice(),
             Compress::Yes,
             Validate::Yes,
             &(),

@@ -128,9 +128,9 @@ request with the same field profile, ring dimension, and transform domain.
 Concurrent construction of the same key is single-flight.
 
 The terminal verifier keeps its separate exact-negacyclic cache and adds the
-i16 tail only when the checked CRT bound requires it. Compression diagnostics
-also use a separate cache and dimension policy. Neither namespace changes
-public setup identity or ordinary prover cache sizing.
+i16 tail only when the checked CRT bound requires it. Compression execution
+uses its compression-aware cache path and dimension policy. Neither namespace
+changes public setup identity or ordinary prover cache sizing.
 
 Optional disk persistence serializes the public matrix identity, provisioning
 limits, flat field-element count, matrix coefficients, and setup-prefix

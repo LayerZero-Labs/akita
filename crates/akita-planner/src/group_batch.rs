@@ -16,8 +16,8 @@ use akita_types::{
 
 use crate::schedule_params::{
     derive_optimal_suffix_schedule, find_schedule, materialize_candidate_schedule,
-    optimize_fold_challenge_shape, validate_policy, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
-    SuffixState,
+    optimize_fold_challenge_shape, select_complete_candidate, validate_policy,
+    RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -260,16 +260,19 @@ pub(crate) fn multi_group_root_next_w_len(
     field_bits: u32,
     params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
-) -> Result<usize, AkitaError> {
+) -> Result<Option<usize>, AkitaError> {
     params.witness_chunk.validate()?;
     params.validate_opening_batch(opening_batch)?;
+    if !params.compression_sources_supported()? {
+        return Ok(None);
+    }
     let witness_layout = WitnessLayout::new(
         params,
         opening_batch,
         params.witness_chunk.num_chunks,
         compute_num_digits_field_width(field_bits, params.log_basis_open),
     )?;
-    Ok(witness_layout.live_coeff_len())
+    Ok(Some(witness_layout.live_coeff_len()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -346,8 +349,11 @@ pub(crate) fn multi_group_root_level_candidates_for_basis(
             continue;
         }
         candidate_params.witness_chunk = policy.witness_chunk_for_level(0);
-        let output_witness_len =
-            multi_group_root_next_w_len(field_bits, &candidate_params, &opening_batch)?;
+        let Some(output_witness_len) =
+            multi_group_root_next_w_len(field_bits, &candidate_params, &opening_batch)?
+        else {
+            continue;
+        };
         if output_witness_len
             .checked_mul(candidate_log_basis as usize)
             .ok_or_else(|| {
@@ -495,6 +501,7 @@ fn multi_group_root_main_level_params_candidate(
     };
 
     let params = CommittedGroupParams {
+        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
         log_basis_inner,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
@@ -606,28 +613,22 @@ fn find_group_batch_schedule_inner(
             current_witness_len: root_input_witness_len,
             current_lb: 0,
             incoming_setup_prefix: None,
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
         },
         0,
     )?;
     let best = match policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayload => suffix
-            .best_by_payload_per_lb
-            .values()
-            .min_by_key(|candidate| candidate.total_bytes),
+        crate::SelectionPolicyId::MinEstimatedProofPayload => {
+            select_complete_candidate(policy, suffix.best_by_payload_per_lb.values())?
+        }
         crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
             return Err(AkitaError::UnsupportedSchedule(
                 "mixed ring-dimension selection is not supported for multi-group roots".to_string(),
             ));
         }
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => suffix
-            .best_by_first_direct_setup_per_lb
-            .values()
-            .min_by_key(|candidate| {
-                (
-                    candidate.first_direct_setup_field_len_or_max(),
-                    candidate.total_bytes,
-                )
-            }),
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
+            select_complete_candidate(policy, suffix.best_by_first_direct_setup_per_lb.values())?
+        }
     };
 
     let Some(best) = best.cloned() else {
