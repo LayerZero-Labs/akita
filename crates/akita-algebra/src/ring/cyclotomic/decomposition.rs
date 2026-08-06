@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+mod x86;
+
 /// Compute the centering threshold for balanced decomposition.
 ///
 /// When `levels * log_basis == field_bits`, uses asymmetric centering (T_k).
@@ -191,6 +194,20 @@ pub fn balanced_decompose_coefficients_pow2_i8_into<F: CanonicalField>(
         params.log_basis <= <i8 as BalancedSignedDigit>::MAX_LOG_BASIS,
         "log_basis must be in 1..=8 for i8 output"
     );
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if coefficients.len().is_multiple_of(8) {
+        if let Some(canonical) = F::canonical_u32_slice(coefficients) {
+            if std::is_x86_feature_detected!("avx2") {
+                // SAFETY: runtime feature detection guarantees AVX2, and the
+                // length check guarantees every load/store covers eight lanes.
+                unsafe {
+                    x86::balanced_decompose_canonical_u32_pow2_i8_avx2(canonical, out, params)
+                };
+                return;
+            }
+        }
+    }
     balanced_decompose_coefficients_pow2_signed_into_with_params(coefficients, out, params);
 }
 
@@ -597,11 +614,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             params.log_basis <= <i8 as BalancedSignedDigit>::MAX_LOG_BASIS,
             "log_basis must be in 1..=8 for i8 output"
         );
-        balanced_decompose_coefficients_pow2_signed_into_with_params(
-            &self.coeffs,
-            out.as_flattened_mut(),
-            params,
-        );
+        balanced_decompose_coefficients_pow2_i8_into(&self.coeffs, out.as_flattened_mut(), params);
     }
 
     /// Balanced decomposition directly into signed i16 digit planes.

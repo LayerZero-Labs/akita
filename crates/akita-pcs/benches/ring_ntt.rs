@@ -1,14 +1,17 @@
 #![allow(missing_docs)]
 
 use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::tables::{
     q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES,
 };
 use akita_algebra::{
-    mat_vec_i16_with_tail, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
-    I16TailParams, MontCoeff, NttKernelPlan,
+    balanced_decompose_coefficients_pow2_i8_into, mat_vec_i16_with_tail, CrtNttParamSet,
+    CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams, MontCoeff, NttKernelPlan,
 };
-use akita_field::{Fp64, HalvingField, Prime128Offset159, Prime128OffsetA7F7};
+use akita_field::{
+    CanonicalField, Fp64, HalvingField, Prime128Offset159, Prime128OffsetA7F7, Prime32Offset99,
+};
 use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
@@ -188,6 +191,37 @@ fn bench_ntt_i16_tail_round_trip(c: &mut Criterion) {
     bench_ntt_i16_tail_round_trip_dimension::<128>(c);
     bench_ntt_i16_tail_round_trip_dimension::<256>(c);
     bench_ntt_i16_tail_round_trip_dimension::<512>(c);
+}
+
+fn bench_fp32_decomposition_dimension<const D: usize, const LOG_BASIS: u32>(c: &mut Criterion) {
+    let coefficients: [Prime32Offset99; D] = std::array::from_fn(|i| {
+        Prime32Offset99::from_canonical_u128_reduced(
+            (i as u128 * 0x9e37_79b9 + 0x7f4a_7c15) % ((1u128 << 32) - 99),
+        )
+    });
+    let levels = 32usize.div_ceil(LOG_BASIS as usize);
+    let params = BalancedDecomposePow2Params::new(levels, LOG_BASIS, (1u128 << 32) - 99);
+    let mut digits = vec![0i8; D * levels];
+    let name = format!("fp32_balanced_decompose_l{LOG_BASIS}_d{D}");
+    c.bench_function(&name, |b| {
+        b.iter(|| {
+            balanced_decompose_coefficients_pow2_i8_into(
+                black_box(&coefficients),
+                black_box(&mut digits),
+                &params,
+            );
+        })
+    });
+}
+
+fn bench_fp32_decomposition(c: &mut Criterion) {
+    bench_fp32_decomposition_dimension::<64, 8>(c);
+    bench_fp32_decomposition_dimension::<128, 8>(c);
+    bench_fp32_decomposition_dimension::<256, 8>(c);
+    bench_fp32_decomposition_dimension::<512, 8>(c);
+    bench_fp32_decomposition_dimension::<128, 3>(c);
+    bench_fp32_decomposition_dimension::<128, 4>(c);
+    bench_fp32_decomposition_dimension::<128, 6>(c);
 }
 
 fn bench_crt_round_trip(c: &mut Criterion) {
@@ -611,6 +645,7 @@ criterion_group!(
     bench_ring_schoolbook_mul,
     bench_ntt_single_prime_round_trip,
     bench_ntt_i16_tail_round_trip,
+    bench_fp32_decomposition,
     bench_crt_round_trip,
     bench_ring_schoolbook_mul_q128m159,
     bench_crt_mul_q128m159,
