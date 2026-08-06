@@ -1,20 +1,14 @@
 //! Packed field abstractions and architecture-specific SIMD backends.
 
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "avx2",
-    not(all(target_feature = "avx512f", target_feature = "avx512dq"))
-))]
+#[cfg(target_arch = "x86_64")]
 pub(crate) mod avx2;
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "avx512f",
-    target_feature = "avx512dq"
-))]
+#[cfg(target_arch = "x86_64")]
 pub(crate) mod avx512;
 pub(crate) mod ext;
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub(crate) mod neon;
+#[cfg(target_arch = "x86_64")]
+pub mod runtime_x86;
 
 pub use ext::{PackedFpExt2, PackedFpExt4, PackedFpExt8};
 

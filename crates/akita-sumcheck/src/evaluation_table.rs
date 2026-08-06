@@ -198,6 +198,31 @@ where
         &mut self.coefficients[start..start + self.len]
     }
 
+    /// Return all live coefficient slices as separate mutable borrows.
+    ///
+    /// The const length must equal `E::EXT_DEGREE`. This form lets a kernel
+    /// process several coefficient slabs together without exposing the table's
+    /// backing allocation, stride, or inactive rows.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `N != E::EXT_DEGREE`.
+    pub fn coefficient_slices_mut<const N: usize>(&mut self) -> [&mut [F]; N] {
+        assert_eq!(
+            N,
+            <E as ExtField<F>>::EXT_DEGREE,
+            "coefficient slice count must match the extension degree"
+        );
+        let len = self.len;
+        let stride = self.stride;
+        let mut remaining: &mut [F] = &mut self.coefficients;
+        std::array::from_fn(|_| {
+            let (slab, rest) = core::mem::take(&mut remaining).split_at_mut(stride);
+            remaining = rest;
+            &mut slab[..len]
+        })
+    }
+
     /// Return the number of live stored rows.
     #[inline]
     pub fn len(&self) -> usize {
@@ -360,6 +385,24 @@ mod tests {
                 .map(|row| F::from_u64((100 * coefficient + row) as u64))
                 .collect();
             assert_eq!(table.coefficient_slice(coefficient), expected);
+        }
+    }
+
+    #[test]
+    fn mutable_coefficient_slices_are_disjoint_and_live() {
+        let mut table = EvaluationTable::<F, E>::from_evaluation_fn(8, value);
+        table.truncate(3);
+        let coefficients = table.coefficient_slices_mut::<4>();
+        for (coefficient, slice) in coefficients.into_iter().enumerate() {
+            assert_eq!(slice.len(), 3);
+            slice[1] = F::from_u64((900 + coefficient) as u64);
+        }
+
+        for coefficient in 0..4 {
+            assert_eq!(
+                table.coefficient_slice(coefficient)[1],
+                F::from_u64((900 + coefficient) as u64)
+            );
         }
     }
 

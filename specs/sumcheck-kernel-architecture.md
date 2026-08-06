@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao and Codex |
 | Created | 2026-08-06 |
 | Status | active |
-| PR | |
+| PR | [#368](https://github.com/LayerZero-Labs/akita/pull/368) |
 | Supersedes | [`packed-sumcheck.md`](archive/2026-Q3/packed-sumcheck.md) |
 | Superseded-by | |
 | Book-chapter | |
@@ -297,12 +297,14 @@ materializing `E` values:
 5. Compute the next round while writing that table when a fused pass saves a
    second read.
 
-AVX512 byte and word operations require AVX512BW. The current fp32 arithmetic
-uses AVX512F and AVX512DQ. An operation that uses 128 or 256 bit AVX512 forms
-must also check AVX512VL. Each target function declares and checks its exact
-feature set. The runtime plan selects these operations independently. A machine
-may therefore use AVX512 for fp32 table folds and AVX2 for a compact i8 or i16
-operation if measurement shows that choice is faster.
+AVX512 byte and word operations require AVX512BW. The fp32 fold uses AVX512F,
+AVX512DQ, and AVX512IFMA. Without IFMA, the current plan falls back to AVX2
+instead of assuming that a wider register wins. An operation that uses 128 or
+256 bit AVX512 forms must also check AVX512VL. Each target function declares and
+checks its exact feature set. The runtime plan selects these operations
+independently. A machine may therefore use AVX512 IFMA for fp32 table folds and
+AVX2 for a compact i8 or i16 operation if measurement shows that choice is
+faster.
 
 NEON uses its widening operations for compact values. A compact path may remain
 scalar on a target when its measured SIMD version does not win.
@@ -319,7 +321,7 @@ The plan may select different implementations for:
 
 | Operation family | Candidate implementations |
 |---|---|
-| fp32 extension table arithmetic | scalar, NEON, AVX2, AVX512 |
+| fp32 extension table arithmetic | scalar, NEON, AVX2, AVX512 IFMA |
 | fp64 extension table arithmetic | scalar, NEON, AVX2, AVX512 |
 | fp128 table arithmetic | scalar, measured SIMD only if it wins |
 | compact i8 operations | scalar, NEON, AVX2, AVX512BW |
@@ -501,7 +503,7 @@ Record these rows for each meaningful slice:
 
 1. Scalar reference operation.
 2. AVX2 operation.
-3. AVX512 operation.
+3. AVX512 IFMA operation.
 4. Conversion or materialization cost when the operation introduces one.
 5. End to end proof time with the same build profile and proof parameters.
 

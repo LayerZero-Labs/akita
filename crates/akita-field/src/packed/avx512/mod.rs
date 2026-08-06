@@ -5,8 +5,10 @@
 
 use super::{PackedField, PackedValue};
 use crate::ext::FpExt2Config;
+use crate::Fp32;
 use crate::Invertible;
-use crate::{Fp128, Fp32, Fp64};
+#[cfg(all(target_feature = "avx512f", target_feature = "avx512dq"))]
+use crate::{Fp128, Fp64};
 use core::arch::x86_64::*;
 use core::fmt;
 use core::mem::transmute;
@@ -25,6 +27,7 @@ unsafe fn moveldup_epi32_512(x: __m512i) -> __m512i {
 /// 64×64→128 schoolbook multiply using 32×32→64 partial products.
 /// Returns (hi, lo) representing the 128-bit product.
 /// Adapted from plonky3's Goldilocks AVX-512 backend.
+#[cfg(all(target_feature = "avx512f", target_feature = "avx512dq"))]
 #[inline]
 unsafe fn mul64_64_512(x: __m512i, y: __m512i) -> (__m512i, __m512i) {
     let x_hi = movehdup_epi32_512(x);
@@ -51,9 +54,13 @@ unsafe fn mul64_64_512(x: __m512i, y: __m512i) -> (__m512i, __m512i) {
     (res_hi, res_lo)
 }
 
+#[cfg(all(target_feature = "avx512f", target_feature = "avx512dq"))]
 mod fp128;
 mod fp32;
+#[cfg(all(target_feature = "avx512f", target_feature = "avx512dq"))]
 mod fp64;
+#[cfg(all(target_feature = "avx512f", target_feature = "avx512dq"))]
 pub(crate) use fp128::*;
 pub(crate) use fp32::*;
+#[cfg(all(target_feature = "avx512f", target_feature = "avx512dq"))]
 pub(crate) use fp64::*;

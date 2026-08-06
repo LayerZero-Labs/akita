@@ -4,6 +4,10 @@ use super::*;
 pub(crate) const FP32_WIDTH: usize = 16;
 
 /// AVX-512 packed arithmetic for `Fp32<P>`, processing 16 lanes.
+#[cfg_attr(
+    not(all(target_feature = "avx512f", target_feature = "avx512dq")),
+    allow(unreachable_pub)
+)]
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct PackedFp32Avx512<const P: u32>(pub [Fp32<P>; FP32_WIDTH]);

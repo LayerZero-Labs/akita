@@ -1,9 +1,13 @@
 use akita_field::packed::{HasPacking, PackedField, PackedValue};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
+#[cfg(target_arch = "x86_64")]
+use akita_field::Fp32;
 use akita_field::{
     CanonicalField, FieldCore, FpExt4, Prime128Offset275, Prime32Offset99, RandomSampling, Zero,
 };
-use criterion::{black_box, Criterion, Throughput};
+use akita_prover::kernels::sumcheck::SumcheckKernelPlan;
+use akita_sumcheck::EvaluationTable;
+use criterion::{black_box, BatchSize, Criterion, Throughput};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 use super::cases::*;
@@ -180,6 +184,14 @@ fn bench_fp32_ext4_sumcheck_fold(c: &mut Criterion) {
     let packed_left = PE::pack_slice(&left);
     let packed_right = PE::pack_slice(&right);
     let packed_challenge = PE::broadcast(challenge);
+    let runtime_plan = SumcheckKernelPlan::detect();
+    let runtime_table = EvaluationTable::from_evaluation_fn(2 * half, |row| {
+        if row < half {
+            left[row]
+        } else {
+            right[row - half]
+        }
+    });
 
     let mut scalar_out = vec![E::zero(); half];
     let mut packed_out = vec![PE::broadcast(E::zero()); packed_left.len()];
@@ -228,6 +240,48 @@ fn bench_fp32_ext4_sumcheck_fold(c: &mut Criterion) {
         })
     });
 
+    group.bench_function("runtime_evaluation_table", |b| {
+        b.iter_batched(
+            || runtime_table.clone(),
+            |mut table| {
+                runtime_plan.fold_first_variable_fp32(&mut table, challenge);
+                black_box(table);
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    #[cfg(target_arch = "x86_64")]
+    if std::is_x86_feature_detected!("avx2") {
+        group.bench_function("runtime_avx2_evaluation_table", |b| {
+            b.iter_batched(
+                || runtime_table.clone(),
+                |mut table| {
+                    bench_fold_fp32_avx2(&mut table, challenge);
+                    black_box(table);
+                },
+                BatchSize::SmallInput,
+            )
+        });
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if std::is_x86_feature_detected!("avx512f")
+        && std::is_x86_feature_detected!("avx512dq")
+        && std::is_x86_feature_detected!("avx512ifma")
+    {
+        group.bench_function("runtime_avx512_ifma_evaluation_table", |b| {
+            b.iter_batched(
+                || runtime_table.clone(),
+                |mut table| {
+                    bench_fold_fp32_avx512_ifma(&mut table, challenge);
+                    black_box(table);
+                },
+                BatchSize::SmallInput,
+            )
+        });
+    }
+
     group.throughput(Throughput::Elements((2 * half) as u64));
     group.bench_function(format!("pack_two_halves_w{}", PE::WIDTH), |b| {
         b.iter(|| {
@@ -259,6 +313,57 @@ fn bench_fp32_ext4_sumcheck_fold(c: &mut Criterion) {
         })
     });
     group.finish();
+}
+
+#[cfg(target_arch = "x86_64")]
+fn bench_fold_fp32_avx2<const P: u32>(
+    table: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    challenge: FpExt4<Fp32<P>>,
+) {
+    let half = table.len() / 2;
+    let [coefficient_0, coefficient_1, coefficient_2, coefficient_3] =
+        table.coefficient_slices_mut::<4>();
+    let (left_0, right_0) = coefficient_0.split_at_mut(half);
+    let (left_1, right_1) = coefficient_1.split_at_mut(half);
+    let (left_2, right_2) = coefficient_2.split_at_mut(half);
+    let (left_3, right_3) = coefficient_3.split_at_mut(half);
+
+    // SAFETY: the benchmark only calls this helper after detecting AVX2. Its
+    // fixed power-of-two input gives every coefficient equal complete halves.
+    unsafe {
+        akita_field::packed::runtime_x86::fold_fp_ext4_fp32_avx2(
+            [left_0, left_1, left_2, left_3],
+            [right_0, right_1, right_2, right_3],
+            challenge,
+        )
+    };
+    table.truncate(half);
+}
+
+#[cfg(target_arch = "x86_64")]
+fn bench_fold_fp32_avx512_ifma<const P: u32>(
+    table: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    challenge: FpExt4<Fp32<P>>,
+) {
+    let half = table.len() / 2;
+    let [coefficient_0, coefficient_1, coefficient_2, coefficient_3] =
+        table.coefficient_slices_mut::<4>();
+    let (left_0, right_0) = coefficient_0.split_at_mut(half);
+    let (left_1, right_1) = coefficient_1.split_at_mut(half);
+    let (left_2, right_2) = coefficient_2.split_at_mut(half);
+    let (left_3, right_3) = coefficient_3.split_at_mut(half);
+
+    // SAFETY: the benchmark only calls this helper after detecting AVX-512F,
+    // AVX-512DQ, and AVX-512IFMA. Its fixed power-of-two input gives every
+    // coefficient equal complete halves.
+    unsafe {
+        akita_field::packed::runtime_x86::fold_fp_ext4_fp32_avx512_ifma(
+            [left_0, left_1, left_2, left_3],
+            [right_0, right_1, right_2, right_3],
+            challenge,
+        )
+    };
+    table.truncate(half);
 }
 
 fn bench_packed_sumcheck_mix(c: &mut Criterion) {
