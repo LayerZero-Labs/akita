@@ -388,7 +388,6 @@ fn runtime_rejects_malformed_extension_geometry_without_panicking() {
 #[test]
 fn policy_bridge_matches_cfg_hooks() {
     assert_policy_matches_cfg::<fp128::D64Dense>();
-    assert_policy_matches_cfg::<fp128::D128Dense>();
     assert_policy_matches_cfg::<fp128::D64OneHot>();
     assert_policy_matches_cfg::<fp128::OneHot>();
     assert_policy_matches_cfg::<fp32::D64OneHot>();

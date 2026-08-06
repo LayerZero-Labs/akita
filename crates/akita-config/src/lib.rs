@@ -712,20 +712,17 @@ mod fp128_policy_tests {
     }
 
     #[test]
-    fn fp128_family_selector_uses_generated_singleton_plans() {
+    fn fp128_generated_singleton_plans_resolve() {
         let key = PolynomialGroupLayout::singleton(32);
 
-        let dense = fp128::best_dense_schedule(key)
-            .expect("selector should resolve dense schedules")
-            .expect("selector should find a generated dense schedule");
+        let dense = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(key))
+            .expect("D64 dense schedule");
         let onehot = fp128::best_onehot_schedule(key)
             .expect("selector should resolve onehot schedules")
             .expect("selector should find a generated onehot schedule");
 
-        for selection in [&dense, &onehot] {
-            assert_eq!(selection.schedule.initial_witness_len(), 1usize << 32);
-        }
-        assert!(!dense.preset.is_onehot());
+        assert_eq!(dense.initial_witness_len(), 1usize << 32);
+        assert_eq!(onehot.schedule.initial_witness_len(), 1usize << 32);
         assert!(onehot.preset.is_onehot());
     }
 

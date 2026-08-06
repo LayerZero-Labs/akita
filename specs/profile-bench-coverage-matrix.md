@@ -78,11 +78,11 @@ The ring degree differs by field, for two distinct reasons:
   133,000 B at D64 vs 163,968 B at D128; dense nv=24: 131,656 B vs 160,080 B),
   while still folding through 8-9 secure recursive levels. This is confirmed by
   `current_d64_onehot_schedule_stays_within_audited_sis_widths` (securability)
-  and by the `best_dense_schedule` / `best_onehot_schedule` selectors, which
+  and by the `best_onehot_schedule` selector, which
   pick D64 (or D32), never D128. The earlier D128 fp128 cells were *not*
   proof-size optimal; D32/D64 are the planner optima (D32 is marginally
   smaller for fp128). The benchmark matrix tracks D64; use
-  `best_onehot_schedule` / `best_dense_schedule` to compare D32/D64/D128.
+  `best_onehot_schedule` to compare supported one-hot families.
 
 D32/D128 profile modes still exist for direct local comparisons, but neither
 the adaptive `full`/`onehot` selectors nor those comparison modes are part of
@@ -193,7 +193,7 @@ The test-coverage cleanup touches:
       cases.
 - [x] The known long hosted-runner offender `onehot_fp16_d32:32:1` is
       documented as deferred rather than active.
-- [x] `dense_fp128_d128` remains active at `nv=24`, not the earlier `nv=26`
+- [x] `dense_fp128_d64` remains active at `nv=24`, not the earlier `nv=26`
       hosted-runner offender size.
 - [ ] `dense_fp64_d32:25:1` is re-enabled after a separate validation pass
       and completes setup, commit, prove, verify, proof summary, and proof
@@ -283,7 +283,7 @@ This PR reduces per-case samples from 5 to 3 and expands the active matrix from
 3 cases to 7 cases. The first 8-case candidate run was useful for finding
 costly coverage, but `onehot_fp16_d32:32:1` and `dense_fp128_d32:26:1` are too
 expensive for this PR's always-on hosted-runner budget. The active workflow
-therefore keeps dense fp128 coverage at `nv=24` (now `dense_fp128_d128:24:1`)
+therefore keeps dense fp128 coverage at `nv=24` (now `dense_fp128_d64:24:1`)
 and remains a smoke matrix, not an exhaustive benchmark suite.
 
 One PR run completed all 8 candidate benchmark cases with status `ok`, but the job
@@ -440,8 +440,6 @@ cost only.
 ## Follow-Up
 
 - Re-enable `onehot_fp16_d32:32:1` after small-field one-hot prover cost is
-  reduced or the CI runner budget changes.
-- Revisit `dense_fp128_d128` at `nv=26` after dense fp128 commit/prove cost is
   reduced or the CI runner budget changes.
 - Re-enable `dense_fp64_d32:25:1` after a separate dense fp64 validation pass.
 - Record the first fully successful expanded workflow runtime after the

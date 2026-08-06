@@ -32,12 +32,12 @@ one-hot preset now chooses dimensions per fold from generated adaptive tables;
 
 | Field | Typical production choice | Notes |
 |-------|---------------------------|--------|
-| **fp128** | **One-hot** (`fp128::OneHot`) | **Default direct one-hot preset.** The generated schedule chooses dimensions for the first two fold levels and uses D64 afterward. Explicit uniform `fp128::D64OneHot` remains available, and Jolt/recursive presets remain pinned to D64. Shipped tables include the default and D64 one-hot families plus D64/D128 dense. |
+| **fp128** | **One-hot** (`fp128::OneHot`) | **Default direct one-hot preset.** The generated schedule chooses dimensions for the first two fold levels and uses D64 afterward. Explicit uniform `fp128::D64OneHot` remains available, and Jolt/recursive presets remain pinned to D64. Shipped tables include the default and D64 one-hot families plus D64 dense. |
 | **fp32 / fp64** | **D128 one-hot** | D32/D64 are **not securable** under the reprice and unsupported schedules fail fast. CI benches at **nv=28** (eq-table memory budget). Shipped: fp32 D128/D256 onehot; fp64 D128 dense/onehot and D256 onehot. |
 
-Use `akita_config::proof_optimized::fp128::best_onehot_schedule` /
-`best_dense_schedule` to compare the available fp128 presets for a lookup key.
-Every preset falls back to the verifier-reachable planner on table miss.
+Use `akita_config::proof_optimized::fp128::best_onehot_schedule` to compare the
+available fp128 one-hot presets for a lookup key. Dense fp128 uses
+`fp128::D64Dense` directly.
 
 **Test harness vs profile defaults.** `crates/akita-pcs/tests/common/mod.rs` uses
 `fp128::D64OneHot` (one-hot) and `fp128::D64Dense` (dense tests); profile/CI

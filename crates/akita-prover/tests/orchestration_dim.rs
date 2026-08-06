@@ -41,12 +41,12 @@ fn batched_selection_preserves_typed_schedule_topology() {
 
 #[test]
 fn role_dispatch_rejects_wrong_inner_dimension() {
-    let schedule = fp128::D128Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(16),
     ))
     .expect("runtime schedule");
     let dims = schedule.root.params.final_group.commitment.role_dims();
-    assert!(validate_role_dispatch::<64>(dims, RingRole::Inner).is_err());
+    assert!(validate_role_dispatch::<128>(dims, RingRole::Inner).is_err());
 }
 
 #[test]

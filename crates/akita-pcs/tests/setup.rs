@@ -592,16 +592,6 @@ macro_rules! preset_module {
     };
 }
 
-// Multipoint/batched setup sizing falls through to the planner DP via the
-// default `runtime_schedule` fallback, so bare presets suffice — even
-// tables-only configs (`D128*` has no table at all).
-preset_module!(
-    d128_dense,
-    fp128::D128Dense,
-    128,
-    run_dense_e2e,
-    run_dense_batched_e2e
-);
 preset_module!(
     d64_dense,
     fp128::D64Dense,

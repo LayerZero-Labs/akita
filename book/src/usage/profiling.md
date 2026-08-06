@@ -31,15 +31,15 @@ The default direct **fp128** one-hot preset is adaptive: generated tables choose
 the first two fold levels and use D64 for the uniform suffix. The explicit
 uniform `fp128_d64_onehot` baseline remains available, and recursive presets
 remain D64. Shipped tables include `fp128_onehot`,
-`fp128_d64_onehot`, `fp128_d64_dense`, and `fp128_d128_dense`.
+`fp128_d64_onehot` and `fp128_d64_dense`.
 **fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
 `D32OneHot` preset.
 **fp32/fp64** D32/D64 are not securable; smallest secure choice is **D128
 one-hot** (CI benches at `nv=28`).
 
-Compare ring degrees with
-`akita_config::proof_optimized::fp128::best_onehot_schedule` /
-`best_dense_schedule`.
+Compare one-hot schedules with
+`akita_config::proof_optimized::fp128::best_onehot_schedule`. Dense fp128 uses
+the single `D64Dense` runtime catalog.
 
 ## Environment knobs
 

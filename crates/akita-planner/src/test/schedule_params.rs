@@ -678,9 +678,9 @@ fn mixed_search_validates_key_and_policy_at_entry() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn dimension_domain_is_independent_of_setup_generation_dimension() {
-    use akita_config::{policy_of, proof_optimized::fp128::D128Dense};
+    use akita_config::{policy_of, proof_optimized::fp128::D64Dense};
 
-    let mut policy = policy_of::<D128Dense>();
+    let mut policy = policy_of::<D64Dense>();
     let domain = RingDimensionSearchDomain::uniform(256).unwrap();
     policy.uniform_ring_dimension = 256;
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {

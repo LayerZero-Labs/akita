@@ -617,12 +617,10 @@ mod tests {
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
-        // The D128 catalog begins at nv=13; the D64 catalog begins at nv=14,
-        // the first singleton shapes with the required root and suffix folds.
-        new_prover_setup::<fp128::Field, fp128::D128Dense>(13, 1)
-            .expect("default fp128 D=128 preset should accept the fp128 field");
+        // The D64 catalog begins at nv=14, the first singleton shape with the
+        // required root and suffix folds.
         new_prover_setup::<fp128::Field, fp128::D64Dense>(14, 1)
-            .expect("small-D fp128 preset should accept the default field");
+            .expect("fp128 dense preset should accept the default field");
     }
 
     #[cfg(feature = "disk-persistence")]

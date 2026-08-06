@@ -57,16 +57,6 @@ pub const DEFAULT_STANDALONE_PRECOMMIT_NUM_VARS: &[usize] = &[14, 15, 16];
 /// Polynomial counts emitted for standalone frozen precommit descriptors.
 pub const DEFAULT_STANDALONE_PRECOMMIT_NUM_POLYNOMIALS: &[usize] = &[1, 2];
 
-const FP128_D128_DENSE_KEYS: &[PolynomialGroupLayout] = &[
-    PolynomialGroupLayout::singleton(13),
-    PolynomialGroupLayout::singleton(15),
-    PolynomialGroupLayout::singleton(16),
-    PolynomialGroupLayout::new(16, 2),
-    PolynomialGroupLayout::singleton(18),
-    PolynomialGroupLayout::new(20, 2),
-    PolynomialGroupLayout::singleton(24),
-];
-
 const FP128_D64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
     PolynomialGroupLayout::singleton(16),
@@ -720,13 +710,6 @@ fn explicit_precommitted_group<Cfg: CommitmentConfig + 'static>(
 /// here; both the table emitter and the drift-guard test pick it up
 /// automatically.
 pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
-    family_row!(
-        "fp128_d128_dense",
-        "FP128_D128_DENSE_SCHEDULES",
-        "fp128-d128-dense",
-        FP128_D128_DENSE_KEYS,
-        fp128::D128Dense
-    ),
     family_row!(
         group_batch,
         "fp128_d64_onehot",

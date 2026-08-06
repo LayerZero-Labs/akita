@@ -457,10 +457,6 @@ pub(crate) fn validate_certified_bases(
 }
 
 // @generated schedule module wiring begin
-#[cfg(feature = "fp128-d128-dense")]
-pub mod fp128_d128_dense;
-#[cfg(feature = "fp128-d128-dense")]
-pub mod fp128_d128_dense_precommitted;
 #[cfg(feature = "fp128-d64-dense")]
 pub mod fp128_d64_dense;
 #[cfg(feature = "fp128-d64-dense-multi-chunk")]
@@ -521,16 +517,6 @@ pub mod fp64_d128_onehot_precommitted;
 pub mod fp64_d256_onehot;
 #[cfg(feature = "fp64-d256-onehot")]
 pub mod fp64_d256_onehot_precommitted;
-
-#[cfg(feature = "fp128-d128-dense")]
-pub fn fp128_d128_dense_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d128_dense::FP128_D128_DENSE_SCHEDULES,
-        precommitted_profiles:
-            fp128_d128_dense_precommitted::FP128_D128_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d128_dense::CATALOG_IDENTITY,
-    }
-}
 
 #[cfg(feature = "fp128-d64-dense")]
 pub fn fp128_d64_dense_table() -> GeneratedScheduleTable {

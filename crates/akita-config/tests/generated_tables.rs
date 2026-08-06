@@ -72,7 +72,6 @@ fn group_batch_emission_matches_supported_policy_shape() {
 
 fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
     match family.module_name {
-        "fp128_d128_dense" => fp128::D128Dense::schedule_catalog().is_some(),
         "fp128_onehot" => fp128::OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot" => fp128::D64OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot_recursive" => {
@@ -344,7 +343,6 @@ fn family_catalog(
     keys: &[PolynomialGroupLayout],
 ) -> akita_schedules::GeneratedScheduleTable {
     match family.module_name {
-        "fp128_d128_dense" => prepare_family_catalog::<fp128::D128Dense>(family, keys),
         "fp128_onehot" => prepare_family_catalog::<fp128::OneHot>(family, keys),
         "fp128_d64_onehot" => prepare_family_catalog::<fp128::D64OneHot>(family, keys),
         "fp128_d64_onehot_recursive" => prepare_family_catalog::<
@@ -402,9 +400,6 @@ fn assert_group_batch_table_hits<Cfg: CommitmentConfig>(
 
 fn assert_family_group_batch_table_hit(family: &GeneratedFamily, requests: &[GroupBatchCandidate]) {
     match family.module_name {
-        "fp128_d128_dense" => {
-            assert_group_batch_table_hits::<fp128::D128Dense>(family.module_name, requests)
-        }
         "fp128_onehot" => {
             assert_group_batch_table_hits::<fp128::OneHot>(family.module_name, requests)
         }
@@ -497,7 +492,6 @@ fn resolve_family_group_batch_schedule(
     request: &GroupBatchCandidate,
 ) -> Result<FoldSchedule, AkitaError> {
     match family.module_name {
-        "fp128_d128_dense" => table_backed_group_batch_schedule::<fp128::D128Dense>(request),
         "fp128_onehot" => table_backed_group_batch_schedule::<fp128::OneHot>(request),
         "fp128_d64_onehot" => table_backed_group_batch_schedule::<fp128::D64OneHot>(request),
         "fp128_d64_onehot_recursive" => table_backed_group_batch_schedule::<

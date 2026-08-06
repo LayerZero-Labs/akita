@@ -418,14 +418,14 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     group.finish();
 }
 
-fn bench_dense_nv15(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::D128Dense::D }, fp128::D128Dense>(c, "dense-d128", 15);
+fn bench_dense_nv14(c: &mut Criterion) {
+    bench_dense_phases::<{ fp128::D64Dense::D }, fp128::D64Dense>(c, "dense-d64", 14);
 }
-fn bench_dense_nv20(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::D128Dense::D }, fp128::D128Dense>(c, "dense-d128", 20);
+fn bench_dense_nv16(c: &mut Criterion) {
+    bench_dense_phases::<{ fp128::D64Dense::D }, fp128::D64Dense>(c, "dense-d64", 16);
 }
-fn bench_dense_nv25(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::D128Dense::D }, fp128::D128Dense>(c, "dense-d128", 25);
+fn bench_dense_nv24(c: &mut Criterion) {
+    bench_dense_phases::<{ fp128::D64Dense::D }, fp128::D64Dense>(c, "dense-d64", 24);
 }
 
 fn bench_onehot_nv15(c: &mut Criterion) {
@@ -440,9 +440,9 @@ fn bench_onehot_nv25(c: &mut Criterion) {
 
 criterion_group!(
     akita_benches,
-    bench_dense_nv15,
-    bench_dense_nv20,
-    bench_dense_nv25,
+    bench_dense_nv14,
+    bench_dense_nv16,
+    bench_dense_nv24,
     bench_onehot_nv15,
     bench_onehot_nv20,
     bench_onehot_nv25,

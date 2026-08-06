@@ -734,7 +734,6 @@ schedules-default = [
     "schedules-fp128-d64-onehot",
     "schedules-fp128-d64-dense",
     "schedules-fp128-onehot",
-    "schedules-fp128-d128-dense",
     "schedules-fp32-d128-onehot",
     "schedules-fp32-d256-onehot",
     "schedules-fp64-d128-onehot",

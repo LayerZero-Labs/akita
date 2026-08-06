@@ -6,12 +6,12 @@
 //! Two polynomial representations are covered:
 //!
 //! * **One-hot** — `fp128::D64OneHot` (D = 64, K = 256).
-//! * **Dense**   — `fp128::D128Dense`   (D = 128, arbitrary field coefficients).
+//! * **Dense**   — `fp128::D64Dense` (D = 64, arbitrary field coefficients).
 //!
 //! Variable counts:
 //!
 //! - one-hot: 12, 15, 20
-//! - dense: 13, 15, 18
+//! - dense: 14, 16, 24
 
 #![allow(missing_docs)]
 
@@ -111,10 +111,10 @@ fn run_single_onehot(nv: usize) {
 }
 
 // ---------------------------------------------------------------------------
-// Dense helpers (D = 128)
+// Dense helpers (D = 64)
 // ---------------------------------------------------------------------------
 
-type DenseCfg = fp128::D128Dense;
+type DenseCfg = fp128::D64Dense;
 const DENSE_D: usize = DenseCfg::D;
 
 fn run_single_dense(nv: usize) {
@@ -254,18 +254,18 @@ fn single_onehot_nv20() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn single_dense_nv13() {
-    run_single_dense(13);
+fn single_dense_nv14() {
+    run_single_dense(14);
 }
 
 #[test]
-fn single_dense_nv15() {
-    run_single_dense(15);
+fn single_dense_nv16() {
+    run_single_dense(16);
 }
 
 #[test]
-fn single_dense_nv18() {
-    run_single_dense(18);
+fn single_dense_nv24() {
+    run_single_dense(24);
 }
 
 // #[test]

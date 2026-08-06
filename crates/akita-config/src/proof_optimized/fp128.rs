@@ -6,10 +6,6 @@ use super::*;
 /// Base field for the default fp128 presets.
 pub type Field = Prime128OffsetA7F7;
 
-/// Dense `D=128` preset for planner-backed experiments.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D128Dense;
-
 /// Dense adaptive `D=64` preset.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64Dense;
@@ -67,21 +63,6 @@ pub struct D64OneHotMultiChunkW4R2;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64DenseMultiChunk;
 
-impl_proof_optimized_preset!(
-    D128Dense,
-    Field,
-    Field,
-    akita_types::SisModulusProfileId::Q128OffsetA7F7,
-    128,
-    128,
-    128,
-    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 128),
-    schedules = (
-        "schedules-fp128-d128-dense",
-        "fp128_d128_dense",
-        fp128_d128_dense_table
-    )
-);
 impl_proof_optimized_preset!(
     D64Dense,
     Field,
@@ -194,9 +175,6 @@ impl_multi_chunk_companion!(
 pub enum Fp128Preset {
     /// Dense adaptive `D=64` preset.
     D64Dense,
-    /// Dense `D=128` preset (comparison / legacy; D64 is smaller under
-    /// committed-fold A-role pricing).
-    D128Dense,
     /// Binary onehot generated `D=64` preset.
     D64OneHot,
     /// Binary onehot preset with adaptive per-level ring dimensions.
@@ -208,7 +186,6 @@ impl Fp128Preset {
     pub const fn ring_dimension(self) -> usize {
         match self {
             Self::D64Dense | Self::D64OneHot => 64,
-            Self::D128Dense => 128,
             Self::OneHot => 256,
         }
     }
@@ -222,7 +199,6 @@ impl Fp128Preset {
     pub const fn name(self) -> &'static str {
         match self {
             Self::D64Dense => "D64Dense",
-            Self::D128Dense => "D128Dense",
             Self::D64OneHot => "D64OneHot",
             Self::OneHot => "OneHot",
         }
@@ -290,26 +266,6 @@ where
             selection.preset.ring_dimension(),
         )
     })
-}
-
-/// Select the best dense fp128 preset for a schedule lookup key.
-///
-/// The key carries singleton and multi-group batch shape data, so
-/// this helper can be used by profile tooling without manually comparing
-/// typed preset schedule tables. A genuine planner failure propagates as an
-/// error; supported keys yield a folded schedule for each candidate preset.
-///
-/// # Errors
-///
-/// Propagates a planner / runtime-schedule failure (invalid key shape,
-/// witness overflow, or an uncovered SIS-floor width).
-pub fn best_dense_schedule(
-    key: PolynomialGroupLayout,
-) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    Ok(best_by_exact_bytes([
-        candidate::<D64Dense>(Fp128Preset::D64Dense, key)?,
-        candidate::<D128Dense>(Fp128Preset::D128Dense, key)?,
-    ]))
 }
 
 /// Select the best onehot fp128 preset for a schedule lookup key.

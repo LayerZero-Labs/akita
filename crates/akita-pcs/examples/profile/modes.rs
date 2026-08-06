@@ -245,10 +245,6 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2,
     },
     ProfileMode {
-        name: "dense_fp128_d128",
-        run: run_profile_dense_fp128_d128,
-    },
-    ProfileMode {
         name: "onehot_fp128_d64_tensor",
         run: run_profile_onehot_fp128_d64_tensor,
     },
@@ -318,7 +314,6 @@ const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     // D128+ presets are heavy and/or runtime-DP-backed; keep them out of the
     // default `all` smoke sweep (they are still selectable by explicit
     // `AKITA_MODE=` and drive the profile-bench matrix).
-    "dense_fp128_d128",
     "dense_fp32_d128",
     "onehot_fp32_d128",
     "onehot_fp64_d128",
@@ -536,20 +531,6 @@ fn run_profile_onehot_fp128_d64_tensor(nv: usize, num_polys: usize) {
         )
     };
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64_tensor", &title, nv, num_polys);
-}
-
-#[cfg(not(feature = "profile-ci"))]
-fn run_profile_dense_fp128_d128(nv: usize, num_polys: usize) {
-    type Cfg = fp128::D128Dense;
-    assert_singleton_mode("dense_fp128_d128", num_polys);
-    let prime = fp128_prime_label();
-    run_dense_mode::<{ Cfg::D }, Cfg>(
-        "dense_fp128_d128",
-        &format!(
-            "=== dense_fp128_d128 (fp128, {prime}, D=128 dense, log_commit_bound=128, runtime DP schedule) ==="
-        ),
-        nv,
-    );
 }
 
 #[cfg(not(feature = "profile-ci"))]

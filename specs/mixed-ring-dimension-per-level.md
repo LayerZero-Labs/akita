@@ -262,10 +262,10 @@ The shipped selection policies are:
 | `MinFirstDirectSetupThenPayload` | Recursive setup schedules: first later direct setup scan, then exact proof payload, subject to an optional host budget |
 
 The ordinary direct policy computes a setup envelope but does not use it for
-selection. The fp128 `best_dense_schedule` and `best_onehot_schedule` helpers
-compare separately generated uniform-D64 and uniform-D128 catalogs by proof
-bytes, then use smaller uniform D as a tie-break. They are family selectors
-outside the schedule DP; they cannot produce a mixed schedule.
+selection. The fp128 `best_onehot_schedule` helper compares the separately
+generated uniform-D64 and default per-level catalogs by proof bytes, then uses
+the smaller setup-generation dimension as a tie-break. It is a family selector
+outside the schedule DP and does not run a new search.
 
 ### Current search algorithm
 
