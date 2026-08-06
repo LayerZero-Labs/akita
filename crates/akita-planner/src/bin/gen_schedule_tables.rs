@@ -336,11 +336,16 @@ fn emit_spec_with_overrides(
     explicit_rows: &ExplicitRows,
     generator_command: &'static str,
 ) -> Result<EmitSpec, String> {
-    let mut spec = emit_spec_for_family(family, base_dir, generator_command)
-        .map_err(|e| format!("{}: emit spec: {e}", family.module_name))?;
     if !explicit_rows.has_family(family) {
-        return Ok(spec);
+        return emit_spec_for_family(family, base_dir, generator_command)
+            .map_err(|e| format!("{}: emit spec: {e}", family.module_name));
     }
+
+    // Explicit sweeps replace the catalog key set. Start from the cheap wiring
+    // shape so a one-key diagnostic does not first plan every default grouped
+    // root merely to discard those rows below.
+    let mut spec = wiring_emit_spec(family, base_dir);
+    spec.generator_command = generator_command;
 
     let final_group = explicit_rows
         .final_group
@@ -444,4 +449,33 @@ fn main() -> Result<(), String> {
     }
     run_regen_fmt()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_scalar_sweep_replaces_default_catalog_work() {
+        let family = family_by_name("fp128_d64_onehot").expect("known family");
+        let explicit_rows = ExplicitRows {
+            final_group: Some(
+                parse_explicit_group("fp128_d64_onehot:14:1").expect("explicit group"),
+            ),
+            precommitted_groups: Vec::new(),
+        };
+
+        let spec = emit_spec_with_overrides(
+            family,
+            PathBuf::from("generated"),
+            &explicit_rows,
+            "generator command",
+        )
+        .expect("explicit emit spec");
+
+        assert_eq!(spec.keys, vec![PolynomialGroupLayout::singleton(14)]);
+        assert!(spec.group_batch_keys.is_empty());
+        assert!(spec.precommitted_profiles.is_empty());
+        assert_eq!(spec.generator_command, "generator command");
+    }
 }
