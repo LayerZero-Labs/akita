@@ -41,7 +41,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .collect())
     }
 
-    /// Multiply a prepared matrix by signed-i16 rings, retaining CRT+NTT form.
+    /// Multiply a prepared matrix by signed-i16 rings, retaining NTT-domain
+    /// accumulators so the arithmetic core is independent of the output field.
     pub(super) fn mat_vec_i16_ntt(
         matrix: &[Self],
         num_rows: usize,
