@@ -50,7 +50,9 @@ pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
                 .collect();
             mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, p)
         }
-        PreparedNttCache::Q32Ifma52 { .. } | PreparedNttCache::Q64Ifma52 { .. } => {
+        PreparedNttCache::Q32Ifma52 { .. }
+        | PreparedNttCache::Q64Ifma52 { .. }
+        | PreparedNttCache::Q128Ifma52 { .. } => {
             return Err(AkitaError::InvalidSetup(
                 "signed-i8 matvec requires a base-profile NTT cache".into(),
             ));
@@ -102,7 +104,9 @@ pub fn mat_vec_mul_ntt_single_i8_cyclic<F: FieldCore + CanonicalField, const D: 
                 .collect();
             mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, p)
         }
-        PreparedNttCache::Q32Ifma52 { .. } | PreparedNttCache::Q64Ifma52 { .. } => {
+        PreparedNttCache::Q32Ifma52 { .. }
+        | PreparedNttCache::Q64Ifma52 { .. }
+        | PreparedNttCache::Q128Ifma52 { .. } => {
             return Err(AkitaError::InvalidSetup(
                 "cyclic NTT domain not prepared".into(),
             ));

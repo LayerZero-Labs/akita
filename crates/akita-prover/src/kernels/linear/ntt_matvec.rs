@@ -26,7 +26,9 @@ macro_rules! dispatch_slot {
                 let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
                 $func(&rows, $($arg,)* p)
             }
-            PreparedNttCache::Q32Ifma52 { .. } | PreparedNttCache::Q64Ifma52 { .. } => {
+            PreparedNttCache::Q32Ifma52 { .. }
+            | PreparedNttCache::Q64Ifma52 { .. }
+            | PreparedNttCache::Q128Ifma52 { .. } => {
                 return Err(AkitaError::InvalidSetup(
                     "signed-i8 matvec requires a base-profile NTT cache".into(),
                 ));

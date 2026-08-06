@@ -174,6 +174,42 @@ fn bench_q64_exact_shape<const D: usize>(
     );
 }
 
+fn bench_q128_exact_shape<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    rank: usize,
+    width: usize,
+) {
+    let matrix = sample_matrix::<D>(rank, width);
+    let flat = FlatMatrix::from_ring_slice(&matrix);
+    let cache = prepare_ntt_cache(
+        flat.ring_view::<D>(rank, width).expect("Q128 matrix view"),
+        NttCacheMode::ExactNegacyclic {
+            width,
+            rhs_abs_bound: 1 << 15,
+        },
+    )
+    .expect("Q128 exact cache");
+    let profile = if matches!(cache, PreparedNttCache::Q128Ifma52 { .. }) {
+        "ifma52_i16"
+    } else {
+        "i32"
+    };
+    let rhs = sample_i16_digits::<D>(width, 16);
+    group.throughput(Throughput::Elements((rank * width * D) as u64));
+    group.bench_function(
+        BenchmarkId::new(profile, format!("d{D}_r{rank}_w{width}")),
+        |bench| {
+            bench.iter(|| {
+                black_box(
+                    cache
+                        .mat_vec_i16::<F>(16, rank, black_box(&rhs))
+                        .expect("Q128 exact matvec"),
+                )
+            })
+        },
+    );
+}
+
 fn i8_matvec<const D: usize>(
     cache: &PreparedNttCache<D>,
     rank: usize,
@@ -385,12 +421,21 @@ fn bench_q32_exact(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_q128_exact(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ntt_matvec_q128/exact_i16/r4_w128");
+    bench_q128_exact_shape::<64>(&mut group, 4, 128);
+    bench_q128_exact_shape::<128>(&mut group, 4, 128);
+    bench_q128_exact_shape::<256>(&mut group, 4, 128);
+    bench_q128_exact_shape::<512>(&mut group, 4, 128);
+    group.finish();
+}
+
 criterion_group! {
     name = ntt_matvec;
     config = Criterion::default()
         .sample_size(10)
         .warm_up_time(Duration::from_millis(200))
         .measurement_time(Duration::from_secs(1));
-    targets = bench_rank_ring_dim, bench_width, bench_equal_output, bench_q64_exact, bench_q32_exact
+    targets = bench_rank_ring_dim, bench_width, bench_equal_output, bench_q64_exact, bench_q32_exact, bench_q128_exact
 }
 criterion_main!(ntt_matvec);
