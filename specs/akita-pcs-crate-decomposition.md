@@ -35,7 +35,7 @@ It also sits naturally beside the Greyhound/LaBRADOR lineage: a concrete, memora
 The rename is justified because the implementation target is no longer only a packaging refactor of the original Hachi paper.
 The Akita line includes, or is being designed to include, material protocol improvements over the original Hachi design:
 
-- faster verifier-oriented reductions through matrix-claim delegation and tensor-structured challenges;
+- faster verifier-oriented reductions through matrix-claim delegation;
 - smaller proof sizes for large-field deployments, including 128-bit-field settings, through modulus switching and field-size lowering;
 - an efficient zero-knowledge layer, tentatively named Whiteout, based on fully blinding the proof with committed sumcheck masks and Gaussian masking noise.
 

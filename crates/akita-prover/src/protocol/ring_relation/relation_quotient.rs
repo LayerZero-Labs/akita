@@ -53,7 +53,7 @@ where
     F: FieldCore + CanonicalField + Send + Sync,
     R: Fn(usize) -> Option<CyclotomicRing<F, D>> + Sync,
 {
-    let total = challenges.logical_len();
+    let total = challenges.len();
     let out = cfg_fold_reduce!(
         0..total,
         || vec![F::zero(); D],
@@ -61,7 +61,7 @@ where
             let Some(ring) = ring_fn(i) else {
                 return acc;
             };
-            add_sparse_ring_product_high_half::<F, D>(&mut acc, &challenges.challenges[i], &ring);
+            add_sparse_ring_product_high_half::<F, D>(&mut acc, &challenges.as_slice()[i], &ring);
             acc
         },
         |mut a: Vec<F>, b: Vec<F>| {
@@ -485,14 +485,14 @@ where
         let expected_recomposed_coeffs = n_a
             .checked_mul(group_dims.d_a())
             .ok_or(AkitaError::InvalidProof)?;
-        if challenges.logical_len() != expected_blocks
+        if challenges.len() != expected_blocks
             || group.e_folded.coeff_len() != expected_e_coeffs
             || group.e_hat.total_planes() != expected_e_planes
             || group.e_hat.digit_stride() != group_dims.d_d()
         {
             return Err(AkitaError::InvalidInput(format!(
                 "relation quotient group shape mismatch: challenges={} e_folded={} recomposed={} e_planes={} e_stride={} expected_blocks={} expected_e_planes={} expected_d_d={}",
-                challenges.logical_len(),
+                challenges.len(),
                 group.e_folded.coeff_len() / group_dims.d_a(),
                 group.recomposed_inner_rows.coeff_len() / expected_recomposed_coeffs,
                 group.e_hat.total_planes(),

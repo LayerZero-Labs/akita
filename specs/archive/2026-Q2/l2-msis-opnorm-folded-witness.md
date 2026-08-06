@@ -79,11 +79,11 @@ infrastructure: the planner may enable it only when Γ collision pricing
 strictly lowers audited A-rank vs ω pricing **and** the fold-level witness
 scoring cost (`(1 + n_a)·δ_open·2^r + δ_commit·δ_fold·m_eff`, same as
 `optimal_block_geometry_split`) is strictly lower with rejection on at that geometry **and**
-the fold draw samples at most `2^12` sparse challenges (flat `2^{block_index_bits} · num_claims`,
-or tensor `num_claims · (left_len + right_len)`).
+the fold draw samples at most `2^12` sparse challenges
+(`num_live_blocks · num_claims`).
 **Production scope today is D=64 only.** The only shipped binding preset is
 `signed-sparse { count_mag1: 31, count_mag2: 11 }` with `T = 18` at ring degree 64.
-D=32 uses `BoundedL1Norm`; D=128 and D=256 use `pm1-only` sparse challenges
+D=128 and D=256 use ±1-only sparse challenges
 (`proof_optimized_ring_challenge_config`). For those families
 `operator_norm_cap` equals L1 mass, so the flag stays false and the sampler
 skips the rejection oracle. D=128/D=256 flat folds may still use fold-linf
@@ -289,8 +289,7 @@ Unit tests:
 - SIS tests pinning L2 secure-rank lookup against generated tables, including
   bucket rounding and unsupported-bucket rejection.
 - Folded-witness tests that compare `centered_coeffs` square sums with a direct
-  negacyclic integer reference for dense, one-hot, recursive, and tensor-shaped
-  folds.
+  negacyclic integer reference for dense, one-hot, recursive, and batched folds.
 - Grouped-carry tests covering field-fitting selection, single-digit grouping,
   last short groups, negative `C_e` / carries, the integer carry recurrence
   against a direct `Σ z[i]^2` reference, and no-wrap-gate fallback.
@@ -542,39 +541,6 @@ The substantive content is therefore in `mu2_implied` itself:
   One-hot and dense levels need different policies.
 - Direct source-block L2 sum logging is the gating step before any of this
   becomes planner input.
-
-#### D32 Bounded-L1 Calibration
-
-The L2 cutover should also revisit whether D32 should switch back into the
-production set.
-Current D32 uses `SparseChallengeConfig::BoundedL1Norm`, the fixed
-`D = 32`, `M = 8`, `B = 121` sampler that draws a uniform 128-bit rank into a
-retained subset of the bounded ball.
-Exact dynamic programming over that retained production distribution gives:
-
-```text
-E ||c||_1              = 114.123123661
-E ||c||_2^2            = 591.468541687
-per-coordinate E[c_i^2] = 18.483391928
-sqrt(E ||c||_2^2)      = 24.320126268
-```
-
-A local Monte Carlo over 300,000 production-distributed single challenges gave
-the negacyclic convolution operator norm:
-
-```text
-gamma(c) mean = 44.57
-gamma(c) p50  = 43.83
-gamma(c) p90  = 52.99
-gamma(c) p95  = 56.09
-gamma(c) p99  = 62.26
-```
-
-This is far below the coefficient worst-case `||c||_1 = 121`, but much larger
-than the D64 signed-sparse threshold currently being studied.
-The numbers are calibration only.
-They suggest D32 is worth repricing under the L2/operator-norm model, but they
-do not by themselves justify adding D32 back to production schedules.
 
 ## Design
 
@@ -1633,7 +1599,6 @@ inner-product payload is serialized under `feature = "zk"`.
 
 - `specs/sis-euclidean-estimator.md` (S5a: offline estimator + table regen)
 - `specs/weak-binding-norm-fix.md`
-- `specs/bounded-l1-sparse-challenge.md`
 - `crates/akita-types/src/sis/norm_bound.rs`
 - `crates/akita-prover/src/protocol/ring_relation.rs`
 - `crates/akita-prover/src/protocol/ring_switch/coeffs.rs` (`build_w_coeffs`)

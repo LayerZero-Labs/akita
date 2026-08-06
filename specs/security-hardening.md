@@ -58,7 +58,7 @@ Regression tests should target the boundary validation, not the internal asserti
 - Panic hardening must not introduce alternate protocol semantics.
   In particular, do not add compatibility shims, slow fallback evaluators, or secondary arithmetic paths merely to avoid panics; validate the shape before reaching the existing evaluator.
 - Existing Fiat-Shamir transcript framing for current labels must remain byte-for-byte compatible.
-  The bounded-L1 reference vector and transcript framing tests protect this.
+  The sparse-challenge reference vectors and transcript framing tests protect this.
 - Transcript labels remain one-byte-framed internal protocol labels.
   Serialization into the transcript remains fail-fast because there is no safe way to continue after transcript serialization fails.
 - Validated deserialization of self-described vectors and proof-shape-controlled buffers must not allocate from attacker-controlled lengths without a generic cap.

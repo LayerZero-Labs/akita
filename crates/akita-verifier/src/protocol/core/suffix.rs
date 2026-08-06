@@ -275,7 +275,7 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    params.validate_fold_grind_nonce(&scheduled.sparse_challenge_config, proof.fold_grind_nonce)?;
+    params.validate_fold_grind_nonce(proof.fold_grind_nonce)?;
 
     let recursive_num_vars = params.recursive_opening_num_vars()?;
     if current_state.setup_prefix_opening.is_some() {

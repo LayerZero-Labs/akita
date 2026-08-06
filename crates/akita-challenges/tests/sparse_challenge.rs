@@ -5,9 +5,7 @@ use akita_challenges::{
     SparseChallengeConfig,
 };
 use akita_field::{CanonicalField, FieldCore, Fp64};
-use akita_transcript::labels::{
-    ABSORB_SPARSE_CHALLENGE, CHALLENGE_WITNESS_FOLD, DOMAIN_AKITA_PROTOCOL,
-};
+use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, DOMAIN_AKITA_PROTOCOL};
 use akita_transcript::{AkitaTranscript, Transcript};
 
 type F = Fp64<4294967197>;
@@ -20,10 +18,6 @@ struct RecordingFoldDraw {
 }
 
 impl FoldDraw for RecordingFoldDraw {
-    fn absorb(&mut self, label: &[u8], _payload: &[u8]) {
-        self.absorb_labels.push(label.to_vec());
-    }
-
     fn absorb_and_squeeze(&mut self, label: &[u8], _payload: &[u8]) -> Vec<u8> {
         self.absorb_labels.push(label.to_vec());
         vec![0; 32]
@@ -222,20 +216,29 @@ fn fold_sampling_draws_one_challenge_per_claim_and_block() {
         .draw_folding_challenges(DR, 3, 5, 2, &cfg, 0)
         .unwrap();
 
-    assert_eq!(challenges.logical_len(), 10);
+    assert_eq!(challenges.len(), 10);
     assert_eq!(challenges.num_claims(), 2);
     assert_eq!(challenges.num_live_blocks_per_claim(), 5);
     assert!(challenges
-        .challenges
+        .as_slice()
         .iter()
         .all(|challenge| challenge.positions.len() == 2));
 }
 
 #[test]
+fn challenge_layout_rejects_mismatched_vector_length() {
+    let challenge = SparseChallenge {
+        positions: Vec::new(),
+        coeffs: Vec::new(),
+    };
+    assert!(akita_challenges::Challenges::from_sparse(vec![challenge], 2, 1).is_err());
+}
+
+#[test]
 fn fold_sampling_binds_group_geometry() {
-    let first = fold_challenge_sample_label(CHALLENGE_WITNESS_FOLD, 0, 5, 2).unwrap();
-    let second = fold_challenge_sample_label(CHALLENGE_WITNESS_FOLD, 1, 5, 2).unwrap();
-    let resized = fold_challenge_sample_label(CHALLENGE_WITNESS_FOLD, 0, 6, 2).unwrap();
+    let first = fold_challenge_sample_label(0, 5, 2).unwrap();
+    let second = fold_challenge_sample_label(1, 5, 2).unwrap();
+    let resized = fold_challenge_sample_label(0, 6, 2).unwrap();
 
     assert_ne!(first, second);
     assert_ne!(first, resized);

@@ -18,12 +18,10 @@ use super::decomposition_digits::{balanced_digit_max, num_digits_for_bound};
 use crate::layout::digit_math::isqrt_ceil;
 
 pub use super::fold_linf_cap::{
-    fold_witness_linf_cap_policy, rademacher_proxy_variance,
-    rademacher_proxy_variance_flat_challenges, FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy,
-    FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM,
-    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
-    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
-    MAX_FOLD_GRIND_ATTEMPTS,
+    rademacher_proxy_variance, FoldWitnessLinfCapConfig, FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN,
+    FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN,
+    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM, MAX_FOLD_GRIND_ATTEMPTS,
 };
 
 /// Rounded-up SIS infinity norm when adding/subtracting two small digits. A
@@ -269,31 +267,56 @@ pub(crate) fn fold_witness_digit_plan(
     let log_cap = (128 - inf_norm_bound.leading_zeros()).saturating_add(1);
     let mut fold_decomposed_digits = num_digits_for_bound(log_cap, field_bits, log_basis);
 
-    // Optional digit snap-down: walk `δ_fold` downward while the symmetric
+    // Walk `δ_fold` downward while the symmetric
     // honest-prover digit envelope at `δ-1` still clears
     // `retain_num/retain_den · t*`.
     //
     // This pre-cutover regression oracle uses the historical field-specific
     // retain floor. Production policy ownership lives in honest_fold_policy.
-    if let (FoldWitnessLinfCapPolicy::TailBoundWithGrind, Some(rademacher_inf_norm_bound)) =
-        (cap_config.policy, rademacher_inf_norm_bound)
-    {
-        let (retain_num, retain_den): (u32, u32) = if field_bits == 32 { (3, 4) } else { (1, 2) };
-        if retain_den > 0 && fold_decomposed_digits > 1 && rademacher_inf_norm_bound > 0 {
-            let floor = (rademacher_inf_norm_bound.saturating_mul(u128::from(retain_num))
-                / u128::from(retain_den))
-            .max(1);
-            while fold_decomposed_digits > 1 {
-                let positive_lower = balanced_digit_max(log_basis, fold_decomposed_digits - 1);
-                if positive_lower < floor {
-                    break;
-                }
-                fold_decomposed_digits -= 1;
-                inf_norm_bound = inf_norm_bound.min(positive_lower);
+    let (retain_num, retain_den): (u32, u32) = if field_bits == 32 { (3, 4) } else { (1, 2) };
+    if retain_den > 0 && fold_decomposed_digits > 1 && rademacher_inf_norm_bound > 0 {
+        let floor = (rademacher_inf_norm_bound.saturating_mul(u128::from(retain_num))
+            / u128::from(retain_den))
+        .max(1);
+        while fold_decomposed_digits > 1 {
+            let positive_lower = balanced_digit_max(log_basis, fold_decomposed_digits - 1);
+            if positive_lower < floor {
+                break;
             }
+            fold_decomposed_digits -= 1;
+            inf_norm_bound = inf_norm_bound.min(positive_lower);
         }
     }
     Ok((fold_decomposed_digits, inf_norm_bound))
+}
+
+/// Worst-case negacyclic ring-product envelope for one folded response.
+pub(crate) fn fold_witness_beta_inf(
+    num_live_blocks: usize,
+    num_claims: usize,
+    challenge: FoldChallengeNorms,
+    witness: FoldWitnessNorms,
+) -> Result<u128, AkitaError> {
+    if num_live_blocks == 0 || num_claims == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "folded-witness geometry must be positive".to_string(),
+        ));
+    }
+    let beta = challenge
+        .infinity_norm
+        .saturating_mul(witness.l1_norm)
+        .min(challenge.l1_norm.saturating_mul(witness.infinity_norm))
+        .checked_mul(num_claims as u128)
+        .and_then(|value| value.checked_mul(num_live_blocks as u128))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("folded-witness bound β overflows u128".to_string())
+        })?;
+    if beta == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "folded-witness bound β = 0".to_string(),
+        ));
+    }
+    Ok(beta)
 }
 
 /// Honest folded-response infinity-norm cap before any digit-boundary snap.
@@ -307,50 +330,22 @@ pub fn fold_witness_unsnapped_linf_cap(
     challenge: FoldChallengeNorms,
     witness: FoldWitnessNorms,
     cap_config: &FoldWitnessLinfCapConfig,
-) -> Result<(u128, Option<u128>), AkitaError> {
-    if num_live_blocks == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "fold_witness_digit_plan: num_live_blocks must be positive".to_string(),
-        ));
-    }
+) -> Result<(u128, u128), AkitaError> {
     // Worst-case negacyclic ring-product L∞ of
     // `c · s` is `min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`, so
     // `β_inf = num_claims · num_live_blocks · that min side`.
-    let mut inf_norm_bound = challenge
-        .infinity_norm
-        .saturating_mul(witness.l1_norm)
-        .min(challenge.l1_norm.saturating_mul(witness.infinity_norm))
-        .checked_mul(num_claims as u128)
-        .and_then(|t| t.checked_mul(num_live_blocks as u128))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "fold_witness_digit_plan: folded-witness bound β overflows u128".to_string(),
-            )
-        })?;
-    if inf_norm_bound == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "fold_witness_digit_plan: folded-witness bound β = 0".to_string(),
-        ));
-    }
-    let rademacher_inf_norm_bound;
-    (inf_norm_bound, rademacher_inf_norm_bound) = match cap_config.policy {
-        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => (inf_norm_bound, None),
-        FoldWitnessLinfCapPolicy::TailBoundWithGrind => {
-            let witness_linf_sq = witness
-                .infinity_norm()
-                .saturating_mul(witness.infinity_norm());
-            let rademacher_inf_norm_bound = isqrt_ceil(rademacher_proxy_variance(
-                num_live_blocks,
-                num_claims,
-                witness_linf_sq,
-                cap_config,
-            )?);
-            (
-                inf_norm_bound.min(rademacher_inf_norm_bound),
-                Some(rademacher_inf_norm_bound),
-            )
-        }
-    };
+    let mut inf_norm_bound =
+        fold_witness_beta_inf(num_live_blocks, num_claims, challenge, witness)?;
+    let witness_linf_sq = witness
+        .infinity_norm()
+        .saturating_mul(witness.infinity_norm());
+    let rademacher_inf_norm_bound = isqrt_ceil(rademacher_proxy_variance(
+        num_live_blocks,
+        num_claims,
+        witness_linf_sq,
+        cap_config,
+    )?);
+    inf_norm_bound = inf_norm_bound.min(rademacher_inf_norm_bound);
     Ok((inf_norm_bound, rademacher_inf_norm_bound))
 }
 
@@ -388,11 +383,9 @@ mod tests {
     #[test]
     fn fold_witness_digit_plan_beta_picks_min_ring_product_side() {
         let beta = |c_inf, c_l1, s_inf, s_l1| {
-            fold_witness_digit_plan(
+            fold_witness_beta_inf(
                 1,
                 1,
-                128,
-                3,
                 FoldChallengeNorms {
                     infinity_norm: c_inf,
                     l1_norm: c_l1,
@@ -401,9 +394,7 @@ mod tests {
                     infinity_norm: s_inf,
                     l1_norm: s_l1,
                 },
-                &FoldWitnessLinfCapConfig::worst_case_beta_only(),
             )
-            .map(|(_, beta)| beta)
             .unwrap()
         };
         assert_eq!(beta(2, 8, 4, 10), 20);
@@ -421,17 +412,7 @@ mod tests {
             l1_norm: 10,
         };
         let beta = |num_live_blocks| {
-            fold_witness_digit_plan(
-                num_live_blocks,
-                1,
-                128,
-                3,
-                challenge,
-                witness,
-                &FoldWitnessLinfCapConfig::worst_case_beta_only(),
-            )
-            .map(|(_, beta)| beta)
-            .unwrap()
+            fold_witness_beta_inf(num_live_blocks, 1, challenge, witness).unwrap()
         };
 
         assert_eq!(beta(5), 100);
@@ -491,7 +472,6 @@ mod tests {
         let witness = FoldWitnessNorms::sparse_binary(d, 64).unwrap();
         let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
             &fold_challenge_config,
-            d,
             inner_width as usize * d,
         )
         .unwrap();
@@ -559,7 +539,6 @@ mod tests {
         let witness = FoldWitnessNorms::sparse_binary(d, 64).unwrap();
         let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
             &fold_challenge_config,
-            d,
             inner_width as usize * d,
         )
         .unwrap();
@@ -627,7 +606,7 @@ mod tests {
             log_open_bound: None,
         };
         let cap_config =
-            FoldWitnessLinfCapConfig::for_fold_coeffs(&fold_challenge_config, 64, 128).unwrap();
+            FoldWitnessLinfCapConfig::for_fold_coeffs(&fold_challenge_config, 128).unwrap();
         let (delta_fold, inf_norm_bound) = fold_witness_digit_plan(
             5,
             1,
@@ -645,16 +624,7 @@ mod tests {
             .saturating_mul(witness.infinity_norm());
         let t_star =
             isqrt_ceil(rademacher_proxy_variance(5, 1, witness_linf_sq, &cap_config).unwrap());
-        let (_, beta) = fold_witness_digit_plan(
-            5,
-            1,
-            decomposition.field_bits(),
-            decomposition.log_basis,
-            challenge,
-            witness,
-            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        )
-        .unwrap();
+        let beta = fold_witness_beta_inf(5, 1, challenge, witness).unwrap();
         let pre_snap_cap = beta.min(t_star);
         let delta_unsnapped = num_digits_for_bound(
             (128 - pre_snap_cap.leading_zeros()).saturating_add(1),
@@ -691,7 +661,6 @@ mod tests {
         let witness = FoldWitnessNorms::bounded(decomposition.log_basis, d);
         let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
             &fold_challenge_config,
-            d,
             inner_width as usize * d,
         )
         .unwrap();

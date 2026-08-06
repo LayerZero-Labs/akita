@@ -169,7 +169,7 @@ where
         prepared,
         batch_view,
         DecomposeFoldBatchPlan::Sparse {
-            challenges: &point_challenges.challenges,
+            challenges: point_challenges.as_slice(),
             num_positions_per_block,
             num_digits: num_digits_inner,
             log_basis: log_basis_inner,
@@ -181,8 +181,8 @@ where
                 .iter()
                 .zip(
                     point_challenges
-                        .challenges
-                        .chunks(point_challenges.num_live_blocks_per_claim),
+                        .as_slice()
+                        .chunks(point_challenges.num_live_blocks_per_claim()),
                 )
                 .map(|(poly, poly_challenges)| -> Result<_, AkitaError> {
                     OpeningFoldKernel::decompose_fold(
@@ -298,11 +298,11 @@ pub(super) fn window_sparse_challenges(
     fold_range: std::ops::Range<usize>,
 ) -> Result<Challenges, AkitaError> {
     let windowed: Vec<SparseChallenge> = challenges
-        .challenges
+        .as_slice()
         .iter()
         .enumerate()
         .map(|(index, challenge)| {
-            let block = index % challenges.num_live_blocks_per_claim;
+            let block = index % challenges.num_live_blocks_per_claim();
             if fold_range.contains(&block) {
                 challenge.clone()
             } else {
@@ -315,8 +315,8 @@ pub(super) fn window_sparse_challenges(
         .collect();
     Challenges::from_sparse(
         windowed,
-        challenges.num_live_blocks_per_claim,
-        challenges.num_claims,
+        challenges.num_live_blocks_per_claim(),
+        challenges.num_claims(),
     )
 }
 

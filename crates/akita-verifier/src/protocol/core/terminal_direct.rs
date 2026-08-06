@@ -36,7 +36,7 @@ where
     F: FieldCore + FromPrimitiveInt,
 {
     challenges
-        .challenges
+        .as_slice()
         .iter()
         .map(sparse_challenge_ring::<F, D>)
         .collect()

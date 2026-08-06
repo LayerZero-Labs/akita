@@ -54,7 +54,7 @@ pub const CHALLENGE_STOP_CONDITION: &[u8] = b"ak/c/st";
 
 /// Absorb the terminal compressed opening payload before sampling fold challenges.
 pub const ABSORB_OPENING_PAYLOAD: &[u8] = b"ak/a/v";
-/// Challenge label for witness-fold sparse ring elements `c_i` (flat shape).
+/// Challenge label for witness-fold sparse ring elements `c_i`.
 ///
 /// Prefixes the sparse-challenge Fiat–Shamir absorb buffer for one draw batch.
 /// The buffer is appended under [`ABSORB_SPARSE_CHALLENGE`]; this string is not

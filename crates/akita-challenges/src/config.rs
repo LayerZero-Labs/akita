@@ -227,7 +227,7 @@ mod entropy_tests {
     }
 
     #[test]
-    fn tensor_floor_is_per_draw_not_product_budget() {
+    fn entropy_floor_is_per_draw() {
         let weak = SparseChallengeConfig::pm1_only(1);
         let per_draw = weak.log2_support_bits::<4>();
         assert!(per_draw < 128.0);

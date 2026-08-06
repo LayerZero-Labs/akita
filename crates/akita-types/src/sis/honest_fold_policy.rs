@@ -7,9 +7,8 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
 use super::{
-    decomposition_digits::balanced_digit_max, fold_witness_linf_cap_policy,
-    fold_witness_unsnapped_linf_cap, num_digits_for_bound, FoldChallengeNorms,
-    FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessNorms,
+    decomposition_digits::balanced_digit_max, fold_witness_unsnapped_linf_cap,
+    num_digits_for_bound, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
     FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM,
     FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
 };
@@ -97,10 +96,7 @@ impl BalancedSignedDigitFoldPolicy {
         }
     }
 
-    fn unsnapped_cap(
-        &self,
-        query: HonestFoldSizingQuery<'_>,
-    ) -> Result<(u128, Option<u128>, FoldWitnessLinfCapPolicy), AkitaError> {
+    fn unsnapped_cap(&self, query: HonestFoldSizingQuery<'_>) -> Result<(u128, u128), AkitaError> {
         self.witness.validate()?;
         self.snap.validate()?;
         validate_query(query)?;
@@ -108,12 +104,8 @@ impl BalancedSignedDigitFoldPolicy {
         // logical single-fold geometry even though the query reports every
         // physical response coefficient.
         let logical_fold_coeffs = query.num_fold_coeffs / query.num_chunks;
-        let policy = fold_witness_linf_cap_policy(query.challenge_config, query.ring_dimension);
-        let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
-            query.challenge_config,
-            query.ring_dimension,
-            logical_fold_coeffs,
-        )?;
+        let cap_config =
+            FoldWitnessLinfCapConfig::for_fold_coeffs(query.challenge_config, logical_fold_coeffs)?;
         let (cap, tail_cap) = fold_witness_unsnapped_linf_cap(
             query.num_live_blocks,
             query.num_claims,
@@ -121,7 +113,7 @@ impl BalancedSignedDigitFoldPolicy {
             self.witness,
             &cap_config,
         )?;
-        Ok((cap, tail_cap, policy))
+        Ok((cap, tail_cap))
     }
 
     fn digit_depth_for_cap(&self, cap: u128, log_basis: u32) -> usize {
@@ -132,17 +124,13 @@ impl BalancedSignedDigitFoldPolicy {
 
 impl HonestFoldPolicy for BalancedSignedDigitFoldPolicy {
     fn num_digits_fold(&self, query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
-        let (cap, tail_cap, policy) = self.unsnapped_cap(query)?;
+        let (cap, tail_cap) = self.unsnapped_cap(query)?;
         let mut digits = self.digit_depth_for_cap(cap, query.log_basis);
-        if matches!(policy, FoldWitnessLinfCapPolicy::TailBoundWithGrind) {
-            if let Some(tail_cap) = tail_cap {
-                let floor = tail_cap.saturating_mul(u128::from(self.snap.retain_num))
-                    / u128::from(self.snap.retain_den);
-                let floor = floor.max(1);
-                while digits > 1 && balanced_digit_max(query.log_basis, digits - 1) >= floor {
-                    digits -= 1;
-                }
-            }
+        let floor = tail_cap.saturating_mul(u128::from(self.snap.retain_num))
+            / u128::from(self.snap.retain_den);
+        let floor = floor.max(1);
+        while digits > 1 && balanced_digit_max(query.log_basis, digits - 1) >= floor {
+            digits -= 1;
         }
         Ok(digits)
     }
@@ -426,12 +414,9 @@ mod tests {
         let witness = FoldWitnessNorms::bounded(3, 64);
         let policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(128, witness);
         let actual = policy.num_digits_fold(query).expect("balanced policy");
-        let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
-            &challenge,
-            query.ring_dimension,
-            query.num_fold_coeffs,
-        )
-        .expect("cap config");
+        let cap_config =
+            FoldWitnessLinfCapConfig::for_fold_coeffs(&challenge, query.num_fold_coeffs)
+                .expect("cap config");
         let expected = super::super::fold_witness_digit_plan(
             query.num_live_blocks,
             query.num_claims,

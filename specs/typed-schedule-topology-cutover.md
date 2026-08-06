@@ -173,7 +173,7 @@ commitment compression.
 #### Transcript, serialization, and safety
 
 - The instance descriptor binds topology tags, ordered groups, exact final-root
-  challenge shape, the flat precommitted-group invariant, all matrix dimensions
+  challenge configuration, all matrix dimensions
   and ranks, decomposition digit widths, block geometry, witness partitions,
   setup-prefix identities, balanced slicing plans, witness lengths, and terminal
   response shape.
@@ -316,7 +316,6 @@ d_inner                        = 64
 live ring elements per claim   = 67,108,864
 positions per block            = 32,768
 live blocks                    = 2,048
-root challenge                 = Flat
 inner digit width / output rank      = 3 / 5
 outer digit width / output rank      = 3 / 2
 shared open digit width / output rank = 3 / 1
@@ -330,7 +329,6 @@ d_inner / d_outer              = 64 / 64
 live ring elements per claim   = 1,024
 positions per block            = 32
 live blocks                    = 32
-root challenge                 = Flat
 inner digit width / output rank      = 2 / 4
 outer digit width / output rank      = 2 / 2
 ```
@@ -671,7 +669,7 @@ pub struct GeneratedRecursiveFold {
 }
 ```
 
-There is deliberately no challenge field: recursive folding is flat. There is
+Every fold uses its committed group's sparse challenge configuration. There is
 also no outgoing setup mode. If this fold's successor has an incoming setup
 prefix, this fold offloads; otherwise its setup contribution is direct.
 
@@ -1008,7 +1006,7 @@ performs the following checks with checked arithmetic, in this order:
    protocol epoch, catalog policy identity, and SIS table digest.
 2. Recompute every group's exact live geometry from the statement or incoming
    witness. Emitted live counts are equality-checked audit checksums.
-3. Validate selected digit widths, ring dimensions, root-final challenge shape,
+3. Validate selected digit widths, ring dimensions, root-final challenge configuration,
    partition counts, setup-prefix identities, and balanced slice counts against
    both `MAX_COMMIT_MATRIX_SLICES` and the catalog's implemented capability
    domains.
@@ -1461,10 +1459,8 @@ introduced.
   recomputes the component sum and rejects disagreement with the cached score.
 - Move root standalone precommitted groups into `GeneratedRootFold`; move setup
   prefix metadata onto recursive consumers; and make partitioning explicit on every eligible fold.
-- Remove challenge-shape selection from standalone-precommit planning and descriptors.
-- In multi-group prover/verifier sampling, dispatch the final group through its
-  typed selected shape and every later precommitted group through the flat
-  sampler while preserving group-index domain separation and transcript order.
+- Keep one sparse-challenge sampling path for every root group while preserving
+  group-index domain separation and transcript order.
 - Update planner expansion, generated lookup/sorting/hashing/emission, setup,
   prover, verifier, PCS orchestration, persistence, profiles, and tests against
   the concrete typed steps.

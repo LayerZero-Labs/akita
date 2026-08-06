@@ -262,7 +262,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 #### Engine and API
 
 - [ ] `akita_planner::shipped_table` and `get_schedule` are removed, along with the
-  global `crate::generated::*_table` import block and the `root_fold_is_tensor`
+  global `crate::generated::*_table` import block and preset-specific resolver
   disambiguation hack they required.
 - [ ] `akita_planner::resolve_schedule(key, policy, ring_challenge_config, catalog: Option<GeneratedScheduleTable>)` is the single runtime entry point (catalog passed **by value** because `GeneratedScheduleTable` is `Copy`).
 - [ ] `GeneratedScheduleTable` contains a validated identity, not only `sis_modulus_profile`:
@@ -424,7 +424,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 | profile-ci coverage | `scripts/check_profile_ci_features.sh` in CI (parses `AKITA_BENCH_CASES`) |
 | profile-ci linkage | Hard smoke check that profile-ci binary does not contain an obvious non-profile family symbol |
 | Profile compile | CI builds head with `--no-default-features --features parallel,profile-ci`; merge-base build probes feature availability |
-| E2E | `akita-pcs` e2e, `batched_aggregated_e2e`, tiered/tensor cases with appropriate features |
+| E2E | `akita-pcs` e2e, `batched_aggregated_e2e`, and tiered cases with appropriate features |
 
 Feature combinations: run drift guards under default and `zk` for families that ship
 `zk` tables. The required schedule-specific jobs are:
@@ -552,10 +552,8 @@ Digest inputs use a fixed little-endian byte format:
 
 - `usize` / `u32` fields are encoded as `u64::to_le_bytes` after checked conversion.
 - `bool` is one byte (`0` or `1`).
-- `SparseChallengeConfig` is encoded by variant tag plus canonical fields:
-  uniform configs encode weight and ordered `nonzero_coeffs` bytes; bounded-L1 /
-  signed-sparse configs encode their public scalar parameters in declaration order.
-  Adding a new challenge variant must update this encoder.
+- `SparseChallengeConfig` is encoded by its canonical `count_pm1` and
+  `count_pm2` fields in declaration order.
 
 If `checked_shl` or `ring_challenge_config(d)` fails while validating a `Some`
 catalog, return the same `AkitaError` shape the DP would return for invalid setup.
@@ -947,7 +945,7 @@ measure binary footprint.
 | Alternative | Why rejected |
 |-------------|--------------|
 | Keep `shipped_table()` global registry | Cannot isolate link-time catalogs; forces downstream upstreaming |
-| Trust per-preset catalog wiring without runtime identity | Too easy to silently attach a one-hot/tensor/tiered catalog to the wrong preset; verifier-reachable code should reject this as invalid setup |
+| Trust per-preset catalog wiring without runtime identity | Too easy to silently attach a catalog to the wrong preset; verifier-reachable code should reject this as invalid setup |
 | Move all tables out of Akita repo | User requirement: tables stay on `main`, grow as needed (e.g. D32) |
 | Runtime plugin / dynamic loading | Rust static tables; unnecessary complexity |
 | Per-case CI binaries (Option A) | Compile cost; user chose Option B |
@@ -1005,7 +1003,7 @@ measure binary footprint.
 10. Point presets at catalogs via `#[cfg]`-gated `schedule_catalog()` overrides
     (default features = current behavior through forwarded `schedules-default`).
 11. Delete `shipped_table`, `get_schedule`, the planner generated table-data imports,
-    and the `root_fold_is_tensor` hack in `resolve.rs`.
+    and the preset-specific resolver hack in `resolve.rs`.
 12. Keep `ALL_GENERATED_FAMILIES` + drift guard in `akita-config`; gate each family row
     behind its `schedules-*` feature; add `all-schedules` meta-feature. Migrate
     `tests/runtime_fallback.rs` and `proof_optimized/tests.rs` off direct planner table
@@ -1041,7 +1039,7 @@ measure binary footprint.
 | Production preset silently degraded to DP by a missing feature | Forward `schedules-default` through top-level crates; drift guard asserts `schedule_catalog().is_some()` and table hits for enabled rows |
 | Wrong catalog attached to a preset | Runtime catalog identity validation rejects the mismatch before lookup |
 | `zk` / non-`zk` table split | `akita-config/zk` forwards `akita-schedules?/zk`; identity includes `zk_enabled`; non-ZK-only tiered is inert under `zk` |
-| Tensor/tiered presets | Separate families (already separate tables); each names its own catalog, so the `root_fold_is_tensor` runtime hack is deleted |
+| Tiered presets | Separate families (already separate tables); each names its own catalog, so preset-specific resolver hacks are deleted |
 | Profile-ci accidentally links defaults | Build with `--no-default-features`, set `akita-setup` dependency defaults to false, and run linkage smoke check |
 
 ## References

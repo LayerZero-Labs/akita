@@ -337,8 +337,7 @@ impl CommittedGroupParams {
         self.fold_challenge_config.l1_norm()
     }
 
-    /// Effective fold-round challenge L∞ norm `||c||_inf` at this level,
-    /// accounting for the challenge shape (flat vs tensor).
+    /// Effective fold-round challenge L∞ norm `||c||_inf` at this level.
     #[inline]
     pub fn challenge_infinity_norm(&self) -> usize {
         self.fold_challenge_config.infinity_norm() as usize
@@ -356,24 +355,18 @@ impl CommittedGroupParams {
         (self.inner_width() as u128).saturating_mul(self.d_a() as u128)
     }
 
-    /// Validate the shared fold nonce from schedule-owned challenge policies.
+    /// Validate the shared fold nonce against the protocol-wide attempt cap.
     ///
     /// This verifier boundary deliberately does not reconstruct an honest
     /// source model or an honest folded-response cap. Those values guide the
-    /// prover's search only; nonce admission is fixed by each selected
-    /// group's challenge family, shape, and native A dimension.
+    /// prover's search only.
     pub fn validate_fold_grind_nonce(
         &self,
         opening_batch: &OpeningClaimsLayout,
-        max_grind_attempts: u32,
         fold_grind_nonce: u32,
     ) -> Result<(), AkitaError> {
         self.validate_opening_batch(opening_batch)?;
-        if max_grind_attempts == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "fold grind attempt budget must be positive".to_string(),
-            ));
-        }
+        let max_grind_attempts = crate::FoldLinfProtocolBinding::CURRENT.max_grind_attempts;
         if fold_grind_nonce >= max_grind_attempts {
             return Err(AkitaError::InvalidProof);
         }

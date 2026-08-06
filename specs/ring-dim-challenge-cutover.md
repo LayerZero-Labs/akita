@@ -38,7 +38,7 @@ relation source.
 | Rust name | Role |
 |-----------|------|
 | `LevelParams::fold_challenge_config` | `(count_pm1, count_pm2)` family at this fold level |
-| `witness_fold_challenge_labels()` | Fiat–Shamir absorb-buffer label for fold draws |
+| `CHALLENGE_WITNESS_FOLD` | Fiat–Shamir absorb-buffer label for fold draws |
 | `CHALLENGE_WITNESS_FOLD` | `b"ak/c/wf"` — witness-fold draw |
 
 Production [`AkitaTranscript`](crates/akita-transcript) sponges are **positional**:
@@ -160,8 +160,7 @@ pub struct SparseChallengeConfig {
 - **Production ladder:** `SparseChallengeConfig::production_for_ring_dim(d)` —
   `(64→(31,10), 128→(31,0), 256→(23,0), 512→(19,0), 1024→(16,0), 2048→(14,0))`.
 - **Validation:** `validate_for_ring_dim(d_a)` = structural + 128-bit entropy floor.
-- **Removed:** `BoundedL1Norm`, `Uniform`, `ExactShell` enum variants and separate
-  sampler modules.
+- **Removed:** the legacy challenge-family enum variants and separate sampler modules.
 
 #### Descriptor and domain separator (single encoding)
 
@@ -169,10 +168,7 @@ pub struct SparseChallengeConfig {
 |----:|---------|
 | 0 | `count_pm1`, `count_pm2` (usize wire encoding in descriptor; u64 LE in domain separator) |
 
-Tag 2 (`BoundedL1Norm`) and the old tag-0/tag-1 split (`Uniform` vs
-`ExactShell`) are **deleted**. Schedule tables regenerated.
-
-Archive bounded-L₁ design: `specs/archive/bounded-l1-sparse-challenge.md`.
+The old multi-tag encoding is deleted. Schedule tables were regenerated.
 
 ### 6. Fold-challenge ladder (≥128-bit entropy per draw)
 
@@ -215,16 +211,16 @@ Live E2E at `d_a > 256` waits on inner dispatch + backends + preset.
 
 - [x] `MAX_STACK_RING_DIM = 2048`; seed tests at D=512/1024/2048
 
-### Slice D — BoundedL1Norm deletion
+### Slice D — legacy family deletion
 
-- [x] Delete bounded-L₁ sampler and enum variant
+- [x] Delete legacy samplers and enum variants
 
 ### Slice F — unified config + naming cutover
 
 - [x] `SparseChallengeConfig { count_pm1, count_pm2 }` struct
 - [x] Single signed-sparse sampler; `position_sample.rs` for distinct positions
 - [x] `fold_challenge_config` on `LevelParams` (was `stage1_config`)
-- [x] `witness_fold_challenge_labels`, `CHALLENGE_WITNESS_FOLD = b"ak/c/wf"`
+- [x] `CHALLENGE_WITNESS_FOLD = b"ak/c/wf"`
 - [x] Descriptor/domain separator: tag 0 + two counts
 - [x] Schedule table regen + catalog digests
 
@@ -236,7 +232,7 @@ Live E2E at `d_a > 256` waits on inner dispatch + backends + preset.
 
 ### Acceptance Criteria
 
-- [x] No `BoundedL1Norm`; single descriptor tag 0 encoding.
+- [x] Single descriptor tag 0 encoding.
 - [x] `fold_challenge_config.validate_for_ring_dim(d_a)` at role-dim boundary.
 - [x] Witness-fold transcript labels use `ak/c/wf` family (not `s1f`).
 - [ ] Prime tables and dispatch acceptance criteria from Slice A/B.

@@ -587,11 +587,8 @@ impl TerminalCommittedGroupParams {
         let num_fold_coeffs = usize::try_from(params.num_fold_coeffs()).map_err(|_| {
             AkitaError::InvalidSetup("terminal fold coefficient count exceeds usize".into())
         })?;
-        let cap_config = crate::sis::FoldWitnessLinfCapConfig::for_fold_coeffs(
-            &sparse,
-            params.d_a(),
-            num_fold_coeffs,
-        )?;
+        let cap_config =
+            crate::sis::FoldWitnessLinfCapConfig::for_fold_coeffs(&sparse, num_fold_coeffs)?;
         let challenge = crate::sis::FoldChallengeNorms::new(&sparse);
         let witness = crate::sis::FoldWitnessNorms::bounded(params.log_basis_inner, params.d_a());
         let (unconstrained_target, _) = crate::sis::fold_witness_unsnapped_linf_cap(
@@ -663,13 +660,8 @@ impl TerminalCommittedGroupParams {
         Ok(certified_capacity.min(i16::MAX as u128))
     }
 
-    /// Validate the terminal Fiat–Shamir grind nonce under the same bound
-    /// policy used to derive the response wire.
-    pub fn validate_fold_grind_nonce(
-        &self,
-        _sparse: &akita_challenges::SparseChallengeConfig,
-        nonce: u32,
-    ) -> Result<(), AkitaError> {
+    /// Validate the terminal Fiat–Shamir grind nonce.
+    pub fn validate_fold_grind_nonce(&self, nonce: u32) -> Result<(), AkitaError> {
         if nonce >= crate::FoldLinfProtocolBinding::CURRENT.max_grind_attempts {
             return Err(AkitaError::InvalidProof);
         }

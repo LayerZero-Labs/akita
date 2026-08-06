@@ -62,7 +62,7 @@ envelope** the stage-1 range check actually certifies:
 ```text
 β^resp = num_claims · num_live_blocks · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
        = fold_witness_beta(...)
-δ_fold = num_digits_fold(..., honest cap = min(β_inf, t*) when tail-bound-with-grind)
+δ_fold = num_digits_fold(..., honest cap = min(β_inf, t*))
 z_verifier = balanced_digit_abs_max(log_basis, δ_fold)
 
 collision_A_inf = 8 · ω · z_verifier · ν
@@ -75,7 +75,7 @@ collision_A     = ceil_bucket(d · collision_A_inf²)   (L2 MSIS table)
 
 This is implemented in
 [`crates/akita-types/src/sis/norm_bound.rs`](../crates/akita-types/src/sis/norm_bound.rs)
-(with fold-linf cap policy in
+(with fold-linf cap sizing in
 [`fold_linf_cap.rs`](../crates/akita-types/src/sis/fold_linf_cap.rs)):
 `rounded_up_role_a_inf_norm` prices the
 `8·ω·balanced_digit_abs_max·ν` coefficient-`L∞` envelope into the audited
@@ -137,11 +137,9 @@ This branch also ships a second, independent soundness fix that this spec does
 not own: a real ≥128-bit ring-challenge policy for 64-bit-and-lower fields. The
 historical small-field challenge was the toy `pm1-only { weight: 8, [−1, 1] }`,
 which has only ~31 bits of Fiat-Shamir support at `D = 32`, far below 128-bit
-soundness. It is replaced by the shared, dimension-keyed family specified in
-[`specs/bounded-l1-sparse-challenge.md`](bounded-l1-sparse-challenge.md)
-("Current Proof-Optimized Policy"): `D=32` `BoundedL1Norm` (`||c||_1 = 121`,
-`||c||_inf = 8`), `D=64` `signed-sparse{30,12}` (`54, 2`), `D=128` `Uniform{31}`
-(`31, 1`), `D=256` `Uniform{23}` (`23, 1`).
+soundness. It is replaced by the shared, dimension-keyed fixed-weight
+signed-sparse family. The production ladder defines the exact ±1 and ±2 counts
+for every supported ring dimension.
 
 The two fixes are coupled in the regenerated tables: those `(||c||_1, ||c||_inf)`
 values are exactly the challenge norms `fold_witness_beta` and the corrected
@@ -369,9 +367,8 @@ In the negacyclic ring `R = Z[X]/(X^D + 1)`, for any `a, b ∈ R`:
 `D`-fold convolution sum); using it is the core mistake in the current
 binding-norm code.
 
-This is already the basis of the existing fold bound — see
-[`specs/bounded-l1-sparse-challenge.md`](bounded-l1-sparse-challenge.md),
-which tracks the challenge L1 mass precisely *because*
+This is already the basis of the existing fold bound, which tracks the
+challenge L1 mass precisely *because*
 `||c · s||_inf <= ||c||_1 · ||s||_inf`. This spec extends the same reasoning to
 (a) the weak-binding collision norm, which was never updated to track L1, and
 (b) the `min(...)` refinement for sparse witnesses.
@@ -791,8 +788,6 @@ output.
 - Hachi paper: Lemma 7 (Weak Binding); "Basic parameters" / Section 4.2 /
   Figure 3 (the fold bound `β = 2^r · ω · b`). (Screenshots in the originating
   task.)
-- [`specs/bounded-l1-sparse-challenge.md`](bounded-l1-sparse-challenge.md) —
-  prior art tracking challenge L1 mass for the fold bound.
 - Code: `crates/akita-planner/src/ajtai_params.rs`,
   `crates/akita-types/src/sis_offline.rs`,
   `crates/akita-types/src/layout/digit_math.rs`,

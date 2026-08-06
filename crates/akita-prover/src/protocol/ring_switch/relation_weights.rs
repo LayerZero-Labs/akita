@@ -577,7 +577,7 @@ where
         let total_blocks = k_g
             .checked_mul(group_lp.num_live_blocks())
             .ok_or(AkitaError::InvalidProof)?;
-        if challenges.logical_len() != total_blocks {
+        if challenges.len() != total_blocks {
             return Err(AkitaError::InvalidProof);
         }
         let depth_witness = group_lp.num_digits_inner();
@@ -662,8 +662,8 @@ where
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("relation challenge index overflow".into())
                     })?;
-                let challenge_alpha = challenges
-                    .eval_logical_at_pows::<F, E>(challenge_index, &group_alpha_pows_a)?;
+                let challenge_alpha =
+                    challenges.eval_at_pows::<F, E>(challenge_index, &group_alpha_pows_a)?;
                 for (digit, &opening_gadget) in g_open.iter().enumerate() {
                     for role_subcol in 0..d_ratio {
                         let physical_start = unit.e_coefficient_index(

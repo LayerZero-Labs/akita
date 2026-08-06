@@ -82,7 +82,7 @@ Every function on the prove/verify path has one of two roles:
 
 - **Orchestration** reads schedule types, drives the transcript, and moves
   D-free storage. It never carries `const D`.
-- **Kernels** (NTT, digit decomposition, commit/opening/tensor folds,
+- **Kernels** (NTT, digit decomposition, commit/opening folds,
   ring-switch arithmetic) are const-generic over `D` and receive extracted
   numbers, never schedule types.
 

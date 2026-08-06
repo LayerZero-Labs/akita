@@ -1,9 +1,6 @@
 //! Feature-gated fixtures for benchmarking the production relation evaluator.
 
-use super::{
-    FlatRelationContext, PreparedChallengeEvals, RelationMatrixEvaluator,
-    RelationMatrixGroupEvaluator,
-};
+use super::{FlatRelationContext, RelationMatrixEvaluator, RelationMatrixGroupEvaluator};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, Prime128OffsetA7F7};
@@ -143,17 +140,14 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
     let evaluator = RelationMatrixEvaluator {
         relation_address_geometry,
         groups: vec![RelationMatrixGroupEvaluator {
-            c_alphas: PreparedChallengeEvals(
-                (0..NUM_CLAIMS * NUM_LIVE_BLOCKS)
-                    .map(|index| scalar(307 + index as u128))
-                    .collect(),
-            ),
+            c_alphas: (0..NUM_CLAIMS * NUM_LIVE_BLOCKS)
+                .map(|index| scalar(307 + index as u128))
+                .collect(),
             opening_a_evals: (0..NUM_POSITIONS_PER_BLOCK)
                 .map(|index| scalar(401 + index as u128))
                 .collect(),
             group_id: 0,
             num_claims: NUM_CLAIMS,
-            num_live_blocks: NUM_LIVE_BLOCKS,
             depth_fold,
             a_row_start: 1,
             b_row_start: 1 + N_A,

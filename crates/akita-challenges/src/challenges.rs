@@ -7,11 +7,11 @@ use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Challenges {
     /// Per-(claim, block) sparse challenges.
-    pub challenges: Vec<SparseChallenge>,
+    challenges: Vec<SparseChallenge>,
     /// Exact number of live blocks packed into one claim.
-    pub num_live_blocks_per_claim: usize,
+    num_live_blocks_per_claim: usize,
     /// Number of claims represented by this vector.
-    pub num_claims: usize,
+    num_claims: usize,
 }
 
 impl Challenges {
@@ -41,11 +41,25 @@ impl Challenges {
         })
     }
 
-    /// Number of logical block challenges represented by this value.
+    /// Return the sparse challenges in claim-major block order.
     #[inline]
     #[must_use]
-    pub fn logical_len(&self) -> usize {
+    pub fn as_slice(&self) -> &[SparseChallenge] {
+        &self.challenges
+    }
+
+    /// Number of block challenges represented by this value.
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
         self.challenges.len()
+    }
+
+    /// Whether this challenge set is empty.
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.challenges.is_empty()
     }
 
     /// Number of claims represented by this challenge set.
@@ -67,20 +81,16 @@ impl Challenges {
     /// # Errors
     ///
     /// Returns an error if the index is out of range or the challenge is invalid.
-    pub fn eval_logical_at_pows<F, E>(
-        &self,
-        logical_index: usize,
-        alpha_pows: &[E],
-    ) -> Result<E, AkitaError>
+    pub fn eval_at_pows<F, E>(&self, index: usize, alpha_pows: &[E]) -> Result<E, AkitaError>
     where
         F: FieldCore + FromPrimitiveInt,
         E: FieldCore + MulBase<F>,
     {
         self.challenges
-            .get(logical_index)
+            .get(index)
             .ok_or_else(|| {
                 AkitaError::InvalidInput(format!(
-                    "challenge index {logical_index} out of range for {} challenges",
+                    "challenge index {index} out of range for {} challenges",
                     self.challenges.len()
                 ))
             })?
@@ -109,11 +119,11 @@ impl Challenges {
     ///
     /// Returns an error if any claim index is out of range.
     pub fn select_claims(&self, claim_indices: &[usize]) -> Result<Self, AkitaError> {
-        let mut selected = Vec::with_capacity(
-            claim_indices
-                .len()
-                .saturating_mul(self.num_live_blocks_per_claim),
-        );
+        let capacity = claim_indices
+            .len()
+            .checked_mul(self.num_live_blocks_per_claim)
+            .ok_or_else(|| AkitaError::InvalidSetup("challenge count overflow".to_string()))?;
+        let mut selected = Vec::with_capacity(capacity);
         for &claim_index in claim_indices {
             let start = claim_index
                 .checked_mul(self.num_live_blocks_per_claim)

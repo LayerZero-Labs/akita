@@ -1,7 +1,7 @@
 //! Fold-l∞ tail-bound primitives for balanced signed-digit policy sizing.
 //!
-//! [`FoldWitnessLinfCapConfig`] selects whether digit depth uses worst-case
-//! `β_inf` alone or `min(β_inf, t*)` under a proved tail certificate.
+//! [`FoldWitnessLinfCapConfig`] supplies the proved tail-bound inputs used to
+//! size digit depth from `min(β_inf, t*)`.
 //! A-role MSIS pricing is separate: it uses
 //! [`super::decomposition_digits::balanced_digit_abs_max`] at the
 //! resulting `δ_fold` depth (see [`super::norm_bound::rounded_up_role_a_inf_norm`]).
@@ -9,7 +9,7 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
-/// Maximum Fiat-Shamir rerolls per committed fold level under tail-bound-with-grind policy.
+/// Maximum Fiat-Shamir probes per committed fold level.
 pub const MAX_FOLD_GRIND_ATTEMPTS: u32 = 4096;
 
 /// Per-challenge **grind** acceptance target `p_grind = NUM / DEN` used in the union-bound
@@ -28,57 +28,6 @@ pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN: u32 = 2;
 /// Minimum retained fraction of `t*` for the Fp32 fold-l∞ policy.
 pub const FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM: u32 = 3;
 pub const FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN: u32 = 4;
-
-/// Whether balanced signed-digit policy sizing uses the sub-Gaussian tail `t*`
-/// (`min(β_inf, t*)`) or the worst-case envelope `β_inf` alone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum FoldWitnessLinfCapPolicy {
-    /// Proved sub-Gaussian tail: production signed-sparse at `D = 64`, or a
-    /// production pm1-only ladder entry at `D ≥ 128`; `cap = min(β_inf, t*)` and grind allowed.
-    TailBoundWithGrind,
-    /// No tail certificate yet: uncertified flat presets use `cap = β_inf` only.
-    WorstCaseBetaOnly,
-}
-
-impl FoldWitnessLinfCapPolicy {
-    #[inline]
-    #[must_use]
-    pub const fn allows_grind(self) -> bool {
-        !matches!(self, Self::WorstCaseBetaOnly)
-    }
-
-    #[inline]
-    #[must_use]
-    pub const fn max_nonce_exclusive(self, max_grind_attempts: u32) -> u32 {
-        match self {
-            Self::WorstCaseBetaOnly => 1,
-            Self::TailBoundWithGrind => max_grind_attempts,
-        }
-    }
-}
-
-/// Select the fold-linf threshold policy for a stage-1 sparse family at ring
-/// degree `ring_dimension`.
-#[inline]
-#[must_use]
-pub fn fold_witness_linf_cap_policy(
-    fold_challenge_config: &SparseChallengeConfig,
-    ring_dimension: usize,
-) -> FoldWitnessLinfCapPolicy {
-    let flat_certified = match (ring_dimension, fold_challenge_config.count_pm2) {
-        (64, pm2) if pm2 > 0 => true,
-        (d, 0) => {
-            SparseChallengeConfig::production_for_ring_dim(d).as_ref()
-                == Some(fold_challenge_config)
-        }
-        _ => false,
-    };
-    if flat_certified {
-        FoldWitnessLinfCapPolicy::TailBoundWithGrind
-    } else {
-        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
-    }
-}
 
 /// Rational ceiling for `ln(2)` used to bound natural logarithms without floats.
 const LN2_CEIL_NUM: u128 = 71;
@@ -104,10 +53,20 @@ pub(crate) fn fold_witness_linf_grind_union_ln(
     grind_target_accept_num: u128,
     grind_target_accept_den: u128,
 ) -> Result<u128, AkitaError> {
+    if num_fold_coeffs == 0
+        || grind_target_accept_num == 0
+        || grind_target_accept_den == 0
+        || grind_target_accept_num >= grind_target_accept_den
+    {
+        return Err(AkitaError::InvalidSetup(
+            "fold grind sizing inputs must be positive with p_num < p_den".to_string(),
+        ));
+    }
     let miss = grind_target_accept_den - grind_target_accept_num;
     let numerator = 2u128
-        .saturating_mul(num_fold_coeffs)
-        .saturating_mul(grind_target_accept_den);
+        .checked_mul(num_fold_coeffs)
+        .and_then(|value| value.checked_mul(grind_target_accept_den))
+        .ok_or_else(|| AkitaError::InvalidSetup("fold grind union bound overflows u128".into()))?;
     Ok(ceil_natural_log(numerator.div_ceil(miss)))
 }
 
@@ -125,7 +84,7 @@ pub(crate) fn fold_witness_linf_grind_union_ln(
 ///
 /// Returns [`AkitaError::InvalidSetup`] when any argument is zero or the product
 /// overflows `u128`.
-pub fn rademacher_proxy_variance_flat_challenges(
+fn rademacher_proxy_variance_from_ln(
     num_fold_blocks: u128,
     challenge_l2_sq_max: u128,
     witness_linf_sq: u128,
@@ -133,7 +92,7 @@ pub fn rademacher_proxy_variance_flat_challenges(
 ) -> Result<u128, AkitaError> {
     if num_fold_blocks == 0 || challenge_l2_sq_max == 0 || witness_linf_sq == 0 || ln_term == 0 {
         return Err(AkitaError::InvalidSetup(
-            "rademacher_proxy_variance_flat_challenges: arguments must be positive".to_string(),
+            "rademacher_proxy_variance_from_ln: arguments must be positive".to_string(),
         ));
     }
     let two = 2u128;
@@ -143,7 +102,7 @@ pub fn rademacher_proxy_variance_flat_challenges(
         .and_then(|v| v.checked_mul(ln_term))
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
-                "rademacher_proxy_variance_flat_challenges: t*² overflows u128".to_string(),
+                "rademacher_proxy_variance_from_ln: t*² overflows u128".to_string(),
             )
         })
 }
@@ -166,95 +125,39 @@ pub fn rademacher_proxy_variance(
                 "rademacher_proxy_variance: num_fold_blocks overflows u128".to_string(),
             )
         })?;
-    match cap_config.policy {
-        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => Err(AkitaError::InvalidSetup(
-            "rademacher_proxy_variance: deterministic policy has no tail bound".to_string(),
-        )),
-        FoldWitnessLinfCapPolicy::TailBoundWithGrind => rademacher_proxy_variance_flat_challenges(
-            num_fold_blocks,
-            cap_config.challenge_l2_sq_max,
-            witness_linf_sq,
-            cap_config.grind_union_ln,
-        ),
-    }
+    rademacher_proxy_variance_from_ln(
+        num_fold_blocks,
+        cap_config.challenge_l2_sq_max,
+        witness_linf_sq,
+        cap_config.grind_union_ln,
+    )
 }
 
 /// Level-static configuration for balanced signed-digit policy sizing.
-///
-/// When the policy is [`WorstCaseBetaOnly`](FoldWitnessLinfCapPolicy::WorstCaseBetaOnly),
-/// tail-bound fields are ignored and sizing uses `β_inf` alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FoldWitnessLinfCapConfig {
-    pub policy: FoldWitnessLinfCapPolicy,
     /// Family worst-case `max ‖c‖_2²` per logical block.
-    pub challenge_l2_sq_max: u128,
-    pub num_fold_coeffs: u128,
-    /// Fixed offline sizing cutoff `p_grind` (`NUM / DEN`).
-    pub grind_target_accept_num: u128,
-    pub grind_target_accept_den: u128,
+    challenge_l2_sq_max: u128,
     /// Precomputed union ln term.
-    pub grind_union_ln: u128,
+    grind_union_ln: u128,
 }
 
 impl FoldWitnessLinfCapConfig {
-    /// Worst-case `β_inf` sizing only (no tail certificate).
-    #[inline]
-    pub const fn worst_case_beta_only() -> Self {
-        Self {
-            policy: FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
-            challenge_l2_sq_max: 0,
-            num_fold_coeffs: 0,
-            grind_target_accept_num: 0,
-            grind_target_accept_den: 1,
-            grind_union_ln: 0,
-        }
-    }
-
-    /// Tail-aware sizing inputs for a fold level from its sparse family,
-    /// ring degree, and inner A-matrix width (`num_positions_per_block · δ_commit`).
+    /// Tail-aware sizing inputs for a fold level from its sparse family and
+    /// inner A-matrix width (`num_positions_per_block · δ_commit`).
     #[inline]
     pub fn for_fold_coeffs(
         fold_challenge_config: &SparseChallengeConfig,
-        ring_dimension: usize,
         num_fold_coeffs: usize,
-    ) -> Result<Self, AkitaError> {
-        let grind_target_accept_num = FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM as u128;
-        let grind_target_accept_den = FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN as u128;
-        let policy = fold_witness_linf_cap_policy(fold_challenge_config, ring_dimension);
-        Self::assemble(
-            policy,
-            fold_challenge_config,
-            ring_dimension,
-            num_fold_coeffs,
-            grind_target_accept_num,
-            grind_target_accept_den,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn assemble(
-        policy: FoldWitnessLinfCapPolicy,
-        fold_challenge_config: &SparseChallengeConfig,
-        _ring_dimension: usize,
-        num_fold_coeffs: usize,
-        grind_target_accept_num: u128,
-        grind_target_accept_den: u128,
     ) -> Result<Self, AkitaError> {
         let num_fold_coeffs = num_fold_coeffs as u128;
-        let grind_union_ln = match policy {
-            FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 0,
-            FoldWitnessLinfCapPolicy::TailBoundWithGrind => fold_witness_linf_grind_union_ln(
-                num_fold_coeffs,
-                grind_target_accept_num,
-                grind_target_accept_den,
-            )?,
-        };
-        Ok(Self {
-            policy,
-            challenge_l2_sq_max: fold_challenge_config.challenge_l2_sq_max(),
+        let grind_union_ln = fold_witness_linf_grind_union_ln(
             num_fold_coeffs,
-            grind_target_accept_num,
-            grind_target_accept_den,
+            FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM as u128,
+            FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN as u128,
+        )?;
+        Ok(Self {
+            challenge_l2_sq_max: fold_challenge_config.challenge_l2_sq_max(),
             grind_union_ln,
         })
     }
@@ -266,38 +169,11 @@ mod tests {
     use crate::sis::norm_bound::{FoldChallengeNorms, FoldWitnessNorms};
 
     #[test]
-    fn rademacher_proxy_variance_flat_challenges_monotone_and_clamped_inputs() {
-        let base = rademacher_proxy_variance_flat_challenges(16, 71, 1, 24).unwrap();
-        assert!(rademacher_proxy_variance_flat_challenges(32, 71, 1, 24).unwrap() >= base);
-        assert!(rademacher_proxy_variance_flat_challenges(16, 71, 4, 24).unwrap() >= base);
-        assert!(rademacher_proxy_variance_flat_challenges(0, 71, 1, 24).is_err());
-    }
-
-    #[test]
-    fn fold_witness_linf_cap_policy_certifies_production_families() {
-        let shell = SparseChallengeConfig {
-            count_pm1: akita_challenges::D64_PRODUCTION_PM1_COUNT,
-            count_pm2: akita_challenges::D64_PRODUCTION_PM2_COUNT,
-        };
-        assert_eq!(
-            fold_witness_linf_cap_policy(&shell, 64),
-            FoldWitnessLinfCapPolicy::TailBoundWithGrind,
-        );
-        let uni = SparseChallengeConfig::pm1_only(31);
-        assert_eq!(
-            fold_witness_linf_cap_policy(&uni, 128),
-            FoldWitnessLinfCapPolicy::TailBoundWithGrind,
-        );
-        let ladder512 = SparseChallengeConfig::production_for_ring_dim(512).expect("ladder");
-        assert_eq!(
-            fold_witness_linf_cap_policy(&ladder512, 512),
-            FoldWitnessLinfCapPolicy::TailBoundWithGrind,
-        );
-        let uncertified = SparseChallengeConfig::pm1_only(31);
-        assert_eq!(
-            fold_witness_linf_cap_policy(&uncertified, 64),
-            FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
-        );
+    fn rademacher_proxy_variance_from_ln_is_monotone_and_rejects_zero_inputs() {
+        let base = rademacher_proxy_variance_from_ln(16, 71, 1, 24).unwrap();
+        assert!(rademacher_proxy_variance_from_ln(32, 71, 1, 24).unwrap() >= base);
+        assert!(rademacher_proxy_variance_from_ln(16, 71, 4, 24).unwrap() >= base);
+        assert!(rademacher_proxy_variance_from_ln(0, 71, 1, 24).is_err());
     }
 
     #[test]
@@ -320,8 +196,8 @@ mod tests {
         let half = fold_witness_linf_grind_union_ln(n, 1, 2).unwrap();
         let eighth = fold_witness_linf_grind_union_ln(n, 1, 8).unwrap();
         assert!(eighth < half, "eighth={eighth} half={half}");
-        let t_half = rademacher_proxy_variance_flat_challenges(1, 71, 1, half).unwrap();
-        let t_eighth = rademacher_proxy_variance_flat_challenges(1, 71, 1, eighth).unwrap();
+        let t_half = rademacher_proxy_variance_from_ln(1, 71, 1, half).unwrap();
+        let t_eighth = rademacher_proxy_variance_from_ln(1, 71, 1, eighth).unwrap();
         assert!(t_eighth < t_half);
     }
 
@@ -334,20 +210,13 @@ mod tests {
             l1_norm: 51,
         };
         let witness = FoldWitnessNorms::sparse_binary(64, 64).unwrap();
-        let (_, tight_beta) = crate::sis::fold_witness_digit_plan(
-            4,
-            1,
-            128,
-            3,
-            challenge,
-            witness,
-            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        )
-        .unwrap();
+        let tight_beta = 4u128
+            * (challenge.infinity_norm * witness.l1_norm())
+                .min(challenge.l1_norm * witness.infinity_norm());
         let pessimistic_linf_envelope = 16u128 * challenge.l1_norm * witness.infinity_norm();
         assert!(tight_beta < pessimistic_linf_envelope);
         let ln_term = fold_witness_linf_grind_union_ln(1u128 << 16, 1, 8).unwrap();
-        let t_sq = rademacher_proxy_variance_flat_challenges(16, 71, 1, ln_term).unwrap();
+        let t_sq = rademacher_proxy_variance_from_ln(16, 71, 1, ln_term).unwrap();
         let t = isqrt_ceil(t_sq);
         assert!(
             t < pessimistic_linf_envelope,
