@@ -93,6 +93,15 @@ and are compared against merge-base like the other rows.
 Report pipeline: `scripts/profile_bench_report.py`.
 Coverage matrix spec: `specs/profile-bench-coverage-matrix.md`.
 
+`Setup and preparation` includes exact NTT prewarming for the resolved profile
+execution on its uniform CPU stack. This is an execution prewarm, not part of
+public setup identity or `ComputeBackendSetup::prepare_setup`: it joins the root
+commitment requirements with `NttExecutionRequirements::from_prove_schedule`
+and materializes the resulting per-dimension, per-domain prefixes before the
+online timers begin. The harness rejects any later cache growth during commit
+or prove. Consequently, `Commit` and `Prove` measure hot-cache protocol work,
+while `Prepared NTT cache size` remains the exact execution-resident footprint.
+
 ## NTT matvec microbenchmarks
 
 Use the `ntt_matvec` Criterion target to compare the production i8/L8

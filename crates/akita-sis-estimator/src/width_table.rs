@@ -841,7 +841,7 @@ mod tests {
     fn generation_filters_to_canonical_production_and_compression_cells() {
         assert!(reachable_role_cell(
             AkitaModulusProfileId::Q128OffsetA7F7,
-            32,
+            64,
             15
         ));
         assert!(!reachable_role_cell(
@@ -884,17 +884,17 @@ mod tests {
             32,
             1
         ));
-        assert!(reachable_role_cell(
+        assert!(!reachable_role_cell(
             AkitaModulusProfileId::Q128OffsetA7F7,
             32,
             1
         ));
-        assert!(reachable_role_cell(
+        assert!(!reachable_role_cell(
             AkitaModulusProfileId::Q64Offset59,
             64,
             1
         ));
-        assert!(reachable_role_cell(
+        assert!(!reachable_role_cell(
             AkitaModulusProfileId::Q32Offset99,
             128,
             1

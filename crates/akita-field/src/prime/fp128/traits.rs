@@ -169,14 +169,7 @@ impl<const P: u128> HalvingField for Fp128<P> {
 impl<const P: u128> RandomSampling for Fp128<P> {
     #[inline(always)]
     fn random<R: RngCore>(rng: &mut R) -> Self {
-        loop {
-            let lo = rng.next_u64();
-            let hi = rng.next_u64();
-            let x = lo as u128 | (hi as u128) << 64;
-            if x < P {
-                return Self(pack(lo, hi));
-            }
-        }
+        Self(from_u128(sample_uniform_below(rng, P, u128::BITS)))
     }
 }
 

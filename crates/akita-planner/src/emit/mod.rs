@@ -96,7 +96,6 @@ fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInpu
     let group = &slot.commitment_params;
     GeneratedSetupPrefixInput {
         natural_len: slot.natural_len as u64,
-        d_setup: group.layout.inner_commit_matrix.ring_dimension() as u32,
         num_digits_fold: group.num_digits_fold as u32,
         commitment: GeneratedCommittedGroup {
             geometry: GeneratedBlockGeometry {
@@ -159,6 +158,7 @@ fn generated_entry(
         .recursive_folds
         .iter()
         .map(|step| GeneratedRecursiveFold {
+            payload_mode: step.params.witness.payload_mode,
             witness: committed_group(&step.params.witness),
             num_digits_fold: step.params.witness.num_digits_fold as u32,
             open_commit_matrix: open_matrix_params(
@@ -370,12 +370,18 @@ fn emit_partition(value: GeneratedWitnessPartition) -> String {
     }
 }
 
+fn emit_payload_mode(value: akita_types::CommitmentPayloadMode) -> &'static str {
+    match value {
+        akita_types::CommitmentPayloadMode::Compressed => "CommitmentPayloadMode::Compressed",
+        akita_types::CommitmentPayloadMode::Raw => "CommitmentPayloadMode::Raw",
+    }
+}
+
 fn emit_setup_prefix(value: Option<GeneratedSetupPrefixInput>) -> String {
     match value {
         Some(value) => format!(
-            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, d_setup: {}, num_digits_fold: {}, commitment: {} }})",
+            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, num_digits_fold: {}, commitment: {} }})",
             value.natural_len,
-            value.d_setup,
             value.num_digits_fold,
             emit_committed_group(value.commitment)
         ),
@@ -448,7 +454,8 @@ fn emit_schedule_entry(
         for fold in entry.recursive_folds {
             writeln!(
                 out,
-                "            GeneratedRecursiveFold {{ witness: {}, num_digits_fold: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
+                "            GeneratedRecursiveFold {{ payload_mode: {}, witness: {}, num_digits_fold: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
+                emit_payload_mode(fold.payload_mode),
                 emit_committed_group(fold.witness),
                 fold.num_digits_fold,
                 emit_open_matrix(fold.open_commit_matrix),
@@ -551,12 +558,13 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    protocol_epoch: {protocol_epoch},\n",
             "    cost_model: PlannerCostModelId::{cost_model},\n",
             "    selection_policy: SelectionPolicyId::{selection_policy},\n",
-            "    max_setup_envelope_field_elements: {max_setup_envelope_field_elements},\n",
+            "    setup_field_budget: {setup_field_budget},\n",
             "    min_offloaded_witness_contraction: {min_offloaded_witness_contraction},\n",
             "    sis_modulus_profile: {sis_modulus_profile},\n",
             "    sis_security_policy: SisSecurityPolicyId::{sis_security_policy},\n",
             "    sis_table_digest: SisTableDigest({sis_table_digest}),\n",
-            "    ring_dimension: {ring_dimension},\n",
+            "    uniform_ring_dimension: {uniform_ring_dimension},\n",
+            "    setup_prefix_inner_ring_dimension: {setup_prefix_inner_ring_dimension},\n",
             "    decomposition: {decomposition},\n",
             "    ring_subfield_norm_bound: {ring_subfield_norm_bound},\n",
             "    claim_ext_degree: {claim_ext_degree},\n",
@@ -578,12 +586,16 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         protocol_epoch = identity.protocol_epoch,
         cost_model = identity.cost_model.name(),
         selection_policy = identity.selection_policy.name(),
-        max_setup_envelope_field_elements = identity.max_setup_envelope_field_elements,
+        setup_field_budget = match identity.setup_field_budget {
+            Some(value) => format!("Some({value})"),
+            None => "None".to_string(),
+        },
         min_offloaded_witness_contraction = identity.min_offloaded_witness_contraction,
         sis_modulus_profile = emit_sis_modulus_profile(identity.sis_modulus_profile),
         sis_security_policy = identity.sis_security_policy.name(),
         sis_table_digest = format_bytes(identity.sis_table_digest.0),
-        ring_dimension = identity.ring_dimension,
+        uniform_ring_dimension = identity.uniform_ring_dimension,
+        setup_prefix_inner_ring_dimension = identity.setup_prefix_inner_ring_dimension,
         decomposition = emit_decomposition(identity.decomposition),
         ring_subfield_norm_bound = identity.ring_subfield_norm_bound,
         claim_ext_degree = identity.claim_ext_degree,
@@ -719,7 +731,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
          GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
          CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, CommittedGroupProfile, \
          InnerCommitMatrixParams, OuterCommitMatrixParams, \
-         SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \
+         CommitmentPayloadMode, SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \
          TensorChallengeShape,\n}};"
     )
     .map_err(|e| e.to_string())?;

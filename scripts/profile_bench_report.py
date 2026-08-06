@@ -24,6 +24,7 @@ RSS_PATTERNS = [
 ]
 ONEHOT_ARITY = 256
 ONEHOT_WORKLOAD_LABEL = f"1-of-{ONEHOT_ARITY} one-hot"
+CASE_SCHEMA_VERSION = 5
 REQUIRED_RUN_METRICS = (
     "setup_s",
     "commit_s",
@@ -51,13 +52,13 @@ PROOF_LEVEL_BYTE_FIELDS = (
     "extension_opening_partials_bytes",
     "extension_opening_sumcheck_bytes",
     "fold_grind_nonce_bytes",
-    "v_bytes",
+    "opening_payload_bytes",
     "stage1_sumcheck_bytes",
     "stage1_interstage_claims_bytes",
     "stage1_range_image_evaluation_bytes",
     "stage2_sumcheck_bytes",
     "stage3_sumcheck_bytes",
-    "next_w_commitment_bytes",
+    "next_w_payload_bytes",
     "next_w_eval_bytes",
 )
 
@@ -752,7 +753,7 @@ def extract_summary(
     metadata = case_metadata(mode)
     setup_mode = normalize_setup_mode(setup_mode)
     summary: dict[str, object] = {
-        "schema_version": 4,
+        "schema_version": CASE_SCHEMA_VERSION,
         "benchmark": benchmark_name(mode, num_vars, num_polys, setup_mode),
         "mode": mode,
         "setup_contribution_mode": setup_mode,
@@ -772,8 +773,23 @@ def extract_summary(
         line = ANSI_RE.sub("", line)
         kvs = parse_kvs(line)
         if " INFO setup sizes" in line and kvs.get("label") == mode:
-            summary["setup_ring_elements"] = int(kvs["setup_ring_elements"])
-            summary["setup_vector_bytes"] = int(kvs["setup_vector_bytes"])
+            setup_vector_bytes = int(kvs["setup_vector_bytes"])
+            summary["setup_vector_bytes"] = setup_vector_bytes
+            if "num_setup_field_elements" in kvs:
+                num_setup_field_elements = int(kvs["num_setup_field_elements"])
+            else:
+                # Merge-base binaries before the flat-setup cutover report a
+                # D-chunked count. Recover the comparable flat count from the
+                # byte footprint instead of comparing incompatible units.
+                field_bytes = {"fp32": 4, "fp64": 8, "fp128": 16}[
+                    metadata.field_family
+                ]
+                if setup_vector_bytes % field_bytes != 0:
+                    raise ValueError(
+                        "setup vector byte count is not field-element aligned"
+                    )
+                num_setup_field_elements = setup_vector_bytes // field_bytes
+            summary["num_setup_field_elements"] = num_setup_field_elements
             summary["setup_ntt_cache_bytes"] = int(kvs["setup_ntt_cache_bytes"])
         elif " INFO verifier NTT cache size" in line and kvs.get("label") == mode:
             summary["verifier_ntt_cache_bytes"] = int(kvs["verifier_ntt_cache_bytes"])
@@ -1099,7 +1115,7 @@ SUMMARY_CSV_COLUMNS = (
     "setup_s",
     "setup_expand_s",
     "backend_prepare_s",
-    "setup_ring_elements",
+    "num_setup_field_elements",
     "setup_vector_bytes",
     "setup_ntt_cache_bytes",
     "verifier_ntt_cache_bytes",
@@ -1346,7 +1362,7 @@ def write_failure_summary(args: argparse.Namespace) -> int:
         metadata = case_metadata(case.mode)
         cases.append(
             {
-                "schema_version": 4,
+                "schema_version": CASE_SCHEMA_VERSION,
                 "benchmark": benchmark_name(
                     case.mode, case.num_vars, case.num_polys, case.setup_mode
                 ),
@@ -1552,7 +1568,12 @@ REPORT_METRICS = [
     Metric("prove_total_s", "Prove", "s", fmt_seconds),
     Metric("verify_total_s", "Verify", "ms", fmt_milliseconds),
     Metric("max_rss_kib", "Peak process RSS", "MiB", fmt_mib),
-    Metric("setup_ring_elements", "Setup ring elements", "ring elements", fmt_count),
+    Metric(
+        "num_setup_field_elements",
+        "Setup field elements",
+        "field elements",
+        fmt_count,
+    ),
     Metric("setup_vector_bytes", "Setup vector", "MiB", fmt_mib_with_exact_bytes),
     Metric("setup_ntt_cache_bytes", "Prepared NTT cache", "MiB", fmt_mib_with_exact_bytes),
     Metric("verifier_ntt_cache_bytes", "Verifier NTT cache", "MiB", fmt_mib_with_exact_bytes),
@@ -1985,9 +2006,9 @@ def render_proof_levels(
     print()
     print(
         "| Fold level | Proof step | Fold-level bytes | Extension-opening partials | "
-        "Extension-opening sumcheck | Grinding nonce | Opening commitment (`v`) | "
+        "Extension-opening sumcheck | Grinding nonce | Opening payload (`p_H`) | "
         "Stage 1 sumcheck | Stage 1 transition claims | Range-image evaluation | "
-        "Stage 2 sumcheck | Stage 3 sumcheck | Next-witness commitment | "
+        "Stage 2 sumcheck | Stage 3 sumcheck | Next-witness payload | "
         "Next-witness evaluation |"
     )
     print(
@@ -2008,13 +2029,13 @@ def render_proof_levels(
             f"{proof_component_value(level, baseline, 'extension_opening_partials_bytes')} | "
             f"{proof_component_value(level, baseline, 'extension_opening_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'fold_grind_nonce_bytes')} | "
-            f"{proof_component_value(level, baseline, 'v_bytes')} | "
+            f"{proof_component_value(level, baseline, 'opening_payload_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage1_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage1_interstage_claims_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage1_range_image_evaluation_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage2_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage3_sumcheck_bytes')} | "
-            f"{proof_component_value(level, baseline, 'next_w_commitment_bytes')} | "
+            f"{proof_component_value(level, baseline, 'next_w_payload_bytes')} | "
             f"{proof_component_value(level, baseline, 'next_w_eval_bytes')} |"
         )
     print()

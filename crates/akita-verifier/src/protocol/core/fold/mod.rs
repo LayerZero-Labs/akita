@@ -28,16 +28,12 @@ pub(in crate::protocol::core) struct FoldPrefix<F: FieldCore, E: FieldCore> {
 pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) lp: &'a CommittedGroupParams,
     pub(in crate::protocol::core) fold_grind_nonce: u32,
-    pub(in crate::protocol::core) v: RingVec<F>,
+    pub(in crate::protocol::core) opening_payload: RingVec<F>,
     /// Normalized opening geometry (one group for scalar/suffix folds, `G`
     /// groups for multi-group roots).
     pub(in crate::protocol::core) opening_shape: OpeningClaimsLayout,
-    /// Sent commitment rows concatenated in M-row (final-first
-    /// `root_group_order`) order — the single group's rows for scalar/suffix
-    /// folds, `concat_g u_g` for multi-group roots. Matches the prover's
-    /// `RingRelationProver` commitment-row concatenation and
-    /// `relation_rhs_layout_for` block order.
-    pub(in crate::protocol::core) commitment_rows: RingVec<F>,
+    /// Terminal F payloads in relation (final-first) group order.
+    pub(in crate::protocol::core) commitment_payloads: Vec<RingVec<F>>,
     pub(in crate::protocol::core) prefix: FoldPrefix<F, E>,
     pub(in crate::protocol::core) w_len: usize,
     pub(in crate::protocol::core) payload: PreparedFoldPayload<'a, F, E>,
@@ -66,6 +62,7 @@ pub(in crate::protocol::core) enum PreparedFoldPayload<'a, F: FieldCore, E: Fiel
 
 struct Stage1Replay<E: FieldCore> {
     batching_coeff: E,
+    binary_batching: Option<E>,
     range_image_evaluation: E,
     stage1_point: Vec<E>,
 }
@@ -104,9 +101,14 @@ where
         stage1_verifier.verify::<F, T>(proof, transcript)?
     };
     transcript.append_serde(ABSORB_RANGE_IMAGE_EVALUATION, &proof.range_image_evaluation);
+    let binary_batching = rs
+        .compression_relation_weights
+        .as_ref()
+        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_COMPRESSION_BINARY));
     let batching_coeff: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     Ok(Stage1Replay {
         batching_coeff,
+        binary_batching,
         range_image_evaluation: proof.range_image_evaluation,
         stage1_point,
     })
@@ -171,6 +173,9 @@ where
         witness_eval,
         stage1.stage1_point,
         &rs.relation_matrix_evaluator,
+        rs.compression_relation_weights.as_ref(),
+        rs.negative_binary_support.as_ref(),
+        stage1.binary_batching,
         &setup.expanded,
         rs.alpha,
         setup_claim,
@@ -241,9 +246,36 @@ where
 {
     let opening_shape = prepared.opening_shape.clone();
     let num_groups = opening_shape.num_groups();
-    let commitment_rows = &prepared.commitment_rows;
+    let commitment_payloads = &prepared.commitment_payloads;
     let prefix = &prepared.prefix;
     let role_dims = prepared.lp.role_dims();
+    let relation_rhs_layout =
+        relation_rhs_layout_for(prepared.lp, &opening_shape).map_err(|error| {
+            AkitaError::InvalidInput(format!("compressed relation layout failed: {error:?}"))
+        })?;
+    if commitment_payloads.len() != num_groups {
+        return Err(AkitaError::InvalidInput(
+            "commitment payload group count mismatch".into(),
+        ));
+    }
+    for (relation_group_index, payload) in commitment_payloads.iter().enumerate() {
+        if payload.coeff_len()
+            != relation_rhs_layout
+                .group_payload_geometry(relation_group_index)?
+                .transmitted_coefficients()
+        {
+            return Err(AkitaError::InvalidInput(
+                "commitment payload length mismatch".into(),
+            ));
+        }
+    }
+    let opening_payload_geometry = relation_rhs_layout.opening_payload_geometry()?;
+    if prepared.opening_payload.coeff_len() != opening_payload_geometry.transmitted_coefficients() {
+        return Err(AkitaError::InvalidInput(
+            "opening payload length mismatch".into(),
+        ));
+    }
+    let opening_payload_ring_dim = opening_payload_geometry.transcript_ring_dimension();
     let _fold_span = tracing::info_span!(
         "verify_fold",
         d_a = role_dims.d_a(),
@@ -254,25 +286,11 @@ where
     .entered();
     {
         let _span = tracing::info_span!("fold_validate_inputs").entered();
-        dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Outer),
-            F,
-            role_dims.d_b(),
-            |D| commitment_rows.as_ring_slice::<D>().map(|_| ())
-        )?;
         prepared.lp.validate_fold_grind_nonce(
             &opening_shape,
             FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
             prepared.fold_grind_nonce,
         )?;
-        if !prepared.v.coeffs().is_empty() {
-            dispatch_for_field!(
-                ProtocolDispatchSlot::Role(RingRole::Opening),
-                F,
-                role_dims.d_d(),
-                |D| prepared.v.as_ring_slice::<D>().map(|_| ())
-            )?;
-        }
         if prefix.prepared_points.len() != num_groups {
             return Err(AkitaError::InvalidProof);
         }
@@ -281,12 +299,15 @@ where
         let _span = tracing::info_span!("fold_derive_stage1_challenges").entered();
         derive_multi_group_stage1_challenges::<F, T>(
             transcript,
-            prepared.v.coeffs(),
-            role_dims.d_d(),
+            prepared.opening_payload.coeffs(),
+            opening_payload_ring_dim,
             &opening_shape,
             prepared.lp,
             prepared.fold_grind_nonce,
-        )?
+        )
+        .map_err(|error| {
+            AkitaError::InvalidInput(format!("fold challenge replay failed: {error:?}"))
+        })?
     };
     let (relation_rhs_layout, relation_instance) = {
         let _span = tracing::info_span!("fold_prepare_relation").entered();
@@ -300,9 +321,29 @@ where
                 )
             }
         )?;
-        let relation_rhs_layout = relation_rhs_layout_for(prepared.lp, &opening_shape)?;
-        let relation_rhs =
-            assemble_relation_rhs::<F>(&relation_rhs_layout, &prepared.v, commitment_rows)?;
+        let commitment_rows = RingVec::from_coeffs(
+            commitment_payloads
+                .iter()
+                .flat_map(|payload| payload.coeffs().iter().copied())
+                .collect(),
+        );
+        let relation_rhs = if prepared.lp.payload_mode.is_compressed() {
+            let group_payloads = commitment_payloads
+                .iter()
+                .map(|payload| payload.coeffs())
+                .collect::<Vec<_>>();
+            assemble_compressed_relation_rhs::<F>(
+                &relation_rhs_layout,
+                &group_payloads,
+                prepared.opening_payload.coeffs(),
+            )?
+        } else {
+            assemble_relation_rhs::<F>(
+                &relation_rhs_layout,
+                &prepared.opening_payload,
+                &commitment_rows,
+            )?
+        };
         let group_ring_opening_points = prefix
             .prepared_points
             .iter()
@@ -321,10 +362,19 @@ where
             gamma,
             row_coefficient_rings,
             relation_rhs,
-            prepared.v,
+            if prepared.lp.payload_mode.is_compressed() {
+                RingVec::from_coeffs(Vec::new())
+            } else {
+                prepared.opening_payload.clone()
+            },
             role_dims,
-        )?;
-        relation_instance.check_v_shape_for_level(prepared.lp)?;
+        )
+        .map_err(|error| {
+            AkitaError::InvalidInput(format!("relation instance failed: {error:?}"))
+        })?;
+        if !prepared.lp.payload_mode.is_compressed() {
+            relation_instance.check_v_shape_for_level(prepared.lp)?;
+        }
         (relation_rhs_layout, relation_instance)
     };
     let (stage1, stage2, next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
@@ -371,15 +421,22 @@ where
             PreparedNextWitness::TerminalT(_) => return Err(AkitaError::InvalidProof),
         }
     }
-    let rs = ring_switch_verifier::<F, E, T>(&ring_switch_replay, prepared.w_len, transcript)?;
-    let relation_claim = relation_claim_from_layout_extension::<F, E>(
+    let rs = ring_switch_verifier::<F, E, T>(&ring_switch_replay, prepared.w_len, transcript)
+        .map_err(|error| {
+            AkitaError::InvalidInput(format!("compressed ring-switch replay failed: {error:?}"))
+        })?;
+    let relation_claim = relation_claim_from_compressed_rhs_extension::<F, E>(
         &relation_rhs_layout,
         &rs.tau1,
         rs.alpha,
-        relation_instance.v(),
-        commitment_rows,
-    )?;
-    let stage1_replay = verify_stage1::<F, E, T>(stage1, &rs, transcript)?;
+        relation_instance.rhs(),
+    )
+    .map_err(|error| {
+        AkitaError::InvalidInput(format!("compressed relation claim failed: {error:?}"))
+    })?;
+    let stage1_replay = verify_stage1::<F, E, T>(stage1, &rs, transcript).map_err(|error| {
+        AkitaError::InvalidInput(format!("compressed stage-1 replay failed: {error:?}"))
+    })?;
     // EvaluationTrace is the last padded relation row: weight openings by
     // `eq(tau1, EvaluationTrace_row_index)`.
     let opening_batch = relation_instance.opening_batch();
@@ -430,7 +487,10 @@ where
         evaluation_trace,
         evaluation_trace_weight,
         evaluation_trace_opening_claim,
-    )?;
+    )
+    .map_err(|error| {
+        AkitaError::InvalidInput(format!("compressed stage-2 replay failed: {error:?}"))
+    })?;
     let setup_prefix_opening =
         verify_stage3::<F, E, T>(setup, transcript, &rs, &sumcheck_challenges, stage3)?;
     Ok((sumcheck_challenges, setup_prefix_opening))

@@ -9,6 +9,7 @@
 
 pub mod batch;
 pub mod commitment;
+pub mod compression_relation_weights;
 pub mod relation;
 pub mod relation_address;
 pub mod relation_range_image;
@@ -28,8 +29,15 @@ mod tail_segments;
 #[cfg(test)]
 mod tests;
 mod wire;
+
+/// Maximum coefficients accepted from a self-describing commitment artifact.
+///
+/// This guards generic untrusted allocation. It is not a bound on the public
+/// setup stream or on a caller-validated setup package.
+pub const MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS: usize = 1 << 26;
+
 pub use crate::opening_claims::{
-    sample_public_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
+    derive_public_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
     PolynomialGroupClaims, PolynomialGroupLayout,
 };
 pub(crate) use batch::root_tensor_projection_enabled_for_width;
@@ -43,6 +51,9 @@ pub use batch::{
 pub use commitment::{
     AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,
 };
+pub use compression_relation_weights::{
+    build_compression_relation_weights, CompressionRelationWeights, NegativeBinarySupport,
+};
 pub use containers::{
     append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,
 };
@@ -53,31 +64,35 @@ pub use levels::{
     TerminalLevelProof,
 };
 pub use relation::{
-    assemble_relation_rhs, evaluation_trace_row_weight, generate_relation_rhs,
+    assemble_compressed_relation_rhs, assemble_relation_rhs,
+    compression_relation_claim_from_rhs_extension, evaluation_trace_row_weight,
+    generate_relation_rhs, relation_claim_from_compressed_rhs_extension,
     relation_claim_from_layout_extension, relation_claim_from_rows,
     relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
-    relation_rhs_row_count, RelationGroupRows, RelationRhsLayout,
+    relation_rhs_row_count, RelationGroupRows, RelationRhsLayout, RelationRowFamily,
 };
-pub use relation_address::RelationAddressGeometry;
+pub use relation_address::{CompressionRelationAddressGeometry, RelationAddressGeometry};
 pub use relation_range_image::{RelationRangeImageGroupPlan, RelationRangeImagePlan};
-pub use ring_relation::ring_relation_segment_lengths;
-pub use ring_relation::RingRelationInstance;
+pub use ring_relation::{
+    ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
+    RingRelationSegmentLengths,
+};
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{
-    derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
-    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed, SetupMatrixEnvelope,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    derive_public_matrix_prefix, sample_akita_setup_seed, validate_public_matrix_matches_seed,
+    AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, AkitaVerifierSetup,
+    PublicMatrixDerivation, SetupMatrixCapacity, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
 pub use setup_envelope::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
-    setup_matrix_envelope_for_schedule, setup_matrix_field_elements_for_schedule,
-    setup_prefix_slot_field_elements,
+    setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
+    setup_prefix_slot_field_elements, verifier_setup_matrix_capacity_for_schedule,
 };
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,
-    setup_prefix_precommitted_params, setup_prefix_slot_id, SetupPrefixProverRegistry,
-    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
-    SetupPrefixVerifierSlot, SETUP_OFFLOAD_D_SETUP,
+    setup_prefix_precommitted_params, setup_prefix_slot_id, suffix_opening_layout,
+    SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
 };
 pub use shapes::{
     AkitaBatchedProofShape, AkitaStage1StageShape, ExtensionOpeningReductionShape, LevelProofShape,

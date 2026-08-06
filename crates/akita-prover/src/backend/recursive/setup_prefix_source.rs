@@ -179,7 +179,7 @@ fn setup_prefix_fold_geometry<const D: usize>(
             .sis_modulus_profile()
             .field_bits(),
     )?;
-    if slot.id.d_setup != D
+    if slot.id.d_setup() != D
         || geometry.group.num_polynomials() != 1
         || geometry.num_live_ring_elements_per_claim != source_ring_len
         || geometry.num_positions_per_block == 0

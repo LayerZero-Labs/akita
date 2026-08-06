@@ -175,7 +175,8 @@ for a stacked follow-up.
 
 ### Keep as live specs
 
-`setup-layout-repack.md`, `role-native-projected-digit-layout.md`,
+`flat-public-matrix-and-exact-ntt-cache.md`,
+`role-native-projected-digit-layout.md`, `setup-layout-repack.md`,
 `setup-offloading-planner.md`,
 `eor-streamed-prover.md`, `packed-sumcheck.md`,
 `planner-incidence-generalization.md`, `akita-field-refactor.md`,

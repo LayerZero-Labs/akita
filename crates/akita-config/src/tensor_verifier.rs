@@ -56,11 +56,11 @@ pub mod fp128 {
             SisModulusProfileId::Q128OffsetA7F7
         }
 
-        fn max_setup_matrix_size(
+        fn setup_matrix_capacity(
             max_num_vars: usize,
             max_num_batched_polys: usize,
-        ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
-            crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
+        ) -> Result<akita_types::SetupMatrixCapacity, akita_field::AkitaError> {
+            crate::proof_optimized::proof_optimized_setup_matrix_capacity::<Self>(
                 max_num_vars,
                 max_num_batched_polys,
             )

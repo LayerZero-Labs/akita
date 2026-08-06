@@ -22,6 +22,13 @@ At a high level:
    state. The terminal relation is `consistency | A`; it has no outer `u`, B
    block, D block, or quotient sumcheck.
 
+At each nonterminal fold, the verifier checks fixed 128-byte `p_H` and `p_F`
+payload shapes, reconstructs the B, D, F, and H relation right hand sides, and
+folds the compression relations at their native ring dimensions. It derives
+the negative-binary support from `WitnessLayout` and evaluates the stage-1
+equality table restricted to those intervals; compression roles never enlarge
+or shrink the ordinary A/B/D common address block.
+
 Root replay reads each commitment group's point directly from
 `PolynomialGroupClaims`.
 The verifier prepares the per-group relation and extension-opening factors from
@@ -70,7 +77,7 @@ replay, it:
    dimension;
 5. checks root, recursive, setup-prefix, challenge, witness-partition, terminal
    response, and full terminal infinity-norm-cap geometry;
-6. checks that the schedule fits the setup envelope; and only then
+6. checks that the schedule fits the setup field capacity; and only then
 7. binds the instance descriptor and replays the proof.
 
 Private polynomial representations and honest-prover witness models are absent

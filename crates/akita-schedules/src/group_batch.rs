@@ -178,7 +178,7 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
     let mut d_width = 0usize;
     for group in &groups {
         d_width = d_width
-            .checked_add(group.d_segment_width(policy.ring_dimension)?)
+            .checked_add(group.d_segment_width(policy.uniform_ring_dimension)?)
             .ok_or_else(|| AkitaError::InvalidSetup("multi-group D width overflow".to_string()))?;
     }
     Ok((groups, d_width))

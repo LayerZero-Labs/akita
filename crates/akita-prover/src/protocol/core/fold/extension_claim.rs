@@ -26,7 +26,13 @@ pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, V,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    F: FieldCore
+        + CanonicalField
+        + FromPrimitiveInt
+        + HalvingField
+        + HasWide
+        + RandomSampling
+        + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
@@ -81,7 +87,6 @@ where
             tensor.backend(),
             Some(tensor.prepared()),
             &eor_inputs,
-            pad_base_evals,
             transcript,
             if pad_base_evals { "recursive" } else { "root" },
         )
@@ -94,13 +99,9 @@ where
             Some(proved.reduction),
         )
     } else {
-        let (protocol_points, row_coefficients) = prepare_non_eor_opening(
-            &block_claims,
-            &opening_batch,
-            pad_base_evals,
-            validate_non_eor,
-        )?;
-        (protocol_points, row_coefficients, None)
+        let protocol_points =
+            prepare_non_eor_opening(&block_claims, &opening_batch, validate_non_eor)?;
+        (protocol_points, None, None)
     };
 
     // Tensor-project only when EOR ran without base-eval padding (root geometry).

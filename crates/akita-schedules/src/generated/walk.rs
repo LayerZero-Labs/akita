@@ -100,6 +100,7 @@ pub(crate) fn walk_generated_schedule_entry(
             .commitment
             .expand_to_level_params_with_setup(
                 policy,
+                akita_types::CommitmentPayloadMode::Compressed,
                 ring_challenge_config,
                 0,
                 Some(entry.root.final_group.num_digits_inner),
@@ -136,6 +137,7 @@ pub(crate) fn walk_generated_schedule_entry(
     for (index, fold) in entry.recursive_folds.iter().enumerate() {
         let mut params = fold.witness.expand_to_level_params_with_setup(
             policy,
+            fold.payload_mode,
             ring_challenge_config,
             index + 1,
             None,
@@ -209,7 +211,7 @@ pub(crate) fn walk_generated_schedule_entry(
             if binds_terminal {
                 Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState)
             } else {
-                Some(akita_types::NextWitnessBindingPolicy::OuterCommitment)
+                Some(akita_types::NextWitnessBindingPolicy::OuterPayload)
             },
         )?
         .checked_add(extension_opening_reduction_level_bytes(
@@ -295,7 +297,6 @@ pub(crate) fn walk_generated_schedule_entry(
     let planned_schedule = materialize_candidate_schedule(
         total_bytes,
         setup_field_elements,
-        policy.ring_dimension,
         first_direct_setup_field_len,
         folds,
         CandidateTerminalResponse {

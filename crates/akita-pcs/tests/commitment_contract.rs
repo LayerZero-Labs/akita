@@ -15,11 +15,9 @@ use akita_config::CommitmentConfig;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_prover::backend::DenseView;
-#[cfg(feature = "compression-diagnostics")]
-use akita_prover::compute::CompressionDiagnosticBackend;
 use akita_prover::compute::{
-    CommitInnerPlan, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx, RootCommitKernel,
-    RootCommitSource, RootPolyShape,
+    CommitInnerPlan, CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
+    DigitRowsComputeBackend, OperationCtx, RootCommitKernel, RootCommitSource, RootPolyShape,
 };
 use akita_prover::{
     batched_commit_with_params, commit_with_params, AkitaProverSetup, CpuBackend, CpuPreparedSetup,
@@ -102,11 +100,11 @@ where
 {
     type PreparedSetup = CpuPreparedSetup<F>;
 
-    fn prepare_expanded<const RING_D: usize>(
+    fn prepare_expanded(
         &self,
         expanded: std::sync::Arc<akita_types::AkitaExpandedSetup<F>>,
     ) -> Result<Self::PreparedSetup, AkitaError> {
-        CpuBackend.prepare_expanded::<RING_D>(expanded)
+        CpuBackend.prepare_expanded(expanded)
     }
 
     fn ensure_ntt_slot(
@@ -140,8 +138,7 @@ where
     }
 }
 
-#[cfg(feature = "compression-diagnostics")]
-impl<F> CompressionDiagnosticBackend<F> for ContractCommitBackend
+impl<F> CompressionComputeBackend<F> for ContractCommitBackend
 where
     F: FieldCore + CanonicalField,
 {
@@ -149,12 +146,12 @@ where
         CpuBackend.compression_cache_bytes(prepared)
     }
 
-    fn compression_rows<const RING_D: usize>(
+    fn compression_rows_products<const RING_D: usize>(
         &self,
         prepared: &Self::PreparedSetup,
         digit_vectors: &[&[[i8; RING_D]]],
-    ) -> Result<Vec<Vec<CyclotomicRing<F, RING_D>>>, AkitaError> {
-        CpuBackend.compression_rows(prepared, digit_vectors)
+    ) -> Result<Vec<CompressionRowsProducts<F, RING_D>>, AkitaError> {
+        CpuBackend.compression_rows_products(prepared, digit_vectors)
     }
 }
 
@@ -197,10 +194,9 @@ fn custom_commit_source_runs_commit_with_params() {
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
-    let setup_envelope = Cfg::max_setup_matrix_size(CONTRACT_NUM_VARS, 1).expect("envelope");
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, D, setup_envelope)
-            .expect("setup");
+    let setup_envelope = Cfg::setup_matrix_capacity(CONTRACT_NUM_VARS, 1).expect("envelope");
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
+        .expect("setup");
     let prepared = ContractCommitBackend
         .prepare_setup(&setup)
         .expect("prepared");
@@ -245,10 +241,9 @@ fn custom_commit_source_runs_batched_commit_with_params() {
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
-    let setup_envelope = Cfg::max_setup_matrix_size(CONTRACT_NUM_VARS, 1).expect("envelope");
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, D, setup_envelope)
-            .expect("setup");
+    let setup_envelope = Cfg::setup_matrix_capacity(CONTRACT_NUM_VARS, 1).expect("envelope");
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
+        .expect("setup");
     let prepared = ContractCommitBackend
         .prepare_setup(&setup)
         .expect("prepared");
