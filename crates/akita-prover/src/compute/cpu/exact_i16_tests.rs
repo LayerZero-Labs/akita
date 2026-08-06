@@ -1,4 +1,4 @@
-use super::tests::{prepared, D, F};
+use super::prepared_tests::{prepared, D, F};
 use super::CpuBackend;
 use crate::compute::backend::CommitmentComputeBackend;
 use crate::compute::plans::{

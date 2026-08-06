@@ -1,4 +1,5 @@
-use super::{validate_digit_row_request, CpuBackend};
+use super::prepared::validate_digit_row_request;
+use super::CpuBackend;
 use crate::compute::backend::{CompressionComputeBackend, CompressionRowsProducts};
 use crate::kernels::linear::{
     mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_single_i8_cyclic, validate_compression_batch_shape,
