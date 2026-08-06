@@ -1,4 +1,3 @@
-
 use super::*;
 use akita_algebra::CyclotomicRing;
 use akita_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
