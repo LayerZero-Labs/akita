@@ -634,40 +634,24 @@ fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
     type ProtocolCfg =
         crate::test_support::EnvelopeFinalGroupConfig<fp128::D256OneHot, fp128::D64OneHot>;
 
-    let pre_layout = OpeningClaimsLayout::new(PRE_NV, 1).expect("precommit layout");
-    let pre_params =
-        <PrecommittedCommitmentConfig<ProtocolCfg> as CommitmentConfig>::
-            get_params_for_batched_commitment(&pre_layout)
-                .expect("precommit params");
-    let test_pre_params =
-        <PrecommittedCommitmentConfig<fp128::D256OneHot> as CommitmentConfig>::
-            get_params_for_batched_commitment(&pre_layout)
-                .expect("test precommit params");
-    assert_eq!(
-        pre_params.outer_commit_matrix.output_rank(),
-        test_pre_params.outer_commit_matrix.output_rank(),
-        "protocol and standalone precommit policies must freeze the same B rank"
-    );
+    let pre_group = akita_types::PolynomialGroupLayout::new(PRE_NV, 1);
+    let precommitted = akita_planner::derive_standalone_precommit_profile(
+        pre_group,
+        &akita_config::policy_of::<fp128::D256OneHot>(),
+        fp128::D256OneHot::root_honest_fold_policy(),
+        fp128::D256OneHot::ring_challenge_config,
+        fp128::D256OneHot::fold_challenge_shape_at_level,
+    )
+    .expect("synthetic D256 precommit profile");
     let key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, 2),
-        precommitteds: vec![akita_types::CommittedGroupProfile::from_params(
-            akita_types::PolynomialGroupLayout::new(PRE_NV, 1),
-            &pre_params,
-        )],
+        precommitteds: vec![precommitted],
     };
     let opening_layout = key.opening_layout().unwrap();
     let schedule = ProtocolCfg::runtime_schedule(key).expect("descending-A schedule");
     let root = multi_group_root_params(&schedule);
     assert_eq!(root.d_a(), 64);
     assert_eq!(root.group_role_dims(&opening_layout, 0).unwrap().d_a(), 256);
-
-    multi_group_root_round_trip_onehot::<fp128::D256OneHot, ProtocolCfg>(
-        PRE_NV,
-        FINAL_NV,
-        &[1],
-        2,
-        true,
-    );
 }
 
 #[test]

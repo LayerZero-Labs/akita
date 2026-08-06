@@ -73,7 +73,6 @@ fn group_batch_emission_matches_supported_policy_shape() {
 fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
     match family.module_name {
         "fp128_d128_dense" => fp128::D128Dense::schedule_catalog().is_some(),
-        "fp128_d256_onehot" => fp128::D256OneHot::schedule_catalog().is_some(),
         "fp128_mixed_dim_onehot" => fp128::AdaptiveOneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot" => fp128::D64OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot_recursive" => {
@@ -346,7 +345,6 @@ fn family_catalog(
 ) -> akita_schedules::GeneratedScheduleTable {
     match family.module_name {
         "fp128_d128_dense" => prepare_family_catalog::<fp128::D128Dense>(family, keys),
-        "fp128_d256_onehot" => prepare_family_catalog::<fp128::D256OneHot>(family, keys),
         "fp128_mixed_dim_onehot" => prepare_family_catalog::<fp128::AdaptiveOneHot>(family, keys),
         "fp128_d64_onehot" => prepare_family_catalog::<fp128::D64OneHot>(family, keys),
         "fp128_d64_onehot_recursive" => prepare_family_catalog::<
@@ -406,9 +404,6 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, requests: &[Gro
     match family.module_name {
         "fp128_d128_dense" => {
             assert_group_batch_table_hits::<fp128::D128Dense>(family.module_name, requests)
-        }
-        "fp128_d256_onehot" => {
-            assert_group_batch_table_hits::<fp128::D256OneHot>(family.module_name, requests)
         }
         "fp128_mixed_dim_onehot" => {
             assert_group_batch_table_hits::<fp128::AdaptiveOneHot>(family.module_name, requests)
@@ -503,7 +498,6 @@ fn resolve_family_group_batch_schedule(
 ) -> Result<FoldSchedule, AkitaError> {
     match family.module_name {
         "fp128_d128_dense" => table_backed_group_batch_schedule::<fp128::D128Dense>(request),
-        "fp128_d256_onehot" => table_backed_group_batch_schedule::<fp128::D256OneHot>(request),
         "fp128_mixed_dim_onehot" => {
             table_backed_group_batch_schedule::<fp128::AdaptiveOneHot>(request)
         }

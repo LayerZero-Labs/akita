@@ -102,11 +102,6 @@ const FP128_D64_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(50),
 ];
 
-const FP128_D256_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
-    PolynomialGroupLayout::singleton(14),
-    PolynomialGroupLayout::singleton(16),
-];
-
 const FP128_MIXED_DIM_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(32),
     PolynomialGroupLayout::singleton(36),
@@ -739,13 +734,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp128-d64-onehot",
         FP128_D64_ONEHOT_KEYS,
         fp128::D64OneHot
-    ),
-    family_row!(
-        "fp128_d256_onehot",
-        "FP128_D256_ONEHOT_SCHEDULES",
-        "fp128-d256-onehot",
-        FP128_D256_ONEHOT_KEYS,
-        fp128::D256OneHot
     ),
     GeneratedFamily {
         module_name: "fp128_mixed_dim_onehot",
