@@ -362,6 +362,19 @@ fn packed_fp_ext4_pack_unpack() {
 }
 
 #[test]
+fn packed_fp_ext4_from_coeff_fn() {
+    let mut rng = StdRng::seed_from_u64(365);
+    let width = <PR4 as PackedValue>::WIDTH;
+    let elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
+
+    let packed = PR4::from_coeff_fn(|lane, coefficient| elems[lane].coeffs[coefficient]);
+
+    for (lane, &expected) in elems.iter().enumerate() {
+        assert_eq!(packed.extract(lane), expected);
+    }
+}
+
+#[test]
 fn pack_unpack_roundtrip_fp_ext2() {
     let mut rng = StdRng::seed_from_u64(400);
     let width = <PE2 as PackedValue>::WIDTH;
