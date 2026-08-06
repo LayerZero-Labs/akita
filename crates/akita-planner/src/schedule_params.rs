@@ -12,10 +12,10 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, BalancedSignedDigitFoldPolicy,
-    FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
+    num_digits_inner_for_bound, num_digits_open, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy,
+    HonestFoldPolicySpec, HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams,
 };
 use akita_types::{
     level_proof_bytes, padded_setup_prefix_len, try_extension_opening_reduction_level_bytes,
@@ -143,17 +143,27 @@ impl ScheduleCandidate {
         self.folds.first().map(|fold| &fold.params)
     }
 
-    pub(crate) fn first_direct_setup_field_len_or_max(&self) -> usize {
-        self.first_direct_setup_field_len.unwrap_or(usize::MAX)
+    pub(crate) fn first_direct_setup_padded_field_len_or_max(&self) -> usize {
+        self.first_direct_setup_field_len
+            .map(padded_setup_prefix_len)
+            .unwrap_or(usize::MAX)
+    }
+
+    pub(crate) fn first_output_witness_len_or_max(&self) -> usize {
+        self.folds
+            .first()
+            .map(|fold| fold.output_witness_len)
+            .unwrap_or(usize::MAX)
     }
 
     pub(crate) fn direct_frontier_score(&self) -> (usize, usize) {
         (self.total_bytes, self.setup_field_elements)
     }
 
-    pub(crate) fn recursive_setup_frontier_score(&self) -> (usize, usize, usize) {
+    pub(crate) fn recursive_setup_frontier_score(&self) -> (usize, usize, usize, usize) {
         (
-            self.first_direct_setup_field_len_or_max(),
+            self.first_direct_setup_padded_field_len_or_max(),
+            self.first_output_witness_len_or_max(),
             self.total_bytes,
             self.setup_field_elements,
         )
@@ -332,6 +342,7 @@ pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> 
     } else {
         match policy.selection_policy {
             crate::SelectionPolicyId::MinEstimatedProofPayload
+            | crate::SelectionPolicyId::MinNextWitnessThenPayload
             | crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
                 policy.selection_policy
             }
@@ -479,7 +490,10 @@ pub fn derive_standalone_precommit_profile(
 ) -> Result<CommittedGroupProfile, AkitaError> {
     key.validate()?;
     let mut direct_policy = policy.direct_only();
-    direct_policy.basis_range = (direct_policy.basis_range.0, direct_policy.basis_range.0);
+    direct_policy.opening_basis_range = (
+        direct_policy.opening_basis_range.0,
+        direct_policy.opening_basis_range.0,
+    );
     validate_policy(&direct_policy)?;
 
     let witness_len = 1usize
@@ -491,37 +505,41 @@ pub fn derive_standalone_precommit_profile(
         input_witness_len: witness_len,
     });
     let (min_log_basis, max_log_basis) = direct_policy.log_basis_search_range_at_level(0);
+    let (min_inner_basis, max_inner_basis) = direct_policy.inner_basis_search_range();
     let mut best: Option<(usize, CommittedGroupParams)> = None;
     let schedule_key = AkitaScheduleLookupKey::single(key);
 
     for candidate_log_basis in min_log_basis..=max_log_basis {
-        for dimensions in direct_policy.ring_dimension_candidates.iter().copied() {
-            let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
-                continue;
-            };
-            let alpha = (dimensions.d_a() as u32).trailing_zeros() as usize;
-            let reduced_vars = key.num_vars().saturating_sub(alpha);
-            if reduced_vars == 0 {
-                continue;
-            }
-            for (candidate_params, next_witness_len) in
-                crate::planner::root_level_candidates_for_basis(
-                    &schedule_key,
-                    honest_fold_policy,
-                    &[],
-                    &direct_policy,
-                    dimensions,
-                    &ring_challenge_cfg,
-                    &ring_challenge_config,
-                    requested_fold_shape,
-                    witness_len,
-                    candidate_log_basis,
-                    false,
-                )?
-            {
-                match &best {
-                    Some((best_len, _)) if *best_len <= next_witness_len => {}
-                    _ => best = Some((next_witness_len, candidate_params)),
+        for candidate_inner_basis in min_inner_basis..=max_inner_basis {
+            for dimensions in direct_policy.ring_dimension_candidates.iter().copied() {
+                let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
+                    continue;
+                };
+                let alpha = (dimensions.d_a() as u32).trailing_zeros() as usize;
+                let reduced_vars = key.num_vars().saturating_sub(alpha);
+                if reduced_vars == 0 {
+                    continue;
+                }
+                for (candidate_params, next_witness_len) in
+                    crate::planner::root_level_candidates_for_basis(
+                        &schedule_key,
+                        honest_fold_policy,
+                        &[],
+                        &direct_policy,
+                        dimensions,
+                        &ring_challenge_cfg,
+                        &ring_challenge_config,
+                        requested_fold_shape,
+                        witness_len,
+                        candidate_inner_basis,
+                        candidate_log_basis,
+                        false,
+                    )?
+                {
+                    match &best {
+                        Some((best_len, _)) if *best_len <= next_witness_len => {}
+                        _ => best = Some((next_witness_len, candidate_params)),
+                    }
                 }
             }
         }

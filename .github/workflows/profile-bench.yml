@@ -76,7 +76,9 @@ jobs:
         group:
           - name: 1-fp128-dense
             cases: |
-              dense_fp128_d64:24:1
+              dense_fp32_d128:26:1
+              dense_fp64_d128:26:1
+              dense_fp128_d64:26:1
           - name: 2-fp128-tensor
             cases: |
               onehot_fp128_d64_tensor:26:1

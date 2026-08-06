@@ -342,7 +342,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
-        basis_range: Cfg::basis_range(),
+        opening_basis_range: Cfg::opening_basis_range(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning: Cfg::recursive_setup_planning(),
     };
@@ -435,13 +435,13 @@ fn offline_planner_admits_dense_multi_group_roots() {
 #[test]
 fn root_basis_is_derived_from_existing_policy_inputs() {
     let fp128 = policy_of::<fp128::D64OneHot>();
-    assert_eq!(fp128.basis_range, (3, 6));
+    assert_eq!(fp128.opening_basis_range, (3, 6));
     assert_eq!(fp128.decomposition.log_basis, 3);
     assert_eq!(fp128.log_basis_search_range_at_level(0), (3, 3));
     assert_eq!(fp128.log_basis_search_range_at_level(1), (3, 6));
 
     let fp32 = policy_of::<fp32::D64OneHot>();
-    assert_eq!(fp32.basis_range, (3, 6));
+    assert_eq!(fp32.opening_basis_range, (3, 6));
     assert_eq!(fp32.decomposition.log_basis, 3);
     assert_eq!(fp32.log_basis_search_range_at_level(0), (3, 3));
     assert_eq!(fp32.log_basis_search_range_at_level(1), (3, 6));

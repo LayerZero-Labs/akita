@@ -30,6 +30,11 @@ pub enum NttTransformDomain {
     Negacyclic,
     /// Base-profile cyclic transforms only.
     Cyclic,
+    /// Exact negacyclic transforms for a signed-i16 matrix product.
+    ///
+    /// `width` is the active matrix row width.  It participates in the cache
+    /// identity because exact CRT sizing depends on both width and digit bound.
+    ExactNegacyclicI16 { width: usize, log_basis: u32 },
 }
 
 /// Exact public-matrix prefix required at one ring dimension.

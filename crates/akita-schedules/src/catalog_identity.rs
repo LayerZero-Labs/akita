@@ -55,8 +55,10 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(u64::from(policy.ring_subfield_norm_bound));
     h.write_u64(policy.claim_ext_degree as u64);
     h.write_u64(policy.chal_ext_degree as u64);
-    h.write_u64(u64::from(policy.basis_range.0));
-    h.write_u64(u64::from(policy.basis_range.1));
+    h.write_u64(u64::from(policy.inner_basis_range.0));
+    h.write_u64(u64::from(policy.inner_basis_range.1));
+    h.write_u64(u64::from(policy.opening_basis_range.0));
+    h.write_u64(u64::from(policy.opening_basis_range.1));
     h.write_u64(policy.witness_chunk.num_chunks as u64);
     h.write_u64(policy.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(policy.recursive_setup_planning));
@@ -84,8 +86,10 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(u64::from(identity.ring_subfield_norm_bound));
     h.write_u64(identity.claim_ext_degree as u64);
     h.write_u64(identity.chal_ext_degree as u64);
-    h.write_u64(u64::from(identity.basis_range.0));
-    h.write_u64(u64::from(identity.basis_range.1));
+    h.write_u64(u64::from(identity.inner_basis_range.0));
+    h.write_u64(u64::from(identity.inner_basis_range.1));
+    h.write_u64(u64::from(identity.opening_basis_range.0));
+    h.write_u64(u64::from(identity.opening_basis_range.1));
     h.write_u64(identity.witness_chunk.num_chunks as u64);
     h.write_u64(identity.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(identity.recursive_setup_planning));
@@ -145,7 +149,8 @@ struct CatalogIdentityExpectation {
     ring_subfield_norm_bound: u32,
     claim_ext_degree: usize,
     chal_ext_degree: usize,
-    basis_range: (u32, u32),
+    inner_basis_range: (u32, u32),
+    opening_basis_range: (u32, u32),
     witness_chunk: akita_types::ChunkedWitnessCfg,
     recursive_setup_planning: bool,
 
@@ -176,7 +181,8 @@ impl CatalogIdentityExpectation {
             ring_subfield_norm_bound: identity.ring_subfield_norm_bound,
             claim_ext_degree: identity.claim_ext_degree,
             chal_ext_degree: identity.chal_ext_degree,
-            basis_range: identity.basis_range,
+            inner_basis_range: identity.inner_basis_range,
+            opening_basis_range: identity.opening_basis_range,
             witness_chunk: identity.witness_chunk,
             recursive_setup_planning: identity.recursive_setup_planning,
 
@@ -230,7 +236,8 @@ fn catalog_identity_expectation(
         ring_subfield_norm_bound: policy.ring_subfield_norm_bound,
         claim_ext_degree: policy.claim_ext_degree,
         chal_ext_degree: policy.chal_ext_degree,
-        basis_range: policy.basis_range,
+        inner_basis_range: policy.inner_basis_range,
+        opening_basis_range: policy.opening_basis_range,
         witness_chunk: policy.witness_chunk,
         recursive_setup_planning: policy.recursive_setup_planning,
 
@@ -275,7 +282,8 @@ pub fn expected_catalog_identity(
         ring_subfield_norm_bound: expected.ring_subfield_norm_bound,
         claim_ext_degree: expected.claim_ext_degree,
         chal_ext_degree: expected.chal_ext_degree,
-        basis_range: expected.basis_range,
+        inner_basis_range: expected.inner_basis_range,
+        opening_basis_range: expected.opening_basis_range,
         witness_chunk: expected.witness_chunk,
         recursive_setup_planning: expected.recursive_setup_planning,
 

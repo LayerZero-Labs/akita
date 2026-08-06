@@ -120,7 +120,10 @@ impl NttExecutionRequirements {
             params.inner_commit_matrix.ring_dimension(),
             params.inner_commit_matrix.output_rank(),
             params.inner_commit_matrix.input_width(),
-            NttTransformDomain::Negacyclic,
+            signed_commit_domain(
+                params.inner_commit_matrix.input_width(),
+                params.log_basis_inner,
+            ),
         )?;
         self.add_matrix(
             fold_level,
@@ -183,7 +186,10 @@ impl NttExecutionRequirements {
             params.inner_commit_matrix.ring_dimension(),
             params.inner_commit_matrix.output_rank(),
             params.inner_commit_matrix.input_width(),
-            NttTransformDomain::Negacyclic,
+            signed_commit_domain(
+                params.inner_commit_matrix.input_width(),
+                params.log_basis_inner,
+            ),
         )?;
         self.add_matrix(
             level,
@@ -273,8 +279,19 @@ impl NttExecutionRequirements {
             params.inner_commit_matrix.ring_dimension(),
             params.inner_commit_matrix.output_rank(),
             params.inner_commit_matrix.input_width(),
-            NttTransformDomain::Negacyclic,
+            signed_commit_domain(
+                params.inner_commit_matrix.input_width(),
+                params.log_basis_inner,
+            ),
         )
+    }
+}
+
+const fn signed_commit_domain(width: usize, log_basis: u32) -> NttTransformDomain {
+    if log_basis <= 8 {
+        NttTransformDomain::Negacyclic
+    } else {
+        NttTransformDomain::ExactNegacyclicI16 { width, log_basis }
     }
 }
 
@@ -291,6 +308,7 @@ const fn domain_order(domain: NttTransformDomain) -> u8 {
     match domain {
         NttTransformDomain::Negacyclic => 0,
         NttTransformDomain::Cyclic => 1,
+        NttTransformDomain::ExactNegacyclicI16 { .. } => 2,
     }
 }
 

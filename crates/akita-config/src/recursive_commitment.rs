@@ -55,8 +55,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         )
     }
 
-    fn basis_range() -> (u32, u32) {
-        Cfg::basis_range()
+    fn opening_basis_range() -> (u32, u32) {
+        Cfg::opening_basis_range()
     }
 
     fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {

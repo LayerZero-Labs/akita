@@ -175,13 +175,28 @@ pub fn num_digits_for_bound(log_bound: u32, field_bits: u32, log_basis: u32) -> 
 /// level commits the balanced-digit witness, whose commit bound collapses to
 /// `log_basis`.
 pub fn num_digits_inner(decomposition: DecompositionParams, is_root: bool) -> usize {
-    let field_bits = decomposition.field_bits();
     let bound = if is_root {
         decomposition.log_commit_bound
     } else {
         decomposition.log_basis
     };
-    num_digits_for_bound(bound, field_bits, decomposition.log_basis)
+    num_digits_inner_for_bound(decomposition, bound)
+}
+
+/// `δ_commit` for an explicit source coefficient bound.
+///
+/// This is the general planner entry point when the source bound and selected
+/// A decomposition basis are independent. `source_log_bound` follows the same
+/// signed-bound convention as [`num_digits_for_bound`].
+pub fn num_digits_inner_for_bound(
+    decomposition: DecompositionParams,
+    source_log_bound: u32,
+) -> usize {
+    num_digits_for_bound(
+        source_log_bound,
+        decomposition.field_bits(),
+        decomposition.log_basis,
+    )
 }
 
 /// `δ_setup`: digits per coefficient for setup-prefix commitments.

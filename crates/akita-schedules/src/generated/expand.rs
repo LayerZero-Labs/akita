@@ -1003,7 +1003,8 @@ mod tests {
             ring_subfield_norm_bound: 1,
             claim_ext_degree: 1,
             chal_ext_degree: 1,
-            basis_range: (3, 6),
+            inner_basis_range: (3, 16),
+            opening_basis_range: (3, 6),
             witness_chunk: ChunkedWitnessCfg::default(),
             recursive_setup_planning: true,
         }

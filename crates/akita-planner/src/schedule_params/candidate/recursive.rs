@@ -11,7 +11,9 @@ pub(crate) fn recursive_fold_level_params_candidate(
     dimensions: CommitmentRingDims,
     num_ring_elems: usize,
     reduced_vars: usize,
-    log_basis: u32,
+    source_log_bound: u32,
+    log_basis_inner: u32,
+    log_basis_open: u32,
     fold_level: usize,
     block_index_bits: usize,
     requested_fold_shape: TensorChallengeShape,
@@ -35,12 +37,16 @@ pub(crate) fn recursive_fold_level_params_candidate(
     }
     let fold_challenge_shape =
         optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
-    let decomp = DecompositionParams {
-        log_basis,
+    let inner_decomp = DecompositionParams {
+        log_basis: log_basis_inner,
         ..policy.decomposition
     };
-    let delta_commit = num_digits_inner(decomp, false);
-    let delta_open = num_digits_open(decomp);
+    let open_decomp = DecompositionParams {
+        log_basis: log_basis_open,
+        ..policy.decomposition
+    };
+    let delta_commit = num_digits_inner_for_bound(inner_decomp, source_log_bound);
+    let delta_open = num_digits_open(open_decomp);
     let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, delta_commit) else {
         return Ok(None);
     };
@@ -52,7 +58,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
     };
     let fold_policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
         policy.decomposition.field_bits(),
-        FoldWitnessNorms::bounded(decomp.log_basis, dimensions.d_a()),
+        FoldWitnessNorms::bounded(log_basis_inner, dimensions.d_a()),
     );
     let Ok(num_digits_fold) = fold_policy.num_digits_fold(HonestFoldSizingQuery {
         ring_dimension: dimensions.d_a(),
@@ -60,7 +66,8 @@ pub(crate) fn recursive_fold_level_params_candidate(
         num_live_blocks,
         num_chunks,
         num_fold_coeffs,
-        log_basis: decomp.log_basis,
+        witness_norms: FoldWitnessNorms::bounded(log_basis_inner, dimensions.d_a()),
+        log_basis_response: log_basis_open,
         challenge_config: ring_challenge_cfg,
         challenge_shape: fold_challenge_shape,
     }) else {
@@ -71,7 +78,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         policy.sis_table_digest,
         policy.sis_modulus_profile,
         dimensions.d_a(),
-        decomp.log_basis,
+        log_basis_open,
         ring_challenge_cfg,
         fold_challenge_shape,
         num_digits_fold,
@@ -104,7 +111,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         dimensions.d_a(),
         dimensions.d_b(),
         native_width_t,
-        log_basis,
+        log_basis_open,
     ) else {
         return Ok(None);
     };
@@ -122,7 +129,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         dimensions.d_a(),
         dimensions.d_d(),
         native_width_w,
-        log_basis,
+        log_basis_open,
     ) else {
         return Ok(None);
     };
@@ -132,9 +139,9 @@ pub(crate) fn recursive_fold_level_params_candidate(
     };
     let params = CommittedGroupParams {
         payload_mode: akita_types::CommitmentPayloadMode::Compressed,
-        log_basis_inner: log_basis,
-        log_basis_outer: log_basis,
-        log_basis_open: log_basis,
+        log_basis_inner,
+        log_basis_outer: log_basis_open,
+        log_basis_open,
         inner_commit_matrix,
         outer_commit_matrix,
         open_commit_matrix,
@@ -272,7 +279,7 @@ struct RecursiveLevelSearch {
     num_chunks: usize,
     num_ring_elems: usize,
     reduced_vars: usize,
-    setup_prefix: Option<akita_types::SetupPrefixSlotId>,
+    setup_prefixes: Vec<Option<akita_types::SetupPrefixSlotId>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -281,7 +288,7 @@ fn prepare_recursive_level_search(
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
     dimensions: CommitmentRingDims,
     current_witness_len: usize,
-    log_basis: u32,
+    log_basis_open: u32,
     fold_level: usize,
     incoming_setup_prefix: Option<usize>,
     requested_fold_shape: TensorChallengeShape,
@@ -309,31 +316,33 @@ fn prepare_recursive_level_search(
         )));
     }
 
-    let setup_prefix = match incoming_setup_prefix {
+    let setup_prefixes = match incoming_setup_prefix {
         Some(natural_len) => {
             let n_prefix = padded_setup_prefix_len(natural_len);
-            let Some(group) = derive_setup_prefix_group(
+            let groups = derive_setup_prefix_groups(
                 policy,
                 ring_challenge_cfg,
                 requested_fold_shape,
-                log_basis,
-                log_basis,
+                log_basis_open,
                 n_prefix,
                 num_chunks,
                 dimensions.d_b(),
-            )?
-            else {
+            )?;
+            if groups.is_empty() {
                 return Ok(None);
-            };
-            Some(akita_types::setup_prefix_slot_id(natural_len, group))
+            }
+            groups
+                .into_iter()
+                .map(|group| Some(akita_types::setup_prefix_slot_id(natural_len, group)))
+                .collect()
         }
-        None => None,
+        None => vec![None],
     };
     Ok(Some(RecursiveLevelSearch {
         num_chunks,
         num_ring_elems,
         reduced_vars,
-        setup_prefix,
+        setup_prefixes,
     }))
 }
 
@@ -344,7 +353,10 @@ fn recursive_level_candidate_for_split(
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
     dimensions: CommitmentRingDims,
     search: &RecursiveLevelSearch,
-    log_basis: u32,
+    setup_prefix: Option<&akita_types::SetupPrefixSlotId>,
+    source_log_bound: u32,
+    log_basis_inner: u32,
+    log_basis_open: u32,
     fold_level: usize,
     block_index_bits: usize,
     requested_fold_shape: TensorChallengeShape,
@@ -355,7 +367,9 @@ fn recursive_level_candidate_for_split(
         dimensions,
         search.num_ring_elems,
         search.reduced_vars,
-        log_basis,
+        source_log_bound,
+        log_basis_inner,
+        log_basis_open,
         fold_level,
         block_index_bits,
         requested_fold_shape,
@@ -364,7 +378,7 @@ fn recursive_level_candidate_for_split(
         return Ok(None);
     };
     candidate_params.payload_mode = payload_mode;
-    candidate_params.setup_prefix = search.setup_prefix.clone();
+    candidate_params.setup_prefix = setup_prefix.cloned();
     if let Some(prefix) = &candidate_params.setup_prefix {
         let prefix_d_width = prefix
             .commitment_params
@@ -406,7 +420,9 @@ pub(crate) fn derive_candidate_level_params(
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
     dimensions: CommitmentRingDims,
     current_witness_len: usize,
-    log_basis: u32,
+    source_log_bound: u32,
+    log_basis_inner: u32,
+    log_basis_open: u32,
     fold_level: usize,
     incoming_setup_prefix: Option<usize>,
     requested_fold_shape: TensorChallengeShape,
@@ -416,7 +432,7 @@ pub(crate) fn derive_candidate_level_params(
         ring_challenge_cfg,
         dimensions,
         current_witness_len,
-        log_basis,
+        log_basis_open,
         fold_level,
         incoming_setup_prefix,
         requested_fold_shape,
@@ -429,12 +445,16 @@ pub(crate) fn derive_candidate_level_params(
     // equal-scoring candidate. Keep that tie-break explicit because the
     // seed-first search intentionally evaluates splits in a different order.
     let mut best: Option<(LayoutCandidateScore, usize, CommittedGroupParams, usize)> = None;
-    let decomp = DecompositionParams {
-        log_basis,
+    let inner_decomp = DecompositionParams {
+        log_basis: log_basis_inner,
         ..policy.decomposition
     };
-    let delta_commit = num_digits_inner(decomp, false);
-    let delta_open = num_digits_open(decomp);
+    let open_decomp = DecompositionParams {
+        log_basis: log_basis_open,
+        ..policy.decomposition
+    };
+    let delta_commit = num_digits_inner_for_bound(inner_decomp, source_log_bound);
+    let delta_open = num_digits_open(open_decomp);
     let mut evaluated = Vec::new();
     let mut candidates = seed_recursive_split_candidates(
         search.num_ring_elems,
@@ -470,26 +490,31 @@ pub(crate) fn derive_candidate_level_params(
                 }
             }
         }
-        let Some((score, candidate_params, next_witness_len)) =
-            recursive_level_candidate_for_split(
-                policy,
-                payload_mode,
-                ring_challenge_cfg,
-                dimensions,
-                &search,
-                log_basis,
-                fold_level,
-                r,
-                requested_fold_shape,
-            )?
-        else {
-            continue;
-        };
-        if best.as_ref().is_none_or(|(best_score, best_r, _, _)| {
-            recursive_candidate_order_key(score, r)
-                < recursive_candidate_order_key(*best_score, *best_r)
-        }) {
-            best = Some((score, r, candidate_params, next_witness_len));
+        for setup_prefix in &search.setup_prefixes {
+            let Some((score, candidate_params, next_witness_len)) =
+                recursive_level_candidate_for_split(
+                    policy,
+                    payload_mode,
+                    ring_challenge_cfg,
+                    dimensions,
+                    &search,
+                    setup_prefix.as_ref(),
+                    source_log_bound,
+                    log_basis_inner,
+                    log_basis_open,
+                    fold_level,
+                    r,
+                    requested_fold_shape,
+                )?
+            else {
+                continue;
+            };
+            if best.as_ref().is_none_or(|(best_score, best_r, _, _)| {
+                recursive_candidate_order_key(score, r)
+                    < recursive_candidate_order_key(*best_score, *best_r)
+            }) {
+                best = Some((score, r, candidate_params, next_witness_len));
+            }
         }
     }
 
@@ -511,7 +536,9 @@ pub(crate) fn derive_candidate_level_params_all_splits(
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
     dimensions: CommitmentRingDims,
     current_witness_len: usize,
-    log_basis: u32,
+    source_log_bound: u32,
+    log_basis_inner: u32,
+    log_basis_open: u32,
     fold_level: usize,
     incoming_setup_prefix: Option<usize>,
     requested_fold_shape: TensorChallengeShape,
@@ -521,7 +548,7 @@ pub(crate) fn derive_candidate_level_params_all_splits(
         ring_challenge_cfg,
         dimensions,
         current_witness_len,
-        log_basis,
+        log_basis_open,
         fold_level,
         incoming_setup_prefix,
         requested_fold_shape,
@@ -531,22 +558,27 @@ pub(crate) fn derive_candidate_level_params_all_splits(
     };
     let mut candidates = Vec::new();
     for block_index_bits in (1..search.reduced_vars).rev() {
-        let Some((_, params, next_witness_len)) = recursive_level_candidate_for_split(
-            policy,
-            payload_mode,
-            ring_challenge_cfg,
-            dimensions,
-            &search,
-            log_basis,
-            fold_level,
-            block_index_bits,
-            requested_fold_shape,
-        )?
-        else {
-            continue;
-        };
-        if next_witness_len < current_witness_len {
-            candidates.push((params, next_witness_len));
+        for setup_prefix in &search.setup_prefixes {
+            let Some((_, params, next_witness_len)) = recursive_level_candidate_for_split(
+                policy,
+                payload_mode,
+                ring_challenge_cfg,
+                dimensions,
+                &search,
+                setup_prefix.as_ref(),
+                source_log_bound,
+                log_basis_inner,
+                log_basis_open,
+                fold_level,
+                block_index_bits,
+                requested_fold_shape,
+            )?
+            else {
+                continue;
+            };
+            if next_witness_len < current_witness_len {
+                candidates.push((params, next_witness_len));
+            }
         }
     }
     Ok(candidates)

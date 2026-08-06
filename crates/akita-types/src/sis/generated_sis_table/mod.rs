@@ -3,6 +3,11 @@
 // Generator certifies scalar cells (B, n) -> max m. The checked-in runtime artifact
 // stores the Module-SIS projection (d, B) -> max ring widths by rank, with
 // width[r-1] = cutoff_m(B, n = r * d) / d. Role coverage is validated before lookup.
+//
+// The 2026-08 high-norm A expansion (B > 67_108_863) uses the pinned
+// lattice-estimator-local-minimum profile. Q64/Q128 rows use the production
+// 6.4e12 search cap. Q32 rows at B >= 536_870_911 use a conservative 2M cap,
+// which is exposed as the corresponding runtime role-cell width ceiling.
 
 mod q128;
 mod q32;

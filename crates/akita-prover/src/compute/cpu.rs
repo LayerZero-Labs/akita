@@ -22,8 +22,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{
-    dispatch_for_field, prepare_ntt_cache, AkitaExpandedSetup, NttCacheKey, NttCacheMode,
-    NttTransformDomain, PreparedNttCache,
+    dispatch_for_field, ntt_cache_requires_i16_tail, prepare_ntt_cache, AkitaExpandedSetup,
+    NttCacheKey, NttCacheMode, NttTransformDomain, PreparedNttCache,
 };
 use std::any::Any;
 use std::array::from_fn;
@@ -192,6 +192,7 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
             let domain = match metric.key.domain {
                 NttTransformDomain::Negacyclic => 0,
                 NttTransformDomain::Cyclic => 1,
+                NttTransformDomain::ExactNegacyclicI16 { .. } => 2,
             };
             (metric.key.ring_d, domain, metric.key.num_ring_elements)
         });
@@ -217,16 +218,37 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
         }
         joined
             .into_iter()
-            .try_fold(0usize, |total, ((ring_d, _domain), count)| {
+            .try_fold(0usize, |total, ((ring_d, domain), count)| {
                 let profile =
                     dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, ring_d, |RING_D| {
                         selected_crt_i8_capacity_profile::<F, RING_D>()
                     })?;
-                count
+                let base_bytes = count
                     .checked_mul(ring_d)
                     .and_then(|bytes| bytes.checked_mul(profile.num_primes))
                     .and_then(|bytes| bytes.checked_mul(core::mem::size_of::<i32>()))
-                    .and_then(|bytes| total.checked_add(bytes))
+                    .ok_or_else(|| AkitaError::InvalidSetup("planned NTT bytes overflow".into()))?;
+                let tail_bytes = match domain {
+                    NttTransformDomain::ExactNegacyclicI16 { width, log_basis }
+                        if dispatch_for_field!(
+                            ProtocolDispatchSlot::Ntt,
+                            F,
+                            ring_d,
+                            |RING_D| ntt_cache_requires_i16_tail::<F, RING_D>(width, log_basis)
+                        )? =>
+                    {
+                        count
+                            .checked_mul(ring_d)
+                            .and_then(|bytes| bytes.checked_mul(core::mem::size_of::<i16>()))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup("planned i16-tail bytes overflow".into())
+                            })?
+                    }
+                    _ => 0,
+                };
+                total
+                    .checked_add(base_bytes)
+                    .and_then(|bytes| bytes.checked_add(tail_bytes))
                     .ok_or_else(|| AkitaError::InvalidSetup("planned NTT bytes overflow".into()))
             })
     }
@@ -263,6 +285,9 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
         let mode = match key.domain {
             NttTransformDomain::Negacyclic => NttCacheMode::Negacyclic,
             NttTransformDomain::Cyclic => NttCacheMode::Cyclic,
+            NttTransformDomain::ExactNegacyclicI16 { width, log_basis } => {
+                NttCacheMode::ExactNegacyclic { width, log_basis }
+            }
         };
         let cache = Arc::new(prepare_ntt_cache(view, mode)?);
         Ok(ErasedCpuNttCache {
@@ -483,7 +508,35 @@ where
                         AkitaError::InvalidSetup("dense coefficient row width overflow".to_string())
                     })
                 })?;
-                if plan.n_a == 1 {
+                if log_basis_inner > 8 {
+                    prepared.with_shared_ntt::<D, _>(
+                        NttCacheKey::from_matrix_shape(
+                            D,
+                            plan.n_a,
+                            row_width,
+                            NttTransformDomain::ExactNegacyclicI16 {
+                                width: row_width,
+                                log_basis: log_basis_inner,
+                            },
+                        )?,
+                        |ntt| {
+                            block_slices
+                                .iter()
+                                .map(|block| {
+                                    let mut rhs = vec![[0i16; D]; row_width];
+                                    for (ring_idx, ring) in block.iter().enumerate() {
+                                        let start = ring_idx * num_digits_inner;
+                                        ring.balanced_decompose_pow2_i16_into(
+                                            &mut rhs[start..start + num_digits_inner],
+                                            log_basis_inner,
+                                        );
+                                    }
+                                    ntt.mat_vec_i16::<F>(log_basis_inner, plan.n_a, &rhs)
+                                })
+                                .collect()
+                        },
+                    )
+                } else if plan.n_a == 1 {
                     prepared.with_shared_ntt::<D, _>(
                         NttCacheKey::from_matrix_shape(
                             D,
@@ -614,6 +667,45 @@ where
             return Err(AkitaError::InvalidSetup(
                 "recursive witness does not cover its live blocks".to_string(),
             ));
+        }
+        if plan.log_basis_inner > 8 {
+            return prepared.with_shared_ntt::<D, _>(
+                NttCacheKey::from_matrix_shape(
+                    D,
+                    plan.n_rows,
+                    row_width,
+                    NttTransformDomain::ExactNegacyclicI16 {
+                        width: row_width,
+                        log_basis: plan.log_basis_inner,
+                    },
+                )?,
+                |ntt| {
+                    plan.coeffs
+                        .chunks(plan.num_positions_per_block)
+                        .take(plan.num_live_blocks)
+                        .map(|block| {
+                            let mut rhs = vec![[0i16; D]; row_width];
+                            if plan.num_digits_inner == 1 {
+                                for (dst, src) in rhs.iter_mut().zip(block) {
+                                    *dst = from_fn(|k| i16::from(src[k]));
+                                }
+                            } else {
+                                for (ring_idx, digit) in block.iter().enumerate() {
+                                    let ring = CyclotomicRing::from_coefficients(from_fn(|k| {
+                                        F::from_i8(digit[k])
+                                    }));
+                                    let start = ring_idx * plan.num_digits_inner;
+                                    ring.balanced_decompose_pow2_i16_into(
+                                        &mut rhs[start..start + plan.num_digits_inner],
+                                        plan.log_basis_inner,
+                                    );
+                                }
+                            }
+                            ntt.mat_vec_i16::<F>(plan.log_basis_inner, plan.n_rows, &rhs)
+                        })
+                        .collect()
+                },
+            );
         }
         if plan.num_digits_inner == 1 {
             let blocks = plan
@@ -1367,6 +1459,68 @@ mod tests {
             .expect("recursive commit rows");
 
         assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn recursive_commit_selects_exact_i16_from_inner_basis() {
+        let prepared = prepared();
+        let coeffs = vec![[1i8; D], [-1i8; D]];
+        let commit = |log_basis_inner| {
+            CpuBackend
+                .recursive_witness_commit_rows(
+                    &prepared,
+                    RecursiveWitnessCommitRowsPlan {
+                        coeffs: &coeffs,
+                        n_rows: 1,
+                        num_positions_per_block: 2,
+                        num_live_blocks: 1,
+                        num_digits_inner: 1,
+                        log_basis_inner,
+                        known_balanced_log_basis: Some(2),
+                    },
+                )
+                .expect("recursive commit rows")
+        };
+
+        assert_eq!(commit(3), commit(11));
+        assert!(prepared.shared_ntt.lock().unwrap().contains_key(
+            &NttCacheKey::from_matrix_shape(
+                D,
+                1,
+                2,
+                NttTransformDomain::ExactNegacyclicI16 {
+                    width: 2,
+                    log_basis: 11,
+                },
+            )
+            .unwrap()
+        ));
+    }
+
+    #[test]
+    fn dense_coeff_commit_selects_exact_i16_from_inner_basis() {
+        let prepared = prepared();
+        let block = vec![
+            CyclotomicRing::from_coefficients([F::one(); D]),
+            CyclotomicRing::from_coefficients([F::from_i8(-1); D]),
+        ];
+        let commit = |log_basis_inner| {
+            CpuBackend
+                .dense_commit_rows(
+                    &prepared,
+                    DenseCommitRowsPlan {
+                        n_a: 1,
+                        input: DenseCommitInput::CoeffBlocks {
+                            block_slices: vec![block.as_slice()],
+                            num_digits_inner: 1,
+                            log_basis_inner,
+                        },
+                    },
+                )
+                .expect("dense commit rows")
+        };
+
+        assert_eq!(commit(3), commit(11));
     }
 
     #[test]

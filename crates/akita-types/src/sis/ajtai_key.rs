@@ -30,18 +30,18 @@ impl SisTableDigest {
 
     /// Digest committed by the current generated artifact.
     pub const CURRENT: Self = Self([
-        0xb4, 0x65, 0x7f, 0x62, 0x90, 0x61, 0x5c, 0xf3, 0x58, 0x55, 0x77, 0xd7, 0xad, 0x51, 0x9f,
-        0x9d, 0xc5, 0x5d, 0x4b, 0x8d, 0xcc, 0x63, 0x16, 0x11, 0x1b, 0x26, 0x70, 0x42, 0xac, 0x3b,
-        0x92, 0x94,
+        0x70, 0xef, 0x82, 0x20, 0x2e, 0x24, 0x47, 0x23, 0x34, 0x55, 0xfb, 0x59, 0x41, 0x19, 0x66,
+        0xf7, 0xa6, 0x8a, 0xed, 0x8e, 0xb4, 0xa9, 0xc1, 0x76, 0x7a, 0x92, 0x7a, 0xd9, 0xef, 0x8d,
+        0xbf, 0x3b,
     ]);
 
     /// Additive q128 Inner/512 coverage generated directly for `D = 512`.
     ///
     /// Existing schedules intentionally remain on [`Self::CURRENT`].
     pub const Q128_INNER_D512: Self = Self([
-        0xc2, 0x02, 0x7a, 0x80, 0xd8, 0x4b, 0x01, 0xdb, 0xbf, 0xfa, 0xe5, 0x71, 0xcb, 0x9b, 0xf0,
-        0xe9, 0x68, 0x6d, 0xb6, 0xe7, 0x62, 0xc5, 0xa4, 0x20, 0x2d, 0x5e, 0x53, 0xa3, 0x06, 0xe6,
-        0xca, 0xce,
+        0x91, 0xd6, 0x8c, 0x6d, 0x5a, 0x55, 0xb4, 0x0e, 0x58, 0xb8, 0x97, 0x11, 0xb2, 0x42, 0xdb,
+        0x3e, 0x66, 0xd8, 0x4d, 0x85, 0xa8, 0x0d, 0x4b, 0x30, 0xb0, 0x94, 0xc7, 0x58, 0x88, 0x4d,
+        0x78, 0x87,
     ]);
 }
 
@@ -203,9 +203,41 @@ pub const SUPPORTED_SIS_SECURITY_POLICIES: &[SisSecurityPolicyId] = &[DEFAULT_SI
 /// Keep in lockstep with `COEFF_LINF_BUCKETS` in
 /// `crates/akita-sis-estimator/src/width_table.rs`.
 pub const COEFF_LINF_BUCKETS: &[u128] = &[
-    2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535, 131_071,
-    262_143, 524_287, 1_048_575, 2_097_151, 4_194_303, 8_388_607, 16_777_215, 33_554_431,
+    2,
+    3,
+    7,
+    15,
+    31,
+    63,
+    127,
+    255,
+    511,
+    1023,
+    2047,
+    4095,
+    8191,
+    16383,
+    32767,
+    65535,
+    131_071,
+    262_143,
+    524_287,
+    1_048_575,
+    2_097_151,
+    4_194_303,
+    8_388_607,
+    16_777_215,
+    33_554_431,
     67_108_863,
+    134_217_727,
+    268_435_455,
+    536_870_911,
+    1_073_741_823,
+    2_147_483_647,
+    4_294_967_295,
+    8_589_934_591,
+    17_179_869_183,
+    34_359_738_367,
 ];
 
 /// Canonical key for a generated SIS floor row.
@@ -284,7 +316,11 @@ pub fn sis_role_cell(
             GADGET_COEFF_LINF_ANCHORS,
         ),
     };
-    if !dimension_supported || !bounds.contains(&coeff_linf_bound) {
+    let trivial_collision_bound = (modulus_profile.modulus() - 1) / 2;
+    if !dimension_supported
+        || !bounds.contains(&coeff_linf_bound)
+        || coeff_linf_bound >= trivial_collision_bound
+    {
         return None;
     }
     Some(SisRoleCell {
@@ -293,7 +329,17 @@ pub fn sis_role_cell(
         ring_dimension,
         coeff_linf_bound,
         max_module_rank: 20,
-        required_max_width: 6_400_000_000_000,
+        required_max_width: if modulus_profile == SisModulusProfileId::Q32Offset99
+            && coeff_linf_bound >= 536_870_911
+        {
+            // These near-half-modulus q32 cells are deliberately certified only
+            // over the planner's dense/setup-prefix width regime.  The emitted
+            // rows use the same estimator and policy with an explicit 2M cap;
+            // callers needing a wider A matrix must choose another cell.
+            2_000_000
+        } else {
+            6_400_000_000_000
+        },
     })
 }
 
@@ -808,6 +854,29 @@ mod tests {
         assert_eq!(ceil_coeff_linf_bucket(1_048_574), Some(1_048_575));
         assert_eq!(ceil_coeff_linf_bucket(1_048_575), Some(1_048_575));
         assert_eq!(ceil_coeff_linf_bucket(1_048_576), Some(2_097_151));
+        assert_eq!(ceil_coeff_linf_bucket(67_108_864), Some(134_217_727));
+        assert_eq!(ceil_coeff_linf_bucket(297_196_256), Some(536_870_911));
+        assert_eq!(ceil_coeff_linf_bucket(4_294_967_296), Some(8_589_934_591));
+        assert_eq!(ceil_coeff_linf_bucket(34_359_738_368), None);
+    }
+
+    #[test]
+    fn q32_high_norm_cells_are_explicitly_width_limited() {
+        let capped = sis_role_cell(
+            SisMatrixRole::Inner,
+            SisModulusProfileId::Q32Offset99,
+            128,
+            536_870_911,
+        )
+        .expect("q32 high-norm A cell");
+        assert_eq!(capped.required_max_width, 2_000_000);
+        assert!(sis_role_cell(
+            SisMatrixRole::Inner,
+            SisModulusProfileId::Q32Offset99,
+            128,
+            2_147_483_647,
+        )
+        .is_none());
     }
 
     #[test]

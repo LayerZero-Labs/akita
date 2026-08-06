@@ -7,7 +7,7 @@ use crate::compute::{
     UniformProverStack,
 };
 use crate::kernels::linear::decompose_commit_blocks_into;
-use crate::validation::validate_i8_setup_log_basis;
+use crate::validation::{validate_i16_setup_log_basis, validate_i8_setup_log_basis};
 use crate::{CommitInnerWitness, RootTensorProjectionPoly};
 use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
 use akita_field::parallel::*;
@@ -92,9 +92,9 @@ where
             "commit params require nonzero digit depths".to_string(),
         ));
     }
-    validate_i8_setup_log_basis(
+    validate_i16_setup_log_basis(
         params.log_basis_inner,
-        "for i8 witness commitment decomposition",
+        "for signed witness commitment decomposition",
     )?;
     validate_i8_setup_log_basis(
         params.log_basis_outer,
@@ -166,9 +166,9 @@ where
     F: FieldCore + CanonicalField,
 {
     profile.validate_frozen_precommit(F::modulus_bits())?;
-    validate_i8_setup_log_basis(
+    validate_i16_setup_log_basis(
         profile.log_basis_inner,
-        "for i8 witness commitment decomposition",
+        "for signed witness commitment decomposition",
     )?;
     validate_i8_setup_log_basis(
         profile.log_basis_outer,

@@ -661,10 +661,9 @@ impl CommittedGroupParams {
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
-        if self.log_basis_open < self.log_basis_inner || self.log_basis_open < self.log_basis_outer
-        {
+        if self.log_basis_open < self.log_basis_outer {
             return Err(AkitaError::InvalidSetup(
-                "certified opening basis must dominate level inner/outer bases".to_string(),
+                "certified opening basis must dominate the level outer basis".to_string(),
             ));
         }
         if opening_batch.num_groups() != self.group_count() {

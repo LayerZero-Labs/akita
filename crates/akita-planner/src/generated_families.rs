@@ -83,12 +83,15 @@ const FP128_D64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::new(16, 2),
     PolynomialGroupLayout::new(17, 4),
     PolynomialGroupLayout::singleton(24),
+    PolynomialGroupLayout::singleton(26),
     PolynomialGroupLayout::singleton(28),
     PolynomialGroupLayout::singleton(30),
     PolynomialGroupLayout::singleton(32),
     PolynomialGroupLayout::singleton(44),
     PolynomialGroupLayout::singleton(50),
 ];
+
+const FP32_D128_DENSE_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(26)];
 
 const FP128_D64_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(10),
@@ -150,6 +153,7 @@ const FP32_D256_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout:
 const FP64_D128_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
     PolynomialGroupLayout::singleton(20),
+    PolynomialGroupLayout::singleton(26),
 ];
 
 const FP64_D128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(28)];
@@ -871,6 +875,13 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp64-d256-onehot",
         FP64_D256_ONEHOT_KEYS,
         fp64::D256OneHot
+    ),
+    family_row!(
+        "fp32_d128_dense",
+        "FP32_D128_DENSE_SCHEDULES",
+        "fp32-d128-dense",
+        FP32_D128_DENSE_KEYS,
+        fp32::D128Dense
     ),
     family_row!(
         "fp32_d128_onehot",

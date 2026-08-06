@@ -11,13 +11,20 @@ pub(crate) enum CompleteScheduleScore {
         setup_field_elements: usize,
         descriptor: Vec<u8>,
     },
+    DirectNextWitness {
+        next_witness_len: usize,
+        proof_bytes: usize,
+        setup_field_elements: usize,
+        descriptor: Vec<u8>,
+    },
     MixedDimension {
         setup_field_elements: usize,
         proof_bytes: usize,
         descriptor: Vec<u8>,
     },
     RecursiveSetup {
-        first_direct_setup_field_len: usize,
+        first_direct_setup_padded_field_len: usize,
+        next_witness_len: usize,
         proof_bytes: usize,
         setup_field_elements: usize,
         descriptor: Vec<u8>,
@@ -35,6 +42,14 @@ pub(crate) fn complete_schedule_score(
             setup_field_elements: candidate.setup_field_elements,
             descriptor,
         }),
+        SelectionPolicyId::MinNextWitnessThenPayload => {
+            Ok(CompleteScheduleScore::DirectNextWitness {
+                next_witness_len: candidate.first_output_witness_len_or_max(),
+                proof_bytes: candidate.total_bytes,
+                setup_field_elements: candidate.setup_field_elements,
+                descriptor,
+            })
+        }
         SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
             Ok(CompleteScheduleScore::MixedDimension {
                 setup_field_elements: candidate.setup_field_elements,
@@ -50,7 +65,10 @@ pub(crate) fn complete_schedule_score(
                     )
                 })?;
             Ok(CompleteScheduleScore::RecursiveSetup {
-                first_direct_setup_field_len,
+                first_direct_setup_padded_field_len: akita_types::padded_setup_prefix_len(
+                    first_direct_setup_field_len,
+                ),
+                next_witness_len: candidate.first_output_witness_len_or_max(),
                 proof_bytes: candidate.total_bytes,
                 setup_field_elements: candidate.setup_field_elements,
                 descriptor,

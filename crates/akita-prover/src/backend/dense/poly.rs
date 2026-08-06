@@ -293,6 +293,9 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
         num_digits: usize,
         log_basis: u32,
     ) -> Option<&[[i8; D]]> {
+        if log_basis > 8 {
+            return None;
+        }
         if let Some(cache) = self.digit_cache.get() {
             // A cache built at another dimension is not reused: returning
             // `None` falls back to the uncached path, exactly like a

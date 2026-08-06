@@ -100,6 +100,7 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
         "fp64_d128_dense" => fp64::D128Dense::schedule_catalog().is_some(),
         "fp64_d128_onehot" => fp64::D128OneHot::schedule_catalog().is_some(),
         "fp64_d256_onehot" => fp64::D256OneHot::schedule_catalog().is_some(),
+        "fp32_d128_dense" => fp32::D128Dense::schedule_catalog().is_some(),
         "fp32_d128_onehot" => fp32::D128OneHot::schedule_catalog().is_some(),
         "fp32_d256_onehot" => fp32::D256OneHot::schedule_catalog().is_some(),
         other => panic!("unknown generated family for catalog guard: {other}"),
@@ -373,6 +374,7 @@ fn family_catalog(
         "fp64_d128_dense" => prepare_family_catalog::<fp64::D128Dense>(family, keys),
         "fp64_d128_onehot" => prepare_family_catalog::<fp64::D128OneHot>(family, keys),
         "fp64_d256_onehot" => prepare_family_catalog::<fp64::D256OneHot>(family, keys),
+        "fp32_d128_dense" => prepare_family_catalog::<fp32::D128Dense>(family, keys),
         "fp32_d128_onehot" => prepare_family_catalog::<fp32::D128OneHot>(family, keys),
         "fp32_d256_onehot" => prepare_family_catalog::<fp32::D256OneHot>(family, keys),
         other => panic!("unknown generated family for catalog guard: {other}"),
@@ -454,6 +456,9 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, requests: &[Gro
         }
         "fp64_d256_onehot" => {
             assert_group_batch_table_hits::<fp64::D256OneHot>(family.module_name, requests)
+        }
+        "fp32_d128_dense" => {
+            assert_group_batch_table_hits::<fp32::D128Dense>(family.module_name, requests)
         }
         "fp32_d128_onehot" => {
             assert_group_batch_table_hits::<fp32::D128OneHot>(family.module_name, requests)
@@ -537,6 +542,7 @@ fn resolve_family_group_batch_schedule(
         "fp64_d128_dense" => table_backed_group_batch_schedule::<fp64::D128Dense>(request),
         "fp64_d128_onehot" => table_backed_group_batch_schedule::<fp64::D128OneHot>(request),
         "fp64_d256_onehot" => table_backed_group_batch_schedule::<fp64::D256OneHot>(request),
+        "fp32_d128_dense" => table_backed_group_batch_schedule::<fp32::D128Dense>(request),
         "fp32_d128_onehot" => table_backed_group_batch_schedule::<fp32::D128OneHot>(request),
         "fp32_d256_onehot" => table_backed_group_batch_schedule::<fp32::D256OneHot>(request),
         other => panic!("unknown generated family for multi-group schedule guard: {other}"),
@@ -954,5 +960,114 @@ fn generated_schedule_tables_match_key_planner() {
          Regenerate the generated tables with:\n  {hint}",
         count = mismatches.len(),
         hint = regen_hint(),
+    );
+}
+
+#[test]
+fn dense_nv26_independent_inner_basis_snapshots() {
+    #[derive(Debug, PartialEq, Eq)]
+    struct Snapshot {
+        inner_basis: u32,
+        opening_basis: u32,
+        positions: usize,
+        blocks: usize,
+        inner_digits: usize,
+        n_a: usize,
+        n_b: usize,
+        n_d: usize,
+        a_input_raw: usize,
+        a_output_raw: usize,
+        b_input_raw: usize,
+        b_output_raw: usize,
+        d_input_raw: usize,
+        d_output_raw: usize,
+        next_witness: usize,
+    }
+
+    fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
+        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(26),
+        ))
+        .expect("generated dense nv=26 schedule");
+        let root = &schedule.root.params.final_group.commitment;
+        let dims = root.role_dims();
+        Snapshot {
+            inner_basis: root.log_basis_inner,
+            opening_basis: root.log_basis_open,
+            positions: root.num_positions_per_block,
+            blocks: root.num_live_blocks,
+            inner_digits: root.num_digits_inner,
+            n_a: root.inner_commit_matrix.output_rank(),
+            n_b: root.outer_commit_matrix.output_rank(),
+            n_d: root.open_commit_matrix.output_rank(),
+            a_input_raw: root.inner_commit_matrix.input_width() * dims.d_a(),
+            a_output_raw: root.inner_commit_matrix.output_rank() * dims.d_a(),
+            b_input_raw: root.outer_commit_matrix.input_width() * dims.d_b(),
+            b_output_raw: root.outer_commit_matrix.output_rank() * dims.d_b(),
+            d_input_raw: root.open_commit_matrix.input_width() * dims.d_d(),
+            d_output_raw: root.open_commit_matrix.output_rank() * dims.d_d(),
+            next_witness: schedule.root.output_witness_len,
+        }
+    }
+
+    assert_eq!(
+        snapshot::<fp32::D128Dense>(),
+        Snapshot {
+            inner_basis: 11,
+            opening_basis: 3,
+            positions: 2048,
+            blocks: 256,
+            inner_digits: 3,
+            n_a: 15,
+            n_b: 2,
+            n_d: 2,
+            a_input_raw: 786_432,
+            a_output_raw: 1_920,
+            b_input_raw: 5_406_720,
+            b_output_raw: 256,
+            d_input_raw: 360_448,
+            d_output_raw: 256,
+            next_witness: 11_323_008,
+        }
+    );
+    assert_eq!(
+        snapshot::<fp64::D128Dense>(),
+        Snapshot {
+            inner_basis: 11,
+            opening_basis: 3,
+            positions: 2048,
+            blocks: 256,
+            inner_digits: 6,
+            n_a: 9,
+            n_b: 1,
+            n_d: 1,
+            a_input_raw: 1_572_864,
+            a_output_raw: 1_152,
+            b_input_raw: 6_488_064,
+            b_output_raw: 128,
+            d_input_raw: 720_896,
+            d_output_raw: 128,
+            next_witness: 18_275_456,
+        }
+    );
+    assert_eq!(
+        snapshot::<fp128::D64Dense>(),
+        Snapshot {
+            inner_basis: 11,
+            opening_basis: 3,
+            positions: 2048,
+            blocks: 512,
+            inner_digits: 12,
+            n_a: 9,
+            n_b: 1,
+            n_d: 1,
+            a_input_raw: 1_572_864,
+            a_output_raw: 576,
+            b_input_raw: 12_681_216,
+            b_output_raw: 64,
+            d_input_raw: 1_409_024,
+            d_output_raw: 64,
+            next_witness: 25_155_904,
+        }
     );
 }

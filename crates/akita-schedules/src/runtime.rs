@@ -39,6 +39,8 @@ impl PlannerCostModelId {
 pub enum SelectionPolicyId {
     /// Pick proof bytes, then physical setup fields, then canonical descriptor.
     MinEstimatedProofPayload,
+    /// Pick the first emitted recursive witness, then proof bytes, setup, and descriptor.
+    MinNextWitnessThenPayload,
     /// Pick physical setup fields, then proof bytes, then canonical descriptor.
     MinSetupMatrixFieldElementsThenProofPayload,
     /// Pick first direct setup, proof bytes, total setup, then descriptor.
@@ -58,7 +60,7 @@ impl SelectionPolicyId {
         {
             Self::MinSetupMatrixFieldElementsThenProofPayload
         } else {
-            Self::MinEstimatedProofPayload
+            Self::MinNextWitnessThenPayload
         }
     }
 
@@ -68,6 +70,7 @@ impl SelectionPolicyId {
             Self::MinEstimatedProofPayload => 1,
             Self::MinFirstDirectSetupThenPayload => 2,
             Self::MinSetupMatrixFieldElementsThenProofPayload => 3,
+            Self::MinNextWitnessThenPayload => 4,
         }
     }
 
@@ -75,6 +78,7 @@ impl SelectionPolicyId {
     pub const fn name(self) -> &'static str {
         match self {
             Self::MinEstimatedProofPayload => "MinEstimatedProofPayload",
+            Self::MinNextWitnessThenPayload => "MinNextWitnessThenPayload",
             Self::MinSetupMatrixFieldElementsThenProofPayload => {
                 "MinSetupMatrixFieldElementsThenProofPayload"
             }
@@ -112,7 +116,10 @@ pub struct PlannerPolicy {
     pub ring_subfield_norm_bound: u32,
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
-    pub basis_range: (u32, u32),
+    /// Inclusive A/source decomposition basis domain at every level.
+    pub inner_basis_range: (u32, u32),
+    /// Inclusive B/D opening and folded-response basis domain.
+    pub opening_basis_range: (u32, u32),
     pub witness_chunk: ChunkedWitnessCfg,
     pub recursive_setup_planning: bool,
 }
@@ -203,11 +210,16 @@ impl PlannerPolicy {
     /// search the full configured range, while the suffix DP separately enforces
     /// non-decreasing bases across adjacent folds.
     pub fn log_basis_search_range_at_level(&self, level: usize) -> (u32, u32) {
-        let (configured_min, max) = self.basis_range;
+        let (configured_min, max) = self.opening_basis_range;
         if level == 0 {
             return (configured_min, configured_min);
         }
         (configured_min, max)
+    }
+
+    /// Inclusive A/source decomposition basis domain.
+    pub const fn inner_basis_search_range(&self) -> (u32, u32) {
+        self.inner_basis_range
     }
 }
 
@@ -250,6 +262,16 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
         return Err(AkitaError::InvalidSetup(
             "minimum offloaded witness contraction must be positive".to_string(),
         ));
+    }
+    for (label, (min, max), supported_max) in [
+        ("opening", policy.opening_basis_range, 8),
+        ("inner", policy.inner_basis_range, 16),
+    ] {
+        if min == 0 || min > max || max > supported_max {
+            return Err(AkitaError::InvalidSetup(format!(
+                "{label} basis range [{min}, {max}] is outside 1..={supported_max}"
+            )));
+        }
     }
     policy.witness_chunk.validate()?;
     if policy.witness_chunk.num_activated_levels > MAX_RECURSION_DEPTH {

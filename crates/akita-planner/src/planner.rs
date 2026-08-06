@@ -4,9 +4,10 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
     compute_num_digits_field_width, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, num_digits_inner, num_digits_open, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
+    decomposed_w_ring_count, num_digits_inner_for_bound, num_digits_open,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, HonestFoldPolicy,
+    HonestFoldPolicySpec, HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams,
 };
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams,
@@ -140,7 +141,10 @@ fn materialize_precommitted_group_for_open_basis(
             num_live_blocks: group.layout.num_live_blocks,
             num_chunks,
             num_fold_coeffs,
-            log_basis: log_basis_open,
+            witness_norms: group
+                .honest_fold_policy
+                .witness_norms_for_inner_basis(group.layout.log_basis_inner, ring_dimension),
+            log_basis_response: log_basis_open,
             challenge_config: ring_challenge_cfg,
             challenge_shape,
         })?;
@@ -271,7 +275,8 @@ pub(crate) fn root_level_candidates_for_basis(
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     requested_fold_shape: TensorChallengeShape,
     root_input_witness_len: usize,
-    candidate_log_basis: u32,
+    candidate_log_basis_inner: u32,
+    candidate_log_basis_open: u32,
     require_witness_contraction: bool,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     dimensions.validate_role_projection()?;
@@ -308,14 +313,16 @@ pub(crate) fn root_level_candidates_for_basis(
             policy,
             ring_challenge_config,
             dimensions.d_d(),
-            candidate_log_basis,
+            candidate_log_basis_open,
         )?;
     for block_index_bits in (min_block_index_bits..=max_block_index_bits).rev() {
         let position_index_bits = reduced_vars - block_index_bits;
         let Some(mut candidate_params) = root_final_group_level_params_candidate(
             &candidate_ctx,
             key.final_group.num_polynomials(),
-            candidate_log_basis,
+            policy.decomposition.log_commit_bound,
+            candidate_log_basis_inner,
+            candidate_log_basis_open,
             position_index_bits,
             block_index_bits,
             &candidate_precommitted_groups,
@@ -344,7 +351,7 @@ pub(crate) fn root_level_candidates_for_basis(
         };
         if require_witness_contraction
             && output_witness_len
-                .checked_mul(candidate_log_basis as usize)
+                .checked_mul(candidate_log_basis_open as usize)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("root batch next witness bit length overflow".into())
                 })?
@@ -361,7 +368,9 @@ pub(crate) fn root_level_candidates_for_basis(
 fn root_final_group_level_params_candidate(
     ctx: &MultiGroupRootCandidateCtx<'_>,
     main_num_polys: usize,
-    log_basis: u32,
+    source_log_bound: u32,
+    log_basis_inner: u32,
+    log_basis_open: u32,
     position_index_bits: usize,
     block_index_bits: usize,
     precommitted_groups: &[PrecommittedLevelParams],
@@ -373,15 +382,14 @@ fn root_final_group_level_params_candidate(
     let family = policy.sis_modulus_profile;
     let decomp = ctx.policy.decomposition;
     let level_decomp = DecompositionParams {
-        log_basis,
+        log_basis: log_basis_open,
         ..decomp
     };
-    let log_basis_inner = log_basis;
     let witness_decomp = DecompositionParams {
         log_basis: log_basis_inner,
         ..decomp
     };
-    let num_digits_inner = num_digits_inner(witness_decomp, true);
+    let num_digits_inner = num_digits_inner_for_bound(witness_decomp, source_log_bound);
     let num_digits_outer = num_digits_open(level_decomp);
     let num_digits_open = num_digits_outer;
     let Some(num_live_blocks) = 1usize.checked_shl(block_index_bits as u32) else {
@@ -417,7 +425,10 @@ fn root_final_group_level_params_candidate(
             num_live_blocks,
             num_chunks,
             num_fold_coeffs,
-            log_basis,
+            witness_norms: ctx
+                .final_honest_fold_policy
+                .witness_norms_for_inner_basis(log_basis_inner, d_a),
+            log_basis_response: log_basis_open,
             challenge_config: ctx.ring_challenge_cfg,
             challenge_shape: fold_challenge_shape,
         })
@@ -429,7 +440,7 @@ fn root_final_group_level_params_candidate(
         policy.sis_table_digest,
         family,
         d_a,
-        log_basis,
+        log_basis_open,
         ctx.ring_challenge_cfg,
         fold_challenge_shape,
         num_digits_fold,
@@ -456,7 +467,7 @@ fn root_final_group_level_params_candidate(
         d_a,
         dimensions.d_b(),
         width_t,
-        log_basis,
+        log_basis_open,
     ) else {
         return Ok(None);
     };
@@ -480,7 +491,7 @@ fn root_final_group_level_params_candidate(
         d_a,
         dimensions.d_d(),
         d_width,
-        log_basis,
+        log_basis_open,
     ) else {
         return Ok(None);
     };
@@ -492,8 +503,8 @@ fn root_final_group_level_params_candidate(
     let params = CommittedGroupParams {
         payload_mode: akita_types::CommitmentPayloadMode::Compressed,
         log_basis_inner,
-        log_basis_outer: log_basis,
-        log_basis_open: log_basis,
+        log_basis_outer: log_basis_open,
+        log_basis_open,
         inner_commit_matrix,
         outer_commit_matrix,
         open_commit_matrix,
@@ -651,7 +662,8 @@ pub fn find_schedule(
         0,
     )?;
     let best = match active_policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayload => {
+        crate::SelectionPolicyId::MinEstimatedProofPayload
+        | crate::SelectionPolicyId::MinNextWitnessThenPayload => {
             select_complete_candidate(active_policy, suffix.best_by_payload_per_lb.values())?
         }
         crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {

@@ -32,7 +32,10 @@ fn precommit_config_commit_returns_exact_frozen_layout() {
         layout.num_positions_per_block
     );
     assert_eq!(frozen_layout.num_live_blocks, layout.num_live_blocks);
-    assert_eq!(frozen_layout.log_basis_outer, OneHotCfg::basis_range().0);
+    assert_eq!(
+        frozen_layout.log_basis_outer,
+        OneHotCfg::opening_basis_range().0
+    );
     assert_eq!(
         frozen_layout.inner_commit_matrix.output_rank(),
         layout.inner_commit_matrix.output_rank()

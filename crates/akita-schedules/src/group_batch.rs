@@ -78,11 +78,9 @@ fn materialize_precommitted_group_for_open_basis(
     ring_challenge_cfg: &SparseChallengeConfig,
     log_basis_open: u32,
 ) -> Result<PrecommittedLevelParams, AkitaError> {
-    if log_basis_open < group.layout.log_basis_inner
-        || log_basis_open < group.layout.log_basis_outer
-    {
+    if log_basis_open < group.layout.log_basis_outer {
         return Err(AkitaError::InvalidSetup(
-            "certified opening basis must dominate precommitted inner/outer bases".to_string(),
+            "certified opening basis must dominate the precommitted outer basis".to_string(),
         ));
     }
     let open_decomp = DecompositionParams {

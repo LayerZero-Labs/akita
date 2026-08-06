@@ -177,6 +177,14 @@ struct ProfileMode {
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), feature = "profile-ci"))]
 const PROFILE_CI_MODES: &[ProfileMode] = &[
     ProfileMode {
+        name: "dense_fp32_d128",
+        run: run_profile_dense_fp32_d128,
+    },
+    ProfileMode {
+        name: "dense_fp64_d128",
+        run: run_profile_dense_fp64_d128,
+    },
+    ProfileMode {
         name: "dense_fp128_d64",
         run: run_profile_dense_fp128_d64,
     },
@@ -285,6 +293,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         run: run_profile_dense_fp64_d64,
     },
     ProfileMode {
+        name: "dense_fp64_d128",
+        run: run_profile_dense_fp64_d128,
+    },
+    ProfileMode {
         name: "onehot_fp64_d64",
         run: run_profile_onehot_fp64_d64,
     },
@@ -321,6 +333,7 @@ const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "dense_fp128_d128",
     "onehot_fp128_d128",
     "dense_fp32_d128",
+    "dense_fp64_d128",
     "onehot_fp32_d128",
     "onehot_fp64_d128",
 ];
@@ -366,7 +379,6 @@ fn small_field_onehot_title(field_label: &str, d: usize, nv: usize, num_polys: u
     }
 }
 
-#[cfg(not(feature = "profile-ci"))]
 fn small_field_dense_title(field_label: &str, d: usize) -> String {
     let schedule = small_field_schedule_source(d);
     format!("=== dense_{field_label}_d{d} ({field_label}, D={d}, {schedule}) ===")
@@ -578,12 +590,18 @@ fn run_profile_dense_fp32_d64(nv: usize, num_polys: usize) {
     run_dense_mode_for::<fp32::Field, { Cfg::D }, Cfg>("dense_fp32_d64", &title, nv);
 }
 
-#[cfg(not(feature = "profile-ci"))]
 fn run_profile_dense_fp32_d128(nv: usize, num_polys: usize) {
     type Cfg = fp32::D128Dense;
     assert_singleton_mode("dense_fp32_d128", num_polys);
     let title = small_field_dense_title("fp32", Cfg::D);
     run_dense_mode_for::<fp32::Field, { Cfg::D }, Cfg>("dense_fp32_d128", &title, nv);
+}
+
+fn run_profile_dense_fp64_d128(nv: usize, num_polys: usize) {
+    type Cfg = fp64::D128Dense;
+    assert_singleton_mode("dense_fp64_d128", num_polys);
+    let title = small_field_dense_title("fp64", Cfg::D);
+    run_dense_mode_for::<fp64::Field, { Cfg::D }, Cfg>("dense_fp64_d128", &title, nv);
 }
 
 fn run_profile_onehot_fp32_d128(nv: usize, num_polys: usize) {

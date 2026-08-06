@@ -66,7 +66,7 @@ pub mod fp128 {
             )
         }
 
-        fn basis_range() -> (u32, u32) {
+        fn opening_basis_range() -> (u32, u32) {
             (
                 crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
                 crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
