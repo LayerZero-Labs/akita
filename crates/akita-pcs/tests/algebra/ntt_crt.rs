@@ -535,7 +535,7 @@ fn parameter_set_records_detected_host_plan() {
         F::from_u64(((i as u64 * 13) + 9) % Q32_MODULUS)
     }));
 
-    assert_eq!(params.kernel_plan, NttKernelPlan::detect::<i32>());
+    assert_eq!(params.kernel_plan(), NttKernelPlan::detect::<i32>());
     let ntt = N::from_ring(&ring, &params);
     assert_eq!(ntt.to_ring::<F>(&params), ring);
 }

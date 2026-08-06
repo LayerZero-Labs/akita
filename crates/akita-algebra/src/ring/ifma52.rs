@@ -1,5 +1,6 @@
 //! Limb-major prepared matrices over canonical 50-bit IFMA residues.
 
+use crate::ntt::crt::{modular_inverse, GarnerData};
 use crate::ntt::ifma52::{
     forward, ifma52_enabled, inverse, pointwise_dot_accumulate, Ifma52Prime, Ifma52Twiddles,
 };
@@ -20,7 +21,7 @@ struct Ifma52I16Tail<const K: usize> {
 pub struct Ifma52Params<const K: usize, const D: usize> {
     primes: [Ifma52Prime; K],
     twiddles: [Ifma52Twiddles<D>; K],
-    gamma: [[u64; K]; K],
+    garner: GarnerData<K>,
     use_ifma: bool,
     i16_tail: Option<Ifma52I16Tail<K>>,
 }
@@ -46,19 +47,11 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
             .collect::<Result<Vec<_>, _>>()?
             .try_into()
             .map_err(|_| AkitaError::InvalidSetup("IFMA52 twiddle count mismatch".into()))?;
-        let mut gamma = [[0; K]; K];
-        for index in 1..K {
-            for prior in 0..index {
-                gamma[index][prior] = modular_inverse(
-                    primes[prior].modulus % primes[index].modulus,
-                    primes[index].modulus,
-                )?;
-            }
-        }
+        let garner = GarnerData::try_from_moduli(moduli)?;
         Ok(Self {
             primes,
             twiddles,
-            gamma,
+            garner,
             use_ifma: ifma52_enabled(),
             i16_tail: None,
         })
@@ -128,28 +121,13 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
         });
         let tail_field_weight = field_product;
         let coefficients = std::array::from_fn(|coefficient| {
-            let mut digits = [0i64; K];
-            let first = canonical[0][coefficient];
-            digits[0] = center(first, self.primes[0].modulus);
-            for index in 1..K {
-                let modulus = i128::from(self.primes[index].modulus);
-                let mut digit = i128::from(center(
-                    canonical[index][coefficient],
-                    self.primes[index].modulus,
-                ));
-                for (prior, prior_digit) in digits.iter().enumerate().take(index) {
-                    digit = (digit - i128::from(*prior_digit)).rem_euclid(modulus);
-                    digit = (digit * i128::from(self.gamma[index][prior])).rem_euclid(modulus);
-                }
-                if digit > modulus / 2 {
-                    digit -= modulus;
-                }
-                digits[index] = digit as i64;
-            }
+            let moduli = self.primes.map(|prime| prime.modulus);
+            let residues = std::array::from_fn(|limb| i128::from(canonical[limb][coefficient]));
+            let digits = self.garner.centered_mixed_radix(residues, moduli);
 
             let mut result = F::zero();
             for (digit, weight) in digits.iter().zip(field_weights) {
-                result += F::from_i64(*digit) * weight;
+                result += F::from_i128(*digit) * weight;
             }
             if let (Some(tail), Some(tail_canonical)) = (&self.i16_tail, tail_canonical) {
                 let tail_digit = i128::from(tail_canonical[coefficient])
@@ -157,7 +135,7 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
                     + digits
                         .iter()
                         .zip(tail.digit_weights)
-                        .map(|(digit, weight)| i128::from(*digit) * i128::from(weight))
+                        .map(|(digit, weight)| *digit * i128::from(weight))
                         .sum::<i128>();
                 let tail_modulus = i128::from(tail.modulus);
                 let mut tail_digit = tail_digit.rem_euclid(tail_modulus);
@@ -179,6 +157,7 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
 #[derive(Debug)]
 pub struct Ifma52NttMatrix<const K: usize, const D: usize> {
     limbs: [Vec<[u64; D]>; K],
+    params: Ifma52Params<K, D>,
 }
 
 impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
@@ -201,7 +180,10 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
                 limb.push(transformed);
             }
         }
-        Self { limbs }
+        Self {
+            limbs,
+            params: params.clone(),
+        }
     }
 
     /// In-memory byte footprint of the prepared matrix.
@@ -222,15 +204,26 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         self.len() == 0
     }
 
+    /// Exact CRT capacity of the parameters bound to this matrix.
+    #[must_use]
+    pub fn crt_capacity(&self) -> CrtCapacity {
+        self.params.crt_capacity()
+    }
+
+    /// Whether the bound parameters require an exactness-only i16 tail.
+    #[must_use]
+    pub const fn has_i16_tail(&self) -> bool {
+        self.params.has_i16_tail()
+    }
+
     /// Multiply by one exact signed-i16 vector.
     #[inline]
     pub fn mat_vec_i16<F: FieldCore + CanonicalField>(
         &self,
         num_rows: usize,
         rhs: &[[i16; D]],
-        params: &Ifma52Params<K, D>,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        if params.i16_tail.is_some() {
+        if self.params.i16_tail.is_some() {
             return Err(AkitaError::InvalidSetup(
                 "prepared IFMA52 tail does not match its parameters".into(),
             ));
@@ -238,9 +231,9 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         if num_rows == 0 || rhs.is_empty() {
             return Ok(vec![CyclotomicRing::zero(); num_rows]);
         }
-        self.mat_vec_i16_canonical(num_rows, rhs, params)?
+        self.mat_vec_i16_canonical(num_rows, rhs)?
             .iter()
-            .map(|canonical| params.reconstruct(canonical, None))
+            .map(|canonical| self.params.reconstruct(canonical, None))
             .collect()
     }
 
@@ -250,14 +243,13 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         tail_matrix: &[CyclotomicCrtNtt<i16, 1, D>],
         num_rows: usize,
         rhs: &[[i16; D]],
-        params: &Ifma52Params<K, D>,
         tail_params: &CrtNttParamSet<i16, 1, D>,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         let num_cols = rhs.len();
         let required = num_rows
             .checked_mul(num_cols)
             .ok_or(AkitaError::InvalidProof)?;
-        if params.i16_tail.is_none() {
+        if self.params.i16_tail.is_none() {
             return Err(AkitaError::InvalidSetup(
                 "prepared IFMA52 tail does not match its parameters".into(),
             ));
@@ -271,7 +263,7 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
             return Ok(vec![CyclotomicRing::zero(); num_rows]);
         }
 
-        let accumulators = self.mat_vec_i16_canonical(num_rows, rhs, params)?;
+        let accumulators = self.mat_vec_i16_canonical(num_rows, rhs)?;
         let rhs_abs_bound = rhs
             .iter()
             .flatten()
@@ -302,7 +294,7 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         accumulators
             .iter()
             .zip(&tail_canonical)
-            .map(|(canonical, tail)| params.reconstruct(canonical, Some(tail)))
+            .map(|(canonical, tail)| self.params.reconstruct(canonical, Some(tail)))
             .collect()
     }
 
@@ -311,7 +303,6 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         &self,
         num_rows: usize,
         rhs: &[[i16; D]],
-        params: &Ifma52Params<K, D>,
     ) -> Result<Vec<[[u64; D]; K]>, AkitaError> {
         let num_cols = rhs.len();
         let required = num_rows
@@ -331,8 +322,8 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         for (prime_index, ((matrix_limb, prime), twiddles)) in self
             .limbs
             .iter()
-            .zip(params.primes.iter())
-            .zip(params.twiddles.iter())
+            .zip(self.params.primes.iter())
+            .zip(self.params.twiddles.iter())
             .enumerate()
         {
             let mut transformed_rhs = Vec::with_capacity(tile_width);
@@ -341,7 +332,7 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
                 transformed_rhs.clear();
                 transformed_rhs.extend(rhs[tile_start..tile_end].iter().map(|digits| {
                     let mut transformed = digits.map(|digit| prime.canonical_i16(digit));
-                    forward(&mut transformed, *prime, twiddles, params.use_ifma);
+                    forward(&mut transformed, *prime, twiddles, self.params.use_ifma);
                     transformed
                 }));
                 for (row, accumulator) in accumulators.iter_mut().enumerate() {
@@ -352,7 +343,7 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
                         &matrix_limb[row_start..row_end],
                         &transformed_rhs,
                         *prime,
-                        params.use_ifma,
+                        self.params.use_ifma,
                     );
                 }
             }
@@ -361,37 +352,13 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         for accumulator in &mut accumulators {
             for (limb, (prime, twiddles)) in accumulator
                 .iter_mut()
-                .zip(params.primes.iter().zip(&params.twiddles))
+                .zip(self.params.primes.iter().zip(&self.params.twiddles))
             {
-                inverse(limb, *prime, twiddles, params.use_ifma);
+                inverse(limb, *prime, twiddles, self.params.use_ifma);
             }
         }
         Ok(accumulators)
     }
-}
-
-fn center(value: u64, modulus: u64) -> i64 {
-    if value > modulus / 2 {
-        value as i64 - modulus as i64
-    } else {
-        value as i64
-    }
-}
-
-fn modular_inverse(value: u64, modulus: u64) -> Result<u64, AkitaError> {
-    let (mut old_remainder, mut remainder) = (i128::from(modulus), i128::from(value));
-    let (mut old_coefficient, mut coefficient) = (0i128, 1i128);
-    while remainder != 0 {
-        let quotient = old_remainder / remainder;
-        (old_remainder, remainder) = (remainder, old_remainder - quotient * remainder);
-        (old_coefficient, coefficient) = (coefficient, old_coefficient - quotient * coefficient);
-    }
-    if old_remainder != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "IFMA52 CRT primes are not pairwise coprime".into(),
-        ));
-    }
-    Ok(old_coefficient.rem_euclid(i128::from(modulus)) as u64)
 }
 
 #[cfg(test)]
@@ -399,11 +366,9 @@ mod tests {
     use super::*;
     use crate::ntt::ifma52::IFMA52_PRIMES;
     use crate::ntt::tables::I16_TAIL_PRIME;
-    use akita_field::{Prime128OffsetA7F7, Prime64Offset59};
+    use akita_field::{FromPrimitiveInt, Prime128OffsetA7F7, Prime64Offset59};
 
-    #[test]
-    fn limb_major_i16_matvec_matches_ring_arithmetic() {
-        const D: usize = 64;
+    fn assert_limb_major_i16_matvec<const D: usize>() {
         type F = Prime64Offset59;
         let params =
             Ifma52Params::<2, D>::new([IFMA52_PRIMES[0], IFMA52_PRIMES[1]]).expect("params");
@@ -418,7 +383,7 @@ mod tests {
             .map(|column| std::array::from_fn(|index| (column * 9 + index) as i16 - 20))
             .collect::<Vec<_>>();
         let prepared = Ifma52NttMatrix::prepare(&matrix, &params);
-        let actual = prepared.mat_vec_i16::<F>(2, &rhs, &params).expect("matvec");
+        let actual = prepared.mat_vec_i16::<F>(2, &rhs).expect("matvec");
         let expected = matrix
             .chunks_exact(3)
             .map(|row| {
@@ -436,8 +401,14 @@ mod tests {
     }
 
     #[test]
-    fn mixed_ifma_i16_tail_matvec_matches_ring_arithmetic() {
-        const D: usize = 64;
+    fn limb_major_i16_matvec_matches_ring_arithmetic_at_all_ifma_dimensions() {
+        assert_limb_major_i16_matvec::<64>();
+        assert_limb_major_i16_matvec::<128>();
+        assert_limb_major_i16_matvec::<256>();
+        assert_limb_major_i16_matvec::<512>();
+    }
+
+    fn assert_mixed_ifma_i16_tail_matvec<const D: usize>() {
         type F = Prime64Offset59;
         let params = Ifma52Params::<1, D>::new([IFMA52_PRIMES[0]])
             .expect("params")
@@ -464,7 +435,7 @@ mod tests {
             .map(|ring| CyclotomicCrtNtt::from_ring(ring, &tail_params))
             .collect::<Vec<_>>();
         let actual = prepared
-            .mat_vec_i16_with_tail::<F>(&tail_matrix, 2, &rhs, &params, &tail_params)
+            .mat_vec_i16_with_tail::<F>(&tail_matrix, 2, &rhs, &tail_params)
             .expect("mixed matvec");
         let expected = matrix
             .chunks_exact(3)
@@ -480,6 +451,72 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn mixed_ifma_i16_tail_matvec_matches_ring_arithmetic_at_all_dimensions() {
+        assert_mixed_ifma_i16_tail_matvec::<64>();
+        assert_mixed_ifma_i16_tail_matvec::<128>();
+        assert_mixed_ifma_i16_tail_matvec::<256>();
+        assert_mixed_ifma_i16_tail_matvec::<512>();
+    }
+
+    fn assert_q128_ifma_i16_tail_matvec<const D: usize>() {
+        type F = Prime128OffsetA7F7;
+        let params = Ifma52Params::<3, D>::new(IFMA52_PRIMES)
+            .expect("params")
+            .with_i16_tail(I16_TAIL_PRIME.p)
+            .expect("tail params");
+        let tail_params = CrtNttParamSet::new([I16_TAIL_PRIME]);
+        let matrix = (0..6)
+            .map(|entry| {
+                CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|coefficient| {
+                    let low = (entry as u64 + 1) * 65_537 + coefficient as u64 * 4_099;
+                    F::from_i128((u128::from(low) << 80) as i128) - F::from_u64(low.rotate_left(17))
+                }))
+            })
+            .collect::<Vec<_>>();
+        let rhs = (0..3)
+            .map(|column| {
+                std::array::from_fn(|coefficient| {
+                    if (column + coefficient) % 2 == 0 {
+                        i16::MAX
+                    } else {
+                        i16::MIN
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let prepared = Ifma52NttMatrix::prepare(&matrix, &params);
+        let tail_matrix = matrix
+            .iter()
+            .map(|ring| CyclotomicCrtNtt::from_ring(ring, &tail_params))
+            .collect::<Vec<_>>();
+        let actual = prepared
+            .mat_vec_i16_with_tail::<F>(&tail_matrix, 2, &rhs, &tail_params)
+            .expect("Q128 mixed matvec");
+        let expected = matrix
+            .chunks_exact(3)
+            .map(|row| {
+                row.iter()
+                    .zip(&rhs)
+                    .fold(CyclotomicRing::zero(), |sum, (lhs, rhs)| {
+                        sum + *lhs
+                            * CyclotomicRing::from_coefficients(
+                                rhs.map(|value| F::from_i64(value.into())),
+                            )
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn q128_ifma_i16_tail_matvec_matches_ring_arithmetic_at_all_dimensions() {
+        assert_q128_ifma_i16_tail_matvec::<64>();
+        assert_q128_ifma_i16_tail_matvec::<128>();
+        assert_q128_ifma_i16_tail_matvec::<256>();
+        assert_q128_ifma_i16_tail_matvec::<512>();
     }
 
     #[test]

@@ -36,9 +36,9 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     /// Per-prime twiddle tables for forward/inverse NTT.
     pub twiddles: [NttTwiddles<W, D>; K],
     /// Garner reconstruction constants for CRT lift-back.
-    pub garner: GarnerData<W, K>,
+    pub garner: GarnerData<K>,
     /// Host arithmetic kernels selected when this parameter set was prepared.
-    pub kernel_plan: NttKernelPlan,
+    kernel_plan: NttKernelPlan,
 }
 
 mod convert;
@@ -53,7 +53,7 @@ pub use mixed::{mat_vec_i16_with_tail, I16TailParams};
 
 fn reconstruct<F, W, const K: usize, const D: usize>(
     primes: &[NttPrime<W>; K],
-    garner: &GarnerData<W, K>,
+    garner: &GarnerData<K>,
     canonical: &[[W; D]; K],
 ) -> [F; D]
 where
@@ -62,27 +62,14 @@ where
 {
     let mut coefficients = [F::zero(); D];
     for (index, coefficient) in coefficients.iter_mut().enumerate() {
-        let mut mixed_radix = [0i64; K];
-        mixed_radix[0] = canonical[0][index].to_i64();
-        for i in 1..K {
-            let modulus = primes[i].p.to_i64();
-            let mut digit = canonical[i][index].to_i64();
-            #[allow(clippy::needless_range_loop)]
-            for j in 0..i {
-                digit -= mixed_radix[j];
-                digit = ((digit % modulus) + modulus) % modulus;
-                digit = (digit * garner.gamma[i][j].to_i64()) % modulus;
-            }
-            if digit > modulus / 2 {
-                digit -= modulus;
-            }
-            mixed_radix[i] = digit;
-        }
+        let moduli = primes.map(|prime| prime.p.to_i64() as u64);
+        let residues = std::array::from_fn(|limb| i128::from(canonical[limb][index].to_i64()));
+        let mixed_radix = garner.centered_mixed_radix(residues, moduli);
 
-        let mut result = F::from_i64(mixed_radix[0]);
+        let mut result = F::from_i128(mixed_radix[0]);
         let mut partial_product = F::from_i64(primes[0].p.to_i64());
         for i in 1..K {
-            result += F::from_i64(mixed_radix[i]) * partial_product;
+            result += F::from_i128(mixed_radix[i]) * partial_product;
             if i + 1 < K {
                 partial_product *= F::from_i64(primes[i].p.to_i64());
             }
@@ -93,6 +80,12 @@ where
 }
 
 impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
+    /// Host kernel plan selected when these parameters were prepared.
+    #[must_use]
+    pub const fn kernel_plan(&self) -> NttKernelPlan {
+        self.kernel_plan
+    }
+
     /// Build a full parameter set from CRT primes.
     ///
     /// Computes per-prime twiddles and Garner reconstruction constants.

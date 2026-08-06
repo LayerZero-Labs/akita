@@ -1,5 +1,6 @@
 use std::array::from_fn;
 
+use crate::ntt::crt::modular_inverse;
 use crate::{AkitaError, CanonicalField, CyclotomicRing, FieldCore};
 
 use super::{CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt};
@@ -21,10 +22,11 @@ impl<const K: usize, const D: usize> I16TailParams<K, D> {
     pub fn new(wide: CrtNttParamSet<i32, K, D>, tail: CrtNttParamSet<i16, 1, D>) -> Self {
         let tail_modulus = i64::from(tail.primes[0].p);
         let tail_gamma: [i64; K] = from_fn(|i| {
-            mod_inverse_i64(
-                i64::from(wide.primes[i].p).rem_euclid(tail_modulus),
-                tail_modulus,
+            modular_inverse(
+                i64::from(wide.primes[i].p).rem_euclid(tail_modulus) as u64,
+                tail_modulus as u64,
             )
+            .expect("CRT tail prime must be coprime to the base profile") as i64
         });
         // The final mixed-radix digit is affine in the tail residue and the
         // already reconstructed wide digits. Precompute that linear form so
@@ -133,29 +135,17 @@ fn split_to_ring<F: FieldCore + CanonicalField, const K: usize, const D: usize>(
     let tail_field_weight = field_product;
 
     let coefficients = from_fn(|d| {
-        let mut digits = [0i64; K];
-        if K != 0 {
-            digits[0] = i64::from(wide[0][d]);
-        }
-        for i in 1..K {
-            let modulus = i64::from(params.wide.primes[i].p);
-            let mut value = i64::from(wide[i][d]);
-            for (j, digit) in digits[..i].iter().enumerate() {
-                value = (value - digit).rem_euclid(modulus);
-                value = (value * i64::from(params.wide.garner.gamma[i][j])) % modulus;
-            }
-            if value > modulus / 2 {
-                value -= modulus;
-            }
-            digits[i] = value;
-        }
+        let moduli = params.wide.primes.map(|prime| prime.p as u64);
+        let residues = from_fn(|limb| i128::from(wide[limb][d]));
+        let digits = params.wide.garner.centered_mixed_radix(residues, moduli);
 
-        let tail_digit = i64::from(tail[0][d]) * params.tail_residue_weight
+        let tail_digit = i128::from(tail[0][d]) * i128::from(params.tail_residue_weight)
             + digits
                 .iter()
                 .zip(params.tail_digit_weights)
-                .map(|(digit, weight)| digit * weight)
-                .sum::<i64>();
+                .map(|(digit, weight)| *digit * i128::from(weight))
+                .sum::<i128>();
+        let tail_modulus = i128::from(tail_modulus);
         let mut tail_digit = tail_digit.rem_euclid(tail_modulus);
         if tail_digit > tail_modulus / 2 {
             tail_digit -= tail_modulus;
@@ -163,23 +153,11 @@ fn split_to_ring<F: FieldCore + CanonicalField, const K: usize, const D: usize>(
 
         let mut result = F::zero();
         for (digit, weight) in digits.iter().zip(field_weights) {
-            result += F::from_i64(*digit) * weight;
+            result += F::from_i128(*digit) * weight;
         }
-        result + F::from_i64(tail_digit) * tail_field_weight
+        result + F::from_i128(tail_digit) * tail_field_weight
     });
     CyclotomicRing::from_coefficients(coefficients)
-}
-
-fn mod_inverse_i64(a: i64, modulus: i64) -> i64 {
-    let (mut old_r, mut r) = (a, modulus);
-    let (mut old_s, mut s) = (1i64, 0i64);
-    while r != 0 {
-        let quotient = old_r / r;
-        (old_r, r) = (r, old_r - quotient * r);
-        (old_s, s) = (s, old_s - quotient * s);
-    }
-    debug_assert_eq!(old_r.abs(), 1);
-    old_s.rem_euclid(modulus)
 }
 
 #[cfg(test)]

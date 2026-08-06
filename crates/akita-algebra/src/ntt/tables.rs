@@ -76,7 +76,7 @@ pub const Q32_PRIMES: [NttPrime<i32>; Q32_NUM_PRIMES] = [
 ];
 
 /// Garner CRT reconstruction constants for Q32 measured `2xi32` profile.
-pub fn q32_garner() -> GarnerData<i32, Q32_NUM_PRIMES> {
+pub fn q32_garner() -> GarnerData<Q32_NUM_PRIMES> {
     GarnerData::compute(&Q32_PRIMES)
 }
 
@@ -106,7 +106,7 @@ pub const Q64_PRIMES: [NttPrime<i32>; Q64_NUM_PRIMES] = [
 ];
 
 /// Garner CRT reconstruction constants for Q64 reduced profile.
-pub fn q64_garner() -> GarnerData<i32, Q64_NUM_PRIMES> {
+pub fn q64_garner() -> GarnerData<Q64_NUM_PRIMES> {
     GarnerData::compute(&Q64_PRIMES)
 }
 
@@ -116,7 +116,7 @@ pub fn q128_primes() -> [NttPrime<i32>; Q128_NUM_PRIMES] {
 }
 
 /// Garner CRT reconstruction constants for Q128.
-pub fn q128_garner() -> GarnerData<i32, Q128_NUM_PRIMES> {
+pub fn q128_garner() -> GarnerData<Q128_NUM_PRIMES> {
     let primes = q128_primes();
     GarnerData::compute(&primes)
 }
@@ -148,7 +148,7 @@ mod tests {
     fn assert_garner_profile<W, const K: usize>(
         label: &str,
         primes: &[NttPrime<W>; K],
-        garner: GarnerData<W, K>,
+        garner: GarnerData<K>,
     ) where
         W: super::super::prime::PrimeWidth,
     {
@@ -156,7 +156,7 @@ mod tests {
             let pi = prime_i.p.to_i64();
             for (j, prime_j) in primes[..i].iter().enumerate() {
                 let pj = prime_j.p.to_i64();
-                let g = garner.gamma[i][j].to_i64();
+                let g = garner.gamma[i][j] as i64;
                 assert_eq!(
                     (pj * g) % pi,
                     1,

@@ -132,10 +132,10 @@ fn q64_exact_cache_uses_ifma52_when_enabled() {
     .expect("exact cache");
     if ifma52_cache_enabled::<D>() {
         assert!(ntt_cache_requires_i16_tail::<Prime32Offset99, D>(2, 1 << 15).unwrap());
-        assert!(matches!(cache, PreparedNttCache::Q64Ifma52 { .. }));
+        assert!(cache.uses_ifma52());
         assert_eq!(cache.cache_bytes(), 2 * 2 * D * size_of::<u64>());
     } else {
-        assert!(matches!(cache, PreparedNttCache::Q64 { .. }));
+        assert!(!cache.uses_ifma52());
     }
     assert_eq!(
         cache
@@ -158,14 +158,14 @@ fn q32_exact_cache_uses_mixed_ifma52_when_enabled() {
     )
     .expect("exact cache");
     if ifma52_cache_enabled::<D>() {
-        assert!(matches!(cache, PreparedNttCache::Q32Ifma52 { .. }));
+        assert!(cache.uses_ifma52());
         assert!(cache.has_i16_tail());
         assert_eq!(
             cache.cache_bytes(),
             2 * D * (size_of::<u64>() + size_of::<i16>())
         );
     } else {
-        assert!(matches!(cache, PreparedNttCache::Q32 { .. }));
+        assert!(!cache.uses_ifma52());
     }
     assert_eq!(
         cache
@@ -175,9 +175,7 @@ fn q32_exact_cache_uses_mixed_ifma52_when_enabled() {
     );
 }
 
-#[test]
-fn q32_mixed_ifma52_cache_matches_ring_arithmetic() {
-    const D: usize = 64;
+fn assert_q32_exact_cache_matches_ring_arithmetic<const D: usize>() {
     const ROWS: usize = 2;
     const COLS: usize = 3;
     type F = Prime32Offset99;
@@ -233,8 +231,14 @@ fn q32_mixed_ifma52_cache_matches_ring_arithmetic() {
 }
 
 #[test]
-fn q128_mixed_ifma52_cache_matches_ring_arithmetic() {
-    const D: usize = 64;
+fn q32_exact_cache_matches_ring_arithmetic_at_all_ifma_dimensions() {
+    assert_q32_exact_cache_matches_ring_arithmetic::<64>();
+    assert_q32_exact_cache_matches_ring_arithmetic::<128>();
+    assert_q32_exact_cache_matches_ring_arithmetic::<256>();
+    assert_q32_exact_cache_matches_ring_arithmetic::<512>();
+}
+
+fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
     const ROWS: usize = 2;
     const COLS: usize = 3;
     type F = Prime128OffsetA7F7;
@@ -262,7 +266,7 @@ fn q128_mixed_ifma52_cache_matches_ring_arithmetic() {
     )
     .expect("exact cache");
     if ifma52_cache_enabled::<D>() {
-        assert!(matches!(cache, PreparedNttCache::Q128Ifma52 { .. }));
+        assert!(cache.uses_ifma52());
         assert!(cache.has_i16_tail());
         assert_eq!(
             cache.cache_bytes(),
@@ -297,6 +301,14 @@ fn q128_mixed_ifma52_cache_matches_ring_arithmetic() {
         })
         .collect::<Vec<_>>();
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn q128_exact_cache_matches_ring_arithmetic_at_all_ifma_dimensions() {
+    assert_q128_exact_cache_matches_ring_arithmetic::<64>();
+    assert_q128_exact_cache_matches_ring_arithmetic::<128>();
+    assert_q128_exact_cache_matches_ring_arithmetic::<256>();
+    assert_q128_exact_cache_matches_ring_arithmetic::<512>();
 }
 
 #[test]

@@ -5,6 +5,7 @@ use std::fmt;
 use std::ops::{Add, Sub};
 
 use super::prime::{NttPrime, PrimeWidth};
+use crate::AkitaError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SmallNat {
@@ -162,39 +163,73 @@ const RADIX_MASK: i32 = RADIX - 1;
 /// `gamma[i][j]` = `p_j^{-1} mod p_i` for `j < i`. Upper triangle and
 /// diagonal entries are zero (unused).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GarnerData<W: PrimeWidth, const K: usize> {
+pub struct GarnerData<const K: usize> {
     /// `gamma[i][j]` = `p_j^{-1} mod p_i` for `j < i`.
-    pub gamma: [[W; K]; K],
+    pub gamma: [[u64; K]; K],
 }
 
-impl<W: PrimeWidth, const K: usize> GarnerData<W, K> {
+impl<const K: usize> GarnerData<K> {
     /// Compute Garner constants from a set of NTT primes.
-    pub fn compute(primes: &[NttPrime<W>; K]) -> Self {
-        let mut gamma = [[W::default(); K]; K];
+    pub fn compute<W: PrimeWidth>(primes: &[NttPrime<W>; K]) -> Self {
+        Self::try_from_moduli(primes.map(|prime| prime.p.to_i64() as u64))
+            .expect("CRT primes must be pairwise coprime")
+    }
+
+    pub(crate) fn try_from_moduli(moduli: [u64; K]) -> Result<Self, AkitaError> {
+        let mut gamma = [[0; K]; K];
         for i in 1..K {
-            let pi = primes[i].p.to_i64();
+            let pi = moduli[i];
             #[allow(clippy::needless_range_loop)]
             for j in 0..i {
-                let pj = primes[j].p.to_i64();
-                let inv = mod_inverse_i64(pj, pi);
-                gamma[i][j] = W::from_i64(inv);
+                gamma[i][j] = modular_inverse(moduli[j] % pi, pi)?;
             }
         }
-        Self { gamma }
+        Ok(Self { gamma })
+    }
+
+    pub(crate) fn centered_mixed_radix(&self, residues: [i128; K], moduli: [u64; K]) -> [i128; K] {
+        let mut digits = [0; K];
+        if K == 0 {
+            return digits;
+        }
+        let first_modulus = i128::from(moduli[0]);
+        digits[0] = center_mod(residues[0], first_modulus);
+        for index in 1..K {
+            let modulus = i128::from(moduli[index]);
+            let mut digit = residues[index].rem_euclid(modulus);
+            for (prior, prior_digit) in digits.iter().enumerate().take(index) {
+                digit = (digit - prior_digit).rem_euclid(modulus);
+                digit = (digit * i128::from(self.gamma[index][prior])).rem_euclid(modulus);
+            }
+            digits[index] = center_mod(digit, modulus);
+        }
+        digits
     }
 }
 
-/// Modular inverse via extended GCD, operating in `i64`.
-fn mod_inverse_i64(a: i64, modulus: i64) -> i64 {
-    let (mut t, mut new_t) = (0i64, 1i64);
-    let (mut r, mut new_r) = (modulus, ((a % modulus) + modulus) % modulus);
-    while new_r != 0 {
-        let q = r / new_r;
-        (t, new_t) = (new_t, t - q * new_t);
-        (r, new_r) = (new_r, r - q * new_r);
+fn center_mod(value: i128, modulus: i128) -> i128 {
+    let value = value.rem_euclid(modulus);
+    if value > modulus / 2 {
+        value - modulus
+    } else {
+        value
     }
-    assert_eq!(r, 1, "modular inverse does not exist");
-    ((t % modulus) + modulus) % modulus
+}
+
+pub(crate) fn modular_inverse(value: u64, modulus: u64) -> Result<u64, AkitaError> {
+    let (mut old_remainder, mut remainder) = (i128::from(modulus), i128::from(value));
+    let (mut old_coefficient, mut coefficient) = (0i128, 1i128);
+    while remainder != 0 {
+        let quotient = old_remainder / remainder;
+        (old_remainder, remainder) = (remainder, old_remainder - quotient * remainder);
+        (old_coefficient, coefficient) = (coefficient, old_coefficient - quotient * coefficient);
+    }
+    if old_remainder != 1 {
+        return Err(AkitaError::InvalidSetup(
+            "CRT primes are not pairwise coprime".into(),
+        ));
+    }
+    Ok(old_coefficient.rem_euclid(i128::from(modulus)) as u64)
 }
 
 /// Fixed-width radix-`2^14` integer.

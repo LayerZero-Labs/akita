@@ -117,7 +117,7 @@ fn bench_q32_exact_shape<const D: usize>(
         },
     )
     .expect("Q32 exact cache");
-    let profile = if matches!(cache, PreparedNttCache::Q32Ifma52 { .. }) {
+    let profile = if cache.uses_ifma52() {
         "ifma52_i16"
     } else {
         "i32"
@@ -153,11 +153,7 @@ fn bench_q64_exact_shape<const D: usize>(
         },
     )
     .expect("Q64 exact cache");
-    let profile = if matches!(cache, PreparedNttCache::Q64Ifma52 { .. }) {
-        "ifma52"
-    } else {
-        "i32"
-    };
+    let profile = if cache.uses_ifma52() { "ifma52" } else { "i32" };
     let rhs = sample_i16_digits::<D>(width, 16);
     group.throughput(Throughput::Elements((rank * width * D) as u64));
     group.bench_function(
@@ -189,7 +185,7 @@ fn bench_q128_exact_shape<const D: usize>(
         },
     )
     .expect("Q128 exact cache");
-    let profile = if matches!(cache, PreparedNttCache::Q128Ifma52 { .. }) {
+    let profile = if cache.uses_ifma52() {
         "ifma52_i16"
     } else {
         "i32"

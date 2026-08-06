@@ -797,7 +797,7 @@ while sharing immutable CRT parameters.
 
 The terminal verifier remains an exact-negacyclic consumer. Its base prefix is
 the exact terminal A footprint. Its i16 tail prefix exists only when
-`ntt_cache_requires_i16_tail(width, log_basis)` requires it and is independently
+`ntt_cache_requires_i16_tail(width, rhs_abs_bound)` requires it and is independently
 covering. The current verifier cache already approximates this target behavior
 and should be generalized rather than replaced by a full-envelope cache.
 
@@ -807,18 +807,24 @@ or eager cache contract.
 
 #### Memory formula
 
-Let `K(F, D)` be the number of i32 CRT primes in the selected base profile. For
-one backend-owned `(cluster, D)` cache with `N` negacyclic ring entries, `C`
-cyclic ring entries, and `T` i16-tail ring entries, transformed matrix storage
-is:
+Let `K32(F, D)` be the number of i32 CRT primes in the portable base profile.
+For one backend-owned `(cluster, D)` cache with `N` negacyclic ring entries,
+`C` cyclic ring entries, and `T` i16-tail ring entries, portable transformed
+matrix storage is:
 
 ```text
-base bytes = (N + C) * D * K(F, D) * sizeof(i32)
+base bytes = (N + C) * D * K32(F, D) * sizeof(i32)
 tail bytes = T * D * sizeof(i16)
 total      = base bytes + tail bytes
 ```
 
 Metadata and allocator overhead are reported separately if material.
+
+For exact-negacyclic caches on AVX-512IFMA hosts at D64 through D512, replace
+the base term with `N * D * K52(F) * sizeof(u64)`, where `K52` is 1, 2, or 3
+for Q32, Q64, or Q128. The optional tail term is unchanged. Consequently,
+profiling and verifier tests must obtain the selected representation's byte
+count rather than assuming an i32 layout.
 
 This formula is also the canonical estimator used by profiling. It makes the
 current waste visible: preparing both domains over an `M`-field full envelope

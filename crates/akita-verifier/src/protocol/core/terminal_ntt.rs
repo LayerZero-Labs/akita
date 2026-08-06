@@ -100,6 +100,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_algebra::ntt::ifma52::ifma52_enabled;
     use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES};
     use akita_config::{proof_optimized::fp128::D64OneHot, CommitmentConfig};
     use akita_field::{Prime128Offset275 as F, Prime32Offset99 as F32};
@@ -110,6 +111,15 @@ mod tests {
     use std::sync::Arc;
 
     const D: usize = 64;
+
+    fn q128_base_cache_bytes(entries: usize) -> usize {
+        let bytes_per_coefficient = if ifma52_enabled() {
+            3 * core::mem::size_of::<u64>()
+        } else {
+            Q128_NUM_PRIMES * core::mem::size_of::<i32>()
+        };
+        entries * D * bytes_per_coefficient
+    }
 
     fn matrix() -> Vec<CyclotomicRing<F, D>> {
         (0..10)
@@ -189,7 +199,7 @@ mod tests {
         );
         assert_eq!(
             setup.verifier_ntt_cache_bytes().expect("cache bytes"),
-            10 * D * (Q128_NUM_PRIMES * core::mem::size_of::<i32>() + core::mem::size_of::<i16>())
+            q128_base_cache_bytes(10) + 10 * D * core::mem::size_of::<i16>()
         );
     }
 
@@ -290,8 +300,7 @@ mod tests {
         assert!(combined.has_i16_tail());
         assert_eq!(
             setup.verifier_ntt_cache_bytes().expect("combined bytes"),
-            10 * D * Q128_NUM_PRIMES * core::mem::size_of::<i32>()
-                + 4 * D * core::mem::size_of::<i16>()
+            q128_base_cache_bytes(10) + 4 * D * core::mem::size_of::<i16>()
         );
         let reused_other_basis = setup
             .prepared_verifier_ntt_prefix::<D>(10, 0, 1, 1 << 14)
