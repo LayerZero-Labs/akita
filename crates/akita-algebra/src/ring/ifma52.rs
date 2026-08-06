@@ -152,17 +152,19 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
                 result += F::from_i64(*digit) * weight;
             }
             if let (Some(tail), Some(tail_canonical)) = (&self.i16_tail, tail_canonical) {
-                let tail_digit = i64::from(tail_canonical[coefficient]) * tail.residue_weight
+                let tail_digit = i128::from(tail_canonical[coefficient])
+                    * i128::from(tail.residue_weight)
                     + digits
                         .iter()
                         .zip(tail.digit_weights)
-                        .map(|(digit, weight)| digit * weight)
-                        .sum::<i64>();
-                let mut tail_digit = tail_digit.rem_euclid(tail.modulus);
-                if tail_digit > tail.modulus / 2 {
-                    tail_digit -= tail.modulus;
+                        .map(|(digit, weight)| i128::from(*digit) * i128::from(weight))
+                        .sum::<i128>();
+                let tail_modulus = i128::from(tail.modulus);
+                let mut tail_digit = tail_digit.rem_euclid(tail_modulus);
+                if tail_digit > tail_modulus / 2 {
+                    tail_digit -= tail_modulus;
                 }
-                result += F::from_i64(tail_digit) * tail_field_weight;
+                result += F::from_i64(tail_digit as i64) * tail_field_weight;
             }
             result
         });
@@ -397,7 +399,7 @@ mod tests {
     use super::*;
     use crate::ntt::ifma52::IFMA52_PRIMES;
     use crate::ntt::tables::I16_TAIL_PRIME;
-    use akita_field::Prime64Offset59;
+    use akita_field::{Prime128OffsetA7F7, Prime64Offset59};
 
     #[test]
     fn limb_major_i16_matvec_matches_ring_arithmetic() {
@@ -478,5 +480,48 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn q128_tail_reconstruction_handles_maximum_centered_digits() {
+        const D: usize = 64;
+        type F = Prime128OffsetA7F7;
+        let params = Ifma52Params::<3, D>::new(IFMA52_PRIMES)
+            .expect("params")
+            .with_i16_tail(I16_TAIL_PRIME.p)
+            .expect("tail params");
+        let digits = IFMA52_PRIMES.map(|prime| (prime / 2) as i64);
+        let residue = |modulus: u64| {
+            let modulus = u128::from(modulus);
+            let mut residue = 0u128;
+            let mut weight = 1u128;
+            for (digit, prime) in digits.iter().zip(IFMA52_PRIMES) {
+                residue = (residue + (*digit as u128 * weight) % modulus) % modulus;
+                weight = (weight * u128::from(prime)) % modulus;
+            }
+            residue as u64
+        };
+        let canonical = IFMA52_PRIMES.map(|prime| [residue(prime); D]);
+        let tail_modulus = I16_TAIL_PRIME.p as u64;
+        let tail_residue = residue(tail_modulus) as i64;
+        let tail_centered = if tail_residue > i64::from(I16_TAIL_PRIME.p) / 2 {
+            tail_residue - i64::from(I16_TAIL_PRIME.p)
+        } else {
+            tail_residue
+        } as i16;
+        let tail = [tail_centered; D];
+
+        let mut field_weight = F::one();
+        let mut expected = F::zero();
+        for (digit, prime) in digits.into_iter().zip(IFMA52_PRIMES) {
+            expected += F::from_i64(digit) * field_weight;
+            field_weight *= F::from_u64(prime);
+        }
+        assert_eq!(
+            params
+                .reconstruct::<F>(&canonical, Some(&tail))
+                .expect("reconstruction"),
+            CyclotomicRing::from_coefficients([expected; D])
+        );
     }
 }
