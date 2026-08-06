@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao |
 | Created | 2026-08-06 |
 | Status | active |
-| PR | |
+| PR | [#364](https://github.com/LayerZero-Labs/akita/pull/364) |
 | Supersedes | The residual chunk rules in `distributed-prover.md`, `distributed-planner.md`, and `digit-innermost-layout.md` |
 | Superseded-by | |
 | Book-chapter | book/src/how/proving/opening-points-layout.md |
