@@ -46,6 +46,9 @@ pub struct EmitSpec {
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
     pub precommitted_profiles: Vec<CommittedGroupProfile>,
+    /// Already-materialized rows retained by an explicit partial regeneration.
+    /// Requested scalar/group keys replace rows with the same full lookup key.
+    pub preserved_entries: Vec<(AkitaScheduleLookupKey, FoldSchedule)>,
     pub generator_command: &'static str,
 }
 
@@ -647,8 +650,14 @@ fn materialized_entries(
     );
     keys.extend(spec.group_batch_keys.iter().map(|(key, _)| key.clone()));
 
+    let requested_keys = keys.clone();
     let workers = schedule_generation_worker_count(keys.len());
-    let mut entries = Vec::new();
+    let mut entries = spec
+        .preserved_entries
+        .iter()
+        .filter(|(key, _)| !requested_keys.contains(key))
+        .cloned()
+        .collect::<Vec<_>>();
     if workers > 1 && keys.len() >= 2 * workers {
         let chunk_size = keys.len().div_ceil(workers);
         std::thread::scope(|scope| -> Result<(), String> {

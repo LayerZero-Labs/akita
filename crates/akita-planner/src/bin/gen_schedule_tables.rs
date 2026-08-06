@@ -21,6 +21,7 @@ struct ExplicitRows {
 struct ParsedArgs {
     base_dir: PathBuf,
     wiring_only: bool,
+    preserve_existing: bool,
     family_filter: Option<Vec<String>>,
     explicit_rows: ExplicitRows,
 }
@@ -45,6 +46,7 @@ fn generator_command() -> &'static str {
 fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-gen \
      --bin gen_schedule_tables -- <output-dir> [--wiring-only] [family_module_name ...] \
+     [--preserve-existing] \
      [--final-group family:num_vars_or_range:num_polys_or_range] \
      [--precommitted-group family:num_vars_or_range:num_polys_or_range ...]"
 }
@@ -118,6 +120,7 @@ fn parse_args() -> Result<ParsedArgs, String> {
     }
     let base_dir = PathBuf::from(&raw_args[0]);
     let mut wiring_only = false;
+    let mut preserve_existing = false;
     let mut family_args = Vec::new();
     let mut explicit_rows = ExplicitRows::default();
     let mut i = 1;
@@ -125,6 +128,10 @@ fn parse_args() -> Result<ParsedArgs, String> {
         match raw_args[i].as_str() {
             "--wiring-only" => {
                 wiring_only = true;
+                i += 1;
+            }
+            "--preserve-existing" => {
+                preserve_existing = true;
                 i += 1;
             }
             "--final-group" => {
@@ -198,9 +205,13 @@ fn parse_args() -> Result<ParsedArgs, String> {
     if wiring_only && family_filter.is_some() {
         return Err("--wiring-only does not accept family filters or explicit rows".to_string());
     }
+    if preserve_existing && explicit_rows.final_group.is_none() {
+        return Err("--preserve-existing requires --final-group".to_string());
+    }
     Ok(ParsedArgs {
         base_dir,
         wiring_only,
+        preserve_existing,
         family_filter,
         explicit_rows,
     })
@@ -397,6 +408,41 @@ fn emit_spec_with_overrides(
     Ok(spec)
 }
 
+fn preserve_existing_catalog(spec: &mut EmitSpec, family: &GeneratedFamily) -> Result<(), String> {
+    let table = (family.existing_table)().ok_or_else(|| {
+        format!(
+            "{}: --preserve-existing requires the `{}` schedule feature",
+            family.module_name, family.schedule_feature
+        )
+    })?;
+    for entry in table.entries {
+        let key = entry.to_runtime_lookup_key();
+        let schedule = akita_planner::schedule_from_entry(
+            entry,
+            &key,
+            &spec.policy,
+            spec.ring_challenge_config,
+            spec.fold_challenge_shape_at_level,
+        )
+        .map_err(|error| format!("{}: expand preserved row: {error}", family.module_name))?;
+        spec.preserved_entries.push((key, schedule));
+    }
+    for generated in table.precommitted_profiles {
+        let profile = generated
+            .expand_to_committed_profile(&spec.policy)
+            .map_err(|error| {
+                format!(
+                    "{}: expand preserved precommit profile: {error}",
+                    family.module_name
+                )
+            })?;
+        push_unique_profile(&mut spec.precommitted_profiles, profile);
+    }
+    spec.precommitted_profiles
+        .sort_by_key(CommittedGroupProfile::canonical_descriptor_bytes);
+    Ok(())
+}
+
 fn main() -> Result<(), String> {
     let args = parse_args()?;
     fs::create_dir_all(&args.base_dir)
@@ -415,12 +461,16 @@ fn main() -> Result<(), String> {
         let specs = families_to_write
             .iter()
             .map(|family| {
-                emit_spec_with_overrides(
+                let mut spec = emit_spec_with_overrides(
                     family,
                     args.base_dir.clone(),
                     &args.explicit_rows,
                     generator_command,
-                )
+                )?;
+                if args.preserve_existing {
+                    preserve_existing_catalog(&mut spec, family)?;
+                }
+                Ok::<EmitSpec, String>(spec)
             })
             .collect::<Result<Vec<_>, _>>()?;
         for spec in &specs {

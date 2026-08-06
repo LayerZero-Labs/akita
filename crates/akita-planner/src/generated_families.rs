@@ -193,6 +193,8 @@ pub struct GeneratedFamily {
     /// `Cfg::runtime_schedule(key)` — strict table-backed runtime resolution.
     /// Used by diagnostic comparisons against the generated table.
     pub table_backed: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
+    /// Currently compiled generated table, when its schedule feature is enabled.
+    pub existing_table: fn() -> Option<akita_schedules::GeneratedScheduleTable>,
     pub policy: fn() -> PlannerPolicy,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -301,6 +303,10 @@ fn table_backed<Cfg: CommitmentConfig>(
     key: PolynomialGroupLayout,
 ) -> Result<FoldSchedule, AkitaError> {
     Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
+}
+
+fn existing_table<Cfg: CommitmentConfig>() -> Option<akita_schedules::GeneratedScheduleTable> {
+    Cfg::schedule_catalog()
 }
 
 fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
@@ -620,6 +626,7 @@ macro_rules! family_row {
             emit_group_batch: true,
             group_batch_keys: group_batch_keys::<$cfg>,
             table_backed: table_backed::<$cfg>,
+            existing_table: existing_table::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
             fold_challenge_shape_at_level:
@@ -641,6 +648,7 @@ macro_rules! family_row {
             emit_group_batch: true,
             group_batch_keys: recursive_profile_group_batch_keys::<$cfg>,
             table_backed: table_backed::<$cfg>,
+            existing_table: existing_table::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
             fold_challenge_shape_at_level:
@@ -660,6 +668,7 @@ macro_rules! family_row {
             emit_group_batch: false,
             group_batch_keys: group_batch_keys::<$cfg>,
             table_backed: table_backed::<$cfg>,
+            existing_table: existing_table::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
             fold_challenge_shape_at_level:
@@ -687,6 +696,7 @@ pub fn wiring_emit_spec(family: &GeneratedFamily, output_dir: std::path::PathBuf
         ring_challenge_config: family.ring_challenge_config,
         fold_challenge_shape_at_level: family.fold_challenge_shape_at_level,
         precommitted_profiles: Vec::new(),
+        preserved_entries: Vec::new(),
         generator_command: "",
     }
 }
@@ -716,6 +726,7 @@ pub fn emit_spec_for_family(
         ring_challenge_config: family.ring_challenge_config,
         fold_challenge_shape_at_level: family.fold_challenge_shape_at_level,
         precommitted_profiles,
+        preserved_entries: Vec::new(),
         generator_command,
     })
 }
@@ -775,6 +786,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         emit_group_batch: false,
         group_batch_keys: group_batch_keys::<fp128::MixedDimFp128OneHot>,
         table_backed: table_backed::<fp128::MixedDimFp128OneHot>,
+        existing_table: existing_table::<fp128::MixedDimFp128OneHot>,
         policy: family_policy::<fp128::MixedDimFp128OneHot>,
         ring_challenge_config:
             <fp128::MixedDimFp128OneHot as CommitmentConfig>::ring_challenge_config,
