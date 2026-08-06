@@ -153,8 +153,8 @@ impl ScheduleMemo {
     }
 
     fn insert(&mut self, key: ScheduleMemoKey, result: &Arc<SuffixResult>) {
-        if self.entries.contains_key(&key) {
-            self.entries.insert(key, Arc::clone(result));
+        if let std::collections::hash_map::Entry::Occupied(mut entry) = self.entries.entry(key) {
+            entry.insert(Arc::clone(result));
             return;
         }
         if self.entries.len() >= MAX_SCHEDULE_MEMO_ENTRIES {

@@ -192,6 +192,8 @@ struct MultiGroupRootCandidateCtx<'a> {
     ring_challenge_cfg: &'a SparseChallengeConfig,
     requested_fold_shape: TensorChallengeShape,
     final_honest_fold_policy: HonestFoldPolicySpec,
+    main_num_polys: usize,
+    source_log_bound: u32,
 }
 
 fn multi_group_root_precommitted_group_seeds(
@@ -297,6 +299,8 @@ pub(crate) fn root_level_candidates_for_basis(
         ring_challenge_cfg,
         requested_fold_shape,
         final_honest_fold_policy,
+        main_num_polys: key.final_group.num_polynomials(),
+        source_log_bound: policy.decomposition.log_commit_bound,
     };
     let opening_batch = key.opening_layout()?;
     let initial_witness_len_bits = root_input_witness_len
@@ -318,8 +322,6 @@ pub(crate) fn root_level_candidates_for_basis(
         let position_index_bits = reduced_vars - block_index_bits;
         let Some(mut candidate_params) = root_final_group_level_params_candidate(
             &candidate_ctx,
-            key.final_group.num_polynomials(),
-            policy.decomposition.log_commit_bound,
             candidate_log_basis_inner,
             candidate_log_basis_open,
             position_index_bits,
@@ -366,8 +368,6 @@ pub(crate) fn root_level_candidates_for_basis(
 
 fn root_final_group_level_params_candidate(
     ctx: &MultiGroupRootCandidateCtx<'_>,
-    main_num_polys: usize,
-    source_log_bound: u32,
     log_basis_inner: u32,
     log_basis_open: u32,
     position_index_bits: usize,
@@ -388,7 +388,7 @@ fn root_final_group_level_params_candidate(
         log_basis: log_basis_inner,
         ..decomp
     };
-    let num_digits_inner = num_digits_inner_for_bound(witness_decomp, source_log_bound);
+    let num_digits_inner = num_digits_inner_for_bound(witness_decomp, ctx.source_log_bound);
     let num_digits_outer = num_digits_open(level_decomp);
     let num_digits_open = num_digits_outer;
     let Some(num_live_blocks) = 1usize.checked_shl(block_index_bits as u32) else {
@@ -420,7 +420,7 @@ fn root_final_group_level_params_candidate(
         .final_honest_fold_policy
         .num_digits_fold(HonestFoldSizingQuery {
             ring_dimension: d_a,
-            num_claims: main_num_polys,
+            num_claims: ctx.main_num_polys,
             num_live_blocks,
             num_chunks,
             num_fold_coeffs,
@@ -456,7 +456,7 @@ fn root_final_group_level_params_candidate(
     let n_a = inner_commit_matrix.output_rank();
 
     let Some(width_t) =
-        decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, main_num_polys)
+        decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, ctx.main_num_polys)
     else {
         return Ok(None);
     };
@@ -477,7 +477,7 @@ fn root_final_group_level_params_candidate(
     };
 
     let Some(main_d_width) =
-        decomposed_w_ring_count(num_digits_open, num_live_blocks, main_num_polys)
+        decomposed_w_ring_count(num_digits_open, num_live_blocks, ctx.main_num_polys)
     else {
         return Ok(None);
     };
