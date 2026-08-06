@@ -16,6 +16,30 @@ use super::{
 pub(crate) static FP128_D64_ONEHOT_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
+            final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(12, 1), num_digits_inner: 1, num_digits_fold: 2, challenge: GeneratedRootFinalChallenge::Flat,
+                commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 64, positions_per_block: 4, live_blocks: 16 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 64, log_basis: 3, slice_count: 1 } } },
+            precommitted_groups: &[],
+            open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 64, log_basis: 3, slice_count: 1 },
+            witness_partition: GeneratedWitnessPartition::Single,
+        },
+        recursive_folds: &[],
+        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1909, positions_per_block: 256, live_blocks: 8 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 3 }, num_digits_inner: 1, inner_output_rank: 4, inner_coeff_linf_bound: 1048575, z_admission_linf_cap: 2570, z_rice_low_bits: 9, z_payload_bytes: 26624 },
+    },
+    GeneratedFoldScheduleEntry {
+        root: GeneratedRootFold {
+            final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(14, 1), num_digits_inner: 1, num_digits_fold: 2, challenge: GeneratedRootFinalChallenge::Flat,
+                commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 256, positions_per_block: 32, live_blocks: 8 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 64, log_basis: 3, slice_count: 1 } } },
+            precommitted_groups: &[],
+            open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 64, log_basis: 3, slice_count: 1 },
+            witness_partition: GeneratedWitnessPartition::Single,
+        },
+        recursive_folds: &[
+            GeneratedRecursiveFold { payload_mode: CommitmentPayloadMode::Compressed, witness: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 2051, positions_per_block: 256, live_blocks: 9 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 64, log_basis: 6, slice_count: 1 } }, num_digits_fold: 2, open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 64, log_basis: 6, slice_count: 1 }, incoming_setup_prefix: None, witness_partition: GeneratedWitnessPartition::Single },
+        ],
+        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1993, positions_per_block: 256, live_blocks: 8 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 6 }, num_digits_inner: 1, inner_output_rank: 4, inner_coeff_linf_bound: 1048575, z_admission_linf_cap: 2570, z_rice_low_bits: 9, z_payload_bytes: 26624 },
+    },
+    GeneratedFoldScheduleEntry {
+        root: GeneratedRootFold {
             final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(15, 4), num_digits_inner: 1, num_digits_fold: 2, challenge: GeneratedRootFinalChallenge::Flat,
                 commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 512, positions_per_block: 256, live_blocks: 2 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 64, log_basis: 3, slice_count: 1 } } },
             precommitted_groups: &[],
@@ -27,6 +51,17 @@ pub(crate) static FP128_D64_ONEHOT_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
             GeneratedRecursiveFold { payload_mode: CommitmentPayloadMode::Raw, witness: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 2334, positions_per_block: 256, live_blocks: 10 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 5 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 64, log_basis: 6, slice_count: 1 } }, num_digits_fold: 2, open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 64, log_basis: 6, slice_count: 1 }, incoming_setup_prefix: None, witness_partition: GeneratedWitnessPartition::Single },
         ],
         terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1766, positions_per_block: 256, live_blocks: 7 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 6 }, num_digits_inner: 1, inner_output_rank: 4, inner_coeff_linf_bound: 1048575, z_admission_linf_cap: 2570, z_rice_low_bits: 9, z_payload_bytes: 26624 },
+    },
+    GeneratedFoldScheduleEntry {
+        root: GeneratedRootFold {
+            final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(16, 1), num_digits_inner: 1, num_digits_fold: 2, challenge: GeneratedRootFinalChallenge::Flat,
+                commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1024, positions_per_block: 512, live_blocks: 2 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 64, log_basis: 3, slice_count: 1 } } },
+            precommitted_groups: &[],
+            open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 64, log_basis: 3, slice_count: 1 },
+            witness_partition: GeneratedWitnessPartition::Single,
+        },
+        recursive_folds: &[],
+        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1979, positions_per_block: 256, live_blocks: 8 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 3 }, num_digits_inner: 1, inner_output_rank: 4, inner_coeff_linf_bound: 1048575, z_admission_linf_cap: 2570, z_rice_low_bits: 9, z_payload_bytes: 26624 },
     },
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
@@ -385,6 +420,6 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimension_candidates: CATALOG_RING_DIMENSION_CANDIDATES,
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 12477507731232336810,
-    key_count: 20,
-    key_digest: 6837684976299068666,
+    key_count: 23,
+    key_digest: 14550165649709982050,
 };
