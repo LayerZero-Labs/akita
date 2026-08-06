@@ -24,12 +24,10 @@ env:
   # - Small prime fields (fp32/fp64): their D32/D64 schedules are non-securable
   #   under the reprice (they degrade to a cleartext root-direct proof), so the
   #   smallest secure ring degree is D128. Those cells use D128 one-hot.
-  # - fp128: D64 is the actual proof-size optimum for both dense and one-hot
-  #   (~20% smaller than D128 while still folding through 8-9 secure levels;
-  #   confirmed by `current_d64_onehot_schedule_stays_within_audited_sis_widths`
-  #   and the `best_dense_schedule`/`best_onehot_schedule` selectors, which pick
-  #   D64 over D128). The fp128 cells therefore track D64, not D128.
-  AKITA_BENCH_MODE: onehot_fp128_d64
+  # - fp128: `onehot_fp128` is the canonical direct one-hot profile. Explicit
+  #   D64 rows remain in the matrix as uniform and recursive/distributed
+  #   comparison profiles.
+  AKITA_BENCH_MODE: onehot_fp128
   AKITA_BENCH_RUNS: "3"
   # One warm-up run per case is discarded before the measured runs to
   # prime caches and lazily-initialized statics; cache misses on the
@@ -85,7 +83,7 @@ jobs:
               onehot_fp32_d128:28:1
               onehot_fp64_d128:28:1
               onehot_fp128_d64:32:1
-              onehot_fp128_mixed_dim:32:1
+              onehot_fp128:32:1
               onehot_fp128_d64:30:4
           - name: 4-multi-group-recursive-direct
             cases: |

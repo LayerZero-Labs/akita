@@ -306,7 +306,7 @@ fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
 
 #[test]
 fn adapters_forward_mixed_dimension_policy() {
-    type Base = fp128::AdaptiveOneHot;
+    type Base = fp128::OneHot;
     assert_eq!(
         <RecursiveCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
         Base::RING_DIMENSION_SCHEDULE_MODE,
@@ -390,7 +390,7 @@ fn policy_bridge_matches_cfg_hooks() {
     assert_policy_matches_cfg::<fp128::D64Dense>();
     assert_policy_matches_cfg::<fp128::D128Dense>();
     assert_policy_matches_cfg::<fp128::D64OneHot>();
-    assert_policy_matches_cfg::<fp128::AdaptiveOneHot>();
+    assert_policy_matches_cfg::<fp128::OneHot>();
     assert_policy_matches_cfg::<fp32::D64OneHot>();
 }
 

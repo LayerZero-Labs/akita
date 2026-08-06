@@ -102,7 +102,7 @@ const FP128_D64_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(50),
 ];
 
-const FP128_MIXED_DIM_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
+const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(32),
     PolynomialGroupLayout::singleton(36),
 ];
@@ -243,9 +243,9 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
     plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
 }
 
-/// Offline mixed-dimension regeneration for the catalog-backed fp128 profile.
-fn regen_mixed_dim_fp128_onehot(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
-    type Cfg = fp128::AdaptiveOneHot;
+/// Offline regeneration for the catalog-backed default fp128 onehot profile.
+fn regen_fp128_onehot(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
+    type Cfg = fp128::OneHot;
     let policy = policy_of::<Cfg>();
     Ok(find_schedule(
         &AkitaScheduleLookupKey::single(key),
@@ -736,21 +736,21 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp128::D64OneHot
     ),
     GeneratedFamily {
-        module_name: "fp128_mixed_dim_onehot",
-        const_name: "FP128_MIXED_DIM_ONEHOT_SCHEDULES",
-        schedule_feature: "fp128-mixed-dim-onehot",
-        scalar_keys: FP128_MIXED_DIM_ONEHOT_KEYS,
-        regen: regen_mixed_dim_fp128_onehot,
-        regen_group_batch: regen_group_batch::<fp128::AdaptiveOneHot>,
+        module_name: "fp128_onehot",
+        const_name: "FP128_ONEHOT_SCHEDULES",
+        schedule_feature: "fp128-onehot",
+        scalar_keys: FP128_ONEHOT_KEYS,
+        regen: regen_fp128_onehot,
+        regen_group_batch: regen_group_batch::<fp128::OneHot>,
         emit_group_batch: false,
-        group_batch_keys: group_batch_keys::<fp128::AdaptiveOneHot>,
-        table_backed: table_backed::<fp128::AdaptiveOneHot>,
-        policy: family_policy::<fp128::AdaptiveOneHot>,
-        ring_challenge_config: <fp128::AdaptiveOneHot as CommitmentConfig>::ring_challenge_config,
+        group_batch_keys: group_batch_keys::<fp128::OneHot>,
+        table_backed: table_backed::<fp128::OneHot>,
+        policy: family_policy::<fp128::OneHot>,
+        ring_challenge_config: <fp128::OneHot as CommitmentConfig>::ring_challenge_config,
         fold_challenge_shape_at_level:
-            <fp128::AdaptiveOneHot as CommitmentConfig>::fold_challenge_shape_at_level,
-        precommitted_profiles: precommitted_profiles::<fp128::AdaptiveOneHot>,
-        explicit_precommitted_group: explicit_precommitted_group::<fp128::AdaptiveOneHot>,
+            <fp128::OneHot as CommitmentConfig>::fold_challenge_shape_at_level,
+        precommitted_profiles: precommitted_profiles::<fp128::OneHot>,
+        explicit_precommitted_group: explicit_precommitted_group::<fp128::OneHot>,
     },
     family_row!(
         recursive,

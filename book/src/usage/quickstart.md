@@ -15,7 +15,7 @@ a newcomer should reach for first.
 
 - `crates/akita-pcs/tests/single_poly_e2e.rs` (smallest E2E template).
 - `AGENTS.md` (Essential Commands); `crates/akita-pcs/examples/profile/main.rs`
-  (`AKITA_MODE=onehot_fp128_mixed_dim`, `AKITA_NUM_VARS=32`).
+  (`AKITA_MODE=onehot_fp128`, `AKITA_NUM_VARS=32`).
 
 ## Choosing a configuration
 
@@ -32,7 +32,7 @@ one-hot preset now chooses dimensions per fold from generated adaptive tables;
 
 | Field | Typical production choice | Notes |
 |-------|---------------------------|--------|
-| **fp128** | **Adaptive one-hot** (`fp128::OneHot`, explicitly `fp128::AdaptiveOneHot`) | **Default direct one-hot preset.** The generated schedule adapts the first two fold levels and uses D64 afterward. Explicit uniform `fp128::D64OneHot` remains available, and Jolt/recursive presets remain pinned to D64. Shipped tables include adaptive and D64 one-hot plus D64/D128 dense. |
+| **fp128** | **One-hot** (`fp128::OneHot`) | **Default direct one-hot preset.** The generated schedule chooses dimensions for the first two fold levels and uses D64 afterward. Explicit uniform `fp128::D64OneHot` remains available, and Jolt/recursive presets remain pinned to D64. Shipped tables include the default and D64 one-hot families plus D64/D128 dense. |
 | **fp32 / fp64** | **D128 one-hot** | D32/D64 are **not securable** under the reprice and unsupported schedules fail fast. CI benches at **nv=28** (eq-table memory budget). Shipped: fp32 D128/D256 onehot; fp64 D128 dense/onehot and D256 onehot. |
 
 Use `akita_config::proof_optimized::fp128::best_onehot_schedule` /

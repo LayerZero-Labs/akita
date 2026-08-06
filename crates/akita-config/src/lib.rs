@@ -658,7 +658,7 @@ mod fp128_policy_tests {
     const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
 
     #[test]
-    fn fp128_default_onehot_is_adaptive() {
+    fn fp128_onehot_uses_adaptive_schedule_policy() {
         assert_eq!(<fp128::OneHot as CommitmentConfig>::D, 256);
         assert!(matches!(
             <fp128::OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,

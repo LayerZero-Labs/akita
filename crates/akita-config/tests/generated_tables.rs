@@ -73,7 +73,7 @@ fn group_batch_emission_matches_supported_policy_shape() {
 fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
     match family.module_name {
         "fp128_d128_dense" => fp128::D128Dense::schedule_catalog().is_some(),
-        "fp128_mixed_dim_onehot" => fp128::AdaptiveOneHot::schedule_catalog().is_some(),
+        "fp128_onehot" => fp128::OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot" => fp128::D64OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot_recursive" => {
             <akita_config::RecursiveCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::schedule_catalog()
@@ -280,8 +280,8 @@ fn equal_lookup_keys_form_one_contiguous_candidate_range() {
 fn mixed_catalog_identity_binds_nonwinning_dimensions() {
     static WITHOUT_NONWINNER: &[usize] = &[64, 256];
 
-    let policy = policy_of::<fp128::AdaptiveOneHot>();
-    let catalog = fp128::AdaptiveOneHot::schedule_catalog().expect("adaptive catalog");
+    let policy = policy_of::<fp128::OneHot>();
+    let catalog = fp128::OneHot::schedule_catalog().expect("fp128 one-hot catalog");
     assert!(catalog.entries.iter().all(|entry| entry
         .root
         .final_group
@@ -312,8 +312,8 @@ fn mixed_catalog_identity_binds_nonwinning_dimensions() {
     let error = validate_catalog_identity(
         &mutated,
         &policy,
-        fp128::AdaptiveOneHot::ring_challenge_config,
-        fp128::AdaptiveOneHot::fold_challenge_shape_at_level,
+        fp128::OneHot::ring_challenge_config,
+        fp128::OneHot::fold_challenge_shape_at_level,
     )
     .expect_err("removing an admitted nonwinner must invalidate the catalog");
     assert!(error.to_string().contains("catalog identity mismatch"));
@@ -345,7 +345,7 @@ fn family_catalog(
 ) -> akita_schedules::GeneratedScheduleTable {
     match family.module_name {
         "fp128_d128_dense" => prepare_family_catalog::<fp128::D128Dense>(family, keys),
-        "fp128_mixed_dim_onehot" => prepare_family_catalog::<fp128::AdaptiveOneHot>(family, keys),
+        "fp128_onehot" => prepare_family_catalog::<fp128::OneHot>(family, keys),
         "fp128_d64_onehot" => prepare_family_catalog::<fp128::D64OneHot>(family, keys),
         "fp128_d64_onehot_recursive" => prepare_family_catalog::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
@@ -405,8 +405,8 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, requests: &[Gro
         "fp128_d128_dense" => {
             assert_group_batch_table_hits::<fp128::D128Dense>(family.module_name, requests)
         }
-        "fp128_mixed_dim_onehot" => {
-            assert_group_batch_table_hits::<fp128::AdaptiveOneHot>(family.module_name, requests)
+        "fp128_onehot" => {
+            assert_group_batch_table_hits::<fp128::OneHot>(family.module_name, requests)
         }
         "fp128_d64_onehot" => {
             assert_group_batch_table_hits::<fp128::D64OneHot>(family.module_name, requests)
@@ -498,9 +498,7 @@ fn resolve_family_group_batch_schedule(
 ) -> Result<FoldSchedule, AkitaError> {
     match family.module_name {
         "fp128_d128_dense" => table_backed_group_batch_schedule::<fp128::D128Dense>(request),
-        "fp128_mixed_dim_onehot" => {
-            table_backed_group_batch_schedule::<fp128::AdaptiveOneHot>(request)
-        }
+        "fp128_onehot" => table_backed_group_batch_schedule::<fp128::OneHot>(request),
         "fp128_d64_onehot" => table_backed_group_batch_schedule::<fp128::D64OneHot>(request),
         "fp128_d64_onehot_recursive" => table_backed_group_batch_schedule::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,

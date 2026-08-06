@@ -119,12 +119,12 @@ fn generated_q32_terminals_require_the_i16_tail() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn fp128_adaptive_onehot_catalog_freezes_root_fold_digits() {
-    let table = fp128::AdaptiveOneHot::schedule_catalog().expect("adaptive one-hot catalog");
+    let table = fp128::OneHot::schedule_catalog().expect("fp128 one-hot catalog");
     let first = table
         .entries
         .first()
         .expect("nonempty adaptive one-hot catalog");
-    let schedule = fp128::AdaptiveOneHot::runtime_schedule(first.to_runtime_lookup_key())
+    let schedule = fp128::OneHot::runtime_schedule(first.to_runtime_lookup_key())
         .expect("resolve adaptive one-hot row");
     let root = &schedule.root.params.final_group.commitment;
     assert_eq!(

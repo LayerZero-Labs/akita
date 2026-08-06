@@ -13,7 +13,7 @@ use super::{
 };
 
 #[rustfmt::skip]
-pub(crate) static FP128_MIXED_DIM_ONEHOT_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
+pub(crate) static FP128_ONEHOT_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
             final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(32, 1), num_digits_inner: 1, num_digits_fold: 3, challenge: GeneratedRootFinalChallenge::Flat,
@@ -62,7 +62,7 @@ pub(crate) static CATALOG_POTENTIAL_D_DIMENSIONS: &[usize] = &[64, 128];
 pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64, 128, 256];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
-    family_name: "fp128_mixed_dim_onehot",
+    family_name: "fp128_onehot",
     protocol_epoch: 3,
     cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
     selection_policy: SelectionPolicyId::MinAdaptiveARankDimensionThenSetupAndProof,

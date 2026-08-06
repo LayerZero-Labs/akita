@@ -185,8 +185,8 @@ const PROFILE_CI_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_d64,
     },
     ProfileMode {
-        name: "onehot_fp128_mixed_dim",
-        run: run_profile_onehot_fp128_mixed_dim,
+        name: "onehot_fp128",
+        run: run_profile_onehot_fp128,
     },
     ProfileMode {
         name: "onehot_fp128_d64_multi_group_recursive",
@@ -233,8 +233,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_d64,
     },
     ProfileMode {
-        name: "onehot_fp128_mixed_dim",
-        run: run_profile_onehot_fp128_mixed_dim,
+        name: "onehot_fp128",
+        run: run_profile_onehot_fp128,
     },
     ProfileMode {
         name: "onehot_fp128_d64_multi_group_recursive",
@@ -389,18 +389,18 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
 }
 
 #[cfg(not(feature = "profile-onehot-fp128-d64"))]
-fn run_profile_onehot_fp128_mixed_dim(nv: usize, num_polys: usize) {
-    type Cfg = fp128::AdaptiveOneHot;
+fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
+    type Cfg = fp128::OneHot;
     assert!(
         matches!(nv, 32 | 36),
-        "mixed-dimension profile supports generated nv=32 and nv=36 rows"
+        "fp128 one-hot profile supports generated nv=32 and nv=36 rows"
     );
-    assert_singleton_mode("onehot_fp128_mixed_dim", num_polys);
+    assert_singleton_mode("onehot_fp128", num_polys);
 
     let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
     ))
-    .expect("generated mixed-dimension schedule");
+    .expect("generated fp128 one-hot schedule");
     let selected_dims = std::iter::once(schedule.root.params.final_group.commitment.role_dims())
         .chain(
             schedule
@@ -411,24 +411,18 @@ fn run_profile_onehot_fp128_mixed_dim(nv: usize, num_polys: usize) {
         .collect::<Vec<_>>();
     tracing::info!(
         selected_dims = ?selected_dims,
-        "generated mixed-dimension schedule selection"
+        "generated fp128 one-hot schedule selection"
     );
 
     let layout = resolve_layout::<F, Cfg>(nv);
     tracing::info!(
-        "=== onehot_fp128_mixed_dim (fp128, flat public setup, generated per-level dimensions, 1-of-256) ==="
+        "=== onehot_fp128 (fp128, flat public setup, generated per-level dimensions, 1-of-256) ==="
     );
     print_layout(&layout, 1, Cfg::decomposition().field_bits());
     // The catalog row selected here is the same exact row used by the PCS
     // prover and verifier. The benchmark intentionally does not compare it
     // against a different uniform-D family.
-    run_onehot::<F, { Cfg::D }, Cfg>(
-        "onehot_fp128_mixed_dim",
-        nv,
-        &layout,
-        Some(&schedule),
-        false,
-    );
+    run_onehot::<F, { Cfg::D }, Cfg>("onehot_fp128", nv, &layout, Some(&schedule), false);
 }
 
 /// Shared driver for the recursive multi-group profiles. Every such profile

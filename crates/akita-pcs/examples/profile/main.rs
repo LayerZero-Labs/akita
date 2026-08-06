@@ -54,7 +54,7 @@ fn main() {
     let default_mode = if cfg!(feature = "profile-onehot-fp128-d64") {
         "onehot_fp128_d64"
     } else {
-        "onehot_fp128_mixed_dim"
+        "onehot_fp128"
     };
     let mode = env::var("AKITA_MODE").unwrap_or_else(|_| default_mode.to_string());
     let enable_trace = env_flag("AKITA_PROFILE_TRACE", true);

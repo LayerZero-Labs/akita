@@ -497,10 +497,10 @@ pub mod fp128_d64_onehot_recursive_precommitted;
 pub mod fp128_d64_onehot_tensor;
 #[cfg(feature = "fp128-d64-onehot-tensor")]
 pub mod fp128_d64_onehot_tensor_precommitted;
-#[cfg(feature = "fp128-mixed-dim-onehot")]
-pub mod fp128_mixed_dim_onehot;
-#[cfg(feature = "fp128-mixed-dim-onehot")]
-pub mod fp128_mixed_dim_onehot_precommitted;
+#[cfg(feature = "fp128-onehot")]
+pub mod fp128_onehot;
+#[cfg(feature = "fp128-onehot")]
+pub mod fp128_onehot_precommitted;
 #[cfg(feature = "fp32-d128-onehot")]
 pub mod fp32_d128_onehot;
 #[cfg(feature = "fp32-d128-onehot")]
@@ -615,12 +615,13 @@ pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
     }
 }
 
-#[cfg(feature = "fp128-mixed-dim-onehot")]
-pub fn fp128_mixed_dim_onehot_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp128-onehot")]
+pub fn fp128_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp128_mixed_dim_onehot::FP128_MIXED_DIM_ONEHOT_SCHEDULES,
-        precommitted_profiles: fp128_mixed_dim_onehot_precommitted::FP128_MIXED_DIM_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_mixed_dim_onehot::CATALOG_IDENTITY,
+        entries: fp128_onehot::FP128_ONEHOT_SCHEDULES,
+        precommitted_profiles:
+            fp128_onehot_precommitted::FP128_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp128_onehot::CATALOG_IDENTITY,
     }
 }
 

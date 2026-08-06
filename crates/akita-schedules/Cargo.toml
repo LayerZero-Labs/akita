@@ -29,7 +29,7 @@ all-schedules = [
 ]
 schedules-default = [
   "fp128-d64-onehot",
-  "fp128-mixed-dim-onehot",
+  "fp128-onehot",
   "fp128-d64-dense",
   "fp128-d128-dense",
   "fp32-d128-onehot",
@@ -39,7 +39,7 @@ schedules-default = [
   "fp64-d256-onehot",
 ]
 fp128-d64-onehot = []
-fp128-mixed-dim-onehot = []
+fp128-onehot = []
 fp128-d64-onehot-recursive = []
 fp128-d64-onehot-recursive-multi-chunk-w8r2 = []
 fp128-d64-dense = []

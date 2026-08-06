@@ -88,11 +88,11 @@ class CaseMetadata:
 # (`akita_config::generated_families::ALL_GENERATED_FAMILIES`). Modes outside
 # this map still render via the `case_metadata` fallback below.
 CASE_METADATA: dict[str, CaseMetadata] = {
-    # fp128 ships adaptive and D64 one-hot presets, plus D64 tensor and D128
+    # fp128 ships default and D64 one-hot presets, plus D64 tensor and D128
     # dense presets.
     "dense_fp128_d128": CaseMetadata("fp128", "dense", "dense", "D128"),
     "onehot_fp128_d64": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
-    "onehot_fp128_mixed_dim": CaseMetadata(
+    "onehot_fp128": CaseMetadata(
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "mixed D256 to D64"
     ),
     "onehot_fp128_d64_multi_group_recursive": CaseMetadata(
@@ -159,7 +159,7 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument(
         "--output-dir", required=True, help="Directory where logs and summary.json are written."
     )
-    run_parser.add_argument("--mode", default="onehot_fp128_d64", help="Benchmark mode.")
+    run_parser.add_argument("--mode", default="onehot_fp128", help="Benchmark mode.")
     run_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
     run_parser.add_argument(
         "--num-polys",
@@ -248,7 +248,7 @@ def parse_args() -> argparse.Namespace:
     failure_parser.add_argument(
         "--output-dir", required=True, help="Directory where summary files are written."
     )
-    failure_parser.add_argument("--mode", default="onehot_fp128_d64", help="Benchmark mode.")
+    failure_parser.add_argument("--mode", default="onehot_fp128", help="Benchmark mode.")
     failure_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
     failure_parser.add_argument(
         "--num-polys",

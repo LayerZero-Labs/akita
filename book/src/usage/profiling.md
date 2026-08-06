@@ -16,7 +16,7 @@ Run from `crates/akita-pcs/`. The harness refuses debug builds unless
 
 This feature-pruned command intentionally measures the explicit uniform-D64
 baseline. With the normal default feature set, omitting `AKITA_MODE` selects
-`onehot_fp128_mixed_dim` at `nv=32`, the adaptive fp128 one-hot default.
+`onehot_fp128` at `nv=32`, the default fp128 one-hot profile.
 
 Always use the feature-pruned command above when profiling this path or
 measuring its binary size/codegen time. An unpruned default-feature build of
@@ -30,7 +30,7 @@ normal release link look like a verifier regression.
 The default direct **fp128** one-hot preset is adaptive: generated tables choose
 the first two fold levels and use D64 for the uniform suffix. The explicit
 uniform `fp128_d64_onehot` baseline remains available, and recursive presets
-remain D64. Shipped tables include `fp128_mixed_dim_onehot`,
+remain D64. Shipped tables include `fp128_onehot`,
 `fp128_d64_onehot`, `fp128_d64_dense`, and `fp128_d128_dense`.
 **fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
 `D32OneHot` preset.
@@ -45,7 +45,7 @@ Compare ring degrees with
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `AKITA_MODE` | `onehot_fp128_mixed_dim` normally; `onehot_fp128_d64` in the feature-pruned command | Preset family and representation |
+| `AKITA_MODE` | `onehot_fp128` normally; `onehot_fp128_d64` in the feature-pruned command | Preset family and representation |
 | `AKITA_NUM_VARS` | `32` normally; `25` in the feature-pruned D64 binary | Witness size |
 | `AKITA_NUM_POLYS` | `1` | Batched opening count |
 | `AKITA_PROFILE_TRACE` | `1` | Chrome/Perfetto trace output |

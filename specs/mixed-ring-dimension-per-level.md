@@ -7,7 +7,7 @@
 | Benchmark snapshot | 2026-07-28, release build of `25a1e94a6` |
 | Recursive benchmark snapshot | 2026-07-28, working tree based on `af770e1296` |
 | Primary workload | fp128 one-hot, `nv = 36`, `np = 1` |
-| Primary profile mode | `onehot_fp128_mixed_dim` |
+| Primary profile mode | `onehot_fp128` |
 | Related spec | `specs/runtime-ring-cutover.md` |
 | Projected digit layout | `specs/role-native-projected-digit-layout.md` |
 | Planner implementation | `crates/akita-planner/src/schedule_params/` |
