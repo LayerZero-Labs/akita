@@ -47,7 +47,8 @@ pub struct EmitSpec {
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
     pub precommitted_profiles: Vec<CommittedGroupProfile>,
     /// Already-materialized rows retained by an explicit partial regeneration.
-    /// Requested scalar/group keys replace rows with the same full lookup key.
+    /// Successfully regenerated scalar/group keys replace matching rows;
+    /// unsupported replacements leave the existing row intact.
     pub preserved_entries: Vec<(AkitaScheduleLookupKey, FoldSchedule)>,
     pub generator_command: &'static str,
 }
@@ -650,14 +651,8 @@ fn materialized_entries(
     );
     keys.extend(spec.group_batch_keys.iter().map(|(key, _)| key.clone()));
 
-    let requested_keys = keys.clone();
     let workers = schedule_generation_worker_count(keys.len());
-    let mut entries = spec
-        .preserved_entries
-        .iter()
-        .filter(|(key, _)| !requested_keys.contains(key))
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut regenerated_entries = Vec::new();
     if workers > 1 && keys.len() >= 2 * workers {
         let chunk_size = keys.len().div_ceil(workers);
         std::thread::scope(|scope| -> Result<(), String> {
@@ -678,7 +673,7 @@ fn materialized_entries(
             let mut first_error = None;
             for handle in handles {
                 match handle.join() {
-                    Ok(Ok(local)) if first_error.is_none() => entries.extend(local),
+                    Ok(Ok(local)) if first_error.is_none() => regenerated_entries.extend(local),
                     Ok(Ok(_)) => {}
                     Ok(Err(error)) => {
                         first_error.get_or_insert(error);
@@ -698,12 +693,26 @@ fn materialized_entries(
     } else {
         for key in keys {
             if let Some(entry) = materialized_entry(spec, key)? {
-                entries.push(entry);
+                regenerated_entries.push(entry);
             }
         }
     }
+    let mut entries = spec.preserved_entries.clone();
+    replace_materialized_entries(&mut entries, regenerated_entries);
     entries.sort_by(|(left, _), (right, _)| akita_schedules::runtime_schedule_key_cmp(left, right));
     Ok(entries)
+}
+
+fn replace_materialized_entries<T>(
+    entries: &mut Vec<(AkitaScheduleLookupKey, T)>,
+    replacements: Vec<(AkitaScheduleLookupKey, T)>,
+) {
+    entries.retain(|(key, _)| {
+        !replacements
+            .iter()
+            .any(|(replacement_key, _)| replacement_key == key)
+    });
+    entries.extend(replacements);
 }
 
 fn materialized_entry(
@@ -937,4 +946,31 @@ pub fn write_precommitted_profiles_module(spec: &EmitSpec) -> Result<PathBuf, St
         .join(format!("{}.rs", precommitted_profiles_module_name(spec)));
     fs::write(&dest, &body).map_err(|e| format!("write {}: {e}", dest.display()))?;
     Ok(dest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_partial_regen_preserves_existing_entry() {
+        let requested = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(14));
+        let untouched = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
+        let mut entries = vec![(requested.clone(), "existing"), (untouched, "untouched")];
+
+        replace_materialized_entries(&mut entries, Vec::new());
+
+        assert_eq!(entries[0], (requested, "existing"));
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn successful_partial_regen_replaces_existing_entry_once() {
+        let requested = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(14));
+        let mut entries = vec![(requested.clone(), "existing")];
+
+        replace_materialized_entries(&mut entries, vec![(requested.clone(), "regenerated")]);
+
+        assert_eq!(entries, vec![(requested, "regenerated")]);
+    }
 }
