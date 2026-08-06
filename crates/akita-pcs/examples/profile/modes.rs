@@ -1,4 +1,15 @@
-#![cfg_attr(feature = "profile-onehot-fp128-d64", allow(dead_code))]
+#![cfg_attr(
+    any(
+        feature = "profile-onehot-fp128-d64",
+        feature = "profile-ci-fp128-dense",
+        feature = "profile-ci-fp128-tensor",
+        feature = "profile-ci-flat-onehot",
+        feature = "profile-ci-multi-group-recursive",
+        feature = "profile-ci-multi-group-recursive-w8r2",
+        feature = "profile-ci-distributed",
+    ),
+    allow(dead_code)
+)]
 
 use crate::report::print_layout;
 use crate::workload::{
@@ -174,55 +185,91 @@ struct ProfileMode {
     run: ProfileModeRunner,
 }
 
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), feature = "profile-ci"))]
-const PROFILE_CI_MODES: &[ProfileMode] = &[
+#[cfg(all(
+    not(feature = "profile-onehot-fp128-d64"),
+    any(
+        feature = "profile-ci",
+        feature = "profile-ci-fp128-dense",
+        feature = "profile-ci-fp128-tensor",
+        feature = "profile-ci-flat-onehot",
+        feature = "profile-ci-multi-group-recursive",
+        feature = "profile-ci-multi-group-recursive-w8r2",
+        feature = "profile-ci-distributed",
+    )
+))]
+const PROFILE_SELECTED_MODES: &[ProfileMode] = &[
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp128-dense"))]
     ProfileMode {
         name: "dense_fp128_d64",
         run: run_profile_dense_fp128_d64,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-flat-onehot"))]
     ProfileMode {
         name: "onehot_fp128_d64",
         run: run_profile_onehot_fp128_d64,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-flat-onehot"))]
     ProfileMode {
         name: "onehot_fp128_mixed_dim",
         run: run_profile_onehot_fp128_mixed_dim,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-multi-group-recursive"))]
     ProfileMode {
         name: "onehot_fp128_d64_multi_group_recursive",
         run: run_profile_onehot_fp128_d64_multi_group_recursive,
     },
+    #[cfg(any(
+        feature = "profile-ci",
+        feature = "profile-ci-multi-group-recursive-w8r2"
+    ))]
     ProfileMode {
         name: "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
         run: run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp128-tensor"))]
     ProfileMode {
         name: "onehot_fp128_d64_tensor",
         run: run_profile_onehot_fp128_d64_tensor,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-distributed"))]
     ProfileMode {
         name: "onehot_fp128_d64_multi_chunk_w2r2",
         run: run_profile_onehot_fp128_d64_multi_chunk_w2r2,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-distributed"))]
     ProfileMode {
         name: "onehot_fp128_d64_multi_chunk_w4r2",
         run: run_profile_onehot_fp128_d64_multi_chunk_w4r2,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-distributed"))]
     ProfileMode {
         name: "onehot_fp128_d64_multi_chunk_w8r2",
         run: run_profile_onehot_fp128_d64_multi_chunk_w8r2,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-flat-onehot"))]
     ProfileMode {
         name: "onehot_fp32_d128",
         run: run_profile_onehot_fp32_d128,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-flat-onehot"))]
     ProfileMode {
         name: "onehot_fp64_d128",
         run: run_profile_onehot_fp64_d128,
     },
 ];
 
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
+#[cfg(all(
+    not(feature = "profile-onehot-fp128-d64"),
+    not(any(
+        feature = "profile-ci",
+        feature = "profile-ci-fp128-dense",
+        feature = "profile-ci-fp128-tensor",
+        feature = "profile-ci-flat-onehot",
+        feature = "profile-ci-multi-group-recursive",
+        feature = "profile-ci-multi-group-recursive-w8r2",
+        feature = "profile-ci-distributed",
+    ))
+))]
 const PROFILE_ALL_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "dense_fp128_d64",
@@ -296,11 +343,27 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
 #[cfg(not(feature = "profile-onehot-fp128-d64"))]
 fn profile_modes() -> &'static [ProfileMode] {
-    #[cfg(feature = "profile-ci")]
+    #[cfg(any(
+        feature = "profile-ci",
+        feature = "profile-ci-fp128-dense",
+        feature = "profile-ci-fp128-tensor",
+        feature = "profile-ci-flat-onehot",
+        feature = "profile-ci-multi-group-recursive",
+        feature = "profile-ci-multi-group-recursive-w8r2",
+        feature = "profile-ci-distributed",
+    ))]
     {
-        PROFILE_CI_MODES
+        PROFILE_SELECTED_MODES
     }
-    #[cfg(not(feature = "profile-ci"))]
+    #[cfg(not(any(
+        feature = "profile-ci",
+        feature = "profile-ci-fp128-dense",
+        feature = "profile-ci-fp128-tensor",
+        feature = "profile-ci-flat-onehot",
+        feature = "profile-ci-multi-group-recursive",
+        feature = "profile-ci-multi-group-recursive-w8r2",
+        feature = "profile-ci-distributed",
+    )))]
     {
         PROFILE_ALL_MODES
     }
@@ -389,7 +452,7 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64", &title, nv, num_polys);
 }
 
-#[cfg(feature = "profile-ci")]
+#[cfg(any(feature = "profile-ci", feature = "profile-ci-flat-onehot"))]
 fn run_profile_onehot_fp128_mixed_dim(nv: usize, num_polys: usize) {
     type Cfg = fp128::MixedDimFp128OneHot;
     assert_eq!(nv, 32, "mixed-dimension profile fixes nv=32");

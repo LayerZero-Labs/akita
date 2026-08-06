@@ -4,7 +4,18 @@ mod modes;
 mod ntt_prewarm;
 mod parallel;
 mod report;
-#[cfg_attr(feature = "profile-onehot-fp128-d64", allow(dead_code))]
+#[cfg_attr(
+    any(
+        feature = "profile-onehot-fp128-d64",
+        feature = "profile-ci-fp128-dense",
+        feature = "profile-ci-fp128-tensor",
+        feature = "profile-ci-flat-onehot",
+        feature = "profile-ci-multi-group-recursive",
+        feature = "profile-ci-multi-group-recursive-w8r2",
+        feature = "profile-ci-distributed",
+    ),
+    allow(dead_code)
+)]
 mod workload;
 
 use std::env;
