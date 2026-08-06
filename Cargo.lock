@@ -206,6 +206,7 @@ dependencies = [
  "akita-field",
  "akita-serialization",
  "akita-transcript",
+ "rayon",
  "tracing",
 ]
 
