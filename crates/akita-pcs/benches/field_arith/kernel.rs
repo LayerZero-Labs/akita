@@ -6,7 +6,7 @@ use akita_field::{
     CanonicalField, FieldCore, FpExt4, Prime128Offset275, Prime32Offset99, RandomSampling, Zero,
 };
 use akita_prover::kernels::sumcheck::SumcheckKernelPlan;
-use akita_sumcheck::EvaluationTable;
+use akita_sumcheck::{compute_product_round_scalar, EvaluationTable};
 use criterion::{black_box, BatchSize, Criterion, Throughput};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -192,6 +192,7 @@ fn bench_fp32_ext4_sumcheck_fold(c: &mut Criterion) {
             right[row - half]
         }
     });
+    let product_factor = EvaluationTable::from_evaluation_fn(2 * half, |_| E::random(&mut rng));
 
     let mut scalar_out = vec![E::zero(); half];
     let mut packed_out = vec![PE::broadcast(E::zero()); packed_left.len()];
@@ -251,6 +252,26 @@ fn bench_fp32_ext4_sumcheck_fold(c: &mut Criterion) {
         )
     });
 
+    group.bench_function("scalar_product_round_evaluation_tables", |b| {
+        b.iter(|| {
+            black_box(compute_product_round_scalar(
+                black_box(&runtime_table),
+                black_box(&product_factor),
+            ))
+        })
+    });
+
+    group.bench_function("runtime_product_round_evaluation_tables", |b| {
+        b.iter(|| {
+            black_box(
+                runtime_plan.compute_product_round_fp32(
+                    black_box(&runtime_table),
+                    black_box(&product_factor),
+                ),
+            )
+        })
+    });
+
     #[cfg(target_arch = "x86_64")]
     if std::is_x86_feature_detected!("avx2") {
         group.bench_function("runtime_avx2_evaluation_table", |b| {
@@ -262,6 +283,14 @@ fn bench_fp32_ext4_sumcheck_fold(c: &mut Criterion) {
                 },
                 BatchSize::SmallInput,
             )
+        });
+        group.bench_function("runtime_avx2_product_round_evaluation_tables", |b| {
+            b.iter(|| {
+                black_box(bench_product_round_fp32_avx2(
+                    black_box(&runtime_table),
+                    black_box(&product_factor),
+                ))
+            })
         });
     }
 
@@ -279,6 +308,14 @@ fn bench_fp32_ext4_sumcheck_fold(c: &mut Criterion) {
                 },
                 BatchSize::SmallInput,
             )
+        });
+        group.bench_function("runtime_avx512_ifma_product_round_evaluation_tables", |b| {
+            b.iter(|| {
+                black_box(bench_product_round_fp32_avx512_ifma(
+                    black_box(&runtime_table),
+                    black_box(&product_factor),
+                ))
+            })
         });
     }
 
@@ -364,6 +401,50 @@ fn bench_fold_fp32_avx512_ifma<const P: u32>(
         )
     };
     table.truncate(half);
+}
+
+#[cfg(target_arch = "x86_64")]
+fn bench_coefficient_halves<const P: u32>(
+    table: &EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+) -> ([&[Fp32<P>]; 4], [&[Fp32<P>]; 4]) {
+    let half = table.len() / 2;
+    (
+        std::array::from_fn(|coefficient| &table.coefficient_slice(coefficient)[..half]),
+        std::array::from_fn(|coefficient| &table.coefficient_slice(coefficient)[half..]),
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn bench_product_round_fp32_avx2<const P: u32>(
+    witness: &EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    factor: &EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+) -> (FpExt4<Fp32<P>>, FpExt4<Fp32<P>>) {
+    let (witness_0, witness_1) = bench_coefficient_halves(witness);
+    let (factor_0, factor_1) = bench_coefficient_halves(factor);
+    // SAFETY: the benchmark only calls this helper after detecting AVX2. All
+    // slices come from equal halves of same-length power-of-two tables.
+    unsafe {
+        akita_field::packed::runtime_x86::compute_product_round_fp_ext4_fp32_avx2(
+            witness_0, witness_1, factor_0, factor_1,
+        )
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn bench_product_round_fp32_avx512_ifma<const P: u32>(
+    witness: &EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    factor: &EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+) -> (FpExt4<Fp32<P>>, FpExt4<Fp32<P>>) {
+    let (witness_0, witness_1) = bench_coefficient_halves(witness);
+    let (factor_0, factor_1) = bench_coefficient_halves(factor);
+    // SAFETY: the benchmark only calls this helper after detecting AVX-512F,
+    // AVX-512DQ, and AVX-512IFMA. All slices come from equal halves of
+    // same-length power-of-two tables.
+    unsafe {
+        akita_field::packed::runtime_x86::compute_product_round_fp_ext4_fp32_avx512_ifma(
+            witness_0, witness_1, factor_0, factor_1,
+        )
+    }
 }
 
 fn bench_packed_sumcheck_mix(c: &mut Criterion) {

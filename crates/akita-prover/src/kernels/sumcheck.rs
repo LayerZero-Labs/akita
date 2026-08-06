@@ -1,7 +1,7 @@
 //! Runtime-selected kernels over canonical sumcheck evaluation tables.
 
 use akita_field::{Fp32, FpExt4};
-use akita_sumcheck::{fold_first_variable_scalar, EvaluationTable};
+use akita_sumcheck::{compute_product_round_scalar, fold_first_variable_scalar, EvaluationTable};
 
 /// Host-detected operation choices for sumcheck tables.
 ///
@@ -9,11 +9,12 @@ use akita_sumcheck::{fold_first_variable_scalar, EvaluationTable};
 /// target-feature implementation that the current CPU does not support.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SumcheckKernelPlan {
-    fp32_fold: Fp32FoldKernel,
+    fp32_fold: Fp32Kernel,
+    fp32_product_round: Fp32Kernel,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Fp32FoldKernel {
+enum Fp32Kernel {
     Scalar,
     #[cfg(target_arch = "x86_64")]
     Avx2,
@@ -24,25 +25,10 @@ enum Fp32FoldKernel {
 impl SumcheckKernelPlan {
     /// Detect the fastest supported implementation for each operation.
     pub fn detect() -> Self {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if std::is_x86_feature_detected!("avx512f")
-                && std::is_x86_feature_detected!("avx512dq")
-                && std::is_x86_feature_detected!("avx512ifma")
-            {
-                return Self {
-                    fp32_fold: Fp32FoldKernel::Avx512Ifma,
-                };
-            }
-            if std::is_x86_feature_detected!("avx2") {
-                return Self {
-                    fp32_fold: Fp32FoldKernel::Avx2,
-                };
-            }
-        }
-
+        let fp32 = detect_fp32_kernel();
         Self {
-            fp32_fold: Fp32FoldKernel::Scalar,
+            fp32_fold: fp32,
+            fp32_product_round: fp32,
         }
     }
 
@@ -62,9 +48,9 @@ impl SumcheckKernelPlan {
         );
 
         match self.fp32_fold {
-            Fp32FoldKernel::Scalar => fold_first_variable_scalar(table, challenge),
+            Fp32Kernel::Scalar => fold_first_variable_scalar(table, challenge),
             #[cfg(target_arch = "x86_64")]
-            Fp32FoldKernel::Avx2 => {
+            Fp32Kernel::Avx2 => {
                 if table.len() / 2 < 8 {
                     fold_first_variable_scalar(table, challenge);
                 } else {
@@ -74,7 +60,7 @@ impl SumcheckKernelPlan {
                 }
             }
             #[cfg(target_arch = "x86_64")]
-            Fp32FoldKernel::Avx512Ifma => {
+            Fp32Kernel::Avx512Ifma => {
                 if table.len() / 2 < 16 {
                     fold_first_variable_scalar(table, challenge);
                 } else {
@@ -87,20 +73,109 @@ impl SumcheckKernelPlan {
         }
     }
 
+    /// Compute one fp32 quartic-extension product round using the detected operation.
+    pub fn compute_product_round_fp32<const P: u32>(
+        self,
+        witness: &EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+        factor: &EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    ) -> (FpExt4<Fp32<P>>, FpExt4<Fp32<P>>) {
+        assert_eq!(
+            witness.len(),
+            factor.len(),
+            "product round tables must have equal lengths"
+        );
+        assert!(
+            witness.len().is_power_of_two(),
+            "product round table length must be a power of two"
+        );
+        assert!(
+            witness.len() >= 2,
+            "product round tables must have at least two rows"
+        );
+
+        match self.fp32_product_round {
+            Fp32Kernel::Scalar => compute_product_round_scalar(witness, factor),
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx2 => {
+                if witness.len() / 2 < 8 {
+                    compute_product_round_scalar(witness, factor)
+                } else {
+                    let (witness_0, witness_1) = coefficient_halves(witness);
+                    let (factor_0, factor_1) = coefficient_halves(factor);
+                    // SAFETY: only `detect` constructs production plans, and
+                    // it selects this variant after checking AVX2 support.
+                    unsafe {
+                        akita_field::packed::runtime_x86::compute_product_round_fp_ext4_fp32_avx2(
+                            witness_0, witness_1, factor_0, factor_1,
+                        )
+                    }
+                }
+            }
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx512Ifma => {
+                if witness.len() / 2 < 16 {
+                    compute_product_round_scalar(witness, factor)
+                } else {
+                    let (witness_0, witness_1) = coefficient_halves(witness);
+                    let (factor_0, factor_1) = coefficient_halves(factor);
+                    // SAFETY: only `detect` constructs production plans, and
+                    // it selects this variant after checking AVX-512F, DQ,
+                    // and IFMA.
+                    unsafe {
+                        akita_field::packed::runtime_x86::compute_product_round_fp_ext4_fp32_avx512_ifma(
+                            witness_0, witness_1, factor_0, factor_1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     #[cfg(test)]
     const SCALAR: Self = Self {
-        fp32_fold: Fp32FoldKernel::Scalar,
+        fp32_fold: Fp32Kernel::Scalar,
+        fp32_product_round: Fp32Kernel::Scalar,
     };
 
     #[cfg(all(test, target_arch = "x86_64"))]
     const AVX2: Self = Self {
-        fp32_fold: Fp32FoldKernel::Avx2,
+        fp32_fold: Fp32Kernel::Avx2,
+        fp32_product_round: Fp32Kernel::Avx2,
     };
 
     #[cfg(all(test, target_arch = "x86_64"))]
     const AVX512_IFMA: Self = Self {
-        fp32_fold: Fp32FoldKernel::Avx512Ifma,
+        fp32_fold: Fp32Kernel::Avx512Ifma,
+        fp32_product_round: Fp32Kernel::Avx512Ifma,
     };
+}
+
+fn detect_fp32_kernel() -> Fp32Kernel {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::is_x86_feature_detected!("avx512f")
+            && std::is_x86_feature_detected!("avx512dq")
+            && std::is_x86_feature_detected!("avx512ifma")
+        {
+            return Fp32Kernel::Avx512Ifma;
+        }
+        if std::is_x86_feature_detected!("avx2") {
+            return Fp32Kernel::Avx2;
+        }
+    }
+
+    Fp32Kernel::Scalar
+}
+
+#[cfg(target_arch = "x86_64")]
+fn coefficient_halves<const P: u32>(
+    table: &EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+) -> ([&[Fp32<P>]; 4], [&[Fp32<P>]; 4]) {
+    let half = table.len() / 2;
+    (
+        std::array::from_fn(|coefficient| &table.coefficient_slice(coefficient)[..half]),
+        std::array::from_fn(|coefficient| &table.coefficient_slice(coefficient)[half..]),
+    )
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -182,9 +257,24 @@ mod tests {
         }
     }
 
+    fn compare_product_round_plan(plan: SumcheckKernelPlan) {
+        for len in [2, 4, 8, 16, 32, 64, 256] {
+            let witness = EvaluationTable::<F, E>::from_multilinear_evaluation_fn(len, value)
+                .expect("valid witness table");
+            let factor = EvaluationTable::<F, E>::from_multilinear_evaluation_fn(len, |row| {
+                value(row + len + 31)
+            })
+            .expect("valid factor table");
+            let expected = SumcheckKernelPlan::SCALAR.compute_product_round_fp32(&witness, &factor);
+            let actual = plan.compute_product_round_fp32(&witness, &factor);
+            assert_eq!(actual, expected, "product round mismatch at len={len}");
+        }
+    }
+
     #[test]
     fn detected_fp32_fold_matches_scalar() {
         compare_plan(SumcheckKernelPlan::detect());
+        compare_product_round_plan(SumcheckKernelPlan::detect());
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -192,12 +282,14 @@ mod tests {
     fn supported_x86_fp32_folds_match_scalar() {
         if std::is_x86_feature_detected!("avx2") {
             compare_plan(SumcheckKernelPlan::AVX2);
+            compare_product_round_plan(SumcheckKernelPlan::AVX2);
         }
         if std::is_x86_feature_detected!("avx512f")
             && std::is_x86_feature_detected!("avx512dq")
             && std::is_x86_feature_detected!("avx512ifma")
         {
             compare_plan(SumcheckKernelPlan::AVX512_IFMA);
+            compare_product_round_plan(SumcheckKernelPlan::AVX512_IFMA);
         }
     }
 }
