@@ -17,7 +17,10 @@ pub use akita_algebra::poly::{
 };
 pub use akita_algebra::uni_poly::{CompressedUniPoly, UniPoly};
 
-pub use accum::reduce_signed_accum;
+pub use accum::{
+    reduce_signed_accum, DelayedProductRoundAccumulator, DirectProductRoundAccumulator,
+    ProductRoundAccumulator,
+};
 pub use batched_sumcheck::{
     check_batched_output_claim, compute_batched_expected_output_claim, prove_batched_sumcheck,
     verify_batched_sumcheck, verify_batched_sumcheck_rounds, BatchedSumcheckRoundResult,
@@ -27,7 +30,9 @@ pub use drivers::{
     advance_eq_factored_claim, check_sumcheck_output_claim, EqFactoredSumcheckInstanceProverExt,
     EqFactoredSumcheckInstanceVerifierExt, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
 };
-pub use evaluation_table::{fold_first_variable_scalar, EvaluationTable};
+pub use evaluation_table::{
+    compute_product_round_scalar, fold_first_variable_scalar, EvaluationTable,
+};
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,
     EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,

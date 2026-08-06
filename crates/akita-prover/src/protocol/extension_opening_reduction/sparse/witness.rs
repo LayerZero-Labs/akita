@@ -339,19 +339,22 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
         // most one entry; it accumulates the identical products in the identical
         // order, so both paths agree bit-for-bit.
         let (constant, quadratic) = match (E::DELAYED_PRODUCT_SUM_IS_EXACT, merge_free) {
-            (true, false) => Self::accumulate_entries_with_factor_using::<DelayedDeg2<E>, P>(
-                entries,
-                factor_pair,
-            ),
-            (false, false) => {
-                Self::accumulate_entries_with_factor_using::<DirectDeg2<E>, P>(entries, factor_pair)
-            }
-            (true, true) => {
-                Self::accumulate_entries_merge_free_using::<DelayedDeg2<E>, P>(entries, factor_pair)
-            }
-            (false, true) => {
-                Self::accumulate_entries_merge_free_using::<DirectDeg2<E>, P>(entries, factor_pair)
-            }
+            (true, false) => Self::accumulate_entries_with_factor_using::<
+                DelayedProductRoundAccumulator<E>,
+                P,
+            >(entries, factor_pair),
+            (false, false) => Self::accumulate_entries_with_factor_using::<
+                DirectProductRoundAccumulator<E>,
+                P,
+            >(entries, factor_pair),
+            (true, true) => Self::accumulate_entries_merge_free_using::<
+                DelayedProductRoundAccumulator<E>,
+                P,
+            >(entries, factor_pair),
+            (false, true) => Self::accumulate_entries_merge_free_using::<
+                DirectProductRoundAccumulator<E>,
+                P,
+            >(entries, factor_pair),
         };
         (coeff * constant, coeff * quadratic)
     }
@@ -361,7 +364,7 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
         factor_pair: &P,
     ) -> (E, E)
     where
-        A: Deg2RoundAccum<E>,
+        A: ProductRoundAccumulator<E>,
         P: Fn(usize) -> (E, E) + Sync,
     {
         let mut acc = A::zero();
@@ -400,13 +403,13 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
     /// `merge_free_rounds_left` rounds). It is the grouped loop with the inner
     /// pair-grouping `while` removed: each pair contributes exactly its single
     /// child, placed at `w0` or `w1` by parity, so the products, their order, and
-    /// the `Deg2RoundAccum` calls are byte-identical to the general path.
+    /// the `ProductRoundAccumulator` calls are byte-identical to the general path.
     pub(super) fn accumulate_entries_merge_free_using<A, P>(
         entries: &[(usize, E)],
         factor_pair: &P,
     ) -> (E, E)
     where
-        A: Deg2RoundAccum<E>,
+        A: ProductRoundAccumulator<E>,
         P: Fn(usize) -> (E, E) + Sync,
     {
         let mut acc = A::zero();
@@ -566,12 +569,12 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
         P: Fn(usize) -> (E, E) + Sync,
     {
         let (constant, quadratic) = if E::DELAYED_PRODUCT_SUM_IS_EXACT {
-            self.fused_fold_accumulate_merge_free_using::<DelayedDeg2<E>, P>(
+            self.fused_fold_accumulate_merge_free_using::<DelayedProductRoundAccumulator<E>, P>(
                 r_round,
                 next_factor_pair,
             )
         } else {
-            self.fused_fold_accumulate_merge_free_using::<DirectDeg2<E>, P>(
+            self.fused_fold_accumulate_merge_free_using::<DirectProductRoundAccumulator<E>, P>(
                 r_round,
                 next_factor_pair,
             )
@@ -587,7 +590,7 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
         next_factor_pair: &P,
     ) -> (E, E)
     where
-        A: Deg2RoundAccum<E>,
+        A: ProductRoundAccumulator<E>,
         P: Fn(usize) -> (E, E) + Sync,
     {
         let one_minus = E::one() - r_round;

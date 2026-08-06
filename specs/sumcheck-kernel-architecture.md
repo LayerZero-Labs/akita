@@ -370,6 +370,12 @@ The scalar reference uses the current `HasUnreducedOps` contract. A SIMD
 implementation must prove its integer bounds for the exact modulus and maximum
 chunk size before using delayed reduction.
 
+`akita-sumcheck` owns the product round accumulator interface and its delayed
+and direct reduction implementations. The scalar table operation and the dense,
+fused, and sparse EOR traversals use those same implementations. The delayed
+implementation rejects a field unless `DELAYED_PRODUCT_SUM_IS_EXACT` is true.
+This keeps the reduction policy in one source of truth.
+
 Small signed inputs may use wider integer accumulators and reduce less often.
 Full field products may need a different accumulator. The operation plan may
 select different accumulation code for compact first rounds and later full field

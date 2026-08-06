@@ -23,9 +23,15 @@ pub(crate) fn accumulate_dense_round<E: FieldCore + HasUnreducedOps>(
     // each product immediately so the coefficients stay byte-identical to
     // per-term `Mul` (the `DELAYED_PRODUCT_SUM_IS_EXACT` contract).
     let (constant, quadratic) = if E::DELAYED_PRODUCT_SUM_IS_EXACT {
-        accumulate_dense_round_with::<E, DelayedDeg2<E>>(witness_evals, factor_evals)
+        accumulate_dense_round_with::<E, DelayedProductRoundAccumulator<E>>(
+            witness_evals,
+            factor_evals,
+        )
     } else {
-        accumulate_dense_round_with::<E, DirectDeg2<E>>(witness_evals, factor_evals)
+        accumulate_dense_round_with::<E, DirectProductRoundAccumulator<E>>(
+            witness_evals,
+            factor_evals,
+        )
     };
     (coeff * constant, coeff * quadratic)
 }
@@ -33,7 +39,7 @@ pub(crate) fn accumulate_dense_round<E: FieldCore + HasUnreducedOps>(
 fn accumulate_dense_round_with<E, A>(witness_evals: &[E], factor_evals: &[E]) -> (E, E)
 where
     E: FieldCore + HasUnreducedOps,
-    A: Deg2RoundAccum<E>,
+    A: ProductRoundAccumulator<E>,
 {
     let half = witness_evals.len() / 2;
 
@@ -102,9 +108,17 @@ pub(crate) fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
     // accumulation respects `DELAYED_PRODUCT_SUM_IS_EXACT`, matching
     // `accumulate_dense_round`.
     if E::DELAYED_PRODUCT_SUM_IS_EXACT {
-        fused_fold_and_accumulate_with::<E, DelayedDeg2<E>>(witness_evals, factor_evals, r_round)
+        fused_fold_and_accumulate_with::<E, DelayedProductRoundAccumulator<E>>(
+            witness_evals,
+            factor_evals,
+            r_round,
+        )
     } else {
-        fused_fold_and_accumulate_with::<E, DirectDeg2<E>>(witness_evals, factor_evals, r_round)
+        fused_fold_and_accumulate_with::<E, DirectProductRoundAccumulator<E>>(
+            witness_evals,
+            factor_evals,
+            r_round,
+        )
     }
 }
 
@@ -115,7 +129,7 @@ fn fused_fold_and_accumulate_with<E, A>(
 ) -> (E, E)
 where
     E: FieldCore + HasUnreducedOps + HasOptimizedFold,
-    A: Deg2RoundAccum<E>,
+    A: ProductRoundAccumulator<E>,
 {
     let half = witness_evals.len() / 2;
     let quarter = half / 2;

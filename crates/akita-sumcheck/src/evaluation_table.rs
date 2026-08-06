@@ -1,6 +1,9 @@
 //! Coefficient-first storage for materialized sumcheck evaluations.
 
-use akita_field::unreduced::HasOptimizedFold;
+use crate::accum::{
+    DelayedProductRoundAccumulator, DirectProductRoundAccumulator, ProductRoundAccumulator,
+};
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, ExtField, FieldCore};
 use core::fmt;
 use core::marker::PhantomData;
@@ -58,6 +61,68 @@ where
         }
     }
     table.truncate(half);
+}
+
+/// Compute the constant and quadratic coefficients for a product round.
+///
+/// Both dense tables must have the same binding order and live length. For each
+/// row pair this computes `w0 * f0` for the constant coefficient and
+/// `(w1 - w0) * (f1 - f0)` for the quadratic coefficient. The caller derives
+/// the linear coefficient from the previous claim.
+///
+/// # Panics
+///
+/// Panics if the table lengths differ, are not powers of two, or have fewer
+/// than two rows.
+pub fn compute_product_round_scalar<F, E>(
+    witness: &EvaluationTable<F, E>,
+    factor: &EvaluationTable<F, E>,
+) -> (E, E)
+where
+    F: FieldCore,
+    E: ExtField<F> + HasUnreducedOps,
+{
+    assert_eq!(
+        witness.len(),
+        factor.len(),
+        "product round tables must have equal lengths"
+    );
+    assert!(
+        witness.len().is_power_of_two(),
+        "product round table length must be a power of two"
+    );
+    assert!(
+        witness.len() >= 2,
+        "product round tables must have at least two rows"
+    );
+
+    if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+        compute_product_round_with::<F, E, DelayedProductRoundAccumulator<E>>(witness, factor)
+    } else {
+        compute_product_round_with::<F, E, DirectProductRoundAccumulator<E>>(witness, factor)
+    }
+}
+
+fn compute_product_round_with<F, E, A>(
+    witness: &EvaluationTable<F, E>,
+    factor: &EvaluationTable<F, E>,
+) -> (E, E)
+where
+    F: FieldCore,
+    E: ExtField<F> + HasUnreducedOps,
+    A: ProductRoundAccumulator<E>,
+{
+    let half = witness.len() / 2;
+    let mut accumulator = A::zero();
+    for row in 0..half {
+        let witness_0 = witness.evaluation(row);
+        let witness_1 = witness.evaluation(row + half);
+        let factor_0 = factor.evaluation(row);
+        let factor_1 = factor.evaluation(row + half);
+        accumulator.add_constant_product(witness_0, factor_0);
+        accumulator.add_quadratic_product(witness_1 - witness_0, factor_1 - factor_0);
+    }
+    accumulator.finish()
 }
 
 impl<F, E> EvaluationTable<F, E>
@@ -334,15 +399,44 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{fold_first_variable_scalar, EvaluationTable};
+    use super::{compute_product_round_scalar, fold_first_variable_scalar, EvaluationTable};
     use akita_algebra::poly::fold_evals_in_place;
-    use akita_field::{Ext2, ExtField, FpExt4, FpExt8, Prime32Offset99};
+    use akita_field::unreduced::HasUnreducedOps;
+    use akita_field::{
+        Ext2, ExtField, FieldCore, FpExt4, FpExt8, Prime128Offset275, Prime32Offset99, Zero,
+    };
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;
 
     fn value(row: usize) -> E {
         E::from_base_fn(|coefficient| F::from_u64((100 * coefficient + row) as u64))
+    }
+
+    fn check_product_round<B, T>(witness: Vec<T>, factor: Vec<T>)
+    where
+        B: FieldCore,
+        T: ExtField<B> + HasUnreducedOps,
+    {
+        let mut constant = T::zero();
+        let mut quadratic = T::zero();
+        for row in 0..witness.len() / 2 {
+            let witness_0 = witness[2 * row];
+            let witness_1 = witness[2 * row + 1];
+            let factor_0 = factor[2 * row];
+            let factor_1 = factor[2 * row + 1];
+            constant += witness_0 * factor_0;
+            quadratic += (witness_1 - witness_0) * (factor_1 - factor_0);
+        }
+
+        let witness = EvaluationTable::<B, T>::from_multilinear_evaluations(&witness)
+            .expect("valid witness table");
+        let factor = EvaluationTable::<B, T>::from_multilinear_evaluations(&factor)
+            .expect("valid factor table");
+        assert_eq!(
+            compute_product_round_scalar(&witness, &factor),
+            (constant, quadratic)
+        );
     }
 
     #[test]
@@ -447,6 +541,43 @@ mod tests {
 
         assert_eq!(table.len(), 1);
         assert_eq!(table.evaluation(0), logical[0]);
+    }
+
+    #[test]
+    fn product_round_matches_logical_pairs_with_delayed_reduction() {
+        assert!(E::DELAYED_PRODUCT_SUM_IS_EXACT);
+        for len in [2, 4, 8, 16, 32] {
+            check_product_round::<F, E>(
+                (0..len).map(value).collect(),
+                (0..len).map(|row| value(row + 37)).collect(),
+            );
+        }
+    }
+
+    #[test]
+    fn product_round_matches_logical_pairs_with_direct_reduction() {
+        type G = Prime128Offset275;
+        assert!(!G::DELAYED_PRODUCT_SUM_IS_EXACT);
+        for len in [2, 4, 8, 16, 32] {
+            check_product_round::<G, G>(
+                (0..len)
+                    .map(|row| G::from_u64((3 * row + 11) as u64))
+                    .collect(),
+                (0..len)
+                    .map(|row| G::from_u64((7 * row + 19) as u64))
+                    .collect(),
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "product round tables must have equal lengths")]
+    fn product_round_rejects_mismatched_tables() {
+        let witness = EvaluationTable::<F, E>::from_multilinear_evaluation_fn(4, value)
+            .expect("valid witness table");
+        let factor = EvaluationTable::<F, E>::from_multilinear_evaluation_fn(2, value)
+            .expect("valid factor table");
+        compute_product_round_scalar(&witness, &factor);
     }
 
     #[test]
