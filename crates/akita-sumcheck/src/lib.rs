@@ -31,7 +31,8 @@ pub use drivers::{
     EqFactoredSumcheckInstanceVerifierExt, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
 };
 pub use evaluation_table::{
-    compute_product_round_scalar, fold_first_variable_scalar, EvaluationTable,
+    compute_product_round_scalar, fold_and_compute_product_round_scalar,
+    fold_first_variable_scalar, EvaluationTable,
 };
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,

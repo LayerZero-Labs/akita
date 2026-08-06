@@ -82,15 +82,7 @@ where
     F: FieldCore,
     E: ExtField<F> + HasUnreducedOps,
 {
-    assert_eq!(
-        witness.len(),
-        factor.len(),
-        "product round tables must have equal lengths"
-    );
-    assert!(
-        witness.len().is_power_of_two(),
-        "product round table length must be a power of two"
-    );
+    validate_product_round_tables(witness, factor);
     assert!(
         witness.len() >= 2,
         "product round tables must have at least two rows"
@@ -101,6 +93,60 @@ where
     } else {
         compute_product_round_with::<F, E, DirectProductRoundAccumulator<E>>(witness, factor)
     }
+}
+
+/// Fold two tables and compute their next product round in one pass.
+///
+/// The operation binds the first variable to `challenge`, writes both folded
+/// tables in place, and returns the constant and quadratic coefficients for the
+/// next variable. It avoids reading the folded tables in a second pass.
+///
+/// # Panics
+///
+/// Panics if the table lengths differ, are not powers of two, or have fewer
+/// than four rows.
+pub fn fold_and_compute_product_round_scalar<F, E>(
+    witness: &mut EvaluationTable<F, E>,
+    factor: &mut EvaluationTable<F, E>,
+    challenge: E,
+) -> (E, E)
+where
+    F: FieldCore,
+    E: ExtField<F> + HasOptimizedFold + HasUnreducedOps,
+{
+    validate_product_round_tables(witness, factor);
+    assert!(
+        witness.len() >= 4,
+        "fused product round tables must have at least four rows"
+    );
+
+    if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+        fold_and_compute_product_round_with::<F, E, DelayedProductRoundAccumulator<E>>(
+            witness, factor, challenge,
+        )
+    } else {
+        fold_and_compute_product_round_with::<F, E, DirectProductRoundAccumulator<E>>(
+            witness, factor, challenge,
+        )
+    }
+}
+
+fn validate_product_round_tables<F, E>(
+    witness: &EvaluationTable<F, E>,
+    factor: &EvaluationTable<F, E>,
+) where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    assert_eq!(
+        witness.len(),
+        factor.len(),
+        "product round tables must have equal lengths"
+    );
+    assert!(
+        witness.len().is_power_of_two(),
+        "product round table length must be a power of two"
+    );
 }
 
 fn compute_product_round_with<F, E, A>(
@@ -122,6 +168,58 @@ where
         accumulator.add_constant_product(witness_0, factor_0);
         accumulator.add_quadratic_product(witness_1 - witness_0, factor_1 - factor_0);
     }
+    accumulator.finish()
+}
+
+fn fold_and_compute_product_round_with<F, E, A>(
+    witness: &mut EvaluationTable<F, E>,
+    factor: &mut EvaluationTable<F, E>,
+    challenge: E,
+) -> (E, E)
+where
+    F: FieldCore,
+    E: ExtField<F> + HasOptimizedFold + HasUnreducedOps,
+    A: ProductRoundAccumulator<E>,
+{
+    let half = witness.len() / 2;
+    let quarter = half / 2;
+    let fold = E::precompute_fold(challenge);
+    let mut accumulator = A::zero();
+
+    for row in 0..quarter {
+        let witness_0 = E::fold_one(
+            &fold,
+            witness.evaluation(row),
+            witness.evaluation(row + half),
+        );
+        let witness_1 = E::fold_one(
+            &fold,
+            witness.evaluation(row + quarter),
+            witness.evaluation(row + quarter + half),
+        );
+        let factor_0 = E::fold_one(&fold, factor.evaluation(row), factor.evaluation(row + half));
+        let factor_1 = E::fold_one(
+            &fold,
+            factor.evaluation(row + quarter),
+            factor.evaluation(row + quarter + half),
+        );
+
+        accumulator.add_constant_product(witness_0, factor_0);
+        accumulator.add_quadratic_product(witness_1 - witness_0, factor_1 - factor_0);
+
+        for coefficient in 0..<E as ExtField<F>>::EXT_DEGREE {
+            let witness_coefficient = witness.coefficient_slice_mut(coefficient);
+            witness_coefficient[row] = witness_0.base_coefficient(coefficient);
+            witness_coefficient[row + quarter] = witness_1.base_coefficient(coefficient);
+
+            let factor_coefficient = factor.coefficient_slice_mut(coefficient);
+            factor_coefficient[row] = factor_0.base_coefficient(coefficient);
+            factor_coefficient[row + quarter] = factor_1.base_coefficient(coefficient);
+        }
+    }
+
+    witness.truncate(half);
+    factor.truncate(half);
     accumulator.finish()
 }
 
@@ -399,9 +497,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_product_round_scalar, fold_first_variable_scalar, EvaluationTable};
+    use super::{
+        compute_product_round_scalar, fold_and_compute_product_round_scalar,
+        fold_first_variable_scalar, EvaluationTable,
+    };
     use akita_algebra::poly::fold_evals_in_place;
-    use akita_field::unreduced::HasUnreducedOps;
+    use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
     use akita_field::{
         Ext2, ExtField, FieldCore, FpExt4, FpExt8, Prime128Offset275, Prime32Offset99, Zero,
     };
@@ -437,6 +538,34 @@ mod tests {
             compute_product_round_scalar(&witness, &factor),
             (constant, quadratic)
         );
+    }
+
+    fn check_fused_product_round<B, T>(witness: Vec<T>, factor: Vec<T>, challenge: T)
+    where
+        B: FieldCore,
+        T: ExtField<B> + HasOptimizedFold + HasUnreducedOps,
+    {
+        let mut expected_witness = EvaluationTable::<B, T>::from_multilinear_evaluations(&witness)
+            .expect("valid witness table");
+        let mut expected_factor = EvaluationTable::<B, T>::from_multilinear_evaluations(&factor)
+            .expect("valid factor table");
+        fold_first_variable_scalar(&mut expected_witness, challenge);
+        fold_first_variable_scalar(&mut expected_factor, challenge);
+        let expected = compute_product_round_scalar(&expected_witness, &expected_factor);
+
+        let mut actual_witness = EvaluationTable::<B, T>::from_multilinear_evaluations(&witness)
+            .expect("valid witness table");
+        let mut actual_factor = EvaluationTable::<B, T>::from_multilinear_evaluations(&factor)
+            .expect("valid factor table");
+        let actual = fold_and_compute_product_round_scalar(
+            &mut actual_witness,
+            &mut actual_factor,
+            challenge,
+        );
+
+        assert_eq!(actual, expected);
+        assert_eq!(actual_witness, expected_witness);
+        assert_eq!(actual_factor, expected_factor);
     }
 
     #[test]
@@ -566,6 +695,33 @@ mod tests {
                 (0..len)
                     .map(|row| G::from_u64((7 * row + 19) as u64))
                     .collect(),
+            );
+        }
+    }
+
+    #[test]
+    fn fused_product_round_matches_separate_delayed_operations() {
+        for len in [4, 8, 16, 32] {
+            check_fused_product_round::<F, E>(
+                (0..len).map(value).collect(),
+                (0..len).map(|row| value(row + 37)).collect(),
+                value(len + 73),
+            );
+        }
+    }
+
+    #[test]
+    fn fused_product_round_matches_separate_direct_operations() {
+        type G = Prime128Offset275;
+        for len in [4, 8, 16, 32] {
+            check_fused_product_round::<G, G>(
+                (0..len)
+                    .map(|row| G::from_u64((3 * row + 11) as u64))
+                    .collect(),
+                (0..len)
+                    .map(|row| G::from_u64((7 * row + 19) as u64))
+                    .collect(),
+                G::from_u64((len + 29) as u64),
             );
         }
     }
