@@ -1,4 +1,9 @@
+#[cfg(target_arch = "aarch64")]
+use std::mem::size_of;
+
 use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt, inverse_ntt_cyclic};
+#[cfg(target_arch = "aarch64")]
+use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, PrimeWidth};
 use crate::ring::cyclotomic::CyclotomicRing;
 
@@ -160,6 +165,60 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 *dst = lut.get(k, coefficient).unwrap_or_else(|| {
                     prime.from_canonical(reducer.reduce_i64(i64::from(coefficient)))
                 });
+            }
+            forward_ntt(limb, *prime, tw, params.kernel_plan);
+        }
+        Self { limbs }
+    }
+
+    /// Convert signed i16 coefficients directly into negacyclic CRT+NTT form.
+    ///
+    /// On AArch64, i32 and i16 CRT limbs use width-specific NEON Montgomery
+    /// conversion. Other targets retain the scalar centered-reduction path.
+    pub(super) fn from_centered_i16_with_params(
+        coeffs: &[i16; D],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Self {
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for ((limb, prime), tw) in limbs
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+        {
+            #[cfg(target_arch = "aarch64")]
+            if params.kernel_plan.uses_neon() && size_of::<W>() == size_of::<i32>() {
+                unsafe {
+                    neon::centered_i16_to_mont_i32(
+                        limb.as_mut_ptr() as *mut i32,
+                        coeffs.as_ptr(),
+                        D,
+                        prime.p.to_i64() as i32,
+                        prime.pinv.to_i64() as i32,
+                        prime.montsq.to_i64() as i32,
+                    );
+                }
+                forward_ntt(limb, *prime, tw, params.kernel_plan);
+                continue;
+            }
+            #[cfg(target_arch = "aarch64")]
+            if params.kernel_plan.uses_neon() && size_of::<W>() == size_of::<i16>() {
+                unsafe {
+                    neon::centered_i16_to_mont_i16(
+                        limb.as_mut_ptr() as *mut i16,
+                        coeffs.as_ptr(),
+                        D,
+                        prime.p.to_i64() as i16,
+                        prime.pinv.to_i64() as i16,
+                        prime.montsq.to_i64() as i16,
+                    );
+                }
+                forward_ntt(limb, *prime, tw, params.kernel_plan);
+                continue;
+            }
+
+            let reducer = CenteredPrimeReducer::new(*prime);
+            for (dst, &coefficient) in limb.iter_mut().zip(coeffs) {
+                *dst = prime.from_canonical(reducer.reduce_i64(i64::from(coefficient)));
             }
             forward_ntt(limb, *prime, tw, params.kernel_plan);
         }

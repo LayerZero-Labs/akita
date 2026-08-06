@@ -62,24 +62,40 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             return Ok(vec![Self::zero(); num_rows]);
         }
 
-        let rhs_abs_bound = rhs
-            .iter()
-            .flatten()
-            .map(|&digit| i32::from(digit).unsigned_abs())
-            .max()
-            .unwrap_or(0) as i32;
-        let lut = CenteredMontLut::new(params, rhs_abs_bound);
+        #[cfg(target_arch = "aarch64")]
+        let use_direct_i16 = params.kernel_plan.uses_neon()
+            && (size_of::<W>() == size_of::<i16>() || size_of::<W>() == size_of::<i32>());
+        #[cfg(not(target_arch = "aarch64"))]
+        let use_direct_i16 = false;
+        let lut = if use_direct_i16 {
+            None
+        } else {
+            let rhs_abs_bound = rhs
+                .iter()
+                .flatten()
+                .map(|&digit| i32::from(digit).unsigned_abs())
+                .max()
+                .unwrap_or(0) as i32;
+            Some(CenteredMontLut::new(params, rhs_abs_bound))
+        };
         let mut accumulators = vec![Self::zero(); num_rows];
         if !params.uses_lazy_i32_dot() {
             for (column, digits) in rhs.iter().enumerate() {
                 if digits.iter().all(|&digit| digit == 0) {
                     continue;
                 }
-                let centered = digits.map(i32::from);
-                let transformed = Self::from_centered_i32_with_lut(&centered, params, &lut);
+                let transformed = if let Some(lut) = &lut {
+                    let centered = digits.map(i32::from);
+                    Self::from_centered_i32_with_lut(&centered, params, lut)
+                } else {
+                    Self::from_centered_i16_with_params(digits, params)
+                };
                 for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
                 {
-                    accumulator.add_assign_pointwise_mul(&row[column], &transformed, params);
+                    let matrix_entry = row.get(column).ok_or_else(|| {
+                        AkitaError::InvalidSetup("prepared NTT matrix row is undersized".into())
+                    })?;
+                    accumulator.add_assign_pointwise_mul(matrix_entry, &transformed, params);
                 }
             }
             return Ok(accumulators);
@@ -94,8 +110,13 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 if digits.iter().all(|&digit| digit == 0) {
                     break;
                 }
-                let centered = digits.map(i32::from);
-                transformed.push(Self::from_centered_i32_with_lut(&centered, params, &lut));
+                let transformed_rhs = if let Some(lut) = &lut {
+                    let centered = digits.map(i32::from);
+                    Self::from_centered_i32_with_lut(&centered, params, lut)
+                } else {
+                    Self::from_centered_i16_with_params(digits, params)
+                };
+                transformed.push(transformed_rhs);
             }
 
             if transformed.len() == batch_end - batch_start {
@@ -109,18 +130,24 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 }
                 continue;
             }
-
             // Preserve the zero-ring fast path when a batch is not fully dense.
             for (offset, digits) in rhs[batch_start..batch_end].iter().enumerate() {
                 if digits.iter().all(|&digit| digit == 0) {
                     continue;
                 }
-                let centered = digits.map(i32::from);
-                let transformed = Self::from_centered_i32_with_lut(&centered, params, &lut);
+                let transformed = if let Some(lut) = &lut {
+                    let centered = digits.map(i32::from);
+                    Self::from_centered_i32_with_lut(&centered, params, lut)
+                } else {
+                    Self::from_centered_i16_with_params(digits, params)
+                };
                 let column = batch_start + offset;
                 for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
                 {
-                    accumulator.add_assign_pointwise_mul(&row[column], &transformed, params);
+                    let matrix_entry = row.get(column).ok_or_else(|| {
+                        AkitaError::InvalidSetup("prepared NTT matrix row is undersized".into())
+                    })?;
+                    accumulator.add_assign_pointwise_mul(matrix_entry, &transformed, params);
                 }
             }
         }

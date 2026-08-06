@@ -3,7 +3,9 @@
 use std::time::Duration;
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use akita_field::{
+    CanonicalField, FieldCore, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
+};
 use akita_prover::kernels::linear::mat_vec_mul_ntt_digits_i8;
 use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode, PreparedNttCache};
 use criterion::{
@@ -19,6 +21,13 @@ const WIDTHS: [usize; 4] = [128, 256, 512, 1024];
 const COMMON_LOG_BASES: [u32; 7] = [2, 3, 4, 5, 6, 7, 8];
 
 fn sample_matrix<const D: usize>(rank: usize, width: usize) -> Vec<CyclotomicRing<F, D>> {
+    sample_matrix_for::<F, D>(rank, width)
+}
+
+fn sample_matrix_for<Field: FieldCore + CanonicalField, const D: usize>(
+    rank: usize,
+    width: usize,
+) -> Vec<CyclotomicRing<Field, D>> {
     (0..rank * width)
         .map(|entry| {
             CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
@@ -26,10 +35,21 @@ fn sample_matrix<const D: usize>(rank: usize, width: usize) -> Vec<CyclotomicRin
                     .wrapping_mul(0x9E37_79B1_85EB_CA87)
                     .wrapping_add((coefficient as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F));
                 let high = low.rotate_left(29) ^ 0xD6E8_FEB8_6659_FD93;
-                F::from_canonical_u128_reduced(u128::from(low) | (u128::from(high) << 64))
+                Field::from_canonical_u128_reduced(u128::from(low) | (u128::from(high) << 64))
             }))
         })
         .collect()
+}
+
+fn prepare_for<Field: FieldCore + CanonicalField, const D: usize>(
+    matrix: &[CyclotomicRing<Field, D>],
+    mode: NttCacheMode,
+) -> PreparedNttCache<D> {
+    let flat = FlatMatrix::from_ring_slice(matrix);
+    let view = flat
+        .ring_view::<D>(1, matrix.len())
+        .expect("benchmark matrix view");
+    prepare_ntt_cache(view, mode).expect("benchmark NTT cache")
 }
 
 fn sample_i8_digits<const D: usize>(width: usize, log_basis: u32) -> Vec<[i8; D]> {
@@ -276,6 +296,40 @@ fn bench_shape<const D: usize>(
     }
 }
 
+fn bench_exact_profile_shape<Field: FieldCore + CanonicalField, const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    rank: usize,
+    width: usize,
+) {
+    let shape = format!("d{D}_r{rank}_w{width}");
+    let matrix = sample_matrix_for::<Field, D>(rank, width);
+    group.throughput(Throughput::Elements((rank * width * D) as u64));
+
+    for log_basis in [8, 11] {
+        let cache = prepare_for(
+            &matrix,
+            NttCacheMode::ExactNegacyclic {
+                width,
+                rhs_abs_bound: 1 << (log_basis - 1),
+            },
+        );
+        let digits = sample_i16_digits::<D>(width, log_basis);
+        let layout = if cache.has_i16_tail() { "tail" } else { "base" };
+        group.bench_function(
+            BenchmarkId::new(format!("i16_l{log_basis}_{layout}"), &shape),
+            |bench| {
+                bench.iter(|| {
+                    black_box(
+                        cache
+                            .mat_vec_i16::<Field>(log_basis, rank, black_box(&digits))
+                            .expect("exact-profile benchmark matvec"),
+                    )
+                })
+            },
+        );
+    }
+}
+
 fn bench_equal_output_shape<const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     rank: usize,
@@ -369,6 +423,30 @@ fn bench_rank_ring_dim(c: &mut Criterion) {
         bench_shape::<128>(&mut group, rank, FIXED_WIDTH);
         bench_shape::<256>(&mut group, rank, FIXED_WIDTH);
         bench_shape::<512>(&mut group, rank, FIXED_WIDTH);
+    }
+    group.finish();
+}
+
+fn bench_q32_rank_ring_dim(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ntt_matvec_q32/rank_ring_dim/w128");
+    for rank in RANKS {
+        bench_exact_profile_shape::<Prime32Offset99, 64>(&mut group, rank, FIXED_WIDTH);
+        bench_exact_profile_shape::<Prime32Offset99, 128>(&mut group, rank, FIXED_WIDTH);
+        bench_exact_profile_shape::<Prime32Offset99, 256>(&mut group, rank, FIXED_WIDTH);
+        bench_exact_profile_shape::<Prime32Offset99, 512>(&mut group, rank, FIXED_WIDTH);
+        bench_exact_profile_shape::<Prime32Offset99, 1024>(&mut group, rank, FIXED_WIDTH);
+    }
+    group.finish();
+}
+
+fn bench_q64_rank_ring_dim(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ntt_matvec_q64/rank_ring_dim/w128");
+    for rank in RANKS {
+        bench_exact_profile_shape::<Prime64Offset59, 64>(&mut group, rank, FIXED_WIDTH);
+        bench_exact_profile_shape::<Prime64Offset59, 128>(&mut group, rank, FIXED_WIDTH);
+        bench_exact_profile_shape::<Prime64Offset59, 256>(&mut group, rank, FIXED_WIDTH);
+        bench_exact_profile_shape::<Prime64Offset59, 512>(&mut group, rank, FIXED_WIDTH);
+        bench_exact_profile_shape::<Prime64Offset59, 1024>(&mut group, rank, FIXED_WIDTH);
     }
     group.finish();
 }
@@ -489,6 +567,6 @@ criterion_group! {
         .sample_size(10)
         .warm_up_time(Duration::from_millis(200))
         .measurement_time(Duration::from_secs(1));
-    targets = bench_rank_ring_dim, bench_width, bench_equal_output, bench_q64_exact, bench_q32_exact, bench_q128_exact, bench_q32_one_core_traversal
+    targets = bench_rank_ring_dim, bench_q32_rank_ring_dim, bench_q64_rank_ring_dim, bench_width, bench_equal_output, bench_q64_exact, bench_q32_exact, bench_q128_exact, bench_q32_one_core_traversal
 }
 criterion_main!(ntt_matvec);
