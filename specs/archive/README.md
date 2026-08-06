@@ -13,6 +13,7 @@ to track current behavior; update the owning book chapter instead.
 | Spec | Final status | Book chapter | Archived |
 |------|--------------|--------------|----------|
 | `2026-Q3/group-local-opening-points.md` | archived | `book/src/how/architecture.md` | 2026-Q3 |
+| `2026-Q3/digit-range-pipeline-refactor.md` | archived | `book/src/how/proving/sumcheck-stages.md` | 2026-Q3 |
 | `2026-Q2/w-to-e-notation.md` | archived | `book/src/foundations/glossary.md` | 2026-Q2 |
 | `2026-Q2/planner-refactor.md` | archived | `book/src/how/configuration.md` | 2026-Q2 |
 | `2026-Q2/planner-owns-schedule-expansion.md` | archived | `book/src/how/configuration.md` | 2026-Q2 |
