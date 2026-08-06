@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     sync::Arc,
 };
 
@@ -122,37 +122,49 @@ pub(crate) fn terminal_direct_suffix_cost(
     Ok((direct, terminal_bytes))
 }
 
-pub(crate) type ScheduleMemo = HashMap<
-    (
-        usize,
-        usize,
-        u32,
-        usize,
-        akita_types::CommitmentPayloadPhase,
-    ),
-    Arc<SuffixResult>,
->;
+type ScheduleMemoKey = (
+    usize,
+    usize,
+    u32,
+    usize,
+    akita_types::CommitmentPayloadPhase,
+);
 
 // Geometry and independent-basis search can produce many distinct witness
 // lengths. Memoization is only a speed optimization, so bound retained states
 // rather than allowing catalog generation to consume memory without limit.
 const MAX_SCHEDULE_MEMO_ENTRIES: usize = 16_384;
 
-fn memo_insert(
-    memo: &mut ScheduleMemo,
-    key: (
-        usize,
-        usize,
-        u32,
-        usize,
-        akita_types::CommitmentPayloadPhase,
-    ),
-    result: &Arc<SuffixResult>,
-) {
-    if memo.len() >= MAX_SCHEDULE_MEMO_ENTRIES {
-        memo.clear();
+pub(crate) struct ScheduleMemo {
+    entries: HashMap<ScheduleMemoKey, Arc<SuffixResult>>,
+    insertion_order: VecDeque<ScheduleMemoKey>,
+}
+
+impl ScheduleMemo {
+    pub(crate) fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            insertion_order: VecDeque::new(),
+        }
     }
-    memo.insert(key, Arc::clone(result));
+
+    fn get(&self, key: &ScheduleMemoKey) -> Option<&Arc<SuffixResult>> {
+        self.entries.get(key)
+    }
+
+    fn insert(&mut self, key: ScheduleMemoKey, result: &Arc<SuffixResult>) {
+        if self.entries.contains_key(&key) {
+            self.entries.insert(key, Arc::clone(result));
+            return;
+        }
+        if self.entries.len() >= MAX_SCHEDULE_MEMO_ENTRIES {
+            if let Some(evicted) = self.insertion_order.pop_front() {
+                self.entries.remove(&evicted);
+            }
+        }
+        self.insertion_order.push_back(key);
+        self.entries.insert(key, Arc::clone(result));
+    }
 }
 
 fn offloaded_witness_contracts(
@@ -605,7 +617,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
 
     if depth > MAX_RECURSION_DEPTH {
         let result = empty_suffix_result();
-        memo_insert(memo, memo_key, &result);
+        memo.insert(memo_key, &result);
         return Ok(result);
     }
 
@@ -657,7 +669,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
     )?
     else {
         let result = empty_suffix_result();
-        memo_insert(memo, memo_key, &result);
+        memo.insert(memo_key, &result);
         return Ok(result);
     };
     let scalar_opening_layout = if root_level_key.is_some() {
@@ -871,7 +883,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         best_by_first_direct_setup_per_lb,
         best_by_payload_per_lb,
     });
-    memo_insert(memo, memo_key, &result);
+    memo.insert(memo_key, &result);
     Ok(result)
 }
 
