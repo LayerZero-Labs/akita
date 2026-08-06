@@ -417,6 +417,54 @@ fn bench_q32_exact(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_q32_one_core_traversal_shape<const D: usize>(group: &mut BenchmarkGroup<'_, WallTime>) {
+    const RANK: usize = 4;
+    const WIDTH: usize = 128;
+    const BLOCKS: usize = 64;
+    let matrix = sample_q32_matrix::<D>(RANK, WIDTH);
+    let flat = FlatMatrix::from_ring_slice(&matrix);
+    let cache = prepare_ntt_cache(
+        flat.ring_view::<D>(RANK, WIDTH)
+            .expect("Q32 traversal matrix view"),
+        NttCacheMode::BothTransforms,
+    )
+    .expect("Q32 traversal cache");
+    let digit_blocks: Vec<Vec<[i8; D]>> = (0..BLOCKS)
+        .map(|block| {
+            let mut digits = sample_i8_digits::<D>(WIDTH, 6);
+            for (column, ring) in digits.iter_mut().enumerate() {
+                ring.rotate_left((block + column) % D);
+            }
+            digits
+        })
+        .collect();
+    let blocks: Vec<&[[i8; D]]> = digit_blocks.iter().map(Vec::as_slice).collect();
+    group.throughput(Throughput::Elements((BLOCKS * RANK * WIDTH * D) as u64));
+    group.bench_function(format!("d{D}_b{BLOCKS}_r{RANK}_w{WIDTH}"), |bench| {
+        bench.iter(|| {
+            black_box(
+                mat_vec_mul_ntt_digits_i8::<Prime32Offset99, D>(
+                    &cache,
+                    RANK,
+                    WIDTH,
+                    black_box(&blocks),
+                    6,
+                )
+                .expect("Q32 one-core traversal matvec"),
+            )
+        })
+    });
+}
+
+fn bench_q32_one_core_traversal(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ntt_matvec_q32/one_core_traversal/b64_r4_w128");
+    bench_q32_one_core_traversal_shape::<64>(&mut group);
+    bench_q32_one_core_traversal_shape::<128>(&mut group);
+    bench_q32_one_core_traversal_shape::<256>(&mut group);
+    bench_q32_one_core_traversal_shape::<512>(&mut group);
+    group.finish();
+}
+
 fn bench_q128_exact(c: &mut Criterion) {
     let mut group = c.benchmark_group("ntt_matvec_q128/exact_i16/r4_w128");
     bench_q128_exact_shape::<64>(&mut group, 4, 128);
@@ -432,6 +480,6 @@ criterion_group! {
         .sample_size(10)
         .warm_up_time(Duration::from_millis(200))
         .measurement_time(Duration::from_secs(1));
-    targets = bench_rank_ring_dim, bench_width, bench_equal_output, bench_q64_exact, bench_q32_exact, bench_q128_exact
+    targets = bench_rank_ring_dim, bench_width, bench_equal_output, bench_q64_exact, bench_q32_exact, bench_q128_exact, bench_q32_one_core_traversal
 }
 criterion_main!(ntt_matvec);
