@@ -77,7 +77,7 @@
       "consider_updating": [
         "book/src/how/proving/**",
         "book/src/how/recursion.md",
-        "specs/packed-sumcheck.md",
+        "specs/sumcheck-kernel-architecture.md",
         "specs/setup-product-sumcheck.md",
         "specs/terminal-fold-cutover.md",
         "specs/protocol-field-geometry-cutover.md"

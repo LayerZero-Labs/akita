@@ -1,4 +1,4 @@
-// D1 microbench for specs/packed-sumcheck.md (packed ProductAccum lane/reduce choice).
+// Historical D1 microbench for specs/archive/2026-Q3/packed-sumcheck.md.
 //
 // Run:
 //   rustc -C opt-level=3 -C target-cpu=native -C codegen-units=1 \
@@ -10,7 +10,7 @@
 //   small (a<2^8): eager 1.54  chunked-K3 0.80  u64-deferred 0.32  u128-once 0.29
 // Conclusion: the cost is in-loop modular-reduction *frequency*, not lane width.
 // Single-reduce wins (u128 full-width 0.29; u64 deferred for small operands 0.32).
-// See packed-sumcheck.md D1. Re-run with real packed types/intrinsics on AVX2/AVX-512
+// See the archived spec D1. Re-run with real packed types/intrinsics on AVX2/AVX-512
 // before locking the full-width-round lane choice.
 //
 // Directional microbench: packed-style lane accumulation strategies for a 31-bit

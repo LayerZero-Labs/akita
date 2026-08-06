@@ -14,7 +14,7 @@ where the prover's hot work is dispatched.
 **Sources to fold in**
 
 - `docs/compute-backends.md`, `crates/akita-prover/src/compute.rs`.
-- `specs/packed-sumcheck.md`, `specs/eor-sumcheck-prover-acceleration.md`.
+- `specs/sumcheck-kernel-architecture.md`, `specs/eor-sumcheck-prover-acceleration.md`.
 - `specs/akita-compute-backend-metal.md` (Metal is roadmap).
 
 ## SIMD and packing

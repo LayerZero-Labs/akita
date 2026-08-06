@@ -9,7 +9,7 @@
 | Branch | `quang/unify-verifier-setup-weights` |
 | Base | `feat/planner-per-matrix-d` |
 | Integration dependencies | PR #309 at `b0c2d4683539b0c2a465b996f48adfc465a20198`; PR #310 at `4cb4113b02a58889230f3dbaa81deb56895bb4ca` as cross-feature evidence |
-| Related | [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), [`digit-innermost-layout.md`](digit-innermost-layout.md), [`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`packed-sumcheck.md`](packed-sumcheck.md) |
+| Related | [`digit-range-pipeline-refactor.md`](archive/2026-Q3/digit-range-pipeline-refactor.md), [`digit-innermost-layout.md`](digit-innermost-layout.md), [`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`sumcheck-kernel-architecture.md`](sumcheck-kernel-architecture.md) |
 
 ## Summary
 

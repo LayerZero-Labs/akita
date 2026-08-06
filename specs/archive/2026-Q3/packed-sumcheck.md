@@ -1,12 +1,18 @@
-# Spec: Packed-SIMD sum-check and EOR prover
+# Spec: Packed SIMD sumcheck and EOR prover
 
-| Field       | Value                          |
-|-------------|--------------------------------|
-| Author(s)   | Quang Dao (spec) → hand-off for implementation |
-| Created     | 2026-06-02                     |
-| Status      | ready for implementation (EOR only; Stage 1/2 blocked) |
-| Pilot       | extension-opening reduction (EOR), then stage1 / stage2 |
-| Related     | [`eor-streamed-prover.md`](eor-streamed-prover.md), [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), PR [#142](https://github.com/LayerZero-Labs/akita/pull/142) (`specs/cross-repo-field-microbench.md`) |
+| Field | Value |
+|---|---|
+| Author(s) | Quang Dao |
+| Created | 2026-06-02 |
+| Status | superseded |
+| PR | |
+| Supersedes | |
+| Superseded-by | [`sumcheck-kernel-architecture.md`](../../sumcheck-kernel-architecture.md) |
+| Book-chapter | |
+
+This document is frozen as the record of the earlier design. The replacement
+uses architecture neutral coefficient storage and runtime CPU selection. Do not
+use this document as the implementation contract.
 
 ## Summary
 

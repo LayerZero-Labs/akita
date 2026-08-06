@@ -65,7 +65,7 @@ live_specs=(
   specs/setup-layout-repack.md
   specs/setup-offloading-planner.md
   specs/eor-streamed-prover.md
-  specs/packed-sumcheck.md
+  specs/sumcheck-kernel-architecture.md
   specs/schedule-catalog-ownership.md
   specs/planner-incidence-generalization.md
   specs/multi-group-batching.md
