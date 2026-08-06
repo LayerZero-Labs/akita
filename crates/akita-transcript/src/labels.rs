@@ -51,6 +51,8 @@ pub const ABSORB_SUMCHECK_INTERSTAGE_CLAIM: &[u8] = b"ak/a/sci";
 pub const CHALLENGE_SUMCHECK_BATCH: &[u8] = b"ak/c/scb";
 /// Challenge batching canonical blockwise L2 norm subclaims.
 pub const CHALLENGE_L2_NORM_BATCH: &[u8] = b"ak/c/l2b";
+/// Challenge merging the range and norm identities in the final Stage-1 leaf.
+pub const CHALLENGE_L2_NORM_MERGE: &[u8] = b"ak/c/l2m";
 /// Challenge batching Stage-2 bindings of L2 virtual evaluations.
 pub const CHALLENGE_L2_VIRTUAL_BATCH: &[u8] = b"ak/c/l2v";
 /// Challenge batching the support-restricted negative-binary compression check.
@@ -136,6 +138,7 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
     CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_L2_NORM_BATCH,
+    CHALLENGE_L2_NORM_MERGE,
     CHALLENGE_L2_VIRTUAL_BATCH,
     CHALLENGE_COMPRESSION_BINARY,
     CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,

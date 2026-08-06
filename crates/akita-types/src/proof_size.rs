@@ -8,7 +8,10 @@
 //! schedule-table representation it consumes.
 
 use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
-use crate::{CommitmentPayloadGeometry, CommittedGroupParams, DigitRangePlan};
+use crate::{
+    CommitmentPayloadGeometry, CommittedGroupParams, DigitRangePlan, InnerCommitSecurityRoute,
+    PhysicalL2NormProofShape,
+};
 use akita_field::AkitaError;
 
 /// Fixed wire size of `fold_grind_nonce` on every fold level proof.
@@ -22,17 +25,53 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
     rounds * compressed_unipoly_bytes(degree, elem_bytes)
 }
 
-fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
-    DigitRangePlan::new(b)
-        .expect("scheduled range basis must be certified")
-        .stage_shapes(rounds)
-        .into_iter()
-        .map(|stage| {
-            ({ sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes) })
-                + stage.child_claims * elem_bytes
-        })
-        .sum::<usize>()
-        + elem_bytes
+fn stage1_proof_bytes(
+    rounds: usize,
+    b: usize,
+    elem_bytes: usize,
+    route: InnerCommitSecurityRoute,
+) -> Result<usize, AkitaError> {
+    let plan = DigitRangePlan::new(b)?;
+    let stage_bytes = |stage: crate::AkitaStage1StageShape| {
+        sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes) + stage.child_claims * elem_bytes
+    };
+    match route {
+        InnerCommitSecurityRoute::Linf(_) => Ok(plan
+            .stage_shapes(rounds)
+            .into_iter()
+            .map(stage_bytes)
+            .sum::<usize>()
+            + elem_bytes),
+        InnerCommitSecurityRoute::L2 {
+            norm_proof_shape, ..
+        } => {
+            norm_proof_shape.validate()?;
+            let product_bytes = plan
+                .stage_shapes(rounds)
+                .into_iter()
+                .take(plan.product_stage_arities().len())
+                .map(stage_bytes)
+                .sum::<usize>();
+            let (subclaims, virtual_evaluations) = match norm_proof_shape {
+                PhysicalL2NormProofShape::Direct { .. } => (0, 1),
+                PhysicalL2NormProofShape::LimbGram { limb_count, .. } => (
+                    norm_proof_shape.subclaim_count().ok_or_else(|| {
+                        AkitaError::InvalidSetup("L2 norm subclaim count overflow".into())
+                    })?,
+                    limb_count,
+                ),
+            };
+            // The L2 payload carries the ordinary final range evaluation, one
+            // fixed-width integer claim, all shape-derived field claims, and
+            // the fused standard leaf sumcheck. Merging the degree-two norm
+            // term adds exactly one stored coefficient to every leaf round.
+            Ok(product_bytes
+                + elem_bytes
+                + 16
+                + (subclaims + virtual_evaluations) * elem_bytes
+                + sumcheck_bytes(rounds, plan.leaf_degree() + 1, elem_bytes))
+        }
+    }
 }
 
 /// Header-stripped byte size of one non-terminal folded proof level.
@@ -100,7 +139,12 @@ pub fn level_proof_bytes(
     };
     let next_eval_bytes = challenge_elem_bytes;
     let b = 1usize << lp.log_basis_open;
-    let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);
+    let stage1_bytes = stage1_proof_bytes(
+        rounds,
+        b,
+        challenge_elem_bytes,
+        lp.inner_commit_matrix.security_route(),
+    )?;
     Ok(v_bytes
         + FOLD_GRIND_NONCE_BYTES
         + stage1_bytes
@@ -171,10 +215,12 @@ mod tests {
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 
     use crate::golomb_rice::golomb_rice_encode_vec;
+    use crate::sis::sis_l2_table_key_for_collision_sq;
     use crate::{
         terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-        FoldLevelProof, RingVec, SetupSumcheckProof, SisModulusProfileId, TerminalLevelProof,
-        TerminalResponse, TerminalResponseShape, SETUP_SUMCHECK_DEGREE,
+        FoldLevelProof, PhysicalL2NormProof, RingVec, SetupSumcheckProof, SisL2TableDigest,
+        SisModulusProfileId, TerminalLevelProof, TerminalResponse, TerminalResponseShape,
+        DEFAULT_SIS_SECURITY_POLICY, SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;
@@ -240,19 +286,47 @@ mod tests {
         }
     }
 
-    fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
+    fn dummy_stage1_proof<F: FieldCore>(
+        rounds: usize,
+        b: usize,
+        route: InnerCommitSecurityRoute,
+    ) -> AkitaStage1Proof<F> {
+        let plan = DigitRangePlan::new(b).expect("test range basis");
+        let (stage_count, norm_proof) = match route {
+            InnerCommitSecurityRoute::Linf(_) => (plan.stage_count(), None),
+            InnerCommitSecurityRoute::L2 {
+                norm_proof_shape, ..
+            } => {
+                let (subclaims, virtual_evaluations) = match norm_proof_shape {
+                    PhysicalL2NormProofShape::Direct { .. } => (0, 1),
+                    PhysicalL2NormProofShape::LimbGram { limb_count, .. } => (
+                        norm_proof_shape.subclaim_count().expect("test subclaims"),
+                        limb_count,
+                    ),
+                };
+                (
+                    plan.product_stage_arities().len(),
+                    Some(PhysicalL2NormProof {
+                        response_l2_sq: 0,
+                        subclaims: vec![F::zero(); subclaims],
+                        virtual_evaluations: vec![F::zero(); virtual_evaluations],
+                        sumcheck: dummy_sumcheck(rounds, plan.leaf_degree() + 1),
+                    }),
+                )
+            }
+        };
         AkitaStage1Proof {
-            stages: DigitRangePlan::new(b)
-                .expect("test range basis")
+            stages: plan
                 .stage_shapes(rounds)
                 .into_iter()
+                .take(stage_count)
                 .map(|shape| AkitaStage1StageProof {
                     sumcheck_proof: dummy_eq_factored_sumcheck(rounds, shape.sumcheck_proof.1),
                     child_claims: vec![F::zero(); shape.child_claims],
                 })
                 .collect(),
             range_image_evaluation: F::zero(),
-            norm_proof: None,
+            norm_proof,
         }
     }
 
@@ -291,7 +365,7 @@ mod tests {
             extension_opening_reduction: None,
             opening_payload: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             fold_grind_nonce: 0,
-            stage1: dummy_stage1_proof(rounds, b),
+            stage1: dummy_stage1_proof(rounds, b, lp.inner_commit_matrix.security_route()),
             stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
                 next_witness_binding: match next_witness_binding {
@@ -359,6 +433,81 @@ mod tests {
                 )
                 .unwrap(),
                 "planned level bytes should match the serialized non-offloaded body at log_basis={log_basis}"
+            );
+        }
+    }
+
+    #[test]
+    fn planned_level_bytes_match_serialized_l2_payloads() {
+        const D: usize = 64;
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let next_lp = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            2,
+            2,
+            3,
+            2,
+            fold_challenge_config,
+        );
+        let table_key = sis_l2_table_key_for_collision_sq(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisL2TableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            D as u32,
+            1u128 << 50,
+        )
+        .expect("generated L2 key");
+        let shapes = [
+            PhysicalL2NormProofShape::Direct {
+                physical_response_len: 512,
+            },
+            PhysicalL2NormProofShape::LimbGram {
+                physical_response_len: 65,
+                block_len: 32,
+                limb_count: 3,
+            },
+        ];
+
+        for shape in shapes {
+            let mut lp = CommittedGroupParams::params_only(
+                SisModulusProfileId::Q128OffsetA7F7,
+                D,
+                4,
+                2,
+                2,
+                2,
+                fold_challenge_config,
+            )
+            .with_decomp(1, 1, 1, 1, 1)
+            .unwrap();
+            lp.inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_l2_with_min_rank(
+                table_key,
+                lp.inner_commit_matrix.input_width(),
+                1u128 << 30,
+                shape,
+            )
+            .expect("audited L2 matrix");
+            let output_witness_len = D * 8;
+            assert_eq!(
+                level_proof_bytes(
+                    128,
+                    128,
+                    &lp,
+                    Some(&next_lp),
+                    output_witness_len,
+                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
+                )
+                .unwrap(),
+                exact_level_proof_bytes::<F>(
+                    &lp,
+                    &next_lp,
+                    output_witness_len,
+                    None,
+                    crate::NextWitnessBindingPolicy::OuterPayload,
+                )
+                .unwrap(),
+                "planned L2 bytes should match serialized body for {shape:?}"
             );
         }
     }

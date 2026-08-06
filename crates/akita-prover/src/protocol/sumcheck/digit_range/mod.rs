@@ -30,7 +30,7 @@ use akita_transcript::labels;
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     append_digit_range_child_claims, AkitaStage1Proof, AkitaStage1StageProof,
-    DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
+    DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain, PhysicalResponsePlan,
 };
 use class_indexed_product::ClassIndexedProductSubcheckProver;
 use class_indexed_range_leaf::ClassIndexedRangeLeafProver;
@@ -176,6 +176,88 @@ impl<E: FieldCore + FromPrimitiveInt> DigitRangeProver<E> {
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + AkitaSerialize>
     DigitRangeProver<E>
 {
+    /// Produce the Stage-1 product prefix followed by one fused standard leaf
+    /// containing both the range and physical L2 identities.
+    pub fn prove_l2<F, T>(
+        self,
+        physical_plan: &PhysicalResponsePlan,
+        transcript: &mut T,
+    ) -> Result<DigitRangeProveOutput<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: ExtField<F>,
+        T: Transcript<F>,
+    {
+        let Self {
+            digit_source,
+            equality_point,
+            plan,
+            ..
+        } = self;
+        if physical_plan.domain().num_vars() != equality_point.len()
+            || physical_plan.domain().live_len() != digit_source.live_len()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "physical response and digit-range domains disagree".into(),
+            ));
+        }
+
+        let leaf_coeffs = plan.leaf_coeffs::<E>();
+        let mut stage_proofs = Vec::with_capacity(plan.product_stage_arities().len());
+        let mut current_equality_point = equality_point;
+        let mut current_claim = E::zero();
+        let mut current_weights = vec![E::one()];
+        for stage_index in 0..plan.product_stage_arities().len() {
+            let lane_count = plan
+                .product_stage_lane_count(stage_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            let product_input = ProductSubcheckInput {
+                source: digit_source.clone(),
+                plan,
+                leaf_polynomials: &leaf_coeffs,
+                stage_index,
+                parent_weights: current_weights,
+                equality_point: &current_equality_point,
+                input_claim: current_claim,
+            };
+            let (stage_proof, next_equality_point) = match lane_count {
+                2 => prove_class_indexed_product_subcheck::<F, E, T, 2>(product_input, transcript)?,
+                4 => prove_class_indexed_product_subcheck::<F, E, T, 4>(product_input, transcript)?,
+                8 => prove_class_indexed_product_subcheck::<F, E, T, 8>(product_input, transcript)?,
+                _ => return Err(AkitaError::InvalidProof),
+            };
+            append_digit_range_child_claims::<F, E, T>(&stage_proof.child_claims, transcript);
+            let gamma = sample_ext_challenge::<F, E, T>(
+                transcript,
+                labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
+            );
+            current_weights = plan.interstage_batch_weights(gamma, stage_proof.child_claims.len());
+            current_claim = plan.batch_claims(&current_weights, &stage_proof.child_claims)?;
+            current_equality_point = next_equality_point;
+            stage_proofs.push(stage_proof);
+        }
+
+        let batched_leaf_coeffs = plan.batch_leaf_polynomials(&current_weights, &leaf_coeffs)?;
+        let compact_witness = digit_source.digits();
+        let (norm_proof, stage1_point, range_image_evaluation) =
+            super::prove_physical_l2_norm::<F, E, T>(
+                physical_plan,
+                compact_witness.as_ref(),
+                &current_equality_point,
+                current_claim,
+                batched_leaf_coeffs,
+                transcript,
+            )?;
+        Ok((
+            AkitaStage1Proof {
+                stages: stage_proofs,
+                range_image_evaluation,
+                norm_proof: Some(norm_proof),
+            },
+            stage1_point,
+        ))
+    }
+
     /// Produce the full stage-1 tree proof and return the final `stage1_point`.
     ///
     /// # Errors

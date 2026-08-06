@@ -6,7 +6,7 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceVerifier, SumcheckInstanceVerifierExt};
 use akita_transcript::labels::{
     ABSORB_L2_NORM_INTEGER, ABSORB_L2_NORM_SUBCLAIM, ABSORB_L2_VIRTUAL_EVALUATION,
-    CHALLENGE_L2_NORM_BATCH, CHALLENGE_L2_VIRTUAL_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    CHALLENGE_L2_NORM_BATCH, CHALLENGE_L2_NORM_MERGE, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
@@ -16,15 +16,18 @@ use akita_types::{
 
 pub(crate) struct PhysicalL2VerifierReplay<E: FieldCore> {
     pub(crate) point: Vec<E>,
-    pub(crate) batching: Vec<E>,
-    pub(crate) claim: E,
+    pub(crate) virtual_evaluations: Vec<E>,
 }
 
 struct PhysicalL2NormVerifier<'a, E: FieldCore> {
     plan: &'a PhysicalResponsePlan,
     proof: &'a PhysicalL2NormProof<E>,
+    range_equality_point: &'a [E],
+    range_leaf_coefficients: &'a [E],
+    range_image_evaluation: E,
     subclaim_weights: Vec<E>,
     input_claim: E,
+    norm_merge: E,
 }
 
 impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceVerifier<E>
@@ -35,10 +38,7 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceVerifier<E>
     }
 
     fn degree_bound(&self) -> usize {
-        match self.plan.shape() {
-            PhysicalL2NormProofShape::Direct { .. } => 2,
-            PhysicalL2NormProofShape::LimbGram { .. } => 3,
-        }
+        self.range_leaf_coefficients.len()
     }
 
     fn input_claim(&self) -> E {
@@ -46,7 +46,15 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceVerifier<E>
     }
 
     fn expected_output_claim(&self, point: &[E]) -> Result<E, AkitaError> {
-        match self.plan.shape() {
+        let range_equality = EqPolynomial::mle(self.range_equality_point, point)?;
+        let range_leaf = self
+            .range_leaf_coefficients
+            .iter()
+            .rev()
+            .fold(E::zero(), |acc, &coefficient| {
+                acc * self.range_image_evaluation + coefficient
+            });
+        let norm = match self.plan.shape() {
             PhysicalL2NormProofShape::Direct { .. } => {
                 let value = self
                     .proof
@@ -54,7 +62,7 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceVerifier<E>
                     .first()
                     .copied()
                     .ok_or(AkitaError::InvalidProof)?;
-                Ok(value * value)
+                value * value
             }
             PhysicalL2NormProofShape::LimbGram {
                 physical_response_len,
@@ -110,9 +118,10 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceVerifier<E>
                         pair += 1;
                     }
                 }
-                Ok(sum)
+                sum
             }
-        }
+        };
+        Ok(range_equality * range_leaf + self.norm_merge * norm)
     }
 }
 
@@ -258,6 +267,10 @@ where
 pub(crate) fn verify_physical_l2_norm<F, E, T>(
     plan: &PhysicalResponsePlan,
     proof: &PhysicalL2NormProof<E>,
+    range_equality_point: &[E],
+    range_input_claim: E,
+    range_leaf_coefficients: &[E],
+    range_image_evaluation: E,
     profile: SisModulusProfileId,
     cap: u128,
     transcript: &mut T,
@@ -267,13 +280,18 @@ where
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
+    if range_equality_point.len() != plan.domain().num_vars() || range_leaf_coefficients.len() < 3 {
+        return Err(AkitaError::InvalidSetup(
+            "fused Stage-1 leaf has inconsistent range geometry".into(),
+        ));
+    }
     validate_integer_claim::<F, E>(plan, proof, profile, cap)?;
     transcript.append_serde(ABSORB_L2_NORM_INTEGER, &proof.response_l2_sq);
     for claim in &proof.subclaims {
         transcript.append_serde(ABSORB_L2_NORM_SUBCLAIM, claim);
     }
     let mut subclaim_weights = Vec::new();
-    let input_claim = match plan.shape() {
+    let norm_input_claim = match plan.shape() {
         PhysicalL2NormProofShape::Direct { .. } => E::from_u128(proof.response_l2_sq),
         PhysicalL2NormProofShape::LimbGram { .. } => {
             let gamma = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_BATCH);
@@ -289,11 +307,16 @@ where
                 .fold(E::zero(), |sum, (&claim, &weight)| sum + claim * weight)
         }
     };
+    let norm_merge = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_MERGE);
     let verifier = PhysicalL2NormVerifier {
         plan,
         proof,
+        range_equality_point,
+        range_leaf_coefficients,
+        range_image_evaluation,
         subclaim_weights,
-        input_claim,
+        input_claim: range_input_claim + norm_merge * norm_input_claim,
+        norm_merge,
     };
     let point = verifier.verify::<F, T, _>(&proof.sumcheck, transcript, |tr| {
         sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
@@ -301,23 +324,8 @@ where
     for evaluation in &proof.virtual_evaluations {
         transcript.append_serde(ABSORB_L2_VIRTUAL_EVALUATION, evaluation);
     }
-    let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_VIRTUAL_BATCH);
-    let mut batching = Vec::with_capacity(proof.virtual_evaluations.len());
-    let mut power = E::one();
-    for _ in 0..proof.virtual_evaluations.len() {
-        batching.push(power);
-        power *= eta;
-    }
-    let claim = proof
-        .virtual_evaluations
-        .iter()
-        .zip(&batching)
-        .fold(E::zero(), |sum, (&evaluation, &weight)| {
-            sum + evaluation * weight
-        });
     Ok(PhysicalL2VerifierReplay {
         point,
-        batching,
-        claim,
+        virtual_evaluations: proof.virtual_evaluations.clone(),
     })
 }

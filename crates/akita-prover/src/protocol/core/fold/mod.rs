@@ -7,7 +7,7 @@ use crate::compute::{
     RuntimeRingSwitchProveBackend,
 };
 use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
-use crate::protocol::sumcheck::{prove_physical_l2_norm, DigitRangeProver};
+use crate::protocol::sumcheck::DigitRangeProver;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
@@ -19,6 +19,7 @@ use akita_types::{
 pub(in crate::protocol::core) struct PhysicalL2ProverReplay<E: FieldCore> {
     plan: PhysicalResponsePlan,
     point: Vec<E>,
+    virtual_evaluations: Vec<E>,
     batching: Vec<E>,
     claim: E,
 }
@@ -444,6 +445,21 @@ where
         ABSORB_RANGE_IMAGE_EVALUATION,
         &stage1_proof.range_image_evaluation,
     );
+    let physical_l2 = physical_l2.map(|mut replay| {
+        let eta = sample_ext_challenge::<F, E, T>(
+            transcript,
+            akita_transcript::labels::CHALLENGE_L2_VIRTUAL_BATCH,
+        );
+        let mut power = E::one();
+        replay.batching = Vec::with_capacity(replay.virtual_evaluations.len());
+        replay.claim = E::zero();
+        for &evaluation in &replay.virtual_evaluations {
+            replay.batching.push(power);
+            replay.claim += evaluation * power;
+            power *= eta;
+        }
+        replay
+    });
     let stage1_proof = Some(stage1_proof);
     let binary_batching = lp
         .payload_mode
@@ -634,15 +650,18 @@ where
         domain,
         equality_point,
     )?;
-    let (mut stage1_proof, stage1_point) = stage1_prover.prove::<F, T>(transcript)?;
+    let physical_plan = PhysicalResponsePlan::new(lp, plan)?;
+    let (stage1_proof, stage1_point) = match physical_plan.as_ref() {
+        Some(physical_plan) => stage1_prover.prove_l2::<F, T>(physical_plan, transcript)?,
+        None => stage1_prover.prove::<F, T>(transcript)?,
+    };
     let range_image_evaluation = stage1_proof.range_image_evaluation;
-    let physical_l2 = match PhysicalResponsePlan::new(lp, plan)? {
+    let physical_l2 = match physical_plan {
         Some(physical_plan) => {
-            let (norm_proof, point) = prove_physical_l2_norm::<F, E, T>(
-                &physical_plan,
-                rs.w_evals_compact.as_ref(),
-                transcript,
-            )?;
+            let norm_proof = stage1_proof
+                .norm_proof
+                .as_ref()
+                .ok_or(AkitaError::InvalidProof)?;
             let InnerCommitSecurityRoute::L2 {
                 response_l2_sq_cap, ..
             } = lp.inner_commit_matrix.security_route()
@@ -656,29 +675,12 @@ where
                     "folded response exceeds the scheduled L2 cap".into(),
                 ));
             }
-            let eta = sample_ext_challenge::<F, E, T>(
-                transcript,
-                akita_transcript::labels::CHALLENGE_L2_VIRTUAL_BATCH,
-            );
-            let mut batching = Vec::with_capacity(norm_proof.virtual_evaluations.len());
-            let mut power = E::one();
-            for _ in 0..norm_proof.virtual_evaluations.len() {
-                batching.push(power);
-                power *= eta;
-            }
-            let claim = norm_proof
-                .virtual_evaluations
-                .iter()
-                .zip(&batching)
-                .fold(E::zero(), |sum, (&evaluation, &weight)| {
-                    sum + evaluation * weight
-                });
-            stage1_proof.norm_proof = Some(norm_proof);
             Some(PhysicalL2ProverReplay {
                 plan: physical_plan,
-                point,
-                batching,
-                claim,
+                point: stage1_point.clone(),
+                virtual_evaluations: norm_proof.virtual_evaluations.clone(),
+                batching: Vec::new(),
+                claim: E::zero(),
             })
         }
         None => {

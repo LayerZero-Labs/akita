@@ -593,7 +593,7 @@ impl PhysicalL2NormProofShape {
     #[must_use]
     pub fn subclaim_count(self) -> Option<usize> {
         match self {
-            Self::Direct { .. } => Some(1),
+            Self::Direct { .. } => Some(0),
             Self::LimbGram {
                 physical_response_len,
                 block_len,

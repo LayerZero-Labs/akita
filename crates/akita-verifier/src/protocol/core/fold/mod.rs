@@ -100,14 +100,16 @@ where
     )?;
     let plan = DigitRangePlan::new(rs.b)?;
     let stage1_verifier = AkitaStage1Verifier::new(equality_point, plan);
-    let stage1_point = {
-        let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        stage1_verifier.verify::<F, T>(proof, transcript)?
-    };
     let physical_plan = PhysicalResponsePlan::new(lp, relation_plan)?;
-    let (physical_l2_claim, physical_l2_weights) =
+    let (stage1_point, physical_l2_virtual_evaluations, physical_plan) =
         match (physical_plan.as_ref(), proof.norm_proof.as_ref()) {
-            (None, None) => (E::zero(), Vec::new()),
+            (None, None) => {
+                let point = {
+                    let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+                    stage1_verifier.verify::<F, T>(proof, transcript)?
+                };
+                (point, None, None)
+            }
             (Some(plan), Some(norm_proof)) => {
                 let InnerCommitSecurityRoute::L2 {
                     response_l2_sq_cap, ..
@@ -117,19 +119,46 @@ where
                         "physical response plan exists for a non-L2 route".into(),
                     ));
                 };
+                let leaf = stage1_verifier.verify_l2_prefix::<F, T>(proof, transcript)?;
                 let replay = verify_physical_l2_norm::<F, E, T>(
                     plan,
                     norm_proof,
+                    &leaf.equality_point,
+                    leaf.input_claim,
+                    &leaf.polynomial_coefficients,
+                    proof.range_image_evaluation,
                     lp.inner_commit_matrix.sis_modulus_profile(),
                     response_l2_sq_cap,
                     transcript,
                 )?;
-                let weights = plan.virtualization_weights(&replay.point, &replay.batching)?;
-                (replay.claim, weights)
+                (replay.point, Some(replay.virtual_evaluations), Some(plan))
             }
             _ => return Err(AkitaError::InvalidProof),
         };
     transcript.append_serde(ABSORB_RANGE_IMAGE_EVALUATION, &proof.range_image_evaluation);
+    let (physical_l2_claim, physical_l2_weights) =
+        match (physical_l2_virtual_evaluations, physical_plan) {
+            (Some(evaluations), Some(plan)) => {
+                let eta = sample_ext_challenge::<F, E, T>(
+                    transcript,
+                    akita_transcript::labels::CHALLENGE_L2_VIRTUAL_BATCH,
+                );
+                let mut batching = Vec::with_capacity(evaluations.len());
+                let mut power = E::one();
+                let mut claim = E::zero();
+                for evaluation in evaluations {
+                    batching.push(power);
+                    claim += evaluation * power;
+                    power *= eta;
+                }
+                (
+                    claim,
+                    plan.virtualization_weights(&stage1_point, &batching)?,
+                )
+            }
+            (None, None) => (E::zero(), Vec::new()),
+            _ => return Err(AkitaError::InvalidProof),
+        };
     let binary_batching = rs
         .compression_relation_weights
         .as_ref()
