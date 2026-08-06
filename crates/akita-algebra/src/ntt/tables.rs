@@ -145,6 +145,19 @@ pub fn validate_profile_crt_ring_degree(
 mod tests {
     use super::*;
 
+    #[test]
+    fn six_product_i32_lazy_reduction_fits_signed_wide() {
+        for modulus in I32_RAW_PRIMES {
+            let modulus = i128::from(modulus);
+            let product_sum_bound = 6 * (modulus - 1).pow(2);
+            let correction_bound = (1_i128 << 31) * modulus;
+            assert!(product_sum_bound + correction_bound < 1_i128 << 63);
+
+            let seven_product_bound = 7 * (modulus - 1).pow(2) + correction_bound;
+            assert!(seven_product_bound >= 1_i128 << 63);
+        }
+    }
+
     fn assert_garner_profile<W, const K: usize>(
         label: &str,
         primes: &[NttPrime<W>; K],

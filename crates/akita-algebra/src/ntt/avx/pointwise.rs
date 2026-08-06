@@ -7,7 +7,90 @@ use super::montgomery::{
     caddp_8x_i32_avx2, mont_mul_16x_i16_avx2, mont_mul_16x_i32_avx512, mont_mul_8x_i32_avx2,
     reduce_range_16x_i16_avx2, reduce_range_16x_i32_avx512, reduce_range_8x_i32_avx2,
 };
-use crate::ntt::prime::{MontCoeff, NttPrime};
+use crate::ntt::prime::{MontCoeff, NttPrime, I32_LAZY_DOT_BATCH};
+
+/// AVX2 pointwise dot-product accumulation for up to six i32 CRT entries.
+///
+/// Raw signed products are accumulated in i64 lanes and Montgomery-reduced
+/// once per batch. For `B <= 6` and `p < 2^30`, the reduction numerator is
+/// bounded by `B*2^60 + 2^61 < 2^63`; the reduced result therefore fits i32.
+///
+/// # Safety
+///
+/// The caller must ensure AVX2 is available. `acc` must be valid for `d`
+/// writable i32 elements. Each of the first `count` pointers in `lhs` and
+/// `rhs` must be valid for `d` readable i32 elements. The pointed-to ranges
+/// must obey Rust's aliasing rules with `acc`.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn pointwise_dot_acc_i32(
+    acc: *mut i32,
+    lhs: *const *const i32,
+    rhs: *const *const i32,
+    count: usize,
+    d: usize,
+    p: i32,
+    pinv: i32,
+) {
+    debug_assert!(count <= I32_LAZY_DOT_BATCH);
+    if count == 0 {
+        return;
+    }
+    let p_v = _mm256_set1_epi32(p);
+    let pinv_v = _mm256_set1_epi32(pinv);
+    let mut i = 0;
+    while i + 8 <= d {
+        let mut even_sum = _mm256_setzero_si256();
+        let mut odd_sum = _mm256_setzero_si256();
+        for product in 0..count {
+            // SAFETY: guaranteed by this function's pointer contract and loop bounds.
+            unsafe {
+                let l = _mm256_loadu_si256((*lhs.add(product)).add(i).cast());
+                let r = _mm256_loadu_si256((*rhs.add(product)).add(i).cast());
+                even_sum = _mm256_add_epi64(even_sum, _mm256_mul_epi32(l, r));
+                odd_sum = _mm256_add_epi64(
+                    odd_sum,
+                    _mm256_mul_epi32(_mm256_srli_epi64::<32>(l), _mm256_srli_epi64::<32>(r)),
+                );
+            }
+        }
+        // SAFETY: the six-product bound above keeps both signed reductions exact.
+        unsafe {
+            let even = super::montgomery::mont_reduce_i32_products_avx2(even_sum, p_v, pinv_v);
+            let odd = super::montgomery::mont_reduce_i32_products_avx2(odd_sum, p_v, pinv_v);
+            let batch = _mm256_or_si256(even, _mm256_slli_epi64::<32>(odd));
+            let batch = reduce_range_8x_i32_avx2(batch, p_v);
+            let accumulator_pointer = acc.add(i);
+            let accumulator = _mm256_loadu_si256(accumulator_pointer.cast());
+            _mm256_storeu_si256(
+                accumulator_pointer.cast(),
+                reduce_range_8x_i32_avx2(_mm256_add_epi32(accumulator, batch), p_v),
+            );
+        }
+        i += 8;
+    }
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            let mut raw_sum = 0_i64;
+            for product in 0..count {
+                // SAFETY: guaranteed by this function's pointer contract and tail bound.
+                unsafe {
+                    raw_sum += i64::from(*(*lhs.add(product)).add(i))
+                        * i64::from(*(*rhs.add(product)).add(i));
+                }
+            }
+            let correction = (raw_sum as i32).wrapping_mul(pinv);
+            let reduced = ((raw_sum - i64::from(correction) * i64::from(p)) >> 32) as i32;
+            let reduced = prime.reduce_range(MontCoeff::from_raw(reduced));
+            // SAFETY: guaranteed by this function's pointer contract.
+            unsafe {
+                let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(reduced.raw()));
+                *acc.add(i) = prime.reduce_range(sum).raw();
+            }
+            i += 1;
+        }
+    }
+}
 
 /// AVX2 pointwise multiply-accumulate for one `i32` CRT limb.
 ///

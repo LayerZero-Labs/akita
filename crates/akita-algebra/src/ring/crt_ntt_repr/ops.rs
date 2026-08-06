@@ -8,7 +8,7 @@ use crate::ntt::avx::{self, AvxNttMode};
 use crate::ntt::butterfly::forward_ntt;
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
-use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
+use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
 use crate::{AkitaError, CanonicalField, CyclotomicRing, FieldCore};
 
 use super::{CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut};
@@ -34,6 +34,21 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         rhs: &[[i16; D]],
         params: &CrtNttParamSet<W, K, D>,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        let accumulators = Self::mat_vec_i16_ntt(matrix, num_rows, num_cols, rhs, params)?;
+        Ok(accumulators
+            .iter()
+            .map(|accumulator| accumulator.to_ring(params))
+            .collect())
+    }
+
+    /// Multiply a prepared matrix by signed-i16 rings, retaining CRT+NTT form.
+    pub(super) fn mat_vec_i16_ntt(
+        matrix: &[Self],
+        num_rows: usize,
+        num_cols: usize,
+        rhs: &[[i16; D]],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Result<Vec<Self>, AkitaError> {
         if rhs.len() != num_cols {
             return Err(AkitaError::InvalidProof);
         }
@@ -44,7 +59,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             AkitaError::InvalidSetup("prepared NTT matrix prefix is undersized".into())
         })?;
         if num_rows == 0 || num_cols == 0 {
-            return Ok(vec![CyclotomicRing::zero(); num_rows]);
+            return Ok(vec![Self::zero(); num_rows]);
         }
 
         let rhs_abs_bound = rhs
@@ -55,23 +70,108 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .unwrap_or(0) as i32;
         let lut = CenteredMontLut::new(params, rhs_abs_bound);
         let mut accumulators = vec![Self::zero(); num_rows];
-        for (column, digits) in rhs.iter().enumerate() {
-            if digits.iter().all(|&digit| digit == 0) {
+        if !params.uses_lazy_i32_dot() {
+            for (column, digits) in rhs.iter().enumerate() {
+                if digits.iter().all(|&digit| digit == 0) {
+                    continue;
+                }
+                let centered = digits.map(i32::from);
+                let transformed = Self::from_centered_i32_with_lut(&centered, params, &lut);
+                for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
+                {
+                    accumulator.add_assign_pointwise_mul(&row[column], &transformed, params);
+                }
+            }
+            return Ok(accumulators);
+        }
+
+        const BATCH: usize = I32_LAZY_DOT_BATCH;
+        let mut transformed = Vec::with_capacity(BATCH);
+        for batch_start in (0..num_cols).step_by(BATCH) {
+            let batch_end = (batch_start + BATCH).min(num_cols);
+            transformed.clear();
+            for digits in &rhs[batch_start..batch_end] {
+                if digits.iter().all(|&digit| digit == 0) {
+                    break;
+                }
+                let centered = digits.map(i32::from);
+                transformed.push(Self::from_centered_i32_with_lut(&centered, params, &lut));
+            }
+
+            if transformed.len() == batch_end - batch_start {
+                for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
+                {
+                    accumulator.add_assign_pointwise_dot(
+                        &row[batch_start..batch_end],
+                        &transformed,
+                        params,
+                    );
+                }
                 continue;
             }
-            let centered = digits.map(i32::from);
-            let transformed = Self::from_centered_i32_with_lut(&centered, params, &lut);
-            for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols)) {
-                let matrix_entry = row.get(column).ok_or_else(|| {
-                    AkitaError::InvalidSetup("prepared NTT matrix row is undersized".into())
-                })?;
-                accumulator.add_assign_pointwise_mul(matrix_entry, &transformed, params);
+
+            // Preserve the zero-ring fast path when a batch is not fully dense.
+            for (offset, digits) in rhs[batch_start..batch_end].iter().enumerate() {
+                if digits.iter().all(|&digit| digit == 0) {
+                    continue;
+                }
+                let centered = digits.map(i32::from);
+                let transformed = Self::from_centered_i32_with_lut(&centered, params, &lut);
+                let column = batch_start + offset;
+                for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
+                {
+                    accumulator.add_assign_pointwise_mul(&row[column], &transformed, params);
+                }
             }
         }
-        Ok(accumulators
-            .iter()
-            .map(|accumulator| accumulator.to_ring(params))
-            .collect())
+        Ok(accumulators)
+    }
+
+    #[inline(always)]
+    fn add_assign_pointwise_dot(
+        &mut self,
+        lhs: &[Self],
+        rhs: &[Self],
+        params: &CrtNttParamSet<W, K, D>,
+    ) {
+        debug_assert_eq!(lhs.len(), rhs.len());
+        debug_assert!(lhs.len() <= I32_LAZY_DOT_BATCH);
+
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if params.uses_lazy_i32_dot() {
+            for k in 0..K {
+                let lhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
+                    lhs.get(index).map_or(std::ptr::null(), |entry| {
+                        entry.limbs[k].as_ptr().cast::<i32>()
+                    })
+                });
+                let rhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
+                    rhs.get(index).map_or(std::ptr::null(), |entry| {
+                        entry.limbs[k].as_ptr().cast::<i32>()
+                    })
+                });
+                let prime = params.primes[k];
+                // SAFETY: the stored plan proves AVX2 support. Pointer arrays
+                // contain `lhs.len()` valid D-element limbs, and the dispatch
+                // predicate also proves `W == i32`.
+                unsafe {
+                    avx::pointwise_dot_acc_i32(
+                        self.limbs[k].as_mut_ptr().cast::<i32>(),
+                        lhs_pointers.as_ptr(),
+                        rhs_pointers.as_ptr(),
+                        lhs.len(),
+                        D,
+                        prime.p.to_i64() as i32,
+                        prime.pinv.to_i64() as i32,
+                    )
+                }
+            }
+            return;
+        }
+
+        for (lhs, rhs) in lhs.iter().zip(rhs) {
+            self.add_assign_pointwise_mul(lhs, rhs, params);
+        }
     }
 
     #[inline(always)]

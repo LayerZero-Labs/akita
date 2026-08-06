@@ -1,6 +1,6 @@
 use super::*;
 use crate::ntt::butterfly::NttTwiddles;
-use crate::ntt::prime::{MontCoeff, NttPrime};
+use crate::ntt::prime::{MontCoeff, NttPrime, I32_LAZY_DOT_BATCH};
 use crate::ntt::tables::Q128_RAW_PRIMES;
 
 const AVX2_ONLY: AvxCpuFeatures = AvxCpuFeatures {
@@ -608,6 +608,57 @@ fn avx2_pointwise_mul_acc_i32_matches_scalar_with_tail() {
     let mut scalar_acc = acc_init;
     scalar_pointwise_i32(&mut scalar_acc, &lhs, &rhs, prime);
     assert_eq!(avx_acc, scalar_acc);
+}
+
+#[test]
+fn avx2_lazy_i32_dot_matches_repeated_reduction() {
+    if !std::is_x86_feature_detected!("avx2") {
+        return;
+    }
+    const D: usize = 19;
+    for raw_prime in Q128_RAW_PRIMES {
+        let prime = NttPrime::compute(raw_prime);
+        let lhs: [[MontCoeff<i32>; D]; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
+            if index == 0 {
+                edge_mont_array_i32(prime)
+            } else {
+                random_mont_array_i32(prime, 0x1000 + index as u64)
+            }
+        });
+        let rhs: [[MontCoeff<i32>; D]; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
+            if index + 1 == I32_LAZY_DOT_BATCH {
+                edge_mont_array_i32(prime)
+            } else {
+                random_mont_array_i32(prime, 0x2000 + index as u64)
+            }
+        });
+        let lhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] =
+            std::array::from_fn(|index| lhs[index].as_ptr().cast::<i32>());
+        let rhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] =
+            std::array::from_fn(|index| rhs[index].as_ptr().cast::<i32>());
+
+        for count in 1..=I32_LAZY_DOT_BATCH {
+            let initial = random_mont_array_i32::<D>(prime, 0x3000 + count as u64);
+            let mut actual = initial;
+            // SAFETY: guarded by runtime AVX2 detection; every pointer covers D values.
+            unsafe {
+                pointwise_dot_acc_i32(
+                    actual.as_mut_ptr().cast::<i32>(),
+                    lhs_pointers.as_ptr(),
+                    rhs_pointers.as_ptr(),
+                    count,
+                    D,
+                    prime.p,
+                    prime.pinv,
+                );
+            }
+            let mut expected = initial;
+            for product in 0..count {
+                scalar_pointwise_i32(&mut expected, &lhs[product], &rhs[product], prime);
+            }
+            assert_eq!(actual, expected, "prime={raw_prime}, count={count}");
+        }
+    }
 }
 
 #[test]

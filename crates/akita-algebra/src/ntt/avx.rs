@@ -28,7 +28,8 @@ pub use pointwise::{
     pointwise_mul_i32, pointwise_mul_i32_avx512, sub_reduce_i32, sub_reduce_i32_avx512,
 };
 pub(crate) use pointwise::{
-    pointwise_mul_acc_i16, pointwise_mul_acc_i32, pointwise_mul_acc_i32_avx512,
+    pointwise_dot_acc_i32, pointwise_mul_acc_i16, pointwise_mul_acc_i32,
+    pointwise_mul_acc_i32_avx512,
 };
 #[cfg(test)]
 use runtime::{select_avx512_transform_ntt, select_avx_ntt_mode, AvxCpuFeatures};

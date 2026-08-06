@@ -86,6 +86,21 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
         self.kernel_plan
     }
 
+    pub(crate) const fn uses_lazy_i32_dot(&self) -> bool {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            core::mem::size_of::<W>() == core::mem::size_of::<i32>()
+                && matches!(
+                    self.kernel_plan.x86_pointwise_mode(),
+                    Some(crate::ntt::avx::AvxNttMode::Avx2)
+                )
+        }
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+        {
+            false
+        }
+    }
+
     /// Build a full parameter set from CRT primes.
     ///
     /// Computes per-prime twiddles and Garner reconstruction constants.
