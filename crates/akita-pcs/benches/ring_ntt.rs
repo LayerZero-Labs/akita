@@ -166,13 +166,14 @@ fn bench_ntt_single_prime_round_trip(c: &mut Criterion) {
     });
 }
 
-fn bench_ntt_i16_tail_round_trip(c: &mut Criterion) {
+fn bench_ntt_i16_tail_round_trip_dimension<const D: usize>(c: &mut Criterion) {
     let prime = I16_TAIL_PRIME;
-    let tw = NttTwiddles::<i16, 64>::compute(prime);
-    let base: [MontCoeff<i16>; 64] =
+    let tw = NttTwiddles::<i16, D>::compute(prime);
+    let base: [MontCoeff<i16>; D] =
         std::array::from_fn(|i| prime.from_canonical(((i * 5 + 7) as i16) % prime.p));
     let plan = NttKernelPlan::detect::<i16>();
-    c.bench_function("ntt_i16_tail_forward_inverse_d64", |b| {
+    let name = format!("ntt_i16_tail_forward_inverse_d{D}");
+    c.bench_function(&name, |b| {
         b.iter(|| {
             let mut values = base;
             forward_ntt(&mut values, prime, &tw, plan);
@@ -180,6 +181,13 @@ fn bench_ntt_i16_tail_round_trip(c: &mut Criterion) {
             black_box(values)
         })
     });
+}
+
+fn bench_ntt_i16_tail_round_trip(c: &mut Criterion) {
+    bench_ntt_i16_tail_round_trip_dimension::<64>(c);
+    bench_ntt_i16_tail_round_trip_dimension::<128>(c);
+    bench_ntt_i16_tail_round_trip_dimension::<256>(c);
+    bench_ntt_i16_tail_round_trip_dimension::<512>(c);
 }
 
 fn bench_crt_round_trip(c: &mut Criterion) {

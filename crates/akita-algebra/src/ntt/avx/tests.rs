@@ -529,25 +529,37 @@ fn avx2_ntt_i32_transforms_match_scalar() {
     assert_avx2_ntt_i32_transforms_match_scalar::<512>();
 }
 
+fn assert_avx2_ntt_i16_transforms_match_scalar<const D: usize>() {
+    let prime = NttPrime::compute(12289_i16);
+    let tw = NttTwiddles::<i16, D>::compute(prime);
+    for input in [
+        random_mont_array_i16::<D>(prime, 0x1616 ^ D as u64),
+        edge_mont_array_i16::<D>(prime),
+    ] {
+        let mut avx = input;
+        let mut scalar = input;
+        // SAFETY: the caller checks AVX2 support.
+        unsafe { forward_ntt_i16(&mut avx, prime, &tw) };
+        scalar_forward_ntt_i16(&mut scalar, prime, &tw);
+        assert_i16_mont_arrays_eq_mod(&avx, &scalar, prime, "forward");
+
+        // SAFETY: the caller checks AVX2 support.
+        unsafe { inverse_ntt_i16(&mut avx, prime, &tw) };
+        scalar_inverse_ntt_i16(&mut scalar, prime, &tw);
+        assert_i16_mont_arrays_eq_mod(&avx, &scalar, prime, "inverse");
+        assert_i16_mont_arrays_eq_mod(&avx, &input, prime, "round-trip");
+    }
+}
+
 #[test]
 fn avx2_ntt_i16_transforms_match_scalar() {
     if !std::is_x86_feature_detected!("avx2") {
         return;
     }
-    let prime = NttPrime::compute(12289_i16);
-    let tw = NttTwiddles::<i16, 64>::compute(prime);
-    let input = random_mont_array_i16::<64>(prime, 0x1616);
-
-    let mut avx = input;
-    let mut scalar = input;
-    unsafe { forward_ntt_i16(&mut avx, prime, &tw) };
-    scalar_forward_ntt_i16(&mut scalar, prime, &tw);
-    assert_i16_mont_arrays_eq_mod(&avx, &scalar, prime, "forward");
-
-    unsafe { inverse_ntt_i16(&mut avx, prime, &tw) };
-    scalar_inverse_ntt_i16(&mut scalar, prime, &tw);
-    assert_i16_mont_arrays_eq_mod(&avx, &scalar, prime, "inverse");
-    assert_i16_mont_arrays_eq_mod(&avx, &input, prime, "round-trip");
+    assert_avx2_ntt_i16_transforms_match_scalar::<64>();
+    assert_avx2_ntt_i16_transforms_match_scalar::<128>();
+    assert_avx2_ntt_i16_transforms_match_scalar::<256>();
+    assert_avx2_ntt_i16_transforms_match_scalar::<512>();
 }
 
 #[test]
