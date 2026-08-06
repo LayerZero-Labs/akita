@@ -9,9 +9,10 @@ use super::MAX_WITNESS_CHUNKS;
 /// Part `i` of `P` owns
 /// `[floor(i * B / P), floor((i + 1) * B / P))`, where `B` is
 /// `num_live_blocks`. The quotient and remainder calculation below evaluates
-/// those endpoints without multiplying two verifier reachable `usize` values.
-/// When one supported part count divides another, every boundary of the
-/// coarser partition is a boundary of the finer partition.
+/// those endpoints without forming the overflow prone product `i * B`. Every
+/// product in the equivalent calculation uses checked arithmetic. When one
+/// supported part count divides another, every boundary of the coarser
+/// partition is a boundary of the finer partition.
 ///
 /// # Errors
 ///
@@ -108,7 +109,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
 
-            for ranges in &partitions {
+            for (&parts, ranges) in counts.iter().zip(&partitions) {
                 assert_eq!(ranges.first().expect("first range").start, 0);
                 assert_eq!(ranges.last().expect("last range").end, num_live_blocks);
                 assert!(ranges.iter().all(|range| !range.is_empty()));
@@ -116,6 +117,13 @@ mod tests {
                 let min_len = ranges.iter().map(Range::len).min().expect("minimum");
                 let max_len = ranges.iter().map(Range::len).max().expect("maximum");
                 assert!(max_len - min_len <= 1);
+                for (part_index, range) in ranges.iter().enumerate() {
+                    let expected_start = ((part_index as u128) * (num_live_blocks as u128)
+                        / (parts as u128)) as usize;
+                    let expected_end = (((part_index + 1) as u128) * (num_live_blocks as u128)
+                        / (parts as u128)) as usize;
+                    assert_eq!(range, &(expected_start..expected_end));
+                }
             }
 
             for (coarse_index, coarse) in partitions.iter().enumerate() {
