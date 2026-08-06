@@ -236,6 +236,7 @@ pub struct RelationRangeImageProver<E: FieldCore> {
 
     common_alpha_factor: Vec<E>,
     relation_lane_weights: Vec<E>,
+    additional_relation_terms: Option<AdditionalRelationTerms<E>>,
     evaluation_trace: PreparedProverEvaluationTrace<E>,
     live_lane_count: usize,
     lane_bits: usize,
@@ -252,6 +253,7 @@ pub struct RelationRangeImageProver<E: FieldCore> {
     rounds_completed: usize,
 }
 
+mod additional_terms;
 mod coefficient_prefix;
 mod coefficient_round_fold;
 mod compact_prefix;
@@ -261,6 +263,7 @@ mod lane_prefix;
 mod lifecycle;
 mod round_flow;
 
+pub(crate) use additional_terms::AdditionalRelationTerms;
 pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProverEvaluationTrace};
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {

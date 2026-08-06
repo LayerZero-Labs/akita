@@ -1,23 +1,12 @@
-//! Test-only layout helpers shared by the workspace's integration tests,
-//! unit tests, and the `profile` example.
+//! Test-only layout helpers shared by the workspace's integration tests and
+//! unit tests.
 //!
 //! Everything in this module is gated behind the `test-support` Cargo
-//! feature, which production builds never enable: it is switched on only
-//! through the dev-dependency edge of `akita-pcs`, so the helpers here are
-//! compiled for test/example/bench targets and are
-//! absent from every shipped artifact. Production callers size their
-//! per-poly inputs through [`CommitmentConfig::get_params_for_batched_commitment`]
-//! directly and never need this module.
+//! feature, which production builds never enable. Production callers size
+//! their per-poly inputs through
+//! [`CommitmentConfig::get_params_for_batched_commitment`] directly and never
+//! need this module.
 //!
-//! The mixed ring-dimension schedule builders (`mixed_d_per_level_schedule`,
-//! `ring_dimension_transition_schedule`, `per_matrix_ring_dims_root_schedule`,
-//! and their
-//! config adapters) live in
-//! [`akita_pcs::test_support`]: they call the offline planner
-//! (`akita_planner::test_support::plan_optimal_suffix`), which cannot be a
-//! dependency of `akita-config` without a cycle (`akita-planner` depends on
-//! `akita-config`).
-
 use akita_field::AkitaError;
 use akita_types::{AkitaScheduleLookupKey, CommittedGroupParams, PolynomialGroupLayout};
 
@@ -67,12 +56,11 @@ where
 
 /// Minimal setup seed for schedule ring-dimension integration tests.
 #[must_use]
-pub fn ring_plan_test_seed(gen_ring_dim: usize) -> akita_types::AkitaSetupSeed {
-    akita_types::AkitaSetupSeed {
+pub fn ring_plan_test_seed() -> akita_types::AkitaSetupDescriptor {
+    akita_types::AkitaSetupDescriptor {
         max_num_vars: 20,
         max_num_batched_polys: 1,
-        gen_ring_dim,
-        max_setup_len: 1 << 20,
-        public_matrix_seed: [0u8; 32],
+        num_field_elements: 1 << 20,
+        setup_seed: [0u8; 32].into(),
     }
 }

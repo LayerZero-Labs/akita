@@ -11,6 +11,7 @@ pub mod two_round_prefix;
 
 pub use akita_stage3::AkitaStage3Prover;
 pub use digit_range::DigitRangeProver;
+pub(crate) use relation_range_image::AdditionalRelationTerms;
 pub use relation_range_image::RelationRangeImageProver;
 
 // --- Shared helpers ------------------------------------------------------

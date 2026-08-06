@@ -248,7 +248,7 @@ mod non_zk_aggregated_cases {
     aggregated_onehot_case!(aggregated_onehot_nv12_batch1, 12, 1, true);
     aggregated_onehot_case!(aggregated_onehot_nv20_batch4, 20, 4, true);
 
-    aggregated_dense_case!(aggregated_dense_nv13_batch1, 13, 1, true);
+    aggregated_dense_case!(aggregated_dense_nv14_batch1, 14, 1, true);
     aggregated_dense_case!(aggregated_dense_nv17_batch4, 17, 4, true);
 }
 

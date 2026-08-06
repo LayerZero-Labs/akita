@@ -31,7 +31,7 @@ pub struct D128OneHot;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D256OneHot;
 
-/// Binary onehot preset with D256 setup generation and planner-selected
+/// Binary onehot preset with a D256 uniform planner policy and planner-selected
 /// per-level commitment dimensions.
 ///
 /// Mixed-dimension planning is an offline generation step. Runtime proving
@@ -40,12 +40,21 @@ pub struct D256OneHot;
 pub struct MixedDimFp128OneHot;
 
 impl MixedDimFp128OneHot {
-    /// A dimensions searched at the two adaptive leading levels.
-    pub const A_RING_DIMENSIONS: [usize; 3] = [64, 128, 256];
-    /// B dimensions scanned by minimum secure rank for each A candidate.
-    pub const B_RING_DIMENSIONS: [usize; 2] = [64, 128];
-    /// D dimensions scanned by minimum secure rank for each A candidate.
-    pub const D_RING_DIMENSIONS: [usize; 2] = [64, 128];
+    /// Audited commitment-role dimension candidates used by offline planning.
+    pub const RING_DIMENSION_CANDIDATES: [akita_types::CommitmentRingDims; 4] = [
+        akita_types::CommitmentRingDims::uniform(64),
+        akita_types::CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 64,
+        },
+        akita_types::CommitmentRingDims::uniform(128),
+        akita_types::CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 128,
+        },
+    ];
 }
 
 /// Tableless policy marker for a `D = 512` inner (A-role) root.
@@ -173,13 +182,9 @@ impl_proof_optimized_preset!(
         "fp128_mixed_dim_onehot",
         fp128_mixed_dim_onehot_table
     ),
-    ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
-        num_search_levels: 2,
-        uniform_suffix_dimension: 64,
-        potential_a_dimensions: &MixedDimFp128OneHot::A_RING_DIMENSIONS,
-        potential_b_dimensions: &MixedDimFp128OneHot::B_RING_DIMENSIONS,
-        potential_d_dimensions: &MixedDimFp128OneHot::D_RING_DIMENSIONS,
-    }
+    selection_policy =
+        akita_schedules::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload,
+    ring_dimension_candidates = &MixedDimFp128OneHot::RING_DIMENSION_CANDIDATES
 );
 impl_proof_optimized_preset!(
     D512OneHot,
@@ -301,7 +306,7 @@ fn candidate<Cfg: CommitmentConfig>(
             estimated_recursive_stage3_payload_bytes: Vec::new(),
             estimated_terminal_direct_payload_bytes: 0,
             estimated_terminal_response_payload_bytes: 0,
-            estimated_setup_envelope_ring_elements: 0,
+            estimated_num_setup_field_elements: 0,
             first_direct_setup_field_len: None,
             selected_offload_edges: 0,
         },

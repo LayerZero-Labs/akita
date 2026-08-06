@@ -10,11 +10,28 @@ use akita_field::{AkitaError, CanonicalField};
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;
 use crate::opening_claims::OpeningClaimsLayout;
-use crate::proof::{RelationAddressGeometry, SetupPrefixSlotId};
+use crate::proof::{
+    CompressionRelationAddressGeometry, RelationAddressGeometry, RelationRowFamily,
+    SetupPrefixSlotId,
+};
+use crate::CompressionChainPlan;
 
 pub use crate::sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisModulusProfileId,
 };
+
+fn compression_relation_row_count(
+    num_commitments: usize,
+    base_rows: usize,
+) -> Result<usize, AkitaError> {
+    let compression_rows = num_commitments
+        .checked_add(1)
+        .and_then(|chains| chains.checked_mul(crate::COMPRESSION_MAP_COUNT))
+        .ok_or_else(CommittedGroupParams::relation_matrix_row_overflow)?;
+    base_rows
+        .checked_add(compression_rows)
+        .ok_or_else(CommittedGroupParams::relation_matrix_row_overflow)
+}
 
 pub(crate) fn recursive_opening_num_vars_for_geometry(
     d_a: usize,
@@ -67,6 +84,8 @@ pub fn shared_d_digit_log_basis(
 /// single authoritative struct.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommittedGroupParams {
+    /// Public B/D payload encoding selected for this fold level.
+    pub payload_mode: crate::CommitmentPayloadMode,
     /// Base-2 logarithm of the A/source gadget decomposition base.
     pub log_basis_inner: u32,
     /// Base-2 logarithm of the B/`t_hat` gadget decomposition base.
@@ -120,6 +139,74 @@ pub struct CommittedGroupParams {
 }
 
 impl CommittedGroupParams {
+    /// Checked wire geometry for this level's final-group B image.
+    pub fn outer_payload_geometry(&self) -> Result<crate::CommitmentPayloadGeometry, AkitaError> {
+        crate::CommitmentPayloadGeometry::for_mode(
+            self.payload_mode,
+            self.outer_commit_matrix.sis_modulus_profile(),
+            self.outer_commit_matrix.output_rank(),
+            self.role_dims().d_b(),
+        )
+    }
+
+    /// Checked wire geometry for this level's shared D image.
+    pub fn opening_payload_geometry(&self) -> Result<crate::CommitmentPayloadGeometry, AkitaError> {
+        crate::CommitmentPayloadGeometry::for_mode(
+            self.payload_mode,
+            self.open_commit_matrix.sis_modulus_profile(),
+            self.open_commit_matrix.output_rank(),
+            self.role_dims().d_d(),
+        )
+    }
+
+    /// Whether every B/D image at this level fits the compression policy cap.
+    pub fn compression_sources_supported(&self) -> Result<bool, AkitaError> {
+        if !self.payload_mode.is_compressed() {
+            return Ok(true);
+        }
+        let final_outer = self
+            .outer_commit_matrix
+            .output_rank()
+            .checked_mul(self.role_dims().d_b())
+            .ok_or_else(|| AkitaError::InvalidSetup("B compression shape overflow".into()))?;
+        if CompressionChainPlan::try_for_complete_source(
+            self.outer_commit_matrix.sis_modulus_profile(),
+            final_outer,
+        )?
+        .is_none()
+        {
+            return Ok(false);
+        }
+        for group in self.precommitted_group_iter() {
+            let source = group
+                .layout
+                .outer_commit_matrix
+                .output_rank()
+                .checked_mul(group.layout.outer_commit_matrix.ring_dimension())
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("precommitted B compression shape overflow".into())
+                })?;
+            if CompressionChainPlan::try_for_complete_source(
+                group.layout.outer_commit_matrix.sis_modulus_profile(),
+                source,
+            )?
+            .is_none()
+            {
+                return Ok(false);
+            }
+        }
+        let opening = self
+            .open_commit_matrix
+            .output_rank()
+            .checked_mul(self.role_dims().d_d())
+            .ok_or_else(|| AkitaError::InvalidSetup("D compression shape overflow".into()))?;
+        Ok(CompressionChainPlan::try_for_complete_source(
+            self.open_commit_matrix.sis_modulus_profile(),
+            opening,
+        )?
+        .is_some())
+    }
+
     /// Largest gadget basis accepted by this level's shared D product.
     #[must_use]
     pub fn shared_d_digit_log_basis(&self) -> u32 {
@@ -158,6 +245,7 @@ impl CommittedGroupParams {
         fold_challenge_config: SparseChallengeConfig,
     ) -> Self {
         Self {
+            payload_mode: crate::CommitmentPayloadMode::Compressed,
             log_basis_inner: log_basis,
             log_basis_outer: log_basis,
             log_basis_open: log_basis,
@@ -436,6 +524,7 @@ impl CommittedGroupParams {
     /// Kept next to [`CommittedGroupParams`] so protocol-affecting field changes are
     /// reviewed with their Fiat-Shamir binding.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        bytes.push(self.payload_mode.tag());
         push_u32(bytes, self.log_basis_inner);
         push_u32(bytes, self.log_basis_outer);
         push_u32(bytes, self.log_basis_open);
@@ -644,6 +733,31 @@ impl CommittedGroupParams {
         )
     }
 
+    /// Resolve the independent compact address geometry for F/H rows.
+    pub fn compression_relation_address_geometry(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        outgoing_witness_ring_dimension: usize,
+        live_witness_coeff_len: usize,
+    ) -> Result<CompressionRelationAddressGeometry, AkitaError> {
+        let compression_row_dims = crate::relation_rhs_layout_for(self, opening_batch)?
+            .row_families()?
+            .into_iter()
+            .filter_map(|row| {
+                matches!(
+                    row,
+                    RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
+                )
+                .then_some(row.ring_dim())
+            })
+            .collect::<Vec<_>>();
+        CompressionRelationAddressGeometry::new(
+            &compression_row_dims,
+            outgoing_witness_ring_dimension,
+            live_witness_coeff_len,
+        )
+    }
+
     /// Sent commitment row count for one opening group.
     pub fn group_commitment_rows(
         &self,
@@ -701,8 +815,14 @@ impl CommittedGroupParams {
                 .checked_add(group.layout.outer_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
-        rows.checked_add(self.open_commit_matrix.output_rank())
-            .ok_or_else(Self::relation_matrix_row_overflow)
+        let base = rows
+            .checked_add(self.open_commit_matrix.output_rank())
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
+        if self.payload_mode.is_compressed() {
+            compression_relation_row_count(num_commitments, base)
+        } else {
+            Ok(base)
+        }
     }
 
     /// Absolute start row of one group's A block in the multi-group root layout
@@ -873,9 +993,14 @@ impl CommittedGroupParams {
         let after_commitment = after_a
             .checked_add(commitment_rows)
             .ok_or_else(Self::relation_matrix_row_overflow)?;
-        after_commitment
+        let base = after_commitment
             .checked_add(self.open_commit_matrix.output_rank())
-            .ok_or_else(Self::relation_matrix_row_overflow)
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
+        if self.payload_mode.is_compressed() {
+            compression_relation_row_count(num_commitments, base)
+        } else {
+            Ok(base)
+        }
     }
 
     /// Logical row index of the shared EvaluationTrace row (last padded row).
@@ -956,6 +1081,7 @@ impl CommittedGroupParams {
             .checked_mul(num_live_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
         let rebuilt = Self {
+            payload_mode: self.payload_mode,
             log_basis_inner: self.log_basis_inner,
             log_basis_outer: self.log_basis_outer,
             log_basis_open: self.log_basis_open,
@@ -1020,6 +1146,7 @@ impl CommittedGroupParams {
     /// role-specific commit-matrix constructors short-circuit silently.
     pub fn with_layout(&self, other: &CommittedGroupParams) -> Result<Self, AkitaError> {
         Self {
+            payload_mode: other.payload_mode,
             log_basis_inner: other.log_basis_inner,
             log_basis_outer: other.log_basis_outer,
             log_basis_open: other.log_basis_open,

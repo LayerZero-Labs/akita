@@ -47,21 +47,20 @@ fn generated_schedule_has_explicit_terminal_inner_only_topology() {
 
 #[cfg(feature = "schedules-default")]
 #[test]
-fn setup_envelope_includes_terminal_inner_matrix() {
+fn setup_capacity_includes_terminal_inner_matrix() {
     let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(28),
     ))
     .expect("generated fp128 schedule");
-    let envelope =
-        setup_matrix_envelope_for_schedule(&schedule, fp128::D64Dense::D).expect("setup envelope");
-    let terminal_a = schedule
-        .terminal
-        .params
-        .witness
+    let envelope = setup_matrix_capacity_for_schedule(&schedule).expect("setup capacity");
+    let terminal = &schedule.terminal.params.witness;
+    let terminal_a = terminal
         .inner_commit_matrix
         .output_rank()
-        * schedule.terminal.params.witness.inner_width();
-    assert!(envelope.max_setup_len >= terminal_a);
+        .checked_mul(terminal.inner_width())
+        .and_then(|width| width.checked_mul(terminal.inner_commit_matrix.ring_dimension()))
+        .expect("terminal setup capacity");
+    assert!(envelope.num_field_elements >= terminal_a);
 }
 
 #[cfg(feature = "schedules-default")]
@@ -138,7 +137,7 @@ fn fp128_d128_onehot_catalog_freezes_root_fold_digits() {
 #[test]
 fn setup_envelope_scan_includes_multi_polynomial_precommitted_groups() {
     let layouts =
-        setup_envelope_scan_layouts::<fp128::D64OneHot>(14, 3).expect("setup scan layouts");
+        setup_capacity_scan_layouts::<fp128::D64OneHot>(14, 3).expect("setup scan layouts");
 
     assert!(layouts.iter().any(|layout| {
         layout.groups()

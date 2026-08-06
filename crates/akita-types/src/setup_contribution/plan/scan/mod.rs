@@ -130,7 +130,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             });
         }
         let required = self.projection_geometry.required();
-        let setup_len = setup.shared_matrix().total_ring_elements_at::<BASE_D>()?;
+        let setup_len = setup.shared_matrix().num_field_elements() / BASE_D;
         if required > setup_len {
             return Err(AkitaError::InvalidSetup(
                 "shared matrix is too small for selected verifier layout".into(),

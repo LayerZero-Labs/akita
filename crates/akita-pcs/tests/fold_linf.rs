@@ -133,7 +133,11 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
             BasisMode::Lagrange,
         )
         .expect_err("oversized grind nonce must be rejected");
-        assert!(matches!(err, AkitaError::InvalidProof));
+        assert!(
+            matches!(err, AkitaError::InvalidProof)
+                || matches!(err, AkitaError::InvalidInput(ref message) if message.contains("InvalidProof")),
+            "oversized grind nonce returned {err:?}"
+        );
     });
 }
 
@@ -147,7 +151,7 @@ fn fold_recursive_handle_tamper_rejected() {
             .recursive_folds
             .first_mut()
             .expect("tail-bound-with-grind onehot should include an intermediate fold");
-        bump_flat_ring_vec(&mut recursive.v);
+        bump_flat_ring_vec(&mut recursive.opening_payload);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
         let result = Scheme::batched_verify(

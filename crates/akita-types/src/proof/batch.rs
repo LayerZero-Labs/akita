@@ -550,7 +550,7 @@ pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize,
 }
 
 /// Absorb the batch commitment into the transcript using the D-free flat
-/// coefficient encoding under the schedule-derived `ring_dim`.
+/// coefficient encoding under its derived terminal compression `ring_dim`.
 ///
 /// # Errors
 ///

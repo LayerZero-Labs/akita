@@ -352,10 +352,10 @@ pub fn ensure_setup_envelope<F: FieldCore>(
     required: usize,
     fold_ring_d: usize,
 ) -> Result<(), AkitaError> {
-    let setup_len = expanded
-        .shared_matrix()
-        .total_ring_elements_at_dyn(fold_ring_d)?;
-    if required > setup_len {
+    let required_fields = required
+        .checked_mul(fold_ring_d)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup capacity requirement overflow".into()))?;
+    if required_fields > expanded.shared_matrix().num_field_elements() {
         return Err(AkitaError::InvalidSetup(
             "shared matrix is too small for selected setup product".into(),
         ));
@@ -372,14 +372,13 @@ mod tests {
 
     #[test]
     fn ensure_setup_envelope_rejects_undersized_matrix() {
-        let seed = crate::AkitaSetupSeed {
+        let seed = crate::AkitaSetupDescriptor {
             max_num_vars: 32,
             max_num_batched_polys: 1,
-            gen_ring_dim: 32,
-            max_setup_len: 1,
-            public_matrix_seed: [1u8; 32],
+            num_field_elements: 32,
+            setup_seed: [1u8; 32].into(),
         };
-        let shared = crate::derive_public_matrix_flat::<F, 32>(1, &seed.public_matrix_seed);
+        let shared = crate::derive_public_matrix_prefix::<F>(32, &seed.setup_seed);
         let expanded =
             crate::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared);
         let err = ensure_setup_envelope(&expanded, 2, 32).expect_err("undersized");
@@ -390,38 +389,38 @@ mod tests {
     fn projection_geometry_uses_common_base() {
         let geometry = SetupProjectionGeometry::from_role_footprints(
             CommitmentRingDims {
-                inner: 64,
-                outer: 32,
-                opening: 32,
+                inner: 128,
+                outer: 64,
+                opening: 64,
             },
             7,
             11,
             13,
         )
         .expect("common-base geometry");
-        assert_eq!(geometry.base_ring_dim(), 32);
+        assert_eq!(geometry.base_ring_dim(), 64);
         assert_eq!(geometry.a_ratio(), 2);
         assert_eq!(geometry.b_ratio(), 1);
         assert_eq!(geometry.d_ratio(), 1);
         assert_eq!(geometry.required(), 14);
-        assert_eq!(geometry.alpha_power_len(), 32);
-        assert_eq!(geometry.natural_field_len(), 14 * 32);
+        assert_eq!(geometry.alpha_power_len(), 64);
+        assert_eq!(geometry.natural_field_len(), 14 * 64);
     }
 
     #[test]
     fn projection_geometry_accepts_reversed_b_d_order() {
         let geometry = SetupProjectionGeometry::from_role_footprints(
             CommitmentRingDims {
-                inner: 128,
-                outer: 32,
-                opening: 64,
+                inner: 256,
+                outer: 64,
+                opening: 128,
             },
             1,
             1,
             1,
         )
         .expect("role ordering is irrelevant to common-base projection");
-        assert_eq!(geometry.base_ring_dim(), 32);
+        assert_eq!(geometry.base_ring_dim(), 64);
         assert_eq!(geometry.a_ratio(), 4);
         assert_eq!(geometry.b_ratio(), 1);
         assert_eq!(geometry.d_ratio(), 2);
@@ -439,7 +438,11 @@ mod tests {
             3,
             &[
                 SetupProjectionGroupGeometry {
-                    role_dims: CommitmentRingDims::uniform(64),
+                    role_dims: CommitmentRingDims {
+                        inner: 128,
+                        outer: 64,
+                        opening: 64,
+                    },
                     a_rows: 2,
                     a_cols: 5,
                     b_rows: 3,
@@ -448,8 +451,8 @@ mod tests {
                 },
                 SetupProjectionGroupGeometry {
                     role_dims: CommitmentRingDims {
-                        inner: 128,
-                        outer: 32,
+                        inner: 256,
+                        outer: 64,
                         opening: 64,
                     },
                     a_rows: 2,
@@ -462,10 +465,10 @@ mod tests {
         )
         .expect("mixed-group geometry");
 
-        assert_eq!(geometry.base_ring_dim(), 32);
+        assert_eq!(geometry.base_ring_dim(), 64);
         assert_eq!(geometry.a_projection_width(), 40);
-        assert_eq!(geometry.b_projection_width(), 42);
-        assert_eq!(geometry.d_projection_width(), 6);
-        assert_eq!(geometry.required(), 42);
+        assert_eq!(geometry.b_projection_width(), 21);
+        assert_eq!(geometry.d_projection_width(), 3);
+        assert_eq!(geometry.required(), 40);
     }
 }

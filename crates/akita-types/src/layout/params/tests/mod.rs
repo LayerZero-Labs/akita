@@ -216,9 +216,15 @@ fn relation_matrix_row_count_values() {
         .with_layout(&sample_layout_lp())
         .unwrap();
 
-    assert_eq!(lp.relation_matrix_row_count(1).unwrap(), 1 + 3 + 4 + 2);
-    assert_eq!(lp.relation_matrix_row_count(2).unwrap(), 1 + 3 + 4 * 2 + 2);
-    assert_eq!(lp.relation_matrix_row_count(4).unwrap(), 1 + 3 + 4 * 4 + 2);
+    assert_eq!(lp.relation_matrix_row_count(1).unwrap(), 1 + 3 + 4 + 2 + 4);
+    assert_eq!(
+        lp.relation_matrix_row_count(2).unwrap(),
+        1 + 3 + 4 * 2 + 2 + 6
+    );
+    assert_eq!(
+        lp.relation_matrix_row_count(4).unwrap(),
+        1 + 3 + 4 * 4 + 2 + 10
+    );
 }
 
 #[test]
@@ -241,7 +247,7 @@ fn canonical_row_offsets_match_open_coded_layout() {
         assert_eq!(lp.d_start(nc).unwrap(), d_start);
         assert_eq!(
             lp.relation_matrix_row_count(nc).unwrap(),
-            d_start + n_d_active
+            d_start + n_d_active + 2 * (nc + 1)
         );
     }
 }

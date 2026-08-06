@@ -1,9 +1,9 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, OpeningScheduleSelection,
-    RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep, ScheduleRowDigest,
-    TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
-    WitnessPartition,
+    CommittedGroupParams, FoldSchedule, InnerCommitMatrixParams, OpeningClaimsLayout,
+    OpeningScheduleSelection, RootFinalChallenge, RootFinalGroupParams, RootFoldParams,
+    RootFoldStep, ScheduleRowDigest, TerminalCommittedGroupParams, TerminalFoldParams,
+    TerminalFoldStep, TerminalResponseShape, WitnessPartition,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime32Offset99;
@@ -55,7 +55,7 @@ fn sample_selection() -> OpeningScheduleSelection {
 fn sample_descriptor() -> AkitaInstanceDescriptor {
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("valid opening batch");
     AkitaInstanceDescriptor::new(
-        AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99, 64>().expect("algebra"),
+        AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99>().expect("algebra"),
         SetupSection {
             decomposition: DecompositionParams {
                 log_basis: 3,
@@ -63,6 +63,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
                 log_open_bound: Some(32),
             },
             sis_modulus_profile: SisModulusProfileId::Q32Offset99,
+            compression_policy: COMPRESSION_POLICY,
             setup_seed_digest: [1; 32],
             protocol_features: ProtocolFeatureSet::current(),
             fold_linf: FoldLinfProtocolBinding::CURRENT,
@@ -100,6 +101,22 @@ fn setup_section_rejects_mismatched_zk_protocol_feature() {
     descriptor.setup.protocol_features.zk = true;
     assert!(matches!(
         descriptor.check(),
+        Err(SerializationError::InvalidData(_))
+    ));
+}
+
+#[test]
+fn setup_section_rejects_unknown_compression_policy_tag() {
+    let setup = sample_descriptor().setup;
+    let mut bytes = Vec::new();
+    setup
+        .serialize_uncompressed(&mut bytes)
+        .expect("serialize setup section");
+    let policy_offset = decomposition_size(&setup.decomposition, Compress::No)
+        + sis_modulus_profile_size(Compress::No);
+    bytes[policy_offset] = u8::MAX;
+    assert!(matches!(
+        SetupSection::deserialize_uncompressed(&bytes[..], &()),
         Err(SerializationError::InvalidData(_))
     ));
 }
@@ -190,6 +207,37 @@ fn terminal_sparse_sampler_changes_plan_binding() {
     let first = sample_schedule();
     let mut second = first.clone();
     second.terminal.params.sparse_challenge_config = SparseChallengeConfig::pm1_only(4);
+    assert_ne!(
+        PlanSection::from_schedule(sample_selection(), &first),
+        PlanSection::from_schedule(sample_selection(), &second)
+    );
+}
+
+#[test]
+fn role_local_ring_dimension_changes_plan_binding() {
+    let first = sample_schedule();
+    let mut second = first.clone();
+    let matrix = &second
+        .root
+        .params
+        .final_group
+        .commitment
+        .inner_commit_matrix;
+    second
+        .root
+        .params
+        .final_group
+        .commitment
+        .inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+        matrix.security_policy(),
+        matrix.sis_table_key().table_digest,
+        matrix.sis_modulus_profile(),
+        matrix.output_rank(),
+        matrix.input_width(),
+        matrix.coeff_linf_bound(),
+        matrix.ring_dimension() * 2,
+    );
+
     assert_ne!(
         PlanSection::from_schedule(sample_selection(), &first),
         PlanSection::from_schedule(sample_selection(), &second)

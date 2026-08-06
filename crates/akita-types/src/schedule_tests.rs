@@ -9,7 +9,7 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
         estimated_recursive_stage3_payload_bytes: vec![22, 0],
         estimated_terminal_direct_payload_bytes: 400,
         estimated_terminal_response_payload_bytes: 350,
-        estimated_setup_envelope_ring_elements: 512,
+        estimated_num_setup_field_elements: 512,
         first_direct_setup_field_len: Some(1_024),
         selected_offload_edges: 2,
     };
@@ -25,12 +25,11 @@ use crate::golomb_rice::golomb_rice_encode_vec;
 use crate::{
     extension_opening_reduction_proof_bytes, level_proof_bytes, sumcheck_rounds,
     terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    CommittedGroupBatchProfile, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
-    NextWitnessBinding, RingVec, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalLevelProof, TerminalResponse, TerminalResponseShape,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    CommitmentPayloadMode, CommittedGroupBatchProfile, DigitRangePlan,
+    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RingVec,
+    SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
+    TerminalResponse, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
-use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore, Prime128OffsetA7F7};
 use akita_serialization::{AkitaSerialize, Compress};
@@ -124,10 +123,10 @@ fn recursive_schedule(
     let predecessor = committed_params(predecessor_ring_dimension);
     let mut successor = committed_params(successor_ring_dimension);
     let incoming_setup_prefix = offload.then(|| {
-        let natural_len = crate::SETUP_OFFLOAD_D_SETUP;
+        let natural_len = successor_ring_dimension;
         let commitment_params = crate::setup_prefix_precommitted_params(&successor, natural_len)
             .expect("setup-prefix commitment params");
-        crate::setup_prefix_slot_id(crate::SETUP_OFFLOAD_D_SETUP, natural_len, commitment_params)
+        crate::setup_prefix_slot_id(natural_len, commitment_params)
     });
     successor.setup_prefix = incoming_setup_prefix.clone();
     let terminal = TerminalCommittedGroupParams::from_expanded_group(committed_params(
@@ -186,6 +185,107 @@ fn recursive_schedule(
     }
 }
 
+fn append_recursive_fold(schedule: &mut FoldSchedule) {
+    let mut step = schedule
+        .recursive_folds
+        .last()
+        .expect("recursive fixture has one fold")
+        .clone();
+    step.params.incoming_setup_prefix = None;
+    step.params.witness.setup_prefix = None;
+    step.input_witness_len = schedule
+        .recursive_folds
+        .last()
+        .expect("recursive fixture has one fold")
+        .output_witness_len;
+    schedule.terminal.input_witness_len = step.output_witness_len;
+    schedule.recursive_folds.push(step);
+}
+
+#[test]
+fn schedule_rejects_raw_root_payload() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    schedule.root.params.final_group.commitment.payload_mode = CommitmentPayloadMode::Raw;
+
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(message)) if message.contains("root fold payload")
+    ));
+}
+
+#[test]
+fn schedule_rejects_raw_first_recursive_payload() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    schedule.recursive_folds[0].params.witness.payload_mode = CommitmentPayloadMode::Raw;
+
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(message)) if message.contains("cutover policy")
+    ));
+}
+
+#[test]
+fn schedule_rejects_compression_after_raw_suffix_starts() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    append_recursive_fold(&mut schedule);
+    append_recursive_fold(&mut schedule);
+    schedule.recursive_folds[1].params.witness.payload_mode = CommitmentPayloadMode::Raw;
+
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(message)) if message.contains("cutover policy")
+    ));
+}
+
+#[test]
+fn schedule_accepts_extended_compressed_prefix() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    append_recursive_fold(&mut schedule);
+
+    schedule.validate_structure().unwrap();
+}
+
+#[test]
+fn schedule_rejects_setup_prefix_inside_raw_suffix() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    append_recursive_fold(&mut schedule);
+    let raw = &mut schedule.recursive_folds[1];
+    raw.params.witness.payload_mode = CommitmentPayloadMode::Raw;
+    let natural_len = 64;
+    let commitment_params =
+        crate::setup_prefix_precommitted_params(&raw.params.witness, natural_len)
+            .expect("setup-prefix commitment params");
+    let prefix = crate::setup_prefix_slot_id(natural_len, commitment_params);
+    raw.params.incoming_setup_prefix = Some(prefix.clone());
+    raw.params.witness.setup_prefix = Some(prefix);
+
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(message)) if message.contains("cutover policy")
+    ));
+}
+
+#[test]
+fn schedule_rejects_setup_prefix_that_resumes_compression() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    append_recursive_fold(&mut schedule);
+    append_recursive_fold(&mut schedule);
+    schedule.recursive_folds[1].params.witness.payload_mode = CommitmentPayloadMode::Raw;
+    let resumed = &mut schedule.recursive_folds[2];
+    let natural_len = 64;
+    let commitment_params =
+        crate::setup_prefix_precommitted_params(&resumed.params.witness, natural_len)
+            .expect("setup-prefix commitment params");
+    let prefix = crate::setup_prefix_slot_id(natural_len, commitment_params);
+    resumed.params.incoming_setup_prefix = Some(prefix.clone());
+    resumed.params.witness.setup_prefix = Some(prefix);
+
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(message)) if message.contains("resume compression")
+    ));
+}
+
 #[test]
 fn schedule_rejects_setup_prefix_split_authority() {
     let mut schedule = recursive_schedule(64, 64, true);
@@ -198,13 +298,12 @@ fn schedule_rejects_setup_prefix_split_authority() {
 }
 
 #[test]
-fn schedule_rejects_offload_when_producer_projection_misses_prefix_dimension() {
+fn schedule_accepts_prefix_dimension_independent_of_producer_projection() {
     let schedule = recursive_schedule(128, 64, true);
 
-    let err = schedule
+    schedule
         .validate_structure()
-        .expect_err("offload prefix must use the producer setup projection dimension");
-    assert!(matches!(err, AkitaError::InvalidSetup(_)));
+        .expect("prefix commitment A dimension is independent of producer projection");
 }
 
 #[test]
@@ -268,15 +367,14 @@ fn schedule_accepts_mixed_producer_projecting_to_prefix_dimension() {
 }
 
 #[test]
-fn schedule_rejects_prefix_commitment_roles_that_miss_consumer_roles() {
-    let mut schedule = recursive_schedule(64, 64, true);
-    retarget_outer_dimension(&mut schedule.recursive_folds[0].params.witness, 32)
+fn schedule_accepts_prefix_commitment_roles_independent_of_consumer_roles() {
+    let mut schedule = recursive_schedule(64, 128, true);
+    retarget_outer_dimension(&mut schedule.recursive_folds[0].params.witness, 64)
         .expect("retarget consumer B role");
 
-    let err = schedule
+    schedule
         .validate_structure()
-        .expect_err("prefix B commitment must match the consumer B role");
-    assert!(matches!(err, AkitaError::InvalidSetup(_)));
+        .expect("prefix commitment roles are independent of consumer witness roles");
 }
 
 #[test]
@@ -348,7 +446,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
 
     let n_prefix = crate::padded_setup_prefix_len(natural_len);
     let mut consumer = committed_params_with_geometry(64, 16, 64);
-    let prefix_ring_slots = n_prefix / crate::SETUP_OFFLOAD_D_SETUP;
+    let prefix_ring_slots = n_prefix / 64;
     let inner = &consumer.inner_commit_matrix;
     consumer.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
@@ -361,8 +459,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     );
     let commitment_params = crate::setup_prefix_precommitted_params(&consumer, n_prefix)
         .expect("consumer-compatible prefix commitment");
-    let prefix =
-        crate::setup_prefix_slot_id(crate::SETUP_OFFLOAD_D_SETUP, natural_len, commitment_params);
+    let prefix = crate::setup_prefix_slot_id(natural_len, commitment_params);
     schedule.recursive_folds[0].params.witness = consumer.clone();
     schedule.recursive_folds[0].params.open_commit_matrix = consumer.open_commit_matrix;
     schedule.recursive_folds[0].params.incoming_setup_prefix = Some(prefix.clone());
@@ -552,27 +649,37 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
     next_lp: &CommittedGroupParams,
     output_witness_len: usize,
 ) -> Result<usize, AkitaError> {
-    let current_coeffs = lp
+    let current_source_coeffs = lp
         .open_commit_matrix
         .output_rank()
-        .checked_mul(lp.d_a())
+        .checked_mul(lp.role_dims().d_d())
         .ok_or_else(|| AkitaError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
-    let next_commit_coeffs = next_lp
+    let current_coeffs = crate::CompressionChainPlan::for_complete_source(
+        lp.open_commit_matrix.sis_modulus_profile(),
+        current_source_coeffs,
+    )?
+    .terminal_coefficients();
+    let next_commit_source_coeffs = next_lp
         .outer_commit_matrix
         .output_rank()
-        .checked_mul(next_lp.d_a())
+        .checked_mul(next_lp.role_dims().d_b())
         .ok_or_else(|| AkitaError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
+    let next_commit_coeffs = crate::CompressionChainPlan::for_complete_source(
+        next_lp.outer_commit_matrix.sis_modulus_profile(),
+        next_commit_source_coeffs,
+    )?
+    .terminal_coefficients();
     let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
     let b = 1usize << lp.log_basis_open;
 
     let proof = FoldLevelProof {
         extension_opening_reduction: None,
-        v: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
+        opening_payload: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
         fold_grind_nonce: 0,
         stage1: dummy_stage1_proof(rounds, b),
         stage2: AkitaStage2Proof {
             sumcheck_proof: dummy_sumcheck(rounds, 3),
-            next_witness_binding: NextWitnessBinding::OuterCommitment(RingVec::from_coeffs(vec![
+            next_witness_binding: NextWitnessBinding::OuterPayload(RingVec::from_coeffs(vec![
                 F::zero();
                 next_commit_coeffs
             ])),
@@ -617,7 +724,7 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
                     &lp,
                     Some(&next_lp),
                     output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, output_witness_len).unwrap(),
@@ -708,21 +815,34 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
         .unwrap();
         let rounds = sumcheck_rounds(D, output_witness_len);
         let b = 1usize << log_basis;
-        let next_commitment =
-            RingVec::from_ring_elems(&vec![
-                CyclotomicRing::<F, D>::zero();
-                next_lp.outer_commit_matrix.output_rank()
-            ])
-            .into_compact();
-        let level_proof = FoldLevelProof::new::<D>(
-            vec![CyclotomicRing::<F, D>::zero(); lp.open_commit_matrix.output_rank()],
-            dummy_stage1_proof(rounds, b),
-            AkitaStage2Proof {
+        let level_proof = FoldLevelProof {
+            extension_opening_reduction: None,
+            opening_payload: RingVec::from_coeffs(vec![
+                F::zero();
+                crate::CompressionChainPlan::for_complete_source(
+                    lp.open_commit_matrix.sis_modulus_profile(),
+                    lp.open_commit_matrix.output_rank() * lp.role_dims().d_d(),
+                )
+                .unwrap()
+                .terminal_coefficients()
+            ]),
+            fold_grind_nonce: 0,
+            stage1: dummy_stage1_proof(rounds, b),
+            stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
-                next_witness_binding: NextWitnessBinding::OuterCommitment(next_commitment),
+                next_witness_binding: NextWitnessBinding::OuterPayload(RingVec::from_coeffs(vec![
+                    F::zero();
+                    crate::CompressionChainPlan::for_complete_source(
+                        next_lp.outer_commit_matrix.sis_modulus_profile(),
+                        next_lp.outer_commit_matrix.output_rank() * next_lp.role_dims().d_b(),
+                    )
+                    .unwrap()
+                    .terminal_coefficients()
+                ])),
                 next_w_eval: F::zero(),
             },
-        );
+            stage3_sumcheck_proof: None,
+        };
         assert_eq!(
                 level_proof_bytes(
                     128,
@@ -730,7 +850,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                     &lp,
                     Some(&next_lp),
                     output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 level_proof.serialized_size(Compress::No),

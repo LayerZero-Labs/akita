@@ -13,7 +13,4 @@ bench_results/
 scripts/__pycache__/
 scripts/tests/__pycache__/
 
-# Regenerated during local/CI bootstrap by scripts/generate-schedule-tables.sh.
-/crates/akita-schedules/src/generated/fp*.rs
-
 .cursor/

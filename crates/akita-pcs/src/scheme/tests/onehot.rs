@@ -629,7 +629,7 @@ fn multi_group_root_opens_multi_polynomial_precommitted_group() {
 
 #[test]
 fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
-    const PRE_NV: usize = 12;
+    const PRE_NV: usize = 14;
     const FINAL_NV: usize = 24;
     type ProtocolCfg =
         crate::test_support::EnvelopeFinalGroupConfig<fp128::D128OneHot, fp128::D64OneHot>;
@@ -740,7 +740,10 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
 
     let expected_shape = expected_same_point_batched_shape(NV, BATCH_SIZE, &proof);
     let actual_shape = proof.shape();
-    assert_eq!(expected_shape.root.v_coeffs, actual_shape.root.v_coeffs);
+    assert_eq!(
+        expected_shape.root.opening_payload_coeffs,
+        actual_shape.root.opening_payload_coeffs
+    );
     assert_eq!(
         expected_shape.root.stage1_stages,
         actual_shape.root.stage1_stages

@@ -15,7 +15,7 @@ use akita_serialization::{
 };
 use std::io::{Read, Write};
 
-use super::util::{is_pow2_u64, log2_pow2_u64, mul64_wide};
+use super::util::{is_pow2_u64, log2_pow2_u64, mul64_wide, sample_uniform_below};
 
 /// Prime field element for primes `p = 2^k − c` stored as `u64`.
 ///
@@ -530,9 +530,7 @@ impl<const P: u64> HalvingField for Fp64<P> {
 impl<const P: u64> RandomSampling for Fp64<P> {
     #[inline(always)]
     fn random<R: RngCore>(rng: &mut R) -> Self {
-        let lo = rng.next_u64() as u128;
-        let hi = rng.next_u64() as u128;
-        Self(Self::reduce_u128(lo | (hi << 64)))
+        Self(sample_uniform_below(rng, P as u128, Self::BITS) as u64)
     }
 }
 

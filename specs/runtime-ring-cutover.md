@@ -21,6 +21,13 @@ const-generic at kernel and backend leaf boundaries, but the protocol shape is
 field vectors plus schedule-owned dimensions, not `CyclotomicRing<F, D>` at the
 API boundary.
 
+> **Scoped revision (stacked follow-up to PR #334):** The schedule-ownership
+> decision remains authoritative. The phase-1 setup generation dimension and
+> full-envelope NTT preparation described later in this document are superseded by
+> [`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
+> Public setup is now specified as a dimension-free field stream and NTT state
+> as exact backend-derived prefixes.
+
 ## Intent
 
 ### Goal
@@ -363,8 +370,8 @@ New or updated tests:
   a const `D` parameter.
 - A prover/verifier E2E test using the normal public API and a schedule whose
   fold levels use different valid dimensions under one setup envelope.
-- **`akita-verifier` mixed-D rejection tests** mirroring `mixed_d_per_level_e2e`
-  malformed matrix (not only PCS integration).
+- **`akita-verifier` mixed-D rejection tests** covering malformed mixed-D
+  matrices at the verifier boundary.
 - Per-role adapter test: `CommitmentRingDims { d_a:128, d_b:32, d_d:64 }`;
   each operation adapter dispatches on its role dim without imposing an order
   between B and D (planner may still reject divergent dims until Slice 3).

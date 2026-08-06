@@ -23,7 +23,12 @@ rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"
+
+[[bench]]
+name = "crt_ntt_ops"
+harness = false
 
 [features]
 default = []

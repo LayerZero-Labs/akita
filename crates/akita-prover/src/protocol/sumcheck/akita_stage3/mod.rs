@@ -187,12 +187,10 @@ where
     .entered();
     ensure_setup_envelope(expanded, required, ring_d)?;
     let natural_field_len = geometry.natural_field_len();
-    let setup_len = expanded
-        .shared_matrix()
-        .total_ring_elements_at_dyn(ring_d)?;
+    let setup_len = expanded.shared_matrix().num_field_elements() / ring_d;
     let setup_eval_len = if next_fold_level_params.setup_prefix.is_some() {
         let setup_prefix_selection = select_setup_prefix_slot(
-            setup_len,
+            Some(expanded.shared_matrix().num_field_elements()),
             |slot_id| {
                 prefix_slots
                     .get(slot_id)

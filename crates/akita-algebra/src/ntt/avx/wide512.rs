@@ -10,16 +10,16 @@
 //! shuffles. Because `len` is always a power of two, each stage hits exactly
 //! one width with no remainder.
 //!
-//! These kernels are selected only when `avx_ntt_mode()` reports
-//! `AvxNttMode::Avx512`; `AKITA_AVX512_NTT=0` keeps the 128-bit AVX2 path for
-//! A/B comparison.
+//! These kernels are selected when `AKITA_AVX512_NTT=1` and full AVX-512
+//! support is present. The true 256-bit AVX2 transform is the default because
+//! it wins every measured target degree on Ice Lake.
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use super::montgomery::forward_dif_tail_i32_avx2;
+use super::montgomery::{forward_dif_tail_i32_avx2, inverse_dit_head_i32_avx2};
 use super::{
     mont_mul_16x_i32_avx512, mont_mul_4x_i32_avx2, mont_mul_8x_i32_avx2,
     reduce_range_16x_i32_avx512, reduce_range_4x_i32_avx2, reduce_range_8x_i32_avx2,
@@ -155,7 +155,13 @@ unsafe fn inverse_dit_stages<const D: usize>(
     let a_ptr = a.as_mut_ptr() as *mut i32;
     let tw_ptr = tw.inv_twiddles.as_ptr() as *const i32;
 
-    let mut len = 1usize;
+    let mut len = if D.is_multiple_of(16) {
+        // SAFETY: `D` satisfies the helper's geometry and AVX2 is enabled.
+        unsafe { inverse_dit_head_i32_avx2::<D>(a_ptr, tw_ptr, p128, pinv128) };
+        4
+    } else {
+        1
+    };
     while len < D {
         let base = len - 1;
         let mut start = 0usize;

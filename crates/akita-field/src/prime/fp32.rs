@@ -15,6 +15,8 @@ use akita_serialization::{
 };
 use std::io::{Read, Write};
 
+use super::util::sample_uniform_below;
+
 /// Prime field element for primes `p = 2^k − c` stored as `u32`.
 ///
 /// The fold point `k` and offset `c = 2^k − p` are computed at compile time
@@ -444,7 +446,7 @@ impl<const P: u32> HalvingField for Fp32<P> {
 impl<const P: u32> RandomSampling for Fp32<P> {
     #[inline(always)]
     fn random<R: RngCore>(rng: &mut R) -> Self {
-        Self(Self::reduce_u64(rng.next_u64()))
+        Self(sample_uniform_below(rng, P as u128, Self::BITS) as u32)
     }
 }
 

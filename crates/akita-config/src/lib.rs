@@ -10,15 +10,15 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
-use akita_schedules::{PlannerPolicy, RingDimensionScheduleMode};
+use akita_schedules::PlannerPolicy;
 use akita_serialization::Valid;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::PolynomialGroupLayout;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommittedGroupParams,
-    DecompositionParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixEnvelope,
-    SisModulusProfileId,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims,
+    CommittedGroupParams, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
+    SetupMatrixCapacity, SisModulusProfileId,
 };
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
@@ -35,8 +35,8 @@ macro_rules! impl_multi_chunk_companion {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
             const D: usize = <$base as $crate::CommitmentConfig>::D;
-            const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
-                <$base as $crate::CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
+            const RING_DIMENSION_CANDIDATES: &'static [akita_types::CommitmentRingDims] =
+                <$base as $crate::CommitmentConfig>::RING_DIMENSION_CANDIDATES;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
 
             fn decomposition() -> akita_types::DecompositionParams {
@@ -52,17 +52,20 @@ macro_rules! impl_multi_chunk_companion {
             ) -> akita_challenges::TensorChallengeShape {
                 <$base as $crate::CommitmentConfig>::fold_challenge_shape_at_level(inputs)
             }
+            fn selection_policy() -> akita_schedules::SelectionPolicyId {
+                <$base as $crate::CommitmentConfig>::selection_policy()
+            }
             fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
                 <$base as $crate::CommitmentConfig>::sis_modulus_profile()
             }
             fn ring_subfield_embedding_norm_bound() -> u32 {
                 <$base as $crate::CommitmentConfig>::ring_subfield_embedding_norm_bound()
             }
-            fn max_setup_matrix_size(
+            fn setup_matrix_capacity(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<$cfg>(
+            ) -> Result<akita_types::SetupMatrixCapacity, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_setup_matrix_capacity::<$cfg>(
                     max_num_vars,
                     max_num_batched_polys,
                 )
@@ -111,7 +114,10 @@ pub use akita_schedules::ResolvedScheduleRow;
 pub use precommitted_commitment::{
     committed_group_params, committed_group_profile, PrecommittedCommitmentConfig,
 };
-pub use proof_optimized::{ensure_schedule_fits_setup, setup_level_params_from_schedule};
+pub use proof_optimized::{
+    ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
+    setup_level_params_from_schedule,
+};
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
 pub use setup_prefix_slots::setup_prefix_slot_ids_for_capacity;
@@ -126,14 +132,12 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     let recursive_setup_planning = Cfg::recursive_setup_planning();
     PlannerPolicy {
         cost_model: akita_schedules::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
-        selection_policy: akita_schedules::SelectionPolicyId::for_policy(
-            recursive_setup_planning,
-            Cfg::RING_DIMENSION_SCHEDULE_MODE,
-        ),
-        max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+        selection_policy: Cfg::selection_policy(),
+        setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
-        ring_dimension: Cfg::D,
-        ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,
+        uniform_ring_dimension: Cfg::D,
+        setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),
+        ring_dimension_candidates: Cfg::RING_DIMENSION_CANDIDATES,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
@@ -201,11 +205,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
 
-    /// Uniform or bounded-adaptive ring-dimension schedule policy.
-    const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
-        RingDimensionScheduleMode::UniformDimension {
-            ring_dimension: Self::D,
-        };
+    /// Canonically ordered A/B/D tuples admitted by offline schedule search.
+    ///
+    /// Uniform presets use their setup-generation dimension for every role.
+    /// Adaptive presets override this with their full audited search domain.
+    const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] =
+        &[CommitmentRingDims::uniform(Self::D)];
 
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;
@@ -275,10 +280,19 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// `InvalidSetup` on arithmetic overflow.
     #[doc(hidden)]
-    fn max_setup_matrix_size(
+    fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError>;
+    ) -> Result<SetupMatrixCapacity, AkitaError>;
+
+    /// Planner-owned A-matrix ring dimension for setup-prefix commitments.
+    ///
+    /// This controls how the explicitly zero-padded setup-prefix witness is
+    /// chunked for commitment. It is not public-matrix identity or a setup
+    /// materialization dimension.
+    fn setup_prefix_inner_ring_dimension() -> usize {
+        Self::D
+    }
 
     /// Inclusive `(min, max)` log-basis search range.
     #[doc(hidden)]
@@ -303,6 +317,21 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// setup offloading override this and use a separate generated catalog.
     fn recursive_setup_planning() -> bool {
         false
+    }
+
+    /// Catalog-bound schedule selection objective.
+    ///
+    /// Uniform/direct presets minimize proof payload. Recursive setup presets
+    /// minimize the first remaining direct setup footprint before payload.
+    /// Mixed-dimension catalogs may opt into the physical setup-field objective
+    /// explicitly; the policy is part of catalog identity and never inferred
+    /// from a ring dimension.
+    fn selection_policy() -> akita_schedules::SelectionPolicyId {
+        if Self::recursive_setup_planning() {
+            akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayload
+        } else {
+            akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
+        }
     }
 
     /// Optional generated schedule catalog for this preset.
@@ -456,11 +485,11 @@ mod tests {
             SisModulusProfileId::Q32Offset99
         }
 
-        fn max_setup_matrix_size(
+        fn setup_matrix_capacity(
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
-        ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope::minimum())
+        ) -> Result<SetupMatrixCapacity, AkitaError> {
+            Ok(SetupMatrixCapacity::minimum())
         }
 
         fn basis_range() -> (u32, u32) {
@@ -627,7 +656,7 @@ mod fp128_policy_tests {
     }
 
     /// Spot-check keys aligned with `specs/sis-euclidean-estimator.md` plus table max.
-    const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[13, 16, 28, 30, 44, 50];
+    const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
 
     #[test]
     fn current_d64_dense_schedule_stays_within_audited_sis_widths() {

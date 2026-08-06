@@ -241,11 +241,11 @@ fn run() -> Result<(), String> {
         "generating Akita verifier-input artifact (single-poly OneHot, D=64)"
     );
 
+    let opening_layout = OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
     let layout: CommittedGroupParams =
-        <Cfg as CommitmentConfig>::get_params_for_batched_commitment(
-            &OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
-        )
-        .expect("layout");
+        <Cfg as CommitmentConfig>::get_params_for_batched_commitment(&opening_layout)
+            .expect("layout");
+    let schedule = Cfg::get_params_for_prove(&opening_layout).expect("proof schedule");
     let alpha_bits = D.trailing_zeros() as usize;
     let required_vars = layout.position_index_bits() + layout.block_index_bits() + alpha_bits;
     // Both `main` (`required_vars <= nv`, layout fits in nv) and
@@ -343,8 +343,12 @@ fn run() -> Result<(), String> {
     .map_err(|err| format!("batched_prove failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
 
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&prover_setup)
-        .map_err(|err| format!("setup_verifier failed: {err}"))?;
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier_for_schedule(
+        &prover_setup,
+        &schedule,
+        &opening_layout,
+    )
+    .map_err(|err| format!("setup_verifier_for_schedule failed: {err}"))?;
 
     // Sanity check: the proof should verify with the same domain label.
     let t0 = Instant::now();

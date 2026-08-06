@@ -83,11 +83,11 @@ fn level_shape_validation_checks_extension_opening_reduction() {
             DEFAULT_MAX_SEQUENCE_LEN + 1,
             1,
         )),
-        v_coeffs: 1,
+        opening_payload_coeffs: 1,
         stage1_stages: Vec::new(),
         stage2_sumcheck_proof: Vec::new(),
         stage3_sumcheck: None,
-        next_witness_binding: NextWitnessBindingShape::OuterCommitment { coeffs: 1 },
+        next_witness_binding: NextWitnessBindingShape::OuterPayload { coeffs: 1 },
     };
 
     let err = oversized.check().unwrap_err();
@@ -112,7 +112,7 @@ fn level_shape_validation_checks_extension_opening_reduction() {
 fn level_shape_deserialization_rejects_vector_length_before_allocation() {
     let mut bytes = Vec::new();
     false.serialize_compressed(&mut bytes).unwrap(); // extension_opening_reduction
-    0usize.serialize_compressed(&mut bytes).unwrap(); // v_coeffs
+    0usize.serialize_compressed(&mut bytes).unwrap(); // opening_payload_coeffs
     (MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
         .serialize_compressed(&mut bytes)
         .unwrap(); // stage1_stages
@@ -137,7 +137,7 @@ fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
         sumcheck_proof: SumcheckProof {
             round_polys: Vec::new(),
         },
-        next_witness_binding: NextWitnessBinding::OuterCommitment(
+        next_witness_binding: NextWitnessBinding::OuterPayload(
             RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
         ),
         next_w_eval: F::zero(),
@@ -183,14 +183,14 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
 
     let with_reduction = FoldLevelProof {
         extension_opening_reduction: Some(tiny_reduction()),
-        v: RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
+        opening_payload: RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
         fold_grind_nonce: 0,
         stage1: tiny_stage1(),
         stage2: AkitaStage2Proof {
             sumcheck_proof: SumcheckProof {
                 round_polys: Vec::new(),
             },
-            next_witness_binding: NextWitnessBinding::OuterCommitment(
+            next_witness_binding: NextWitnessBinding::OuterPayload(
                 RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
             ),
             next_w_eval: F::zero(),
@@ -229,13 +229,13 @@ fn terminal_inner_state_omits_outer_commitment_from_tag_free_proof_wire() {
         tiny_stage2::<D>(),
     );
     let outer_commitment_bytes = outer
-        .next_w_commitment()
+        .next_w_payload()
         .expect("ordinary recursive edge carries an outer commitment")
         .serialized_size(Compress::No);
 
     let mut terminal_inner = outer.clone();
     terminal_inner.stage2_mut().next_witness_binding = NextWitnessBinding::TerminalInnerState;
-    assert_eq!(terminal_inner.next_w_commitment(), None);
+    assert_eq!(terminal_inner.next_w_payload(), None);
     assert_eq!(
         outer.serialized_size(Compress::No) - terminal_inner.serialized_size(Compress::No),
         outer_commitment_bytes,

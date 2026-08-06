@@ -247,12 +247,12 @@ fn catalog_identity_rejects_planner_policy_changes() {
 
     let mut mutated = catalog;
     mutated.identity.selection_policy =
-        akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope;
+        akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayload;
     assert_rejected("selection policy", mutated);
 
     let mut mutated = catalog;
-    mutated.identity.max_setup_envelope_field_elements -= 1;
-    assert_rejected("setup envelope ceiling", mutated);
+    mutated.identity.setup_field_budget = Some(1);
+    assert_rejected("setup capacity ceiling", mutated);
 
     let mut mutated = catalog;
     mutated.identity.min_offloaded_witness_contraction += 1;

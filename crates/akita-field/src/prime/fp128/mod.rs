@@ -44,7 +44,7 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 
-use super::util::{is_pow2_u64, log2_pow2_u64, mul64_wide};
+use super::util::{is_pow2_u64, log2_pow2_u64, mul64_wide, sample_uniform_below};
 
 pub use self::core::Fp128;
 pub use primes::{Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7};

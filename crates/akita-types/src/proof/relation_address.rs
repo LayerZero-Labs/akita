@@ -179,6 +179,97 @@ impl RelationAddressGeometry {
     }
 }
 
+/// Independent compact address geometry for F/H compression rows.
+///
+/// Compression dimensions never reduce the coefficient block used by the
+/// existing A/B/D relation roles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CompressionRelationAddressGeometry {
+    digit_witness_domain: FlatBooleanDomain,
+    coefficient_block_len: usize,
+    live_witness_coeff_len: usize,
+    committed_witness_coeff_len: usize,
+}
+
+impl CompressionRelationAddressGeometry {
+    /// Derive compact geometry from the native dimensions of only F/H rows.
+    pub fn new(
+        compression_row_ring_dims: &[usize],
+        outgoing_witness_ring_dimension: usize,
+        live_witness_coeff_len: usize,
+    ) -> Result<Self, AkitaError> {
+        let coefficient_block_len = compression_row_ring_dims
+            .iter()
+            .copied()
+            .try_fold(None, |minimum, ring_dim| {
+                if ring_dim == 0 || !ring_dim.is_power_of_two() {
+                    return Err(AkitaError::InvalidSetup(
+                        "compression relation row has a malformed ring dimension".into(),
+                    ));
+                }
+                Ok(Some(
+                    minimum.map_or(ring_dim, |value: usize| value.min(ring_dim)),
+                ))
+            })?
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compression relation requires F/H rows".into())
+            })?;
+        if outgoing_witness_ring_dimension == 0
+            || !outgoing_witness_ring_dimension.is_power_of_two()
+            || live_witness_coeff_len == 0
+            || !live_witness_coeff_len.is_multiple_of(coefficient_block_len)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "compression relation witness geometry is malformed".into(),
+            ));
+        }
+        let committed_witness_coeff_len =
+            witness_commitment_domain_len(live_witness_coeff_len, outgoing_witness_ring_dimension)?;
+        if !committed_witness_coeff_len.is_power_of_two()
+            || !committed_witness_coeff_len.is_multiple_of(coefficient_block_len)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "compression relation domain is not coefficient aligned".into(),
+            ));
+        }
+        let digit_witness_domain = FlatBooleanDomain::new(
+            live_witness_coeff_len,
+            committed_witness_coeff_len.trailing_zeros() as usize,
+        )?;
+        Ok(Self {
+            digit_witness_domain,
+            coefficient_block_len,
+            live_witness_coeff_len,
+            committed_witness_coeff_len,
+        })
+    }
+
+    #[must_use]
+    pub const fn digit_witness_domain(self) -> FlatBooleanDomain {
+        self.digit_witness_domain
+    }
+
+    #[must_use]
+    pub const fn coefficient_block_len(self) -> usize {
+        self.coefficient_block_len
+    }
+
+    #[must_use]
+    pub const fn live_lane_count(self) -> usize {
+        self.live_witness_coeff_len / self.coefficient_block_len
+    }
+
+    #[must_use]
+    pub const fn lane_capacity(self) -> usize {
+        self.committed_witness_coeff_len / self.coefficient_block_len
+    }
+
+    #[must_use]
+    pub const fn coefficient_variable_count(self) -> usize {
+        self.coefficient_block_len.trailing_zeros() as usize
+    }
+}
+
 const fn all_dims_divisible(dims: CommitmentRingDims, block: usize) -> bool {
     dims.d_a().is_multiple_of(block)
         && dims.d_b().is_multiple_of(block)
@@ -192,9 +283,9 @@ mod tests {
     #[test]
     fn outgoing_repacking_preserves_mixed_relation_geometry() {
         let dims = CommitmentRingDims {
-            inner: 64,
-            outer: 32,
-            opening: 32,
+            inner: 128,
+            outer: 64,
+            opening: 64,
         };
         let live_coeff_len = 1024;
         let geometries = [16, 32, 64].map(|outgoing_dim| {
@@ -203,9 +294,9 @@ mod tests {
         for geometry in geometries {
             assert_eq!(geometry.digit_witness_domain().live_len(), live_coeff_len);
             assert_eq!(geometry.digit_witness_domain().domain_len(), live_coeff_len);
-            assert_eq!(geometry.relation_coefficient_block_len(), 32);
-            assert_eq!(geometry.live_relation_lane_count(), 32);
-            assert_eq!(geometry.relation_lane_capacity(), 32);
+            assert_eq!(geometry.relation_coefficient_block_len(), 64);
+            assert_eq!(geometry.live_relation_lane_count(), 16);
+            assert_eq!(geometry.relation_lane_capacity(), 16);
             assert_eq!(geometry.relation_point_variable_count(), 10);
         }
     }
@@ -213,24 +304,40 @@ mod tests {
     #[test]
     fn supports_mixed_groups_without_max_a_padding() {
         let final_dims = CommitmentRingDims {
-            inner: 64,
-            outer: 32,
-            opening: 32,
-        };
-        let precommitted_dims = CommitmentRingDims {
             inner: 128,
             outer: 64,
-            opening: 32,
+            opening: 64,
+        };
+        let precommitted_dims = CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 64,
         };
         let geometry =
-            RelationAddressGeometry::new_for_groups(final_dims, &[precommitted_dims], 64, 288)
+            RelationAddressGeometry::new_for_groups(final_dims, &[precommitted_dims], 64, 320)
                 .unwrap();
-        assert_eq!(geometry.live_witness_coeff_len(), 288);
+        assert_eq!(geometry.live_witness_coeff_len(), 320);
         assert_eq!(geometry.committed_witness_coeff_len(), 512);
         assert_eq!(geometry.successor_live_ring_len(), 5);
-        assert_eq!(geometry.relation_coefficient_block_len(), 32);
-        assert_eq!(geometry.live_relation_lane_count(), 9);
-        assert_eq!(geometry.relation_lane_capacity(), 16);
+        assert_eq!(geometry.relation_coefficient_block_len(), 64);
+        assert_eq!(geometry.live_relation_lane_count(), 5);
+        assert_eq!(geometry.relation_lane_capacity(), 8);
+    }
+
+    #[test]
+    fn compression_rows_use_an_independent_compact_coefficient_block() {
+        let dims = CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 64,
+        };
+        let relation = RelationAddressGeometry::new(dims, 64, 1024).expect("relation geometry");
+        let compression = CompressionRelationAddressGeometry::new(&[16, 8], 64, 1024)
+            .expect("compression geometry");
+        assert_eq!(relation.relation_coefficient_block_len(), 64);
+        assert_eq!(relation.live_relation_lane_count(), 16);
+        assert_eq!(compression.coefficient_block_len(), 8);
+        assert_eq!(compression.live_lane_count(), 128);
     }
 
     #[test]

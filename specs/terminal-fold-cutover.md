@@ -212,7 +212,8 @@ Per-level wire change (terminal level only):
 
 - Removed: `next_w_commitment` (commitment to the next-level
   witness), `next_w_eval`, the entire stage-1 sumcheck, and
-  `v_coeffs = d_key.row_len() * D` of `v` payload.
+  the opening payload coefficients (the current protocol uses fixed-size
+  compressed `p_H` at nonterminal levels).
 - Added: `final_witness` is no longer ghost-shipped after the
   challenges; it now occupies the same transcript slot previously
   held by `next_w_commitment` and is `PackedDigits`-encoded (smaller
@@ -316,7 +317,7 @@ Affected crates and the change at each boundary:
     remainder, re-derives ring-switch `alpha`/`tau1` without terminal
     `tau0`, and runs stage-2 in relation-only mode.
   - `derive_witness_fold_challenges` accepts `RelationMatrixRowLayout` and skips the
-    `ABSORB_PROVER_V` absorb when the layout is Terminal (no `v` is
+    `ABSORB_OPENING_PAYLOAD` absorb when the layout is Terminal (no opening payload is
     transmitted).
 
 - **akita-config / `schedule_policy.rs`**
