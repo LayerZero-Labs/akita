@@ -58,11 +58,14 @@ fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: Commitm
     let inner = &params.inner_commit_matrix;
     params.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
-        inner.sis_table_key().table_digest,
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        inner.coeff_linf_bound(),
+        inner.coeff_linf_bound().expect("L infinity test matrix"),
         role_dims.d_a(),
     );
     let outer = &params.outer_commit_matrix;
@@ -102,11 +105,14 @@ fn retarget_precommitted_test_role_dims(
     let inner_output_rank = inner.output_rank();
     layout.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
-        inner.sis_table_key().table_digest,
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        inner.coeff_linf_bound(),
+        inner.coeff_linf_bound().expect("L infinity test matrix"),
         inner_ring_dimension,
     );
     let outer = &layout.outer_commit_matrix;
@@ -205,7 +211,7 @@ fn test_inputs_for_group_sizes(
             TEST_D,
         );
     }
-    if lp.inner_commit_matrix.coeff_linf_bound() == 0 {
+    if lp.inner_commit_matrix.coeff_linf_bound() == Some(0) {
         lp.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
             crate::sis::DEFAULT_SIS_SECURITY_POLICY,
             crate::sis::SisTableDigest::CURRENT,

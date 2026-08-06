@@ -22,6 +22,24 @@ pub struct AkitaStage1Proof<F: FieldCore> {
     pub stages: Vec<AkitaStage1StageProof<F>>,
     /// Claimed evaluation of `S` at the final stage-1 output point.
     pub range_image_evaluation: F,
+    /// Optional schedule-selected proof of the complete physical response
+    /// square sum. Its presence and exact vector lengths are derived from the
+    /// A matrix security route.
+    pub norm_proof: Option<PhysicalL2NormProof<F>>,
+}
+
+/// Stage-1 payload for one schedule-selected physical L2 norm proof.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhysicalL2NormProof<F: FieldCore> {
+    /// Exact nonnegative integer square sum reconstructed by the verifier.
+    pub response_l2_sq: u128,
+    /// Direct mode leaves this empty. Limb-Gram mode carries the canonical
+    /// block-major, upper-triangular inner-product claims.
+    pub subclaims: Vec<F>,
+    /// Final virtual response or limb evaluations consumed by Stage 2.
+    pub virtual_evaluations: Vec<F>,
+    /// General final-leaf sumcheck batching range and norm terms.
+    pub sumcheck: SumcheckProof<F>,
 }
 
 /// FoldSchedule-shaped outgoing witness binding for an intermediate fold.

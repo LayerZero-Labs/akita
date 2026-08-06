@@ -2,9 +2,11 @@
 
 use akita_field::AkitaError;
 use akita_types::sis::{
-    decomposed_t_ring_count, decomposed_w_ring_count, num_digits_inner, num_digits_open,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, InnerCommitMatrixParams,
-    OpenCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
+    ceil_supported_l2_collision_sq, decomposed_t_ring_count, decomposed_w_ring_count,
+    num_digits_inner, num_digits_open, role_a_collision_l2_sq_for_response_bound,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, FoldChallengeNorms,
+    InnerCommitMatrixParams, InnerCommitSecurityRoute, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, SisL2TableDigest, SisMatrixRole, SisTableKey,
 };
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommittedGroupBatchProfile, CommittedGroupParams,
@@ -44,7 +46,23 @@ fn audit_inner_matrix(
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     matrix.validate()?;
-    audit_sis_key(label, matrix.sis_table_key(), SisMatrixRole::Inner, policy)
+    match matrix.security_route() {
+        InnerCommitSecurityRoute::Linf(key) => {
+            audit_sis_key(label, key, SisMatrixRole::Inner, policy)
+        }
+        InnerCommitSecurityRoute::L2 { table_key, .. } => {
+            if table_key.policy != policy.sis_security_policy
+                || table_key.table_digest != SisL2TableDigest::CURRENT
+                || table_key.modulus_profile != policy.sis_modulus_profile
+            {
+                return Err(invalid(
+                    label,
+                    "A matrix L2 policy, table, or modulus profile disagrees with catalog policy",
+                ));
+            }
+            Ok(())
+        }
+    }
 }
 
 fn audit_outer_matrix(
@@ -110,9 +128,19 @@ fn audit_precommitted_group(
         ));
     }
 
+    let declared_a_bound = params
+        .layout
+        .inner_commit_matrix
+        .coeff_linf_bound()
+        .ok_or_else(|| {
+            invalid(
+                label,
+                "precommitted groups cannot use an L2 A security route",
+            )
+        })?;
     audit_bound(
         label,
-        params.layout.inner_commit_matrix.coeff_linf_bound(),
+        declared_a_bound,
         rounded_up_role_a_inf_norm(
             policy.sis_security_policy,
             policy.sis_table_digest,
@@ -221,20 +249,40 @@ fn audit_committed_params(
         ));
     }
 
-    audit_bound(
-        label,
-        params.inner_commit_matrix.coeff_linf_bound(),
-        rounded_up_role_a_inf_norm(
-            policy.sis_security_policy,
-            policy.sis_table_digest,
-            policy.sis_modulus_profile,
-            dims.d_a(),
-            params.log_basis_open,
-            &params.fold_challenge_config,
-            params.fold_challenge_shape,
-            params.num_digits_fold,
-        ),
-    )?;
+    match params.inner_commit_matrix.security_route() {
+        InnerCommitSecurityRoute::Linf(key) => audit_bound(
+            label,
+            key.coeff_linf_bound,
+            rounded_up_role_a_inf_norm(
+                policy.sis_security_policy,
+                policy.sis_table_digest,
+                policy.sis_modulus_profile,
+                dims.d_a(),
+                params.log_basis_open,
+                &params.fold_challenge_config,
+                params.fold_challenge_shape,
+                params.num_digits_fold,
+            ),
+        )?,
+        InnerCommitSecurityRoute::L2 {
+            table_key,
+            response_l2_sq_cap,
+            ..
+        } => {
+            let challenge =
+                FoldChallengeNorms::new(&params.fold_challenge_config, params.fold_challenge_shape);
+            let collision_sq =
+                role_a_collision_l2_sq_for_response_bound(challenge.l1_norm, response_l2_sq_cap)
+                    .and_then(ceil_supported_l2_collision_sq)
+                    .ok_or_else(|| invalid(label, "L2 collision bound is unsupported"))?;
+            if collision_sq != table_key.collision_l2_sq {
+                return Err(invalid(
+                    label,
+                    "A matrix L2 table bucket does not match its response cap",
+                ));
+            }
+        }
+    }
     audit_bound(
         label,
         params.outer_commit_matrix.coeff_linf_bound(),
@@ -361,6 +409,15 @@ pub(crate) fn audit_resolved_schedule(
 
     let root = &schedule.root.params;
     let final_params = &root.final_group.commitment;
+    if !matches!(
+        final_params.inner_commit_matrix.security_route(),
+        InnerCommitSecurityRoute::Linf(_)
+    ) {
+        return Err(invalid(
+            "root final group",
+            "root cannot use an L2 A security route",
+        ));
+    }
     if profiles.final_group
         != akita_types::CommittedGroupProfile::from_params(profiles.final_group.group, final_params)
         || profiles.precommitteds.len() != root.precommitted_groups.len()

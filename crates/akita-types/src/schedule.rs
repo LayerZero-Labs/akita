@@ -661,7 +661,9 @@ impl TerminalCommittedGroupParams {
             sparse,
             akita_challenges::TensorChallengeShape::Flat,
         );
-        let collision_capacity = self.inner_commit_matrix.coeff_linf_bound();
+        let collision_capacity = self.inner_commit_matrix.coeff_linf_bound().ok_or_else(|| {
+            AkitaError::InvalidSetup("terminal A cannot use an L2 security route".into())
+        })?;
         let certified_capacity = crate::sis::max_response_linf_for_role_a_collision(
             collision_capacity,
             challenge.l1_norm,

@@ -103,7 +103,13 @@ fn materialize_precommitted_group_for_open_basis(
         num_digits_fold,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("no precommitted A-role norm".to_string()))?;
-    if required_a_bound > group.inner_commit_matrix.coeff_linf_bound() {
+    let declared_a_bound = group
+        .inner_commit_matrix
+        .coeff_linf_bound()
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("precommitted A cannot use an L2 security route".to_string())
+        })?;
+    if required_a_bound > declared_a_bound {
         return Err(AkitaError::InvalidSetup(
             "precommitted A bound does not cover the certified opening basis".to_string(),
         ));

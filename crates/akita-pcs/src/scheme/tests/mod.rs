@@ -169,6 +169,7 @@ fn expected_same_point_batched_shape(
         stage1_stages: DigitRangePlan::new(1usize << root_params.log_basis_open)
             .expect("scheduled root range basis")
             .stage_shapes(root_rounds),
+        stage1_norm: None,
         stage2_sumcheck_proof: vec![3; root_rounds],
         stage3_sumcheck: None,
         next_witness_binding: match root_successor {
@@ -197,6 +198,7 @@ fn expected_same_point_batched_shape(
             stage1_stages: DigitRangePlan::new(1usize << level_params.log_basis_open)
                 .expect("scheduled range basis")
                 .stage_shapes(rounds),
+            stage1_norm: None,
             stage2_sumcheck_proof: vec![3; rounds],
             stage3_sumcheck: None,
             next_witness_binding: match schedule.recursive_folds.get(index + 1) {

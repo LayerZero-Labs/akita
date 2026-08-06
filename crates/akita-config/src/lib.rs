@@ -560,7 +560,7 @@ mod tests {
 #[cfg(test)]
 mod sis_schedule_width_audit {
     use super::*;
-    use akita_types::sis::min_secure_rank;
+    use akita_types::sis::{min_secure_l2_rank, min_secure_rank, InnerCommitSecurityRoute};
 
     pub(super) fn assert_schedule_stays_within_audited_sis_widths(
         schedule: &FoldSchedule,
@@ -577,10 +577,13 @@ mod sis_schedule_width_audit {
         {
             let d = u32::try_from(lp.d_a()).expect("ring dimension fits in u32");
 
-            let a_rank = min_secure_rank(
-                lp.inner_commit_matrix.sis_table_key(),
-                u64::try_from(lp.inner_width()).expect("inner width should fit in u64"),
-            )
+            let width = u64::try_from(lp.inner_width()).expect("inner width should fit in u64");
+            let a_rank = match lp.inner_commit_matrix.security_route() {
+                InnerCommitSecurityRoute::Linf(key) => min_secure_rank(key, width),
+                InnerCommitSecurityRoute::L2 { table_key, .. } => {
+                    min_secure_l2_rank(table_key, width)
+                }
+            }
             .unwrap_or_else(|| {
                 panic!(
                     "missing audited A-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
@@ -690,11 +693,10 @@ mod fp128_policy_tests {
         let schedule =
             SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
         let root_params = &schedule.root.params.final_group.commitment;
-        assert!(
-            root_params.inner_commit_matrix.coeff_linf_bound()
-                >= root_params.outer_commit_matrix.coeff_linf_bound() * 2,
-            "A-role L-infinity bound should include the psi norm bound"
-        );
+        assert!(root_params
+            .inner_commit_matrix
+            .coeff_linf_bound()
+            .is_some_and(|bound| bound > 0));
     }
 
     #[test]

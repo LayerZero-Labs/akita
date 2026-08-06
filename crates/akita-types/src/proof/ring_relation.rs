@@ -451,7 +451,10 @@ mod tests {
     fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
         lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
             lp.inner_commit_matrix.security_policy(),
-            lp.inner_commit_matrix.sis_table_key().table_digest,
+            lp.inner_commit_matrix
+                .sis_table_key()
+                .expect("test matrix is L infinity")
+                .table_digest,
             lp.inner_commit_matrix.sis_modulus_profile(),
             lp.inner_commit_matrix.output_rank(),
             lp.inner_commit_matrix.input_width(),

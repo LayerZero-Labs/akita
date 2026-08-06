@@ -406,14 +406,19 @@ impl CommittedGroupParams {
         params: &(impl LevelParamsLike + ?Sized),
     ) -> Result<u128, AkitaError> {
         let inner_commit_matrix = params.inner_commit_matrix_params();
-        if inner_commit_matrix.sis_table_key().role != crate::sis::SisMatrixRole::Inner {
+        let table_key = inner_commit_matrix.sis_table_key().ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "terminal response requires an L-infinity A-role matrix".to_string(),
+            )
+        })?;
+        if table_key.role != crate::sis::SisMatrixRole::Inner {
             return Err(AkitaError::InvalidSetup(
                 "terminal response requires an A-role inner matrix".to_string(),
             ));
         }
         // Bind the terminal wire to the selected SIS bucket. A larger bucket
         // that the same rank happens to support is unused schedule slack.
-        let collision_capacity = inner_commit_matrix.coeff_linf_bound();
+        let collision_capacity = table_key.coeff_linf_bound;
         let challenge = crate::sis::FoldChallengeNorms::new(
             &self.fold_challenge_config,
             params.fold_challenge_shape(),
@@ -1074,15 +1079,7 @@ impl CommittedGroupParams {
             log_basis_inner: self.log_basis_inner,
             log_basis_outer: self.log_basis_outer,
             log_basis_open: self.log_basis_open,
-            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                self.inner_commit_matrix.security_policy(),
-                self.inner_commit_matrix.sis_table_key().table_digest,
-                self.inner_commit_matrix.sis_modulus_profile(),
-                self.inner_commit_matrix.output_rank,
-                inner_width,
-                self.inner_commit_matrix.coeff_linf_bound(),
-                self.inner_commit_matrix.ring_dimension(),
-            ),
+            inner_commit_matrix: self.inner_commit_matrix.try_with_input_width(inner_width)?,
             outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
                 self.outer_commit_matrix.security_policy(),
                 self.outer_commit_matrix.sis_table_key().table_digest,
@@ -1139,15 +1136,9 @@ impl CommittedGroupParams {
             log_basis_inner: other.log_basis_inner,
             log_basis_outer: other.log_basis_outer,
             log_basis_open: other.log_basis_open,
-            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                self.inner_commit_matrix.security_policy(),
-                self.inner_commit_matrix.sis_table_key().table_digest,
-                self.inner_commit_matrix.sis_modulus_profile(),
-                self.inner_commit_matrix.output_rank,
-                other.inner_commit_matrix.input_width,
-                self.inner_commit_matrix.coeff_linf_bound(),
-                self.inner_commit_matrix.ring_dimension(),
-            ),
+            inner_commit_matrix: self
+                .inner_commit_matrix
+                .try_with_input_width(other.inner_commit_matrix.input_width)?,
             outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
                 self.outer_commit_matrix.security_policy(),
                 self.outer_commit_matrix.sis_table_key().table_digest,

@@ -60,8 +60,8 @@ pub use containers::{
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
     AkitaBatchedProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, SetupSumcheckProof,
-    TerminalLevelProof,
+    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, PhysicalL2NormProof,
+    SetupSumcheckProof, TerminalLevelProof,
 };
 pub use relation::{
     assemble_compressed_relation_rhs, assemble_relation_rhs,
@@ -72,7 +72,9 @@ pub use relation::{
     relation_rhs_row_count, RelationGroupRows, RelationRhsLayout, RelationRowFamily,
 };
 pub use relation_address::{CompressionRelationAddressGeometry, RelationAddressGeometry};
-pub use relation_range_image::{RelationRangeImageGroupPlan, RelationRangeImagePlan};
+pub use relation_range_image::{
+    PhysicalResponsePlan, RelationRangeImageGroupPlan, RelationRangeImagePlan,
+};
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,
@@ -96,8 +98,8 @@ pub use setup_prefix::{
 };
 pub use shapes::{
     AkitaBatchedProofShape, AkitaStage1StageShape, ExtensionOpeningReductionShape, LevelProofShape,
-    NextWitnessBindingShape, SetupProductSumcheckShape, TerminalLevelProofShape,
-    SETUP_SUMCHECK_DEGREE,
+    NextWitnessBindingShape, PhysicalL2NormProofWireShape, SetupProductSumcheckShape,
+    TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
     append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,

@@ -529,6 +529,443 @@ struct AuditedCommitMatrixFields {
     sis_table_key: SisTableKey,
 }
 
+/// Schedule-owned shape of the integer norm proof for one L2-selected A
+/// matrix.
+///
+/// The prover does not serialize block or limb-pair identifiers. The checked
+/// shape derives consecutive blocks and the complete upper-triangular pair
+/// sequence from these counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum PhysicalL2NormProofShape {
+    /// One direct square-sum claim over every physical response coefficient.
+    Direct { physical_response_len: usize },
+    /// Blockwise balanced-limb Gram claims used when the direct integer sum
+    /// could wrap the base field.
+    LimbGram {
+        physical_response_len: usize,
+        block_len: usize,
+        limb_count: usize,
+    },
+}
+
+impl PhysicalL2NormProofShape {
+    /// Validate nonzero, bounded arithmetic for the schedule-derived shape.
+    pub fn validate(self) -> Result<(), AkitaError> {
+        let physical_response_len = self.physical_response_len();
+        if physical_response_len == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "L2 norm proof requires a nonempty physical response".into(),
+            ));
+        }
+        if let Self::LimbGram {
+            block_len,
+            limb_count,
+            ..
+        } = self
+        {
+            if block_len == 0 || limb_count == 0 || block_len > physical_response_len {
+                return Err(AkitaError::InvalidSetup(
+                    "L2 limb-Gram shape has invalid block or limb count".into(),
+                ));
+            }
+            self.subclaim_count().ok_or_else(|| {
+                AkitaError::InvalidSetup("L2 limb-Gram subclaim count overflow".into())
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Number of physical centered coefficients certified by the proof.
+    #[must_use]
+    pub const fn physical_response_len(self) -> usize {
+        match self {
+            Self::Direct {
+                physical_response_len,
+            }
+            | Self::LimbGram {
+                physical_response_len,
+                ..
+            } => physical_response_len,
+        }
+    }
+
+    /// Number of integer claims carried by the norm proof.
+    #[must_use]
+    pub fn subclaim_count(self) -> Option<usize> {
+        match self {
+            Self::Direct { .. } => Some(1),
+            Self::LimbGram {
+                physical_response_len,
+                block_len,
+                limb_count,
+            } => {
+                let blocks = physical_response_len.div_ceil(block_len);
+                let pairs = limb_count.checked_mul(limb_count.checked_add(1)?)? / 2;
+                blocks.checked_mul(pairs)
+            }
+        }
+    }
+
+    fn append_descriptor_bytes(self, bytes: &mut Vec<u8>) {
+        match self {
+            Self::Direct {
+                physical_response_len,
+            } => {
+                bytes.push(1);
+                push_usize(bytes, physical_response_len);
+            }
+            Self::LimbGram {
+                physical_response_len,
+                block_len,
+                limb_count,
+            } => {
+                bytes.push(2);
+                push_usize(bytes, physical_response_len);
+                push_usize(bytes, block_len);
+                push_usize(bytes, limb_count);
+            }
+        }
+    }
+}
+
+/// The single selected security route for an A commitment matrix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum InnerCommitSecurityRoute {
+    /// Existing coefficient-L-infinity sizing and digit-range proof.
+    Linf(SisTableKey),
+    /// Complete physical L2 sizing with the scheduled integer norm proof.
+    L2 {
+        table_key: SisL2TableKey,
+        response_l2_sq_cap: u128,
+        norm_proof_shape: PhysicalL2NormProofShape,
+    },
+}
+
+impl InnerCommitSecurityRoute {
+    /// Exact modulus profile selected by this route.
+    #[must_use]
+    pub const fn modulus_profile(self) -> SisModulusProfileId {
+        match self {
+            Self::Linf(key) => key.modulus_profile,
+            Self::L2 { table_key, .. } => table_key.modulus_profile,
+        }
+    }
+
+    /// Exact policy selected by this route.
+    #[must_use]
+    pub const fn policy(self) -> SisSecurityPolicyId {
+        match self {
+            Self::Linf(key) => key.policy,
+            Self::L2 { table_key, .. } => table_key.policy,
+        }
+    }
+
+    /// A-role ring dimension selected by this route.
+    #[must_use]
+    pub const fn ring_dimension(self) -> u32 {
+        match self {
+            Self::Linf(key) => key.ring_dimension,
+            Self::L2 { table_key, .. } => table_key.ring_dimension,
+        }
+    }
+}
+
+/// Parameters for the inner commitment matrix (A).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct InnerCommitMatrixParams {
+    pub(crate) output_rank: usize,
+    pub(crate) input_width: usize,
+    pub(crate) security_route: InnerCommitSecurityRoute,
+}
+
+impl InnerCommitMatrixParams {
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_new(
+        policy: SisSecurityPolicyId,
+        table_digest: SisTableDigest,
+        sis_modulus_profile: SisModulusProfileId,
+        output_rank: usize,
+        input_width: usize,
+        coeff_linf_bound: u128,
+        ring_dimension: usize,
+    ) -> Result<Self, AkitaError> {
+        let fields = audit_commit_matrix_fields(
+            SisMatrixRole::Inner,
+            policy,
+            table_digest,
+            sis_modulus_profile,
+            output_rank,
+            input_width,
+            coeff_linf_bound,
+            ring_dimension,
+        )?;
+        Ok(Self {
+            output_rank: fields.output_rank,
+            input_width: fields.input_width,
+            security_route: InnerCommitSecurityRoute::Linf(fields.sis_table_key),
+        })
+    }
+
+    pub fn try_new_with_min_rank(key: SisTableKey, input_width: usize) -> Result<Self, AkitaError> {
+        let fields = min_rank_commit_matrix_fields(SisMatrixRole::Inner, key, input_width)?;
+        Ok(Self {
+            output_rank: fields.output_rank,
+            input_width: fields.input_width,
+            security_route: InnerCommitSecurityRoute::Linf(fields.sis_table_key),
+        })
+    }
+
+    /// Construct the minimum-rank A matrix for one checked Euclidean route.
+    pub fn try_new_l2_with_min_rank(
+        table_key: SisL2TableKey,
+        input_width: usize,
+        response_l2_sq_cap: u128,
+        norm_proof_shape: PhysicalL2NormProofShape,
+    ) -> Result<Self, AkitaError> {
+        if input_width == 0 || response_l2_sq_cap == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "L2 A matrix requires nonzero width and response cap".into(),
+            ));
+        }
+        norm_proof_shape.validate()?;
+        let width = u64::try_from(input_width)
+            .map_err(|_| AkitaError::InvalidSetup("A matrix input width exceeds u64".into()))?;
+        let output_rank = min_secure_l2_rank(table_key, width).ok_or_else(|| {
+            AkitaError::InvalidSetup("A matrix has no audited L2 SIS rank".into())
+        })?;
+        Ok(Self {
+            output_rank,
+            input_width,
+            security_route: InnerCommitSecurityRoute::L2 {
+                table_key,
+                response_l2_sq_cap,
+                norm_proof_shape,
+            },
+        })
+    }
+
+    /// Rebuild this matrix for a layout-derived input width while preserving
+    /// the selected security route and explicit output rank.
+    pub fn try_with_input_width(self, input_width: usize) -> Result<Self, AkitaError> {
+        match self.security_route {
+            InnerCommitSecurityRoute::Linf(key) => {
+                if key.coeff_linf_bound == 0 {
+                    return Ok(Self::new_unchecked(
+                        key.policy,
+                        key.table_digest,
+                        key.modulus_profile,
+                        self.output_rank,
+                        input_width,
+                        key.coeff_linf_bound,
+                        key.ring_dimension as usize,
+                    ));
+                }
+                Self::try_new(
+                    key.policy,
+                    key.table_digest,
+                    key.modulus_profile,
+                    self.output_rank,
+                    input_width,
+                    key.coeff_linf_bound,
+                    key.ring_dimension as usize,
+                )
+            }
+            InnerCommitSecurityRoute::L2 {
+                table_key,
+                response_l2_sq_cap,
+                norm_proof_shape,
+            } => {
+                let width = u64::try_from(input_width).map_err(|_| {
+                    AkitaError::InvalidSetup("A matrix input width exceeds u64".into())
+                })?;
+                let floor = min_secure_l2_rank(table_key, width).ok_or_else(|| {
+                    AkitaError::InvalidSetup("A matrix has no audited L2 SIS rank".into())
+                })?;
+                if self.output_rank < floor {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "A matrix output_rank {} is below L2 SIS floor {floor}",
+                        self.output_rank
+                    )));
+                }
+                let out = Self {
+                    output_rank: self.output_rank,
+                    input_width,
+                    security_route: InnerCommitSecurityRoute::L2 {
+                        table_key,
+                        response_l2_sq_cap,
+                        norm_proof_shape,
+                    },
+                };
+                out.validate()?;
+                Ok(out)
+            }
+        }
+    }
+
+    /// Re-audit the selected route against its generated table and rank floor.
+    pub fn validate(&self) -> Result<(), AkitaError> {
+        match self.security_route {
+            InnerCommitSecurityRoute::Linf(key) => {
+                let fields = audit_commit_matrix_fields(
+                    SisMatrixRole::Inner,
+                    key.policy,
+                    key.table_digest,
+                    key.modulus_profile,
+                    self.output_rank,
+                    self.input_width,
+                    key.coeff_linf_bound,
+                    key.ring_dimension as usize,
+                )?;
+                if fields.sis_table_key != key {
+                    return Err(AkitaError::InvalidSetup(
+                        "A matrix L-infinity table key is not canonical".into(),
+                    ));
+                }
+            }
+            InnerCommitSecurityRoute::L2 {
+                table_key,
+                response_l2_sq_cap,
+                norm_proof_shape,
+            } => {
+                norm_proof_shape.validate()?;
+                let width = u64::try_from(self.input_width).map_err(|_| {
+                    AkitaError::InvalidSetup("A matrix input width exceeds u64".into())
+                })?;
+                if response_l2_sq_cap == 0
+                    || min_secure_l2_rank(table_key, width)
+                        .is_none_or(|rank| rank > self.output_rank)
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "A matrix L2 route is below its audited SIS floor".into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new_unchecked(
+        policy: SisSecurityPolicyId,
+        table_digest: SisTableDigest,
+        sis_modulus_profile: SisModulusProfileId,
+        output_rank: usize,
+        input_width: usize,
+        coeff_linf_bound: u128,
+        ring_dimension: usize,
+    ) -> Self {
+        Self {
+            output_rank,
+            input_width,
+            security_route: InnerCommitSecurityRoute::Linf(SisTableKey {
+                policy,
+                table_digest,
+                modulus_profile: sis_modulus_profile,
+                role: SisMatrixRole::Inner,
+                ring_dimension: ring_dimension as u32,
+                coeff_linf_bound,
+            }),
+        }
+    }
+
+    #[must_use]
+    pub const fn output_rank(&self) -> usize {
+        self.output_rank
+    }
+
+    #[must_use]
+    pub const fn input_width(&self) -> usize {
+        self.input_width
+    }
+
+    #[must_use]
+    pub const fn security_route(&self) -> InnerCommitSecurityRoute {
+        self.security_route
+    }
+
+    #[must_use]
+    pub const fn security_policy(&self) -> SisSecurityPolicyId {
+        self.security_route.policy()
+    }
+
+    #[must_use]
+    pub const fn sis_modulus_profile(&self) -> SisModulusProfileId {
+        self.security_route.modulus_profile()
+    }
+
+    #[must_use]
+    pub const fn ring_dimension(&self) -> usize {
+        self.security_route.ring_dimension() as usize
+    }
+
+    /// Coefficient table key for an L-infinity-selected matrix.
+    #[must_use]
+    pub const fn sis_table_key(&self) -> Option<SisTableKey> {
+        match self.security_route {
+            InnerCommitSecurityRoute::Linf(key) => Some(key),
+            InnerCommitSecurityRoute::L2 { .. } => None,
+        }
+    }
+
+    /// Rounded coefficient bound for an L-infinity-selected matrix.
+    #[must_use]
+    pub const fn coeff_linf_bound(&self) -> Option<u128> {
+        match self.security_route {
+            InnerCommitSecurityRoute::Linf(key) => Some(key.coeff_linf_bound),
+            InnerCommitSecurityRoute::L2 { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn max_secure_collision_linf(&self) -> Option<u128> {
+        let key = self.sis_table_key()?;
+        COEFF_LINF_BUCKETS
+            .iter()
+            .copied()
+            .take_while(|&bound| {
+                min_secure_rank(
+                    SisTableKey {
+                        coeff_linf_bound: bound,
+                        ..key
+                    },
+                    self.input_width as u64,
+                )
+                .is_some_and(|rank| rank <= self.output_rank)
+            })
+            .last()
+    }
+
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        bytes.push(sis_modulus_profile_tag(self.sis_modulus_profile()));
+        bytes.push(self.security_policy().tag());
+        bytes.push(SisMatrixRole::Inner.tag());
+        match self.security_route {
+            InnerCommitSecurityRoute::Linf(key) => {
+                // Preserve the established Linf descriptor byte sequence.
+                bytes.extend_from_slice(&key.table_digest.0);
+                bytes.extend_from_slice(&key.ring_dimension.to_le_bytes());
+                push_usize(bytes, self.output_rank);
+                push_usize(bytes, self.input_width);
+                push_u128(bytes, key.coeff_linf_bound);
+            }
+            InnerCommitSecurityRoute::L2 {
+                table_key,
+                response_l2_sq_cap,
+                norm_proof_shape,
+            } => {
+                bytes.extend_from_slice(b"akita-l2-route-v1");
+                bytes.extend_from_slice(&table_key.table_digest.0);
+                bytes.extend_from_slice(&table_key.ring_dimension.to_le_bytes());
+                push_usize(bytes, self.output_rank);
+                push_usize(bytes, self.input_width);
+                push_u128(bytes, table_key.collision_l2_sq);
+                push_u128(bytes, response_l2_sq_cap);
+                norm_proof_shape.append_descriptor_bytes(bytes);
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn audit_commit_matrix_fields(
     expected_role: SisMatrixRole,
@@ -784,11 +1221,6 @@ macro_rules! define_commit_matrix_params {
 }
 
 define_commit_matrix_params!(
-    InnerCommitMatrixParams,
-    SisMatrixRole::Inner,
-    "Parameters for the inner commitment matrix (A)."
-);
-define_commit_matrix_params!(
     OuterCommitMatrixParams,
     SisMatrixRole::Outer,
     "Parameters for the outer commitment matrix (B)."
@@ -911,6 +1343,68 @@ mod tests {
             1u128 << 50,
         )
         .is_none());
+    }
+
+    #[test]
+    fn inner_l2_route_owns_its_cap_shape_and_table_identity() {
+        let table_key = sis_l2_table_key_for_collision_sq(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisL2TableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            64,
+            1u128 << 50,
+        )
+        .expect("generated L2 key");
+        let shape = PhysicalL2NormProofShape::Direct {
+            physical_response_len: 512,
+        };
+        let matrix =
+            InnerCommitMatrixParams::try_new_l2_with_min_rank(table_key, 21, 1u128 << 30, shape)
+                .expect("audited L2 matrix");
+
+        assert_eq!(matrix.output_rank(), 3);
+        assert_eq!(matrix.sis_table_key(), None);
+        assert_eq!(matrix.coeff_linf_bound(), None);
+        assert_eq!(
+            matrix.security_route(),
+            InnerCommitSecurityRoute::L2 {
+                table_key,
+                response_l2_sq_cap: 1u128 << 30,
+                norm_proof_shape: shape,
+            }
+        );
+        matrix.validate().expect("L2 route re-audits");
+
+        let mut descriptor = Vec::new();
+        matrix.append_descriptor_bytes(&mut descriptor);
+        let different_cap = InnerCommitMatrixParams::try_new_l2_with_min_rank(
+            table_key,
+            21,
+            (1u128 << 30) - 1,
+            shape,
+        )
+        .expect("second audited L2 matrix");
+        let mut different_descriptor = Vec::new();
+        different_cap.append_descriptor_bytes(&mut different_descriptor);
+        assert_ne!(descriptor, different_descriptor);
+    }
+
+    #[test]
+    fn limb_gram_shape_derives_complete_pair_and_block_count() {
+        let shape = PhysicalL2NormProofShape::LimbGram {
+            physical_response_len: 65,
+            block_len: 32,
+            limb_count: 3,
+        };
+        shape.validate().expect("checked limb-Gram shape");
+        assert_eq!(shape.subclaim_count(), Some(18));
+        assert!(PhysicalL2NormProofShape::LimbGram {
+            physical_response_len: 65,
+            block_len: 0,
+            limb_count: 3,
+        }
+        .validate()
+        .is_err());
     }
 
     #[test]

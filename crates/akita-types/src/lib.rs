@@ -150,9 +150,10 @@ pub use setup_contribution::{
     SetupContributionGroupInputs, SetupContributionPlan, SetupProjectionGeometry,
 };
 pub use sis::{
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, ScalarCutoff,
-    SisMatrixRole, SisModulusProfileId, SisRoleCell, SisSecurityPolicyId, SisTableDigest,
-    SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+    InnerCommitMatrixParams, InnerCommitSecurityRoute, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, PhysicalL2NormProofShape, ScalarCutoff, SisL2TableDigest,
+    SisL2TableKey, SisMatrixRole, SisModulusProfileId, SisRoleCell, SisSecurityPolicyId,
+    SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
 pub use tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 pub use trace_weight::{

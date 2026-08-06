@@ -236,10 +236,11 @@ trait SetupPrefixCommitMatrixParams: Sized {
 
     fn sis_modulus_profile(&self) -> SisModulusProfileId;
     fn security_policy(&self) -> SisSecurityPolicyId;
-    fn sis_table_key(&self) -> crate::SisTableKey;
+    fn sis_table_key(&self) -> Option<crate::SisTableKey>;
     fn output_rank(&self) -> usize;
     fn input_width(&self) -> usize;
-    fn coeff_linf_bound(&self) -> u128;
+    fn coeff_linf_bound(&self) -> Option<u128>;
+    fn ring_dimension(&self) -> usize;
 
     #[allow(clippy::too_many_arguments)]
     fn new_unchecked(
@@ -264,8 +265,8 @@ macro_rules! impl_setup_prefix_commit_matrix_params {
             fn security_policy(&self) -> SisSecurityPolicyId {
                 self.security_policy()
             }
-            fn sis_table_key(&self) -> crate::SisTableKey {
-                self.sis_table_key()
+            fn sis_table_key(&self) -> Option<crate::SisTableKey> {
+                Some(self.sis_table_key())
             }
             fn output_rank(&self) -> usize {
                 self.output_rank()
@@ -273,8 +274,11 @@ macro_rules! impl_setup_prefix_commit_matrix_params {
             fn input_width(&self) -> usize {
                 self.input_width()
             }
-            fn coeff_linf_bound(&self) -> u128 {
-                self.coeff_linf_bound()
+            fn coeff_linf_bound(&self) -> Option<u128> {
+                Some(self.coeff_linf_bound())
+            }
+            fn ring_dimension(&self) -> usize {
+                self.ring_dimension()
             }
             fn new_unchecked(
                 policy: SisSecurityPolicyId,
@@ -299,8 +303,52 @@ macro_rules! impl_setup_prefix_commit_matrix_params {
     };
 }
 
-impl_setup_prefix_commit_matrix_params!(InnerCommitMatrixParams, SisMatrixRole::Inner);
 impl_setup_prefix_commit_matrix_params!(OuterCommitMatrixParams, SisMatrixRole::Outer);
+
+impl SetupPrefixCommitMatrixParams for InnerCommitMatrixParams {
+    const ROLE: SisMatrixRole = SisMatrixRole::Inner;
+
+    fn sis_modulus_profile(&self) -> SisModulusProfileId {
+        self.sis_modulus_profile()
+    }
+    fn security_policy(&self) -> SisSecurityPolicyId {
+        self.security_policy()
+    }
+    fn sis_table_key(&self) -> Option<crate::SisTableKey> {
+        self.sis_table_key()
+    }
+    fn output_rank(&self) -> usize {
+        self.output_rank()
+    }
+    fn input_width(&self) -> usize {
+        self.input_width()
+    }
+    fn coeff_linf_bound(&self) -> Option<u128> {
+        self.coeff_linf_bound()
+    }
+    fn ring_dimension(&self) -> usize {
+        self.ring_dimension()
+    }
+    fn new_unchecked(
+        policy: SisSecurityPolicyId,
+        table_digest: SisTableDigest,
+        sis_modulus_profile: SisModulusProfileId,
+        output_rank: usize,
+        input_width: usize,
+        coeff_linf_bound: u128,
+        ring_dimension: usize,
+    ) -> Self {
+        Self::new_unchecked(
+            policy,
+            table_digest,
+            sis_modulus_profile,
+            output_rank,
+            input_width,
+            coeff_linf_bound,
+            ring_dimension,
+        )
+    }
+}
 
 /// Wire layout mirrors the commit-matrix descriptor bytes:
 /// profile tag, policy tag, role tag, table digest, ring dim, row, col, linf.
@@ -309,7 +357,9 @@ fn serialize_commit_matrix<K: SetupPrefixCommitMatrixParams, W: Write>(
     mut writer: W,
     compress: Compress,
 ) -> Result<(), SerializationError> {
-    let table_key = key.sis_table_key();
+    let table_key = key.sis_table_key().ok_or_else(|| {
+        SerializationError::InvalidData("setup prefix cannot use an L2 A security route".into())
+    })?;
     serialize_sis_modulus_profile(key.sis_modulus_profile(), &mut writer)?;
     serialize_sis_security_policy(key.security_policy(), &mut writer)?;
     serialize_sis_matrix_role(table_key.role, &mut writer)?;
@@ -320,6 +370,9 @@ fn serialize_commit_matrix<K: SetupPrefixCommitMatrixParams, W: Write>(
     key.input_width()
         .serialize_with_mode(&mut writer, compress)?;
     key.coeff_linf_bound()
+        .ok_or_else(|| {
+            SerializationError::InvalidData("setup prefix cannot use an L2 A security route".into())
+        })?
         .serialize_with_mode(&mut writer, compress)?;
     Ok(())
 }
@@ -361,10 +414,10 @@ fn commit_matrix_serialized_size<K: SetupPrefixCommitMatrixParams>(
         + 1 // policy tag
         + 1 // role tag
         + 32 // table digest
-        + (key.sis_table_key().ring_dimension as usize).serialized_size(compress)
+        + key.ring_dimension().serialized_size(compress)
         + key.output_rank().serialized_size(compress)
         + key.input_width().serialized_size(compress)
-        + key.coeff_linf_bound().serialized_size(compress)
+        + 0u128.serialized_size(compress)
 }
 
 fn serialize_precommitted_level_params<W: Write>(
@@ -1330,18 +1383,14 @@ pub fn setup_prefix_precommitted_params(
         if inner_width <= prefix_params.inner_commit_matrix.input_width()
             && outer_width <= prefix_params.outer_commit_matrix.input_width()
         {
-            let inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
-                prefix_params.inner_commit_matrix.security_policy(),
-                prefix_params
-                    .inner_commit_matrix
-                    .sis_table_key()
-                    .table_digest,
-                prefix_params.inner_commit_matrix.sis_modulus_profile(),
-                prefix_params.inner_commit_matrix.output_rank(),
-                inner_width,
-                prefix_params.inner_commit_matrix.coeff_linf_bound(),
-                prefix_params.inner_commit_matrix.ring_dimension(),
-            );
+            if prefix_params.inner_commit_matrix.sis_table_key().is_none() {
+                return Err(AkitaError::InvalidSetup(
+                    "setup prefix cannot be derived from an L2 A security route".into(),
+                ));
+            }
+            let inner_commit_matrix = prefix_params
+                .inner_commit_matrix
+                .try_with_input_width(inner_width)?;
             let outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
                 prefix_params.outer_commit_matrix.security_policy(),
                 prefix_params

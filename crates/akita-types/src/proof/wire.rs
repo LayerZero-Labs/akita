@@ -414,6 +414,17 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
         self.stage1
             .range_image_evaluation
             .serialize_with_mode(&mut writer, compress)?;
+        if let Some(norm) = &self.stage1.norm_proof {
+            norm.response_l2_sq
+                .serialize_with_mode(&mut writer, compress)?;
+            for subclaim in &norm.subclaims {
+                subclaim.serialize_with_mode(&mut writer, compress)?;
+            }
+            for evaluation in &norm.virtual_evaluations {
+                evaluation.serialize_with_mode(&mut writer, compress)?;
+            }
+            norm.sumcheck.serialize_with_mode(&mut writer, compress)?;
+        }
         stage2
             .sumcheck_proof
             .serialize_with_mode(&mut writer, compress)?;
@@ -444,6 +455,20 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
             })
             .sum::<usize>()
             + self.stage1.range_image_evaluation.serialized_size(compress)
+            + self.stage1.norm_proof.as_ref().map_or(0, |norm| {
+                norm.response_l2_sq.serialized_size(compress)
+                    + norm
+                        .subclaims
+                        .iter()
+                        .map(|claim| claim.serialized_size(compress))
+                        .sum::<usize>()
+                    + norm
+                        .virtual_evaluations
+                        .iter()
+                        .map(|evaluation| evaluation.serialized_size(compress))
+                        .sum::<usize>()
+                    + norm.sumcheck.serialized_size(compress)
+            })
             + ({ stage2.sumcheck_proof.serialized_size(compress) })
             + stage3_sumcheck_serialized_size(self.stage3_sumcheck_proof.as_ref(), compress)
             + next_witness_binding_serialized_size(&stage2.next_witness_binding, compress)
@@ -463,6 +488,11 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for FoldLevelProof<F, E> 
             stage.child_claims.check()?;
         }
         self.stage1.range_image_evaluation.check()?;
+        if let Some(norm) = &self.stage1.norm_proof {
+            norm.subclaims.check()?;
+            norm.virtual_evaluations.check()?;
+            norm.sumcheck.check()?;
+        }
         let stage2 = &self.stage2;
         stage2.sumcheck_proof.check()?;
         if let Some(stage3_sumcheck) = &self.stage3_sumcheck_proof {
@@ -521,9 +551,49 @@ impl<
                 child_claims,
             });
         }
+        let range_image_evaluation =
+            E::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let norm_proof = if let Some(shape) = &ctx.stage1_norm {
+            let response_l2_sq = u128::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            let mut subclaims = Vec::new();
+            reserve_shape_len(&mut subclaims, shape.subclaims)?;
+            for _ in 0..shape.subclaims {
+                subclaims.push(E::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?);
+            }
+            let mut virtual_evaluations = Vec::new();
+            reserve_shape_len(&mut virtual_evaluations, shape.virtual_evaluations)?;
+            for _ in 0..shape.virtual_evaluations {
+                virtual_evaluations.push(E::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?);
+            }
+            let sumcheck = SumcheckProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &shape.sumcheck,
+            )?;
+            Some(PhysicalL2NormProof {
+                response_l2_sq,
+                subclaims,
+                virtual_evaluations,
+                sumcheck,
+            })
+        } else {
+            None
+        };
         let stage1 = AkitaStage1Proof {
             stages: stage1_stages,
-            range_image_evaluation: E::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            range_image_evaluation,
+            norm_proof,
         };
         let stage2_sumcheck_proof = SumcheckProof::deserialize_with_mode(
             &mut reader,

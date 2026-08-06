@@ -223,6 +223,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
                     child_claims: Vec::new(),
                 }],
                 range_image_evaluation: range_image_eval,
+                norm_proof: None,
             };
             return Ok((proof, stage1_point));
         }
@@ -295,6 +296,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
         let proof = AkitaStage1Proof {
             stages: stage_proofs,
             range_image_evaluation: range_image_eval,
+            norm_proof: None,
         };
         Ok((proof, stage1_point))
     }

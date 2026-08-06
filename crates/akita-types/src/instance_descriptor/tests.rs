@@ -20,7 +20,10 @@ fn sample_schedule() -> FoldSchedule {
     let inner = committed.inner_commit_matrix;
     committed.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
-        inner.sis_table_key().table_digest,
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
@@ -243,11 +246,14 @@ fn role_local_ring_dimension_changes_plan_binding() {
         .commitment
         .inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         matrix.security_policy(),
-        matrix.sis_table_key().table_digest,
+        matrix
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         matrix.sis_modulus_profile(),
         matrix.output_rank(),
         matrix.input_width(),
-        matrix.coeff_linf_bound(),
+        matrix.coeff_linf_bound().expect("L infinity test matrix"),
         matrix.ring_dimension() * 2,
     );
 

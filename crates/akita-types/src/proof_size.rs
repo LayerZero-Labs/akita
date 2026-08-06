@@ -252,6 +252,7 @@ mod tests {
                 })
                 .collect(),
             range_image_evaluation: F::zero(),
+            norm_proof: None,
         }
     }
 
@@ -651,7 +652,10 @@ mod tests {
             let inner = lp.inner_commit_matrix;
             lp.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
                 inner.security_policy(),
-                inner.sis_table_key().table_digest,
+                inner
+                    .sis_table_key()
+                    .expect("L infinity test matrix")
+                    .table_digest,
                 inner.sis_modulus_profile(),
                 inner.output_rank(),
                 inner.input_width(),

@@ -400,7 +400,10 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     let inner = &group_params.inner_commit_matrix;
     group_params.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
-        inner.sis_table_key().table_digest,
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
@@ -452,11 +455,14 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     let inner = &consumer.inner_commit_matrix;
     consumer.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
-        inner.sis_table_key().table_digest,
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         inner.sis_modulus_profile(),
         inner.output_rank(),
         prefix_ring_slots * consumer.num_digits_inner,
-        inner.coeff_linf_bound(),
+        inner.coeff_linf_bound().expect("L infinity test matrix"),
         inner.ring_dimension(),
     );
     let commitment_params = crate::setup_prefix_precommitted_params(&consumer, n_prefix)
@@ -489,7 +495,10 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
     let inner = committed.inner_commit_matrix;
     committed.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
-        inner.sis_table_key().table_digest,
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
@@ -653,6 +662,7 @@ fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof
             })
             .collect(),
         range_image_evaluation: F::zero(),
+        norm_proof: None,
     }
 }
 
@@ -767,7 +777,10 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         let inner = lp.inner_commit_matrix;
         lp.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
-            inner.sis_table_key().table_digest,
+            inner
+                .sis_table_key()
+                .expect("L infinity test matrix")
+                .table_digest,
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),

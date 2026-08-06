@@ -240,7 +240,8 @@ fn generated_entry(
                 .params
                 .witness
                 .inner_commit_matrix
-                .coeff_linf_bound(),
+                .coeff_linf_bound()
+                .expect("validated terminal matrix is L infinity"),
             z_admission_linf_cap: terminal_group.z_admission_linf_cap,
             z_rice_low_bits: terminal_group.z_rice_low_bits,
             z_payload_bytes: terminal_group.z_payload_bytes as u64,
@@ -269,7 +270,10 @@ fn emit_precommitted_group_key(layout: &CommittedGroupProfile) -> String {
             "InnerCommitMatrixParams",
             layout.inner_commit_matrix.output_rank(),
             layout.inner_commit_matrix.input_width(),
-            layout.inner_commit_matrix.sis_table_key(),
+            layout
+                .inner_commit_matrix
+                .sis_table_key()
+                .expect("validated precommitted matrix is L infinity"),
         ),
         layout.log_basis_outer,
         layout.num_digits_outer,
@@ -297,7 +301,10 @@ fn emit_generated_precommitted_profile(profile: &CommittedGroupProfile) -> Strin
         emit_generated_committed_profile_group(profile),
         profile.num_digits_inner,
         profile.inner_commit_matrix.output_rank(),
-        profile.inner_commit_matrix.coeff_linf_bound(),
+        profile
+            .inner_commit_matrix
+            .coeff_linf_bound()
+            .expect("validated precommitted matrix is L infinity"),
         profile.num_digits_outer,
         profile.outer_commit_matrix.output_rank(),
         profile.outer_commit_matrix.coeff_linf_bound(),

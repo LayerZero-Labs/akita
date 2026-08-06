@@ -85,6 +85,7 @@ fn level_shape_validation_checks_extension_opening_reduction() {
         )),
         opening_payload_coeffs: 1,
         stage1_stages: Vec::new(),
+        stage1_norm: None,
         stage2_sumcheck_proof: Vec::new(),
         stage3_sumcheck: None,
         next_witness_binding: NextWitnessBindingShape::OuterPayload { coeffs: 1 },
@@ -129,6 +130,7 @@ fn tiny_stage1() -> AkitaStage1Proof<F> {
     AkitaStage1Proof {
         stages: Vec::new(),
         range_image_evaluation: F::zero(),
+        norm_proof: None,
     }
 }
 
