@@ -191,7 +191,7 @@ where
     let num_live_blocks = blocks.len();
     debug_assert!(
         active_a_cols <= a_view.num_cols(),
-        "active A width exceeds setup envelope"
+        "active A width exceeds setup capacity"
     );
 
     if blocks

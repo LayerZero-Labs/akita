@@ -10,8 +10,9 @@ use akita_field::{
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    dispatch_for_field, shared_setup_fold_gadget, validate_role_dispatch, AkitaExpandedSetup,
-    CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, PreparedRelationAddress,
+    build_compression_relation_weights, dispatch_for_field, shared_setup_fold_gadget,
+    validate_role_dispatch, AkitaExpandedSetup, CommittedGroupParams, CompressionRelationWeights,
+    FpExtEncoding, NegativeBinarySupport, OpeningClaimsLayout, PreparedRelationAddress,
     RelationAddressGeometry, RingMultiplierOpeningPoint, RingRelationInstance, RingRole,
     SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
 };
@@ -39,6 +40,10 @@ pub use benchmark_support::{
 pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     /// Prepared data for prepared relation-matrix MLE evaluation.
     pub relation_matrix_evaluator: RelationMatrixEvaluator<E>,
+    /// Independent compact F/H contribution; ordinary A/B/D geometry is unchanged.
+    pub compression_relation_weights: Option<CompressionRelationWeights<E>>,
+    /// Sparse support of every F/H negative-binary digit span.
+    pub negative_binary_support: Option<NegativeBinarySupport>,
     /// Canonical flat relation-witness domain and coefficient/lane split.
     pub relation_address_geometry: RelationAddressGeometry,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
@@ -55,6 +60,8 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
 
 struct RingSwitchVerifyCoreOutput<E: FieldCore> {
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
+    compression_relation_weights: Option<CompressionRelationWeights<E>>,
+    negative_binary_support: Option<NegativeBinarySupport>,
     relation_address_geometry: RelationAddressGeometry,
     digit_range_equality_low_variable_count: usize,
     tau0: Option<Vec<E>>,
@@ -68,6 +75,8 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
         let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
         Ok(RingSwitchVerifyOutput {
             relation_matrix_evaluator: self.relation_matrix_evaluator,
+            compression_relation_weights: self.compression_relation_weights,
+            negative_binary_support: self.negative_binary_support,
             relation_address_geometry: self.relation_address_geometry,
             digit_range_equality_low_variable_count: self.digit_range_equality_low_variable_count,
             tau0,
@@ -242,8 +251,35 @@ where
     }
     let relation_matrix_evaluator =
         prepare_relation_matrix_evaluator::<F, E>(replay, alpha, &tau1, Some(w_len))?;
+    let physical_field_len = replay
+        .opening_source_len
+        .checked_mul(replay.opening_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("opening capacity overflow".into()))?;
+    let compression_relation_weights = lp
+        .payload_mode
+        .is_compressed()
+        .then(|| {
+            build_compression_relation_weights(
+                replay.setup,
+                relation,
+                alpha,
+                lp,
+                &tau1,
+                &witness_layout,
+                replay.opening_ring_dim,
+                physical_field_len,
+            )
+        })
+        .transpose()?;
+    let negative_binary_support = lp
+        .payload_mode
+        .is_compressed()
+        .then(|| NegativeBinarySupport::new(&witness_layout, physical_field_len))
+        .transpose()?;
     RingSwitchVerifyCoreOutput {
         relation_matrix_evaluator,
+        compression_relation_weights,
+        negative_binary_support,
         relation_address_geometry,
         digit_range_equality_low_variable_count,
         tau0,

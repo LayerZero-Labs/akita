@@ -568,6 +568,7 @@ pub(crate) fn fused_split_eq_quotients<
 > {
     fused_split_eq_quotients_with_digit_bound(
         slot,
+        slot,
         n_d,
         n_b,
         n_a,
@@ -585,7 +586,8 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
-    slot: &PreparedNttCache<D>,
+    negacyclic_slot: &PreparedNttCache<D>,
+    cyclic_slot: &PreparedNttCache<D>,
     n_d: usize,
     n_b: usize,
     n_a: usize,
@@ -606,7 +608,8 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
     validate_i8_log_basis(log_basis_open)?;
     validate_i8_log_basis(log_basis_outer)?;
     fused_split_eq_quotients_with_digit_bound(
-        slot,
+        negacyclic_slot,
+        cyclic_slot,
         n_d,
         n_b,
         n_a,
@@ -624,7 +627,8 @@ fn fused_split_eq_quotients_with_digit_bound<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
-    slot: &PreparedNttCache<D>,
+    negacyclic_slot: &PreparedNttCache<D>,
+    cyclic_slot: &PreparedNttCache<D>,
     n_d: usize,
     n_b: usize,
     n_a: usize,
@@ -645,13 +649,20 @@ fn fused_split_eq_quotients_with_digit_bound<
     let d_width = e_hat.len();
     let b_width = t_hat.len();
     let a_width = z_folded_rings.len();
-    match slot {
-        PreparedNttCache::Q32 {
-            neg,
-            cyc,
-            params: p,
-            ..
-        } => {
+    match (negacyclic_slot, cyclic_slot) {
+        (
+            PreparedNttCache::Q32 { neg, params: p, .. },
+            PreparedNttCache::Q32 { cyc, params: q, .. },
+        ) if p == q => {
+            let neg = match neg.as_deref() {
+                Some(neg) => neg,
+                None if n_a == 0 => &[],
+                None => {
+                    return Err(AkitaError::InvalidSetup(
+                        "negacyclic NTT domain not prepared".into(),
+                    ));
+                }
+            };
             let cyc = cyc
                 .as_deref()
                 .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
@@ -684,12 +695,19 @@ fn fused_split_eq_quotients_with_digit_bound<
                 p,
             )
         }
-        PreparedNttCache::Q64 {
-            neg,
-            cyc,
-            params: p,
-            ..
-        } => {
+        (
+            PreparedNttCache::Q64 { neg, params: p, .. },
+            PreparedNttCache::Q64 { cyc, params: q, .. },
+        ) if p == q => {
+            let neg = match neg.as_deref() {
+                Some(neg) => neg,
+                None if n_a == 0 => &[],
+                None => {
+                    return Err(AkitaError::InvalidSetup(
+                        "negacyclic NTT domain not prepared".into(),
+                    ));
+                }
+            };
             let cyc = cyc
                 .as_deref()
                 .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
@@ -722,12 +740,19 @@ fn fused_split_eq_quotients_with_digit_bound<
                 p,
             )
         }
-        PreparedNttCache::Q128 {
-            neg,
-            cyc,
-            params: p,
-            ..
-        } => {
+        (
+            PreparedNttCache::Q128 { neg, params: p, .. },
+            PreparedNttCache::Q128 { cyc, params: q, .. },
+        ) if p == q => {
+            let neg = match neg.as_deref() {
+                Some(neg) => neg,
+                None if n_a == 0 => &[],
+                None => {
+                    return Err(AkitaError::InvalidSetup(
+                        "negacyclic NTT domain not prepared".into(),
+                    ));
+                }
+            };
             let cyc = cyc
                 .as_deref()
                 .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
@@ -760,5 +785,8 @@ fn fused_split_eq_quotients_with_digit_bound<
                 p,
             )
         }
+        _ => Err(AkitaError::InvalidSetup(
+            "cyclic and negacyclic NTT profiles do not match".into(),
+        )),
     }
 }

@@ -78,10 +78,12 @@ $$
   \mathbf u_j := \mathbf B_j\,\widehat{\mathbf t}^{(j)} \in R_q^{n_B}.
 $$
 
-The global commitment is then just the sum
+The raw relation image is then the sum
 $\mathbf u = \sum_{j=0}^{\mathcal M-1}\mathbf u_j$. The large local witnesses
 $\widehat{\mathbf t}^{(j)}$ never leave $P_j$; only the short $n_B$-vectors
-$\mathbf u_j$ are summed (criteria 1 and 2).
+$\mathbf u_j$ are summed. The aggregation machine negative-binary decomposes
+that sum through the two F maps and publishes only the 128-byte payload
+$p_F$ (criteria 1 and 2).
 
 ### The opening commitment $\mathbf v$ and the claim $y$
 
@@ -91,14 +93,17 @@ digitises it to $\widehat{\mathbf e}_i := \mathbf G_{b,1}^{-1}(e_i) \in R_q^\del
 and — using only its column block $\mathbf D_j$ — forms the partial opening
 commitment $\mathbf v_j := \mathbf D_j\,\widehat{\mathbf e}^{(j)} \in R_q^{n_D}$,
 with $\widehat{\mathbf e}^{(j)} := (\widehat{\mathbf e}_i)_{i\in\mathcal I_j}$. The
-global opening commitment is $\mathbf v = \sum_j \mathbf v_j$. Each machine also
+global opening relation image is $\mathbf v = \sum_j \mathbf v_j$. The aggregation
+machine compresses that sum through the two H maps and publishes only the
+128-byte payload $p_H$. Each machine also
 forms its partial claim $y_j := \sum_{i\in\mathcal I_j} b_i e_i$, and the claimed
 evaluation is $y = F(\mathbf r) = \sum_j y_j$.
 
-So $\mathbf u$, $\mathbf v$, and $y$ all follow the same pattern: each machine does
+So the raw $\mathbf u$, raw $\mathbf v$, and $y$ all follow the same pattern: each machine does
 the same inner/outer/opening computation as the single-machine prover, but only on
-its own blocks, and the machines aggregate only the small commitment vectors and
-scalar claims.
+its own blocks. The machines aggregate only the small relation images and scalar
+claims; one aggregation machine derives the shared compression digits and public
+terminal payloads.
 
 ### The folded response $\mathbf z$ — the hard part
 
@@ -247,8 +252,10 @@ multilinear polynomial: each machine $P_j$ contributes its segment $\mathbf w_j$
 a pre-assigned aggregation machine additionally contributes the quotient segment
 $\widehat{\mathbf r}$. The machines then run the ordinary inner/outer commit at the
 next level's parameters on their assigned portions and sum the **partial next-level
-commitments** into one $\mathbf u'$. The verifier sees exactly the single-machine
-recursive interface: one extended-witness commitment and one next-level opening claim.
+relation images** into one $\mathbf u'$. The aggregation machine compresses
+$\mathbf u'$ and retains the two shared F digit vectors. The verifier sees exactly
+the single-machine recursive interface: one 128-byte extended-witness payload and
+one next-level opening claim.
 
 ## Ring-switch and row-batching
 

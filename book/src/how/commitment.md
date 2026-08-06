@@ -22,8 +22,16 @@ cached.
 
 The two-tier template decomposes each witness block into commit digits `s_hat`.
 It computes the inner commitment `t = A * s_hat`, then uses `B` for the outer
-commitment and `D` for the opening relation. The binding argument reduces to
-Module-SIS.
+relation and `D` for the opening relation. Neither full image is public. Every
+B and D image is negative-binary decomposed through exactly two rank-one maps;
+the wire carries only the 128-byte terminal payload `p_F` or `p_H`. The source
+image is capped at 8 KiB. The binding argument reduces to Module-SIS for the
+base relation and for each compression map.
+
+The compression ladder is profile-owned (`q128: 16/8`, `q64: 32/16`, `q32:
+64/32`) and is separate from A/B/D matrix dimensions. All A/B/D dimensions are
+at least 64; the smaller compression rows stay in the shared witness tail and
+cannot change ordinary relation alignment.
 
 **Sources to fold in**
 

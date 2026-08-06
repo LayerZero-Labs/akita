@@ -85,7 +85,6 @@ pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, G, B
     tensor_backend: &B,
     tensor_prepared: Option<&B::PreparedSetup>,
     group_inputs: &[ExtensionOpeningGroupInput<'_, '_, E, G>],
-    pad_base_evals: bool,
     transcript: &mut T,
     path: &'static str,
 ) -> Result<ProvedExtensionOpeningReduction<E>, AkitaError>
@@ -151,12 +150,8 @@ where
             actual: openings.len(),
         });
     }
-    let row_coefficients = if pad_base_evals {
-        vec![E::one(); num_claims]
-    } else {
-        append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-        sample_public_row_coefficients::<F, E, T>(&opening_batch, transcript)?
-    };
+    let row_coefficients =
+        derive_public_row_coefficients::<F, E, T>(&opening_batch, &openings, transcript)?;
     let proof_partials = prepared_groups
         .iter()
         .flat_map(|group| group.proof_partials.iter().copied())

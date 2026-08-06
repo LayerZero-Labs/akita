@@ -248,12 +248,14 @@ pub(super) fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
                     match mode {
                         AvxNttMode::Avx2 => avx::add_reduce_i32(
                             acc.limbs[k].as_mut_ptr() as *mut i32,
+                            acc.limbs[k].as_ptr() as *const i32,
                             other.limbs[k].as_ptr() as *const i32,
                             D,
                             prime.p.to_i64() as i32,
                         ),
                         AvxNttMode::Avx512 => avx::add_reduce_i32_avx512(
                             acc.limbs[k].as_mut_ptr() as *mut i32,
+                            acc.limbs[k].as_ptr() as *const i32,
                             other.limbs[k].as_ptr() as *const i32,
                             D,
                             prime.p.to_i64() as i32,

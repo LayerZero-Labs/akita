@@ -239,9 +239,15 @@ pub trait CanonicalU64 {
     fn to_canonical_u64_checked(&self) -> Option<u64>;
 }
 
-/// RNG-backed sampling for tests and witnesses.
+/// Canonical exact-uniform RNG-backed sampling.
+///
+/// Prime fields consume the minimum whole-byte candidate width covering the
+/// modulus, clear unused high bits, and reject candidates outside the canonical
+/// range. This byte-consumption contract is deterministic for a fixed
+/// [`RngCore`] stream. Extension fields sample their base
+/// coefficients independently through the same contract.
 pub trait RandomSampling {
-    /// Samples a random element.
+    /// Samples an exactly uniform element using canonical rejection sampling.
     fn random<R: RngCore>(rng: &mut R) -> Self;
 }
 

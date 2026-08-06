@@ -8,7 +8,7 @@ use akita_transcript::Transcript;
 use akita_types::{
     AkitaCommitmentHint, Commitment, CommittedGroup, CommittedGroupParams, OpeningClaims,
     OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupClaims, PolynomialGroupLayout,
-    RingVec, SetupPrefixSlot,
+    SetupPrefixSlot,
 };
 
 /// Exact top-level row selection paired with its prover opening material.
@@ -227,9 +227,15 @@ where
         // polynomial group's shape, keeping this byte-identical to verifier
         // replay for well-formed inputs.
         let layout = self.opening_layout()?;
+        let relation_layout = akita_types::relation_rhs_layout_for(root_params, &layout)?;
         layout.append_batch_shape_to_transcript::<CommitF, T>(transcript)?;
         for (group_index, commitment) in self.commitments().into_iter().enumerate() {
-            let ring_dim = root_params.group_role_dims(&layout, group_index)?.d_b();
+            let compression = relation_layout.compression_plan_for_group(group_index)?;
+            let ring_dim = compression
+                .maps()
+                .last()
+                .ok_or(AkitaError::InvalidProof)?
+                .ring_dimension();
             commitment.append_to_transcript(
                 akita_transcript::labels::ABSORB_COMMITMENT,
                 ring_dim,
@@ -246,50 +252,6 @@ where
             }
         }
         Ok(())
-    }
-
-    /// Borrow root fold commitment rows in the scheduled M-row commitment order.
-    pub(crate) fn fold_commitment(
-        &self,
-        params: &CommittedGroupParams,
-    ) -> Result<RingVec<CommitF>, AkitaError> {
-        let opening_batch = self.opening_claims.layout()?;
-        if self.opening_claims.num_groups() != opening_batch.num_groups() {
-            return Err(AkitaError::InvalidInput(
-                "fold commitment group count mismatch".to_string(),
-            ));
-        }
-
-        let mut group_order = (0..opening_batch.num_groups())
-            .map(|group_index| {
-                let range = params.commitment_row_range(&opening_batch, group_index)?;
-                Ok((range.start, range.len(), group_index))
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-        group_order.sort_by_key(|(start, _, _)| *start);
-
-        let mut coeffs = Vec::new();
-        for (_, expected_rows, group_index) in group_order {
-            let commitment = self.opening_claims.group_commitment(group_index)?;
-            let rows = commitment.rows();
-            let commitment_ring_dim = params.group_role_dims(&opening_batch, group_index)?.d_b();
-            if !rows.can_decode_vec(commitment_ring_dim) {
-                return Err(AkitaError::InvalidInput(format!(
-                    "fold commitment row shape mismatch for group {group_index}: \
-                     coeff_len {} is not divisible by d_b {commitment_ring_dim}",
-                    rows.coeff_len()
-                )));
-            }
-            let actual_rows = rows.coeff_len() / commitment_ring_dim;
-            if actual_rows != expected_rows {
-                return Err(AkitaError::InvalidInput(format!(
-                    "fold commitment row count mismatch for group {group_index}: \
-                     expected {expected_rows}, actual {actual_rows}"
-                )));
-            }
-            coeffs.extend_from_slice(rows.coeffs());
-        }
-        Ok(RingVec::from_coeffs(coeffs))
     }
 
     /// Preserve grouping metadata while replacing the flat polynomial stream.
@@ -402,7 +364,9 @@ mod tests {
     use akita_field::Fp32;
     use akita_transcript::labels::ABSORB_COMMITMENT;
     use akita_transcript::AkitaTranscript;
-    use akita_types::{CommittedGroupProfile, PrecommittedLevelParams, SisModulusProfileId};
+    use akita_types::{
+        CommittedGroupProfile, PrecommittedLevelParams, RingVec, SisModulusProfileId,
+    };
 
     type F = Fp32<251>;
 

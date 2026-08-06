@@ -3,8 +3,8 @@ use super::*;
 // Top-level batched verifier orchestration once a schedule is selected.
 
 use akita_config::{
-    bind_transcript_instance_descriptor, effective_batched_schedule, ensure_schedule_fits_setup,
-    CommitmentConfig,
+    bind_transcript_instance_descriptor, effective_batched_schedule,
+    ensure_verifier_schedule_fits_setup, CommitmentConfig,
 };
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
@@ -40,27 +40,25 @@ where
                                 next_params: Option<&CommittedGroupParams>,
                                 binding: akita_types::NextWitnessBindingPolicy|
      -> Result<(), AkitaError> {
-        let expected_v_coeffs = params
-            .open_commit_matrix
-            .output_rank()
-            .checked_mul(params.role_dims().d_d())
-            .ok_or(AkitaError::InvalidProof)?;
-        if fold.v.coeff_len() != expected_v_coeffs {
+        if fold.opening_payload.coeff_len()
+            != params
+                .opening_payload_geometry()?
+                .transmitted_coefficients()
+        {
             return Err(AkitaError::InvalidProof);
         }
 
         match (binding, &fold.stage2.next_witness_binding) {
             (
-                akita_types::NextWitnessBindingPolicy::OuterCommitment,
-                akita_types::NextWitnessBinding::OuterCommitment(commitment),
+                akita_types::NextWitnessBindingPolicy::OuterPayload,
+                akita_types::NextWitnessBinding::OuterPayload(commitment),
             ) => {
                 let next_params = next_params.ok_or(AkitaError::InvalidProof)?;
-                let expected_coeffs = next_params
-                    .outer_commit_matrix
-                    .output_rank()
-                    .checked_mul(next_params.role_dims().d_b())
-                    .ok_or(AkitaError::InvalidProof)?;
-                if commitment.coeff_len() != expected_coeffs {
+                if commitment.coeff_len()
+                    != next_params
+                        .outer_payload_geometry()?
+                        .transmitted_coefficients()
+                {
                     return Err(AkitaError::InvalidProof);
                 }
             }
@@ -81,7 +79,7 @@ where
         |step| {
             (
                 Some(&step.params.witness),
-                akita_types::NextWitnessBindingPolicy::OuterCommitment,
+                akita_types::NextWitnessBindingPolicy::OuterPayload,
             )
         },
     );
@@ -105,7 +103,7 @@ where
             |next| {
                 (
                     Some(&next.params.witness),
-                    akita_types::NextWitnessBindingPolicy::OuterCommitment,
+                    akita_types::NextWitnessBindingPolicy::OuterPayload,
                 )
             },
         );
@@ -174,9 +172,12 @@ where
             step.params.witness.d_a()
         }),
         root_t_state.as_deref(),
-    )?;
+    )
+    .map_err(|error| {
+        AkitaError::InvalidInput(format!("compressed root replay failed: {error:?}"))
+    })?;
 
-    let root_next_commitment = proof.root.next_w_commitment();
+    let root_next_commitment = proof.root.next_w_payload();
     let root_witness = match (root_next_commitment, root_t_state) {
         (Some(commitment), None) => SuffixWitnessState::Commitment(commitment),
         (None, Some(t_state)) => SuffixWitnessState::TerminalT(t_state),
@@ -200,9 +201,9 @@ where
 }
 
 use akita_types::{
-    dispatch_for_field, validate_schedule_ring_dims, AkitaBatchedProof, AkitaVerifierSetup,
-    BasisMode, Commitment, CommittedGroupBatchProfile, FoldSchedule, FpExtEncoding,
-    GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
+    validate_schedule_ring_dims, AkitaBatchedProof, AkitaVerifierSetup, BasisMode, Commitment,
+    CommittedGroupBatchProfile, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaims,
+    PolynomialGroupClaims,
 };
 
 /// Verify a batched proof under config `Cfg`.
@@ -261,12 +262,19 @@ where
         descriptor
             .validate_frozen_precommit(Cfg::decomposition().field_bits())
             .map_err(|_| AkitaError::InvalidProof)?;
-        let expected_coeffs = descriptor
+        let source_coefficients = descriptor
             .outer_commit_matrix
             .output_rank()
             .checked_mul(descriptor.outer_commit_matrix.ring_dimension())
             .ok_or(AkitaError::InvalidProof)?;
-        if committed.commitment().rows().coeff_len() != expected_coeffs {
+        let plan = akita_types::CompressionChainPlan::for_complete_source(
+            descriptor
+                .outer_commit_matrix
+                .sis_table_key()
+                .modulus_profile,
+            source_coefficients,
+        )?;
+        if committed.commitment().rows().coeff_len() != plan.terminal_coefficients() {
             return Err(AkitaError::InvalidProof);
         }
     }
@@ -310,12 +318,16 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    validate_schedule_ring_dims(schedule, setup.expanded.seed())?;
-    ensure_schedule_fits_setup::<Cfg>(setup.expanded.as_ref(), schedule, &opening_batch)?;
+    validate_schedule_ring_dims(schedule)?;
+    ensure_verifier_schedule_fits_setup(setup.expanded.as_ref(), schedule, &opening_batch)?;
     schedule
         .validate_structure()
         .map_err(|_| AkitaError::InvalidProof)?;
-    validate_proof_against_schedule(proof, schedule)?;
+    validate_proof_against_schedule(proof, schedule).map_err(|error| {
+        AkitaError::InvalidInput(format!(
+            "proof does not match the selected compressed schedule: {error:?}"
+        ))
+    })?;
 
     // Schedule resolution is the earliest point at which the terminal ring
     // dimension, A widths, and exact base-versus-i16-tail capabilities are all
@@ -323,26 +335,15 @@ where
     // replay so terminal verification performs cache lookup only.
     super::terminal_ntt::warm_for_schedule(setup, schedule)?;
 
-    // The transcript instance descriptor binds the setup-wide root ring
-    // dimension (`gen_ring_dim`), which is byte-identical to the const `Cfg::D`
-    // the prover binds for uniform-D presets. Dispatch on the runtime value so
-    // the verifier entry stays D-free; the descriptor bytes are unchanged.
     {
         let _span = tracing::info_span!("verifier_transcript_bind_instance").entered();
-        dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Envelope,
-            Cfg::Field,
-            setup.expanded.seed().gen_ring_dim,
-            |D| {
-                bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
-                    &setup.expanded,
-                    &opening_batch,
-                    selection,
-                    schedule,
-                    basis,
-                    transcript,
-                )
-            }
+        bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
+            &setup.expanded,
+            &opening_batch,
+            selection,
+            schedule,
+            basis,
+            transcript,
         )?;
     }
 
@@ -361,6 +362,9 @@ where
     let raw_claims =
         OpeningClaims::from_groups(raw_groups).map_err(|_| AkitaError::InvalidProof)?;
     verify::<Cfg::Field, Cfg::ExtField, T>(proof, setup, transcript, raw_claims, basis, schedule)
+        .map_err(|error| {
+            AkitaError::InvalidInput(format!("compressed proof replay failed: {error:?}"))
+        })
 }
 
 #[cfg(test)]

@@ -33,7 +33,7 @@ use akita_types::{
 /// Returns an error when:
 /// - the algebra section cannot be derived for the field tower, or
 /// - canonical descriptor serialization fails.
-pub fn bind_transcript_instance_descriptor<F, T, const D: usize, Cfg>(
+pub fn bind_transcript_instance_descriptor<F, T, Cfg>(
     setup: &AkitaExpandedSetup<F>,
     opening_batch: &OpeningClaimsLayout,
     selection: OpeningScheduleSelection,
@@ -48,11 +48,11 @@ where
     Cfg::ExtField: FpExtEncoding<F>,
 {
     let descriptor = AkitaInstanceDescriptor::new(
-        AlgebraSection::for_fields::<F, Cfg::ExtField, D>()?,
+        AlgebraSection::for_fields::<F, Cfg::ExtField>()?,
         SetupSection::from_parts(
             Cfg::decomposition(),
             Cfg::sis_modulus_profile(),
-            setup.seed(),
+            &setup.seed().setup_seed,
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
         PlanSection::from_schedule(selection, schedule),

@@ -75,13 +75,13 @@ pub struct GeneratedRootFold {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedSetupPrefixInput {
     pub natural_len: u64,
-    pub d_setup: u32,
     pub num_digits_fold: u32,
     pub commitment: GeneratedCommittedGroup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRecursiveFold {
+    pub payload_mode: akita_types::CommitmentPayloadMode,
     pub witness: GeneratedCommittedGroup,
     pub num_digits_fold: u32,
     pub open_commit_matrix: GeneratedOpenCommitMatrix,
@@ -141,12 +141,13 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub protocol_epoch: u32,
     pub cost_model: crate::PlannerCostModelId,
     pub selection_policy: crate::SelectionPolicyId,
-    pub max_setup_envelope_field_elements: usize,
+    pub setup_field_budget: Option<usize>,
     pub min_offloaded_witness_contraction: usize,
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: akita_types::SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,
-    pub ring_dimension: usize,
+    pub uniform_ring_dimension: usize,
+    pub setup_prefix_inner_ring_dimension: usize,
     pub decomposition: akita_types::DecompositionParams,
     pub ring_subfield_norm_bound: u32,
     pub claim_ext_degree: usize,
@@ -183,7 +184,8 @@ pub use crate::{
     SelectionPolicyId, SisSecurityPolicyId, TensorChallengeShape,
 };
 pub use akita_types::{
-    CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+    CommitmentPayloadMode, CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
+    PolynomialGroupLayout,
 };
 pub use akita_types::{SisModulusProfileId, SisTableDigest};
 pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};

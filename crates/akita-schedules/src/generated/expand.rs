@@ -71,7 +71,7 @@ impl GeneratedSetupPrefixInput {
     fn expand_to_precommitted_group(
         self,
         policy: &PlannerPolicy,
-        ring_challenge_cfg: &SparseChallengeConfig,
+        ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_shape: TensorChallengeShape,
         log_basis_open: u32,
     ) -> Result<PrecommittedLevelParams, AkitaError> {
@@ -82,7 +82,17 @@ impl GeneratedSetupPrefixInput {
             policy,
             "generated setup-prefix group",
         )?;
-        let d = self.d_setup as usize;
+        let dimensions = CommitmentRingDims {
+            inner: self.commitment.inner_commit_matrix.ring_dimension as usize,
+            outer: self.commitment.outer_commit_matrix.ring_dimension as usize,
+            // A setup-prefix group is opened by its consuming fold's D matrix,
+            // so only its persisted A/B dimensions are reconstructed here.
+            opening: self.commitment.outer_commit_matrix.ring_dimension as usize,
+        };
+        validate_role_dims(dimensions)?;
+        let d_a = dimensions.d_a();
+        let d_b = dimensions.d_b();
+        let ring_challenge_cfg = ring_challenge_config(d_a)?;
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
         let geometry = self.commitment.geometry;
@@ -95,7 +105,7 @@ impl GeneratedSetupPrefixInput {
         let num_live_blocks = generated_count(geometry.live_blocks, "live block count")?;
         let fold_shape = optimize_fold_challenge_shape(fold_shape, num_live_blocks)?;
         let n_prefix = num_live_ring_elements_per_claim
-            .checked_mul(d)
+            .checked_mul(d_a)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
             })?;
@@ -123,7 +133,7 @@ impl GeneratedSetupPrefixInput {
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited setup-prefix {role}-role layout for generated schedule \
-                 (profile={sis_modulus_profile:?}, d={d}, inner={}, outer={}, open={})",
+                 (profile={sis_modulus_profile:?}, dims={dimensions:?}, inner={}, outer={}, open={})",
                 self.commitment.inner_commit_matrix.log_basis,
                 self.commitment.outer_commit_matrix.log_basis,
                 log_basis_open
@@ -150,9 +160,9 @@ impl GeneratedSetupPrefixInput {
             sis_policy,
             policy.sis_table_digest,
             sis_modulus_profile,
-            d,
+            d_a,
             log_basis_open,
-            ring_challenge_cfg,
+            &ring_challenge_cfg,
             fold_shape,
             num_digits_fold,
             policy.ring_subfield_norm_bound,
@@ -163,7 +173,7 @@ impl GeneratedSetupPrefixInput {
             sis_key(
                 policy,
                 akita_types::SisMatrixRole::Inner,
-                d as u32,
+                d_a as u32,
                 a_bucket,
             ),
             inner_width,
@@ -172,18 +182,20 @@ impl GeneratedSetupPrefixInput {
             sis_policy,
             sis_modulus_profile,
             akita_types::SisMatrixRole::Outer,
-            d,
+            d_b,
             log_basis_open,
         )
         .ok_or_else(|| no_layout("B"))?;
-        let outer_width = decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, 1)
+        let native_outer_width = decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, 1)
+            .ok_or_else(|| no_layout("B"))?;
+        let outer_width = projected_role_ring_count(d_a, d_b, native_outer_width)
             .ok_or_else(|| no_layout("B"))?;
         let n_b = secure_rank(
             "setup-prefix b",
             sis_key(
                 policy,
                 akita_types::SisMatrixRole::Outer,
-                d as u32,
+                d_b as u32,
                 b_bucket,
             ),
             outer_width,
@@ -195,7 +207,7 @@ impl GeneratedSetupPrefixInput {
             n_a,
             inner_width,
             a_bucket,
-            d,
+            d_a,
         )?;
         let outer_commit_matrix = OuterCommitMatrixParams::try_new(
             sis_policy,
@@ -204,7 +216,7 @@ impl GeneratedSetupPrefixInput {
             n_b,
             outer_width,
             b_bucket,
-            d,
+            d_b,
         )?;
         let layout = CommittedGroupProfile {
             version: CommittedGroupProfile::VERSION,
@@ -223,7 +235,7 @@ impl GeneratedSetupPrefixInput {
         Ok(PrecommittedLevelParams {
             layout,
             log_basis_open,
-            fold_challenge_config: *ring_challenge_cfg,
+            fold_challenge_config: ring_challenge_cfg,
             num_digits_open: num_digits_open_val,
             num_digits_fold,
         })
@@ -351,13 +363,14 @@ impl GeneratedCommittedGroup {
     ///
     /// # Errors
     ///
-    /// Returns an error when the stored role dimensions are invalid for the
-    /// setup-generation policy, bucket/width resolution fails, or a generated
-    /// rank fails its SIS audit against the (batched) width.
+    /// Returns an error when a stored role dimension is invalid,
+    /// bucket/width resolution fails, or a generated rank fails its SIS audit
+    /// against the batched width.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn expand_to_level_params_with_setup(
         &self,
         policy: &PlannerPolicy,
+        payload_mode: akita_types::CommitmentPayloadMode,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_level: usize,
         exact_num_digits_inner: Option<u32>,
@@ -374,14 +387,6 @@ impl GeneratedCommittedGroup {
             opening: open_commit_matrix.ring_dimension as usize,
         };
         validate_role_dims(dimensions)?;
-        for dimension in [dimensions.d_a(), dimensions.d_b(), dimensions.d_d()] {
-            if !policy.ring_dimension.is_multiple_of(dimension) {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "generated fold role dimension {dimension} does not divide setup D={}",
-                    policy.ring_dimension
-                )));
-            }
-        }
         let ring_d = dimensions.d_a();
         let is_root = fold_level == 0;
         let log_basis_inner = self.inner_commit_matrix.log_basis;
@@ -531,7 +536,7 @@ impl GeneratedCommittedGroup {
         let setup_prefix = if let Some(group) = setup_prefix_group {
             let commitment_params = group.expand_to_precommitted_group(
                 policy,
-                &ring_challenge_cfg,
+                &ring_challenge_config,
                 TensorChallengeShape::Flat,
                 log_basis_open,
             )?;
@@ -546,7 +551,6 @@ impl GeneratedCommittedGroup {
                 ));
             }
             Some(akita_types::setup_prefix_slot_id(
-                policy.ring_dimension,
                 group.natural_len as usize,
                 commitment_params,
             ))
@@ -591,6 +595,7 @@ impl GeneratedCommittedGroup {
         // key (verifier-reachable, so the fallible `try_new` is used instead
         // of the panicking `new`).
         let params = CommittedGroupParams {
+            payload_mode,
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
@@ -659,10 +664,10 @@ impl GeneratedCommittedGroup {
         open_commit_matrix: GeneratedOpenCommitMatrix,
     ) -> Result<CommittedGroupParams, AkitaError> {
         let ring_d = self.inner_commit_matrix.ring_dimension as usize;
-        if ring_d == 0 || ring_d != policy.ring_dimension {
+        if ring_d == 0 || ring_d != policy.uniform_ring_dimension {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated multi-group root ring dimension {ring_d} does not match policy D={}",
-                policy.ring_dimension
+                "generated multi-group root ring dimension {ring_d} does not match uniform policy D={}",
+                policy.uniform_ring_dimension
             )));
         }
         if precommitted_groups.is_empty() {
@@ -799,6 +804,7 @@ impl GeneratedCommittedGroup {
             d_matrix_width,
         )?;
         let params = CommittedGroupParams {
+            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
@@ -859,11 +865,10 @@ impl GeneratedTerminalFold {
         input_witness_len: usize,
     ) -> Result<TerminalCommittedGroupParams, AkitaError> {
         let ring_dimension = self.inner_commit_matrix.ring_dimension as usize;
-        if ring_dimension == 0 || !policy.ring_dimension.is_multiple_of(ring_dimension) {
-            return Err(AkitaError::InvalidSetup(format!(
-                "generated terminal inner ring dimension {ring_dimension} does not divide setup D={}",
-                policy.ring_dimension
-            )));
+        if ring_dimension == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated terminal inner ring dimension must be nonzero".to_string(),
+            ));
         }
         if input_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(
@@ -959,5 +964,99 @@ impl GeneratedFoldScheduleEntry {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+    use crate::{PlannerCostModelId, SelectionPolicyId};
+    use akita_types::{
+        ChunkedWitnessCfg, CommitmentRingDims, SisModulusProfileId, SisSecurityPolicyId,
+        SisTableDigest,
+    };
+
+    fn recursive_fp128_policy() -> PlannerPolicy {
+        static CANDIDATES: [CommitmentRingDims; 1] = [CommitmentRingDims {
+            inner: 64,
+            outer: 64,
+            opening: 64,
+        }];
+        PlannerPolicy {
+            cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
+            setup_field_budget: None,
+            min_offloaded_witness_contraction: 3,
+            uniform_ring_dimension: 64,
+            setup_prefix_inner_ring_dimension: 128,
+            ring_dimension_candidates: &CANDIDATES,
+            decomposition: DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 1,
+                log_open_bound: Some(128),
+            },
+            sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+            sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
+            sis_table_digest: SisTableDigest::CURRENT,
+            ring_subfield_norm_bound: 1,
+            claim_ext_degree: 1,
+            chal_ext_degree: 1,
+            basis_range: (3, 6),
+            witness_chunk: ChunkedWitnessCfg::default(),
+            recursive_setup_planning: true,
+        }
+    }
+
+    #[test]
+    fn setup_prefix_expansion_preserves_independent_a_b_dimensions() {
+        let input = GeneratedSetupPrefixInput {
+            natural_len: 1 << 16,
+            num_digits_fold: 4,
+            commitment: GeneratedCommittedGroup {
+                geometry: crate::generated::GeneratedBlockGeometry {
+                    live_ring_elements_per_claim: 512,
+                    positions_per_block: 32,
+                    live_blocks: 16,
+                },
+                inner_commit_matrix: crate::generated::GeneratedInnerCommitMatrix {
+                    ring_dimension: 128,
+                    log_basis: 3,
+                },
+                outer_commit_matrix: crate::generated::GeneratedOuterCommitMatrix {
+                    ring_dimension: 64,
+                    log_basis: 3,
+                    slice_count: 1,
+                },
+            },
+        };
+        let requested_dimensions = RefCell::new(Vec::new());
+        let ring_challenge_config = |d| {
+            requested_dimensions.borrow_mut().push(d);
+            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
+            })
+        };
+
+        let expanded = input
+            .expand_to_precommitted_group(
+                &recursive_fp128_policy(),
+                &ring_challenge_config,
+                TensorChallengeShape::Flat,
+                3,
+            )
+            .expect("audited mixed-dimension setup-prefix layout");
+
+        assert_eq!(&*requested_dimensions.borrow(), &[128]);
+        assert_eq!(expanded.layout.inner_commit_matrix.ring_dimension(), 128);
+        assert_eq!(expanded.layout.inner_commit_matrix.input_width(), 1376);
+        assert_eq!(expanded.layout.outer_commit_matrix.ring_dimension(), 64);
+        assert_eq!(expanded.layout.outer_commit_matrix.input_width(), 4128);
+        assert_eq!(
+            expanded.fold_challenge_config,
+            SparseChallengeConfig::production_for_ring_dim(128)
+                .expect("production D128 challenge config")
+        );
     }
 }

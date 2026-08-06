@@ -18,8 +18,13 @@ use common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 
-/// Singleton onehot size whose shipped schedule is exactly root fold followed
-/// by suffix terminal. This is the minimal predecessor-bound `t` handoff.
+/// Small singleton onehot instance that exercises a folded path ending in a
+/// terminal response.
+///
+/// The generated schedule may insert or remove recursive folds as planner
+/// policy evolves. The test below therefore identifies the final handoff from
+/// transcript structure instead of treating the current fold count as a
+/// protocol epoch.
 const TRANSCRIPT_HARDENING_NUM_VARS: usize = 12;
 
 #[test]
@@ -33,6 +38,14 @@ fn preamble_separation_changes_first_challenge() {
     assert_ne!(left_challenge, right_challenge);
 }
 
+/// Check structural transcript invariants across a complete folded proof.
+///
+/// This test intentionally does not freeze proof bytes, event counts, or the
+/// number of recursive folds. It requires the prover and verifier to replay the
+/// same public events, runs the logging smell checks, and verifies the semantic
+/// handoff into the terminal level: the last predecessor binds `t`, squeezes
+/// its ring-switch challenge, and the terminal level rebinds the same canonical
+/// `t` bytes before absorbing its terminal witness data.
 #[test]
 fn event_stream_equality_small() {
     init_rayon_pool();
@@ -78,11 +91,6 @@ fn event_stream_equality_small() {
             BasisMode::Lagrange,
         )
         .expect("prove");
-        assert!(
-            proof.recursive_folds.is_empty(),
-            "fixture must use exactly two folds"
-        );
-
         let mut verifier_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_E_HAT);
@@ -103,21 +111,34 @@ fn event_stream_equality_small() {
         assert_eq!(prover_public, verifier_public);
         let terminal_e = assert_terminal_event_order_if_present(&prover_public)
             .expect("terminal transcript must absorb logical e_hat");
-        let predecessor_t =
-            first_label_index(&prover_public, labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING)
-                .expect("predecessor must bind terminal t");
-        let predecessor_alpha = first_label_or_extension_limb_index_after(
-            &prover_public,
-            predecessor_t + 1,
-            labels::CHALLENGE_RING_SWITCH,
-        )
-        .expect("predecessor must squeeze ring-switch challenge after binding t");
-        let terminal_t = first_label_index_after(
-            &prover_public,
-            predecessor_alpha + 1,
-            labels::ABSORB_COMMITMENT,
-        )
-        .expect("terminal must rebind carried t as its current state");
+        // Anchor at the terminal window and walk backward. Earlier recursive
+        // folds contain the same labels, so forward searches would select the
+        // wrong transition whenever the generated schedule gains a level.
+        let terminal_t = prover_public[..terminal_e]
+            .iter()
+            .rposition(|event| {
+                event_label(event).is_some_and(|candidate| candidate == labels::ABSORB_COMMITMENT)
+            })
+            .expect("terminal must rebind carried t as its current state");
+        let predecessor_alpha = prover_public[..terminal_t]
+            .iter()
+            .rposition(|event| {
+                event_label(event).is_some_and(|candidate| {
+                    candidate == labels::CHALLENGE_RING_SWITCH
+                        || akita_transcript::is_ext_limb_label(
+                            candidate,
+                            labels::CHALLENGE_RING_SWITCH,
+                        )
+                })
+            })
+            .expect("predecessor must squeeze ring-switch challenge after binding t");
+        let predecessor_t = prover_public[..predecessor_alpha]
+            .iter()
+            .rposition(|event| {
+                event_label(event)
+                    .is_some_and(|candidate| candidate == labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING)
+            })
+            .expect("predecessor must bind terminal t");
         assert!(
             predecessor_t < predecessor_alpha
                 && predecessor_alpha < terminal_t
@@ -249,20 +270,18 @@ impl ProofTamper {
             }
             Self::ExtraZPayload => terminal_response_mut(proof).z_payloads.push(vec![0]),
             Self::OversizedRootV => {
-                let mut coeffs = proof.root.v.coeffs().to_vec();
+                let mut coeffs = proof.root.opening_payload.coeffs().to_vec();
                 coeffs.push(F::zero());
-                proof.root.v = RingVec::from_coeffs(coeffs);
+                proof.root.opening_payload = RingVec::from_coeffs(coeffs);
             }
             Self::WrongOutgoingBinding => {
                 proof.root.stage2.next_witness_binding =
                     match &proof.root.stage2.next_witness_binding {
-                        NextWitnessBinding::OuterCommitment(_) => {
+                        NextWitnessBinding::OuterPayload(_) => {
                             NextWitnessBinding::TerminalInnerState
                         }
                         NextWitnessBinding::TerminalInnerState => {
-                            NextWitnessBinding::OuterCommitment(RingVec::from_coeffs(vec![
-                                F::zero(),
-                            ]))
+                            NextWitnessBinding::OuterPayload(RingVec::from_coeffs(vec![F::zero()]))
                         }
                     };
             }

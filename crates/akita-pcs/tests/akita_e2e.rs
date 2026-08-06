@@ -597,7 +597,7 @@ fn trace_internalization_rejects_tampered_root_fold_handle() {
         let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
             make_dense_fixture::<F, D, Cfg>(DENSE_TEST_NV, b"akita_e2e/root-trace-tamper");
         let mut malformed = proof.clone();
-        bump_flat_ring_vec(&mut malformed.root.v);
+        bump_flat_ring_vec(&mut malformed.root.opening_payload);
 
         let commitments = [commitment];
         let openings = [opening];
@@ -684,7 +684,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
             .recursive_folds
             .first_mut()
             .expect("fixture should include an intermediate recursive fold");
-        bump_flat_ring_vec(&mut recursive.v);
+        bump_flat_ring_vec(&mut recursive.opening_payload);
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");

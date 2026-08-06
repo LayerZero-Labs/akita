@@ -1,5 +1,6 @@
 //! Prover-owned commitment kernels.
 
+use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{
     tensor_root_projection, CommitInnerPlan, OperationCtx, RootCommitKernel, RootCommitSource,
     RootPolyMeta, RuntimeCommitBackendFor, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
@@ -8,16 +9,18 @@ use crate::compute::{
 use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{CommitInnerWitness, RootTensorProjectionPoly};
-use akita_config::{ensure_schedule_fits_setup, CommitmentConfig};
+use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
+use akita_field::{
+    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
+};
 use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
     Commitment, CommitmentRingDims, CommittedGroup, CommittedGroupParams, CommittedGroupProfile,
-    DigitBlocks, FpExtEncoding, OpeningClaimsLayout, OpeningScheduleSelection,
-    PolynomialGroupLayout, RingVec,
+    CompressionChainPlan, DigitBlocks, FpExtEncoding, OpeningClaimsLayout,
+    OpeningScheduleSelection, PolynomialGroupLayout, RingVec,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -128,7 +131,7 @@ where
         .output_rank()
         .checked_mul(params.inner_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
-    let a_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_a())?;
+    let a_available = setup.shared_matrix.num_field_elements() / dims.d_a();
     if a_required > a_available {
         return Err(AkitaError::InvalidSetup(format!(
             "A-role commit params require {a_required} setup ring elements at d={}, but setup has {a_available}",
@@ -140,7 +143,7 @@ where
         .output_rank()
         .checked_mul(params.outer_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
-    let b_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_b())?;
+    let b_available = setup.shared_matrix.num_field_elements() / dims.d_b();
     if b_required > b_available {
         return Err(AkitaError::InvalidSetup(format!(
             "B-role commit params require {b_required} setup ring elements at d={}, but setup has {b_available}",
@@ -183,7 +186,7 @@ where
         .output_rank()
         .checked_mul(profile.inner_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
-    let a_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_a())?;
+    let a_available = setup.shared_matrix.num_field_elements() / dims.d_a();
     if a_required > a_available {
         return Err(AkitaError::InvalidSetup(format!(
             "A-role precommit profile requires {a_required} setup ring elements at d={}, but setup has {a_available}",
@@ -195,7 +198,7 @@ where
         .output_rank()
         .checked_mul(profile.outer_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
-    let b_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_b())?;
+    let b_available = setup.shared_matrix.num_field_elements() / dims.d_b();
     if b_required > b_available {
         return Err(AkitaError::InvalidSetup(format!(
             "B-role precommit profile requires {b_required} setup ring elements at d={}, but setup has {b_available}",
@@ -299,7 +302,13 @@ fn commit_with_validated_params<F, P, B>(
     params: &CommittedGroupParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + FromPrimitiveInt
+        + HalvingField
+        + HasWide
+        + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
@@ -320,19 +329,8 @@ where
     let n_a = params.inner_commit_matrix.output_rank();
     let num_digits_open = params.num_digits_outer;
     let log_basis = params.log_basis_outer;
-    let gen_ring_dim = backend
-        .prepared_expanded_setup(prepared)
-        .seed()
-        .gen_ring_dim;
-    let mut warmed_ring_dim = gen_ring_dim;
-    for ring_dim in [dims.d_a(), dims.d_b()] {
-        if ring_dim != gen_ring_dim && ring_dim != warmed_ring_dim {
-            ctx.ensure_envelope_ntt(backend.prepared_expanded_setup(prepared), ring_dim)?;
-            warmed_ring_dim = ring_dim;
-        }
-    }
     let n_b = params.outer_commit_matrix.output_rank();
-    let (commitment, inner_rows) = dispatch_for_field!(
+    let (commitment, inner_rows, compression_witness, compression_quotients) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
         dims.d_a(),
@@ -382,18 +380,50 @@ where
                             u.len(),
                         )));
                     }
+                    let source = RingVec::from_ring_elems(&u);
+                    let plan = CompressionChainPlan::for_complete_source(
+                        params.outer_commit_matrix.sis_table_key().modulus_profile,
+                        source.coeff_len(),
+                    )?;
+                    let (mut outputs, _) = execute_compression_chains(
+                        ctx,
+                        vec![CompressionExecutionInput {
+                            id: (),
+                            plan,
+                            coefficients: source.into_coeffs(),
+                        }],
+                    )?;
+                    let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
+                    let terminal_ring_dim = output
+                        .witness
+                        .plan()
+                        .maps()
+                        .last()
+                        .ok_or(AkitaError::InvalidProof)?
+                        .ring_dimension();
+                    let payload = RingVec::from_coeffs_with_ring_dim(
+                        output.terminal.coefficients().to_vec(),
+                        terminal_ring_dim,
+                    )?;
                     Ok::<_, AkitaError>((
-                        Commitment::from_ring_elems(&u),
+                        Commitment::new(payload),
                         prepared_polynomials
                             .into_iter()
                             .map(|(rows, _)| rows)
                             .collect::<Vec<_>>(),
+                        output.witness,
+                        output.quotients,
                     ))
                 }
             )
         }
     )?;
-    let hint = AkitaCommitmentHint::new(dims.d_a(), inner_rows)?;
+    let hint = AkitaCommitmentHint::new_with_outer_compression(
+        dims.d_a(),
+        inner_rows,
+        &compression_witness,
+        &compression_quotients,
+    )?;
     Ok((commitment, hint))
 }
 
@@ -403,7 +433,13 @@ fn commit_with_validated_profile<F, P, B>(
     profile: &CommittedGroupProfile,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + FromPrimitiveInt
+        + HalvingField
+        + HasWide
+        + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
@@ -425,19 +461,8 @@ where
     let n_a = profile.inner_commit_matrix.output_rank();
     let num_digits_open = profile.num_digits_outer;
     let log_basis = profile.log_basis_outer;
-    let gen_ring_dim = backend
-        .prepared_expanded_setup(prepared)
-        .seed()
-        .gen_ring_dim;
-    let mut warmed_ring_dim = gen_ring_dim;
-    for ring_dim in [dims.d_a(), dims.d_b()] {
-        if ring_dim != gen_ring_dim && ring_dim != warmed_ring_dim {
-            ctx.ensure_envelope_ntt(backend.prepared_expanded_setup(prepared), ring_dim)?;
-            warmed_ring_dim = ring_dim;
-        }
-    }
     let n_b = profile.outer_commit_matrix.output_rank();
-    let (commitment, inner_rows) = dispatch_for_field!(
+    let (commitment, inner_rows, compression_witness, compression_quotients) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
         dims.d_a(),
@@ -487,18 +512,50 @@ where
                             u.len(),
                         )));
                     }
+                    let source = RingVec::from_ring_elems(&u);
+                    let plan = CompressionChainPlan::for_complete_source(
+                        profile.outer_commit_matrix.sis_table_key().modulus_profile,
+                        source.coeff_len(),
+                    )?;
+                    let (mut outputs, _) = execute_compression_chains(
+                        ctx,
+                        vec![CompressionExecutionInput {
+                            id: (),
+                            plan,
+                            coefficients: source.into_coeffs(),
+                        }],
+                    )?;
+                    let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
+                    let terminal_ring_dim = output
+                        .witness
+                        .plan()
+                        .maps()
+                        .last()
+                        .ok_or(AkitaError::InvalidProof)?
+                        .ring_dimension();
+                    let payload = RingVec::from_coeffs_with_ring_dim(
+                        output.terminal.coefficients().to_vec(),
+                        terminal_ring_dim,
+                    )?;
                     Ok::<_, AkitaError>((
-                        Commitment::from_ring_elems(&u),
+                        Commitment::new(payload),
                         prepared_polynomials
                             .into_iter()
                             .map(|(rows, _)| rows)
                             .collect::<Vec<_>>(),
+                        output.witness,
+                        output.quotients,
                     ))
                 }
             )
         }
     )?;
-    let hint = AkitaCommitmentHint::new(dims.d_a(), inner_rows)?;
+    let hint = AkitaCommitmentHint::new_with_outer_compression(
+        dims.d_a(),
+        inner_rows,
+        &compression_witness,
+        &compression_quotients,
+    )?;
     Ok((commitment, hint))
 }
 
@@ -518,7 +575,13 @@ pub fn commit_with_params<F, P, B>(
     params: &CommittedGroupParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + FromPrimitiveInt
+        + HalvingField
+        + HasWide
+        + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
@@ -591,7 +654,13 @@ pub fn commit<Cfg, P, B>(
 ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
+    Cfg::Field: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + FromPrimitiveInt
+        + HalvingField
+        + HasWide
+        + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
@@ -704,7 +773,13 @@ pub fn commit_group<Cfg, P, B>(
 ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
+    Cfg::Field: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + FromPrimitiveInt
+        + HalvingField
+        + HasWide
+        + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
@@ -800,7 +875,13 @@ pub fn commit_final_group<Cfg, P, B>(
 ) -> Result<FinalCommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
+    Cfg::Field: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + FromPrimitiveInt
+        + HalvingField
+        + HasWide
+        + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
@@ -812,7 +893,7 @@ where
         final_group_key_from_polys::<Cfg, P>(polys, expanded, precommitteds.clone())?;
     let schedule = Cfg::runtime_schedule(schedule_key.clone())?;
     let opening_layout = schedule_key.opening_layout()?;
-    ensure_schedule_fits_setup::<Cfg>(expanded, &schedule, &opening_layout)?;
+    ensure_prover_schedule_fits_setup::<Cfg>(expanded, &schedule, &opening_layout)?;
     let params = schedule.root_fold().params.final_group.commitment.clone();
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
     let (commitment, hint) =
@@ -858,7 +939,13 @@ pub fn batched_commit<Cfg, P, B>(
 ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
+    Cfg::Field: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + FromPrimitiveInt
+        + HalvingField
+        + HasWide
+        + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
@@ -909,7 +996,13 @@ pub fn batched_commit_with_params<F, P, B>(
     params: &CommittedGroupParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + FromPrimitiveInt
+        + HalvingField
+        + HasWide
+        + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
@@ -931,7 +1024,7 @@ mod tests {
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp64;
-    use akita_types::{OpenCommitMatrixParams, SetupMatrixEnvelope, SisModulusProfileId};
+    use akita_types::{OpenCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId};
 
     type F = Fp64<4294967197>;
     const D: usize = 64;
@@ -973,8 +1066,9 @@ mod tests {
         let expanded = AkitaProverSetup::<F>::generate_with_capacity(
             5,
             1,
-            D,
-            SetupMatrixEnvelope { max_setup_len: 8 },
+            SetupMatrixCapacity {
+                num_field_elements: D,
+            },
         )
         .unwrap()
         .expanded;
@@ -1001,8 +1095,9 @@ mod tests {
         let expanded = AkitaProverSetup::<F>::generate_with_capacity(
             5,
             1,
-            D,
-            SetupMatrixEnvelope { max_setup_len: 8 },
+            SetupMatrixCapacity {
+                num_field_elements: D,
+            },
         )
         .unwrap()
         .expanded;

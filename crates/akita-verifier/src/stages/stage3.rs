@@ -12,9 +12,9 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, AkitaExpandedSetup,
-    AkitaVerifierSetup, CommittedGroupParams, PreparedRelationAddress, SetupContributionPlan,
-    SetupSumcheckProof, SETUP_SUMCHECK_DEGREE,
+    dispatch_for_field, select_setup_prefix_slot, AkitaExpandedSetup, AkitaVerifierSetup,
+    CommittedGroupParams, PreparedRelationAddress, SetupContributionPlan, SetupSumcheckProof,
+    SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -88,15 +88,18 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             .setup_contribution_plan
             .projection_geometry()
             .base_ring_dim();
-        let setup_len = setup
-            .expanded
-            .shared_matrix()
-            .total_ring_elements_at_dyn(ring_d)?;
-        let setup_eval_len = self.setup_eval_len::<F, T>(
+        if ring_d == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "Stage 3 setup ring dimension must be nonzero".into(),
+            ));
+        }
+        let setup_eval_len = setup_eval_len::<F, T>(
             setup,
             next_fold_level_params,
+            self.setup_contribution_plan
+                .projection_geometry()
+                .natural_field_len(),
             ring_d,
-            setup_len,
             transcript,
         )?;
         let setup_prefix_eval = next_fold_level_params
@@ -117,50 +120,6 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                 )
             }
         )
-    }
-
-    fn setup_eval_len<F, T>(
-        &self,
-        setup: &AkitaVerifierSetup<F>,
-        next_fold_level_params: &CommittedGroupParams,
-        ring_d: usize,
-        setup_len: usize,
-        transcript: &mut T,
-    ) -> Result<usize, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        T: Transcript<F>,
-    {
-        if next_fold_level_params.setup_prefix.is_some() {
-            let geometry = self.setup_contribution_plan.projection_geometry();
-            let natural_field_len = geometry.natural_field_len();
-            ensure_setup_envelope(&setup.expanded, geometry.required(), ring_d)?;
-            let setup_prefix_selection = select_setup_prefix_slot(
-                setup_len,
-                |id| {
-                    setup
-                        .prefix_slots
-                        .get(id)
-                        .map(|slot| (slot, slot.natural_len, slot.padded_len))
-                },
-                next_fold_level_params,
-                natural_field_len,
-                ring_d,
-                "verifier setup-prefix slot does not cover setup product",
-            )?;
-            if let Some((slot, setup_eval_len)) = setup_prefix_selection {
-                transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
-                Ok(setup_eval_len)
-            } else if next_fold_level_params.setup_prefix.is_some() {
-                Err(AkitaError::InvalidSetup(
-                    "planned setup-prefix slot is missing from verifier setup".to_string(),
-                ))
-            } else {
-                Ok(setup_len)
-            }
-        } else {
-            Ok(setup_len)
-        }
     }
 
     fn verify_stage3_kernel<F, T, const D: usize>(
@@ -219,6 +178,48 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         }
         Ok(challenges)
     }
+}
+
+fn setup_eval_len<F, T>(
+    setup: &AkitaVerifierSetup<F>,
+    next_fold_level_params: &CommittedGroupParams,
+    natural_field_len: usize,
+    ring_d: usize,
+    transcript: &mut T,
+) -> Result<usize, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    if next_fold_level_params.setup_prefix.is_none() {
+        let setup_field_len = setup.expanded.shared_matrix().num_field_elements();
+        if ring_d == 0 || !setup_field_len.is_multiple_of(ring_d) {
+            return Err(AkitaError::InvalidSetup(
+                "shared setup field length is not divisible by Stage 3 ring dimension".into(),
+            ));
+        }
+        return Ok(setup_field_len / ring_d);
+    }
+    let (slot, setup_eval_len) = select_setup_prefix_slot(
+        None,
+        |id| {
+            setup
+                .prefix_slots
+                .get(id)
+                .map(|slot| (slot, slot.natural_len, slot.padded_len))
+        },
+        next_fold_level_params,
+        natural_field_len,
+        ring_d,
+        "verifier setup-prefix slot does not cover setup product",
+    )?
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "planned setup-prefix slot is missing from verifier setup".to_string(),
+        )
+    })?;
+    transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
+    Ok(setup_eval_len)
 }
 
 fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, AkitaError> {
@@ -284,4 +285,99 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(terms.into_iter().fold(E::zero(), |acc, value| acc + value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_config::{committed_group_params, proof_optimized::fp128::D64Dense};
+    use akita_field::Prime128OffsetA7F7;
+    use akita_transcript::AkitaTranscript;
+    use akita_types::{
+        derive_public_matrix_prefix, padded_setup_prefix_len, setup_prefix_precommitted_params,
+        setup_prefix_slot_id, AkitaSetupDescriptor, CommittedGroupParams, PolynomialGroupLayout,
+        RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+    };
+    use std::sync::Arc;
+
+    type F = Prime128OffsetA7F7;
+    const RING_D: usize = 64;
+
+    fn verifier_setup_with_unaligned_matrix(
+        mut level_params: CommittedGroupParams,
+        natural_field_len: usize,
+    ) -> (AkitaVerifierSetup<F>, CommittedGroupParams) {
+        let setup_seed = [7u8; 32].into();
+        let descriptor = AkitaSetupDescriptor {
+            max_num_vars: 0,
+            max_num_batched_polys: 0,
+            num_field_elements: natural_field_len,
+            setup_seed,
+        };
+        let shared_matrix =
+            derive_public_matrix_prefix::<F>(natural_field_len, &descriptor.setup_seed);
+        let expanded = Arc::new(
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                descriptor,
+                shared_matrix,
+            ),
+        );
+
+        let padded_len = padded_setup_prefix_len(natural_field_len);
+        let commitment_params = setup_prefix_precommitted_params(&level_params, padded_len)
+            .expect("setup-prefix parameters");
+        let id = setup_prefix_slot_id(natural_field_len, commitment_params);
+        level_params.setup_prefix = Some(id.clone());
+        let mut prefix_slots = SetupPrefixVerifierRegistry::new(expanded.seed.setup_seed.clone());
+        prefix_slots
+            .insert(SetupPrefixVerifierSlot {
+                id,
+                natural_len: natural_field_len,
+                padded_len,
+                commitment: SetupPrefixPublicCommitment {
+                    rows: vec![RingVec::from_coeffs(vec![F::zero(); RING_D])],
+                },
+            })
+            .expect("insert setup-prefix slot");
+        let setup = AkitaVerifierSetup::from_parts(expanded, prefix_slots).expect("verifier setup");
+        (setup, level_params)
+    }
+
+    #[test]
+    fn offloaded_setup_ignores_shared_matrix_divisibility() {
+        let level_params =
+            committed_group_params::<D64Dense>(&PolynomialGroupLayout::singleton(16))
+                .expect("level parameters");
+        let natural_field_len = RING_D + 1;
+        let (setup, offloaded_params) =
+            verifier_setup_with_unaligned_matrix(level_params.clone(), natural_field_len);
+        assert!(!setup
+            .expanded
+            .shared_matrix()
+            .num_field_elements()
+            .is_multiple_of(RING_D));
+
+        let mut offloaded_transcript = AkitaTranscript::<F>::new(b"test/offloaded-stage3");
+        assert_eq!(
+            setup_eval_len(
+                &setup,
+                &offloaded_params,
+                natural_field_len,
+                RING_D,
+                &mut offloaded_transcript,
+            )
+            .expect("offloaded setup uses the registered prefix"),
+            2,
+        );
+
+        let mut direct_transcript = AkitaTranscript::<F>::new(b"test/direct-stage3");
+        assert!(setup_eval_len(
+            &setup,
+            &level_params,
+            natural_field_len,
+            RING_D,
+            &mut direct_transcript,
+        )
+        .is_err());
+    }
 }

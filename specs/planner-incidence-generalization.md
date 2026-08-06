@@ -63,7 +63,7 @@ pub struct AkitaScheduleLookupKey {
 
 This key intentionally no longer carries setup capacity. In particular,
 `max_num_vars` is not a scheduler/planner key dimension after preprocessing.
-Setup capacity still exists in `AkitaSetupSeed` and setup sizing policy, but
+Setup capacity still exists in `AkitaSetupDescriptor` and setup sizing policy, but
 runtime schedule selection is keyed only by actual root group geometry and any
 frozen precommit metadata.
 
@@ -350,7 +350,7 @@ the planner's actual choices while preserving exact proof-size accounting.
 
 `max_num_vars` remains a setup-capacity concept:
 
-- `AkitaSetupSeed::max_num_vars` bounds accepted commitment/proof inputs.
+- `AkitaSetupDescriptor::max_num_vars` bounds accepted commitment/proof inputs.
 - `ClaimIncidence::validate` and batched input validation reject claims whose
   actual `num_vars` exceeds setup capacity.
 - Setup matrix sizing must conservatively cover every actual runtime shape the

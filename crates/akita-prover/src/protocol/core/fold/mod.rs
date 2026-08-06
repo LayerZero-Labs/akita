@@ -22,9 +22,9 @@ pub(in crate::protocol::core) use extension_claim::{
 pub(in crate::protocol::core) use single_field::prepare_single_field_fold;
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
-    pub(in crate::protocol::core) commitment: RingVec<F>,
     pub(in crate::protocol::core) instance: RingRelationInstance<F>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F>,
+    pub(in crate::protocol::core) opening_payload: RingVec<F>,
     pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<E>>,
     pub(in crate::protocol::core) evaluation_trace_claim: E,
@@ -34,16 +34,11 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) row_coefficients: Option<Vec<E>>,
 }
 
-/// Shared non-EOR opening preparation used by single-field and extension-claim
-/// skip-EOR paths.
-type NonEorOpeningPrep<E> = (Vec<Vec<E>>, Option<Vec<E>>);
-
 pub(super) fn prepare_non_eor_opening<'a, F, E, P, V>(
     block_claims: &ProverOpeningData<'a, E, P, F>,
     opening_batch: &OpeningClaimsLayout,
-    pad_base_evals: bool,
     validate_non_eor: V,
-) -> Result<NonEorOpeningPrep<E>, AkitaError>
+) -> Result<Vec<Vec<E>>, AkitaError>
 where
     F: FieldCore,
     E: ExtField<F>,
@@ -51,20 +46,14 @@ where
     V: FnOnce() -> Result<(), AkitaError>,
 {
     validate_non_eor()?;
-    let row_coefficients = if pad_base_evals {
-        Some(vec![E::one(); opening_batch.num_total_polynomials()])
-    } else {
-        None
-    };
-    let protocol_points = (0..opening_batch.num_groups())
+    (0..opening_batch.num_groups())
         .map(|group_index| {
             block_claims
                 .opening_claims()
                 .group_point(group_index)
                 .map(<[E]>::to_vec)
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((protocol_points, row_coefficients))
+        .collect()
 }
 
 /// Borrowed/owned argument bundle for [`finish_prepared_fold`].
@@ -96,7 +85,13 @@ pub(super) fn finish_prepared_fold<'a, 'p, F, E, T, Q, C, O, TS, R>(
     args: FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    F: FieldCore
+        + CanonicalField
+        + FromPrimitiveInt
+        + HalvingField
+        + HasWide
+        + RandomSampling
+        + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
@@ -215,9 +210,6 @@ where
     .map_err(|err| {
         AkitaError::InvalidInput(format!("root row-coefficient preparation failed: {err:?}"))
     })?;
-    let commitment = block_claims.fold_commitment(level_params).map_err(|err| {
-        AkitaError::InvalidInput(format!("fold commitment preparation failed: {err:?}"))
-    })?;
     let (instance, witness) = RingRelationProver::new(
         opening,
         stack.ring_switch(),
@@ -238,6 +230,11 @@ where
     .map_err(|err| {
         AkitaError::InvalidInput(format!("ring relation preparation failed: {err:?}"))
     })?;
+    let opening_payload = if level_params.payload_mode.is_compressed() {
+        witness.opening_payload()?
+    } else {
+        instance.v().clone()
+    };
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     let evaluation_trace_claim_coefficients = trace_claim.claim_coefficients;
     // Recursive suffixes still omit the public row coefficients from ring-switch
@@ -250,9 +247,9 @@ where
         Some(row_coefficients)
     };
     Ok(PreparedFold {
-        commitment,
         instance,
         witness,
+        opening_payload,
         extension_opening_reduction,
         evaluation_trace_claim: trace_claim.claimed_evaluation,
         evaluation_trace_points: prepared_points,
@@ -374,10 +371,9 @@ where
     let _span = tracing::info_span!("commit_w_level", level).entered();
     let next_commitment = match next_params {
         FoldSuccessorParams::Recursive(params) => {
-            if next_witness_binding != Some(akita_types::NextWitnessBindingPolicy::OuterCommitment)
-            {
+            if next_witness_binding != Some(akita_types::NextWitnessBindingPolicy::OuterPayload) {
                 return Err(AkitaError::InvalidSetup(
-                    "recursive successor requires outer-commitment binding".into(),
+                    "recursive successor requires outer-payload binding".into(),
                 ));
             }
             crate::commit_w::<Cfg, C>(&params.witness, expanded, stack.commit(), &logical_w)?
@@ -395,7 +391,7 @@ where
     };
     drop(_span);
     match &next_commitment.binding {
-        NextWitnessState::OuterCommitment(commitment) => {
+        NextWitnessState::OuterPayload(commitment) => {
             transcript.append_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, commitment);
         }
         NextWitnessState::TerminalInnerState => {
@@ -429,12 +425,11 @@ where
     )?;
 
     let relation_rhs_layout = relation_rhs_layout_for(lp, prepared_fold.instance.opening_batch())?;
-    let relation_claim = relation_claim_from_layout_extension::<F, E>(
+    let relation_claim = relation_claim_from_compressed_rhs_extension::<F, E>(
         &relation_rhs_layout,
         &rs.tau1,
         rs.alpha,
-        prepared_fold.instance.v(),
-        &prepared_fold.commitment,
+        prepared_fold.instance.rhs(),
     )?;
     let (stage1_proof, stage1_point, range_image_evaluation) =
         prove_stage1::<F, E, T>(transcript, &mut rs, &relation_range_image_plan)?;
@@ -443,6 +438,10 @@ where
         &stage1_proof.range_image_evaluation,
     );
     let stage1_proof = Some(stage1_proof);
+    let binary_batching = lp
+        .payload_mode
+        .is_compressed()
+        .then(|| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_COMPRESSION_BINARY));
     let batching_coeff: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     // EvaluationTrace is the last padded relation row: weight openings by
     // `eq(tau1, EvaluationTrace_row_index)`.
@@ -491,6 +490,7 @@ where
         &stage1_point,
         range_image_evaluation,
         relation_claim,
+        binary_batching,
         evaluation_trace,
         trace_opening_claim,
         relation_range_image_plan,
@@ -538,9 +538,9 @@ where
         hint: committed_hint,
     } = next_commitment;
     let (proof_binding, next_binding) = match binding {
-        NextWitnessState::OuterCommitment(commitment) => (
-            akita_types::NextWitnessBinding::OuterCommitment(commitment.clone().into_compact()),
-            NextWitnessState::OuterCommitment(commitment),
+        NextWitnessState::OuterPayload(commitment) => (
+            akita_types::NextWitnessBinding::OuterPayload(commitment.clone().into_compact()),
+            NextWitnessState::OuterPayload(commitment),
         ),
         NextWitnessState::TerminalInnerState => (
             akita_types::NextWitnessBinding::TerminalInnerState,
@@ -549,7 +549,7 @@ where
     };
     let level_proof = FoldLevelProof {
         extension_opening_reduction: prepared_fold.extension_opening_reduction,
-        v: prepared_fold.instance.v().clone().into_compact(),
+        opening_payload: prepared_fold.opening_payload.into_compact(),
         fold_grind_nonce,
         stage1: stage1_proof,
         stage2: AkitaStage2Proof {
@@ -631,6 +631,7 @@ fn prove_stage2<F, E, T>(
     stage1_point: &[E],
     range_image_evaluation: E,
     relation_claim: E,
+    binary_batching: Option<E>,
     evaluation_trace: PreparedProverEvaluationTrace<E>,
     trace_opening_claim: E,
     plan: RelationRangeImagePlan,
@@ -664,6 +665,26 @@ where
             common_alpha_factor.len(),
         )));
     }
+    let additional_relation_terms = rs
+        .compression_relation_weights
+        .map(|weights| {
+            let compression_domain_len = weights.physical_field_len();
+            let binary_support =
+                NegativeBinarySupport::new(plan.witness_layout(), compression_domain_len)?;
+            AdditionalRelationTerms::new(
+                rs.w_evals_compact.as_ref(),
+                compression_domain_len,
+                weights.into_sparse_entries()?,
+                binary_support.intervals(),
+                stage1_point,
+                binary_batching.ok_or(AkitaError::InvalidProof)?,
+            )
+        })
+        .transpose()?;
+    let ordinary_relation_claim = relation_claim
+        - additional_relation_terms
+            .as_ref()
+            .map_or_else(E::zero, AdditionalRelationTerms::input_claim);
     let mut stage2_prover = RelationRangeImageProver::new(
         batching_coeff,
         rs.w_evals_compact,
@@ -675,19 +696,25 @@ where
         live_relation_lane_count,
         relation_lane_variable_count,
         relation_coefficient_variable_count,
-        relation_claim,
+        ordinary_relation_claim,
         evaluation_trace,
         trace_opening_claim,
+        additional_relation_terms,
     )
     .map_err(|err| {
         AkitaError::InvalidInput(format!(
             "stage-2 prover initialization failed at fold level {level}: {err}"
         ))
     })?;
-    let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
+    let (stage2_sumcheck_proof, sumcheck_challenges, final_claim) = stage2_prover
         .prove::<F, T, _>(transcript, |tr| {
             sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
         })?;
+    if final_claim != stage2_prover.expected_final_claim()? {
+        return Err(AkitaError::InvalidInput(
+            "stage-2 prover final claim disagrees with its folded oracle".into(),
+        ));
+    }
     Ok((stage2_sumcheck_proof, sumcheck_challenges, stage2_prover))
 }
 
