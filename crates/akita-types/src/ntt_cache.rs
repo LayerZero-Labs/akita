@@ -1,12 +1,15 @@
 //! Runtime ring-dimension NTT prepared-setup caches.
 
+use akita_algebra::ntt::ifma52::{ifma52_enabled, IFMA52_PRIMES};
 use akita_algebra::ntt::prime::PrimeWidth;
 use akita_algebra::ntt::tables::{
     q128_primes, validate_profile_crt_ring_degree, I16_TAIL_PRIME, Q128_MAX_RING_D, Q128_MODULUS,
     Q128_NUM_PRIMES, Q32_MAX_RING_D, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MAX_RING_D,
     Q64_MODULUS, Q64_NUM_PRIMES, Q64_PRIMES,
 };
-use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, I16TailParams};
+use akita_algebra::{
+    CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt, I16TailParams, Ifma52NttMatrix, Ifma52Params,
+};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{
@@ -247,6 +250,10 @@ where
     )))
 }
 
+fn q64_ifma52_enabled<const D: usize>() -> bool {
+    D <= 256 && ifma52_enabled()
+}
+
 /// NTT representations requested by protocol and backend consumers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NttCacheMode {
@@ -296,6 +303,11 @@ pub enum PreparedNttCache<const D: usize> {
         params: CrtNttParamSet<i32, Q64_NUM_PRIMES, D>,
         tail: Option<PreparedI16Tail<Q64_NUM_PRIMES, D>>,
         exact: bool,
+    },
+    #[non_exhaustive]
+    Q64Ifma52 {
+        neg: Ifma52NttMatrix<2, D>,
+        params: Ifma52Params<2, D>,
     },
     #[non_exhaustive]
     Q128 {
@@ -358,6 +370,13 @@ impl<const D: usize> PreparedNttCache<D> {
                 tail,
                 exact,
             } => validate!(neg, cyc, params, tail, *exact),
+            Self::Q64Ifma52 { neg, .. } => {
+                if neg.is_empty() {
+                    return Err(AkitaError::InvalidSetup(
+                        "prepared IFMA52 NTT cache is empty".into(),
+                    ));
+                }
+            }
             Self::Q128 {
                 neg,
                 cyc,
@@ -386,6 +405,7 @@ impl<const D: usize> PreparedNttCache<D> {
         match self {
             Self::Q32 { neg, cyc, tail, .. } => bytes!(neg, cyc, tail, Q32_NUM_PRIMES),
             Self::Q64 { neg, cyc, tail, .. } => bytes!(neg, cyc, tail, Q64_NUM_PRIMES),
+            Self::Q64Ifma52 { neg, .. } => neg.cache_bytes(),
             Self::Q128 { neg, cyc, tail, .. } => bytes!(neg, cyc, tail, Q128_NUM_PRIMES),
         }
     }
@@ -396,6 +416,7 @@ impl<const D: usize> PreparedNttCache<D> {
         match self {
             Self::Q32 { cyc, .. } => cyc.is_some(),
             Self::Q64 { cyc, .. } => cyc.is_some(),
+            Self::Q64Ifma52 { .. } => false,
             Self::Q128 { cyc, .. } => cyc.is_some(),
         }
     }
@@ -406,6 +427,7 @@ impl<const D: usize> PreparedNttCache<D> {
         match self {
             Self::Q32 { neg, .. } => neg.is_some(),
             Self::Q64 { neg, .. } => neg.is_some(),
+            Self::Q64Ifma52 { .. } => true,
             Self::Q128 { neg, .. } => neg.is_some(),
         }
     }
@@ -416,6 +438,7 @@ impl<const D: usize> PreparedNttCache<D> {
         match self {
             Self::Q32 { tail, .. } => tail.is_some(),
             Self::Q64 { tail, .. } => tail.is_some(),
+            Self::Q64Ifma52 { .. } => false,
             Self::Q128 { tail, .. } => tail.is_some(),
         }
     }
@@ -469,6 +492,26 @@ impl<const D: usize> PreparedNttCache<D> {
                 }
                 mat_vec_i16_from_cache(neg, params, tail.as_ref(), *exact, log_basis, num_rows, rhs)
             }
+            Self::Q64Ifma52 { neg, params } => {
+                if !matches!(
+                    select_crt_ntt_params::<F, D>()?,
+                    ProtocolCrtNttParams::Q64(_)
+                ) {
+                    return Err(AkitaError::InvalidSetup(
+                        "prepared NTT field profile mismatch".into(),
+                    ));
+                }
+                let rhs_abs_bound = validate_i16_rhs(log_basis, rhs)?;
+                if !params
+                    .crt_capacity()
+                    .supports::<F, D>(rhs.len(), rhs_abs_bound)
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "signed-i16 matvec exceeds prepared IFMA52 capacity".into(),
+                    ));
+                }
+                neg.mat_vec_i16(num_rows, rhs, params)
+            }
             Self::Q128 {
                 neg,
                 params,
@@ -510,23 +553,9 @@ where
             "signed-i16 matvec requested from a cyclic cache".into(),
         ));
     }
-    if !(1..=16).contains(&log_basis) {
-        return Err(AkitaError::InvalidProof);
-    }
     let width = rhs.len();
-    if width == 0 {
-        return Err(AkitaError::InvalidProof);
-    }
-    let bound = 1i32 << (log_basis - 1);
-    if rhs
-        .iter()
-        .flatten()
-        .any(|&digit| !(-bound..bound).contains(&i32::from(digit)))
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    let needs_tail =
-        required_profile_for_params::<F, _, K, D>(params, width, 1u64 << (log_basis - 1))?;
+    let rhs_abs_bound = validate_i16_rhs(log_basis, rhs)?;
+    let needs_tail = required_profile_for_params::<F, _, K, D>(params, width, rhs_abs_bound)?;
     if needs_tail {
         let tail = tail.ok_or_else(|| {
             AkitaError::InvalidSetup("prepared exact NTT cache is missing its required tail".into())
@@ -542,6 +571,21 @@ where
     } else {
         CyclotomicCrtNtt::mat_vec_i16(neg, num_rows, width, rhs, params)
     }
+}
+
+fn validate_i16_rhs<const D: usize>(log_basis: u32, rhs: &[[i16; D]]) -> Result<u64, AkitaError> {
+    if !(1..=16).contains(&log_basis) || rhs.is_empty() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let bound = 1i32 << (log_basis - 1);
+    if rhs
+        .iter()
+        .flatten()
+        .any(|&digit| !(-bound..bound).contains(&i32::from(digit)))
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(bound as u64)
 }
 
 fn validate_cache_mode(mode: NttCacheMode) -> Result<(), AkitaError> {
@@ -579,6 +623,14 @@ pub fn ntt_cache_requires_i16_tail<F: CanonicalField, const D: usize>(
             required_profile_for_params::<F, _, Q32_NUM_PRIMES, D>(&params, width, rhs_abs_bound)?
         }
         ProtocolCrtNttParams::Q64(params) => {
+            if q64_ifma52_enabled::<D>()
+                && CrtCapacity::from_prime_moduli(
+                    IFMA52_PRIMES[..2].iter().copied().map(u128::from),
+                )
+                .supports::<F, D>(width, rhs_abs_bound)
+            {
+                return Ok(false);
+            }
             required_profile_for_params::<F, _, Q64_NUM_PRIMES, D>(&params, width, rhs_abs_bound)?
         }
         ProtocolCrtNttParams::Q128(params) => {
@@ -633,6 +685,31 @@ fn prepare_ntt_cache_with_tail_prefix<F: FieldCore + CanonicalField, const D: us
         return Err(AkitaError::InvalidSetup(
             "i16-tail NTT prefix exceeds the prepared base prefix".into(),
         ));
+    }
+    if q64_ifma52_enabled::<D>() {
+        if let (
+            NttCacheMode::ExactNegacyclic {
+                width,
+                rhs_abs_bound,
+            },
+            ProtocolCrtNttParams::Q64(_),
+        ) = (mode, &selected)
+        {
+            let params = Ifma52Params::new([IFMA52_PRIMES[0], IFMA52_PRIMES[1]])?;
+            if params.crt_capacity().supports::<F, D>(width, rhs_abs_bound) {
+                if tail_prefix_len.is_some_and(|length| length > 0) {
+                    return Err(AkitaError::InvalidSetup(
+                        "IFMA52 exact cache does not require an i16 tail".into(),
+                    ));
+                }
+                let prepared = PreparedNttCache::Q64Ifma52 {
+                    neg: Ifma52NttMatrix::prepare(matrix.as_slice(), &params),
+                    params,
+                };
+                prepared.validate()?;
+                return Ok(prepared);
+            }
+        }
     }
     macro_rules! prepare {
         ($params:expr, $variant:ident, $k:expr) => {{
@@ -1016,6 +1093,32 @@ mod tests {
             select_crt_ntt_params::<Prime128OffsetA7F7, 512>(),
             Ok(ProtocolCrtNttParams::Q128(_))
         ));
+    }
+
+    #[test]
+    fn q64_exact_cache_uses_ifma52_when_enabled() {
+        const D: usize = 64;
+        let flat = flat_zeros::<Prime64Offset59, D>(2);
+        let cache = prepare_ntt_cache(
+            flat.ring_view::<D>(1, 2).expect("matrix view"),
+            NttCacheMode::ExactNegacyclic {
+                width: 2,
+                rhs_abs_bound: 1 << 15,
+            },
+        )
+        .expect("exact cache");
+        if q64_ifma52_enabled::<D>() {
+            assert!(matches!(cache, PreparedNttCache::Q64Ifma52 { .. }));
+            assert_eq!(cache.cache_bytes(), 2 * 2 * D * size_of::<u64>());
+        } else {
+            assert!(matches!(cache, PreparedNttCache::Q64 { .. }));
+        }
+        assert_eq!(
+            cache
+                .mat_vec_i16::<Prime64Offset59>(16, 1, &[[i16::MAX; D], [i16::MIN; D]])
+                .expect("IFMA52 exact matvec"),
+            vec![CyclotomicRing::zero()]
+        );
     }
 
     #[test]

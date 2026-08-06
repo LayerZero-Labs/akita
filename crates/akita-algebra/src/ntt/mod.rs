@@ -5,6 +5,7 @@ pub mod avx;
 pub mod butterfly;
 pub mod crt;
 pub mod forward_dif_tail_policy;
+pub mod ifma52;
 #[cfg(target_arch = "aarch64")]
 pub mod neon;
 mod plan;

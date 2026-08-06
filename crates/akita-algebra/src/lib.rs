@@ -40,7 +40,7 @@ pub use ntt::{
 pub use ring::{
     balanced_decompose_coefficients_pow2_i8_into, mat_vec_i16_with_tail, CenteredMontLut,
     CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
-    I16TailParams,
+    I16TailParams, Ifma52NttMatrix, Ifma52Params,
 };
 pub use split_eq::GruenSplitEq;
 pub use uni_poly::{CompressedUniPoly, UniPoly};

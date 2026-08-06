@@ -1,5 +1,3 @@
-use std::array::from_fn;
-
 use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt, inverse_ntt_cyclic};
 use crate::ntt::prime::{MontCoeff, PrimeWidth};
 use crate::ring::cyclotomic::CyclotomicRing;
@@ -35,16 +33,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
-        let q = (-F::one()).to_canonical_u128() + 1;
-        let half_q = q / 2;
-        let centered_coeffs: [i128; D] = from_fn(|i| {
-            let canonical = ring.coeffs[i].to_canonical_u128();
-            if canonical > half_q {
-                -((q - canonical) as i128)
-            } else {
-                canonical as i128
-            }
-        });
+        let centered_coeffs = ring.centered_coefficients_i128();
 
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for ((limb, prime), tw) in limbs
@@ -67,16 +56,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> (Self, Self) {
-        let q = (-F::one()).to_canonical_u128() + 1;
-        let half_q = q / 2;
-        let centered_coeffs: [i128; D] = from_fn(|i| {
-            let canonical = ring.coeffs[i].to_canonical_u128();
-            if canonical > half_q {
-                -((q - canonical) as i128)
-            } else {
-                canonical as i128
-            }
-        });
+        let centered_coeffs = ring.centered_coefficients_i128();
 
         let mut neg_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         let mut cyc_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
@@ -360,16 +340,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
-        let q = (-F::one()).to_canonical_u128() + 1;
-        let half_q = q / 2;
-        let centered_coeffs: [i128; D] = from_fn(|i| {
-            let canonical = ring.coeffs[i].to_canonical_u128();
-            if canonical > half_q {
-                -((q - canonical) as i128)
-            } else {
-                canonical as i128
-            }
-        });
+        let centered_coeffs = ring.centered_coefficients_i128();
 
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for ((limb, prime), tw) in limbs

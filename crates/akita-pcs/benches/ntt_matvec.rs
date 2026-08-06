@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, Prime128OffsetA7F7};
+use akita_field::{CanonicalField, Prime128OffsetA7F7, Prime64Offset59};
 use akita_prover::kernels::linear::mat_vec_mul_ntt_digits_i8;
 use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode, PreparedNttCache};
 use criterion::{
@@ -66,6 +66,59 @@ fn prepare<const D: usize>(
         .ring_view::<D>(1, matrix.len())
         .expect("benchmark matrix view");
     prepare_ntt_cache(view, mode).expect("benchmark NTT cache")
+}
+
+fn sample_q64_matrix<const D: usize>(
+    rank: usize,
+    width: usize,
+) -> Vec<CyclotomicRing<Prime64Offset59, D>> {
+    (0..rank * width)
+        .map(|entry| {
+            CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
+                Prime64Offset59::from_u64(
+                    entry
+                        .wrapping_mul(65_537)
+                        .wrapping_add(coefficient.wrapping_mul(4_099)) as u64,
+                )
+            }))
+        })
+        .collect()
+}
+
+fn bench_q64_exact_shape<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    rank: usize,
+    width: usize,
+) {
+    let matrix = sample_q64_matrix::<D>(rank, width);
+    let flat = FlatMatrix::from_ring_slice(&matrix);
+    let cache = prepare_ntt_cache(
+        flat.ring_view::<D>(rank, width).expect("Q64 matrix view"),
+        NttCacheMode::ExactNegacyclic {
+            width,
+            rhs_abs_bound: 1 << 15,
+        },
+    )
+    .expect("Q64 exact cache");
+    let profile = if matches!(cache, PreparedNttCache::Q64Ifma52 { .. }) {
+        "ifma52"
+    } else {
+        "i32"
+    };
+    let rhs = sample_i16_digits::<D>(width, 16);
+    group.throughput(Throughput::Elements((rank * width * D) as u64));
+    group.bench_function(
+        BenchmarkId::new(profile, format!("d{D}_r{rank}_w{width}")),
+        |bench| {
+            bench.iter(|| {
+                black_box(
+                    cache
+                        .mat_vec_i16::<Prime64Offset59>(16, rank, black_box(&rhs))
+                        .expect("Q64 exact matvec"),
+                )
+            })
+        },
+    );
 }
 
 fn i8_matvec<const D: usize>(
@@ -261,12 +314,21 @@ fn bench_equal_output(c: &mut Criterion) {
     equal_io.finish();
 }
 
+fn bench_q64_exact(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ntt_matvec_q64/exact_i16/r4_w128");
+    bench_q64_exact_shape::<64>(&mut group, 4, 128);
+    bench_q64_exact_shape::<128>(&mut group, 4, 128);
+    bench_q64_exact_shape::<256>(&mut group, 4, 128);
+    bench_q64_exact_shape::<512>(&mut group, 4, 128);
+    group.finish();
+}
+
 criterion_group! {
     name = ntt_matvec;
     config = Criterion::default()
         .sample_size(10)
         .warm_up_time(Duration::from_millis(200))
         .measurement_time(Duration::from_secs(1));
-    targets = bench_rank_ring_dim, bench_width, bench_equal_output
+    targets = bench_rank_ring_dim, bench_width, bench_equal_output, bench_q64_exact
 }
 criterion_main!(ntt_matvec);
