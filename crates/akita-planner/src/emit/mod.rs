@@ -52,6 +52,19 @@ pub struct EmitSpec {
 const MOD_WIRING_BEGIN: &str = "// @generated schedule module wiring begin";
 const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
 
+pub(crate) fn schedule_generation_worker_count(work_items: usize) -> usize {
+    let configured = std::env::var("AKITA_SCHEDULE_GEN_JOBS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or(2);
+    std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(configured)
+        .min(work_items.max(1))
+}
+
 fn geometry(p: &CommittedGroupParams) -> GeneratedBlockGeometry {
     GeneratedBlockGeometry {
         live_ring_elements_per_claim: p.num_live_ring_elements_per_claim as u64,
@@ -634,10 +647,7 @@ fn materialized_entries(
     );
     keys.extend(spec.group_batch_keys.iter().map(|(key, _)| key.clone()));
 
-    let workers = std::thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(1)
-        .min(keys.len().max(1));
+    let workers = schedule_generation_worker_count(keys.len());
     let mut entries = Vec::new();
     if workers > 1 && keys.len() >= 2 * workers {
         let chunk_size = keys.len().div_ceil(workers);

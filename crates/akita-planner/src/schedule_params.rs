@@ -505,7 +505,8 @@ pub fn derive_standalone_precommit_profile(
         input_witness_len: witness_len,
     });
     let (min_log_basis, max_log_basis) = direct_policy.log_basis_search_range_at_level(0);
-    let (min_inner_basis, max_inner_basis) = direct_policy.inner_basis_search_range();
+    let (min_inner_basis, max_inner_basis) = direct_policy
+        .inner_basis_search_range_for_source(direct_policy.decomposition.log_commit_bound);
     let mut best: Option<(usize, CommittedGroupParams)> = None;
     let schedule_key = AkitaScheduleLookupKey::single(key);
 

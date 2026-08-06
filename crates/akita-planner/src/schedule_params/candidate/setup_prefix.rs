@@ -150,7 +150,8 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     let mut frontier: Vec<(usize, usize, LayoutCandidateScore, PrecommittedLevelParams)> =
         Vec::new();
 
-    let (inner_basis_min, inner_basis_max) = policy.inner_basis_search_range();
+    let (inner_basis_min, inner_basis_max) =
+        policy.inner_basis_search_range_for_source(policy.decomposition.field_bits());
     for log_basis_inner in inner_basis_min..=inner_basis_max {
         let inner_decomp = DecompositionParams {
             log_basis: log_basis_inner,

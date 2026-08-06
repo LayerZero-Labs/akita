@@ -221,6 +221,15 @@ impl PlannerPolicy {
     pub const fn inner_basis_search_range(&self) -> (u32, u32) {
         self.inner_basis_range
     }
+
+    /// Inclusive A/source basis domain after removing one-digit choices that
+    /// are strictly weaker than the smallest one-digit basis. Once the basis
+    /// reaches the source coefficient bound, increasing it cannot reduce the
+    /// digit count and can only weaken the commitment norm bound.
+    pub fn inner_basis_search_range_for_source(&self, source_log_bound: u32) -> (u32, u32) {
+        let (min, max) = self.inner_basis_range;
+        (min, max.min(source_log_bound.max(min)))
+    }
 }
 
 /// Suffix-DP depth cap carried into runtime validation for chunk policy bounds.

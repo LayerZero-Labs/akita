@@ -342,6 +342,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
+        inner_basis_range: Cfg::inner_basis_range(),
         opening_basis_range: Cfg::opening_basis_range(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning: Cfg::recursive_setup_planning(),
@@ -445,6 +446,14 @@ fn root_basis_is_derived_from_existing_policy_inputs() {
     assert_eq!(fp32.decomposition.log_basis, 3);
     assert_eq!(fp32.log_basis_search_range_at_level(0), (3, 3));
     assert_eq!(fp32.log_basis_search_range_at_level(1), (3, 6));
+}
+
+#[test]
+fn inner_basis_domain_drops_only_dominated_one_digit_choices() {
+    let policy = policy_of::<fp128::D64Dense>();
+    assert_eq!(policy.inner_basis_search_range_for_source(3), (3, 3));
+    assert_eq!(policy.inner_basis_search_range_for_source(11), (3, 11));
+    assert_eq!(policy.inner_basis_search_range_for_source(128), (3, 16));
 }
 
 #[test]

@@ -133,6 +133,28 @@ pub(crate) type ScheduleMemo = HashMap<
     Arc<SuffixResult>,
 >;
 
+// Geometry and independent-basis search can produce many distinct witness
+// lengths. Memoization is only a speed optimization, so bound retained states
+// rather than allowing catalog generation to consume memory without limit.
+const MAX_SCHEDULE_MEMO_ENTRIES: usize = 16_384;
+
+fn memo_insert(
+    memo: &mut ScheduleMemo,
+    key: (
+        usize,
+        usize,
+        u32,
+        usize,
+        akita_types::CommitmentPayloadPhase,
+    ),
+    result: &Arc<SuffixResult>,
+) {
+    if memo.len() >= MAX_SCHEDULE_MEMO_ENTRIES {
+        memo.clear();
+    }
+    memo.insert(key, Arc::clone(result));
+}
+
 fn offloaded_witness_contracts(
     input_witness_len: usize,
     input_log_basis: u32,
@@ -182,14 +204,19 @@ fn prune_level_candidate_frontier(
                 .checked_mul(params.role_dims().d_d())
                 .ok_or_else(|| AkitaError::InvalidSetup("D output dimension overflow".into()))?,
         ];
+        // Successor feasibility is not monotone in witness length because the
+        // legal block geometry changes with it. Only compare candidates inside
+        // the same exact next-witness class.
         if frontier.iter().any(|(best, best_params, _)| {
             best_params.payload_mode == params.payload_mode
+                && best[0] == coords[0]
                 && best.iter().zip(coords).all(|(lhs, rhs)| *lhs <= rhs)
         }) {
             continue;
         }
         frontier.retain(|(other, other_params, _)| {
             other_params.payload_mode != params.payload_mode
+                || other[0] != coords[0]
                 || !coords.iter().zip(*other).all(|(lhs, rhs)| *lhs <= rhs)
         });
         frontier.push((coords, params, next_witness_len));
@@ -578,7 +605,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
 
     if depth > MAX_RECURSION_DEPTH {
         let result = empty_suffix_result();
-        memo.insert(memo_key, Arc::clone(&result));
+        memo_insert(memo, memo_key, &result);
         return Ok(result);
     }
 
@@ -630,7 +657,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
     )?
     else {
         let result = empty_suffix_result();
-        memo.insert(memo_key, Arc::clone(&result));
+        memo_insert(memo, memo_key, &result);
         return Ok(result);
     };
     let scalar_opening_layout = if root_level_key.is_some() {
@@ -653,7 +680,13 @@ pub(crate) fn derive_optimal_suffix_schedule(
         }
         let mut best_for_this_lb = BTreeMap::<(usize, usize), ScheduleCandidate>::new();
         let mut best_payload_for_this_lb = BTreeMap::<(usize, usize), ScheduleCandidate>::new();
-        let (min_inner_basis, max_inner_basis) = policy.inner_basis_search_range();
+        let source_log_bound = if level_zero_is_root && level == 0 {
+            policy.decomposition.log_commit_bound
+        } else {
+            current_lb
+        };
+        let (min_inner_basis, max_inner_basis) =
+            policy.inner_basis_search_range_for_source(source_log_bound);
 
         for inner_lb in min_inner_basis..=max_inner_basis {
             let (current_opening_layout, candidates, require_child_fold) = if let Some(root_key) =
@@ -722,7 +755,6 @@ pub(crate) fn derive_optimal_suffix_schedule(
             };
 
             let candidates = prune_level_candidate_frontier(current_opening_layout, candidates)?;
-
             for (candidate_params, next_witness_len) in candidates {
                 if let Some(natural_prefix_len) = incoming_setup_prefix {
                     let padded_prefix_len =
@@ -839,7 +871,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         best_by_first_direct_setup_per_lb,
         best_by_payload_per_lb,
     });
-    memo.insert(memo_key, Arc::clone(&result));
+    memo_insert(memo, memo_key, &result);
     Ok(result)
 }
 

@@ -17,6 +17,7 @@ use std::{
     sync::{LazyLock, Mutex, MutexGuard},
 };
 
+use crate::emit::schedule_generation_worker_count;
 use crate::{
     derive_standalone_precommit_profile, find_schedule, runtime_schedule_key_cmp, EmitSpec,
     PlannerPolicy,
@@ -317,10 +318,7 @@ fn supported_group_batch_key<Cfg: CommitmentConfig + 'static>(
 fn supported_group_batch_keys<Cfg: CommitmentConfig + 'static>(
     candidates: Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
-    let workers = std::thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(1)
-        .min(candidates.len().max(1));
+    let workers = schedule_generation_worker_count(candidates.len());
 
     if workers <= 1 || candidates.len() < 2 * workers {
         return Ok(candidates

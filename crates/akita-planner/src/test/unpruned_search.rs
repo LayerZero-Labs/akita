@@ -46,7 +46,8 @@ fn enumerate_suffixes(
         input_witness_len,
     });
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(level);
-    let (min_inner_basis, max_inner_basis) = policy.inner_basis_search_range();
+    let (min_inner_basis, max_inner_basis) =
+        policy.inner_basis_search_range_for_source(current_log_basis);
     let mut schedules = Vec::new();
 
     for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
@@ -250,7 +251,8 @@ pub(super) fn find_schedule(
         input_witness_len,
     });
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(0);
-    let (min_inner_basis, max_inner_basis) = policy.inner_basis_search_range();
+    let (min_inner_basis, max_inner_basis) =
+        policy.inner_basis_search_range_for_source(policy.decomposition.log_commit_bound);
     let mut complete = Vec::new();
     let schedule_key = akita_types::AkitaScheduleLookupKey::single(key);
     let ctx = UnprunedCtx {
