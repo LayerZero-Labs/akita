@@ -63,6 +63,15 @@ impl Ifma52Prime {
         ((u128::from(lhs) * u128::from(rhs)) % u128::from(self.modulus)) as u64
     }
 
+    #[inline]
+    pub(crate) fn canonical_i16(self, value: i16) -> u64 {
+        if value >= 0 {
+            value as u64
+        } else {
+            self.modulus - u64::from(value.unsigned_abs())
+        }
+    }
+
     fn pow(self, mut base: u64, mut exponent: u64) -> u64 {
         let mut result = 1;
         while exponent != 0 {
@@ -104,7 +113,7 @@ pub struct Ifma52Twiddles<const D: usize> {
 impl<const D: usize> Ifma52Twiddles<D> {
     /// Compute tables for a supported power-of-two ring degree.
     pub fn compute(prime: Ifma52Prime) -> Result<Self, AkitaError> {
-        if D < 64 || !D.is_power_of_two() || (prime.modulus - 1) % (2 * D as u64) != 0 {
+        if D < 64 || !D.is_power_of_two() || !(prime.modulus - 1).is_multiple_of(2 * D as u64) {
             return Err(AkitaError::InvalidSetup(format!(
                 "IFMA52 prime does not support ring degree {D}"
             )));
@@ -200,6 +209,7 @@ pub fn ifma52_enabled() -> bool {
     ifma52_available() && std::env::var_os("AKITA_IFMA52").is_none_or(|value| value != "0")
 }
 
+#[inline(always)]
 pub(crate) fn forward<const D: usize>(
     values: &mut [u64; D],
     prime: Ifma52Prime,
@@ -217,6 +227,7 @@ pub(crate) fn forward<const D: usize>(
     scalar_forward(values, prime, twiddles);
 }
 
+#[inline(always)]
 pub(crate) fn inverse<const D: usize>(
     values: &mut [u64; D],
     prime: Ifma52Prime,
@@ -234,23 +245,27 @@ pub(crate) fn inverse<const D: usize>(
     scalar_inverse(values, prime, twiddles);
 }
 
-pub(crate) fn pointwise_accumulate<const D: usize>(
+#[inline(always)]
+pub(crate) fn pointwise_dot_accumulate<const D: usize>(
     accumulator: &mut [u64; D],
-    lhs: &[u64; D],
-    rhs: &[u64; D],
+    lhs: &[[u64; D]],
+    rhs: &[[u64; D]],
     prime: Ifma52Prime,
     use_ifma: bool,
 ) {
+    debug_assert_eq!(lhs.len(), rhs.len());
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     let _ = use_ifma;
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_ifma {
         // SAFETY: runtime feature detection covers every enabled instruction.
-        unsafe { x86::pointwise_accumulate(accumulator, lhs, rhs, prime) };
+        unsafe { x86::pointwise_dot_accumulate(accumulator, lhs, rhs, prime) };
         return;
     }
-    for ((accumulator, &lhs), &rhs) in accumulator.iter_mut().zip(lhs).zip(rhs) {
-        *accumulator = prime.add(*accumulator, prime.mul(lhs, rhs));
+    for (lhs, rhs) in lhs.iter().zip(rhs) {
+        for ((accumulator, &lhs), &rhs) in accumulator.iter_mut().zip(lhs).zip(rhs) {
+            *accumulator = prime.add(*accumulator, prime.mul(lhs, rhs));
+        }
     }
 }
 

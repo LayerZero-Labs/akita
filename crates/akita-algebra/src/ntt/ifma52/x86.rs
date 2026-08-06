@@ -533,27 +533,36 @@ pub(super) unsafe fn inverse<const D: usize>(
     };
 }
 
-/// Accumulate one pointwise product.
+/// Accumulate a pointwise dot product in exact three-product batches.
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-pub(super) unsafe fn pointwise_accumulate<const D: usize>(
+pub(super) unsafe fn pointwise_dot_accumulate<const D: usize>(
     accumulator: &mut [u64; D],
-    lhs: &[u64; D],
-    rhs: &[u64; D],
+    lhs: &[[u64; D]],
+    rhs: &[[u64; D]],
     prime: Ifma52Prime,
 ) {
+    if lhs.is_empty() {
+        return;
+    }
     let modulus = _mm512_set1_epi64(prime.modulus as i64);
-    for index in (0..D).step_by(8) {
-        // SAFETY: supported degrees are multiples of eight.
-        unsafe {
-            let accumulator_pointer = accumulator.as_mut_ptr().add(index);
-            let value = _mm512_loadu_si512(accumulator_pointer.cast());
-            let lhs = _mm512_loadu_si512(lhs.as_ptr().add(index).cast());
-            let rhs = _mm512_loadu_si512(rhs.as_ptr().add(index).cast());
-            let product = mul_variable(lhs, rhs, prime);
-            _mm512_storeu_si512(
-                accumulator_pointer.cast(),
-                reduce_once(_mm512_add_epi64(value, product), modulus),
-            );
+    let twice_modulus = _mm512_set1_epi64((2 * prime.modulus) as i64);
+    for (lhs_batch, rhs_batch) in lhs.chunks(3).zip(rhs.chunks(3)) {
+        for index in (0..D).step_by(8) {
+            // SAFETY: supported degrees are multiples of eight. The two
+            // slices have matching lengths and every array contains D
+            // coefficients.
+            unsafe {
+                let accumulator_pointer = accumulator.as_mut_ptr().add(index);
+                let mut sum = _mm512_loadu_si512(accumulator_pointer.cast());
+                for (lhs, rhs) in lhs_batch.iter().zip(rhs_batch) {
+                    let lhs = _mm512_loadu_si512(lhs.as_ptr().add(index).cast());
+                    let rhs = _mm512_loadu_si512(rhs.as_ptr().add(index).cast());
+                    sum = _mm512_add_epi64(sum, mul_variable(lhs, rhs, prime));
+                }
+                sum = reduce_once(sum, twice_modulus);
+                sum = reduce_once(sum, modulus);
+                _mm512_storeu_si512(accumulator_pointer.cast(), sum);
+            }
         }
     }
 }

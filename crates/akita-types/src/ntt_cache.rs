@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use crate::dispatch::compression_ring_dim_supported_for_tier;
 use crate::{
     field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
-    protocol_dispatch_tier, AkitaExpandedSetup, RingMatrixView,
+    protocol_dispatch_tier, AkitaExpandedSetup, ProtocolRingDispatchTierId, RingMatrixView,
 };
 
 /// Transform representation stored by one exact-prefix NTT cache entry.
@@ -251,7 +251,7 @@ where
 }
 
 fn q64_ifma52_enabled<const D: usize>() -> bool {
-    D <= 256 && ifma52_enabled()
+    (64..=512).contains(&D) && ifma52_enabled()
 }
 
 /// NTT representations requested by protocol and backend consumers.
@@ -451,6 +451,16 @@ impl<const D: usize> PreparedNttCache<D> {
         rhs: &[[i16; D]],
     ) -> Result<Vec<akita_algebra::CyclotomicRing<F, D>>, AkitaError> {
         self.validate()?;
+        let prepared_tier = match self {
+            Self::Q32 { .. } => ProtocolRingDispatchTierId::Fp32,
+            Self::Q64 { .. } | Self::Q64Ifma52 { .. } => ProtocolRingDispatchTierId::Fp64,
+            Self::Q128 { .. } => ProtocolRingDispatchTierId::Fp128,
+        };
+        if protocol_dispatch_tier::<F>() != prepared_tier {
+            return Err(AkitaError::InvalidSetup(
+                "prepared NTT field profile mismatch".into(),
+            ));
+        }
         match self {
             Self::Q32 {
                 neg,
@@ -462,14 +472,6 @@ impl<const D: usize> PreparedNttCache<D> {
                 let neg = neg.as_deref().ok_or_else(|| {
                     AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
                 })?;
-                if !matches!(
-                    select_crt_ntt_params::<F, D>()?,
-                    ProtocolCrtNttParams::Q32(_)
-                ) {
-                    return Err(AkitaError::InvalidSetup(
-                        "prepared NTT field profile mismatch".into(),
-                    ));
-                }
                 mat_vec_i16_from_cache(neg, params, tail.as_ref(), *exact, log_basis, num_rows, rhs)
             }
             Self::Q64 {
@@ -482,25 +484,9 @@ impl<const D: usize> PreparedNttCache<D> {
                 let neg = neg.as_deref().ok_or_else(|| {
                     AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
                 })?;
-                if !matches!(
-                    select_crt_ntt_params::<F, D>()?,
-                    ProtocolCrtNttParams::Q64(_)
-                ) {
-                    return Err(AkitaError::InvalidSetup(
-                        "prepared NTT field profile mismatch".into(),
-                    ));
-                }
                 mat_vec_i16_from_cache(neg, params, tail.as_ref(), *exact, log_basis, num_rows, rhs)
             }
             Self::Q64Ifma52 { neg, params } => {
-                if !matches!(
-                    select_crt_ntt_params::<F, D>()?,
-                    ProtocolCrtNttParams::Q64(_)
-                ) {
-                    return Err(AkitaError::InvalidSetup(
-                        "prepared NTT field profile mismatch".into(),
-                    ));
-                }
                 let rhs_abs_bound = validate_i16_rhs(log_basis, rhs)?;
                 if !params
                     .crt_capacity()
@@ -522,14 +508,6 @@ impl<const D: usize> PreparedNttCache<D> {
                 let neg = neg.as_deref().ok_or_else(|| {
                     AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
                 })?;
-                if !matches!(
-                    select_crt_ntt_params::<F, D>()?,
-                    ProtocolCrtNttParams::Q128(_)
-                ) {
-                    return Err(AkitaError::InvalidSetup(
-                        "prepared NTT field profile mismatch".into(),
-                    ));
-                }
                 mat_vec_i16_from_cache(neg, params, tail.as_ref(), *exact, log_basis, num_rows, rhs)
             }
         }
@@ -578,6 +556,9 @@ fn validate_i16_rhs<const D: usize>(log_basis: u32, rhs: &[[i16; D]]) -> Result<
         return Err(AkitaError::InvalidProof);
     }
     let bound = 1i32 << (log_basis - 1);
+    if log_basis == 16 {
+        return Ok(bound as u64);
+    }
     if rhs
         .iter()
         .flatten()

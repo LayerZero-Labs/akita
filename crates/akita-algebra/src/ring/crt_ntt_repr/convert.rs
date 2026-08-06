@@ -8,7 +8,7 @@ use super::{
 };
 
 impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
-    pub(super) fn centered_coefficients_with_params(
+    pub(crate) fn centered_coefficients_with_params(
         &self,
         params: &CrtNttParamSet<W, K, D>,
     ) -> [[W; D]; K] {
