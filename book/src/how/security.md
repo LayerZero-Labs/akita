@@ -76,3 +76,5 @@ norm. Keep the fold-reprice correction explicit.
 - Paper §3.12 `sec:batched-soundness` (`def:batched-weak-opening`, `lem:batched-weak-binding`, `prop:committed-fold-price`).
 - `specs/weak-binding-norm-fix.md` (fold reprice — keep the correction section).
 - `specs/fold-linf-rejection.md` (fold digit-count tightening).
+- `specs/selective-l2-fold-security-sizing.md` (active physical norm correction
+  and optional L2 route).

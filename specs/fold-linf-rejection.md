@@ -47,10 +47,9 @@ only replays the accepted Fiat–Shamir challenge stream.
 | `TailBoundWithGrind` | `FoldWitnessLinfCapPolicy` variant: `cap = min(β_inf, t*)`, grind allowed |
 | `WorstCaseBetaOnly` | `FoldWitnessLinfCapPolicy` variant: `cap = β_inf` only, nonce must be 0 |
 
-This is orthogonal to the L2-MSIS cutover (#155): that stack prices the **A-role
-binding rank** (challenge L1 mass `ω` + Euclidean MSIS); this spec tightens the
-**fold digit count** that sizes the **next-level width**. The two never touch the
-same quantity.
+This spec tightens only the **fold digit count** that sizes the
+**next-level width**. It does not select or define the norm used to price the
+A-role binding rank.
 
 ### Field-specific snap policy
 
@@ -69,9 +68,8 @@ regenerated from the same bound after a policy change; the policy is not
 covered by the group-local point cutover's no-pricing-drift invariant.
 
 The sub-Gaussian tail argument for the approved flat-family cutover is reproduced in
-the Design section below. This spec is self-contained and consistent with the
-"Folded-Witness ∞-Norm Rejection" section of
-[`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md).
+the Design section below. This spec is the self-contained source for the
+folded-witness infinity-norm rejection policy.
 
 ## Intent
 
@@ -151,11 +149,8 @@ The feature introduces or modifies:
 
 ### Non-Goals
 
-- **Not** the L2 Euclidean certificate (S6–S13 of the L2 spec; **cancelled and removed #247**): `Z_SQUARED`,
-  four-square slack, the two linked sum-checks. Those would have priced the A-role rank via a realized bound;
-  production instead uses the coefficient-`L∞` envelope from
-  `rounded_up_role_a_inf_norm`.
-  This spec's `‖z‖∞` tail work is orthogonal to that stack.
+- **Not** an A-role L2 certificate or Euclidean security-pricing policy. This
+  spec controls only the digit depth and realized coefficient-`L∞` admission.
 - **Not** a calibrated/measured threshold (the `~0.03·β_inf` regime). The spec
   uses the rigorous `t*`; a calibrated constant is left as a future opt-in with a
   documented second-moment assumption (see Alternatives).
@@ -492,8 +487,8 @@ Tensor tail-bound grind needs the separate tensor-chaos formula in
   `L·log2(MAX_FOLD_GRIND_ATTEMPTS)` bits of challenge entropy. With the fixed cap
   above this is `12L` bits. The descriptor/security docs must state that the
   accepted fold-challenge support still exceeds
-  `λ + log2(Q) + 12L` bits, refining the accepted-challenge entropy invariant from
-  the in-repo L2 spec.
+  `λ + log2(Q) + 12L` bits. This is the complete accepted-challenge entropy
+  invariant for the fold-L∞ policy.
 
 ### Precise diff surface
 
@@ -601,10 +596,6 @@ worst-case path is generalized in place):
 
 ## Documentation
 
-- Update the "Folded-Witness ∞-Norm Rejection" section of
-  [`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md) to point
-  at this spec, mark flat `signed-sparse`/`Uniform{[-1,1]}` as certified, and mark
-  tensor/`BoundedL1Norm` as `WorstCaseBetaOnly` pending separate proofs.
 - Crate docs on `num_digits_fold` and the tail-bound primitive, stating the
   per-family `challenge_l2_sq_max` table and the sign-symmetry requirement inline.
 - Public security-model docs: extend the challenge-distribution / norm-bound
@@ -639,9 +630,6 @@ runs stage-1 challenge sampling (root, intermediate, and terminal).
 
 ## References
 
-- [`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md)
-  ("Folded-Witness ∞-Norm Rejection" section; accepted-challenge entropy
-  invariant).
 - `crates/akita-types/src/sis/{norm_bound,decomposition_digits,ajtai_key}.rs`
 - `crates/akita-types/src/layout/{params,proof_size}.rs`,
   `crates/akita-types/src/proof/levels.rs`
