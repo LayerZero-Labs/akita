@@ -108,7 +108,10 @@ where
     SparseExtensionOpeningWitness::from_sorted_unique_entries(table_len, entries).unwrap()
 }
 
-fn sparse_tensor_term<F, E>(num_vars: usize, num_polys: usize) -> ExtensionOpeningReductionTerm<E>
+fn sparse_tensor_term<F, E>(
+    num_vars: usize,
+    num_polys: usize,
+) -> ExtensionOpeningReductionTerm<F, E>
 where
     F: CanonicalField + CanonicalBytes + TranscriptChallenge,
     E: ExtField<F>,
@@ -126,7 +129,7 @@ where
     let lazy_rounds = tail_vars.min(
         akita_prover::protocol::extension_opening_reduction::SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
     );
-    ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<F>(
+    ExtensionOpeningReductionTerm::<F, E>::new_sparse_tensor_factor(
         witness,
         tail_point,
         eta,
@@ -145,7 +148,7 @@ where
     let num_polys = env_usize("AKITA_EOR_NUM_POLYS", DEFAULT_NUM_POLYS);
     let term = sparse_tensor_term::<F, E>(num_vars, num_polys);
     let terms = vec![term];
-    let input_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms).unwrap();
+    let input_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms);
 
     let mut group = c.benchmark_group(format!(
         "extension_opening_reduction/{label}/onehot_nv{num_vars}_np{num_polys}"

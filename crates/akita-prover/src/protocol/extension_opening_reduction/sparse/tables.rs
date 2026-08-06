@@ -11,24 +11,27 @@ use super::*;
 ///   transparent padding factor has Boolean sum one, so native rounds are
 ///   unchanged and the remaining rounds fold only that factor.
 #[derive(Debug, Clone)]
-pub(in crate::protocol::extension_opening_reduction) enum ExtensionOpeningTables<E: FieldCore> {
+pub(in crate::protocol::extension_opening_reduction) enum ExtensionOpeningTables<
+    F: FieldCore,
+    E: ExtField<F>,
+> {
     Dense {
-        witness: Vec<E>,
-        factor: Vec<E>,
+        witness: EvaluationTable<F, E>,
+        factor: EvaluationTable<F, E>,
     },
     Sparse {
         witness: SparseExtensionOpeningWitness<E>,
         factor: SparseFactor<E>,
     },
     Cylindrical {
-        inner: Box<ExtensionOpeningTables<E>>,
+        inner: Box<ExtensionOpeningTables<F, E>>,
         extra_point: Vec<E>,
         extra_round: usize,
         extra_factor_eval: E,
     },
 }
 
-impl<E: FieldCore> ExtensionOpeningTables<E> {
+impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningTables<F, E> {
     pub(in crate::protocol::extension_opening_reduction) fn len(&self) -> usize {
         match self {
             Self::Dense { witness, .. } => witness.len(),
@@ -48,32 +51,12 @@ impl<E: FieldCore> ExtensionOpeningTables<E> {
         }
     }
 
-    pub(in crate::protocol::extension_opening_reduction) fn claim(&self) -> Result<E, AkitaError> {
-        match self {
-            Self::Dense { witness, factor } => extension_opening_reduction_claim(witness, factor),
-            Self::Sparse { witness, factor } => match factor {
-                SparseFactor::Dense(factor_evals) => witness.claim_with_factor(factor_evals),
-                SparseFactor::Tensor(factor) => {
-                    if witness.table_len() != factor.len() {
-                        return Err(AkitaError::InvalidSize {
-                            expected: witness.table_len(),
-                            actual: factor.len(),
-                        });
-                    }
-                    Ok(witness.claim_with_factor_fn(|idx| factor.factor_at_index(idx)))
-                }
-            },
-            Self::Cylindrical { inner, .. } => inner.claim(),
-        }
-    }
-
     pub(in crate::protocol::extension_opening_reduction) fn final_witness_and_factor_evals(
         &self,
     ) -> Option<(E, E)> {
         match self {
-            Self::Dense { witness, factor } => {
-                (factor.len() == 1 && witness.len() == 1).then(|| (witness[0], factor[0]))
-            }
+            Self::Dense { witness, factor } => (factor.len() == 1 && witness.len() == 1)
+                .then(|| (witness.evaluation(0), factor.evaluation(0))),
             Self::Sparse { witness, factor } => match factor {
                 SparseFactor::Dense(factor_evals) => (factor_evals.len() == 1)
                     .then(|| witness.final_eval())
@@ -94,7 +77,11 @@ impl<E: FieldCore> ExtensionOpeningTables<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps> ExtensionOpeningTables<E> {
+impl<F, E> ExtensionOpeningTables<F, E>
+where
+    F: FieldCore,
+    E: ExtField<F> + HasUnreducedOps,
+{
     pub(in crate::protocol::extension_opening_reduction) fn accumulate_round(
         &self,
         coeff: E,
@@ -104,9 +91,9 @@ impl<E: FieldCore + HasUnreducedOps> ExtensionOpeningTables<E> {
         match self {
             Self::Dense { witness, factor } => {
                 let (round_constant, round_quadratic) =
-                    accumulate_dense_round(witness, factor, coeff);
-                *constant += round_constant;
-                *quadratic += round_quadratic;
+                    compute_product_round_scalar(witness, factor);
+                *constant += coeff * round_constant;
+                *quadratic += coeff * round_quadratic;
             }
             Self::Sparse { witness, factor } => match factor {
                 SparseFactor::Dense(factor_evals) => {
@@ -156,11 +143,16 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SparseFactor<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningTables<E> {
+impl<F, E> ExtensionOpeningTables<F, E>
+where
+    F: FieldCore,
+    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold,
+{
     pub(in crate::protocol::extension_opening_reduction) fn fold_in_place(&mut self, r_round: E) {
         match self {
             Self::Dense { witness, factor } => {
-                fold_dense_reduction_tables_in_place(witness, factor, r_round);
+                fold_first_variable_scalar(witness, r_round);
+                fold_first_variable_scalar(factor, r_round);
             }
             Self::Sparse { witness, factor } => {
                 witness.fold_in_place(r_round);
@@ -187,7 +179,7 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningTables<E
 /// Fold a sparse term's factor and witness by one challenge AND compute the next
 /// round's `(constant, quadratic)` in a single witness sweep.
 ///
-/// Sparse counterpart of [`fused_fold_and_accumulate`], valid only inside the
+/// Sparse counterpart of [`fold_and_compute_product_round_scalar`], valid only inside the
 /// merge-free plateau. The factor is folded first so the witness sweep reads the
 /// next round's factor children while folding each entry. Returns the *unscaled*
 /// next-round coefficients; the caller applies the term coefficient.

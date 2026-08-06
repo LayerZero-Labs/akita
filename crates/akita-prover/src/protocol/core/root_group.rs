@@ -80,7 +80,7 @@ where
         row_coefficients: &[E],
         tail_point: &[E],
         eta: &[E],
-    ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>;
+    ) -> Result<Vec<ExtensionOpeningReductionTerm<F, E>>, AkitaError>;
 }
 
 impl<F, P> RootProverGroupMeta<F> for PreparedProverGroup<'_, P>
@@ -260,7 +260,7 @@ where
         row_coefficients: &[E],
         tail_point: &[E],
         eta: &[E],
-    ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError> {
+    ) -> Result<Vec<ExtensionOpeningReductionTerm<F, E>>, AkitaError> {
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,

@@ -5,15 +5,17 @@ use super::*;
 /// A single dense term is the degenerate `1`-term case; the prover treats the
 /// dense and batched paths uniformly.
 #[derive(Debug, Clone)]
-pub struct ExtensionOpeningReductionTerm<E: FieldCore> {
-    pub(in crate::protocol::extension_opening_reduction) tables: ExtensionOpeningTables<E>,
+pub struct ExtensionOpeningReductionTerm<F: FieldCore, E: ExtField<F>> {
+    pub(in crate::protocol::extension_opening_reduction) tables: ExtensionOpeningTables<F, E>,
     pub(in crate::protocol::extension_opening_reduction) coeff: E,
+    /// Unscaled input sum validated when the term is constructed.
+    pub(in crate::protocol::extension_opening_reduction) initial_claim: E,
     /// `coeff`-scaled `(constant, quadratic)` for the next round, pre-computed
     /// by the fused fold in [`Self::ingest_challenge`] for the dense path.
     pub(in crate::protocol::extension_opening_reduction) cached_accumulate: Option<(E, E)>,
 }
 
-impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
+impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
     /// Construct one term `coeff * sum_x witness(x) * factor(x)`.
     ///
     /// # Errors
@@ -21,12 +23,14 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
     /// Returns an error if the witness/factor tables are malformed.
     pub fn new(witness_evals: Vec<E>, factor_evals: Vec<E>, coeff: E) -> Result<Self, AkitaError> {
         validate_reduction_tables(&witness_evals, &factor_evals)?;
+        let initial_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals)?;
         Ok(Self {
             tables: ExtensionOpeningTables::Dense {
-                witness: witness_evals,
-                factor: factor_evals,
+                witness: EvaluationTable::from_multilinear_evaluations(&witness_evals)?,
+                factor: EvaluationTable::from_multilinear_evaluations(&factor_evals)?,
             },
             coeff,
+            initial_claim,
             cached_accumulate: None,
         })
     }
@@ -47,12 +51,14 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
                 actual: factor_evals.len(),
             });
         }
+        let initial_claim = witness_evals.claim_with_factor(&factor_evals)?;
         Ok(Self {
             tables: ExtensionOpeningTables::Sparse {
                 witness: witness_evals,
                 factor: SparseFactor::Dense(factor_evals),
             },
             coeff,
+            initial_claim,
             cached_accumulate: None,
         })
     }
@@ -63,17 +69,13 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
     ///
     /// Returns an error if the tensor factor shape and sparse witness domain
     /// differ, or if the tensor opening parameters are malformed.
-    pub fn new_sparse_tensor_factor<F>(
+    pub fn new_sparse_tensor_factor(
         witness_evals: SparseExtensionOpeningWitness<E>,
         tail_point: Vec<E>,
         eta: Vec<E>,
         coeff: E,
         materialize_at: usize,
-    ) -> Result<Self, AkitaError>
-    where
-        F: FieldCore,
-        E: ExtField<F>,
-    {
+    ) -> Result<Self, AkitaError> {
         let factor = TensorEqualityFactor::new::<F>(tail_point, eta, materialize_at)?;
         if witness_evals.table_len() != factor.len() {
             return Err(AkitaError::InvalidSize {
@@ -81,6 +83,7 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
                 actual: factor.len(),
             });
         }
+        let initial_claim = witness_evals.claim_with_factor_fn(|idx| factor.factor_at_index(idx));
         let factor = if factor.is_ready_to_materialize() {
             SparseFactor::Dense(factor.materialize_dense())
         } else {
@@ -92,6 +95,7 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
                 factor,
             },
             coeff,
+            initial_claim,
             cached_accumulate: None,
         })
     }
@@ -143,7 +147,11 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningReductionTerm<E> {
+impl<F, E> ExtensionOpeningReductionTerm<F, E>
+where
+    F: FieldCore,
+    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold,
+{
     /// Add this term's `coeff`-scaled `(constant, quadratic)` round
     /// contribution into the shared accumulators.
     ///
@@ -184,9 +192,9 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningReductio
             return;
         }
         let fused = match &mut self.tables {
-            ExtensionOpeningTables::Dense { witness, factor } if witness.len() >= 4 => {
-                Some(fused_fold_and_accumulate(witness, factor, r_round))
-            }
+            ExtensionOpeningTables::Dense { witness, factor } if witness.len() >= 4 => Some(
+                fold_and_compute_product_round_scalar(witness, factor, r_round),
+            ),
             ExtensionOpeningTables::Sparse { witness, factor }
                 if witness.merge_free_rounds_left >= 2 =>
             {

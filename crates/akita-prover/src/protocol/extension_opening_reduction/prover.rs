@@ -6,13 +6,13 @@ use super::*;
 /// a common Boolean domain and a single round challenge sequence. A single
 /// dense opening is the degenerate one-term case.
 #[derive(Debug, Clone)]
-pub struct ExtensionOpeningReductionProver<E: FieldCore> {
-    terms: Vec<ExtensionOpeningReductionTerm<E>>,
+pub struct ExtensionOpeningReductionProver<F: FieldCore, E: ExtField<F>> {
+    terms: Vec<ExtensionOpeningReductionTerm<F, E>>,
     input_claim: E,
     num_rounds: usize,
 }
 
-impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
+impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionProver<F, E> {
     /// Construct a prover from terms sharing one Boolean domain.
     ///
     /// The caller supplies the claimed input sum. This avoids recomputing it
@@ -23,7 +23,7 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
     ///
     /// Returns an error if there are no terms or their table lengths differ.
     pub fn new(
-        terms: Vec<ExtensionOpeningReductionTerm<E>>,
+        terms: Vec<ExtensionOpeningReductionTerm<F, E>>,
         input_claim: E,
     ) -> Result<Self, AkitaError> {
         let first = terms.first().ok_or_else(|| {
@@ -72,15 +72,10 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
     /// This is useful for tests and standalone callers that do not already
     /// have an independently derived input claim.
     ///
-    /// # Errors
-    ///
-    /// Returns an error if any term has malformed witness/factor tables.
-    pub fn input_claim_from_terms(
-        terms: &[ExtensionOpeningReductionTerm<E>],
-    ) -> Result<E, AkitaError> {
-        terms.iter().try_fold(E::zero(), |acc, term| {
-            term.tables.claim().map(|claim| acc + term.coeff * claim)
-        })
+    pub fn input_claim_from_terms(terms: &[ExtensionOpeningReductionTerm<F, E>]) -> E {
+        terms
+            .iter()
+            .fold(E::zero(), |acc, term| acc + term.coeff * term.initial_claim)
     }
 
     /// Number of sumcheck rounds for this prover instance.
@@ -116,8 +111,10 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E>
-    for ExtensionOpeningReductionProver<E>
+impl<F, E> SumcheckInstanceProver<E> for ExtensionOpeningReductionProver<F, E>
+where
+    F: FieldCore,
+    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold,
 {
     fn num_rounds(&self) -> usize {
         self.num_rounds

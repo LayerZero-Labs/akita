@@ -427,6 +427,13 @@ The cutover evolves current owners rather than adding parallel wrappers:
 | Materialized Stage 2 factors and trace values | `EvaluationTable<F, E>` where they are full live row tables |
 | Stage 3 product tables | `EvaluationTable<F, E>` where they are folded multilinear tables |
 
+`ExtensionOpeningReductionTerm<F, E>` and
+`ExtensionOpeningReductionProver<F, E>` name both fields directly. A term
+computes and stores its unscaled input claim while its logical order vectors are
+validated, then converts dense vectors once into binding order tables. Batched
+input claim calculation reads those immutable term claims. It does not convert
+tables back to row values or repeat the product sum.
+
 Small coefficient lists, round polynomials, challenge vectors, lookup tables,
 and proof values remain `Vec<E>` or fixed arrays. `EvaluationTable` is only for a
 row indexed materialized evaluation set.
@@ -442,9 +449,9 @@ small public API boundaries and must not survive in a production round loop.
 
 ### Acceptance criteria
 
-- [ ] `ExtField` provides allocation free coefficient construction and access
+- [x] `ExtField` provides allocation free coefficient construction and access
   for the identity field, `FpExt2`, `FpExt4`, and `FpExt8`.
-- [ ] `EvaluationTable` enforces its length, stride, coefficient count, and
+- [x] `EvaluationTable` enforces its length, stride, coefficient count, and
   bounds invariants through private fields and focused tests.
 - [ ] Dense binding order conversion and every later fold match the current LSB
   first scalar evaluation for random tables at 1 to 20 variables.
@@ -454,7 +461,7 @@ small public API boundaries and must not survive in a production round loop.
 - [ ] Scalar and every supported CPU operation produce identical round
   polynomials, folded tables, final evaluations, proof bytes, and transcript
   events.
-- [ ] Dense EOR uses the canonical table and operation set without round loop
+- [x] Dense EOR uses the canonical table and operation set without round loop
   allocations.
 - [ ] Root sparse EOR stores coefficients once and keeps its index sidecar in
   sync through merge free and merging folds.

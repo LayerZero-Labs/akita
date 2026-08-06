@@ -123,9 +123,12 @@ fn fused_term_matches_unfused_reference() {
         let factor: Vec<TE> = (0..table_len).map(|_| TE::random(&mut rng)).collect();
 
         // Fused: the production term path engages the sparse fused fold.
-        let mut fused_term =
-            ExtensionOpeningReductionTerm::new_sparse(witness.clone(), factor.clone(), coeff)
-                .unwrap();
+        let mut fused_term = ExtensionOpeningReductionTerm::<Prime32Offset99, TE>::new_sparse(
+            witness.clone(),
+            factor.clone(),
+            coeff,
+        )
+        .unwrap();
 
         // Reference: identical inputs, but merge-free disabled so every round
         // takes the original general accumulate + general fold (no fusion).
@@ -182,11 +185,14 @@ fn cylindrical_term_matches_materialized_high_variable_extension() {
     let native_factor = (0..8).map(|_| TE::random(&mut rng)).collect::<Vec<_>>();
     let coeff = TE::random(&mut rng);
 
-    let mut cylindrical =
-        ExtensionOpeningReductionTerm::new(native_witness.clone(), native_factor.clone(), coeff)
-            .expect("native term")
-            .extend_cylindrically(vec![TE::zero(), TE::zero()])
-            .expect("virtual extension");
+    let mut cylindrical = ExtensionOpeningReductionTerm::<Prime32Offset99, TE>::new(
+        native_witness.clone(),
+        native_factor.clone(),
+        coeff,
+    )
+    .expect("native term")
+    .extend_cylindrically(vec![TE::zero(), TE::zero()])
+    .expect("virtual extension");
 
     let mut materialized_witness = Vec::with_capacity(32);
     for _ in 0..4 {
@@ -194,9 +200,12 @@ fn cylindrical_term_matches_materialized_high_variable_extension() {
     }
     let mut materialized_factor = native_factor;
     materialized_factor.resize(32, TE::zero());
-    let mut materialized =
-        ExtensionOpeningReductionTerm::new(materialized_witness, materialized_factor, coeff)
-            .expect("materialized extension");
+    let mut materialized = ExtensionOpeningReductionTerm::<Prime32Offset99, TE>::new(
+        materialized_witness,
+        materialized_factor,
+        coeff,
+    )
+    .expect("materialized extension");
 
     for round in 0..5 {
         let (mut cylindrical_constant, mut cylindrical_quadratic) = (TE::zero(), TE::zero());

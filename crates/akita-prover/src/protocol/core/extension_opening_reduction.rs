@@ -225,7 +225,7 @@ where
         term_ranges.push(start..terms.len());
     }
 
-    let prover_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms)?;
+    let prover_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms);
     if prover_claim != true_input_claim {
         return Err(AkitaError::InvalidInput(
             "extension-opening reduction input claim mismatch".to_string(),
@@ -319,7 +319,7 @@ pub(in crate::protocol::core) fn build_extension_opening_reduction_terms<
     row_coefficients: &[E],
     tail_point: &[E],
     eta: &[E],
-) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>
+) -> Result<Vec<ExtensionOpeningReductionTerm<F, E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + MulBaseUnreduced<F>,
@@ -365,7 +365,7 @@ fn try_sparse_extension_opening_reduction_terms<F, E, P, B, const D: usize>(
     row_coefficients: &[E],
     tail_point: &[E],
     eta: &[E],
-) -> Result<Option<Vec<ExtensionOpeningReductionTerm<E>>>, AkitaError>
+) -> Result<Option<Vec<ExtensionOpeningReductionTerm<F, E>>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
@@ -402,7 +402,7 @@ where
             lazy_rounds
         )
         .entered();
-        ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<F>(
+        ExtensionOpeningReductionTerm::new_sparse_tensor_factor(
             witness_evals,
             tail_point.to_vec(),
             eta.to_vec(),
@@ -418,7 +418,7 @@ fn extension_opening_term_from_packed_witness<F, E>(
     tail_point: &[E],
     eta: &[E],
     coeff: E,
-) -> Result<ExtensionOpeningReductionTerm<E>, AkitaError>
+) -> Result<ExtensionOpeningReductionTerm<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
@@ -441,7 +441,7 @@ fn build_dense_extension_opening_reduction_terms<F, E, P, B, const D: usize>(
     row_coefficients: &[E],
     tail_point: &[E],
     eta: &[E],
-) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>
+) -> Result<Vec<ExtensionOpeningReductionTerm<F, E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + MulBaseUnreduced<F>,

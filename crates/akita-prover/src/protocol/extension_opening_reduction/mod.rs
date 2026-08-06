@@ -10,8 +10,9 @@ use akita_algebra::EqPolynomial;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, ExtField, FieldCore, Zero};
 use akita_sumcheck::{
-    DelayedProductRoundAccumulator, DirectProductRoundAccumulator, ProductRoundAccumulator,
-    SumcheckInstanceProver,
+    compute_product_round_scalar, fold_and_compute_product_round_scalar,
+    fold_first_variable_scalar, DelayedProductRoundAccumulator, DirectProductRoundAccumulator,
+    EvaluationTable, ProductRoundAccumulator, SumcheckInstanceProver,
 };
 use akita_types::{
     checked_table_len, extension_opening_reduction_claim, num_rounds_from_table_len,
@@ -27,13 +28,8 @@ use rayon::prelude::*;
 /// full dense factor table while the sparse witness still has large support.
 pub const SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS: usize = 12;
 
-mod dense;
 mod prover;
 mod sparse;
 
 pub use prover::ExtensionOpeningReductionProver;
 pub use sparse::{ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness};
-
-pub(crate) use dense::{
-    accumulate_dense_round, fold_dense_reduction_tables_in_place, fused_fold_and_accumulate,
-};
