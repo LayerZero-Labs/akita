@@ -6,11 +6,13 @@
 
 pub mod akita_stage3;
 pub mod digit_range;
+mod physical_l2_norm;
 pub mod relation_range_image;
 pub mod two_round_prefix;
 
 pub use akita_stage3::AkitaStage3Prover;
 pub use digit_range::DigitRangeProver;
+pub(crate) use physical_l2_norm::prove_physical_l2_norm;
 pub(crate) use relation_range_image::AdditionalRelationTerms;
 pub use relation_range_image::RelationRangeImageProver;
 

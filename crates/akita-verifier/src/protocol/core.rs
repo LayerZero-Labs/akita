@@ -12,7 +12,7 @@ use crate::protocol::ring_switch::{
 };
 use crate::stages::stage1::{derive_multi_group_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::AkitaStage2Verifier;
-use crate::stages::SetupSumcheckVerifier;
+use crate::stages::{verify_physical_l2_norm, SetupSumcheckVerifier};
 use akita_challenges::{
     witness_fold_challenge_labels, FoldDraw, LiveFoldDraw, TensorChallengeShape,
 };
@@ -38,10 +38,11 @@ use akita_types::{
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
     tensor_equality_factor_eval_at_point, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
     BasisMode, CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof,
-    FoldLevelProof, FoldLinfProtocolBinding, FoldSchedule, FpExtEncoding, OpeningClaims,
-    OpeningClaimsLayout, PolynomialGroupClaims, PreparedOpeningPoint, RecursiveFoldParams,
-    RingRelationInstance, RingVec, SetupContributionMode, SetupSumcheckProof, TerminalFoldParams,
-    TerminalLevelProof, TerminalResponse, TerminalWitnessTranscriptParts,
+    FoldLevelProof, FoldLinfProtocolBinding, FoldSchedule, FpExtEncoding, InnerCommitSecurityRoute,
+    OpeningClaims, OpeningClaimsLayout, PhysicalResponsePlan, PolynomialGroupClaims,
+    PreparedOpeningPoint, RecursiveFoldParams, RelationRangeImagePlan, RingRelationInstance,
+    RingVec, SetupContributionMode, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
+    TerminalResponse, TerminalWitnessTranscriptParts,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,

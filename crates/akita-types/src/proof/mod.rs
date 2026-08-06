@@ -73,7 +73,8 @@ pub use relation::{
 };
 pub use relation_address::{CompressionRelationAddressGeometry, RelationAddressGeometry};
 pub use relation_range_image::{
-    PhysicalResponsePlan, RelationRangeImageGroupPlan, RelationRangeImagePlan,
+    reconstruct_l2_sq_from_gram, PhysicalResponsePlan, RelationRangeImageGroupPlan,
+    RelationRangeImagePlan,
 };
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,

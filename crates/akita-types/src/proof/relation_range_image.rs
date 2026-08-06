@@ -133,6 +133,18 @@ impl PhysicalResponsePlan {
         }
     }
 
+    /// Integer folded-response digit basis.
+    #[must_use]
+    pub const fn fold_basis(&self) -> usize {
+        self.fold_basis
+    }
+
+    /// Number of balanced fold digits recomposed into one physical response.
+    #[must_use]
+    pub const fn fold_digit_count(&self) -> usize {
+        self.fold_digit_count
+    }
+
     fn witness_index(&self, physical_index: usize, limb: usize) -> Result<usize, AkitaError> {
         if limb >= self.fold_digit_count {
             return Err(AkitaError::InvalidInput(
@@ -211,6 +223,59 @@ impl PhysicalResponsePlan {
         Ok(tables)
     }
 
+    /// Materialize the unpadded centered integer virtual tables used for exact
+    /// norm and limb-Gram claim construction.
+    pub fn materialize_virtual_integers(
+        &self,
+        compact_witness: &[i8],
+    ) -> Result<Vec<Vec<i128>>, AkitaError> {
+        if compact_witness.len() != self.domain.live_len() {
+            return Err(AkitaError::InvalidSize {
+                expected: self.domain.live_len(),
+                actual: compact_witness.len(),
+            });
+        }
+        let mut tables =
+            vec![vec![0i128; self.shape.physical_response_len()]; self.virtual_table_count()];
+        for physical_index in 0..self.shape.physical_response_len() {
+            match self.shape {
+                PhysicalL2NormProofShape::Direct { .. } => {
+                    let mut value = 0i128;
+                    let mut basis_power = 1i128;
+                    for limb in 0..self.fold_digit_count {
+                        let index = self.witness_index(physical_index, limb)?;
+                        value = value
+                            .checked_add(
+                                i128::from(compact_witness[index])
+                                    .checked_mul(basis_power)
+                                    .ok_or_else(|| {
+                                        AkitaError::InvalidSetup("L2 basis power overflow".into())
+                                    })?,
+                            )
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup(
+                                    "L2 response recomposition overflow".into(),
+                                )
+                            })?;
+                        basis_power = basis_power
+                            .checked_mul(self.fold_basis as i128)
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup("L2 basis power overflow".into())
+                            })?;
+                    }
+                    tables[0][physical_index] = value;
+                }
+                PhysicalL2NormProofShape::LimbGram { limb_count, .. } => {
+                    for (limb, table) in tables.iter_mut().enumerate().take(limb_count) {
+                        table[physical_index] =
+                            i128::from(compact_witness[self.witness_index(physical_index, limb)?]);
+                    }
+                }
+            }
+        }
+        Ok(tables)
+    }
+
     /// Sparse Stage-2 weights that batch all virtual evaluations at one
     /// Stage-1 point into a single linear witness relation.
     pub fn virtualization_weights<E: FieldCore + FromPrimitiveInt>(
@@ -252,6 +317,87 @@ impl PhysicalResponsePlan {
         weights.sort_unstable_by_key(|(index, _)| *index);
         Ok(weights)
     }
+}
+
+/// Reconstruct the exact nonnegative square sum from canonical block-major,
+/// upper-triangular limb Gram claims.
+pub fn reconstruct_l2_sq_from_gram(
+    shape: PhysicalL2NormProofShape,
+    fold_basis: usize,
+    claims: &[i128],
+) -> Result<u128, AkitaError> {
+    let PhysicalL2NormProofShape::LimbGram {
+        physical_response_len,
+        block_len,
+        limb_count,
+    } = shape
+    else {
+        return Err(AkitaError::InvalidInput(
+            "direct L2 shape has no limb-Gram reconstruction".into(),
+        ));
+    };
+    shape.validate()?;
+    let blocks = physical_response_len.div_ceil(block_len);
+    let pairs = limb_count
+        .checked_mul(
+            limb_count
+                .checked_add(1)
+                .ok_or_else(|| AkitaError::InvalidSetup("L2 limb-pair count overflow".into()))?,
+        )
+        .and_then(|value| value.checked_div(2))
+        .ok_or_else(|| AkitaError::InvalidSetup("L2 limb-pair count overflow".into()))?;
+    let expected = blocks
+        .checked_mul(pairs)
+        .ok_or_else(|| AkitaError::InvalidSetup("L2 subclaim count overflow".into()))?;
+    if claims.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: claims.len(),
+        });
+    }
+    let basis = i128::try_from(fold_basis)
+        .map_err(|_| AkitaError::InvalidSetup("L2 fold basis exceeds i128".into()))?;
+    let power_count = limb_count
+        .checked_mul(2)
+        .ok_or_else(|| AkitaError::InvalidSetup("L2 power count overflow".into()))?;
+    let mut powers = Vec::with_capacity(power_count);
+    let mut power = 1i128;
+    for _ in 0..power_count {
+        powers.push(power);
+        power = power
+            .checked_mul(basis)
+            .ok_or_else(|| AkitaError::InvalidSetup("L2 basis power overflow".into()))?;
+    }
+    let mut total = 0i128;
+    let mut cursor = 0usize;
+    for _ in 0..blocks {
+        for left in 0..limb_count {
+            for right in left..limb_count {
+                let claim = claims
+                    .get(cursor)
+                    .copied()
+                    .ok_or(AkitaError::InvalidProof)?;
+                cursor = cursor
+                    .checked_add(1)
+                    .ok_or_else(|| AkitaError::InvalidSetup("L2 claim cursor overflow".into()))?;
+                let exponent = left
+                    .checked_add(right)
+                    .ok_or_else(|| AkitaError::InvalidSetup("L2 exponent overflow".into()))?;
+                let scale = powers
+                    .get(exponent)
+                    .copied()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .checked_mul(if left == right { 1 } else { 2 })
+                    .ok_or_else(|| AkitaError::InvalidSetup("L2 Gram scale overflow".into()))?;
+                total = total
+                    .checked_add(claim.checked_mul(scale).ok_or_else(|| {
+                        AkitaError::InvalidSetup("L2 Gram product overflow".into())
+                    })?)
+                    .ok_or_else(|| AkitaError::InvalidSetup("L2 Gram sum overflow".into()))?;
+            }
+        }
+    }
+    u128::try_from(total).map_err(|_| AkitaError::InvalidProof)
 }
 
 /// One commitment group's claims and witness units in physical processing order.
