@@ -2,7 +2,11 @@ use super::*;
 
 struct UnprunedCtx<'a> {
     policy: &'a PlannerPolicy,
-    dimensions: &'a RingDimensionSearchDomain,
+    num_search_levels: usize,
+    uniform_suffix_dimension: usize,
+    potential_a_dimensions: &'a [usize],
+    potential_b_dimensions: &'a [usize],
+    potential_d_dimensions: &'a [usize],
     ring_challenge_config: &'a dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_shape: &'a dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     key: PolynomialGroupLayout,
@@ -22,7 +26,11 @@ fn enumerate_suffixes(
 ) -> Result<Vec<ScheduleCandidate>, AkitaError> {
     let UnprunedCtx {
         policy,
-        dimensions,
+        num_search_levels,
+        uniform_suffix_dimension,
+        potential_a_dimensions,
+        potential_b_dimensions,
+        potential_d_dimensions,
         ring_challenge_config,
         fold_shape,
         key,
@@ -47,34 +55,44 @@ fn enumerate_suffixes(
     let mut schedules = Vec::new();
 
     for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
-        for candidate_dimensions in dimensions.candidates() {
-            let suffix_dimensions = CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
-            if level >= MIXED_SEARCH_FOLD_LEVELS {
-                if *candidate_dimensions != suffix_dimensions {
-                    continue;
-                }
-            } else if !componentwise_dimensions_at_most(*candidate_dimensions, dimension_ceiling) {
-                continue;
-            }
+        let dimension_candidates = if level < num_search_levels {
+            potential_a_dimensions
+                .iter()
+                .copied()
+                .filter(|&inner| inner <= dimension_ceiling.d_a())
+                .map(|inner| RingDimensionCandidate::Adaptive {
+                    inner,
+                    outer_dimensions: potential_b_dimensions,
+                    opening_dimensions: potential_d_dimensions,
+                    ceiling: dimension_ceiling,
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![RingDimensionCandidate::Fixed(CommitmentRingDims::uniform(
+                uniform_suffix_dimension,
+            ))]
+        };
+        for candidate_dimensions in dimension_candidates {
+            let d_a = candidate_dimensions.inner();
             let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
                 challenge_field_bits,
                 policy.claim_ext_degree,
                 level,
                 key,
                 input_witness_len,
-                candidate_dimensions.d_a(),
+                d_a,
             )?
             else {
                 continue;
             };
-            let Ok(ring_challenge) = ring_challenge_config(candidate_dimensions.d_a()) else {
+            let Ok(ring_challenge) = ring_challenge_config(d_a) else {
                 continue;
             };
-            let candidates = if level < MIXED_SEARCH_FOLD_LEVELS {
+            let candidates = if level < num_search_levels {
                 derive_candidate_level_params_all_splits(
                     policy,
                     &ring_challenge,
-                    *candidate_dimensions,
+                    candidate_dimensions,
                     input_witness_len,
                     log_basis,
                     level,
@@ -85,7 +103,7 @@ fn enumerate_suffixes(
                 derive_candidate_level_params(
                     policy,
                     &ring_challenge,
-                    *candidate_dimensions,
+                    candidate_dimensions,
                     input_witness_len,
                     log_basis,
                     level,
@@ -97,7 +115,7 @@ fn enumerate_suffixes(
             };
 
             for (params, output_witness_len) in candidates {
-                if level >= MIXED_SEARCH_FOLD_LEVELS {
+                if level >= num_search_levels {
                     if let Some((mut terminal, terminal_bytes)) =
                         suffix_dp::try_terminal_direct_suffix_cost(
                             input_witness_len,
@@ -137,8 +155,8 @@ fn enumerate_suffixes(
                     }
                 }
 
-                let child_ceiling = if level + 1 >= MIXED_SEARCH_FOLD_LEVELS {
-                    CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION)
+                let child_ceiling = if level + 1 >= num_search_levels {
+                    CommitmentRingDims::uniform(uniform_suffix_dimension)
                 } else {
                     params.role_dims()
                 };
@@ -207,13 +225,23 @@ pub(super) fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     honest_fold_policy: HonestFoldPolicySpec,
-    dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
     validate_policy(policy)?;
-    dimensions.validate_for_policy(policy)?;
+    let crate::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels,
+        uniform_suffix_dimension,
+        potential_a_dimensions,
+        potential_b_dimensions,
+        potential_d_dimensions,
+    } = policy.ring_dimension_schedule_mode
+    else {
+        return Err(AkitaError::InvalidSetup(
+            "unpruned traversal requires AdaptiveDimension policy".to_string(),
+        ));
+    };
 
     let field_bits = policy.decomposition.field_bits();
     let input_witness_len = 1usize.checked_shl(key.num_vars() as u32).ok_or_else(|| {
@@ -229,29 +257,39 @@ pub(super) fn find_schedule(
     let mut complete = Vec::new();
     let ctx = UnprunedCtx {
         policy,
-        dimensions,
+        num_search_levels,
+        uniform_suffix_dimension,
+        potential_a_dimensions,
+        potential_b_dimensions,
+        potential_d_dimensions,
         ring_challenge_config: &ring_challenge_config,
         fold_shape: &fold_shape,
         key,
     };
 
     for log_basis in min_log_basis..=max_log_basis {
-        for root_dimensions in dimensions.candidates() {
-            let alpha = root_dimensions.d_a().trailing_zeros() as usize;
+        for &root_d_a in potential_a_dimensions {
+            let root_dimensions = RingDimensionCandidate::Adaptive {
+                inner: root_d_a,
+                outer_dimensions: potential_b_dimensions,
+                opening_dimensions: potential_d_dimensions,
+                ceiling: CommitmentRingDims::uniform(policy.ring_dimension),
+            };
+            let alpha = root_d_a.trailing_zeros() as usize;
             let reduced_vars = key.num_vars().saturating_sub(alpha);
             if reduced_vars == 0 {
                 continue;
             }
             let min_block_bits = if reduced_vars >= 3 { 1 } else { 0 };
             let max_block_bits = (reduced_vars - 1).min(usize::BITS as usize - 1);
-            let Ok(ring_challenge) = ring_challenge_config(root_dimensions.d_a()) else {
+            let Ok(ring_challenge) = ring_challenge_config(root_d_a) else {
                 continue;
             };
             for block_bits in min_block_bits..=max_block_bits {
                 let Some(root_params) = scalar_root_fold_level_params_candidate(
                     policy,
                     &ring_challenge,
-                    *root_dimensions,
+                    root_dimensions,
                     key.num_vars(),
                     key.num_polynomials(),
                     log_basis,
@@ -289,7 +327,7 @@ pub(super) fn find_schedule(
                     0,
                     key,
                     input_witness_len,
-                    root_dimensions.d_a(),
+                    root_d_a,
                 )?
                 else {
                     continue;
@@ -300,7 +338,11 @@ pub(super) fn find_schedule(
                         level: 1,
                         input_witness_len: output_witness_len,
                         current_log_basis: log_basis,
-                        dimension_ceiling: *root_dimensions,
+                        dimension_ceiling: if num_search_levels <= 1 {
+                            CommitmentRingDims::uniform(uniform_suffix_dimension)
+                        } else {
+                            root_params.role_dims()
+                        },
                     },
                 )? {
                     let child_is_terminal = suffix.folds.is_empty();
@@ -350,24 +392,15 @@ pub(super) fn find_schedule(
         }
     }
 
-    let mut scored = complete
+    let complete = complete
         .into_iter()
         .filter(|candidate| {
             candidate.setup_field_elements <= policy.max_setup_envelope_field_elements
         })
-        .map(|candidate| {
-            let descriptor =
-                candidate_schedule_descriptor_bytes(&candidate, policy.ring_dimension)?;
-            Ok((
-                candidate.setup_field_elements,
-                candidate.total_bytes,
-                descriptor,
-                candidate,
-            ))
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-    scored.sort_by(|left, right| (&left.0, &left.1, &left.2).cmp(&(&right.0, &right.1, &right.2)));
-    let Some((_, _, _, selected)) = scored.into_iter().next() else {
+        .collect();
+    let Some(selected) =
+        select_adaptive_candidate(complete, num_search_levels, policy.ring_dimension)?
+    else {
         return Err(AkitaError::UnsupportedSchedule(
             "unpruned traversal found no complete schedule".into(),
         ));

@@ -10,15 +10,15 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
-use akita_schedules::PlannerPolicy;
+use akita_schedules::{PlannerPolicy, RingDimensionScheduleMode};
 use akita_serialization::Valid;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::PolynomialGroupLayout;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims,
-    CommittedGroupParams, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
-    SetupMatrixEnvelope, SisModulusProfileId,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommittedGroupParams,
+    DecompositionParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixEnvelope,
+    SisModulusProfileId,
 };
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
@@ -35,8 +35,8 @@ macro_rules! impl_multi_chunk_companion {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
             const D: usize = <$base as $crate::CommitmentConfig>::D;
-            const RING_DIMENSION_CANDIDATES: &'static [akita_types::CommitmentRingDims] =
-                <$base as $crate::CommitmentConfig>::RING_DIMENSION_CANDIDATES;
+            const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
+                <$base as $crate::CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
 
             fn decomposition() -> akita_types::DecompositionParams {
@@ -128,13 +128,12 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         cost_model: akita_schedules::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
         selection_policy: akita_schedules::SelectionPolicyId::for_policy(
             recursive_setup_planning,
-            Cfg::D,
-            Cfg::RING_DIMENSION_CANDIDATES,
+            Cfg::RING_DIMENSION_SCHEDULE_MODE,
         ),
         max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
         ring_dimension: Cfg::D,
-        ring_dimension_candidates: Cfg::RING_DIMENSION_CANDIDATES,
+        ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
@@ -202,12 +201,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
 
-    /// Canonically ordered A/B/D tuples admitted by offline schedule search.
-    ///
-    /// Uniform presets use their setup-generation dimension for every role.
-    /// Adaptive presets override this with their full audited search domain.
-    const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] =
-        &[CommitmentRingDims::uniform(Self::D)];
+    /// Uniform or bounded-adaptive ring-dimension schedule policy.
+    const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
+        RingDimensionScheduleMode::UniformDimension {
+            ring_dimension: Self::D,
+        };
 
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;

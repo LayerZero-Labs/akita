@@ -279,20 +279,8 @@ fn equal_lookup_keys_form_one_contiguous_candidate_range() {
 
 #[cfg(feature = "all-schedules")]
 #[test]
-fn mixed_catalog_identity_binds_nonwinning_candidate_tuples() {
-    static WITHOUT_NONWINNER: &[CommitmentRingDims] = &[
-        CommitmentRingDims::uniform(64),
-        CommitmentRingDims {
-            inner: 128,
-            outer: 64,
-            opening: 64,
-        },
-        CommitmentRingDims {
-            inner: 256,
-            outer: 128,
-            opening: 128,
-        },
-    ];
+fn mixed_catalog_identity_binds_nonwinning_a_dimensions() {
+    static WITHOUT_NONWINNER: &[usize] = &[64, 256];
 
     let policy = policy_of::<fp128::MixedDimFp128OneHot>();
     let catalog = fp128::MixedDimFp128OneHot::schedule_catalog().expect("mixed catalog");
@@ -305,7 +293,24 @@ fn mixed_catalog_identity_binds_nonwinning_candidate_tuples() {
         != 128));
 
     let mut mutated = catalog;
-    mutated.identity.ring_dimension_candidates = WITHOUT_NONWINNER;
+    let akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels,
+        uniform_suffix_dimension,
+        potential_b_dimensions,
+        potential_d_dimensions,
+        ..
+    } = mutated.identity.ring_dimension_schedule_mode
+    else {
+        panic!("mixed catalog must use adaptive dimensions");
+    };
+    mutated.identity.ring_dimension_schedule_mode =
+        akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels,
+            uniform_suffix_dimension,
+            potential_a_dimensions: WITHOUT_NONWINNER,
+            potential_b_dimensions,
+            potential_d_dimensions,
+        };
     let error = validate_catalog_identity(
         &mutated,
         &policy,

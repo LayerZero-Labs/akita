@@ -15,7 +15,7 @@ use crate::{group_batch::multi_group_root_level_candidates_for_basis, PlannerPol
 use super::{
     derive_candidate_level_params, level_setup_field_elements, stage3_payload_bytes_for_successor,
     suffix_opening_layout, terminal_setup_field_elements, CandidateFoldStep,
-    CandidateTerminalResponse, ScheduleCandidate, MAX_RECURSION_DEPTH,
+    CandidateTerminalResponse, RingDimensionCandidate, ScheduleCandidate, MAX_RECURSION_DEPTH,
 };
 
 /// Result of the suffix DP at one state. Both shape options are reported
@@ -569,7 +569,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
             let Some(candidate) = derive_candidate_level_params(
                 policy,
                 &ring_challenge_cfg,
-                dimensions,
+                RingDimensionCandidate::Fixed(dimensions),
                 current_witness_len,
                 lb,
                 level,

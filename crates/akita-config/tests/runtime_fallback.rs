@@ -305,15 +305,15 @@ fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
 }
 
 #[test]
-fn adapters_forward_ring_dimension_candidates() {
+fn adapters_forward_ring_dimension_schedule_mode() {
     type Base = fp128::MixedDimFp128OneHot;
     assert_eq!(
-        <RecursiveCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
-        Base::RING_DIMENSION_CANDIDATES,
+        <RecursiveCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
+        Base::RING_DIMENSION_SCHEDULE_MODE,
     );
     assert_eq!(
-        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
-        Base::RING_DIMENSION_CANDIDATES,
+        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
+        Base::RING_DIMENSION_SCHEDULE_MODE,
     );
 }
 
@@ -323,13 +323,12 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
         selection_policy: SelectionPolicyId::for_policy(
             Cfg::recursive_setup_planning(),
-            Cfg::D,
-            Cfg::RING_DIMENSION_CANDIDATES,
+            Cfg::RING_DIMENSION_SCHEDULE_MODE,
         ),
         max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
         ring_dimension: Cfg::D,
-        ring_dimension_candidates: Cfg::RING_DIMENSION_CANDIDATES,
+        ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,

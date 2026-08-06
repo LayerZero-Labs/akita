@@ -569,19 +569,24 @@ fn find_group_batch_schedule_inner(
     setup_field_budget: Option<usize>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate(policy.decomposition.field_bits())?;
+    if !key.precommitteds.is_empty()
+        && matches!(
+            policy.ring_dimension_schedule_mode,
+            crate::RingDimensionScheduleMode::AdaptiveDimension { .. }
+        )
+    {
+        return Err(AkitaError::InvalidSetup(
+            "adaptive dimension search does not support multi-group roots".to_string(),
+        ));
+    }
     if key.precommitteds.is_empty() {
         // Genuine multi-group roots only. Empty-precommit keys are scalar and
         // must not enter recursion-enabled grouped planning.
         let scalar_policy = policy.direct_only();
-        let dimensions = crate::schedule_params::RingDimensionSearchDomain::new(
-            scalar_policy.ring_dimension,
-            scalar_policy.ring_dimension_candidates.iter().copied(),
-        )?;
         return find_schedule(
             key.final_group,
             &scalar_policy,
             final_honest_fold_policy,
-            &dimensions,
             ring_challenge_config,
             fold_challenge_shape_at_level,
         );
@@ -630,7 +635,7 @@ fn find_group_batch_schedule_inner(
                     candidate.total_bytes,
                 )
             }),
-        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
+        crate::SelectionPolicyId::MinAdaptiveARankDimensionThenSetupAndProof => {
             return Err(AkitaError::UnsupportedSchedule(
                 "mixed ring-dimension selection is not supported for multi-group roots".to_string(),
             ));

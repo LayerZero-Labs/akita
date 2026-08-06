@@ -52,18 +52,20 @@ recursive setup offload remain outside the mixed search. The older transition
 profiles in this document are synthetic schedules built in `akita-pcs` test
 support and are labeled as such.
 
-The proposed next step is to make dimension choice part of the offline planner.
-The requested selection order is:
+Dimension choice is part of the offline planner. The selection order is:
 
 ```text
-1. smallest physical setup matrix, measured in base-field elements;
-2. smallest exact modeled proof payload;
-3. deterministic canonical tie-break only.
+1. within each exact A-dimension path, select the smallest physical setup,
+   then proof payload, then descriptor;
+2. compare path representatives by (A rank, A dimension) at each searched
+   level;
+3. stop dimension growth at rank one, or retain the smallest available rank
+   when rank one is unavailable.
 ```
 
 This policy is implemented by the offline direct scalar entry point and bound
 to the generated mixed catalog as
-`MinSetupMatrixFieldElementsThenProofPayload`. Prover and verifier remain
+`MinAdaptiveARankDimensionThenSetupAndProof`. Prover and verifier remain
 catalog-only and never run the planner.
 
 The currently preferred measured design remains:
@@ -294,8 +296,9 @@ The suffix memo currently retains two maps per first-fold basis:
 - best by first-direct-setup then payload;
 - best by payload.
 
-That is sufficient for the two current scalar-D policies. It is not sufficient
-for a setup-envelope-first mixed-D objective.
+That is sufficient for the two original scalar-D policies. It is not
+sufficient for per-A-path setup/proof representative selection followed by
+rank-first mixed-D path selection.
 
 ### Current mixed-D gap
 
@@ -545,7 +548,8 @@ The approved mixed search is deliberately bounded:
    survive until the root descriptor comparator chooses a canonical winner.
 6. Do not terminate before L2: the terminal and every fold from L2 onward use
    D64.
-7. At the root, choose the global minimum by the requested score.
+7. At the root, select the setup/proof-optimal representative for each exact A
+   path, then choose by the per-level `(A rank, A dimension)` vector.
 
 `derive_candidate_level_params_all_splits` is required only at the two mixed
 levels. Once the schedule returns to D64, `derive_candidate_level_params`
@@ -561,17 +565,18 @@ The suffix context must resolve the A-role ring challenge per candidate
 become dynamic, the memo key must carry the complete incoming prefix identity,
 including `d_setup`, not only its natural length.
 
-### Selection policy and the current nv=36 data
+### Selection policy and the historical nv=36 data
 
-Add a new catalog-bound selection policy with semantics equivalent to:
+The adaptive catalog uses the catalog-bound policy:
 
 ```text
-MinSetupMatrixFieldElementsThenProofPayload
+MinAdaptiveARankDimensionThenSetupAndProof
 ```
 
-Do not change the meaning of `MinEstimatedProofPayload` in place. Existing
-uniform catalogs may continue to use the old ID until intentionally
-regenerated; adaptive mixed-D catalogs use the new ID.
+For each exact A-dimension path, setup fields, proof bytes, and descriptor bytes
+select the representative. Representatives are then compared by their
+per-level `(A rank, A dimension)` vectors. Existing uniform catalogs retain
+`MinEstimatedProofPayload`.
 
 The current benchmark makes the requested policy's result concrete:
 
@@ -583,12 +588,12 @@ The current benchmark makes the requested policy's result concrete:
 | E | **67,633,152** | 95,768 | **21.869 ms** |
 | F | 90,177,536 | 98,229 | 27.153 ms |
 
-Under an unrestricted choice among only these five predefined schedules,
-`(setup field elements, proof bytes)` selects A′: it ties B/E on setup and
-has the smallest proof among them. That historical comparison is not a correctness reference
-for the approved planner domain. The planner additionally enforces
-component-wise descent and returns to D64 at L2. It also searches block splits
-that do not necessarily reproduce any predefined profile.
+Under the superseded setup/proof-only comparison among these five predefined
+schedules, A′ ties B/E on setup and has the smallest proof among them. That
+historical comparison is not a correctness reference for the implemented
+rank-first planner domain. The planner additionally enforces component-wise
+non-increase, returns to D64 at L2, and searches block splits that do not
+necessarily reproduce any predefined profile.
 
 This also proves that setup footprint alone is not a complete verifier-time
 model: B and E verify about 21% faster than A′ despite the same setup
@@ -601,8 +606,7 @@ selection policy such as:
 ```
 
 Do not infer timing weights from one machine or quietly add fold count as a
-hidden objective. The first implementation should follow the requested
-two-component policy unless this decision is changed before coding.
+hidden objective.
 
 ### Recursive setup and multi-chunk policy
 
@@ -616,7 +620,7 @@ and the production planner/catalog restricts setup-prefix commitments to D64.
 The synthetic experiment below proves that the protocol can consume a D128
 prefix source with a D64 outer commitment, but it does not change that planner
 policy. Recursive setup selection is a distinct semantic policy, not a special
-case of setup-envelope-first selection.
+case of adaptive A-path rank selection.
 
 Initial planner-native mixed-D work should:
 
@@ -729,11 +733,13 @@ catalog/policy digest, and effective schedule digest.
 
 The planner must be independent of hash-map iteration and thread scheduling:
 
-- require `PlannerPolicy::ring_dimension_candidates` to be strictly sorted,
-  duplicate-free, and non-empty so the catalog-bound slice has one value
+- require every adaptive A/B/D capability list in
+  `PlannerPolicy::ring_dimension_schedule_mode` to be strictly sorted,
+  duplicate-free, and non-empty so each catalog-bound slice has one value
   identity;
-- reject tuples that fail native role-projection validation or whose role dimensions are
-  not divisors of the setup-generation dimension;
+- reject role dimensions that are not divisors of the setup-generation
+  dimension, cannot descend to the uniform suffix, or violate A-carrier
+  projection at candidate construction;
 - enumerate bases, dimensions, and splits in a documented order;
 - store frontiers in ordered collections or sort before selection/emission;
 - compare semantic cost components first;
@@ -776,11 +782,12 @@ byte-identical.
 3. Enumerate all admitted tuples and block splits at L0 and L1.
 4. Enforce component-wise non-increasing transitions and a uniform-D64 L2+
    suffix.
-5. Retain the unpruned L0/L1 frontier; do not apply rank-one dimension caps
-   until an equivalence key is proved against the unpruned reference traversal.
+5. Retain the unpruned L0/L1 frontier and select one setup/proof-optimal
+   representative for every A-dimension path.
 6. Retain edge-safe setup/proof frontiers across the mixed boundary, then
    reuse the existing uniform-D64 split search.
-7. Select by setup field elements, then proof bytes, then descriptor bytes.
+7. Select path representatives by per-level A rank and dimension, with setup,
+   proof bytes, and descriptor bytes already minimized inside each path.
 8. Keep recursive setup families on singleton D64.
 
 #### Cut 2: catalog replay and shipped adaptive family (implemented for fp128 one-hot)
@@ -803,25 +810,25 @@ byte-identical.
 
 ### Implementation checkpoint and planner example
 
-The current branch implements the first offline direct scalar cut while
-preserving all generated catalogs:
+The current branch implements the declarative offline direct scalar planner:
 
-- `PlannerPolicy::ring_dimension_candidates` is the one catalog-bound source
-  of admitted `(d_a, d_b, d_d)` tuples, validated against the policy's setup
-  generation dimension;
-- the one canonical `find_schedule` entry point dispatches from that policy
-  slice: an exact setup-generation singleton preserves the uniform objective,
-  while any other admitted domain selects by physical setup field elements and
-  then exact modeled proof bytes;
+- `PlannerPolicy::ring_dimension_schedule_mode` is the one catalog-bound
+  source of uniform/adaptive behavior and the ordered A/B/D capability lists;
+- the one canonical `find_schedule` entry point dispatches from that enum:
+  `UniformDimension` preserves the uniform objective, while
+  `AdaptiveDimension` first selects the setup/proof-optimal representative for
+  each A path and then minimizes per-level A rank and dimension;
 - root and recursive candidates derive role-local widths, SIS keys, and
   matrices directly;
-- L0 and L1 exhaustively enumerate splits over admissible, component-wise
-  descending tuples;
+- L0 and L1 exhaustively enumerate splits and non-increasing A choices; B and D
+  are derived without branching by minimum secure rank and smaller-dimension
+  tie-breaking;
 - dimensions are uniform D64 from L2 through the terminal;
-- rank-one dimension pruning is disabled in the authoritative mixed search;
-  a test-only unpruned traversal checks the production frontier and canonical
-  selection while deliberately sharing canonical candidate construction and
-  pricing primitives;
+- rank one stops A/B/D dimension growth, but the smallest available rank above
+  one remains valid when no larger allowed dimension improves it;
+- a test-only unpruned traversal checks the production frontier and canonical
+  selection while sharing canonical candidate construction and pricing
+  primitives;
 - hand-calculated regressions independently pin exact field-element setup
   rounding, candidate-local EOR pricing, unsupported SIS-cell skipping, and
   complete-schedule descriptor ties;
@@ -833,51 +840,13 @@ preserving all generated catalogs:
   to use the existing grouped planner.
 
 `crates/akita-planner/examples/mixed_dimension_search.rs` exercises both the
-implemented and preserved paths. With setup generation D256, `nv=18`, and:
-
-```text
-64/64/64
-128/64/64
-128/128/128
-256/128/128
-```
-
-the constrained mixed search now selects:
-
-```text
-L0:       128/64/64, ranks 2/1/1, input 262,144, output 225,152
-L1:       128/64/64, ranks 2/1/1, input 225,152, output 138,752
-L2:       64/64/64,  ranks 4/1/1, input 138,752, output 105,984
-terminal: D64, rank 4, input 105,984
-```
-
-Its selected score is 88,064 physical setup field elements and 77,320 modeled
-proof bytes.
-
-Release-process measurements after the bounded-search change were:
-
-| `nv` | Observed wall time | L0 | L1 | L2+ | Physical setup fields | Proof bytes |
-|---:|---:|---|---|---|---:|---:|
-| 18 | 0.16 s | `128/64/64` | `128/64/64` | D64 | 88,064 | 77,320 |
-| 24 | 0.22 s | `256/128/128` | `128/64/64` | D64 | 524,288 | 90,976 |
-| 36 | 0.46 s | `256/128/128` | `64/64/64` | D64 | 67,108,864 | 99,368 |
-
-The `nv=24` and `nv=36` rows supersede the earlier rank-one-pruned
-checkpoint. Exhaustive L0/L1 enumeration admits the D256 root and selects it
-because setup fields are the primary objective, even though the `nv=36` proof
-is larger than the former pruned result.
-
-These are planner smoke-test wall times, not a controlled benchmark; the
-process and filesystem caches were warm after the first run. The material
-result is that `nv=24` and `nv=36` now complete normally. Before the bounded
-policy, `nv=24` exceeded one minute and `nv=36` was stopped after five minutes.
-
-The speedup comes from policy, not approximate pruning: mixed dimensions and
-exhaustive split enumeration stop after L1, monotonicity removes upward
-transitions, and the complete D64 suffix reuses the existing fixed planner
-split derivation. Rank-one dimension caps are intentionally absent from the
-authoritative search until an equivalence key is proved and checked against the
-unpruned traversal.
+implemented and preserved paths. The current result table is maintained in
+the benchmark-status section below. The important selection regression is
+`nv=36`: the best representatives for L1 D64, D128, and D256 have A ranks 5,
+3, and 2, so the planner selects D256/rank 2 even though rank one is not
+available. The search still exhausts splits and basis choices inside each
+dimension path before comparing ranks, preventing a worse geometry from
+winning solely because it happens to lower rank.
 
 For the PR recursive multi-group shape, the new entry point returns the
 expected unsupported-policy error because mixed recursive setup is a later
@@ -1366,6 +1335,62 @@ per-matrix coverage is `per_matrix_ring_dims_root_e2e.rs`.
   against canonical Stage 3 sizing and prepared setup capacity.
 
 ## Benchmark status
+
+### Declarative adaptive-planner rerun
+
+The enum-driven planner was rerun on 2026-08-05 after adding rank-first A-path
+selection. These are offline planner outputs. `Modeled proof bytes` is the
+planner's conservative payload estimate, not the data-dependent serialized
+proof length reported by the end-to-end profiler.
+
+| `nv` | Selected L0 | L0 ranks | Selected L1 | L1 ranks | L2+ | Levels including terminal | Physical setup fields | Modeled proof bytes |
+|---:|---|---|---|---|---|---:|---:|---:|
+| 18 | `256/64/64` | `1/1/1` | `256/64/64` | `1/1/1` | uniform D64 | 4 | 163,840 | 82,440 |
+| 24 | `256/64/64` | `1/1/1` | `256/64/64` | `1/1/1` | uniform D64 | 6 | 524,288 | 89,840 |
+| 32 | `256/64/64` | `1/1/1` | `256/64/64` | `2/1/1` | uniform D64 | 8 | 8,388,608 | 97,432 |
+| 36 | `256/128/128` | `1/1/1` | `256/64/64` | `2/1/1` | uniform D64 | 8 | 45,088,768 | 99,512 |
+| 40 diagnostic | `256/128/128` | `2/1/1` | `256/64/64` | `2/1/1` | uniform D64 | 8 | 268,435,456 | 101,192 |
+
+For `nv=36`, the setup/proof-optimal representatives for L1 A dimensions D64,
+D128, and D256 have ranks 5, 3, and 2. No allowed dimension reaches rank one,
+so the smallest-rank fallback selects D256/rank 2. B and D independently reach
+rank one at D64, producing the selected `256/64/64` L1 tuple.
+
+The `nv=40` diagnostic confirms the same fallback at a larger workload: D256
+requires rank two at both L0 and L1 and is still selected because it is the
+smallest rank in the configured domain. The normal preset rejects `nv=40`
+because its 268,435,456-field preprocessing requirement exceeds the current
+67,108,864-field cap; the row was obtained by lifting only that cap in an
+offline diagnostic.
+
+The previously measured `nv=36` timing below belongs to the superseded
+setup/proof-first winner, not the rank-first schedule now selected:
+
+| Superseded schedule | Commit | Prove | Verify | Actual proof bytes | Fold / terminal bytes | Levels |
+|---|---:|---:|---:|---:|---:|---:|
+| `256/128/128 → 64/64/64 → D64` | 8.488 s | 2.669 s | 16.926 ms | 93,959 | 36,256 / 57,703 | 8 |
+
+The new `256/128/128 → 256/64/64 → D64` winner was measured on 2026-08-05 on
+the same Apple M4 Max host and with the same thread and warmup protocol as the
+current-main table below. The build used `--no-default-features` with
+`parallel,profile-ci`; setup contributions were direct and tracing was off.
+The profiler's oversized public-opening weight table was factorized before the
+timed phases for this diagnostic, without changing commit, prove, verify, or
+serialization. The diagnostic wiring was removed afterward.
+
+| Rank-first schedule | Retained run | Commit | Prove | Verify | Actual proof bytes | Fold / terminal bytes | Levels |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `256/128/128 → 256/64/64 → D64` | 1 | 8.830 s | 2.622 s | 19.179 ms | 94,721 | 37,040 / 57,681 | 8 |
+| `256/128/128 → 256/64/64 → D64` | 2 | 8.369 s | 2.605 s | 18.882 ms | 94,721 | 37,040 / 57,681 | 8 |
+| **Two-run mean** | — | **8.599 s** | **2.613 s** | **19.031 ms** | **94,721** | **37,040 / 57,681** | **8** |
+
+Relative to the superseded row, rank-first L1 D256 makes commit 1.3% slower,
+prove 2.1% faster, and verify 12.4% slower in these two-run means. It adds 762
+serialized bytes: 784 bytes in the fold transcript, offset by a 22-byte smaller
+terminal response. The actual proof remains 4,791 bytes below the planner's
+99,512-byte conservative estimate. The previous native `nv=32` measurement
+also predates rank-first selection and must not be attributed to the regenerated
+row.
 
 ### Current-main rerun with D256 topologies
 

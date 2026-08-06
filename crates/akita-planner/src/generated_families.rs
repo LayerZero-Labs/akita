@@ -19,7 +19,7 @@ use std::{
 
 use crate::{
     derive_standalone_precommit_profile, find_group_batch_schedule, find_schedule,
-    runtime_schedule_key_cmp, EmitSpec, PlannerPolicy, RingDimensionSearchDomain,
+    runtime_schedule_key_cmp, EmitSpec, PlannerPolicy,
 };
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
@@ -186,13 +186,10 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
 fn regen_mixed_dim_fp128_onehot(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
     type Cfg = fp128::MixedDimFp128OneHot;
     let policy = policy_of::<Cfg>();
-    let dimensions =
-        RingDimensionSearchDomain::new(policy.ring_dimension, Cfg::RING_DIMENSION_CANDIDATES)?;
     Ok(find_schedule(
         key,
         &policy,
         honest_fold_policy_of::<Cfg>(),
-        &dimensions,
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )?

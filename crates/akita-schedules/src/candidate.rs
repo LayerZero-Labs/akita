@@ -6,11 +6,124 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    num_digits_inner, num_digits_open, projected_role_ring_count, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisTableKey,
+    min_secure_rank, num_digits_inner, num_digits_open, projected_role_ring_count,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, HonestFoldPolicy,
+    HonestFoldPolicySpec, HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{CommitmentRingDims, CommittedGroupParams, DecompositionParams, SisMatrixRole};
+
+/// Ring-dimension choice for one planner candidate.
+#[derive(Clone, Copy, Debug)]
+pub enum RingDimensionCandidate<'a> {
+    /// Use one exact A/B/D tuple.
+    Fixed(CommitmentRingDims),
+    /// Search has fixed A; derive B/D by minimum rank within the supplied
+    /// role domains and the previous level's monotonic ceiling.
+    Adaptive {
+        inner: usize,
+        outer_dimensions: &'a [usize],
+        opening_dimensions: &'a [usize],
+        ceiling: CommitmentRingDims,
+    },
+}
+
+impl RingDimensionCandidate<'_> {
+    /// Return the already-selected A dimension.
+    pub fn inner(self) -> usize {
+        match self {
+            Self::Fixed(dimensions) => dimensions.d_a(),
+            Self::Adaptive { inner, .. } => inner,
+        }
+    }
+
+    fn validate(self) -> Result<(), AkitaError> {
+        match self {
+            Self::Fixed(dimensions) => dimensions.validate_role_projection(),
+            Self::Adaptive { inner, ceiling, .. } => {
+                ceiling.validate_role_projection()?;
+                if inner == 0 || !inner.is_power_of_two() || inner > ceiling.d_a() {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "adaptive A dimension D{inner} is invalid under D{} ceiling",
+                        ceiling.d_a()
+                    )));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Select the B or D dimension for this candidate.
+    pub fn collision_role_price(
+        self,
+        policy: &PlannerPolicy,
+        role: SisMatrixRole,
+        native_width: usize,
+        log_basis: u32,
+    ) -> Option<(SisTableKey, usize)> {
+        let carrier_dimension = self.inner();
+        match self {
+            Self::Fixed(dimensions) => {
+                let role_dimension = match role {
+                    SisMatrixRole::Outer => dimensions.d_b(),
+                    SisMatrixRole::Open => dimensions.d_d(),
+                    SisMatrixRole::Inner => return None,
+                };
+                projected_collision_role_price(
+                    policy,
+                    role,
+                    carrier_dimension,
+                    role_dimension,
+                    native_width,
+                    log_basis,
+                )
+            }
+            Self::Adaptive {
+                outer_dimensions,
+                opening_dimensions,
+                ceiling,
+                ..
+            } => {
+                let (dimensions, role_ceiling) = match role {
+                    SisMatrixRole::Outer => (outer_dimensions, ceiling.d_b()),
+                    SisMatrixRole::Open => (opening_dimensions, ceiling.d_d()),
+                    SisMatrixRole::Inner => return None,
+                };
+                let mut best: Option<(usize, usize, SisTableKey, usize)> = None;
+                for &role_dimension in dimensions {
+                    if role_dimension > carrier_dimension || role_dimension > role_ceiling {
+                        continue;
+                    }
+                    let Some((key, width)) = projected_collision_role_price(
+                        policy,
+                        role,
+                        carrier_dimension,
+                        role_dimension,
+                        native_width,
+                        log_basis,
+                    ) else {
+                        continue;
+                    };
+                    let Ok(width_u64) = u64::try_from(width) else {
+                        continue;
+                    };
+                    let Some(rank) = min_secure_rank(key, width_u64) else {
+                        continue;
+                    };
+                    if best.as_ref().is_none_or(|(best_rank, best_d, _, _)| {
+                        (rank, role_dimension) < (*best_rank, *best_d)
+                    }) {
+                        best = Some((rank, role_dimension, key, width));
+                    }
+                    if rank == 1 {
+                        break;
+                    }
+                }
+                best.map(|(_, _, key, width)| (key, width))
+            }
+        }
+    }
+}
 
 /// Build one scalar root-fold candidate for an explicit basis and split.
 ///
@@ -21,7 +134,7 @@ use akita_types::{CommitmentRingDims, CommittedGroupParams, DecompositionParams,
 pub fn scalar_root_fold_level_params_candidate(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,
-    dimensions: CommitmentRingDims,
+    dimensions: RingDimensionCandidate<'_>,
     num_vars: usize,
     num_claims: usize,
     log_basis: u32,
@@ -29,8 +142,9 @@ pub fn scalar_root_fold_level_params_candidate(
     requested_fold_shape: TensorChallengeShape,
     honest_fold_policy: HonestFoldPolicySpec,
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
-    dimensions.validate_role_projection()?;
-    let alpha = (dimensions.d_a() as u32).trailing_zeros() as usize;
+    dimensions.validate()?;
+    let d_a = dimensions.inner();
+    let alpha = (d_a as u32).trailing_zeros() as usize;
     let reduced_vars = num_vars.saturating_sub(alpha);
     if reduced_vars == 0 || block_index_bits >= reduced_vars {
         return Ok(None);
@@ -69,13 +183,13 @@ pub fn scalar_root_fold_level_params_candidate(
         return Ok(None);
     };
     let Some(num_fold_coeffs) = width_s
-        .checked_mul(dimensions.d_a())
+        .checked_mul(d_a)
         .and_then(|count| count.checked_mul(root_num_chunks))
     else {
         return Ok(None);
     };
     let Ok(num_digits_fold) = honest_fold_policy.num_digits_fold(HonestFoldSizingQuery {
-        ring_dimension: dimensions.d_a(),
+        ring_dimension: d_a,
         num_claims,
         num_live_blocks,
         num_chunks: root_num_chunks,
@@ -90,7 +204,7 @@ pub fn scalar_root_fold_level_params_candidate(
         policy.sis_security_policy,
         policy.sis_table_digest,
         policy.sis_modulus_profile,
-        dimensions.d_a(),
+        d_a,
         log_basis,
         ring_challenge_cfg,
         fold_challenge_shape,
@@ -100,7 +214,7 @@ pub fn scalar_root_fold_level_params_candidate(
         return Ok(None);
     };
     let Ok(inner_commit_matrix) = InnerCommitMatrixParams::try_new_with_min_rank(
-        sis_key_at_dimension(policy, SisMatrixRole::Inner, dimensions.d_a(), norm_s),
+        sis_key_at_dimension(policy, SisMatrixRole::Inner, d_a, norm_s),
         width_s,
     ) else {
         return Ok(None);
@@ -113,14 +227,9 @@ pub fn scalar_root_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Some((outer_key, width_t)) = projected_collision_role_price(
-        policy,
-        SisMatrixRole::Outer,
-        dimensions.d_a(),
-        dimensions.d_b(),
-        native_width_t,
-        log_basis,
-    ) else {
+    let Some((outer_key, width_t)) =
+        dimensions.collision_role_price(policy, SisMatrixRole::Outer, native_width_t, log_basis)
+    else {
         return Ok(None);
     };
     let Ok(outer_commit_matrix) =
@@ -133,14 +242,9 @@ pub fn scalar_root_fold_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Some((open_key, width_w)) = projected_collision_role_price(
-        policy,
-        SisMatrixRole::Open,
-        dimensions.d_a(),
-        dimensions.d_d(),
-        native_width_w,
-        log_basis,
-    ) else {
+    let Some((open_key, width_w)) =
+        dimensions.collision_role_price(policy, SisMatrixRole::Open, native_width_w, log_basis)
+    else {
         return Ok(None);
     };
     let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(open_key, width_w)

@@ -4,8 +4,8 @@ use crate::CommitmentConfig;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, FoldSchedule,
-    OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusProfileId, SETUP_OFFLOAD_D_SETUP,
+    AkitaScheduleInputs, ChunkedWitnessCfg, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
+    SetupMatrixEnvelope, SisModulusProfileId, SETUP_OFFLOAD_D_SETUP,
 };
 #[cfg(any(
     feature = "schedules-fp128-d64-onehot-recursive",
@@ -23,7 +23,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     type ExtField = Cfg::ExtField;
 
     const D: usize = Cfg::D;
-    const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] = Cfg::RING_DIMENSION_CANDIDATES;
+    const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
+        Cfg::RING_DIMENSION_SCHEDULE_MODE;
 
     fn decomposition() -> DecompositionParams {
         Cfg::decomposition()

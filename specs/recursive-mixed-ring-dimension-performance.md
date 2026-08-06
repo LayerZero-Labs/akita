@@ -275,28 +275,26 @@ local cost. The planner must retain alternatives that differ in:
 Prematurely dropping a locally larger candidate can lose the globally best
 schedule after a later transition.
 
-## Planner implementation status on `feat/planner-per-matrix-d`
+## Planner implementation status
 
-The first planner-native cut is an opt-in offline scalar search. The canonical
-`find_schedule` entry point reads the catalog-bound dimension domain directly
-from `PlannerPolicy`.
+The declarative planner supersedes the original tuple-domain implementation.
+The canonical `find_schedule` entry point reads
+`PlannerPolicy::ring_dimension_schedule_mode` directly.
 
 Implemented:
 
-- `PlannerPolicy::ring_dimension_candidates` carries strictly sorted, unique
-  `(d_a, d_b, d_d)` tuples. Policy validation checks native role-projection
-  geometry and requires
-  every role dimension to divide `PlannerPolicy::ring_dimension`, the setup
-  generation dimension.
-- `find_schedule` searches that policy-bound domain. An exact uniform
-  setup-generation singleton retains the historical proof-payload objective.
+- `AdaptiveDimension` carries strictly sorted, unique A/B/D capability lists.
+  Policy validation requires every role dimension to divide
+  `PlannerPolicy::ring_dimension`, the setup generation dimension, and to
+  support the configured uniform suffix.
+- `find_schedule` branches only over A. `UniformDimension` retains the
+  historical proof-payload objective.
 - Root and recursive candidates derive A/B/D SIS keys at their selected role
   dimensions. B and D physical widths include `d_a / d_role` projection
   subcolumns; candidates are built directly rather than retargeted afterward.
-- The mixed search enumerates every admitted tuple and valid block split only
-  at L0 and L1. Tuples are component-wise non-increasing, L2 through the
-  terminal are uniform D64. Rank-one dimension pruning remains disabled until
-  an equivalence key is proved against the unpruned traversal.
+- The adaptive search enumerates every admitted A and valid block split only at
+  L0 and L1. A is non-increasing, B/D are derived by minimum secure rank, and
+  L2 through the terminal are uniform D64.
 - Mixed-boundary suffix states retain the required `(setup, proof)`
   alternatives per exact first `CommittedGroupParams`, because the parent
   proof formula sees that first step. Once dimensions freeze at L2, candidate

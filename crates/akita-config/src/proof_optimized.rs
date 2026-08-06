@@ -393,9 +393,9 @@ macro_rules! impl_proof_optimized_preset {
             }
         }
     };
-    (@ring_dimension_candidates) => {};
-    (@ring_dimension_candidates $candidates:expr) => {
-        const RING_DIMENSION_CANDIDATES: &'static [akita_types::CommitmentRingDims] = $candidates;
+    (@ring_dimension_schedule_mode) => {};
+    (@ring_dimension_schedule_mode $mode:expr) => {
+        const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode = $mode;
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr) => {
         impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, none);
@@ -403,16 +403,16 @@ macro_rules! impl_proof_optimized_preset {
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
         impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table);
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), ring_dimension_candidates = $candidates:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, ring_dimension_candidates = $candidates);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), ring_dimension_schedule_mode = $mode:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, ring_dimension_schedule_mode = $mode);
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, none $(, ring_dimension_candidates = $candidates:expr)?) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, none $(, ring_dimension_schedule_mode = $mode:expr)?) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
             const D: usize = $d;
 
-            impl_proof_optimized_preset!(@ring_dimension_candidates $($candidates)?);
+            impl_proof_optimized_preset!(@ring_dimension_schedule_mode $($mode)?);
 
             fn decomposition() -> akita_types::DecompositionParams {
                 akita_types::DecompositionParams {
@@ -483,13 +483,13 @@ macro_rules! impl_proof_optimized_preset {
             impl_proof_optimized_preset!(@schedule_catalog none);
         }
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, table, $feat:literal, $family_name:literal, $table:ident $(, ring_dimension_candidates = $candidates:expr)?) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, table, $feat:literal, $family_name:literal, $table:ident $(, ring_dimension_schedule_mode = $mode:expr)?) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
             const D: usize = $d;
 
-            impl_proof_optimized_preset!(@ring_dimension_candidates $($candidates)?);
+            impl_proof_optimized_preset!(@ring_dimension_schedule_mode $($mode)?);
 
             fn decomposition() -> akita_types::DecompositionParams {
                 akita_types::DecompositionParams {

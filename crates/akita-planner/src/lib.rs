@@ -7,8 +7,7 @@
 //! `fold_challenge_shape_at_level` closure pair, so the planner names no `CommitmentConfig`
 //! types and depends only on `akita-schedules` / `akita-types` /
 //! `akita-challenges` / `akita-field`.
-//! [`RingDimensionSearchDomain`] is an explicit input for both uniform and
-//! mixed planning.
+//! Uniform and adaptive dimension domains are carried by [`RingDimensionScheduleMode`].
 //!
 //! With the `catalog-gen` feature enabled, this crate also owns the offline
 //! generated-table family list and `gen_schedule_tables` binary. That feature
@@ -16,8 +15,9 @@
 //! preset-free.
 
 pub use akita_schedules::{
-    ChunkedWitnessCfg, DecompositionParams, PlannerCostModelId, PlannerPolicy, SelectionPolicyId,
-    SisModulusProfileId, SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
+    ChunkedWitnessCfg, DecompositionParams, PlannerCostModelId, PlannerPolicy,
+    RingDimensionScheduleMode, SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId,
+    DEFAULT_SIS_SECURITY_POLICY,
 };
 
 pub mod emit;
@@ -41,7 +41,7 @@ pub use emit::{
 pub use group_batch::find_group_batch_schedule;
 pub use schedule_params::{
     derive_standalone_precommit_profile, find_schedule, plan_optimal_suffix, suffix_opening_layout,
-    PlannedSuffix, PlannedSuffixFold, PlannedSuffixTerminal, RingDimensionSearchDomain,
+    PlannedSuffix, PlannedSuffixFold, PlannedSuffixTerminal,
 };
 
 /// Helpers available only to synthetic schedule fixtures and profile experiments.

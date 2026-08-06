@@ -1,11 +1,13 @@
 use super::*;
 
-use akita_schedules::planner_support::{projected_collision_role_price, sis_key_at_dimension};
+use akita_schedules::planner_support::sis_key_at_dimension;
 
 mod recursive;
 mod setup_prefix;
 
-pub(crate) use akita_schedules::planner_support::scalar_root_fold_level_params_candidate;
+pub(crate) use akita_schedules::planner_support::{
+    scalar_root_fold_level_params_candidate, RingDimensionCandidate,
+};
 pub(crate) use recursive::{
     derive_candidate_level_params, derive_candidate_level_params_all_splits,
 };

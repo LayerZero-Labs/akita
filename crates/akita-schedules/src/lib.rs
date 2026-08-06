@@ -26,7 +26,7 @@ pub use resolve::{
 };
 pub use runtime::{
     default_sis_security_policy, suffix_opening_layout, PlannerCostModelId, PlannerPolicy,
-    RuntimeSchedulePolicy, SelectionPolicyId,
+    RingDimensionScheduleMode, RuntimeSchedulePolicy, SelectionPolicyId,
 };
 
 /// Shared schedule-construction primitives used by offline search and generated-row replay.
@@ -34,7 +34,7 @@ pub use runtime::{
 pub mod planner_support {
     pub use crate::candidate::{
         projected_collision_role_price, scalar_root_fold_level_params_candidate,
-        sis_key_at_dimension,
+        sis_key_at_dimension, RingDimensionCandidate,
     };
     pub use crate::runtime::{
         checked_power_of_two_vars, grouped_segment_rings, materialize_candidate_schedule,
