@@ -19,13 +19,13 @@ use akita_types::{
 use std::sync::{Arc, Mutex};
 
 use super::validate_log_basis;
-pub(crate) use tensor_challenges::PreparedChallengeEvals;
+pub(crate) use challenge_evals::PreparedChallengeEvals;
 
 #[cfg(feature = "benchmark-support")]
 mod benchmark_support;
+mod challenge_evals;
 mod prepared_relation_point;
 mod relation_evaluation;
-mod tensor_challenges;
 #[cfg(test)]
 mod tests;
 
@@ -140,9 +140,7 @@ impl<E: FieldCore> RelationMatrixGroupEvaluator<E> {
             .ok_or_else(|| AkitaError::InvalidSetup("structured block count overflow".into()))?;
         let mut block_challenges = Vec::with_capacity(capacity);
         for claim in 0..self.num_claims {
-            let factors = self
-                .c_alphas
-                .affine_factors::<F>(claim, self.num_live_blocks)?;
+            let factors = self.c_alphas.affine_factors(claim, self.num_live_blocks)?;
             block_challenges.extend_from_slice(
                 factors
                     .low
@@ -520,41 +518,25 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
 {
-    match challenges {
-        Challenges::Sparse {
-            challenges: sparse, ..
-        } => Ok(PreparedChallengeEvals::Flat(
-            sparse
-                .iter()
-                .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
-                .collect::<Result<_, _>>()?,
-        )),
-        Challenges::Tensor { factored } => {
-            if D < 2 {
-                return Err(AkitaError::InvalidInput(
-                    "tensor challenge factored evaluation requires D >= 2".to_string(),
-                ));
-            }
-            factored.validate::<D>()?;
-            if factored.num_claims != num_claims {
-                return Err(AkitaError::InvalidSize {
-                    expected: num_claims,
-                    actual: factored.num_claims,
-                });
-            }
-            let num_live_blocks_per_claim = factored.num_live_blocks_per_claim;
-            if num_live_blocks_per_claim != num_live_blocks {
-                return Err(AkitaError::InvalidSize {
-                    expected: num_live_blocks,
-                    actual: num_live_blocks_per_claim,
-                });
-            }
-            Ok(PreparedChallengeEvals::Tensor {
-                challenges: factored.clone(),
-                alpha_pows: alpha_pows.to_vec(),
-            })
-        }
+    if challenges.num_claims != num_claims {
+        return Err(AkitaError::InvalidSize {
+            expected: num_claims,
+            actual: challenges.num_claims,
+        });
     }
+    if challenges.num_live_blocks_per_claim != num_live_blocks {
+        return Err(AkitaError::InvalidSize {
+            expected: num_live_blocks,
+            actual: challenges.num_live_blocks_per_claim,
+        });
+    }
+    Ok(PreparedChallengeEvals(
+        challenges
+            .challenges
+            .iter()
+            .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
+            .collect::<Result<_, _>>()?,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]

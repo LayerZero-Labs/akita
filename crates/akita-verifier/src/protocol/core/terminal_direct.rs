@@ -35,21 +35,11 @@ fn challenge_rings<F, const D: usize>(
 where
     F: FieldCore + FromPrimitiveInt,
 {
-    match challenges {
-        Challenges::Sparse { challenges, .. } => challenges
-            .iter()
-            .map(sparse_challenge_ring::<F, D>)
-            .collect(),
-        Challenges::Tensor { factored } => {
-            factored.validate::<D>()?;
-            (0..factored.total_blocks()?)
-                .map(|index| {
-                    let (_, _, high, low) = factored.factors_for_logical_block(index)?;
-                    Ok(sparse_challenge_ring::<F, D>(high)? * sparse_challenge_ring::<F, D>(low)?)
-                })
-                .collect()
-        }
-    }
+    challenges
+        .challenges
+        .iter()
+        .map(sparse_challenge_ring::<F, D>)
+        .collect()
 }
 
 fn ring_dot<F, const D: usize>(

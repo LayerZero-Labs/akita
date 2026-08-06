@@ -143,7 +143,7 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
     let evaluator = RelationMatrixEvaluator {
         relation_address_geometry,
         groups: vec![RelationMatrixGroupEvaluator {
-            c_alphas: PreparedChallengeEvals::Flat(
+            c_alphas: PreparedChallengeEvals(
                 (0..NUM_CLAIMS * NUM_LIVE_BLOCKS)
                     .map(|index| scalar(307 + index as u128))
                     .collect(),

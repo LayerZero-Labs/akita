@@ -467,14 +467,6 @@ at `num_fold_blocks = 4, 8, 16, 32` before the tighter `ln_term`).
   `fold_witness_linf_cap_policy` returns `WorstCaseBetaOnly` for `BoundedL1Norm`
   until a separate certificate proves a tail bound for the truncated support.
 
-**Tensor folds.** A tensor fold materializes the product `c = α_p · β_q`; the
-signs are products `ε^α·ε^β` and are no longer independent across `(p,q)`. The
-clean flat sub-Gaussian tail argument does not apply directly. The code exposes
-`effective_l2_sq_max = l1_factor^2 · challenge_l2_sq_max(factor)` as a
-deterministic materialized-product envelope. This is not the tensor tail scale.
-Tensor tail-bound grind needs the separate tensor-chaos formula in
-[`specs/tensor-challenge-prover-cutover.md`](tensor-challenge-prover-cutover.md).
-
 ### Why it terminates and stays sound (restated)
 
 - **Termination** is the `<= 1/2` miss probability above, capped at

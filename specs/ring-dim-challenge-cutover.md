@@ -38,11 +38,8 @@ relation source.
 | Rust name | Role |
 |-----------|------|
 | `LevelParams::fold_challenge_config` | `(count_pm1, count_pm2)` family at this fold level |
-| `witness_fold_challenge_labels()` | Fiat–Shamir absorb-buffer labels for flat/tensor draws |
-| `CHALLENGE_WITNESS_FOLD` | `b"ak/c/wf"` — flat witness-fold draw |
-| `CHALLENGE_TENSOR_FOLD_LEFT` | `b"ak/c/wfl"` |
-| `CHALLENGE_TENSOR_FOLD_RIGHT` | `b"ak/c/wfr"` |
-| `ABSORB_TENSOR_FOLD_LEFT` | `b"ak/a/wtl"` — binds right factor to left digest |
+| `witness_fold_challenge_labels()` | Fiat–Shamir absorb-buffer label for fold draws |
+| `CHALLENGE_WITNESS_FOLD` | `b"ak/c/wf"` — witness-fold draw |
 
 Production [`AkitaTranscript`](crates/akita-transcript) sponges are **positional**:
 label bytes are **not** absorbed into the live sponge (diagnostics/logging only).
@@ -228,7 +225,6 @@ Live E2E at `d_a > 256` waits on inner dispatch + backends + preset.
 - [x] Single signed-sparse sampler; `position_sample.rs` for distinct positions
 - [x] `fold_challenge_config` on `LevelParams` (was `stage1_config`)
 - [x] `witness_fold_challenge_labels`, `CHALLENGE_WITNESS_FOLD = b"ak/c/wf"`
-- [x] Tensor labels `ak/c/wfl`, `ak/c/wfr`, `ak/a/wtl`
 - [x] Descriptor/domain separator: tag 0 + two counts
 - [x] Schedule table regen + catalog digests
 

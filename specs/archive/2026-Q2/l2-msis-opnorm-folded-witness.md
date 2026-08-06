@@ -188,7 +188,7 @@ schedule search and table expansion.
 - No compatibility mode for proofs or schedules generated under the old model.
 - No attempt to use empirical challenge or witness distributions as a security
   proof.
-- No unrelated tensor-challenge, setup-offloading, or terminal-proof refactor.
+- No unrelated setup-offloading or terminal-proof refactor.
 - No generic user-facing arbitrary rejection predicate API in the first cut.
   Production challenge families are explicit policy variants with audited
   support and norm facts.
@@ -1620,9 +1620,7 @@ inner-product payload is serialized under `feature = "zk"`.
    weights.
    The residual implementation choice is whether those linear claims are merged
    into the existing stage-2 point or kept adjacent at a separately derived point.
-5. For tensor challenges, should `Gamma` be derived from factor operator norms,
-   the expanded product challenge, or a separate accepted tensor-product policy?
-6. Resolved: the B/D roles keep their coefficient `L∞` digit-collision bound
+5. Resolved: the B/D roles keep their coefficient `L∞` digit-collision bound
    `2^lb - 1` and convert into the unified L2 table via
    `||v||_2 <= sqrt(d)·||v||_inf` (see Invariants and SIS Tables And Planner).
 7. Resolved: small-field (31/32-bit) realized L2 certificates use the
@@ -1636,7 +1634,6 @@ inner-product payload is serialized under `feature = "zk"`.
 - `specs/sis-euclidean-estimator.md` (S5a: offline estimator + table regen)
 - `specs/weak-binding-norm-fix.md`
 - `specs/bounded-l1-sparse-challenge.md`
-- `specs/tensor-structured-folding-challenges.md`
 - `crates/akita-types/src/sis/norm_bound.rs`
 - `crates/akita-prover/src/protocol/ring_relation.rs`
 - `crates/akita-prover/src/protocol/ring_switch/coeffs.rs` (`build_w_coeffs`)

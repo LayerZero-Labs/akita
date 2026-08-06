@@ -60,27 +60,6 @@ pub const ABSORB_OPENING_PAYLOAD: &[u8] = b"ak/a/v";
 /// The buffer is appended under [`ABSORB_SPARSE_CHALLENGE`]; this string is not
 /// absorbed by itself into the positional production sponge.
 pub const CHALLENGE_WITNESS_FOLD: &[u8] = b"ak/c/wf";
-/// Challenge label for the high factor `α` in a tensor-shaped fold round.
-///
-/// Tensor folds sample fold-high and fold-low sparse challenges per claim and
-/// use `c_{p,q} = α_p · β_q`. This prefixes the absorb buffer for the
-/// **fold-high** draw batch (under [`ABSORB_SPARSE_CHALLENGE`]). After the
-/// fold-high challenges are expanded, [`ABSORB_FOLD_HIGH`] commits their digest
-/// before the fold-low batch is drawn.
-pub const CHALLENGE_FOLD_HIGH: &[u8] = b"ak/c/wfh";
-/// Digest of the sampled high tensor factor, appended between high and low draws.
-///
-/// Canonical hash of the fold-high sparse-challenge vector (`fold_high_digest`).
-/// Prevents choosing the fold-low factor `β` adaptively after seeing `α`. This
-/// is a real transcript append (positional sponge); it is not the challenges
-/// themselves.
-pub const ABSORB_FOLD_HIGH: &[u8] = b"ak/a/wfh";
-/// Challenge label for the low factor `β` in a tensor-shaped fold round.
-///
-/// Prefixes the absorb buffer for the **fold-low** draw batch (under
-/// [`ABSORB_SPARSE_CHALLENGE`]), after [`ABSORB_FOLD_HIGH`]. There is no
-/// symmetric digest absorb for the fold-low vector.
-pub const CHALLENGE_FOLD_LOW: &[u8] = b"ak/c/wfl";
 
 /// Absorb field-element evaluation claims for γ-batching.
 pub const ABSORB_EVAL_OPENINGS_FIELD: &[u8] = b"ak/a/eof";
@@ -128,9 +107,6 @@ pub const ALL_LABELS: &[&[u8]] = &[
     CHALLENGE_STOP_CONDITION,
     ABSORB_OPENING_PAYLOAD,
     CHALLENGE_WITNESS_FOLD,
-    CHALLENGE_FOLD_HIGH,
-    ABSORB_FOLD_HIGH,
-    CHALLENGE_FOLD_LOW,
     ABSORB_EVAL_OPENINGS_FIELD,
     CHALLENGE_EVAL_BATCH,
     ABSORB_NEXT_LEVEL_WITNESS_BINDING,

@@ -144,7 +144,7 @@ setup-contribution planner consume the same definitions):
   `chunk_layout.chunks()` zipped with `chunk_layout.chunk_lengths`.
 - **`PreparedChallengeEvals::summarize_chunk_block_carries`** (new, generalizes
   `summarize_all_block_carries` in
-  `crates/akita-verifier/src/protocol/ring_switch/tensor_challenges.rs`): the
+  `crates/akita-verifier/src/protocol/ring_switch/challenge_evals.rs`): the
   per-claim two-bucket `c_alpha` block summaries for one chunk's block window
   `[global_block_base, global_block_base + B_w)`, peeling `B_w` instead of `B`.
 - **`SetupContributionPlanInputs`** / **`SetupContributionPlan::prepare`**: take
@@ -971,8 +971,8 @@ where
     Base: FieldCore + FromPrimitiveInt,
     F: MulBase<Base>,
 {
-    match self {
-        Self::Flat(c_alphas) => (0..num_claims)
+    let c_alphas = self.values();
+    (0..num_claims)
             .map(|claim_idx| {
                 let claim_start = claim_idx.checked_mul(num_live_blocks).ok_or_else(...)?;
                 let start = claim_start.checked_add(global_block_base).ok_or_else(...)?;
@@ -983,16 +983,7 @@ where
                 })?;
                 summarize_pow2_block_carries(eq_low, offset_low, values)
             })
-            .collect(),
-        Self::Tensor { .. } if blocks_per_chunk == num_live_blocks && global_block_base == 0 => {
-            self.summarize_all_block_carries::<Base, D>(
-                num_claims, x_low_challenges, eq_low, offset_low, num_live_blocks,
-            )
-        }
-        Self::Tensor { .. } => Err(AkitaError::InvalidInput(
-            "chunked tensor challenge summaries are not implemented".into(),
-        )),
-    }
+            .collect()
 }
 ```
 

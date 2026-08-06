@@ -1,10 +1,7 @@
 //! Fold-challenge preview drawing for prover-side Fiat–Shamir grinding.
 
 use crate::sampler::{SignedSparseScratch, XofCursor, MAX_STACK_RING_DIM};
-use crate::{
-    fold_high_digest, ChallengeLabels, ChallengeShape, Challenges, SparseChallenge,
-    SparseChallengeConfig, TensorChallenges,
-};
+use crate::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use akita_transcript::{FoldChallengeSeedPreview, Transcript};
@@ -16,7 +13,7 @@ const FOLD_CHALLENGE_ROUND_DOMAIN: &[u8] = b"akita/fold-challenge-round/v1";
 /// Build the canonical transcript prefix for one group-local fold draw.
 ///
 /// The prefix binds the group index, exact `num_live_blocks`, claim count, and
-/// tensor shape before the sparse challenge seed is squeezed.
+/// challenge count before the sparse challenge seed is squeezed.
 ///
 /// # Errors
 ///
@@ -27,7 +24,6 @@ pub fn fold_challenge_sample_label(
     group_index: usize,
     num_live_blocks: usize,
     num_claims: usize,
-    shape: ChallengeShape,
 ) -> Result<Vec<u8>, AkitaError> {
     let group_index = u64::try_from(group_index)
         .map_err(|_| AkitaError::InvalidSetup("fold group index exceeds u64".to_string()))?;
@@ -35,24 +31,11 @@ pub fn fold_challenge_sample_label(
         .map_err(|_| AkitaError::InvalidSetup("num_live_blocks exceeds u64".to_string()))?;
     let num_claims = u64::try_from(num_claims)
         .map_err(|_| AkitaError::InvalidSetup("fold claim count exceeds u64".to_string()))?;
-    let mut label = Vec::with_capacity(FOLD_CHALLENGE_ROUND_DOMAIN.len() + base_label.len() + 33);
+    let mut label = Vec::with_capacity(FOLD_CHALLENGE_ROUND_DOMAIN.len() + base_label.len() + 24);
     label.extend_from_slice(FOLD_CHALLENGE_ROUND_DOMAIN);
     label.extend_from_slice(&group_index.to_le_bytes());
     label.extend_from_slice(&num_live_blocks.to_le_bytes());
     label.extend_from_slice(&num_claims.to_le_bytes());
-    match shape {
-        ChallengeShape::Flat => {
-            label.push(0);
-            label.extend_from_slice(&0u64.to_le_bytes());
-        }
-        ChallengeShape::Tensor { fold_low_len } => {
-            let fold_low_len = u64::try_from(fold_low_len).map_err(|_| {
-                AkitaError::InvalidSetup("tensor fold-low length exceeds u64".to_string())
-            })?;
-            label.push(1);
-            label.extend_from_slice(&fold_low_len.to_le_bytes());
-        }
-    }
     label.extend_from_slice(base_label);
     Ok(label)
 }
@@ -91,8 +74,6 @@ pub trait FoldDraw {
         num_live_blocks: usize,
         num_claims: usize,
         cfg: &SparseChallengeConfig,
-        shape: &ChallengeShape,
-        labels: ChallengeLabels<'_>,
         grind_nonce: u32,
     ) -> Result<Challenges, AkitaError> {
         if ring_d > MAX_STACK_RING_DIM {
@@ -109,62 +90,16 @@ pub trait FoldDraw {
             ));
         }
 
-        match shape {
-            ChallengeShape::Flat => {
-                let total = challenge_count(num_live_blocks, num_claims, "sparse")?;
-                let sample_label = fold_challenge_sample_label(
-                    labels.flat,
-                    group_index,
-                    num_live_blocks,
-                    num_claims,
-                    *shape,
-                )?;
-                let challenges =
-                    self.draw_sparse_challenges(&sample_label, ring_d, total, cfg, grind_nonce);
-                Challenges::from_sparse(challenges, num_live_blocks, num_claims)
-            }
-            ChallengeShape::Tensor { fold_low_len } => {
-                if num_live_blocks == 0 || !fold_low_len.is_power_of_two() {
-                    return Err(AkitaError::InvalidInput(
-                        "tensor challenges require positive num_live_blocks and a power-of-two low length"
-                            .to_string(),
-                    ));
-                }
-                let fold_high_len = num_live_blocks.div_ceil(*fold_low_len);
-                let high_total = challenge_count(fold_high_len, num_claims, "fold-high")?;
-                let low_total = challenge_count(*fold_low_len, num_claims, "fold-low")?;
-                let high_label = fold_challenge_sample_label(
-                    labels.fold_high,
-                    group_index,
-                    num_live_blocks,
-                    num_claims,
-                    *shape,
-                )?;
-                let fold_high =
-                    self.draw_sparse_challenges(&high_label, ring_d, high_total, cfg, grind_nonce);
-                let high_digest = fold_high_digest(&fold_high, fold_high_len, num_claims, ring_d)?;
-                self.absorb(labels.fold_high_digest, &high_digest);
-                let low_label = fold_challenge_sample_label(
-                    labels.fold_low,
-                    group_index,
-                    num_live_blocks,
-                    num_claims,
-                    *shape,
-                )?;
-                let fold_low =
-                    self.draw_sparse_challenges(&low_label, ring_d, low_total, cfg, grind_nonce);
-                Challenges::from_tensor_dyn(
-                    TensorChallenges {
-                        fold_high,
-                        fold_low,
-                        num_live_blocks_per_claim: num_live_blocks,
-                        fold_low_len: *fold_low_len,
-                        num_claims,
-                    },
-                    ring_d,
-                )
-            }
-        }
+        let total = challenge_count(num_live_blocks, num_claims, "sparse")?;
+        let sample_label = fold_challenge_sample_label(
+            akita_transcript::labels::CHALLENGE_WITNESS_FOLD,
+            group_index,
+            num_live_blocks,
+            num_claims,
+        )?;
+        let challenges =
+            self.draw_sparse_challenges(&sample_label, ring_d, total, cfg, grind_nonce);
+        Challenges::from_sparse(challenges, num_live_blocks, num_claims)
     }
 }
 

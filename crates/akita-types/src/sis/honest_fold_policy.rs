@@ -3,7 +3,7 @@
 //! These policies select an exact gadget depth for schedule generation. They
 //! are not runtime protocol metadata and are never evaluated by the verifier.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
 use super::{
@@ -26,7 +26,6 @@ pub struct HonestFoldSizingQuery<'a> {
     pub num_fold_coeffs: usize,
     pub log_basis: u32,
     pub challenge_config: &'a SparseChallengeConfig,
-    pub challenge_shape: TensorChallengeShape,
 }
 
 /// One group-owned offline rule for selecting its folded-witness digit depth.
@@ -109,21 +108,16 @@ impl BalancedSignedDigitFoldPolicy {
         // logical single-fold geometry even though the query reports every
         // physical response coefficient.
         let logical_fold_coeffs = query.num_fold_coeffs / query.num_chunks;
-        let policy = fold_witness_linf_cap_policy(
-            query.challenge_config,
-            query.challenge_shape,
-            query.ring_dimension,
-        );
+        let policy = fold_witness_linf_cap_policy(query.challenge_config, query.ring_dimension);
         let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
             query.challenge_config,
-            query.challenge_shape,
             query.ring_dimension,
             logical_fold_coeffs,
         )?;
         let (cap, tail_cap) = fold_witness_unsnapped_linf_cap(
             query.num_live_blocks,
             query.num_claims,
-            FoldChallengeNorms::new(query.challenge_config, query.challenge_shape),
+            FoldChallengeNorms::new(query.challenge_config),
             self.witness,
             &cap_config,
         )?;
@@ -140,11 +134,7 @@ impl HonestFoldPolicy for BalancedSignedDigitFoldPolicy {
     fn num_digits_fold(&self, query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
         let (cap, tail_cap, policy) = self.unsnapped_cap(query)?;
         let mut digits = self.digit_depth_for_cap(cap, query.log_basis);
-        if matches!(
-            policy,
-            FoldWitnessLinfCapPolicy::TailBoundWithGrind
-                | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind
-        ) {
+        if matches!(policy, FoldWitnessLinfCapPolicy::TailBoundWithGrind) {
             if let Some(tail_cap) = tail_cap {
                 let floor = tail_cap.saturating_mul(u128::from(self.snap.retain_num))
                     / u128::from(self.snap.retain_den);
@@ -205,9 +195,6 @@ impl UnitOneHotFoldPolicy {
     }
 
     fn exact_threshold(&self, query: HonestFoldSizingQuery<'_>) -> Option<u128> {
-        if !matches!(query.challenge_shape, TensorChallengeShape::Flat) {
-            return None;
-        }
         let cfg = query.challenge_config;
         if cfg.weight() > query.ring_dimension || query.ring_dimension == 0 {
             return None;
@@ -261,7 +248,7 @@ impl HonestFoldPolicy for UnitOneHotFoldPolicy {
             return Ok(legacy);
         };
         let live_blocks_per_chunk = query.num_live_blocks.div_ceil(query.num_chunks);
-        let challenge = FoldChallengeNorms::new(query.challenge_config, query.challenge_shape);
+        let challenge = FoldChallengeNorms::new(query.challenge_config);
         let worst_case = challenge
             .l1_norm
             .checked_mul(query.num_claims as u128)
@@ -378,7 +365,6 @@ mod tests {
             num_fold_coeffs: 4_096,
             log_basis: 3,
             challenge_config: challenge,
-            challenge_shape: TensorChallengeShape::Flat,
         }
     }
 
@@ -442,7 +428,6 @@ mod tests {
         let actual = policy.num_digits_fold(query).expect("balanced policy");
         let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
             &challenge,
-            query.challenge_shape,
             query.ring_dimension,
             query.num_fold_coeffs,
         )
@@ -452,7 +437,7 @@ mod tests {
             query.num_claims,
             128,
             query.log_basis,
-            FoldChallengeNorms::new(&challenge, query.challenge_shape),
+            FoldChallengeNorms::new(&challenge),
             witness,
             &cap_config,
         )
@@ -462,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn unit_one_hot_never_exceeds_legacy_and_tensor_falls_back() {
+    fn unit_one_hot_never_exceeds_legacy() {
         let challenge = d64_challenge();
         let legacy_witness = FoldWitnessNorms::new(1, 4);
         let one_hot = UnitOneHotFoldPolicy::preserving_existing_behavior(128, legacy_witness);
@@ -478,15 +463,6 @@ mod tests {
             .and_then(|count| count.checked_mul(challenge.infinity_norm() as usize))
             .unwrap() as u128;
         assert!(one_hot.exact_threshold(flat).unwrap() <= deterministic_cap);
-
-        let tensor = HonestFoldSizingQuery {
-            challenge_shape: TensorChallengeShape::Tensor { fold_low_len: 4 },
-            ..flat
-        };
-        assert_eq!(
-            one_hot.num_digits_fold(tensor).expect("tensor fallback"),
-            legacy.num_digits_fold(tensor).expect("legacy tensor")
-        );
     }
 
     #[test]
@@ -511,7 +487,6 @@ mod tests {
                             num_fold_coeffs,
                             log_basis,
                             challenge_config: &challenge,
-                            challenge_shape: TensorChallengeShape::Flat,
                         };
                         let exact_digits = one_hot.num_digits_fold(query).unwrap();
                         let legacy_digits = legacy.num_digits_fold(query).unwrap();
@@ -555,7 +530,6 @@ mod tests {
                 num_fold_coeffs: physical_num_fold_coeffs,
                 log_basis: 3,
                 challenge_config: &challenge,
-                challenge_shape: TensorChallengeShape::Flat,
             };
             assert_eq!(
                 physical.num_fold_coeffs,
@@ -576,7 +550,6 @@ mod tests {
             num_fold_coeffs: 512,
             log_basis: 3,
             challenge_config: &challenge,
-            challenge_shape: TensorChallengeShape::Flat,
         };
         assert_eq!(
             one_hot
@@ -605,7 +578,6 @@ mod tests {
             num_fold_coeffs: 512,
             log_basis: 3,
             challenge_config: &challenge,
-            challenge_shape: TensorChallengeShape::Flat,
         };
         let largest_window = HonestFoldSizingQuery {
             num_live_blocks: 3,

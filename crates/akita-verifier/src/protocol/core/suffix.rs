@@ -328,8 +328,6 @@ where
         params.num_live_blocks,
         1,
         &scheduled.sparse_challenge_config,
-        &TensorChallengeShape::Flat,
-        witness_fold_challenge_labels(),
         proof.fold_grind_nonce,
     )?;
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_replay.response);

@@ -730,7 +730,7 @@ fn bucketed_high_rows_plan(
     Ok(Some(window))
 }
 
-/// Contract the fold-high rows against the shared low carry summaries using a
+/// Contract the high rows against the shared low carry summaries using a
 /// bounded high-equality table and carry-bucketing.
 ///
 /// For each compatible family and row `r` the base kernel adds

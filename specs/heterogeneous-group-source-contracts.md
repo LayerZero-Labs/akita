@@ -168,7 +168,6 @@ pub struct HonestFoldSizingQuery<'a> {
     pub num_fold_coeffs: usize,
     pub log_basis: u32,
     pub challenge_config: &'a SparseChallengeConfig,
-    pub challenge_shape: TensorChallengeShape,
 }
 
 pub trait HonestFoldPolicy {

@@ -13,9 +13,7 @@ use crate::protocol::ring_switch::{
 use crate::stages::stage1::{derive_multi_group_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::AkitaStage2Verifier;
 use crate::stages::SetupSumcheckVerifier;
-use akita_challenges::{
-    witness_fold_challenge_labels, FoldDraw, LiveFoldDraw, TensorChallengeShape,
-};
+use akita_challenges::{FoldDraw, LiveFoldDraw};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
     HalvingField, MulBaseUnreduced, PseudoMersenneField, RandomSampling,

@@ -130,7 +130,7 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
     let evaluator = RelationMatrixEvaluator {
         relation_address_geometry,
         groups: vec![RelationMatrixGroupEvaluator {
-            c_alphas: PreparedChallengeEvals::Flat(
+            c_alphas: PreparedChallengeEvals(
                 (0..lp.num_live_blocks)
                     .map(|index| MixedF::from_u64(31 + index as u64))
                     .collect(),

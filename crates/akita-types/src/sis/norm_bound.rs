@@ -5,7 +5,7 @@
 //! `L∞` bucket ready to feed [`super::ajtai_key::min_secure_rank`]. The folded witness `z`
 //! is decomposed (not Ajtai-committed), so it has no SIS bucket.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
 use super::ajtai_key::{
@@ -19,11 +19,11 @@ use crate::layout::digit_math::isqrt_ceil;
 
 pub use super::fold_linf_cap::{
     fold_witness_linf_cap_policy, rademacher_proxy_variance,
-    rademacher_proxy_variance_flat_challenges, rademacher_proxy_variance_tensor_challenges,
-    FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN,
-    FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
-    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN,
-    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM, MAX_FOLD_GRIND_ATTEMPTS,
+    rademacher_proxy_variance_flat_challenges, FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy,
+    FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
+    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
+    MAX_FOLD_GRIND_ATTEMPTS,
 };
 
 /// Rounded-up SIS infinity norm when adding/subtracting two small digits. A
@@ -119,11 +119,10 @@ pub fn rounded_up_role_a_inf_norm(
     d: usize,
     log_basis_response: u32,
     fold_challenge_config: &SparseChallengeConfig,
-    fold_shape: TensorChallengeShape,
     fold_decomposed_digits: usize,
     ring_subfield_norm_bound: u32,
 ) -> Option<u128> {
-    let challenge = FoldChallengeNorms::new(fold_challenge_config, fold_shape);
+    let challenge = FoldChallengeNorms::new(fold_challenge_config);
     if log_basis_response == 0 || fold_decomposed_digits == 0 {
         return None;
     }
@@ -154,16 +153,13 @@ pub struct FoldChallengeNorms {
 }
 
 impl FoldChallengeNorms {
-    /// Build the `beta_inf` envelope norms for one fold level from config and shape.
+    /// Build the `beta_inf` envelope norms for one fold level from its config.
     #[inline]
     #[must_use]
-    pub fn new(
-        fold_challenge_config: &SparseChallengeConfig,
-        fold_shape: TensorChallengeShape,
-    ) -> Self {
+    pub fn new(fold_challenge_config: &SparseChallengeConfig) -> Self {
         Self {
-            infinity_norm: fold_shape.effective_infinity_norm(fold_challenge_config) as u128,
-            l1_norm: fold_shape.effective_l1_mass(fold_challenge_config) as u128,
+            infinity_norm: fold_challenge_config.infinity_norm() as u128,
+            l1_norm: fold_challenge_config.l1_norm() as u128,
         }
     }
 }
@@ -279,11 +275,8 @@ pub(crate) fn fold_witness_digit_plan(
     //
     // This pre-cutover regression oracle uses the historical field-specific
     // retain floor. Production policy ownership lives in honest_fold_policy.
-    if let (
-        FoldWitnessLinfCapPolicy::TailBoundWithGrind
-        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
-        Some(rademacher_inf_norm_bound),
-    ) = (cap_config.policy, rademacher_inf_norm_bound)
+    if let (FoldWitnessLinfCapPolicy::TailBoundWithGrind, Some(rademacher_inf_norm_bound)) =
+        (cap_config.policy, rademacher_inf_norm_bound)
     {
         let (retain_num, retain_den): (u32, u32) = if field_bits == 32 { (3, 4) } else { (1, 2) };
         if retain_den > 0 && fold_decomposed_digits > 1 && rademacher_inf_norm_bound > 0 {
@@ -342,8 +335,7 @@ pub fn fold_witness_unsnapped_linf_cap(
     let rademacher_inf_norm_bound;
     (inf_norm_bound, rademacher_inf_norm_bound) = match cap_config.policy {
         FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => (inf_norm_bound, None),
-        FoldWitnessLinfCapPolicy::TailBoundWithGrind
-        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => {
+        FoldWitnessLinfCapPolicy::TailBoundWithGrind => {
             let witness_linf_sq = witness
                 .infinity_norm()
                 .saturating_mul(witness.infinity_norm());
@@ -477,15 +469,13 @@ mod tests {
     fn rounded_up_role_a_inf_norm_matches_lemma7_envelope() {
         use crate::DecompositionParams;
         use akita_challenges::{
-            SparseChallengeConfig, TensorChallengeShape, D64_PRODUCTION_PM1_COUNT,
-            D64_PRODUCTION_PM2_COUNT,
+            SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
         };
 
         let fold_challenge_config = SparseChallengeConfig {
             count_pm1: D64_PRODUCTION_PM1_COUNT,
             count_pm2: D64_PRODUCTION_PM2_COUNT,
         };
-        let fold_shape = TensorChallengeShape::Flat;
         // One-hot committed root (`log_commit_bound == 1`); `log_open_bound`
         // sets `field_bits = 128` for a realistic digit plan.
         let decomposition = DecompositionParams {
@@ -497,11 +487,10 @@ mod tests {
             (64usize, 2usize, 1usize, 1u32, 2u64);
 
         // Recompute the Lemma-7 envelope from the same primitives the function wires.
-        let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
+        let challenge = FoldChallengeNorms::new(&fold_challenge_config);
         let witness = FoldWitnessNorms::sparse_binary(d, 64).unwrap();
         let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
             &fold_challenge_config,
-            fold_shape,
             d,
             inner_width as usize * d,
         )
@@ -536,7 +525,6 @@ mod tests {
                 d,
                 decomposition.log_basis,
                 &fold_challenge_config,
-                fold_shape,
                 delta_fold,
                 subfield,
             )
@@ -550,15 +538,13 @@ mod tests {
     fn committed_fold_collision_prices_digit_envelope_not_honest_cap() {
         use crate::DecompositionParams;
         use akita_challenges::{
-            SparseChallengeConfig, TensorChallengeShape, D64_PRODUCTION_PM1_COUNT,
-            D64_PRODUCTION_PM2_COUNT,
+            SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
         };
 
         let fold_challenge_config = SparseChallengeConfig {
             count_pm1: D64_PRODUCTION_PM1_COUNT,
             count_pm2: D64_PRODUCTION_PM2_COUNT,
         };
-        let fold_shape = TensorChallengeShape::Flat;
         // One-hot committed root (`log_commit_bound == 1`); `log_open_bound`
         // sets `field_bits = 128` so the tail-bound snap-down engages.
         let decomposition = DecompositionParams {
@@ -569,11 +555,10 @@ mod tests {
         let (d, num_live_blocks, num_claims, subfield, inner_width) =
             (64usize, 4usize, 1usize, 1u32, 2u64);
 
-        let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
+        let challenge = FoldChallengeNorms::new(&fold_challenge_config);
         let witness = FoldWitnessNorms::sparse_binary(d, 64).unwrap();
         let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
             &fold_challenge_config,
-            fold_shape,
             d,
             inner_width as usize * d,
         )
@@ -600,7 +585,6 @@ mod tests {
             d,
             decomposition.log_basis,
             &fold_challenge_config,
-            fold_shape,
             delta_fold,
             subfield,
         )
@@ -628,16 +612,14 @@ mod tests {
     fn fold_linf_digit_plan_applies_snap_for_tail_bound_levels() {
         use crate::DecompositionParams;
         use akita_challenges::{
-            SparseChallengeConfig, TensorChallengeShape, D64_PRODUCTION_PM1_COUNT,
-            D64_PRODUCTION_PM2_COUNT,
+            SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
         };
 
         let fold_challenge_config = SparseChallengeConfig {
             count_pm1: D64_PRODUCTION_PM1_COUNT,
             count_pm2: D64_PRODUCTION_PM2_COUNT,
         };
-        let fold_shape = TensorChallengeShape::Flat;
-        let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
+        let challenge = FoldChallengeNorms::new(&fold_challenge_config);
         let witness = FoldWitnessNorms::bounded(3, 64);
         let decomposition = DecompositionParams {
             log_basis: 3,
@@ -645,8 +627,7 @@ mod tests {
             log_open_bound: None,
         };
         let cap_config =
-            FoldWitnessLinfCapConfig::for_fold_coeffs(&fold_challenge_config, fold_shape, 64, 128)
-                .unwrap();
+            FoldWitnessLinfCapConfig::for_fold_coeffs(&fold_challenge_config, 64, 128).unwrap();
         let (delta_fold, inf_norm_bound) = fold_witness_digit_plan(
             5,
             1,
@@ -690,15 +671,13 @@ mod tests {
     fn committed_fold_collision_uses_num_digits_fold_verifier_bound() {
         use crate::DecompositionParams;
         use akita_challenges::{
-            SparseChallengeConfig, TensorChallengeShape, D64_PRODUCTION_PM1_COUNT,
-            D64_PRODUCTION_PM2_COUNT,
+            SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
         };
 
         let fold_challenge_config = SparseChallengeConfig {
             count_pm1: D64_PRODUCTION_PM1_COUNT,
             count_pm2: D64_PRODUCTION_PM2_COUNT,
         };
-        let fold_shape = TensorChallengeShape::Flat;
         // Dense recursive witness path (`is_root = false` ⇒ `is_onehot = false`).
         let decomposition = DecompositionParams {
             log_basis: 3,
@@ -708,11 +687,10 @@ mod tests {
         let (d, num_live_blocks, num_claims, subfield, inner_width) =
             (64usize, 2usize, 1usize, 1u32, 2u64);
 
-        let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
+        let challenge = FoldChallengeNorms::new(&fold_challenge_config);
         let witness = FoldWitnessNorms::bounded(decomposition.log_basis, d);
         let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
             &fold_challenge_config,
-            fold_shape,
             d,
             inner_width as usize * d,
         )
@@ -735,7 +713,6 @@ mod tests {
             d,
             decomposition.log_basis,
             &fold_challenge_config,
-            fold_shape,
             delta_fold,
             subfield,
         )

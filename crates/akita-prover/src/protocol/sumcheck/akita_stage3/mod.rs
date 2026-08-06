@@ -1,6 +1,6 @@
 //! Setup-product sumcheck for a dense table against two disjoint factors.
 //!
-//! The table is laid out as `left * fold_low_len + right`. The right factor is
+//! The table is laid out as `left * right_len + right`. The right factor is
 //! bound first, then the left factor. This matches setup products of the form
 //! `S(i, y) * setup_index_weight(i) * alpha(y)` without materializing the full
 //! `setup_index_weight(i) * alpha(y)` table.

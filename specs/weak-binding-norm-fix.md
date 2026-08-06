@@ -117,7 +117,7 @@ private Akita write-up and are not reproduced here.
   entirely, fp16 was removed from the production and profile paths, and the
   small-D fp128 / fp32 / fp64 families that cannot fold securely under honest
   pricing were removed. The shipping families are now fp128 D128 (plus the D64
-  one-hot and D64 one-hot tensor), fp64 D128 / D256, and fp32 D128 / D256
+  one-hot), fp64 D128 / D256, and fp32 D128 / D256
   one-hot (see `akita_config::generated_families::ALL_GENERATED_FAMILIES`); fp32
   ships no dense family, and the smallest secure small-field ring degree is now
   `D = 128`.
@@ -236,13 +236,6 @@ regenerating the SIS-floor security tables and one deferred follow-up:
   norms (the SIS-secure widths it admits are too small), so `fp16::*Full`
   schedules degrade to cleartext (`Direct`) — sound, but non-succinct. Q16
   one-hot and all fp32/fp64/fp128 families keep folding.
-- **Deferred: dense poly under a one-hot tensor config.** `D64OneHotTensor`
-  has `log_commit_bound == 1`, so the corrected fold `β` sizes against one-hot
-  witness sparsity. Committing a *dense* poly under it folds to a larger
-  `||z||_inf` than that `β`, so the prover aborts. The affected
-  `single_poly_tensor_e2e::*dense_tensor*` tests are `#[ignore]`d pending a
-  follow-up (the tensor + dense-witness β interaction).
-
 ## Follow-up fix (2026-06-02): root-dense witness L∞ off-by-one
 
 While reviewing the consolidated `akita_types::sis` module, a second, smaller
@@ -800,8 +793,6 @@ output.
   task.)
 - [`specs/bounded-l1-sparse-challenge.md`](bounded-l1-sparse-challenge.md) —
   prior art tracking challenge L1 mass for the fold bound.
-- [`specs/tensor-structured-folding-challenges.md`](tensor-structured-folding-challenges.md)
-  — `challenge_l1_mass` / `effective_l1_mass` definitions.
 - Code: `crates/akita-planner/src/ajtai_params.rs`,
   `crates/akita-types/src/sis_offline.rs`,
   `crates/akita-types/src/layout/digit_math.rs`,

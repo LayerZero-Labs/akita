@@ -39,8 +39,7 @@ The Akita line includes, or is being designed to include, material protocol impr
 - smaller proof sizes for large-field deployments, including 128-bit-field settings, through modulus switching and field-size lowering;
 - an efficient zero-knowledge layer, tentatively named Whiteout, based on fully blinding the proof with committed sumcheck masks and Gaussian masking noise.
 
-The crate decomposition should keep these protocol improvements cleanly separable from foundational crates.
-For example, tensor challenge sampling belongs in `akita-challenges` or role crates as appropriate, shared public proof/config shapes belong in `akita-types`, and Whiteout prover-only machinery must not leak into `akita-verifier`.
+The crate decomposition should keep protocol improvements cleanly separable from foundational crates. Shared public proof/config shapes belong in `akita-types`, and Whiteout prover-only machinery must not leak into `akita-verifier`.
 
 The target workspace layout uses a central top-level `crates/` directory.
 Each extracted package lives under `crates/<package-name>/`.
@@ -94,7 +93,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 
 ### Non-Goals
 
-1. Changing current protocol behavior, security assumptions, schedule choices, proof layout semantics, Fiat-Shamir domain labels, or field/ring arithmetic as part of the crate split. Akita protocol improvements such as matrix-claim delegation, tensor challenges, modulus switching, and Whiteout should land as explicit protocol changes, not accidental side effects of moving files.
+1. Changing current protocol behavior, security assumptions, schedule choices, proof layout semantics, Fiat-Shamir domain labels, or field/ring arithmetic as part of the crate split. Akita protocol improvements such as matrix-claim delegation, modulus switching, and Whiteout should land as explicit protocol changes, not accidental side effects of moving files.
 2. Migrating Jolt to consume the new Akita crates in this PR. The output should make that integration straightforward, but the Jolt-side dependency change is separate.
 3. Importing Jolt's code, eval framework, or crate names into Akita.
 4. Keeping temporary compatibility shims for old module paths such as `akita_pcs::protocol::...`, or preserving the old monolithic protocol tree under a new `akita_pcs::protocol::...` facade.
