@@ -76,11 +76,12 @@ bytes are unchanged.
 Prover caches store cyclic and negacyclic transforms in separate exact-prefix
 slots. Commitment kernels request only negacyclic entries. Ring-switch kernels
 join their D/B/A cyclic requirements by maximum and request the A negacyclic
-prefix separately. `ExactNegacyclic { width, log_basis }` prepares the terminal
-verifier's minimum exact negacyclic form: base residues alone when they fit,
-otherwise the selected base plus the 12289 tail. Verifier warming coalesces terminal
-groups into one strongest prefix per ring degree. The base prefix covers every
-group, while the tail prefix covers only groups whose exact bound requires it.
+prefix separately. `ExactNegacyclic { width, rhs_abs_bound }` prepares the
+terminal verifier's minimum exact negacyclic form: base residues alone when
+they fit, otherwise the selected base plus the 12289 tail. Verifier warming
+coalesces terminal groups into one strongest prefix per ring degree. The base
+prefix covers every group, while the tail prefix covers only groups whose exact
+bound requires it.
 
 **Sources to fold in**
 

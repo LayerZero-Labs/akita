@@ -17,6 +17,13 @@ const AVX512_CAPABLE: AvxCpuFeatures = AvxCpuFeatures {
     avx512bw: true,
 };
 
+const AVX512_WITHOUT_AVX2: AvxCpuFeatures = AvxCpuFeatures {
+    avx2: false,
+    avx512f: true,
+    avx512dq: true,
+    avx512bw: true,
+};
+
 #[test]
 fn avx_mode_defaults_to_avx2_when_supported() {
     assert_eq!(
@@ -34,6 +41,18 @@ fn avx512_is_default_pointwise_mode_when_available() {
     assert_eq!(
         select_avx_ntt_mode(None, None, Some("1"), AVX512_CAPABLE),
         Some(AvxNttMode::Avx512)
+    );
+}
+
+#[test]
+fn avx512_mode_rejects_a_feature_mask_without_avx2() {
+    assert_eq!(
+        select_avx_ntt_mode(None, None, None, AVX512_WITHOUT_AVX2),
+        None
+    );
+    assert_eq!(
+        select_avx_ntt_mode(None, None, Some("1"), AVX512_WITHOUT_AVX2),
+        None
     );
 }
 

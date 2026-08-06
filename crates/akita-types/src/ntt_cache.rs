@@ -537,6 +537,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
     }
 
     /// Compute a shape-checked exact signed-i16 matrix product.
+    #[inline]
     fn mat_vec_i16<F: FieldCore + CanonicalField>(
         &self,
         log_basis: u32,
@@ -721,6 +722,7 @@ impl<const D: usize> PreparedNttCache<D> {
     }
 
     /// Compute a shape-checked exact signed-i16 matrix product.
+    #[inline]
     pub fn mat_vec_i16<F: FieldCore + CanonicalField>(
         &self,
         log_basis: u32,
@@ -731,6 +733,7 @@ impl<const D: usize> PreparedNttCache<D> {
     }
 }
 
+#[inline]
 fn mat_vec_i16_from_cache<F, const K: usize, const D: usize>(
     neg: &[CyclotomicCrtNtt<i32, K, D>],
     params: &CrtNttParamSet<i32, K, D>,

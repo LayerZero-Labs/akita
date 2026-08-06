@@ -215,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn q32_terminal_i16_width_uses_only_the_base_cache() {
+    fn q32_terminal_i16_width_uses_the_selected_exact_layout() {
         let matrix = (0..10)
             .map(|entry| {
                 CyclotomicRing::<F32, D>::from_coefficients(std::array::from_fn(|coefficient| {
@@ -239,14 +239,35 @@ mod tests {
         )
         .expect("matching public-matrix identity");
         let rhs = vec![[i16::MAX; D]; 5];
-        assert!(
-            !ntt_cache_requires_i16_tail::<F32, D>(rhs.len(), TERMINAL_I16_ABS_BOUND)
-                .expect("q32 terminal capability")
-        );
-        centered_rows(&setup, 2, &rhs, 10).expect("q32 i16 terminal matvec");
+        let needs_tail = ntt_cache_requires_i16_tail::<F32, D>(rhs.len(), TERMINAL_I16_ABS_BOUND)
+            .expect("q32 terminal capability");
+        let actual = centered_rows(&setup, 2, &rhs, 10).expect("q32 i16 terminal matvec");
+        let centered_rhs = rhs
+            .iter()
+            .map(|ring| {
+                CyclotomicRing::from_coefficients(ring.map(|value| F32::from_i64(i64::from(value))))
+            })
+            .collect::<Vec<_>>();
+        let expected = matrix
+            .chunks_exact(rhs.len())
+            .map(|row| {
+                row.iter()
+                    .zip(&centered_rhs)
+                    .fold(CyclotomicRing::zero(), |sum, (lhs, rhs)| {
+                        sum + (*lhs * *rhs)
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+        let base_bytes_per_coefficient = if ifma52_enabled() {
+            core::mem::size_of::<u64>()
+        } else {
+            Q32_NUM_PRIMES * core::mem::size_of::<i32>()
+        };
+        let tail_bytes_per_coefficient = usize::from(needs_tail) * core::mem::size_of::<i16>();
         assert_eq!(
             setup.verifier_ntt_cache_bytes().expect("cache bytes"),
-            10 * D * Q32_NUM_PRIMES * core::mem::size_of::<i32>()
+            10 * D * (base_bytes_per_coefficient + tail_bytes_per_coefficient)
         );
     }
 

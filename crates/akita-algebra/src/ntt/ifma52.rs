@@ -340,4 +340,15 @@ mod tests {
         round_trip::<256>();
         round_trip::<512>();
     }
+
+    #[test]
+    fn required_ifma52_execution_does_not_fallback() {
+        if std::env::var("AKITA_REQUIRE_IFMA52").ok().as_deref() == Some("1") {
+            assert!(
+                ifma52_available(),
+                "AKITA_REQUIRE_IFMA52 requires AVX-512F/DQ/IFMA at runtime"
+            );
+            round_trip::<64>();
+        }
+    }
 }

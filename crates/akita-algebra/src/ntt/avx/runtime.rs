@@ -20,7 +20,9 @@ pub(super) struct AvxCpuFeatures {
 impl AvxCpuFeatures {
     #[inline]
     const fn has_avx512_ntt(self) -> bool {
-        self.avx512f && self.avx512dq && self.avx512bw
+        // The current AVX-512 transform plan intentionally retains AVX2
+        // stages, and its target-feature contract requires AVX2 explicitly.
+        self.avx2 && self.avx512f && self.avx512dq && self.avx512bw
     }
 }
 
@@ -85,7 +87,8 @@ pub(super) fn select_avx_ntt_mode(
     if scalar_ntt == Some("1") || avx_ntt == Some("0") {
         return None;
     }
-    // Pointwise kernels use AVX-512 by default when available.
+    // Pointwise kernels use AVX-512 by default when the complete current plan
+    // is available. That plan also uses AVX2 transform stages.
     // `AKITA_AVX512_NTT=0` opts all kernels back out to AVX2.
     if avx512_ntt != Some("0") && cpu.has_avx512_ntt() {
         return Some(AvxNttMode::Avx512);

@@ -298,6 +298,17 @@ fn fp32_i8_decomposition_matches_scalar_at_centering_boundaries() {
 }
 
 #[test]
+fn fp32_i8_decomposition_with_zero_levels_is_a_noop() {
+    let q = (-F32::one()).to_canonical_u128() + 1;
+    let params = BalancedDecomposePow2Params::new(0, 8, q);
+    let coefficients = [F32::one(); D];
+    let mut output = [];
+
+    balanced_decompose_coefficients_pow2_i8_into(&coefficients, &mut output, &params);
+    assert!(output.is_empty());
+}
+
+#[test]
 fn balanced_i16_decomposition_supports_bases_ten_and_eleven() {
     let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|i| match i % 6 {
         0 => F128::from_i64(-1024),

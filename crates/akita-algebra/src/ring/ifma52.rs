@@ -238,6 +238,7 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
     }
 
     /// Multiply by one exact signed-i16 vector with an i16 CRT tail.
+    #[inline]
     pub fn mat_vec_i16_with_tail<F: FieldCore + CanonicalField>(
         &self,
         tail_matrix: &[CyclotomicCrtNtt<i16, 1, D>],

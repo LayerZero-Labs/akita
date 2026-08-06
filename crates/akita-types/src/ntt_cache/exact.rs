@@ -208,13 +208,8 @@ pub(super) fn prepare_exact_ntt_cache<F: FieldCore + CanonicalField, const D: us
             homogeneous!(params, Q32, needs_tail)
         }
         ExactCachePlan::Q32Ifma52 { params, needs_tail } => {
-            let tail = needs_tail
-                .then(|| prepare_ifma52_i16_tail(matrix, tail_prefix_len))
-                .transpose()?;
-            PreparedNttCacheRepr::Q32Ifma52 {
-                neg: Ifma52NttMatrix::prepare(matrix.as_slice(), &params),
-                tail,
-            }
+            let (neg, tail) = prepare_ifma52_exact(matrix, tail_prefix_len, *params, needs_tail)?;
+            PreparedNttCacheRepr::Q32Ifma52 { neg, tail }
         }
         ExactCachePlan::Q64 { params, needs_tail } => {
             homogeneous!(params, Q64, needs_tail)
@@ -233,17 +228,31 @@ pub(super) fn prepare_exact_ntt_cache<F: FieldCore + CanonicalField, const D: us
             homogeneous!(params, Q128, needs_tail)
         }
         ExactCachePlan::Q128Ifma52 { params, needs_tail } => {
-            let tail = needs_tail
-                .then(|| prepare_ifma52_i16_tail(matrix, tail_prefix_len))
-                .transpose()?;
-            PreparedNttCacheRepr::Q128Ifma52 {
-                neg: Ifma52NttMatrix::prepare(matrix.as_slice(), &params),
-                tail,
-            }
+            let (neg, tail) = prepare_ifma52_exact(matrix, tail_prefix_len, *params, needs_tail)?;
+            PreparedNttCacheRepr::Q128Ifma52 { neg, tail }
         }
     };
     prepared.validate()?;
     Ok(PreparedNttCache(prepared))
+}
+
+fn prepare_ifma52_exact<F: FieldCore + CanonicalField, const K: usize, const D: usize>(
+    matrix: RingMatrixView<'_, F, D>,
+    tail_prefix_len: Option<usize>,
+    mut params: Ifma52Params<K, D>,
+    needs_tail: bool,
+) -> Result<(Ifma52NttMatrix<K, D>, Option<PreparedIfma52I16Tail<D>>), AkitaError> {
+    // A verifier cache rebuild joins physical prefix lengths. Preserve a tail
+    // installed by an earlier stronger request even when the current request's
+    // exactness bound fits the IFMA base residues by themselves.
+    let retain_tail = needs_tail || tail_prefix_len.is_some_and(|length| length > 0);
+    if retain_tail && !params.has_i16_tail() {
+        params = params.with_i16_tail(I16_TAIL_PRIME.p)?;
+    }
+    let tail = retain_tail
+        .then(|| prepare_ifma52_i16_tail(matrix, tail_prefix_len))
+        .transpose()?;
+    Ok((Ifma52NttMatrix::prepare(matrix.as_slice(), &params), tail))
 }
 
 fn prepare_ifma52_i16_tail<F: FieldCore + CanonicalField, const D: usize>(
@@ -264,4 +273,32 @@ fn prepare_ifma52_i16_tail<F: FieldCore + CanonicalField, const D: usize>(
         .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
         .collect();
     Ok(PreparedIfma52I16Tail { negacyclic, params })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::FlatMatrix;
+    use akita_algebra::CyclotomicRing;
+    use akita_field::Prime32Offset99;
+
+    #[test]
+    fn ifma_rebuild_retains_a_joined_tail_prefix() {
+        const D: usize = 64;
+        let flat =
+            FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<Prime32Offset99, D>::zero(); 10]);
+        let matrix = flat.ring_view::<D>(1, 10).expect("matrix view");
+        let plan = ExactCachePlan::Q32Ifma52 {
+            params: Box::new(Ifma52Params::new([IFMA52_PRIMES[0]]).expect("IFMA52 parameters")),
+            needs_tail: false,
+        };
+        let cache = prepare_exact_ntt_cache(matrix, Some(4), plan).expect("retained tail");
+
+        assert!(cache.uses_ifma52());
+        assert!(cache.has_i16_tail());
+        assert_eq!(
+            cache.cache_bytes(),
+            10 * D * core::mem::size_of::<u64>() + 4 * D * core::mem::size_of::<i16>()
+        );
+    }
 }

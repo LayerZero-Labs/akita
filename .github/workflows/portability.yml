@@ -26,6 +26,47 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
       - name: Check verifier with portable CPU target
         run: RUSTFLAGS="-D warnings -C target-cpu=x86-64" cargo check --release -p akita-verifier --no-default-features
+      - name: Test exact-cache boundary without LTO
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+        run: |
+          cargo test --release -p akita-types --lib ntt_cache
+          cargo test --release -p akita-verifier --lib terminal_ntt
+
+  aarch64-neon:
+    name: Native AArch64 NEON exact NTT
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - name: Require native AArch64 NEON
+        run: |
+          test "$(uname -m)" = "aarch64"
+          grep -Eq '(^|[[:space:]])(asimd|neon)([[:space:]]|$)' /proc/cpuinfo
+      - name: Run architecture-specific exact NTT tests
+        env:
+          RUSTFLAGS: -D warnings -C target-cpu=native
+        run: |
+          cargo test --release -p akita-algebra --lib ntt
+          cargo test --release -p akita-types --lib ntt_cache
+          cargo test --release -p akita-verifier --lib terminal_ntt
+
+  avx512-ifma:
+    name: AVX-512IFMA exact NTT (emulated)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - name: Install x86-64 instruction emulator
+        run: sudo apt-get update && sudo apt-get install --yes qemu-user
+      - name: Run IFMA tests with scalar fallback forbidden
+        env:
+          AKITA_REQUIRE_IFMA52: "1"
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: qemu-x86_64 -cpu max
+        run: |
+          cargo test --release --target x86_64-unknown-linux-gnu -p akita-algebra --lib ifma52
+          cargo test --release --target x86_64-unknown-linux-gnu -p akita-types --lib ntt_cache
+          cargo test --release --target x86_64-unknown-linux-gnu -p akita-verifier --lib terminal_ntt
 
   wasm-serialization:
     name: Wasm serialization check

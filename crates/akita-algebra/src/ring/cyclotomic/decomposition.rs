@@ -194,6 +194,9 @@ pub fn balanced_decompose_coefficients_pow2_i8_into<F: CanonicalField>(
         params.log_basis <= <i8 as BalancedSignedDigit>::MAX_LOG_BASIS,
         "log_basis must be in 1..=8 for i8 output"
     );
+    if coefficients.is_empty() || params.levels == 0 {
+        return;
+    }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if coefficients.len().is_multiple_of(8) {

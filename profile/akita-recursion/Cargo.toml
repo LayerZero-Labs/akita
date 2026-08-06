@@ -29,6 +29,15 @@ members = ["artifact", "glue", "guest", "host"]
 # guest standalone — without `jolt-sdk/host` features — would fail).
 default-members = ["artifact", "host"]
 
+# This excluded workspace consumes Akita through path dependencies, so it does
+# not inherit the repository root's codegen profiles. Keep the production and
+# benchmark profiles aligned with the main workspace's NTT codegen contract.
+[profile.release]
+lto = "thin"
+
+[profile.bench]
+lto = "thin"
+
 [patch.crates-io]
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }

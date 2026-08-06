@@ -7,12 +7,14 @@ use std::arch::x86_64::*;
 
 use super::{Ifma52Prime, Ifma52Twiddles, MASK, RADIX};
 
+#[inline]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 unsafe fn reduce_once(value: __m512i, modulus: __m512i) -> __m512i {
     let mask = _mm512_cmp_epu64_mask(value, modulus, _MM_CMPINT_NLT);
     _mm512_mask_sub_epi64(value, mask, value, modulus)
 }
 
+#[inline]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 unsafe fn normalize(value: __m512i, prime: __m512i, two_prime: __m512i) -> __m512i {
     // SAFETY: inherited target features.
@@ -20,6 +22,7 @@ unsafe fn normalize(value: __m512i, prime: __m512i, two_prime: __m512i) -> __m51
     unsafe { reduce_once(value, prime) }
 }
 
+#[inline]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 unsafe fn mul_constant(
     value: __m512i,
@@ -38,6 +41,7 @@ unsafe fn mul_constant(
     _mm512_and_si512(result, _mm512_set1_epi64(MASK as i64))
 }
 
+#[inline]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 unsafe fn mul_variable(lhs: __m512i, rhs: __m512i, prime: Ifma52Prime) -> __m512i {
     let zero = _mm512_setzero_si512();
@@ -58,6 +62,7 @@ unsafe fn mul_variable(lhs: __m512i, rhs: __m512i, prime: Ifma52Prime) -> __m512
     unsafe { reduce_once(result, _mm512_set1_epi64(prime.modulus as i64)) }
 }
 
+#[inline]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 unsafe fn multiply_table<const D: usize>(
     values: &mut [u64; D],
@@ -85,6 +90,7 @@ unsafe fn multiply_table<const D: usize>(
     }
 }
 
+#[inline]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 unsafe fn paired_lanes(value: __m512i, len: usize) -> (__m512i, __m512i, __mmask8) {
     let (lower, upper, mask) = match len {
@@ -112,6 +118,7 @@ unsafe fn paired_lanes(value: __m512i, len: usize) -> (__m512i, __m512i, __mmask
     )
 }
 
+#[inline]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 unsafe fn forward_small_stage<const D: usize>(
     values: &mut [u64; D],
@@ -151,6 +158,7 @@ unsafe fn forward_small_stage<const D: usize>(
     }
 }
 
+#[inline]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 unsafe fn inverse_small_stage<const D: usize>(
     values: &mut [u64; D],
@@ -192,6 +200,7 @@ unsafe fn inverse_small_stage<const D: usize>(
     }
 }
 
+#[inline]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 unsafe fn forward_butterfly(
     x: __m512i,
@@ -217,6 +226,7 @@ unsafe fn forward_butterfly(
     }
 }
 
+#[inline]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 unsafe fn inverse_butterfly(
     x: __m512i,
@@ -237,6 +247,7 @@ unsafe fn inverse_butterfly(
     }
 }
 
+#[inline]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 unsafe fn forward_radix4_stage<const D: usize>(
     values: &mut [u64; D],
@@ -317,6 +328,7 @@ unsafe fn forward_radix4_stage<const D: usize>(
     }
 }
 
+#[inline]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 unsafe fn inverse_radix4_stage<const D: usize>(
     values: &mut [u64; D],
