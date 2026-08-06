@@ -258,10 +258,11 @@ mode, or compression plan is serialized inside a fold proof.
 
 ### Protocol epoch
 
-`AKITA_INSTANCE_DESCRIPTOR_VERSION` increases from 2 to 3. The schedule row
-hash domain also increases from `v1` to `v2` because witness and proof size
-semantics change. Generated schedule identities and catalog digests are
-regenerated.
+PR #343 increased `AKITA_INSTANCE_DESCRIPTOR_VERSION` from 2 to 3. The later
+[`dyadic-chunk-partition.md`](dyadic-chunk-partition.md) cut resets this
+unreleased development epoch to 1. The schedule row hash domain still increases
+from `v1` to `v2` because witness and proof size semantics change. Generated
+schedule identities and catalog digests are regenerated.
 
 ## Transcript Order
 

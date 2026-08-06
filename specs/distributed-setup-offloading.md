@@ -319,7 +319,7 @@ match the chunked `WitnessLayout`, on both prover and verifier.
 - Prover fold: `fold_probe_witness_kernel`
   (`crates/akita-prover/src/protocol/fold_grind.rs`) windows the fold challenges
   over `params.num_live_blocks()` for *each* group via
-  `WitnessLayout::resolve_chunk_block_ranges` and `window_sparse_challenges`. For
+  `dyadic_block_ranges` and `window_sparse_challenges`. For
   the setup-prefix group, `params` is its frozen geometry and the fold kernel is
   `setup_prefix_evaluate_and_fold` / `setup_prefix_decompose_fold`
   (`crates/akita-prover/src/backend/recursive/setup_prefix_source.rs`).
@@ -334,9 +334,8 @@ match the chunked `WitnessLayout`, on both prover and verifier.
 
 **Why it should work.** The setup-prefix fold source already accepts windowed
 (zero-padded) challenges of length `num_live_blocks`, so folding under a chunk
-window yields that chunk's partial response. `resolve_chunk_block_ranges`
-requires `num_chunks <= num_live_blocks`, satisfied by the generated slot
-geometry.
+window yields that chunk's partial response. `dyadic_block_ranges` requires
+`num_chunks <= num_live_blocks`, satisfied by the generated slot geometry.
 
 **Risks to close.**
 - `setup_prefix_decompose_fold` validates

@@ -45,7 +45,11 @@ r_hat[relation row][quotient digit]
 
 Digits remain tightly packed. Akita does not insert zero digits to make a digit count a power of two.
 
-For distributed proving, each group divides its exact live block prefix into balanced contiguous chunk ranges. Any residual blocks are assigned one at a time to the earliest chunks, with no padding. Each group and chunk unit contains `[z_hat | e_hat | t_hat]`. One shared `r_hat` tail follows all units.
+For distributed proving, each group divides its exact live block prefix into
+balanced contiguous chunk ranges with endpoints
+`floor(j * B_g / num_chunks)`. This dyadic partition is nested across supported
+power of two chunk counts and adds no padding. Each group and chunk unit contains
+`[z_hat | e_hat | t_hat]`. One shared `r_hat` tail follows all units.
 
 ## Current state
 
@@ -426,23 +430,20 @@ If a digit count happens to be a power of two, an evaluator may use a simpler in
 
 ## Chunk ownership
 
-Let `num_chunks` be the number of chunks for the level.
+Let `num_chunks` be the number of chunks for the level. The normative helper and
+validation rules are in [`dyadic-chunk-partition.md`](dyadic-chunk-partition.md).
 
 ```text
 0 < num_chunks <= B_g
-q = floor(B_g / num_chunks)
-r = B_g mod num_chunks
+s_j = floor(j * B_g / num_chunks)
+F_j = s_(j + 1) - s_j
 ```
 
-The first `r` chunks receive `q + 1` blocks. The remaining chunks receive `q` blocks.
-
-```text
-F_j = q + 1 when j < r, otherwise q
-s_0 = 0
-s_j = sum of F_i for i < j
-```
-
-This produces contiguous ranges that exactly cover `[0, B_g)`. Their sizes differ by at most one, and the physical witness contains no chunk padding. Structured evaluators receive each exact range and handle unaligned first and last rows as edge intervals.
+Chunk `j` owns `[s_j, s_(j + 1))`. These ranges exactly cover `[0, B_g)`,
+their sizes differ by at most one, and every partition at `2P` chunks refines
+the partition at `P` chunks. The physical witness contains no chunk padding.
+Structured evaluators receive each exact range and handle unaligned first and
+last rows as edge intervals.
 
 ## Opening point
 
@@ -737,7 +738,7 @@ Cases must include:
 * one chunk;
 * two, four, and eight chunks;
 * a nonzero `global_block_start`;
-* a residual chunk;
+* uneven dyadic chunk ranges;
 * multiple groups with different `M`, `B`, digits, and challenge shapes;
 * mixed A, B, and D ring dimensions;
 * malformed geometry and work limit rejection.

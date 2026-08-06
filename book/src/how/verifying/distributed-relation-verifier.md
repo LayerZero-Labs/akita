@@ -104,12 +104,15 @@ The machines split $[B]$ into deterministic, public, contiguous subsets
 $$
 [B] = \mathcal I_0 \sqcup \dots \sqcup \mathcal I_{\mathcal M-1},
 \qquad
-\mathcal I_j := \bigl\{\, i \in [B] : \lfloor i \cdot \mathcal M / B \rfloor = j \,\bigr\},
+\mathcal I_j :=
+\left[\left\lfloor\frac{jB}{\mathcal M}\right\rfloor,
+      \left\lfloor\frac{(j+1)B}{\mathcal M}\right\rfloor\right),
 $$
 
-so $P_j$ owns the contiguous block range
-$[\,jB_{\mathsf{loc}},\,(j{+}1)B_{\mathsf{loc}}\,)$ with $B_{\mathsf{loc}} := B/\mathcal M$
-blocks each. The public matrices $A$, $B$, $D$ are column views of one
+so every range has either $\lfloor B/\mathcal M\rfloor$ or
+$\lceil B/\mathcal M\rceil$ blocks. When $\mathcal M$ divides $B$, this is
+$[\,jB_{\mathsf{loc}},\,(j{+}1)B_{\mathsf{loc}}\,)$ with
+$B_{\mathsf{loc}} := B/\mathcal M$ blocks each. The public matrices $A$, $B$, $D$ are column views of one
 seed-expanded matrix, so **every machine regenerates the same public columns
 locally** — the fact that keeps the verifier's dominant cost flat.
 

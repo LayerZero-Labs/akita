@@ -48,14 +48,14 @@ fn tensor_low_length_is_selected_independently() {
 }
 
 #[test]
-fn balanced_chunk_geometry_prices_exact_work_and_residual_imbalance() {
+fn dyadic_chunk_geometry_prices_exact_work_and_residual_imbalance() {
     let flat = TensorChallengeShape::Flat;
     assert_eq!(
-        layout_candidate_score(100, 13, 3, flat).unwrap(),
+        layout_candidate_score(100, 13, 4, flat).unwrap(),
         (127, 100, 13, 1)
     );
     assert_eq!(
-        layout_candidate_score(100, 12, 3, flat).unwrap(),
+        layout_candidate_score(100, 12, 4, flat).unwrap(),
         (124, 100, 12, 0)
     );
 }

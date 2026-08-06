@@ -74,9 +74,10 @@ $(X^d+1)$ quotient. (See `crates/akita-types/src/proof/ring_relation.rs`.)
 
 ### The modified relation, parameterized by `num_chunks = W`
 
-Partition the block index set $[B]$ into $W$ balanced contiguous windows. Let
-$q = \lfloor B/W\rfloor$ and $r = B\bmod W$; the first $r$ windows contain
-$q+1$ blocks and the rest contain $q$. Require $B\ge W$ and $W$ a power of two.
+Partition the block index set $[B]$ into $W$ balanced contiguous windows with
+boundary $s_i = \lfloor iB/W\rfloor$. Window $i$ owns $[s_i,s_{i+1})$.
+Require $B\ge W$ and $W$ a power of two. This rule makes every partition at
+$2W$ windows refine the partition at $W$ windows.
 Window $i$ gets its **own** sub-witness
 $\mathbf w_i = (\widehat{\mathbf e}_i,\widehat{\mathbf t}_i,\mathbf z_i)$ where:
 
@@ -148,10 +149,10 @@ In `prove_fold` (`crates/akita-prover/src/protocol/core/fold.rs`), read the chun
 count the planner stamped and derive the windows:
 
 ```rust
-let num_chunks = lp.witness_chunk.num_chunks;        // W; 1 on non-modified levels
-let base_blocks = lp.num_live_blocks / num_chunks;
-let extra_blocks = lp.num_live_blocks % num_chunks;
-// the first extra_blocks windows own base_blocks + 1; the rest own base_blocks
+let chunk_ranges = dyadic_block_ranges(
+    lp.num_live_blocks,
+    lp.witness_chunk.num_chunks,
+)?;
 ```
 
 Validate at this boundary, before any witness math (no-panic contract):

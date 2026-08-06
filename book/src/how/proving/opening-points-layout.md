@@ -76,10 +76,16 @@ padding is one zero suffix after the complete live prefix.
 
 ## Chunks and tensor challenges
 
-Chunks own contiguous ranges of the exact `F` live blocks. Internal allocation
-balances blocks directly: each chunk receives `floor(F / num_chunks)` blocks,
-and the first `F mod num_chunks` chunks receive one additional block. The ranges
-stay exact and contain no padding.
+Chunks own contiguous ranges of the exact `F` live blocks. For chunk `i` of
+`P`, the canonical range is
+
+```text
+[floor(i * F / P), floor((i + 1) * F / P))
+```
+
+The ranges stay exact and contain no padding. Their lengths differ by at most
+one block. All supported chunk counts are powers of two. Therefore, every finer
+chunk partition refines every coarser partition.
 
 A flat fold challenge has `F` independent coefficients. A tensor challenge
 chooses a power-of-two low-factor width `Q` and derives

@@ -18,13 +18,13 @@ use akita_types::sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
 };
 use akita_types::{
-    level_proof_bytes, padded_setup_prefix_len, try_extension_opening_reduction_level_bytes,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams,
-    CommittedGroupProfile, DecompositionParams, FoldSchedule, FoldScheduleEstimate,
-    PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams, RecursiveFoldParams,
-    RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    RootPrecommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
-    WitnessLayout, WitnessPartition,
+    dyadic_block_ranges, level_proof_bytes, padded_setup_prefix_len,
+    try_extension_opening_reduction_level_bytes, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile, DecompositionParams,
+    FoldSchedule, FoldScheduleEstimate, PlannedFoldSchedule, PolynomialGroupLayout,
+    PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge,
+    RootFinalGroupParams, RootFoldParams, RootFoldStep, RootPrecommittedGroupParams,
+    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
 };
 
 use crate::PlannerPolicy;
@@ -443,7 +443,7 @@ pub(crate) fn layout_candidate_score(
             .checked_add(num_live_blocks.div_ceil(fold_low_len))
             .ok_or_else(|| AkitaError::InvalidSetup("challenge-work overflow".to_string()))?,
     };
-    let chunk_ranges = WitnessLayout::resolve_chunk_block_ranges(num_live_blocks, num_chunks)?;
+    let chunk_ranges = dyadic_block_ranges(num_live_blocks, num_chunks)?;
     let min_load = chunk_ranges
         .iter()
         .map(|range| range.len())

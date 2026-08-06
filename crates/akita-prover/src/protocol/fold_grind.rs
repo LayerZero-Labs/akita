@@ -10,9 +10,9 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
-    golomb_rice_total_wire_bits, golomb_rice_values_within_cap, golomb_rice_zigzag_width,
-    CommittedGroupParams, FoldLinfProtocolBinding, LevelParamsLike, OpeningClaimsLayout,
-    TerminalCommittedGroupParams, TerminalResponseShape,
+    dyadic_block_ranges, golomb_rice_total_wire_bits, golomb_rice_values_within_cap,
+    golomb_rice_zigzag_width, CommittedGroupParams, FoldLinfProtocolBinding, LevelParamsLike,
+    OpeningClaimsLayout, TerminalCommittedGroupParams, TerminalResponseShape,
 };
 
 use super::ring_relation::{
@@ -293,10 +293,7 @@ where
         return Ok((witness, per_chunk));
     }
 
-    let chunk_block_ranges = akita_types::WitnessLayout::resolve_chunk_block_ranges(
-        params.num_live_blocks(),
-        num_chunks,
-    )?;
+    let chunk_block_ranges = dyadic_block_ranges(params.num_live_blocks(), num_chunks)?;
     let windows = chunk_block_ranges
         .into_iter()
         .map(|fold_range| {

@@ -211,7 +211,9 @@ impl RelationRangeImagePlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PolynomialGroupLayout, WitnessQuotientRowLayout, WitnessUnitLayout};
+    use crate::{
+        dyadic_block_ranges, PolynomialGroupLayout, WitnessQuotientRowLayout, WitnessUnitLayout,
+    };
 
     fn test_layout(
         opening_batch: &OpeningClaimsLayout,
@@ -223,11 +225,8 @@ mod tests {
         let order = opening_batch.root_group_order().unwrap();
         let block_ranges = (0..opening_batch.num_groups())
             .map(|group_index| {
-                WitnessLayout::resolve_chunk_block_ranges(
-                    2 * chunks_per_group + group_index + 1,
-                    chunks_per_group,
-                )
-                .unwrap()
+                dyadic_block_ranges(2 * chunks_per_group + group_index + 1, chunks_per_group)
+                    .unwrap()
             })
             .collect::<Vec<_>>();
         for chunk_index in 0..chunks_per_group {

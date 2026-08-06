@@ -177,9 +177,9 @@ a level with `witness_chunk.num_chunks = num_chunks > 1` concatenates
 
 with (matching the verifier spec's per-chunk segment ordering and lengths):
 
-- `blocks_in_chunk(j) = floor(num_live_blocks / num_chunks) + 1` for the first
-  `num_live_blocks % num_chunks` chunks, and `floor(num_live_blocks / num_chunks)`
-  for the rest
+- chunk `j` owns
+  `[floor(j * num_live_blocks / num_chunks),
+  floor((j + 1) * num_live_blocks / num_chunks))`
 - $\widehat e^j$, $\widehat t^j$ each cover **only** chunk $j$'s block window
   (partitioned according to its exact block count; still scaled by root
   `num_polynomials` at level 0)
