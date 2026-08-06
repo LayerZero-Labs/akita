@@ -4,8 +4,8 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-23 |
-| Status        | proposed |
-| PR            | |
+| Status        | partially implemented |
+| PR            | #327, #343, with planner unification deferred to a stacked PR |
 | Supersedes    | Planner-architecture portions of [`archive/2026-Q2/planner-refactor.md`](archive/2026-Q2/planner-refactor.md) and the shared-precommit model in [`distributed-setup-offloading.md`](distributed-setup-offloading.md) |
 | Superseded-by | |
 | Book-chapter  | book/src/how/configuration.md |
@@ -46,22 +46,22 @@ All planner work remains offline. The runtime boundary is specified by
 
 ## Status and baseline
 
-This design was written against `origin/main` commit
-`af482ab7c2d8d3edcdc901f0c3950378f954787a`, informed by the PR 323 mirror at
-`75d7a6ddc246a97c9da86b03c0ac0ac5356d14a1`.
+PR 327 established the runtime catalog boundary without the planner. PR 343
+adds commitment compression, the monotone compressed prefix and raw suffix
+search, and one canonical complete schedule selector for every current search
+path.
 
-PR 323 establishes an important prerequisite:
+The shipped root `log_basis` is 3 for all field widths. Recursive levels remain
+planner-selected. The remaining root precommit implementation still runs a
+hypothetical complete schedule under singleton basis range `(3, 3)` and
+extracts the root commitment parameters. That probe is a temporary bridge. A
+hypothetical suffix can influence root geometry even though the suffix will
+never be used.
 
-- root `log_basis` is fixed to 2 for all field widths;
-- recursive levels remain planner-selected;
-- the stale small-field and decomposition-basis floors are removed;
-- conservative rank widening for root-precommitted groups is removed.
-
-Its remaining root-precommit implementation still runs a hypothetical complete
-schedule under singleton basis range `(2, 2)` and extracts the root commitment
-parameters. That probe is a behavior-preserving bridge, not the desired
-architecture: a hypothetical suffix can influence root geometry even though
-the suffix will never be used.
+The stacked planner unification PR will remove that bridge and make the modules
+in this specification the only search path. It must preserve the strict
+selection policies documented below before introducing any proof byte slack or
+fold count preference.
 
 ## Terminology
 
@@ -90,7 +90,7 @@ the suffix will never be used.
 | Chosen | Before final batch is known | For a known recursive edge |
 | Opened | Root only | Recursive suffix |
 | Reuse | Across a declared finite compatibility domain | Only by its owning schedule transition |
-| Basis | Fixed root basis 2 | Exact consuming suffix basis |
+| Basis | Fixed root basis 3 | Exact consuming suffix basis |
 | Geometry context | Group layout and root compatibility domain | Producer, consumer, prefix length, basis, and chunk count |
 | Optimization owner | Root-precommit recipe selector | Recursive transition planner |
 | Runtime representation | Commitment-bound descriptor plus catalog recipe | Schedule-owned setup-prefix slot |
@@ -110,14 +110,14 @@ is forbidden.
 3. Make planner components independently testable and replaceable.
 4. Make objectives and frontier dimensions explicit.
 5. Emit compact runtime decisions that are expanded and validated by
-   `akita-schedule`.
+   `akita-schedules`.
 6. Preserve the planner-free verifier boundary.
 
 ### Invariants
 
 #### Root-precommit recipes
 
-1. The root basis **MUST** be 2.
+1. The root basis **MUST** be 3.
 2. Recipe generation **MUST NOT** invoke full root-plus-suffix planning.
 3. Recipe selection **MUST** enumerate only commitment layouts that are secure,
    structurally valid, and usable throughout their declared compatibility
@@ -155,7 +155,7 @@ is forbidden.
 5. Frontier state **MUST** retain every dimension needed by later choices.
 6. Planner modules **MUST NOT** duplicate security or sizing formulas owned by
    runtime validation primitives.
-7. Generated rows **MUST** pass `akita-schedule` expansion and validation
+7. Generated rows **MUST** pass `akita-schedules` expansion and validation
    before emission.
 8. No planner module **MAY** be reachable from verifier runtime code.
 
@@ -440,7 +440,7 @@ terminal planner
     ↓
 compact decision row
     ↓
-akita-schedule expansion + validation
+akita-schedules expansion + validation
 ```
 
 The exact Rust module names are not normative. The ownership boundaries are.
@@ -464,7 +464,7 @@ struct RecursiveDecision {
 }
 ```
 
-Root basis 2 may be represented implicitly if it is a protocol constant. The
+Root basis 3 may be represented implicitly if it is a protocol constant. The
 planner must not reintroduce it as a per-preset optional policy merely to make
 the IR self-describing.
 
@@ -493,6 +493,31 @@ These types support diagnostics and tests. They are planner concepts and need
 not become public verifier errors.
 
 ### Objectives and frontiers
+
+Until the modular search cutover is complete, all existing planner paths use
+these strict complete schedule orders:
+
+```text
+direct:
+    (proof bytes, total setup fields, canonical descriptor)
+
+mixed dimension:
+    (total setup fields, proof bytes, canonical descriptor)
+
+recursive setup:
+    (first direct setup fields, proof bytes, total setup fields,
+     canonical descriptor)
+```
+
+Direct suffix frontiers retain `(proof bytes, total setup fields)`. Recursive
+setup suffix frontiers retain `(first direct setup fields, proof bytes, total
+setup fields)`. The descriptor is a final deterministic tie-break and is not a
+frontier coordinate.
+
+The current policies do not use proof byte slack or fold count. Those choices
+are intentionally deferred until one shared frontier engine can measure them
+consistently across direct, grouped, mixed dimension, recursive setup, and
+catalog generation paths.
 
 Every frontier must state:
 
@@ -529,7 +554,7 @@ materialization or runtime validation.
 #### Root precommit
 
 - [ ] The full-schedule precommit probe is removed.
-- [ ] Root-precommit recipes are selected directly at root basis 2.
+- [ ] Root-precommit recipes are selected directly at root basis 3.
 - [ ] The selector uses exact materialized \(WZ+E+T\) widths.
 - [ ] One recipe is deterministic across its declared compatibility domain.
 - [ ] Conservative basis-envelope rank widening is absent.
@@ -564,7 +589,7 @@ materialization or runtime validation.
   primitives.
 - [ ] Rejections are typed.
 - [ ] Objectives and frontier coordinates are documented and tested.
-- [ ] Compact emitted rows expand and validate through `akita-schedule`.
+- [ ] Compact emitted rows expand and validate through `akita-schedules`.
 - [ ] Adding a transition strategy does not require verifier changes.
 
 ### Test strategy
@@ -617,7 +642,7 @@ The work should proceed in reviewable slices:
 8. Extract typed enumerators and transition functions.
 9. Make objectives and frontier dimensions explicit.
 10. Regenerate catalogs through the planner-owned binary and validate every
-    row through `akita-schedule`.
+    row through `akita-schedules`.
 
 The runtime dependency cut in
 [`runtime-schedule-boundary.md`](runtime-schedule-boundary.md) may be

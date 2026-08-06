@@ -1,5 +1,6 @@
 use super::*;
 use akita_field::Prime128OffsetA7F7;
+use akita_types::CommitmentRingDims;
 
 type TestField = Prime128OffsetA7F7;
 
@@ -12,11 +13,7 @@ fn mixed_dimension_events() -> RelationWeightEvents<TestField> {
     let mut events = RelationWeightEvents {
         events: Vec::new(),
         alpha_powers: scalar_powers(TestField::from_u64(7), role_dims.d_a()),
-        role_dims,
-        group_role_dims: vec![role_dims],
         relation_coefficient_block_len: 32,
-        live_witness_coeff_len: 256,
-        opening_ring_dim: 128,
         physical_field_len: 256,
         setup_is_deferred: false,
     };
@@ -89,7 +86,7 @@ fn mixed_dimension_factorization_reconstructs_dense_weights() {
 }
 
 #[test]
-fn outgoing_repacking_preserves_relation_factorization_and_evaluation() {
+fn factorization_materialization_preserves_relation_weights() {
     let events = mixed_dimension_events();
     let point = (0..8)
         .map(|index| TestField::from_u64(101 + index))
@@ -97,20 +94,14 @@ fn outgoing_repacking_preserves_relation_factorization_and_evaluation() {
     let expected_dense = events.materialize_dense().unwrap();
     let expected_factorization = events.factor_common_alpha().unwrap();
     let expected_evaluation = events.evaluate_at_point(&point, None).unwrap();
-
-    for opening_ring_dim in [16, 32, 64, 128] {
-        let mut repacked = events.clone();
-        repacked.opening_ring_dim = opening_ring_dim;
-        assert_eq!(repacked.materialize_dense().unwrap(), expected_dense);
-        assert_eq!(
-            repacked.factor_common_alpha().unwrap(),
-            expected_factorization
-        );
-        assert_eq!(
-            repacked.evaluate_at_point(&point, None).unwrap(),
-            expected_evaluation
-        );
-    }
+    assert_eq!(
+        expected_factorization.materialize_dense().unwrap(),
+        expected_dense
+    );
+    assert_eq!(
+        events.evaluate_at_point(&point, None).unwrap(),
+        expected_evaluation
+    );
 }
 
 #[test]

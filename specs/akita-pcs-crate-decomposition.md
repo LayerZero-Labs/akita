@@ -327,7 +327,7 @@ Use current `main` paths, not the stale older plan.
 - Config adapters for SIS derivation now live under `akita-config`, because they are preset policy over `akita-types` SIS derivation helpers rather than commitment machinery.
 - The obsolete root `protocol::commitment` module has been deleted. Prover trait/data imports now come from `akita-prover` or direct aggregate crate re-exports instead of a compatibility wrapper.
 - Shared config data shapes (`DecompositionParams`, `CommitmentEnvelope`, and `AjtaiRole`) are now in `akita-types`; concrete config policy now lives in `akita-config`.
-- Shared setup contracts from the former root setup module: `AkitaSetupSeed`, `AkitaExpandedSetup`, and `AkitaVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `AkitaProverSetup` and config-free setup expansion now live in `akita-prover`, while `akita-config` owns setup sizing and `akita-setup` owns optional disk persistence.
+- Shared setup contracts from the former root setup module: `AkitaSetupDescriptor`, `AkitaExpandedSetup`, and `AkitaVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `AkitaProverSetup` and config-free setup expansion now live in `akita-prover`, while `akita-config` owns setup sizing and `akita-setup` owns optional disk persistence.
 - `src/protocol/prg.rs` only if both prover and verifier need it. If it is setup/prover-only, place it in `akita-prover`.
 - Runtime-to-const dispatch helpers now live in `akita-prover`, beside the
   multi-D NTT cache and prover kernels that consume them.
@@ -814,7 +814,7 @@ The intended sequence is:
     schedule/SIS tables. Follow-up cuts should move schedule/config/setup shared
     shapes once the schedule-provider boundary is explicit enough to keep
     planner search out of runtime verifier/prover crates.
-    The current setup-contract cut moves `AkitaSetupSeed`, `AkitaExpandedSetup`,
+    The current setup-contract cut moves `AkitaSetupDescriptor`, `AkitaExpandedSetup`,
     `AkitaVerifierSetup`, and the public matrix seed type into `akita-types`,
     while later cuts move `AkitaProverSetup` and config-free setup expansion
     into `akita-prover`.

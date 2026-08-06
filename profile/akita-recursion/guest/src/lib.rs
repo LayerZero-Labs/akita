@@ -110,11 +110,18 @@ fn akita_verify(input: &[u8]) -> u32 {
     // surface is `<Cfg>`-generic and routes every policy through `Cfg`
     // internally — no closures to thread through.
     start_cycle_tracking("akita_verify");
+    let statement = match decoded.verifier_statement(&openings) {
+        Ok(statement) => statement,
+        Err(_) => {
+            end_cycle_tracking("akita_verify");
+            return 1;
+        }
+    };
     let result = batched_verify::<Cfg, _>(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,
-        decoded.verifier_opening_batch(&openings),
+        statement,
         BasisMode::Lagrange,
     );
     end_cycle_tracking("akita_verify");

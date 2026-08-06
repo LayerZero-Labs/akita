@@ -10,7 +10,7 @@
 //!    than commit/prove/verify. These must fail (panic). We cover the
 //!    `max_num_vars` axis and the `max_num_batched_polys` axis separately.
 //! 3. **Large setup.** `setup_prover` is called with a *larger* parameter
-//!    than commit/prove/verify. These must succeed — the setup envelope is
+//!    than commit/prove/verify. These must succeed — the setup capacity is
 //!    an upper bound, not a tight match.
 //!
 //! Every preset listed in `presets.rs` for the production D64 merge gate gets its
@@ -28,7 +28,7 @@ use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::AkitaTranscript;
-use akita_types::{AkitaBatchedProof, BasisMode};
+use akita_types::{AkitaBatchedProof, BasisMode, SetupMatrixCapacity};
 use common::{
     dense_field_evals, init_rayon_pool, opening_from_poly, prove_input, random_point,
     run_on_large_stack, verify_input, F,
@@ -111,10 +111,10 @@ where
     assert_eq!(Cfg::D, D);
     assert!(poly_nv >= D.trailing_zeros() as usize);
 
-    let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
-    )
-    .expect("layout");
+    let opening_layout =
+        akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
+    let layout = Cfg::get_params_for_batched_commitment(&opening_layout).expect("layout");
+    let schedule = Cfg::get_params_for_prove(&opening_layout).expect("schedule");
 
     let evals = dense_field_evals(poly_nv, 0xdead_beef_0000 + poly_nv as u64);
     let poly = DensePoly::<F>::from_field_evals(poly_nv, D, &evals).expect("dense poly");
@@ -127,8 +127,46 @@ where
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup =
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup_source =
+        AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv + 1, setup_polys + 1)
+            .expect("larger verifier materialization");
+    assert_eq!(
+        setup.expanded.seed().setup_seed,
+        verifier_setup_source.expanded.seed().setup_seed
+    );
+    assert!(
+        verifier_setup_source
+            .expanded
+            .shared_matrix()
+            .num_field_elements()
+            >= setup.expanded.shared_matrix().num_field_elements()
+    );
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier_for_schedule(
+        &verifier_setup_source,
+        &schedule,
+        &opening_layout,
+    )
+    .expect("schedule-scoped verifier setup from a larger covering public prefix");
+    let verifier_capacity =
+        akita_types::verifier_setup_matrix_capacity_for_schedule(&schedule, &opening_layout)
+            .expect("verifier capacity");
+    assert_eq!(
+        verifier_setup.expanded.shared_matrix().num_field_elements(),
+        verifier_capacity.num_field_elements
+    );
+    if setup.expanded.shared_matrix().num_field_elements() >= verifier_capacity.num_field_elements {
+        let undersized = setup
+            .to_verifier_setup(SetupMatrixCapacity {
+                num_field_elements: verifier_capacity.num_field_elements - 1,
+            })
+            .expect("construct undersized verifier fixture");
+        akita_config::ensure_verifier_schedule_fits_setup(
+            undersized.expanded.as_ref(),
+            &schedule,
+            &opening_layout,
+        )
+        .expect_err("one-field-short verifier setup must reject");
+    }
 
     let (commitment, hint) =
         AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)
@@ -143,7 +181,7 @@ where
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
-        prove_input(
+        prove_input::<Cfg, _>(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
@@ -161,14 +199,14 @@ where
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("verify");
 }
 
-/// Onehot variant of [`run_dense_e2e`].  `K` is the onehot chunk size; in
-/// practice we set `K = D` so `(total_ring * K) == 2^poly_nv`.
+/// Onehot variant of [`run_dense_e2e`]. `K` is the onehot chunk size selected
+/// by the config; standard one-hot presets use `K = 256`.
 fn run_onehot_e2e<Cfg, const D: usize>(setup_nv: usize, setup_polys: usize, poly_nv: usize)
 where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
@@ -176,18 +214,11 @@ where
 {
     assert_eq!(Cfg::D, D);
 
-    let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
-    )
-    .expect("layout");
-    // The committed poly's one-hot chunk size must match the config's required
-    // `onehot_chunk_size` (e.g. 256 for D64OneHot); configs with no constraint
-    // (`<= 1`) use the K = D one-chunk-per-ring-element representation.
-    let k = if layout.onehot_chunk_size > 1 {
-        layout.onehot_chunk_size
-    } else {
-        D
-    };
+    let opening_layout =
+        akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
+    let layout = Cfg::get_params_for_batched_commitment(&opening_layout).expect("layout");
+    let schedule = Cfg::get_params_for_prove(&opening_layout).expect("schedule");
+    let k = 256;
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     assert_eq!(
         total_ring * D,
@@ -210,8 +241,33 @@ where
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup =
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup_source =
+        AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv + 1, setup_polys + 1)
+            .expect("larger verifier materialization");
+    assert_eq!(
+        setup.expanded.seed().setup_seed,
+        verifier_setup_source.expanded.seed().setup_seed
+    );
+    assert!(
+        verifier_setup_source
+            .expanded
+            .shared_matrix()
+            .num_field_elements()
+            >= setup.expanded.shared_matrix().num_field_elements()
+    );
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier_for_schedule(
+        &verifier_setup_source,
+        &schedule,
+        &opening_layout,
+    )
+    .expect("schedule-scoped verifier setup from a larger covering public prefix");
+    let verifier_capacity =
+        akita_types::verifier_setup_matrix_capacity_for_schedule(&schedule, &opening_layout)
+            .expect("verifier capacity");
+    assert_eq!(
+        verifier_setup.expanded.shared_matrix().num_field_elements(),
+        verifier_capacity.num_field_elements
+    );
 
     let (commitment, hint) =
         AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)
@@ -226,7 +282,7 @@ where
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
-        prove_input(
+        prove_input::<Cfg, _>(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
@@ -244,7 +300,7 @@ where
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("verify");
@@ -263,22 +319,21 @@ where
         &tampered,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect_err("tampering predecessor-bound terminal t must be rejected");
 
     let mut wrong_binding = proof.clone();
-    wrong_binding.root.stage2.next_witness_binding =
-        akita_types::NextWitnessBinding::OuterCommitment(akita_types::RingVec::from_coeffs(
-            Vec::new(),
-        ));
+    wrong_binding.root.stage2.next_witness_binding = akita_types::NextWitnessBinding::OuterPayload(
+        akita_types::RingVec::from_coeffs(Vec::new()),
+    );
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     AkitaCommitmentScheme::<Cfg>::batched_verify(
         &wrong_binding,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect_err("schedule/proof binding mismatch must reject without panic");
@@ -337,7 +392,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
-        prove_input(
+        prove_input::<Cfg, _>(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
@@ -355,7 +410,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("batched verify");
@@ -384,11 +439,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let layout =
         akita_config::test_support::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
             .expect("batched layout");
-    let k = if layout.onehot_chunk_size > 1 {
-        layout.onehot_chunk_size
-    } else {
-        D
-    };
+    let k = 256;
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     assert_eq!(total_ring * D, 1usize << poly_nv);
     let total_chunks = total_ring * D / k;
@@ -429,7 +480,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
-        prove_input(
+        prove_input::<Cfg, _>(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
@@ -447,7 +498,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("batched onehot verify");

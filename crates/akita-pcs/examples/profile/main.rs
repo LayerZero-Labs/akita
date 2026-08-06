@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 
 mod modes;
+mod ntt_prewarm;
 mod parallel;
 mod report;
 #[cfg_attr(feature = "profile-onehot-fp128-d64", allow(dead_code))]

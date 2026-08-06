@@ -13,10 +13,13 @@ use proptest::prelude::*;
 type Scheme = AkitaCommitmentScheme<DenseCfg>;
 
 fn batch_shape(index: usize) -> usize {
+    // The generated dense catalog authorizes singleton, pair, and four-claim
+    // rows. Keep fuzz inputs on those public rows so failures exercise
+    // transcript replay rather than missing-schedule rejection.
     match index {
         0 => 1,
         1 => 2,
-        _ => 3,
+        _ => 4,
     }
 }
 
@@ -54,7 +57,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     let proof = Scheme::batched_prove(
         &setup,
-        prove_input(&opening_point, &poly_refs, &commitment, hint),
+        prove_input::<DenseCfg, _>(&opening_point, &poly_refs, &commitment, hint),
         &stack,
         &mut prover_transcript,
         basis_mode,
@@ -67,7 +70,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&opening_point, &openings, &commitment),
+        verify_input::<DenseCfg>(&opening_point, &openings, &commitment),
         basis_mode,
     )
     .expect("verify");

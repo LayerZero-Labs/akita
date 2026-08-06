@@ -1,5 +1,5 @@
 use akita_field::{CanonicalField, FieldCore};
-use akita_prover::PreparedCrtNttProfile;
+use akita_prover::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
     golomb_rice::{
@@ -8,8 +8,8 @@ use akita_types::{
     },
     layout::proof_size::field_bytes,
     sis::num_digits_for_bound,
-    AkitaBatchedProof, CommittedGroupParams, FoldLevelProof, FoldSchedule, SetupSumcheckProof,
-    TerminalLevelProof, ZFoldEncodingStats,
+    AkitaBatchedProof, CommittedGroupParams, FoldLevelProof, FoldSchedule, NttTransformDomain,
+    SetupSumcheckProof, TerminalLevelProof, ZFoldEncodingStats,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -161,21 +161,18 @@ fn terminal_response_z_fold_stats<FF: FieldCore>(
     field_bits: u32,
 ) -> Result<ZFoldEncodingStats, akita_field::AkitaError> {
     let params = &schedule.terminal.params.witness;
-    let sparse = &schedule.terminal.params.sparse_challenge_config;
     let group = witness
         .layout
         .groups
         .first()
         .ok_or(akita_field::AkitaError::InvalidProof)?;
-    let admission_cap = params.response_linf_policy(sparse)?.admission_cap;
+    let admission_cap = group.z_admission_linf_cap;
     let z_values = akita_types::decode_terminal_z_golomb_payload(
         witness
             .z_payloads
             .first()
             .ok_or(akita_field::AkitaError::InvalidProof)?,
-        group.z_coords,
-        admission_cap,
-        Some(group.z_payload_bytes),
+        group,
     )?;
     let log_cap = u128::BITS - admission_cap.leading_zeros();
     let hypothetical_digits =
@@ -197,12 +194,7 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
     field_bits: u32,
     actual_z_payload_bytes: usize,
 ) {
-    let params = &schedule.terminal.params.witness;
-    let sparse = &schedule.terminal.params.sparse_challenge_config;
     let Some(group) = witness.layout.groups.first() else {
-        return;
-    };
-    let Ok(response_policy) = params.response_linf_policy(sparse) else {
         return;
     };
     let Ok(z_values) = akita_types::decode_terminal_z_golomb_payload(
@@ -211,9 +203,7 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
             .first()
             .map(Vec::as_slice)
             .unwrap_or_default(),
-        group.z_coords,
-        response_policy.admission_cap,
-        Some(group.z_payload_bytes),
+        group,
     ) else {
         return;
     };
@@ -263,26 +253,50 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
     }
 }
 
-/// Surface the prepared-setup memory footprint: the plain shared setup vector
-/// (`Vec<F>`) versus the NTT slot cache built from it. The cache stores both
-/// negacyclic and cyclic CRT-NTT forms, so it is several times larger than the
-/// vector; reporting both makes that expansion visible in the bench report.
+/// Surface the public setup prefix and every initialized exact NTT cache slot.
 pub(crate) fn report_setup_sizes(
     label: &str,
-    setup_ring_elements: usize,
+    num_setup_field_elements: usize,
     setup_vector_bytes: usize,
-    setup_ntt_cache_bytes: usize,
+    ntt_cache_metrics: &[PreparedNttCacheMetric],
 ) {
+    let setup_ntt_cache_bytes = ntt_cache_metrics
+        .iter()
+        .map(|metric| metric.cache_bytes)
+        .sum::<usize>();
     tracing::info!(
         label,
-        setup_ring_elements,
+        num_setup_field_elements,
         setup_vector_bytes,
         setup_ntt_cache_bytes,
         "setup sizes"
     );
     eprintln!(
-        "[{label}] setup sizes: ring_elems={setup_ring_elements}, vector={setup_vector_bytes} bytes, ntt_cache={setup_ntt_cache_bytes} bytes"
+        "[{label}] setup sizes: field_elems={num_setup_field_elements}, vector={setup_vector_bytes} bytes, ntt_cache={setup_ntt_cache_bytes} bytes"
     );
+    for metric in ntt_cache_metrics {
+        let domain = match metric.key.domain {
+            NttTransformDomain::Negacyclic => "negacyclic",
+            NttTransformDomain::Cyclic => "cyclic",
+        };
+        tracing::info!(
+            label,
+            ntt_cluster = "shared_cpu",
+            ntt_ring_dimension = metric.key.ring_d,
+            ntt_domain = domain,
+            ntt_prefix_ring_elements = metric.key.num_ring_elements,
+            ntt_prefix_field_elements = metric.key.num_ring_elements * metric.key.ring_d,
+            ntt_cache_bytes = metric.cache_bytes,
+            "exact NTT cache slot"
+        );
+        eprintln!(
+            "[{label}] ntt cache: cluster=shared_cpu D={} domain={domain} ring_elems={} field_elems={} bytes={}",
+            metric.key.ring_d,
+            metric.key.num_ring_elements,
+            metric.key.num_ring_elements * metric.key.ring_d,
+            metric.cache_bytes,
+        );
+    }
 }
 
 pub(crate) fn report_verifier_ntt_cache_size(label: &str, verifier_ntt_cache_bytes: usize) {
@@ -318,16 +332,12 @@ pub(crate) fn emit_runtime_schedule_summary(
     label: &str,
     schedule: &FoldSchedule,
     root_num_claims: usize,
-    setup_generation_dimension: usize,
     field_bits: u32,
 ) {
     let levels = schedule.num_fold_levels();
-    let setup_envelope_field_elements =
+    let num_setup_field_elements =
         akita_types::setup_matrix_field_elements_for_schedule(schedule).unwrap_or(0);
-    let setup_envelope_ring_elements =
-        setup_envelope_field_elements.div_ceil(setup_generation_dimension);
-    let setup_envelope_bytes =
-        setup_envelope_field_elements.saturating_mul(field_bits.div_ceil(8) as usize);
+    let num_setup_bytes = num_setup_field_elements.saturating_mul(field_bits.div_ceil(8) as usize);
     let selected_offload_edges = schedule
         .recursive_folds
         .iter()
@@ -337,9 +347,8 @@ pub(crate) fn emit_runtime_schedule_summary(
         label,
         levels,
         selected_offload_edges,
-        setup_envelope_ring_elements,
-        setup_envelope_field_elements,
-        setup_envelope_bytes,
+        num_setup_field_elements,
+        num_setup_bytes,
         "runtime schedule"
     );
 
@@ -368,7 +377,6 @@ pub(crate) fn emit_runtime_schedule_summary(
     );
     for (level_idx, lp, input_witness_len, output_witness_len, current_w_groups) in nonterminal {
         let role_dims = lp.role_dims();
-        let num_claims = if level_idx == 0 { root_num_claims } else { 1 };
         let current_w_len = current_w_groups;
         let next_w_len = output_witness_len;
         let setup_prefix = schedule
@@ -402,7 +410,7 @@ pub(crate) fn emit_runtime_schedule_summary(
             num_digits_inner = lp.num_digits_inner,
             num_digits_outer = lp.num_digits_outer,
             num_digits_open = lp.num_digits_open,
-            delta_fold = lp.num_digits_fold(num_claims, field_bits).unwrap_or(0),
+            delta_fold = lp.num_digits_fold(),
             input_witness_len,
             output_witness_len,
             current_w_len,
@@ -535,16 +543,17 @@ where
 {
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
-    let v_size = level.v.serialized_size(Compress::No);
+    let opening_payload_size = level.opening_payload.serialized_size(Compress::No);
+    let opening_payload_d = level.opening_payload.coeff_len();
     let total = level.serialized_size(Compress::No);
     let stage2_intermediate = &level.stage2;
 
     eprintln!("[{label}]   akita_fold L{level_idx}: total={total} bytes");
     eprintln!(
-        "[{label}]     v={} bytes ({} ring elems, D={})",
-        v_size,
-        ring_elem_count(level.v.coeff_len(), ring_d),
-        ring_d,
+        "[{label}]     p_H={} bytes ({} ring elems, D={})",
+        opening_payload_size,
+        ring_elem_count(level.opening_payload.coeff_len(), opening_payload_d),
+        opening_payload_d,
     );
     let stage1 = &level.stage1;
     let stage1_sumcheck_size = stage1
@@ -564,11 +573,11 @@ where
         .sumcheck_proof
         .serialized_size(Compress::No);
     let stage3_sumcheck_size = stage3_sumcheck_size(level.stage3_sumcheck_proof.as_ref());
-    let next_w_commitment = stage2_intermediate.next_witness_binding.outer_commitment();
-    let next_w_commitment_size = next_w_commitment
-        .map(|commitment| commitment.serialized_size(Compress::No))
+    let next_w_payload = stage2_intermediate.next_witness_binding.outer_payload();
+    let next_w_payload_size = next_w_payload
+        .map(|payload| payload.serialized_size(Compress::No))
         .unwrap_or(0);
-    let next_w_commitment_coeffs = next_w_commitment.map_or(0, akita_types::RingVec::coeff_len);
+    let next_w_payload_coeffs = next_w_payload.map_or(0, akita_types::RingVec::coeff_len);
     let next_w_eval_size = stage2_intermediate
         .next_w_eval()
         .serialized_size(Compress::No);
@@ -582,7 +591,7 @@ where
         total_bytes = total,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
-        v_bytes = v_size,
+        opening_payload_bytes = opening_payload_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
         grind_nonce,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
@@ -590,7 +599,7 @@ where
         stage1_range_image_evaluation_bytes = stage1_range_image_evaluation_size,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
         stage3_sumcheck_bytes = stage3_sumcheck_size,
-        next_w_commitment_bytes = next_w_commitment_size,
+        next_w_payload_bytes = next_w_payload_size,
         next_w_eval_bytes = next_w_eval_size,
         "proof fold level"
     );
@@ -605,22 +614,22 @@ where
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
-        "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
-        next_w_commitment_coeffs,
+        "[{label}]     next_w_payload={next_w_payload_size} bytes ({} coeffs)",
+        next_w_payload_coeffs,
     );
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     assert_eq!(
         total,
         extension_opening_partials_size
             + extension_opening_sumcheck_size
-            + v_size
+            + opening_payload_size
             + fold_grind_nonce_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
             + stage1_range_image_evaluation_size
             + stage2_sumcheck_size
             + stage3_sumcheck_size
-            + next_w_commitment_size
+            + next_w_payload_size
             + next_w_eval_size
     );
     total
@@ -760,7 +769,7 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     );
 }
 
-pub(crate) fn print_layout(layout: &CommittedGroupParams, num_claims: usize, field_bits: u32) {
+pub(crate) fn print_layout(layout: &CommittedGroupParams, _num_claims: usize, _field_bits: u32) {
     tracing::debug!(
         position_index_bits = layout.position_index_bits(),
         block_index_bits = layout.block_index_bits(),
@@ -771,7 +780,7 @@ pub(crate) fn print_layout(layout: &CommittedGroupParams, num_claims: usize, fie
         num_digits_inner = layout.num_digits_inner,
         num_digits_outer = layout.num_digits_outer,
         num_digits_open = layout.num_digits_open,
-        delta_fold = layout.num_digits_fold(num_claims, field_bits).unwrap_or(0),
+        delta_fold = layout.num_digits_fold(),
         log_basis_inner = layout.log_basis_inner,
         log_basis_outer = layout.log_basis_outer,
         log_basis_open = layout.log_basis_open,

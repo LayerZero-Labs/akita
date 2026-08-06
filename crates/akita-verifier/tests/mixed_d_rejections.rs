@@ -2,11 +2,11 @@
 
 #![allow(missing_docs)]
 
-use akita_field::{AkitaError, Prime128OffsetA7F7 as F};
+use akita_field::Prime128OffsetA7F7 as F;
 use akita_types::{
-    validate_role_dims, validate_role_dispatch, validate_schedule_ring_dims, AkitaSetupSeed,
-    CommitmentRingDims, CommittedGroupParams, FoldSchedule, RingRole, RingView, RootFinalChallenge,
-    RootFinalGroupParams, RootFoldParams, RootFoldStep, RootSource, SisModulusProfileId,
+    validate_role_dims, validate_role_dispatch, validate_schedule_ring_dims, CommitmentRingDims,
+    CommittedGroupParams, FoldSchedule, RingRole, RingView, RootFinalChallenge,
+    RootFinalGroupParams, RootFoldParams, RootFoldStep, SisModulusProfileId,
     TailSegmentGroupLayout, TailSegmentLayout, TerminalCommittedGroupParams, TerminalFoldParams,
     TerminalFoldStep, TerminalResponseShape, WitnessPartition,
 };
@@ -14,9 +14,9 @@ use akita_types::{
 #[test]
 fn role_dims_accept_either_b_d_order_below_a() {
     let dims = CommitmentRingDims {
-        inner: 128,
-        outer: 32,
-        opening: 64,
+        inner: 256,
+        outer: 64,
+        opening: 128,
     };
     validate_role_dims(dims).expect("D may be larger than B");
 }
@@ -60,21 +60,18 @@ fn params(ring_dimension: usize) -> CommittedGroupParams {
 }
 
 #[test]
-fn typed_schedule_rejects_root_dimension_above_setup_dimension() {
+fn typed_schedule_accepts_root_dimension_independent_of_flat_setup() {
     let root = params(128);
     let terminal_witness = TerminalCommittedGroupParams::from_expanded_group(params(64));
     let schedule = FoldSchedule {
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: RootSource::Dense {
-                        coefficient_bits: 128,
-                    },
                     challenge: RootFinalChallenge::Flat,
                     commitment: root.clone(),
                 },
                 precommitted_groups: Vec::new(),
-                open_commit_matrix: root.open_commit_matrix.clone(),
+                open_commit_matrix: root.open_commit_matrix,
                 sparse_challenge_config: root.fold_challenge_config,
                 witness_partition: WitnessPartition::Single,
             },
@@ -95,6 +92,7 @@ fn typed_schedule_rejects_root_dimension_above_setup_dimension() {
                             z_coords: 64,
                             e_field_elems: 64,
                             t_field_elems: 64,
+                            z_admission_linf_cap: 1,
                             z_payload_bytes: 1,
                             z_rice_low_bits: 0,
                         }],
@@ -105,17 +103,8 @@ fn typed_schedule_rejects_root_dimension_above_setup_dimension() {
             input_witness_len: 64,
         },
     };
-    let seed = AkitaSetupSeed {
-        max_num_vars: 16,
-        max_num_batched_polys: 1,
-        gen_ring_dim: 64,
-        max_setup_len: 1 << 20,
-        public_matrix_seed: [0; 32],
-    };
-    assert!(matches!(
-        validate_schedule_ring_dims(&schedule, &seed),
-        Err(AkitaError::InvalidSetup(_))
-    ));
+    validate_schedule_ring_dims(&schedule)
+        .expect("flat setup capacity has no generation ring dimension");
 }
 
 #[test]

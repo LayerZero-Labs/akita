@@ -1,5 +1,10 @@
 # Spec: Typed Fold-Schedule Topology and Planner Cutover
 
+> **Source/profile supersession (2026-07-30).** The typed
+> `root -> recursive_folds[] -> terminal` topology remains authoritative.
+> Source-family fields and lookup ownership are superseded by exact commitment
+> profiles and batch-level approved row selection.
+
 | Field         | Value                                       |
 |---------------|---------------------------------------------|
 | Author(s)     | Quang Dao                                   |
@@ -185,9 +190,9 @@ commitment compression.
   schedules for the same lookup key and policy.
 - Generated lookup order and key digests include the complete root statement:
   final group plus ordered standalone precommitted commitment descriptors.
-- Generated catalogs with different source families, final-root-group challenge
-  families, chunk policies, setup-offload policies, matrix dimension domains,
-  slicing capability, or SIS table digests cannot alias.
+- Generated catalogs with different final-root-group challenge families, chunk
+  policies, setup-offload policies, matrix dimension domains, slicing
+  capability, or SIS table digests cannot alias.
 
 #### Transcript, serialization, and safety
 
@@ -265,7 +270,7 @@ pub enum GeneratedFold {
 
 pub struct GeneratedScheduleTableEntry {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: &'static [PrecommittedGroupDescriptor],
+    pub precommitteds: &'static [CommittedGroupProfile],
     pub folds: &'static [GeneratedFold],
 }
 ```
@@ -641,7 +646,7 @@ pub struct GeneratedRootFinalGroup {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRootPrecommittedGroup {
     /// Frozen standalone commitment identity and certified bounds.
-    pub descriptor: PrecommittedGroupDescriptor,
+    pub descriptor: CommittedGroupProfile,
     pub commitment: GeneratedCommittedGroup,
 }
 ```
@@ -799,7 +804,7 @@ Digit depths are expanded results, never independent generated inputs.
 ```rust
 pub struct RootFoldParams {
     pub final_group: RootFinalGroupParams,
-    pub precommitted_groups: Vec<RootPrecommittedGroupDescriptor>,
+    pub precommitted_groups: Vec<RootCommittedGroupProfile>,
     pub open_commit_matrix: OpenCommitMatrixParams,
     pub sparse_challenge_config: SparseChallengeConfig,
     pub witness_partition: WitnessPartition,
@@ -821,7 +826,7 @@ pub struct TerminalFoldParams {
 ```
 
 Only `RootFinalGroupParams` contains a `RootFinalChallenge` field.
-`RootPrecommittedGroupDescriptor`, `RecursiveFoldParams`, and `TerminalFoldParams`
+`RootCommittedGroupProfile`, `RecursiveFoldParams`, and `TerminalFoldParams`
 are flat by type. Sparse sampler configuration remains explicit because it
 determines challenge distribution and certified norms even for a flat
 challenge.
@@ -1413,24 +1418,24 @@ Catalog families explicitly bind one of the current policies:
 ```rust
 pub enum SelectionPolicyId {
     MinEstimatedProofPayload,
-    MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
+    MinFirstDirectSetupThenPayload,
 }
 ```
 
 `MinEstimatedProofPayload` is the ordinary direct-only proof-byte policy.
-`MinFirstDirectSetupThenPayloadWithinSupportedEnvelope` rejects recursive
-candidates beyond `PlannerPolicy::max_setup_envelope_field_elements`, then
-compares:
+`MinFirstDirectSetupThenPayload` applies an explicit
+`PlannerPolicy::setup_field_budget` when one is configured, then compares:
 
 1. first later direct setup scan;
 2. exact estimated proof payload, including Stage 3; and
 3. the existing deterministic candidate ordering for ties.
 
 `PlannerPolicy::min_offloaded_witness_contraction` and
-`PlannerPolicy::max_setup_envelope_field_elements` are explicit generated-table
-identity inputs. The shipped policy sets them to three and
-`MAX_SETUP_MATRIX_FIELD_ELEMENTS`, respectively. Changing either value requires
-catalog regeneration and produces an identity mismatch against an older table.
+`PlannerPolicy::setup_field_budget` are explicit generated-table identity
+inputs. The shipped policy sets them to three and `None`, respectively. The
+public stream has no protocol length ceiling. Changing either policy value
+requires catalog regeneration and produces an identity mismatch against an
+older table.
 
 This is deliberately not the final Pareto planner. In particular, it does not
 claim that an offloaded schedule preserves the independently optimized direct

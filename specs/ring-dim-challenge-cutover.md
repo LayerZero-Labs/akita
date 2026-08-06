@@ -29,10 +29,11 @@ bytes are deleted, not aliased.
 
 ## Ring fold challenges (protocol placement)
 
-After the prover's folded witness message `v = D · ŵ` is absorbed
-(`ABSORB_PROVER_V`), the protocol samples sparse ring elements `c` used to fold
-the witness toward the next commitment. This is **not** sumcheck "stage 1"; it is
-witness folding between `v` and the next `u` commitment.
+After the prover's compressed opening payload `p_H` for `v = D · ŵ` is absorbed
+(`ABSORB_OPENING_PAYLOAD`), the protocol samples sparse ring elements `c` used
+to fold the witness toward the next commitment. This is **not** sumcheck
+"stage 1"; it is witness folding between the D relation source and the next B
+relation source.
 
 | Rust name | Role |
 |-----------|------|

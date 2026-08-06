@@ -2,7 +2,7 @@ use super::*;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
     ProverComputeStack, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
-    RuntimeRootProvePoly, RuntimeTensorBackendFor,
+    RuntimeTensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -63,15 +63,13 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RuntimeRootProvePoly<F>,
-    TS: RuntimeTensorBackendFor<F, P, E>,
-    O: DigitRowsComputeBackend<F>
-        + RuntimeOpeningProveBackendFor<F, P>
-        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
+    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
+    TS: ComputeBackendSetup<F>,
+    O: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = claims.opening_layout::<F>()?;
+    let opening_batch = claims.opening_layout()?;
     let opening_num_vars = opening_batch.max_num_vars();
     // A-role root fold ring dimension (schedule-derived).
     let root_ring_d = root_params.role_dims().d_a();
@@ -90,14 +88,11 @@ where
             basis,
         )
     } else {
-        let eor_polynomial_groups = (0..opening_batch.num_groups())
-            .map(|group_index| Ok(claims.group_polys(group_index)?.to_vec()))
-            .collect::<Result<Vec<_>, AkitaError>>()?;
         prepare_extension_claim_fold::<F, E, T, P, _, C, O, TS, R>(
             stack,
             needs_extension_reduction,
             claims,
-            eor_polynomial_groups,
+            ExtensionOpeningSource::CurrentClaims,
             false,
             transcript,
             || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
@@ -156,15 +151,13 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RuntimeRootProvePoly<F>,
+    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
     C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
-    O: RuntimeOpeningProveBackendFor<F, P>
-        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
+    O: RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
         + DigitRowsComputeBackend<F>
         + ComputeBackendSetup<F>
         + 'stack,
-    TS: RuntimeTensorBackendFor<F, P, E>
-        + RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, E>
+    TS: RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, E>
         + ComputeBackendSetup<F>
         + 'stack,
     R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,

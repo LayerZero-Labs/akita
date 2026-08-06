@@ -8,10 +8,10 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
-    CommittedGroupParams, FlatMatrix, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress, RelationAddressGeometry,
-    SetupContributionPlan, SisModulusProfileId, WitnessLayout,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, AkitaSetupDescriptor,
+    CommitmentRingDims, CommittedGroupParams, FlatMatrix, InnerCommitMatrixParams,
+    OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress,
+    RelationAddressGeometry, SetupContributionPlan, SisModulusProfileId, WitnessLayout,
 };
 use std::sync::Arc;
 
@@ -183,7 +183,7 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         .ok_or_else(|| AkitaError::InvalidSetup("benchmark setup A ratio is zero".into()))?;
     let setup_ring_elements = plan.required().div_ceil(a_ratio);
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupSeed {
+        AkitaSetupDescriptor {
             max_num_vars: 0,
             max_num_batched_polys: NUM_CLAIMS,
             gen_ring_dim: A_D,

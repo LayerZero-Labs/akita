@@ -6,11 +6,11 @@
 //! semantics.
 
 use crate::descriptor_bytes::sis_modulus_profile_tag;
-use crate::proof::{setup::MAX_SETUP_MATRIX_FIELD_ELEMENTS, AkitaCommitmentHint, RingVec};
+use crate::proof::{AkitaCommitmentHint, RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS};
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
-    CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PolynomialGroupLayout, PrecommittedGroupDescriptor, PrecommittedLevelParams,
+    AkitaSetupSeed, CommittedGroupParams, CommittedGroupProfile, InnerCommitMatrixParams,
+    OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -23,24 +23,41 @@ use std::io::{Read, Write};
 
 const MAX_SETUP_PREFIX_SLOTS: usize = 4096;
 
-/// Ring dimension used when delegating setup claims to a flat coefficient prefix.
-pub const SETUP_OFFLOAD_D_SETUP: usize = 64;
+#[path = "setup_prefix_helpers.rs"]
+mod helpers;
+use helpers::setup_prefix_compression_plan;
+pub use helpers::suffix_opening_layout;
 
 /// Identity for one committed setup-prefix slot.
 ///
 /// `natural_len` distinguishes exact prefixes that share the padded commitment
 /// domain derived from `commitment_params`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct SetupPrefixSlotId {
-    /// Coefficient-axis ring dimension for the delegated prefix object.
-    pub d_setup: usize,
     /// Exact flat coefficient length represented before zero padding.
     pub natural_len: usize,
     /// Commitment parameters used to build the setup-prefix object.
     pub commitment_params: PrecommittedLevelParams,
 }
 
+impl PartialEq for SetupPrefixSlotId {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for SetupPrefixSlotId {}
+
 impl SetupPrefixSlotId {
+    /// Ring dimension used to commit the setup-prefix coefficient vector.
+    #[must_use]
+    pub fn d_setup(&self) -> usize {
+        self.commitment_params
+            .layout
+            .inner_commit_matrix
+            .ring_dimension()
+    }
+
     /// Padded flat coefficient length committed for this slot.
     pub fn n_prefix(&self) -> Result<usize, AkitaError> {
         n_prefix_from_commitment_params(&self.commitment_params).map_err(|err| {
@@ -49,7 +66,6 @@ impl SetupPrefixSlotId {
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        crate::descriptor_bytes::push_usize(bytes, self.d_setup);
         crate::descriptor_bytes::push_usize(bytes, self.natural_len);
         self.commitment_params.append_descriptor_bytes(bytes);
     }
@@ -75,13 +91,11 @@ fn n_prefix_from_commitment_params(
 
 impl Ord for SetupPrefixSlotId {
     fn cmp(&self, other: &Self) -> Ordering {
-        (self.d_setup, self.natural_len)
-            .cmp(&(other.d_setup, other.natural_len))
-            .then_with(|| {
-                precommitted_level_params_descriptor_bytes(&self.commitment_params).cmp(
-                    &precommitted_level_params_descriptor_bytes(&other.commitment_params),
-                )
-            })
+        self.natural_len.cmp(&other.natural_len).then_with(|| {
+            precommitted_level_params_descriptor_bytes(&self.commitment_params).cmp(
+                &precommitted_level_params_descriptor_bytes(&other.commitment_params),
+            )
+        })
     }
 }
 
@@ -93,7 +107,6 @@ impl PartialOrd for SetupPrefixSlotId {
 
 impl Hash for SetupPrefixSlotId {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.d_setup.hash(state);
         self.natural_len.hash(state);
         precommitted_level_params_descriptor_bytes(&self.commitment_params).hash(state);
     }
@@ -101,7 +114,8 @@ impl Hash for SetupPrefixSlotId {
 
 impl Valid for SetupPrefixSlotId {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.d_setup == 0 {
+        let d_setup = self.d_setup();
+        if d_setup == 0 {
             return Err(SerializationError::InvalidData(
                 "setup prefix slot d_setup must be non-zero".to_string(),
             ));
@@ -117,7 +131,7 @@ impl Valid for SetupPrefixSlotId {
                 "setup prefix slot n_prefix must be a non-zero power of two".to_string(),
             ));
         }
-        if !n_prefix.is_multiple_of(self.d_setup) {
+        if !n_prefix.is_multiple_of(d_setup) {
             return Err(SerializationError::InvalidData(
                 "setup prefix slot n_prefix must be a multiple of d_setup".to_string(),
             ));
@@ -360,6 +374,10 @@ fn serialize_precommitted_level_params<W: Write>(
 ) -> Result<(), SerializationError> {
     params
         .layout
+        .version
+        .serialize_with_mode(&mut writer, compress)?;
+    params
+        .layout
         .group
         .num_vars()
         .serialize_with_mode(&mut writer, compress)?;
@@ -386,8 +404,18 @@ fn serialize_precommitted_level_params<W: Write>(
         .serialize_with_mode(&mut writer, compress)?;
     params
         .layout
+        .num_digits_inner
+        .serialize_with_mode(&mut writer, compress)?;
+    serialize_commit_matrix(&params.layout.inner_commit_matrix, &mut writer, compress)?;
+    params
+        .layout
         .log_basis_outer
         .serialize_with_mode(&mut writer, compress)?;
+    params
+        .layout
+        .num_digits_outer
+        .serialize_with_mode(&mut writer, compress)?;
+    serialize_commit_matrix(&params.layout.outer_commit_matrix, &mut writer, compress)?;
     params
         .log_basis_open
         .serialize_with_mode(&mut writer, compress)?;
@@ -400,26 +428,10 @@ fn serialize_precommitted_level_params<W: Write>(
         .count_pm2
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .layout
-        .n_a
-        .serialize_with_mode(&mut writer, compress)?;
-    params
-        .layout
-        .n_b
-        .serialize_with_mode(&mut writer, compress)?;
-    serialize_commit_matrix(&params.inner_commit_matrix, &mut writer, compress)?;
-    serialize_commit_matrix(&params.outer_commit_matrix, &mut writer, compress)?;
-    params
-        .num_digits_inner
-        .serialize_with_mode(&mut writer, compress)?;
-    params
-        .num_digits_outer
-        .serialize_with_mode(&mut writer, compress)?;
-    params
         .num_digits_open
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .num_digits_fold_one
+        .num_digits_fold
         .serialize_with_mode(&mut writer, compress)?;
     Ok(())
 }
@@ -429,6 +441,12 @@ fn deserialize_precommitted_level_params<R: Read>(
     compress: Compress,
     validate: Validate,
 ) -> Result<PrecommittedLevelParams, SerializationError> {
+    let version = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    if version != CommittedGroupProfile::VERSION {
+        return Err(SerializationError::InvalidData(format!(
+            "unknown committed-group profile version {version}"
+        )));
+    }
     let group_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let group_num_polynomials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_live_ring_elements_per_claim =
@@ -437,46 +455,39 @@ fn deserialize_precommitted_level_params<R: Read>(
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_live_blocks = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let log_basis_inner = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let num_digits_inner = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let inner_commit_matrix: InnerCommitMatrixParams =
+        deserialize_commit_matrix(&mut reader, compress, validate)?;
     let log_basis_outer = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let num_digits_outer = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let outer_commit_matrix: OuterCommitMatrixParams =
+        deserialize_commit_matrix(&mut reader, compress, validate)?;
     let log_basis_open = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let challenge_count_pm1 = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let challenge_count_pm2 = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let n_a = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let n_b = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let inner_commit_matrix: InnerCommitMatrixParams =
-        deserialize_commit_matrix(&mut reader, compress, validate)?;
-    let outer_commit_matrix: OuterCommitMatrixParams =
-        deserialize_commit_matrix(&mut reader, compress, validate)?;
-    let num_digits_inner = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let num_digits_outer = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_open = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let num_digits_fold_one = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let num_digits_fold = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     Ok(PrecommittedLevelParams {
-        layout: PrecommittedGroupDescriptor {
+        layout: CommittedGroupProfile {
+            version,
             group: PolynomialGroupLayout::new(group_num_vars, group_num_polynomials),
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
             log_basis_inner,
+            num_digits_inner,
+            inner_commit_matrix,
             log_basis_outer,
-            inner_ring_dimension: inner_commit_matrix.ring_dimension(),
-            outer_ring_dimension: outer_commit_matrix.ring_dimension(),
-            n_a,
-            a_coeff_linf_bound: inner_commit_matrix.coeff_linf_bound(),
-            n_b,
-            b_coeff_linf_bound: outer_commit_matrix.coeff_linf_bound(),
+            num_digits_outer,
+            outer_commit_matrix,
         },
-        inner_commit_matrix,
-        outer_commit_matrix,
         log_basis_open,
         fold_challenge_config: akita_challenges::SparseChallengeConfig {
             count_pm1: challenge_count_pm1,
             count_pm2: challenge_count_pm2,
         },
-        num_digits_inner,
-        num_digits_outer,
         num_digits_open,
-        num_digits_fold_one,
+        num_digits_fold,
     })
 }
 
@@ -484,7 +495,8 @@ fn precommitted_level_params_serialized_size(
     params: &PrecommittedLevelParams,
     compress: Compress,
 ) -> usize {
-    params.layout.group.num_vars().serialized_size(compress)
+    params.layout.version.serialized_size(compress)
+        + params.layout.group.num_vars().serialized_size(compress)
         + params
             .layout
             .group
@@ -500,7 +512,11 @@ fn precommitted_level_params_serialized_size(
             .serialized_size(compress)
         + params.layout.num_live_blocks.serialized_size(compress)
         + params.layout.log_basis_inner.serialized_size(compress)
+        + params.layout.num_digits_inner.serialized_size(compress)
+        + commit_matrix_serialized_size(&params.layout.inner_commit_matrix, compress)
         + params.layout.log_basis_outer.serialized_size(compress)
+        + params.layout.num_digits_outer.serialized_size(compress)
+        + commit_matrix_serialized_size(&params.layout.outer_commit_matrix, compress)
         + params.log_basis_open.serialized_size(compress)
         + params
             .fold_challenge_config
@@ -510,14 +526,8 @@ fn precommitted_level_params_serialized_size(
             .fold_challenge_config
             .count_pm2
             .serialized_size(compress)
-        + params.layout.n_a.serialized_size(compress)
-        + params.layout.n_b.serialized_size(compress)
-        + commit_matrix_serialized_size(&params.inner_commit_matrix, compress)
-        + commit_matrix_serialized_size(&params.outer_commit_matrix, compress)
-        + params.num_digits_inner.serialized_size(compress)
-        + params.num_digits_outer.serialized_size(compress)
         + params.num_digits_open.serialized_size(compress)
-        + params.num_digits_fold_one.serialized_size(compress)
+        + params.num_digits_fold.serialized_size(compress)
 }
 
 impl AkitaSerialize for SetupPrefixSlotId {
@@ -526,7 +536,7 @@ impl AkitaSerialize for SetupPrefixSlotId {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.d_setup.serialize_with_mode(&mut writer, compress)?;
+        self.check()?;
         self.natural_len
             .serialize_with_mode(&mut writer, compress)?;
         serialize_precommitted_level_params(&self.commitment_params, &mut writer, compress)?;
@@ -534,8 +544,7 @@ impl AkitaSerialize for SetupPrefixSlotId {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.d_setup.serialized_size(compress)
-            + self.natural_len.serialized_size(compress)
+        self.natural_len.serialized_size(compress)
             + precommitted_level_params_serialized_size(&self.commitment_params, compress)
     }
 }
@@ -549,12 +558,10 @@ impl AkitaDeserialize for SetupPrefixSlotId {
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let d_setup = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let natural_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let commitment_params =
             deserialize_precommitted_level_params(&mut reader, compress, validate)?;
         let out = Self {
-            d_setup,
             natural_len,
             commitment_params,
         };
@@ -593,10 +600,10 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixPublicCommitment<F> {
             })?;
             row.check()?;
         }
-        if total_coeffs > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
+        if total_coeffs > MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS {
             return Err(SerializationError::LengthLimitExceeded {
                 len: u64::try_from(total_coeffs).unwrap_or(u64::MAX),
-                max: MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+                max: MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS,
             });
         }
         Ok(())
@@ -645,7 +652,7 @@ where
             &mut reader,
             compress,
             validate,
-            MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+            MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS,
         )?;
         let mut rows = Vec::new();
         super::reserve_shape_len(&mut rows, row_count)?;
@@ -655,7 +662,7 @@ where
                 &mut reader,
                 compress,
                 validate,
-                MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+                MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS,
             )?;
             if coeff_count == 0 {
                 return Err(SerializationError::InvalidData(
@@ -667,10 +674,10 @@ where
                     "setup prefix commitment coefficient count overflow".to_string(),
                 )
             })?;
-            if total_coeffs > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
+            if total_coeffs > MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS {
                 return Err(SerializationError::LengthLimitExceeded {
                     len: u64::try_from(total_coeffs).unwrap_or(u64::MAX),
-                    max: MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+                    max: MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS,
                 });
             }
             rows.push(RingVec::deserialize_with_mode(
@@ -717,12 +724,19 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierSlot<F> {
             ));
         }
         self.commitment.check()?;
+        let expected_payload_coefficients =
+            setup_prefix_compression_plan(&self.id.commitment_params)?.terminal_coefficients();
+        if self.commitment.rows.len() != 1 {
+            return Err(SerializationError::InvalidData(
+                "setup prefix commitment must contain one compressed payload".into(),
+            ));
+        }
         for row in &self.commitment.rows {
-            if row.coeff_len() != self.id.d_setup {
+            if row.coeff_len() != expected_payload_coefficients {
                 return Err(SerializationError::InvalidData(format!(
                     "setup prefix commitment row has {} coefficients, expected {}",
                     row.coeff_len(),
-                    self.id.d_setup
+                    expected_payload_coefficients
                 )));
             }
         }
@@ -822,19 +836,26 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
             ));
         }
         self.commitment.check()?;
-        // Re-assert the invariant the const generic `D` used to enforce: every
-        // commitment row must have exactly `d_setup` coefficients.
+        let compression_plan = setup_prefix_compression_plan(&self.id.commitment_params)?;
+        let expected_payload_coefficients = compression_plan.terminal_coefficients();
+        if self.commitment.rows.len() != 1 {
+            return Err(SerializationError::InvalidData(
+                "setup prefix commitment must contain one compressed payload".into(),
+            ));
+        }
         for row in &self.commitment.rows {
-            if row.coeff_len() != self.id.d_setup {
+            if row.coeff_len() != expected_payload_coefficients {
                 return Err(SerializationError::InvalidData(format!(
-                    "setup prefix prover slot commitment row has {} coefficients, expected \
-                     d_setup={}",
+                    "setup prefix prover slot commitment row has {} coefficients, expected {}",
                     row.coeff_len(),
-                    self.id.d_setup
+                    expected_payload_coefficients
                 )));
             }
         }
-        self.hint.check()
+        self.hint.check()?;
+        self.hint
+            .validate_outer_compression(&compression_plan)
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))
     }
 }
 
@@ -899,6 +920,12 @@ where
 }
 
 impl<F: FieldCore> SetupPrefixSlot<F> {
+    fn validate_compression_hint(&self) -> Result<(), AkitaError> {
+        let plan = setup_prefix_compression_plan(&self.id.commitment_params)
+            .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+        self.hint.validate_outer_compression(&plan)
+    }
+
     /// Strip prover-only hint material for verifier metadata.
     #[must_use]
     pub fn verifier_slot(&self) -> SetupPrefixVerifierSlot<F> {
@@ -912,15 +939,25 @@ impl<F: FieldCore> SetupPrefixSlot<F> {
 }
 
 /// In-memory registry of prover-ready setup-prefix slots.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupPrefixProverRegistry<F: FieldCore> {
+    setup_seed: AkitaSetupSeed,
     slots: BTreeMap<SetupPrefixSlotId, SetupPrefixSlot<F>>,
 }
 
 impl<F: FieldCore> SetupPrefixProverRegistry<F> {
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(setup_seed: AkitaSetupSeed) -> Self {
+        Self {
+            setup_seed,
+            slots: BTreeMap::new(),
+        }
+    }
+
+    /// Public field stream to which every committed prefix belongs.
+    #[must_use]
+    pub fn setup_seed(&self) -> &AkitaSetupSeed {
+        &self.setup_seed
     }
 
     #[must_use]
@@ -939,6 +976,7 @@ impl<F: FieldCore> SetupPrefixProverRegistry<F> {
     }
 
     pub fn insert(&mut self, slot: SetupPrefixSlot<F>) -> Result<(), AkitaError> {
+        slot.validate_compression_hint()?;
         if self.slots.contains_key(&slot.id) {
             return Err(AkitaError::InvalidSetup(
                 "duplicate setup prefix slot id".to_string(),
@@ -946,10 +984,6 @@ impl<F: FieldCore> SetupPrefixProverRegistry<F> {
         }
         self.slots.insert(slot.id.clone(), slot);
         Ok(())
-    }
-
-    pub fn replace_from(&mut self, other: Self) {
-        self.slots = other.slots;
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&SetupPrefixSlotId, &SetupPrefixSlot<F>)> {
@@ -967,6 +1001,7 @@ impl<F: FieldCore> SetupPrefixProverRegistry<F> {
 
 impl<F: FieldCore + Valid> Valid for SetupPrefixProverRegistry<F> {
     fn check(&self) -> Result<(), SerializationError> {
+        self.setup_seed.check()?;
         if self.slots.len() > MAX_SETUP_PREFIX_SLOTS {
             return Err(SerializationError::LengthLimitExceeded {
                 len: u64::try_from(self.slots.len()).unwrap_or(u64::MAX),
@@ -991,6 +1026,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixProverRegistry
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
+        self.setup_seed.serialize_with_mode(&mut writer, compress)?;
         self.slots
             .len()
             .serialize_with_mode(&mut writer, compress)?;
@@ -1001,7 +1037,8 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixProverRegistry
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.slots.len().serialized_size(compress)
+        self.setup_seed.serialized_size(compress)
+            + self.slots.len().serialized_size(compress)
             + self
                 .slots
                 .values()
@@ -1022,9 +1059,11 @@ where
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
+        let setup_seed =
+            AkitaSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let slot_count =
             read_limited_usize(&mut reader, compress, validate, MAX_SETUP_PREFIX_SLOTS)?;
-        let mut out = Self::new();
+        let mut out = Self::new(setup_seed);
         for _ in 0..slot_count {
             let slot =
                 SetupPrefixSlot::deserialize_with_mode(&mut reader, compress, validate, &())?;
@@ -1039,15 +1078,25 @@ where
 }
 
 /// In-memory registry of verifier-visible setup-prefix slots.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupPrefixVerifierRegistry<F: FieldCore> {
+    setup_seed: AkitaSetupSeed,
     slots: BTreeMap<SetupPrefixSlotId, SetupPrefixVerifierSlot<F>>,
 }
 
 impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(setup_seed: AkitaSetupSeed) -> Self {
+        Self {
+            setup_seed,
+            slots: BTreeMap::new(),
+        }
+    }
+
+    /// Public field stream to which every committed prefix belongs.
+    #[must_use]
+    pub fn setup_seed(&self) -> &AkitaSetupSeed {
+        &self.setup_seed
     }
 
     #[must_use]
@@ -1079,6 +1128,11 @@ impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
         &mut self,
         prover_registry: &SetupPrefixProverRegistry<F>,
     ) -> Result<(), AkitaError> {
+        if self.setup_seed != *prover_registry.setup_seed() {
+            return Err(AkitaError::InvalidSetup(
+                "setup-prefix registries belong to different public matrices".to_string(),
+            ));
+        }
         self.slots.clear();
         for slot in prover_registry.verifier_slots() {
             self.insert(slot)?;
@@ -1093,6 +1147,7 @@ impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
 
 impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierRegistry<F> {
     fn check(&self) -> Result<(), SerializationError> {
+        self.setup_seed.check()?;
         if self.slots.len() > MAX_SETUP_PREFIX_SLOTS {
             return Err(SerializationError::LengthLimitExceeded {
                 len: u64::try_from(self.slots.len()).unwrap_or(u64::MAX),
@@ -1117,6 +1172,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierRegist
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
+        self.setup_seed.serialize_with_mode(&mut writer, compress)?;
         self.slots
             .len()
             .serialize_with_mode(&mut writer, compress)?;
@@ -1127,7 +1183,8 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierRegist
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.slots.len().serialized_size(compress)
+        self.setup_seed.serialized_size(compress)
+            + self.slots.len().serialized_size(compress)
             + self
                 .slots
                 .values()
@@ -1148,9 +1205,11 @@ where
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
+        let setup_seed =
+            AkitaSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let slot_count =
             read_limited_usize(&mut reader, compress, validate, MAX_SETUP_PREFIX_SLOTS)?;
-        let mut out = Self::new();
+        let mut out = Self::new(setup_seed);
         for _ in 0..slot_count {
             let slot = SetupPrefixVerifierSlot::deserialize_with_mode(
                 &mut reader,
@@ -1243,7 +1302,14 @@ pub fn setup_prefix_precommitted_params(
     prefix_params: &CommittedGroupParams,
     n_prefix: usize,
 ) -> Result<PrecommittedLevelParams, AkitaError> {
-    let d_setup = SETUP_OFFLOAD_D_SETUP;
+    let d_setup = prefix_params.inner_commit_matrix.ring_dimension();
+    let d_outer = prefix_params.outer_commit_matrix.ring_dimension();
+    if d_outer == 0 || !d_setup.is_multiple_of(d_outer) {
+        return Err(AkitaError::InvalidSetup(
+            "setup prefix A dimension must be a multiple of its B dimension".to_string(),
+        ));
+    }
+    let outer_projection_ratio = d_setup / d_outer;
     if n_prefix == 0 || !n_prefix.is_power_of_two() || !n_prefix.is_multiple_of(d_setup) {
         return Err(AkitaError::InvalidSetup(
             "setup prefix length must be a nonzero power-of-two multiple of d_setup".to_string(),
@@ -1259,33 +1325,53 @@ pub fn setup_prefix_precommitted_params(
         let outer_width = num_live_blocks
             .checked_mul(prefix_params.inner_commit_matrix.output_rank())
             .and_then(|n| n.checked_mul(prefix_params.num_digits_outer))
+            .and_then(|n| n.checked_mul(outer_projection_ratio))
             .ok_or_else(|| AkitaError::InvalidSetup("prefix outer width overflow".to_string()))?;
         if inner_width <= prefix_params.inner_commit_matrix.input_width()
             && outer_width <= prefix_params.outer_commit_matrix.input_width()
         {
+            let inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+                prefix_params.inner_commit_matrix.security_policy(),
+                prefix_params
+                    .inner_commit_matrix
+                    .sis_table_key()
+                    .table_digest,
+                prefix_params.inner_commit_matrix.sis_modulus_profile(),
+                prefix_params.inner_commit_matrix.output_rank(),
+                inner_width,
+                prefix_params.inner_commit_matrix.coeff_linf_bound(),
+                prefix_params.inner_commit_matrix.ring_dimension(),
+            );
+            let outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+                prefix_params.outer_commit_matrix.security_policy(),
+                prefix_params
+                    .outer_commit_matrix
+                    .sis_table_key()
+                    .table_digest,
+                prefix_params.outer_commit_matrix.sis_modulus_profile(),
+                prefix_params.outer_commit_matrix.output_rank(),
+                outer_width,
+                prefix_params.outer_commit_matrix.coeff_linf_bound(),
+                prefix_params.outer_commit_matrix.ring_dimension(),
+            );
             return Ok(PrecommittedLevelParams {
-                layout: PrecommittedGroupDescriptor {
+                layout: CommittedGroupProfile {
+                    version: CommittedGroupProfile::VERSION,
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
                     num_live_ring_elements_per_claim: ring_slots,
                     num_positions_per_block,
                     num_live_blocks,
                     log_basis_inner: prefix_params.log_basis_inner,
+                    num_digits_inner: prefix_params.num_digits_inner,
+                    inner_commit_matrix,
                     log_basis_outer: prefix_params.log_basis_outer,
-                    inner_ring_dimension: prefix_params.inner_commit_matrix.ring_dimension(),
-                    outer_ring_dimension: prefix_params.outer_commit_matrix.ring_dimension(),
-                    n_a: prefix_params.inner_commit_matrix.output_rank(),
-                    a_coeff_linf_bound: prefix_params.inner_commit_matrix.coeff_linf_bound(),
-                    n_b: prefix_params.outer_commit_matrix.output_rank(),
-                    b_coeff_linf_bound: prefix_params.outer_commit_matrix.coeff_linf_bound(),
+                    num_digits_outer: prefix_params.num_digits_outer,
+                    outer_commit_matrix,
                 },
-                inner_commit_matrix: prefix_params.inner_commit_matrix.clone(),
-                outer_commit_matrix: prefix_params.outer_commit_matrix.clone(),
                 log_basis_open: prefix_params.log_basis_open,
                 fold_challenge_config: prefix_params.fold_challenge_config,
-                num_digits_inner: prefix_params.num_digits_inner,
-                num_digits_outer: prefix_params.num_digits_outer,
                 num_digits_open: prefix_params.num_digits_open,
-                num_digits_fold_one: prefix_params.num_digits_fold_one,
+                num_digits_fold: prefix_params.num_digits_fold,
             });
         }
         num_positions_per_block = num_positions_per_block.checked_mul(2).ok_or_else(|| {
@@ -1299,12 +1385,10 @@ pub fn setup_prefix_precommitted_params(
 
 /// Build the slot id for one committed setup prefix.
 pub fn setup_prefix_slot_id(
-    d_setup: usize,
     natural_len: usize,
     commitment_params: PrecommittedLevelParams,
 ) -> SetupPrefixSlotId {
     SetupPrefixSlotId {
-        d_setup,
         natural_len,
         commitment_params,
     }
@@ -1314,13 +1398,20 @@ pub fn setup_prefix_slot_id(
 ///
 /// This centralizes the derivation shared by prover and verifier: setup seed
 /// digest, padded prefix length, prefix commitment parameters, slot id, natural
-/// source coverage, and the ring-slot evaluation length used for setup MLEs.
+/// source coverage, and the producer-ring evaluation length used for setup
+/// MLEs. The slot's commitment dimension is independent of that producer view.
+///
+/// `shared_matrix_field_elements` is `Some` when the natural source prefix must
+/// be resident in the shared matrix, as in the prover. It is `None` when the
+/// source is represented by the registered setup-prefix commitment, as in the
+/// schedule-scoped verifier. In both cases the slot's exact natural and padded
+/// lengths are checked.
 pub fn select_setup_prefix_slot<'a, Slot, Lookup>(
-    setup_ring_slots_at_d: usize,
+    shared_matrix_field_elements: Option<usize>,
     lookup_slot: Lookup,
     level_params: &CommittedGroupParams,
     natural_field_len: usize,
-    d_setup: usize,
+    source_ring_dimension: usize,
     coverage_error: &'static str,
 ) -> Result<Option<(&'a Slot, usize)>, AkitaError>
 where
@@ -1330,20 +1421,13 @@ where
     let Some(template) = &level_params.setup_prefix else {
         return Ok(None);
     };
-    if template.d_setup != d_setup {
-        return Err(AkitaError::InvalidSetup(
-            "setup-prefix source dimension disagrees with the active setup projection".to_string(),
-        ));
-    }
-
     let n_prefix = padded_setup_prefix_len(natural_field_len);
-    let setup_field_len = setup_ring_slots_at_d.checked_mul(d_setup).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup matrix field length overflow".to_string())
-    })?;
-    if natural_field_len > setup_field_len {
-        return Err(AkitaError::InvalidSetup(
-            "setup prefix request exceeds shared matrix capacity".to_string(),
-        ));
+    if let Some(shared_matrix_field_elements) = shared_matrix_field_elements {
+        if natural_field_len > shared_matrix_field_elements {
+            return Err(AkitaError::InvalidSetup(
+                "setup prefix request exceeds shared matrix capacity".to_string(),
+            ));
+        }
     }
     let template_n_prefix = template.n_prefix()?;
     if template.natural_len != natural_field_len || template_n_prefix != n_prefix {
@@ -1365,9 +1449,13 @@ where
              active lengths are {natural_field_len}/{n_prefix}",
         )));
     }
-    let setup_eval_len = template_n_prefix.checked_div(d_setup).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup prefix padded length has invalid dimension".to_string())
-    })?;
+    if source_ring_dimension == 0 || !template_n_prefix.is_multiple_of(source_ring_dimension) {
+        return Err(AkitaError::InvalidSetup(
+            "setup prefix padded length must be divisible by the producer ring dimension"
+                .to_string(),
+        ));
+    }
+    let setup_eval_len = template_n_prefix / source_ring_dimension;
     Ok(Some((slot, setup_eval_len)))
 }
 

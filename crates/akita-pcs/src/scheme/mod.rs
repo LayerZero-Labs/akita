@@ -7,29 +7,33 @@ use akita_field::{
     HalvingField, PseudoMersenneField, RandomSampling,
 };
 use akita_prover::compute::{
-    ComputeBackendSetup, LevelProveStacks, RecursiveProveBackend, RuntimeRootCommitBackend,
-    RuntimeRootCommitPoly, RuntimeRootProvePoly, UniformProverStack,
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
+    RuntimeRootCommitPoly, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend, UniformProverStack,
 };
-use akita_prover::ProverOpeningData;
 use akita_prover::ProverTranscriptGrind;
-use akita_prover::{AkitaProverSetup, CommittedGroupWithHint};
+use akita_prover::{AkitaProverSetup, CommittedGroupWithHint, FinalCommittedGroupWithHint};
+use akita_prover::{PreparedGroupProveOps, RecursiveFoldSource, SelectedProverOpeningData};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
+use akita_types::AkitaVerifierSetup;
 use akita_types::{
-    dispatch_for_field, validate_ring_subfield_role, BasisMode, Commitment, FpExtEncoding,
-    PolynomialGroupLayout,
+    dispatch_for_field, validate_ring_subfield_role, BasisMode, CommittedGroup,
+    CommittedGroupProfile, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaimsLayout,
+    SetupMatrixCapacity,
 };
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint};
-use akita_types::{AkitaVerifierSetup, OpeningClaims};
 use std::marker::PhantomData;
 use std::time::Instant;
 
-type CommitmentWithHint<F> = (Commitment<F>, AkitaCommitmentHint<F>);
+type CommitmentWithHint<F> = (CommittedGroup<F>, AkitaCommitmentHint<F>);
 
 /// End-to-end PCS wrapper, generic over commitment config `Cfg`.
 ///
 /// Root ring degree is derived from `Cfg`'s schedule policy at setup time
-/// (`policy_of::<Cfg>().ring_dimension`, equal to `Cfg::D` for uniform-D presets).
+/// (`policy_of::<Cfg>().uniform_ring_dimension`, equal to `Cfg::D` for
+/// uniform-D presets).
 /// Per-level suffix folds dispatch on each step's schedule `ring_dimension`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AkitaCommitmentScheme<Cfg: CommitmentConfig> {
@@ -55,7 +59,7 @@ where
         + HasOptimizedFold
         + AkitaSerialize,
 {
-    /// Build prover setup for the config's generation ring dimension.
+    /// Build a flat prover setup for the config's provisioning policy.
     ///
     /// # Errors
     ///
@@ -64,17 +68,22 @@ where
         max_num_vars: usize,
         max_num_polys_per_commitment_group: usize,
     ) -> Result<AkitaProverSetup<Cfg::Field>, AkitaError> {
-        let ring_d = akita_config::policy_of::<Cfg>().ring_dimension;
-        dispatch_for_field!(ProtocolDispatchSlot::Envelope, Cfg::Field, ring_d, |D| {
-            validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
-            akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
-                max_num_vars,
-                max_num_polys_per_commitment_group,
-            )
-        })
+        let ring_d = akita_config::policy_of::<Cfg>().uniform_ring_dimension;
+        dispatch_for_field!(
+            ProtocolDispatchSlot::UniformPolicy,
+            Cfg::Field,
+            ring_d,
+            |D| {
+                validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
+                akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
+                    max_num_vars,
+                    max_num_polys_per_commitment_group,
+                )
+            }
+        )
     }
 
-    /// Derive verifier setup from prover setup.
+    /// Derive a verifier setup that preserves the prover's full matrix prefix.
     ///
     /// # Errors
     ///
@@ -82,35 +91,54 @@ where
     pub fn setup_verifier(
         setup: &AkitaProverSetup<Cfg::Field>,
     ) -> Result<AkitaVerifierSetup<Cfg::Field>, AkitaError> {
-        setup.verifier_setup()
+        let capacity = SetupMatrixCapacity {
+            num_field_elements: setup.expanded.shared_matrix().num_field_elements(),
+        };
+        setup.to_verifier_setup(capacity)
+    }
+
+    /// Derive a verifier setup narrowed to one resolved schedule and root
+    /// opening layout.
+    ///
+    /// Offloaded setup-contribution producers do not retain their natural
+    /// public-matrix prefixes. The first direct producer after an offloaded
+    /// chain and the terminal matrix still do.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the schedule is malformed or
+    /// its verifier matrix requirement exceeds the prover setup.
+    pub fn setup_verifier_for_schedule(
+        setup: &AkitaProverSetup<Cfg::Field>,
+        schedule: &FoldSchedule,
+        root_layout: &OpeningClaimsLayout,
+    ) -> Result<AkitaVerifierSetup<Cfg::Field>, AkitaError> {
+        let capacity =
+            akita_types::verifier_setup_matrix_capacity_for_schedule(schedule, root_layout)?;
+        setup.to_verifier_setup(capacity)
     }
 
     /// Validate the field tower against the config schedule policy ring dimension.
     fn validate_cfg_ring_policy() -> Result<usize, AkitaError> {
-        let ring_d = akita_config::policy_of::<Cfg>().ring_dimension;
-        dispatch_for_field!(ProtocolDispatchSlot::Envelope, Cfg::Field, ring_d, |D| {
-            validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")
-        })?;
+        let ring_d = akita_config::policy_of::<Cfg>().uniform_ring_dimension;
+        dispatch_for_field!(
+            ProtocolDispatchSlot::UniformPolicy,
+            Cfg::Field,
+            ring_d,
+            |D| validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")
+        )?;
         Ok(ring_d)
     }
 
-    /// Validate policy ring dimension and setup envelope generation degree.
-    fn validate_policy_ring_dim(setup: &AkitaProverSetup<Cfg::Field>) -> Result<(), AkitaError> {
-        let ring_d = Self::validate_cfg_ring_policy()?;
-        setup.ensure_root_ring_dim(ring_d)
+    /// Validate the configured algebra ring dimension.
+    fn validate_policy_ring_dim(_setup: &AkitaProverSetup<Cfg::Field>) -> Result<(), AkitaError> {
+        Self::validate_cfg_ring_policy().map(|_| ())
     }
 
     fn validate_verifier_policy_ring_dim(
-        setup: &AkitaVerifierSetup<Cfg::Field>,
+        _setup: &AkitaVerifierSetup<Cfg::Field>,
     ) -> Result<(), AkitaError> {
-        let ring_d = Self::validate_cfg_ring_policy()?;
-        if setup.expanded.seed().gen_ring_dim != ring_d {
-            return Err(AkitaError::InvalidInput(format!(
-                "setup gen_ring_dim={} does not match scheme root ring degree {ring_d}",
-                setup.expanded.seed().gen_ring_dim
-            )));
-        }
-        Ok(())
+        Self::validate_cfg_ring_policy().map(|_| ())
     }
 
     /// Commit a single opening-point bundle.
@@ -155,11 +183,12 @@ where
         akita_prover::batched_commit::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack)
     }
 
-    /// Commit one standalone one-hot commitment group.
+    /// Commit one standalone commitment group.
     ///
     /// # Errors
     ///
-    /// Returns an error if the group is empty, dense, exceeds setup capacity, or cannot be planned.
+    /// Returns an error if the group exceeds setup capacity or no exact
+    /// generated row supports it.
     #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit_group")]
     pub fn commit_group<P, B>(
@@ -188,8 +217,8 @@ where
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
         stack: &UniformProverStack<'_, Cfg::Field, B>,
-        precommitteds: Vec<PolynomialGroupLayout>,
-    ) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
+        precommitteds: Vec<CommittedGroupProfile>,
+    ) -> Result<FinalCommittedGroupWithHint<Cfg::Field>, AkitaError>
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
@@ -214,7 +243,7 @@ where
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     pub fn batched_prove<'a, T, P, B>(
         setup: &AkitaProverSetup<Cfg::Field>,
-        claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
+        opening: SelectedProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
         stacks: &'a impl LevelProveStacks<
             'a,
             Cfg::Field,
@@ -230,18 +259,33 @@ where
         T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-        P: RuntimeRootProvePoly<Cfg::Field>,
-        B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField>
-            + ComputeBackendSetup<Cfg::Field>
+        P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, B, B>,
+        B: ComputeBackendSetup<Cfg::Field>
+            + CommitmentComputeBackend<Cfg::Field>
+            + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
+            + RuntimeOpeningProveBackendFor<
+                Cfg::Field,
+                akita_prover::RootTensorProjectionPoly<Cfg::Field>,
+            > + SuffixOpeningProveBackend<Cfg::Field>
+            + DigitRowsComputeBackend<Cfg::Field>
+            + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
+            + RuntimeTensorBackendFor<
+                Cfg::Field,
+                akita_prover::RootTensorProjectionPoly<Cfg::Field>,
+                Cfg::ExtField,
+            > + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
+            + RuntimeRingSwitchProveBackend<Cfg::Field>
             + 'a,
         <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     {
         let t_prove_total = Instant::now();
         Self::validate_policy_ring_dim(setup)?;
+        let (selection, claims) = opening;
         let proof = akita_prover::batched_prove::<Cfg, T, P, B, B, B, B>(
             &setup.expanded,
             &setup.prefix_slots,
             stacks,
+            selection,
             claims,
             transcript,
             basis,
@@ -266,11 +310,11 @@ where
         proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
         setup: &AkitaVerifierSetup<Cfg::Field>,
         transcript: &mut T,
-        claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
+        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         Self::validate_verifier_policy_ring_dim(setup)?;
-        batched_verify_inner::<Cfg, T>(proof, setup, transcript, claims, basis)
+        batched_verify_inner::<Cfg, T>(proof, setup, transcript, statement, basis)
     }
 
     /// Protocol identifier.
@@ -284,7 +328,7 @@ fn batched_verify_inner<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
+    statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
     basis: BasisMode,
 ) -> Result<(), AkitaError>
 where
@@ -303,7 +347,7 @@ where
     T: Transcript<Cfg::Field>,
 {
     let t_verify_akita = Instant::now();
-    akita_verifier::batched_verify::<Cfg, T>(proof, setup, transcript, claims, basis)?;
+    akita_verifier::batched_verify::<Cfg, T>(proof, setup, transcript, statement, basis)?;
 
     tracing::info!(
         levels = proof.num_fold_levels(),

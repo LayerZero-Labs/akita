@@ -34,15 +34,11 @@ pub use akita_schedules::{
     validate_catalog_identity, validate_generated_schedule_entry,
     validate_generated_schedule_table, GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
 };
-pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
+pub use emit::{
+    refresh_generated_wiring, run_regen_fmt, write_family_module,
+    write_precommitted_profiles_module, EmitSpec,
+};
 pub use planner::find_schedule;
-pub use schedule_params::suffix_opening_layout;
-
-/// Helpers available only to synthetic schedule fixtures and profile experiments.
-#[cfg(feature = "test-support")]
-pub mod test_support {
-    pub use crate::schedule_params::derive_setup_prefix_group;
-    pub use crate::schedule_params::test_support::{
-        plan_optimal_suffix, PlannedSuffix, PlannedSuffixFold, PlannedSuffixTerminal,
-    };
-}
+pub use schedule_params::{
+    derive_standalone_precommit_profile, suffix_opening_layout, RingDimensionSearchDomain,
+};

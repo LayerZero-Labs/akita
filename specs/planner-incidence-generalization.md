@@ -2,8 +2,11 @@
 
 > **Superseded (schedule keys):** portions of this spec that describe schedule lookup
 > keys, shipped-table selection, or preset↔table binding are superseded by
-> [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md). This file remains
-> for historical witness-layout / incidence notes until archived.
+> [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md) and the exact
+> profile/row-selection design now implemented by `CommittedGroupProfile` and
+> `OpeningScheduleSelection`. Private polynomial representations are not public
+> key fields. This file remains for historical witness-layout / incidence notes
+> until archived.
 
 | Field         | Value                          |
 |---------------|--------------------------------|
@@ -54,13 +57,13 @@ After the opening-claims cutover, the main schedule-facing projection is
 ```rust
 pub struct AkitaScheduleLookupKey {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: Vec<PrecommittedGroupDescriptor>,
+    pub precommitteds: Vec<CommittedGroupProfile>,
 }
 ```
 
 This key intentionally no longer carries setup capacity. In particular,
 `max_num_vars` is not a scheduler/planner key dimension after preprocessing.
-Setup capacity still exists in `AkitaSetupSeed` and setup sizing policy, but
+Setup capacity still exists in `AkitaSetupDescriptor` and setup sizing policy, but
 runtime schedule selection is keyed only by actual root group geometry and any
 frozen precommit metadata.
 
@@ -216,11 +219,10 @@ result is deterministic.
 
 Current superseded schedule-key status:
 
-- Scalar same-point paths use `AkitaScheduleLookupKey::from_layout` on an
-  `OpeningClaimsLayout`; that projection rejects multi-group layouts instead of
-  collapsing them.
+- Scalar same-point paths validate a singleton `OpeningClaimsLayout`, extract
+  its `PolynomialGroupLayout`, and call `AkitaScheduleLookupKey::single`.
 - Grouped-root planning uses `AkitaScheduleLookupKey` with `final_group` plus
-  `PrecommittedGroupDescriptor` for earlier groups, as specified in
+  `CommittedGroupProfile` for earlier groups, as specified in
   [`multi-group-batching.md`](multi-group-batching.md).
 - The older incidence-derived schedule-key plan in this file should not be
   continued directly for production paths.
@@ -301,7 +303,7 @@ Generated rows inline the runtime lookup-key fields:
 ```rust
 pub struct GeneratedScheduleTableEntry {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: &'static [PrecommittedGroupDescriptor],
+    pub precommitteds: &'static [CommittedGroupProfile],
     pub steps: &'static [GeneratedStep],
 }
 ```
@@ -348,7 +350,7 @@ the planner's actual choices while preserving exact proof-size accounting.
 
 `max_num_vars` remains a setup-capacity concept:
 
-- `AkitaSetupSeed::max_num_vars` bounds accepted commitment/proof inputs.
+- `AkitaSetupDescriptor::max_num_vars` bounds accepted commitment/proof inputs.
 - `ClaimIncidence::validate` and batched input validation reject claims whose
   actual `num_vars` exceeds setup capacity.
 - Setup matrix sizing must conservatively cover every actual runtime shape the
