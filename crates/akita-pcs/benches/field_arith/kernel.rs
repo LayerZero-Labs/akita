@@ -1,5 +1,8 @@
-use akita_field::packed::PackedField;
-use akita_field::{CanonicalField, FieldCore, Prime128Offset275, RandomSampling};
+use akita_field::packed::{HasPacking, PackedField, PackedValue};
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
+use akita_field::{
+    CanonicalField, FieldCore, FpExt4, Prime128Offset275, Prime32Offset99, RandomSampling, Zero,
+};
 use criterion::{black_box, Criterion, Throughput};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -8,7 +11,254 @@ use super::data::rand_u128;
 
 pub(crate) fn bench_kernel_patterns(c: &mut Criterion) {
     bench_packed_sumcheck_mix(c);
+    bench_fp32_ext4_sumcheck_fold(c);
+    bench_fp32_ext4_tensor_factor_pair(c);
     bench_fp128_accumulator_pattern(c);
+}
+
+fn bench_fp32_ext4_tensor_factor_pair(c: &mut Criterion) {
+    type E = FpExt4<Prime32Offset99>;
+    type PE = <E as HasPacking>::Packing;
+
+    let n = 1usize << 14;
+    let mut rng = StdRng::seed_from_u64(0xf032_fac7);
+    let suffix_tables: [Vec<E>; 4] =
+        std::array::from_fn(|_| (0..n).map(|_| E::random(&mut rng)).collect());
+    let coeff_zero: [Vec<E>; 4] =
+        std::array::from_fn(|_| (0..n).map(|_| E::random(&mut rng)).collect());
+    let coeff_one: [Vec<E>; 4] =
+        std::array::from_fn(|_| (0..n).map(|_| E::random(&mut rng)).collect());
+    let packed_suffix: [Vec<PE>; 4] = std::array::from_fn(|j| PE::pack_slice(&suffix_tables[j]));
+    let packed_zero: [Vec<PE>; 4] = std::array::from_fn(|j| PE::pack_slice(&coeff_zero[j]));
+    let packed_one: [Vec<PE>; 4] = std::array::from_fn(|j| PE::pack_slice(&coeff_one[j]));
+
+    let mut scalar_out = vec![(E::zero(), E::zero()); n];
+    let mut packed_out = vec![(PE::broadcast(E::zero()), PE::broadcast(E::zero())); n / PE::WIDTH];
+    let mut group = c.benchmark_group("field_arith/kernel/fp32_ext4_tensor_factor_pair");
+    group.throughput(Throughput::Elements(n as u64));
+
+    group.bench_function("scalar_delayed_four_term", |b| {
+        b.iter(|| {
+            for (i, output) in scalar_out.iter_mut().enumerate() {
+                let mut zero = <E as HasUnreducedOps>::ProductAccum::zero();
+                let mut one = <E as HasUnreducedOps>::ProductAccum::zero();
+                for j in 0..4 {
+                    let column = suffix_tables[j][i];
+                    zero += coeff_zero[j][i].mul_to_product_accum(column);
+                    one += coeff_one[j][i].mul_to_product_accum(column);
+                }
+                *output = (E::reduce_product_accum(zero), E::reduce_product_accum(one));
+            }
+            black_box(&scalar_out);
+        })
+    });
+
+    group.bench_function(format!("packed_persistent_w{}", PE::WIDTH), |b| {
+        b.iter(|| {
+            for (i, output) in packed_out.iter_mut().enumerate() {
+                let mut zero = PE::broadcast(E::zero());
+                let mut one = PE::broadcast(E::zero());
+                for j in 0..4 {
+                    let column = packed_suffix[j][i];
+                    zero = zero + packed_zero[j][i] * column;
+                    one = one + packed_one[j][i] * column;
+                }
+                *output = (zero, one);
+            }
+            black_box(&packed_out);
+        })
+    });
+
+    group.bench_function(format!("packed_repack_w{}", PE::WIDTH), |b| {
+        b.iter(|| {
+            for (packed_index, output) in packed_out.iter_mut().enumerate() {
+                let first = packed_index * PE::WIDTH;
+                let mut zero = PE::broadcast(E::zero());
+                let mut one = PE::broadcast(E::zero());
+                for j in 0..4 {
+                    let column = PE::from_fn(|lane| suffix_tables[j][first + lane]);
+                    let packed_coeff_zero = PE::from_fn(|lane| coeff_zero[j][first + lane]);
+                    let packed_coeff_one = PE::from_fn(|lane| coeff_one[j][first + lane]);
+                    zero = zero + packed_coeff_zero * column;
+                    one = one + packed_coeff_one * column;
+                }
+                *output = (zero, one);
+            }
+            black_box(&packed_out);
+        })
+    });
+
+    group.bench_function(
+        format!("packed_persistent_suffix_repack_coeff_w{}", PE::WIDTH),
+        |b| {
+            b.iter(|| {
+                for (packed_index, output) in packed_out.iter_mut().enumerate() {
+                    let first = packed_index * PE::WIDTH;
+                    let mut zero = PE::broadcast(E::zero());
+                    let mut one = PE::broadcast(E::zero());
+                    for j in 0..4 {
+                        let column = packed_suffix[j][packed_index];
+                        let packed_coeff_zero = PE::from_fn(|lane| coeff_zero[j][first + lane]);
+                        let packed_coeff_one = PE::from_fn(|lane| coeff_one[j][first + lane]);
+                        zero = zero + packed_coeff_zero * column;
+                        one = one + packed_coeff_one * column;
+                    }
+                    *output = (zero, one);
+                }
+                black_box(&packed_out);
+            })
+        },
+    );
+
+    group.bench_function(
+        format!("packed_broadcast_suffix_repack_coeff_w{}", PE::WIDTH),
+        |b| {
+            b.iter(|| {
+                for (packed_index, output) in packed_out.iter_mut().enumerate() {
+                    let first = packed_index * PE::WIDTH;
+                    let suffix_index = packed_index / 4;
+                    let mut zero = PE::broadcast(E::zero());
+                    let mut one = PE::broadcast(E::zero());
+                    for j in 0..4 {
+                        let column = PE::broadcast(suffix_tables[j][suffix_index]);
+                        let packed_coeff_zero = PE::from_fn(|lane| coeff_zero[j][first + lane]);
+                        let packed_coeff_one = PE::from_fn(|lane| coeff_one[j][first + lane]);
+                        zero = zero + packed_coeff_zero * column;
+                        one = one + packed_coeff_one * column;
+                    }
+                    *output = (zero, one);
+                }
+                black_box(&packed_out);
+            })
+        },
+    );
+
+    group.bench_function(
+        format!("packed_broadcast_suffix_stack_coeff_w{}", PE::WIDTH),
+        |b| {
+            b.iter(|| {
+                for (packed_index, output) in packed_out.iter_mut().enumerate() {
+                    let first = packed_index * PE::WIDTH;
+                    let suffix_index = packed_index / 4;
+                    let mut zero = PE::broadcast(E::zero());
+                    let mut one = PE::broadcast(E::zero());
+                    for j in 0..4 {
+                        let column = PE::broadcast(suffix_tables[j][suffix_index]);
+                        let packed_coeff_zero = PE::from_coeff_fn(|lane, coefficient| {
+                            coeff_zero[j][first + lane].coeffs[coefficient]
+                        });
+                        let packed_coeff_one = PE::from_coeff_fn(|lane, coefficient| {
+                            coeff_one[j][first + lane].coeffs[coefficient]
+                        });
+                        zero = zero + packed_coeff_zero * column;
+                        one = one + packed_coeff_one * column;
+                    }
+                    *output = (zero, one);
+                }
+                black_box(&packed_out);
+            })
+        },
+    );
+    group.finish();
+}
+
+fn bench_fp32_ext4_sumcheck_fold(c: &mut Criterion) {
+    type E = FpExt4<Prime32Offset99>;
+    type PE = <E as HasPacking>::Packing;
+
+    let half = 1usize << 14;
+    let mut rng = StdRng::seed_from_u64(0xf032_f01d);
+    let left = (0..half).map(|_| E::random(&mut rng)).collect::<Vec<_>>();
+    let right = (0..half).map(|_| E::random(&mut rng)).collect::<Vec<_>>();
+    let interleaved = left
+        .iter()
+        .zip(&right)
+        .flat_map(|(&lhs, &rhs)| [lhs, rhs])
+        .collect::<Vec<_>>();
+    let challenge = E::random(&mut rng);
+    let fold_ctx = E::precompute_fold(challenge);
+    let packed_left = PE::pack_slice(&left);
+    let packed_right = PE::pack_slice(&right);
+    let packed_challenge = PE::broadcast(challenge);
+
+    let mut scalar_out = vec![E::zero(); half];
+    let mut packed_out = vec![PE::broadcast(E::zero()); packed_left.len()];
+    let mut group = c.benchmark_group("field_arith/kernel/fp32_ext4_sumcheck_fold");
+    group.throughput(Throughput::Elements(half as u64));
+
+    group.bench_function("scalar_optimized_fold", |b| {
+        b.iter(|| {
+            let lhs = black_box(&left);
+            let rhs = black_box(&right);
+            for (i, dst) in scalar_out.iter_mut().enumerate() {
+                *dst = E::fold_one(&fold_ctx, lhs[i], rhs[i]);
+            }
+            black_box(&scalar_out);
+        })
+    });
+
+    group.bench_function("scalar_scale", |b| {
+        b.iter(|| {
+            let input = black_box(&left);
+            for (dst, &value) in scalar_out.iter_mut().zip(input) {
+                *dst = value * challenge;
+            }
+            black_box(&scalar_out);
+        })
+    });
+
+    group.bench_function("scalar_optimized_zero_left_fold", |b| {
+        b.iter(|| {
+            let input = black_box(&left);
+            for (dst, &value) in scalar_out.iter_mut().zip(input) {
+                *dst = E::fold_one(&fold_ctx, E::zero(), value);
+            }
+            black_box(&scalar_out);
+        })
+    });
+
+    group.bench_function(format!("packed_fold_w{}", PE::WIDTH), |b| {
+        b.iter(|| {
+            let lhs = black_box(&packed_left);
+            let rhs = black_box(&packed_right);
+            for (i, dst) in packed_out.iter_mut().enumerate() {
+                *dst = lhs[i] + packed_challenge * (rhs[i] - lhs[i]);
+            }
+            black_box(&packed_out);
+        })
+    });
+
+    group.throughput(Throughput::Elements((2 * half) as u64));
+    group.bench_function(format!("pack_two_halves_w{}", PE::WIDTH), |b| {
+        b.iter(|| {
+            black_box((
+                PE::pack_slice(black_box(&left)),
+                PE::pack_slice(black_box(&right)),
+            ))
+        })
+    });
+
+    group.throughput(Throughput::Elements(half as u64));
+    group.bench_function(format!("unpack_folded_w{}", PE::WIDTH), |b| {
+        b.iter(|| black_box(PE::unpack_slice(black_box(&packed_out))))
+    });
+
+    group.bench_function(format!("repack_adjacent_fold_unpack_w{}", PE::WIDTH), |b| {
+        b.iter(|| {
+            let input = black_box(&interleaved);
+            for (packed_index, output) in scalar_out.chunks_exact_mut(PE::WIDTH).enumerate() {
+                let first_output = packed_index * PE::WIDTH;
+                let lhs = PE::from_fn(|lane| input[2 * (first_output + lane)]);
+                let rhs = PE::from_fn(|lane| input[2 * (first_output + lane) + 1]);
+                let folded = lhs + packed_challenge * (rhs - lhs);
+                for (lane, value) in output.iter_mut().enumerate() {
+                    *value = folded.extract(lane);
+                }
+            }
+            black_box(&scalar_out);
+        })
+    });
+    group.finish();
 }
 
 fn bench_packed_sumcheck_mix(c: &mut Criterion) {

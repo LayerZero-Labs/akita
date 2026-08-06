@@ -207,6 +207,21 @@ where
         }
     }
 
+    /// Build a packed quartic directly from `(lane, coefficient)` values.
+    ///
+    /// This is the allocation-free transpose primitive for callers that
+    /// already expose quartic coefficients separately. It avoids staging four
+    /// temporary vectors when packing data from a coefficient-oriented table.
+    #[inline]
+    pub fn from_coeff_fn<G>(mut f: G) -> Self
+    where
+        G: FnMut(usize, usize) -> F,
+    {
+        Self::new(std::array::from_fn(|coefficient| {
+            PF::from_fn(|lane| f(lane, coefficient))
+        }))
+    }
+
     /// Square using the packed ring-subfield backend hook.
     #[inline(always)]
     pub fn square(self) -> Self {
@@ -238,6 +253,19 @@ where
 
     fn extract(&self, lane: usize) -> Self::Value {
         FpExt4::new(std::array::from_fn(|j| self.coeffs[j].extract(lane)))
+    }
+
+    #[inline]
+    fn pack_slice(buf: &[Self::Value]) -> Vec<Self> {
+        assert!(
+            buf.len() % Self::WIDTH == 0,
+            "slice length {} must be divisible by WIDTH {}",
+            buf.len(),
+            Self::WIDTH
+        );
+        buf.chunks_exact(Self::WIDTH)
+            .map(|chunk| Self::from_coeff_fn(|lane, coefficient| chunk[lane].coeffs[coefficient]))
+            .collect()
     }
 }
 
