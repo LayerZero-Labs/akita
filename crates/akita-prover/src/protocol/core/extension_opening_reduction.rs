@@ -3,6 +3,7 @@ use crate::compute::{
     ComputeBackendSetup, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
     TensorProjectionKernel,
 };
+use crate::kernels::sumcheck::SumcheckTableOperations;
 use akita_field::unreduced::ReduceTo;
 use std::ops::Range;
 
@@ -91,7 +92,12 @@ pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, G, B
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + MulBaseUnreduced<F> + AkitaSerialize,
+    E: ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + MulBaseUnreduced<F>
+        + AkitaSerialize
+        + SumcheckTableOperations<F>,
     T: Transcript<F>,
     G: RootProverGroupTensor<F, E, B>,
     B: ComputeBackendSetup<F>,

@@ -150,7 +150,7 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
 impl<F, E> ExtensionOpeningReductionTerm<F, E>
 where
     F: FieldCore,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold,
+    E: SumcheckTableOperations<F>,
 {
     /// Add this term's `coeff`-scaled `(constant, quadratic)` round
     /// contribution into the shared accumulators.
@@ -160,6 +160,7 @@ where
     /// first round, and every round of the sparse/tensor paths).
     pub(in crate::protocol::extension_opening_reduction) fn accumulate_into(
         &mut self,
+        plan: SumcheckKernelPlan,
         constant: &mut E,
         quadratic: &mut E,
     ) {
@@ -170,7 +171,7 @@ where
             }
             None => {
                 self.tables
-                    .accumulate_round(self.coeff, constant, quadratic);
+                    .accumulate_round(plan, self.coeff, constant, quadratic);
             }
         }
     }
@@ -186,6 +187,7 @@ where
     /// Every other shape folds in place and clears the cache.
     pub(in crate::protocol::extension_opening_reduction) fn ingest_challenge(
         &mut self,
+        plan: SumcheckKernelPlan,
         r_round: E,
     ) {
         if self.tables.len() <= 1 {
@@ -193,7 +195,7 @@ where
         }
         let fused = match &mut self.tables {
             ExtensionOpeningTables::Dense { witness, factor } if witness.len() >= 4 => Some(
-                fold_and_compute_product_round_scalar(witness, factor, r_round),
+                E::fold_and_compute_product_round(plan, witness, factor, r_round),
             ),
             ExtensionOpeningTables::Sparse { witness, factor }
                 if witness.merge_free_rounds_left >= 2 =>
@@ -207,7 +209,7 @@ where
                 self.cached_accumulate = Some((self.coeff * constant, self.coeff * quadratic));
             }
             None => {
-                self.tables.fold_in_place(r_round);
+                self.tables.fold_in_place(plan, r_round);
                 self.cached_accumulate = None;
             }
         }

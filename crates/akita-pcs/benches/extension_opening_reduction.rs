@@ -142,7 +142,11 @@ where
 fn bench_case<F, E>(c: &mut Criterion, label: &str)
 where
     F: CanonicalField + CanonicalBytes + TranscriptChallenge,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + akita_serialization::AkitaSerialize,
+    E: ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + akita_serialization::AkitaSerialize
+        + akita_prover::kernels::sumcheck::SumcheckTableOperations<F>,
 {
     let num_vars = env_usize("AKITA_EOR_NUM_VARS", DEFAULT_NUM_VARS);
     let num_polys = env_usize("AKITA_EOR_NUM_POLYS", DEFAULT_NUM_POLYS);

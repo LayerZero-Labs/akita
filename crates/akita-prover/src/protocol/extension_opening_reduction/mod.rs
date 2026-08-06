@@ -4,15 +4,15 @@
 //! `akita-sumcheck`. This module owns the Akita-specific EOR prover state over
 //! witness and factor tables.
 
+use crate::kernels::sumcheck::{SumcheckKernelPlan, SumcheckTableOperations};
 use akita_algebra::poly::fold_evals_in_place;
 use akita_algebra::uni_poly::UniPoly;
 use akita_algebra::EqPolynomial;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, ExtField, FieldCore, Zero};
 use akita_sumcheck::{
-    compute_product_round_scalar, fold_and_compute_product_round_scalar,
-    fold_first_variable_scalar, DelayedProductRoundAccumulator, DirectProductRoundAccumulator,
-    EvaluationTable, ProductRoundAccumulator, SumcheckInstanceProver,
+    DelayedProductRoundAccumulator, DirectProductRoundAccumulator, EvaluationTable,
+    ProductRoundAccumulator, SumcheckInstanceProver,
 };
 use akita_types::{
     checked_table_len, extension_opening_reduction_claim, num_rounds_from_table_len,

@@ -40,7 +40,8 @@ where
         + HasOptimizedFold
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
-        + AkitaSerialize,
+        + AkitaSerialize
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
     V: FnOnce() -> Result<(), AkitaError>,

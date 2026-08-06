@@ -10,6 +10,7 @@ pub struct ExtensionOpeningReductionProver<F: FieldCore, E: ExtField<F>> {
     terms: Vec<ExtensionOpeningReductionTerm<F, E>>,
     input_claim: E,
     num_rounds: usize,
+    plan: SumcheckKernelPlan,
 }
 
 impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionProver<F, E> {
@@ -48,6 +49,7 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionProver<F, E> {
             terms,
             input_claim,
             num_rounds,
+            plan: SumcheckKernelPlan::detect(),
         })
     }
 
@@ -114,7 +116,7 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionProver<F, E> {
 impl<F, E> SumcheckInstanceProver<E> for ExtensionOpeningReductionProver<F, E>
 where
     F: FieldCore,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold,
+    E: SumcheckTableOperations<F>,
 {
     fn num_rounds(&self) -> usize {
         self.num_rounds
@@ -136,7 +138,7 @@ where
         for term in &mut self.terms {
             debug_assert_eq!(term.tables.len(), expected_len);
 
-            term.accumulate_into(&mut constant, &mut quadratic);
+            term.accumulate_into(self.plan, &mut constant, &mut quadratic);
         }
 
         let linear = previous_claim - constant - constant - quadratic;
@@ -145,7 +147,7 @@ where
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {
         for term in &mut self.terms {
-            term.ingest_challenge(r_round);
+            term.ingest_challenge(self.plan, r_round);
         }
     }
 }

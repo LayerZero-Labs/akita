@@ -317,6 +317,13 @@ construction. The plan is not serialized, and a round does not repeat CPU
 feature checks. The plan contains private function choices for each operation
 rather than one public CPU tier.
 
+Generic protocol code reaches those choices through
+`SumcheckTableOperations<F>`. Its default methods call the canonical scalar
+operations. A field family overrides only operations with an accepted runtime
+implementation. `FpExt4<Fp32>` overrides all three dense operations; fp64,
+fp128, and other extension shapes currently keep the scalar defaults. This is a
+static field capability, not a table wrapper or a second protocol path.
+
 The plan may select different implementations for:
 
 | Operation family | Candidate implementations |

@@ -1,6 +1,7 @@
 //! Runtime-selected kernels over canonical sumcheck evaluation tables.
 
-use akita_field::{Fp32, FpExt4};
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
+use akita_field::{ExtField, FieldCore, Fp128, Fp32, Fp64, FpExt2, FpExt2Config, FpExt4, FpExt8};
 use akita_sumcheck::{
     compute_product_round_scalar, fold_and_compute_product_round_scalar,
     fold_first_variable_scalar, EvaluationTable,
@@ -25,6 +26,119 @@ enum Fp32Kernel {
     #[cfg(target_arch = "x86_64")]
     Avx512Ifma,
 }
+
+/// Field-specific operations over canonical sumcheck evaluation tables.
+///
+/// The default methods are the portable scalar implementations. Field families
+/// override only operations with a measured runtime-selected implementation.
+/// This keeps protocol code generic without erasing `F` or `E` and keeps CPU
+/// dispatch outside the row loop.
+pub trait SumcheckTableOperations<F>: ExtField<F> + HasOptimizedFold + HasUnreducedOps
+where
+    F: FieldCore,
+{
+    /// Fold one table by its first variable.
+    fn fold_first_variable(
+        _plan: SumcheckKernelPlan,
+        table: &mut EvaluationTable<F, Self>,
+        challenge: Self,
+    ) where
+        Self: Sized,
+    {
+        fold_first_variable_scalar(table, challenge);
+    }
+
+    /// Compute the constant and quadratic coefficients of one product round.
+    fn compute_product_round(
+        _plan: SumcheckKernelPlan,
+        witness: &EvaluationTable<F, Self>,
+        factor: &EvaluationTable<F, Self>,
+    ) -> (Self, Self)
+    where
+        Self: Sized,
+    {
+        compute_product_round_scalar(witness, factor)
+    }
+
+    /// Fold two tables and compute their next product round in one pass.
+    fn fold_and_compute_product_round(
+        _plan: SumcheckKernelPlan,
+        witness: &mut EvaluationTable<F, Self>,
+        factor: &mut EvaluationTable<F, Self>,
+        challenge: Self,
+    ) -> (Self, Self)
+    where
+        Self: Sized,
+    {
+        fold_and_compute_product_round_scalar(witness, factor, challenge)
+    }
+}
+
+impl<const P: u32> SumcheckTableOperations<Fp32<P>> for FpExt4<Fp32<P>> {
+    fn fold_first_variable(
+        plan: SumcheckKernelPlan,
+        table: &mut EvaluationTable<Fp32<P>, Self>,
+        challenge: Self,
+    ) {
+        plan.fold_first_variable_fp32(table, challenge);
+    }
+
+    fn compute_product_round(
+        plan: SumcheckKernelPlan,
+        witness: &EvaluationTable<Fp32<P>, Self>,
+        factor: &EvaluationTable<Fp32<P>, Self>,
+    ) -> (Self, Self) {
+        plan.compute_product_round_fp32(witness, factor)
+    }
+
+    fn fold_and_compute_product_round(
+        plan: SumcheckKernelPlan,
+        witness: &mut EvaluationTable<Fp32<P>, Self>,
+        factor: &mut EvaluationTable<Fp32<P>, Self>,
+        challenge: Self,
+    ) -> (Self, Self) {
+        plan.fold_and_compute_product_round_fp32(witness, factor, challenge)
+    }
+}
+
+macro_rules! impl_scalar_identity_sumcheck_operations {
+    ($base:ident, $modulus:ty) => {
+        impl<const P: $modulus> SumcheckTableOperations<$base<P>> for $base<P> {}
+    };
+}
+
+macro_rules! impl_scalar_fp_ext2_sumcheck_operations {
+    ($base:ident, $modulus:ty) => {
+        impl<const P: $modulus, C> SumcheckTableOperations<$base<P>> for FpExt2<$base<P>, C> where
+            C: FpExt2Config<$base<P>>
+        {
+        }
+    };
+}
+
+macro_rules! impl_scalar_fp_ext4_sumcheck_operations {
+    ($base:ident, $modulus:ty) => {
+        impl<const P: $modulus> SumcheckTableOperations<$base<P>> for FpExt4<$base<P>> {}
+    };
+}
+
+macro_rules! impl_scalar_fp_ext8_sumcheck_operations {
+    ($base:ident, $modulus:ty) => {
+        impl<const P: $modulus> SumcheckTableOperations<$base<P>> for FpExt8<$base<P>> {}
+    };
+}
+
+impl_scalar_identity_sumcheck_operations!(Fp32, u32);
+impl_scalar_identity_sumcheck_operations!(Fp64, u64);
+impl_scalar_identity_sumcheck_operations!(Fp128, u128);
+impl_scalar_fp_ext2_sumcheck_operations!(Fp32, u32);
+impl_scalar_fp_ext2_sumcheck_operations!(Fp64, u64);
+impl_scalar_fp_ext2_sumcheck_operations!(Fp128, u128);
+impl_scalar_fp_ext4_sumcheck_operations!(Fp64, u64);
+impl_scalar_fp_ext4_sumcheck_operations!(Fp128, u128);
+impl_scalar_fp_ext8_sumcheck_operations!(Fp32, u32);
+impl_scalar_fp_ext8_sumcheck_operations!(Fp64, u64);
+impl_scalar_fp_ext8_sumcheck_operations!(Fp128, u128);
 
 impl SumcheckKernelPlan {
     /// Detect the fastest supported implementation for each operation.

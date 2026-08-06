@@ -85,7 +85,8 @@ where
         + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize
-        + MulBaseUnreduced<Cfg::Field>,
+        + MulBaseUnreduced<Cfg::Field>
+        + crate::kernels::sumcheck::SumcheckTableOperations<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     C: crate::compute::CommitmentComputeBackend<Cfg::Field>
         + ComputeBackendSetup<Cfg::Field>
@@ -226,7 +227,8 @@ where
         + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize
-        + MulBaseUnreduced<F>,
+        + MulBaseUnreduced<F>
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     O: SuffixOpeningProveBackend<F>
         + DigitRowsComputeBackend<F>
@@ -432,7 +434,8 @@ where
         + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize
-        + MulBaseUnreduced<F>,
+        + MulBaseUnreduced<F>
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     TS: RuntimeTensorBackendFor<F, RecursiveWitnessFlat, E>
         + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, E>

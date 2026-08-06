@@ -109,6 +109,7 @@ fn merge_free_matches_general_round_by_round() {
 fn fused_term_matches_unfused_reference() {
     use akita_field::{FpExt4, Prime32Offset99};
     type TE = FpExt4<Prime32Offset99>;
+    let plan = SumcheckKernelPlan::detect();
 
     for (log_chunks, s) in [(6usize, 4usize), (14usize, 4usize)] {
         let mut rng = StdRng::seed_from_u64(0xfeed_1234 ^ ((log_chunks as u64) << 8));
@@ -141,7 +142,7 @@ fn fused_term_matches_unfused_reference() {
 
         for (round, &r) in challenges.iter().enumerate() {
             let (mut c_fused, mut q_fused) = (TE::zero(), TE::zero());
-            fused_term.accumulate_into(&mut c_fused, &mut q_fused);
+            fused_term.accumulate_into(plan, &mut c_fused, &mut q_fused);
 
             let (mut c_ref, mut q_ref) = (TE::zero(), TE::zero());
             ref_witness.accumulate_round(&ref_factor, coeff, &mut c_ref, &mut q_ref);
@@ -155,7 +156,7 @@ fn fused_term_matches_unfused_reference() {
                 "quadratic mismatch (log_chunks={log_chunks}, round={round})"
             );
 
-            fused_term.ingest_challenge(r);
+            fused_term.ingest_challenge(plan, r);
             ref_witness.fold_in_place(r);
             fold_dense(&mut ref_factor, r);
         }
@@ -179,6 +180,7 @@ fn fused_term_matches_unfused_reference() {
 fn cylindrical_term_matches_materialized_high_variable_extension() {
     use akita_field::{FpExt4, Prime32Offset99};
     type TE = FpExt4<Prime32Offset99>;
+    let plan = SumcheckKernelPlan::detect();
 
     let mut rng = StdRng::seed_from_u64(0xc711_1d3a);
     let native_witness = (0..8).map(|_| TE::random(&mut rng)).collect::<Vec<_>>();
@@ -209,17 +211,21 @@ fn cylindrical_term_matches_materialized_high_variable_extension() {
 
     for round in 0..5 {
         let (mut cylindrical_constant, mut cylindrical_quadratic) = (TE::zero(), TE::zero());
-        cylindrical.accumulate_into(&mut cylindrical_constant, &mut cylindrical_quadratic);
+        cylindrical.accumulate_into(plan, &mut cylindrical_constant, &mut cylindrical_quadratic);
         let (mut materialized_constant, mut materialized_quadratic) = (TE::zero(), TE::zero());
-        materialized.accumulate_into(&mut materialized_constant, &mut materialized_quadratic);
+        materialized.accumulate_into(
+            plan,
+            &mut materialized_constant,
+            &mut materialized_quadratic,
+        );
         assert_eq!(
             (cylindrical_constant, cylindrical_quadratic),
             (materialized_constant, materialized_quadratic),
             "round {round}"
         );
         let challenge = TE::random(&mut rng);
-        cylindrical.ingest_challenge(challenge);
-        materialized.ingest_challenge(challenge);
+        cylindrical.ingest_challenge(plan, challenge);
+        materialized.ingest_challenge(plan, challenge);
     }
     assert_eq!(
         cylindrical.final_witness_and_factor_evals(),

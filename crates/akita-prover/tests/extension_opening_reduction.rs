@@ -5,6 +5,7 @@ use akita_field::{
     AkitaError, Ext2, ExtField, FieldCore, FpExt4, FromPrimitiveInt, Prime128Offset275,
     Prime24Offset3, Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime64Offset59,
 };
+use akita_prover::kernels::sumcheck::SumcheckTableOperations;
 use akita_prover::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
@@ -1086,6 +1087,8 @@ mod delayed_product_sum_contract {
             Self(Inner::from_i128(value))
         }
     }
+
+    impl SumcheckTableOperations<LossyField> for LossyField {}
 
     impl HasOptimizedFold for LossyField {
         type FoldCtx = Self;

@@ -80,10 +80,11 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningTables<F, E> {
 impl<F, E> ExtensionOpeningTables<F, E>
 where
     F: FieldCore,
-    E: ExtField<F> + HasUnreducedOps,
+    E: SumcheckTableOperations<F>,
 {
     pub(in crate::protocol::extension_opening_reduction) fn accumulate_round(
         &self,
+        plan: SumcheckKernelPlan,
         coeff: E,
         constant: &mut E,
         quadratic: &mut E,
@@ -91,7 +92,7 @@ where
         match self {
             Self::Dense { witness, factor } => {
                 let (round_constant, round_quadratic) =
-                    compute_product_round_scalar(witness, factor);
+                    E::compute_product_round(plan, witness, factor);
                 *constant += coeff * round_constant;
                 *quadratic += coeff * round_quadratic;
             }
@@ -112,7 +113,7 @@ where
                 extra_factor_eval,
             } => {
                 if inner.len() > 1 {
-                    inner.accumulate_round(coeff, constant, quadratic);
+                    inner.accumulate_round(plan, coeff, constant, quadratic);
                 } else if let (Some((witness, factor)), Some(&point)) = (
                     inner.final_witness_and_factor_evals(),
                     extra_point.get(*extra_round),
@@ -146,13 +147,17 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SparseFactor<E> {
 impl<F, E> ExtensionOpeningTables<F, E>
 where
     F: FieldCore,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold,
+    E: SumcheckTableOperations<F>,
 {
-    pub(in crate::protocol::extension_opening_reduction) fn fold_in_place(&mut self, r_round: E) {
+    pub(in crate::protocol::extension_opening_reduction) fn fold_in_place(
+        &mut self,
+        plan: SumcheckKernelPlan,
+        r_round: E,
+    ) {
         match self {
             Self::Dense { witness, factor } => {
-                fold_first_variable_scalar(witness, r_round);
-                fold_first_variable_scalar(factor, r_round);
+                E::fold_first_variable(plan, witness, r_round);
+                E::fold_first_variable(plan, factor, r_round);
             }
             Self::Sparse { witness, factor } => {
                 witness.fold_in_place(r_round);
@@ -165,7 +170,7 @@ where
                 extra_factor_eval,
             } => {
                 if inner.len() > 1 {
-                    inner.fold_in_place(r_round);
+                    inner.fold_in_place(plan, r_round);
                 } else if let Some(&point) = extra_point.get(*extra_round) {
                     *extra_factor_eval *=
                         (E::one() - point) * (E::one() - r_round) + point * r_round;

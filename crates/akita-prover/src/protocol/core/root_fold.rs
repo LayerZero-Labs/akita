@@ -61,7 +61,8 @@ where
         + HasOptimizedFold
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
-        + AkitaSerialize,
+        + AkitaSerialize
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
     TS: ComputeBackendSetup<F>,
@@ -149,7 +150,8 @@ where
         + HasOptimizedFold
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
-        + AkitaSerialize,
+        + AkitaSerialize
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
     C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,

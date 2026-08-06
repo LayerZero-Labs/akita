@@ -57,7 +57,8 @@ where
         + HasUnreducedOps
         + HasOptimizedFold
         + FromPrimitiveInt
-        + AkitaSerialize,
+        + AkitaSerialize
+        + crate::kernels::sumcheck::SumcheckTableOperations<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
@@ -152,14 +153,15 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
         + ExtField<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>
         + HasUnreducedOps
         + HasOptimizedFold
         + FromPrimitiveInt
-        + AkitaSerialize,
+        + AkitaSerialize
+        + MulBaseUnreduced<Cfg::Field>
+        + crate::kernels::sumcheck::SumcheckTableOperations<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
