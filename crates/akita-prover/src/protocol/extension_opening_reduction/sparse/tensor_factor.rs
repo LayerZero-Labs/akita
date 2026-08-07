@@ -427,7 +427,10 @@ impl<E: FieldCore + HasUnreducedOps, const N: usize> GroupedRoundAccumulator<E, 
 }
 
 impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
-    fn can_prepare_merge_free_products(&self, palette: &MergeFreeValuePalette<E>) -> bool {
+    pub(super) fn can_prepare_merge_free_products(
+        &self,
+        palette: &MergeFreeValuePalette<E>,
+    ) -> bool {
         if !E::REDUCED_TO_PRODUCT_ACCUM_IS_CHEAP || self.round + 1 >= self.materialize_at {
             return false;
         }
@@ -438,7 +441,7 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
         state_len + required <= self.low_pair_states.capacity()
     }
 
-    fn prepare_merge_free_products(&mut self, palette: &MergeFreeValuePalette<E>) {
+    pub(super) fn prepare_merge_free_products(&mut self, palette: &MergeFreeValuePalette<E>) {
         debug_assert!(E::REDUCED_TO_PRODUCT_ACCUM_IS_CHEAP);
         let rest_low_bits = self.materialize_at - self.round - 1;
         let low_pair_count = 1usize << rest_low_bits;
@@ -527,6 +530,45 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
             let (pair, witness_zero, witness_one, next_row) = witness.pair_at_row(row, rows.end);
             row = next_row;
             round.add_pair(self, pair, witness_zero, witness_one);
+        }
+        round.finish(self)
+    }
+
+    pub(super) fn compute_grouped_round_palette<F>(
+        &self,
+        witness: &SparseExtensionOpeningWitness<F, E>,
+        rows: Range<usize>,
+    ) -> (E, E)
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        debug_assert!(witness.merge_free_rounds_left > 0);
+        match self.prefix_state.len() {
+            1 => self.compute_grouped_round_palette_with_width::<F, 1>(witness, rows),
+            2 => self.compute_grouped_round_palette_with_width::<F, 2>(witness, rows),
+            4 => self.compute_grouped_round_palette_with_width::<F, 4>(witness, rows),
+            8 => self.compute_grouped_round_palette_with_width::<F, 8>(witness, rows),
+            _ => unreachable!("grouped tensor round requires a supported extension width"),
+        }
+    }
+
+    fn compute_grouped_round_palette_with_width<F, const N: usize>(
+        &self,
+        witness: &SparseExtensionOpeningWitness<F, E>,
+        rows: Range<usize>,
+    ) -> (E, E)
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        debug_assert_eq!(self.prefix_state.len(), N);
+        let palette = witness
+            .merge_free_value_palette()
+            .expect("merge-free palette was prepared for the first round");
+        let mut round = GroupedRoundAccumulator::<E, N>::new();
+        for row in rows {
+            round.add_palette_child(self, witness.indices[row], palette.value_class(row));
         }
         round.finish(self)
     }

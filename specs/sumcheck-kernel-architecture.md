@@ -600,6 +600,13 @@ reduced complete root EOR from 330 ms to 270 to 272 ms on the current branch.
 The four middle plateau rounds fell from 28.5 to 29.2 ms to 16.4 to 17.3 ms,
 and complete proofs measured 1.683 and 1.703 seconds.
 
+Palette detection and the same product table are also used for the first round,
+before any challenge has folded the palette. The initial grouped contraction
+therefore does not fall back to per-row products merely because the cache was
+previously initialized by `ingest_challenge`. On the current profile, round zero
+fell from 59.5 ms to 40.7 to 40.9 ms and complete root EOR from 268 ms to 250 to
+253 ms. Both complete proofs verified.
+
 The dense recursive EOR factor originally projected every tensor equality value
 through `to_base_vec`, allocating a four-element vector for each row. Reading
 the same canonical coefficients through `base_coefficient` reduced the first

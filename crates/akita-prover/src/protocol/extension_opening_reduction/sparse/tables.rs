@@ -83,7 +83,7 @@ where
     E: SumcheckTableOperations<F>,
 {
     pub(in crate::protocol::extension_opening_reduction) fn accumulate_round(
-        &self,
+        &mut self,
         plan: SumcheckKernelPlan,
         coeff: E,
         constant: &mut E,

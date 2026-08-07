@@ -266,13 +266,18 @@ impl<F: FieldCore, E: ExtField<F>> SparseExtensionOpeningWitness<F, E> {
     /// Fold a small repeated value palette without rewriting the full sparse
     /// extension table. Returns whether palette values are available to the
     /// caller for this folded round.
-    pub(super) fn fold_merge_free_value_palette(&mut self, challenge: E) -> bool {
+    pub(super) fn prepare_merge_free_value_palette(&mut self) -> bool {
         if matches!(self.merge_free_values, MergeFreeValueState::Unchecked) {
             self.merge_free_values = MergeFreeValuePalette::detect(self).map_or(
                 MergeFreeValueState::Unavailable,
                 MergeFreeValueState::Palette,
             );
         }
+        matches!(self.merge_free_values, MergeFreeValueState::Palette(_))
+    }
+
+    pub(super) fn fold_merge_free_value_palette(&mut self, challenge: E) -> bool {
+        self.prepare_merge_free_value_palette();
         match &mut self.merge_free_values {
             MergeFreeValueState::Palette(palette) => {
                 palette.fold(challenge);
@@ -713,8 +718,8 @@ where
     }
 
     pub(super) fn accumulate_grouped_tensor_round(
-        &self,
-        factor: &TensorEqualityFactor<E>,
+        &mut self,
+        factor: &mut TensorEqualityFactor<E>,
         coeff: E,
         constant: &mut E,
         quadratic: &mut E,
@@ -726,23 +731,47 @@ where
         )
         .entered();
         debug_assert!(factor.supports_grouped_rounds());
+        let use_precomputed_products = self.prepare_merge_free_value_palette()
+            && factor.can_prepare_merge_free_products(
+                self.merge_free_value_palette()
+                    .expect("merge-free palette was prepared for the first round"),
+            );
+        if use_precomputed_products {
+            factor.prepare_merge_free_products(
+                self.merge_free_value_palette()
+                    .expect("merge-free palette was prepared for the first round"),
+            );
+        }
 
         #[cfg(feature = "parallel")]
         let (round_constant, round_quadratic) =
             if self.indices.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD {
                 self.pair_aligned_ranges()
                     .into_par_iter()
-                    .map(|rows| factor.compute_grouped_round(self, rows))
+                    .map(|rows| {
+                        if use_precomputed_products {
+                            factor.compute_grouped_round_palette(self, rows)
+                        } else {
+                            factor.compute_grouped_round(self, rows)
+                        }
+                    })
                     .reduce(
                         || (E::zero(), E::zero()),
                         |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1),
                     )
             } else {
-                factor.compute_grouped_round(self, 0..self.indices.len())
+                if use_precomputed_products {
+                    factor.compute_grouped_round_palette(self, 0..self.indices.len())
+                } else {
+                    factor.compute_grouped_round(self, 0..self.indices.len())
+                }
             };
         #[cfg(not(feature = "parallel"))]
-        let (round_constant, round_quadratic) =
-            factor.compute_grouped_round(self, 0..self.indices.len());
+        let (round_constant, round_quadratic) = if use_precomputed_products {
+            factor.compute_grouped_round_palette(self, 0..self.indices.len())
+        } else {
+            factor.compute_grouped_round(self, 0..self.indices.len())
+        };
         *constant += coeff * round_constant;
         *quadratic += coeff * round_quadratic;
     }
