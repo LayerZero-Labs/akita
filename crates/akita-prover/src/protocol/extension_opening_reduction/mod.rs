@@ -11,12 +11,13 @@ use akita_algebra::EqPolynomial;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, ExtField, FieldCore, Zero};
 use akita_sumcheck::{
-    DelayedProductRoundAccumulator, DirectProductRoundAccumulator, EvaluationTable,
-    ProductRoundAccumulator, SumcheckInstanceProver,
+    DelayedProductRoundAccumulator, DelayedProductSum, DirectProductRoundAccumulator,
+    DirectProductSum, EvaluationTable, ProductRoundAccumulator, ProductSumAccumulator,
+    SumcheckInstanceProver,
 };
 use akita_types::{
     checked_table_len, extension_opening_reduction_claim, num_rounds_from_table_len,
-    project_tensor_factor_value, tensor_opening_split, validate_reduction_tables,
+    tensor_opening_split, validate_reduction_tables, TensorFactorProjection,
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 #[cfg(feature = "parallel")]

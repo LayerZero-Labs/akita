@@ -185,6 +185,43 @@ fn fused_term_matches_unfused_reference() {
 }
 
 #[test]
+fn direct_dense_tensor_term_matches_materialized_factor() {
+    use akita_field::{FpExt4, Prime32Offset99};
+    type B = Prime32Offset99;
+    type G = FpExt4<B>;
+
+    let mut rng = StdRng::seed_from_u64(0xd1ec_7e05);
+    let tail_point = (0..10).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
+    let eta = (0..2).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
+    let witness = (0..1 << tail_point.len())
+        .map(|_| G::random(&mut rng))
+        .collect::<Vec<_>>();
+    let factor = tensor_equality_factor_evals::<B, G>(&tail_point, &eta).unwrap();
+    let coeff = G::random(&mut rng);
+    let mut direct =
+        ExtensionOpeningReductionTerm::new_tensor(witness.clone(), &tail_point, &eta, coeff)
+            .unwrap();
+    let mut materialized = ExtensionOpeningReductionTerm::new(witness, factor, coeff).unwrap();
+    assert_eq!(direct.initial_claim, materialized.initial_claim);
+
+    let plan = SumcheckKernelPlan::detect();
+    for round in 0..tail_point.len() {
+        let mut direct_round = (G::zero(), G::zero());
+        direct.accumulate_into(plan, &mut direct_round.0, &mut direct_round.1);
+        let mut materialized_round = (G::zero(), G::zero());
+        materialized.accumulate_into(plan, &mut materialized_round.0, &mut materialized_round.1);
+        assert_eq!(direct_round, materialized_round, "round {round}");
+        let challenge = G::random(&mut rng);
+        direct.ingest_challenge(plan, challenge);
+        materialized.ingest_challenge(plan, challenge);
+    }
+    assert_eq!(
+        direct.final_witness_and_factor_evals(),
+        materialized.final_witness_and_factor_evals()
+    );
+}
+
+#[test]
 fn grouped_tensor_fold_respects_merge_free_boundary() {
     use akita_field::{FpExt4, Prime32Offset99};
     type B = Prime32Offset99;

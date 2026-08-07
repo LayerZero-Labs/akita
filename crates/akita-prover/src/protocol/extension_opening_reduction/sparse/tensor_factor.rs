@@ -52,7 +52,7 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
         checked_table_len(tail_point.len())?;
         checked_table_len(tail_point.len() - materialize_at)?;
 
-        let eta_weights = EqPolynomial::evals(&eta)?;
+        let projection = TensorFactorProjection::<F, E>::new(&eta)?;
         let basis = (0..width)
             .map(|idx| {
                 let mut coords = vec![F::zero(); width];
@@ -81,16 +81,10 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
                 suffix_eq
                     .iter()
                     .copied()
-                    .map(|suffix| {
-                        project_tensor_factor_value::<F, E>(
-                            basis_elem * suffix,
-                            &eta_weights,
-                            width,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()
+                    .map(|suffix| projection.project(basis_elem * suffix))
+                    .collect::<Vec<_>>()
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
 
         let mut factor = Self {
             table_vars: tail_point.len(),

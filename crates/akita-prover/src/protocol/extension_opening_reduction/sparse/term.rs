@@ -1,4 +1,5 @@
 use super::*;
+use akita_algebra::SplitEqEvals;
 
 /// One term in an extension-opening reduction sumcheck.
 ///
@@ -29,6 +30,71 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
                 witness: EvaluationTable::from_multilinear_evaluations(&witness_evals)?,
                 factor: EvaluationTable::from_multilinear_evaluations(&factor_evals)?,
             },
+            coeff,
+            initial_claim,
+            cached_accumulate: None,
+        })
+    }
+
+    /// Construct one dense term with the transparent tensor equality factor.
+    ///
+    /// The factor is written directly into its coefficient-first multilinear
+    /// table. Its input claim is accumulated in that same logical-row pass, so
+    /// this ownership boundary never materializes a temporary factor vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the witness length, tail point, or packed head point
+    /// does not describe one valid tensor factor table.
+    pub(crate) fn new_tensor(
+        witness_evals: Vec<E>,
+        tail_point: &[E],
+        eta: &[E],
+        coeff: E,
+    ) -> Result<Self, AkitaError>
+    where
+        E: HasUnreducedOps,
+    {
+        if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+            Self::new_tensor_using::<DelayedProductSum<E>>(witness_evals, tail_point, eta, coeff)
+        } else {
+            Self::new_tensor_using::<DirectProductSum<E>>(witness_evals, tail_point, eta, coeff)
+        }
+    }
+
+    fn new_tensor_using<A>(
+        witness_evals: Vec<E>,
+        tail_point: &[E],
+        eta: &[E],
+        coeff: E,
+    ) -> Result<Self, AkitaError>
+    where
+        E: HasUnreducedOps,
+        A: ProductSumAccumulator<E>,
+    {
+        let expected = checked_table_len(tail_point.len())?;
+        if witness_evals.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: witness_evals.len(),
+            });
+        }
+        let projection = TensorFactorProjection::<F, E>::new(eta)?;
+        let equality = SplitEqEvals::new(tail_point)?;
+        debug_assert_eq!(equality.len(), expected);
+        let inner_len = equality.in_len();
+        let mut initial_claim = A::zero();
+        let factor = EvaluationTable::from_multilinear_evaluation_fn(expected, |logical_row| {
+            let equality_value =
+                equality.e_out[logical_row / inner_len] * equality.e_in[logical_row % inner_len];
+            let factor_value = projection.project(equality_value);
+            initial_claim.add_product(witness_evals[logical_row], factor_value);
+            factor_value
+        })?;
+        let initial_claim = initial_claim.finish();
+        let witness = EvaluationTable::from_multilinear_evaluations(&witness_evals)?;
+        Ok(Self {
+            tables: ExtensionOpeningTables::Dense { witness, factor },
             coeff,
             initial_claim,
             cached_accumulate: None,

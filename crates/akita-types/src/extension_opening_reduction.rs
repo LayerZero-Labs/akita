@@ -11,6 +11,7 @@ use akita_field::{AkitaError, ExtField, FieldCore, MulBaseUnreduced};
 use num_traits::Zero;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use std::marker::PhantomData;
 
 /// Degree bound for one witness factor times one transparent reduction factor.
 pub const EXTENSION_OPENING_REDUCTION_DEGREE: usize = 2;
@@ -419,34 +420,58 @@ where
         .fold(E::zero(), |acc, (weight, partial)| acc + weight * partial))
 }
 
-#[doc(hidden)]
-pub fn project_tensor_factor_value<F, E>(
-    value: E,
-    eta_weights: &[E],
-    width: usize,
-) -> Result<E, AkitaError>
+/// Prepared base-coordinate projection for the tensor equality factor.
+///
+/// Construction validates the extension width and materializes the small head
+/// equality table once. [`Self::project`] then performs no allocation and
+/// cannot fail inside a logical-row loop.
+#[derive(Debug, Clone)]
+pub struct TensorFactorProjection<F: FieldCore, E: ExtField<F>> {
+    weights: Vec<E>,
+    marker: PhantomData<fn() -> F>,
+}
+
+impl<F, E> TensorFactorProjection<F, E>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
-    if E::EXT_DEGREE != width {
-        return Err(AkitaError::InvalidSize {
-            expected: width,
-            actual: E::EXT_DEGREE,
-        });
+    /// Prepare the projection from the packed head equality point.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `eta` does not have `log2([E:F])` coordinates.
+    pub fn new(eta: &[E]) -> Result<Self, AkitaError> {
+        let (split_bits, width) = tensor_opening_split::<F, E>()?;
+        if eta.len() != split_bits {
+            return Err(AkitaError::InvalidSize {
+                expected: split_bits,
+                actual: eta.len(),
+            });
+        }
+        let weights = EqPolynomial::evals(eta)?;
+        if weights.len() != width {
+            return Err(AkitaError::InvalidSize {
+                expected: width,
+                actual: weights.len(),
+            });
+        }
+        Ok(Self {
+            weights,
+            marker: PhantomData,
+        })
     }
-    if eta_weights.len() != width {
-        return Err(AkitaError::InvalidSize {
-            expected: width,
-            actual: eta_weights.len(),
-        });
+
+    /// Project one extension value into the tensor factor.
+    #[inline]
+    pub fn project(&self, value: E) -> E {
+        self.weights
+            .iter()
+            .enumerate()
+            .fold(E::zero(), |acc, (coordinate, weight)| {
+                acc + weight.mul_base(value.base_coefficient(coordinate))
+            })
     }
-    Ok(eta_weights
-        .iter()
-        .enumerate()
-        .fold(E::zero(), |acc, (coordinate, weight)| {
-            acc + weight.mul_base(value.base_coefficient(coordinate))
-        }))
 }
 
 /// Dense evaluations of the FRI-Binius tensor equality factor
@@ -461,23 +486,15 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    let (split_bits, width) = tensor_opening_split::<F, E>()?;
-    if eta.len() != split_bits {
-        return Err(AkitaError::InvalidSize {
-            expected: split_bits,
-            actual: eta.len(),
-        });
-    }
-    let eta_weights = EqPolynomial::evals(eta)?;
+    let projection = TensorFactorProjection::<F, E>::new(eta)?;
     let mut out = EqPolynomial::evals(tail_point)?;
     let project = |value: &mut E| {
-        *value = project_tensor_factor_value::<F, E>(*value, &eta_weights, width)?;
-        Ok::<(), AkitaError>(())
+        *value = projection.project(*value);
     };
     #[cfg(feature = "parallel")]
-    out.par_iter_mut().try_for_each(project)?;
+    out.par_iter_mut().for_each(project);
     #[cfg(not(feature = "parallel"))]
-    out.iter_mut().try_for_each(project)?;
+    out.iter_mut().for_each(project);
     Ok(out)
 }
 

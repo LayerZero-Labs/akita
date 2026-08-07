@@ -427,16 +427,17 @@ fn extension_opening_term_from_packed_witness<F, E>(
 ) -> Result<ExtensionOpeningReductionTerm<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F>,
+    E: MulBaseUnreduced<F>,
 {
-    let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
     match witness {
         TensorPackedWitness::Dense(witness_evals) => {
-            ExtensionOpeningReductionTerm::new(witness_evals, factor_evals, coeff)
+            ExtensionOpeningReductionTerm::new_tensor(witness_evals, tail_point, eta, coeff)
         }
-        TensorPackedWitness::Sparse(witness) => {
-            ExtensionOpeningReductionTerm::new_sparse(witness, factor_evals, coeff)
-        }
+        TensorPackedWitness::Sparse(witness) => ExtensionOpeningReductionTerm::new_sparse(
+            witness,
+            tensor_equality_factor_evals::<F, E>(tail_point, eta)?,
+            coeff,
+        ),
     }
 }
 
