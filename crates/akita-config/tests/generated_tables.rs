@@ -206,9 +206,7 @@ fn catalog_identity_rejects_planner_policy_changes() {
 
     let mut mutated = catalog;
     mutated.identity.selection_policy =
-        akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
-            direct_payload_slack_permille: 0,
-        };
+        akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope;
     assert_rejected("selection policy", mutated);
 
     let mut mutated = catalog;

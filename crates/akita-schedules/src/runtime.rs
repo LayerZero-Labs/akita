@@ -40,13 +40,8 @@ impl PlannerCostModelId {
 pub enum SelectionPolicyId {
     /// Pick the minimum estimated proof payload.
     MinEstimatedProofPayload,
-    /// Minimize the root inner rank, provided the proof payload remains
-    /// within `slack_permille` of the minimum-payload candidate.
-    MinRootRankThenPayloadWithinSlack { slack_permille: u32 },
     /// Pick the first direct setup footprint, then payload, within setup support.
-    /// Scalar fallbacks may independently trade `direct_payload_slack_permille`
-    /// proof-payload overhead for a smaller root inner rank.
-    MinFirstDirectSetupThenPayloadWithinSupportedEnvelope { direct_payload_slack_permille: u32 },
+    MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
     /// Pick exact physical setup fields, then exact proof payload bytes.
     MinSetupMatrixFieldElementsThenProofPayload,
 }
@@ -58,34 +53,12 @@ impl SelectionPolicyId {
         setup_generation_dimension: usize,
         ring_dimension_candidates: &[CommitmentRingDims],
     ) -> Self {
-        Self::for_policy_with_payload_slack(
-            recursive_setup_planning,
-            setup_generation_dimension,
-            ring_dimension_candidates,
-            0,
-        )
-    }
-
-    /// Canonical selection objective with an optional direct-schedule payload
-    /// budget for preferring a narrower root commitment.
-    pub fn for_policy_with_payload_slack(
-        recursive_setup_planning: bool,
-        setup_generation_dimension: usize,
-        ring_dimension_candidates: &[CommitmentRingDims],
-        direct_payload_slack_permille: u32,
-    ) -> Self {
         if recursive_setup_planning {
-            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
-                direct_payload_slack_permille,
-            }
+            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
         } else if ring_dimension_candidates
             != [CommitmentRingDims::uniform(setup_generation_dimension)]
         {
             Self::MinSetupMatrixFieldElementsThenProofPayload
-        } else if direct_payload_slack_permille > 0 {
-            Self::MinRootRankThenPayloadWithinSlack {
-                slack_permille: direct_payload_slack_permille,
-            }
         } else {
             Self::MinEstimatedProofPayload
         }
@@ -95,37 +68,20 @@ impl SelectionPolicyId {
     pub const fn tag(self) -> u32 {
         match self {
             Self::MinEstimatedProofPayload => 1,
-            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope { .. } => 2,
+            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => 2,
             Self::MinSetupMatrixFieldElementsThenProofPayload => 3,
-            Self::MinRootRankThenPayloadWithinSlack { .. } => 4,
-        }
-    }
-
-    /// Variant payload included in catalog identity digests.
-    pub const fn parameter(self) -> u32 {
-        match self {
-            Self::MinRootRankThenPayloadWithinSlack { slack_permille } => slack_permille,
-            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
-                direct_payload_slack_permille,
-            } => direct_payload_slack_permille,
-            Self::MinEstimatedProofPayload | Self::MinSetupMatrixFieldElementsThenProofPayload => 0,
         }
     }
 
     /// Stable identity name.
-    pub fn name(self) -> String {
+    pub const fn name(self) -> &'static str {
         match self {
-            Self::MinEstimatedProofPayload => "MinEstimatedProofPayload".to_string(),
-            Self::MinRootRankThenPayloadWithinSlack { slack_permille } => {
-                format!("MinRootRankThenPayloadWithinSlack {{ slack_permille: {slack_permille} }}")
+            Self::MinEstimatedProofPayload => "MinEstimatedProofPayload",
+            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => {
+                "MinFirstDirectSetupThenPayloadWithinSupportedEnvelope"
             }
-            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
-                direct_payload_slack_permille,
-            } => format!(
-                "MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {{ direct_payload_slack_permille: {direct_payload_slack_permille} }}"
-            ),
             Self::MinSetupMatrixFieldElementsThenProofPayload => {
-                "MinSetupMatrixFieldElementsThenProofPayload".to_string()
+                "MinSetupMatrixFieldElementsThenProofPayload"
             }
         }
     }
@@ -197,23 +153,12 @@ impl PlannerPolicy {
     /// Direct-only counterpart used when scalar schedules are cataloged under
     /// the non-recursive family identity.
     pub fn direct_only(self) -> Self {
-        let direct_payload_slack_permille = match self.selection_policy {
-            SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
-                direct_payload_slack_permille,
-            } => direct_payload_slack_permille,
-            SelectionPolicyId::MinRootRankThenPayloadWithinSlack { slack_permille } => {
-                slack_permille
-            }
-            SelectionPolicyId::MinEstimatedProofPayload
-            | SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => 0,
-        };
         Self {
             recursive_setup_planning: false,
-            selection_policy: SelectionPolicyId::for_policy_with_payload_slack(
+            selection_policy: SelectionPolicyId::for_policy(
                 false,
                 self.ring_dimension,
                 self.ring_dimension_candidates,
-                direct_payload_slack_permille,
             ),
             ..self
         }
@@ -264,11 +209,10 @@ pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     policy.challenge_field_bits()?;
     validate_ring_dimension_candidates(policy)?;
-    let expected_selection_policy = SelectionPolicyId::for_policy_with_payload_slack(
+    let expected_selection_policy = SelectionPolicyId::for_policy(
         policy.recursive_setup_planning,
         policy.ring_dimension,
         policy.ring_dimension_candidates,
-        policy.selection_policy.parameter(),
     );
     if policy.selection_policy != expected_selection_policy {
         return Err(AkitaError::InvalidSetup(

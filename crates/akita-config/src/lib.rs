@@ -131,14 +131,12 @@ pub fn opening_schedule_key<Cfg: CommitmentConfig>(
 
 pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     let recursive_setup_planning = Cfg::recursive_setup_planning();
-    let selection_payload_slack_permille = Cfg::selection_payload_slack_permille();
     PlannerPolicy {
         cost_model: akita_schedules::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
-        selection_policy: akita_schedules::SelectionPolicyId::for_policy_with_payload_slack(
+        selection_policy: akita_schedules::SelectionPolicyId::for_policy(
             recursive_setup_planning,
             Cfg::D,
             Cfg::RING_DIMENSION_CANDIDATES,
-            selection_payload_slack_permille,
         ),
         max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
@@ -325,11 +323,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// setup offloading override this and use a separate generated catalog.
     fn recursive_setup_planning() -> bool {
         false
-    }
-
-    /// Allowed proof-payload overhead when preferring a smaller root inner rank.
-    fn selection_payload_slack_permille() -> u32 {
-        0
     }
 
     /// Optional generated schedule catalog for this preset.

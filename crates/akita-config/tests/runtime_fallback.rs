@@ -97,22 +97,6 @@ fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
 }
 
 #[test]
-fn recursive_policy_preserves_rank_aware_scalar_selection() {
-    let mut policy = policy_of::<RecursiveCommitmentConfig<fp128::D64OneHot>>();
-    policy.selection_policy =
-        SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
-            direct_payload_slack_permille: 10,
-        };
-
-    let scalar_policy = policy.direct_only();
-    assert!(!scalar_policy.recursive_setup_planning);
-    assert_eq!(
-        scalar_policy.selection_policy,
-        SelectionPolicyId::MinRootRankThenPayloadWithinSlack { slack_permille: 10 }
-    );
-}
-
-#[test]
 fn adapters_forward_ring_dimension_candidates() {
     type Base = fp128::MixedDimFp128OneHot;
     assert_eq!(
@@ -129,11 +113,10 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
         cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
-        selection_policy: SelectionPolicyId::for_policy_with_payload_slack(
+        selection_policy: SelectionPolicyId::for_policy(
             Cfg::recursive_setup_planning(),
             Cfg::D,
             Cfg::RING_DIMENSION_CANDIDATES,
-            Cfg::selection_payload_slack_permille(),
         ),
         max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,

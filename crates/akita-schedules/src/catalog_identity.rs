@@ -62,7 +62,6 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(u64::from(policy.recursive_setup_planning));
     h.write_u64(u64::from(policy.cost_model.tag()));
     h.write_u64(u64::from(policy.selection_policy.tag()));
-    h.write_u64(u64::from(policy.selection_policy.parameter()));
     h.write_u64(policy.max_setup_envelope_field_elements as u64);
     h.write_u64(policy.min_offloaded_witness_contraction as u64);
     let digest = h.finish();
@@ -92,7 +91,6 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(u64::from(identity.recursive_setup_planning));
     h.write_u64(u64::from(identity.cost_model.tag()));
     h.write_u64(u64::from(identity.selection_policy.tag()));
-    h.write_u64(u64::from(identity.selection_policy.parameter()));
     h.write_u64(identity.max_setup_envelope_field_elements as u64);
     h.write_u64(identity.min_offloaded_witness_contraction as u64);
 
