@@ -199,6 +199,7 @@ where
                         .map(|chunk| chunk.into_iter().map(|row| row.to_vec()).collect())
                         .collect(),
                     challenges: challenges.clone(),
+                    response_l2_sq: 0,
                 })
             }
         )

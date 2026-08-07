@@ -344,6 +344,8 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
         sis_table_digest: akita_types::SisTableDigest::CURRENT,
+        sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
+        selective_l2_fold_caps: Cfg::selective_l2_fold_caps(),
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,

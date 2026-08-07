@@ -104,7 +104,7 @@ fn accepts_fold_witness_flat<F: CanonicalField>(
     ctx: &FoldGrindAcceptanceCtx,
     witness: &DecomposeFoldWitness<F>,
     centered_per_chunk: &[Vec<Vec<i32>>],
-) -> bool {
+) -> Option<u128> {
     let coefficients = centered_per_chunk
         .iter()
         .flat_map(|chunk| chunk.iter())
@@ -112,20 +112,21 @@ fn accepts_fold_witness_flat<F: CanonicalField>(
     let mut response_l2_sq = 0u128;
     for &coefficient in coefficients {
         if !coeff_within_digit_bounds(coefficient, ctx) {
-            return false;
+            return None;
         }
         let magnitude = u128::from(coefficient.unsigned_abs());
         let Some(next) = magnitude
             .checked_mul(magnitude)
             .and_then(|square| response_l2_sq.checked_add(square))
         else {
-            return false;
+            return None;
         };
         response_l2_sq = next;
     }
     let _ = witness;
     ctx.response_l2_sq_cap
         .is_none_or(|cap| response_l2_sq <= cap)
+        .then_some(response_l2_sq)
 }
 
 pub(crate) struct FoldGrindGroup<'params, 'group, G> {
@@ -146,6 +147,7 @@ pub(crate) struct FoldGrindGroupOutput<F: FieldCore> {
     pub(crate) witness: DecomposeFoldWitness<F>,
     pub(crate) centered_per_chunk: Vec<Vec<Vec<i32>>>,
     pub(crate) challenges: Challenges,
+    pub(crate) response_l2_sq: u128,
 }
 
 pub(crate) struct TerminalFoldGrindOutput<F: FieldCore> {
@@ -407,15 +409,16 @@ where
                         group
                             .group
                             .probe_fold(opening_ctx, &challenges, root_lp, group.params)?;
-                    let candidate = accepts_fold_witness_flat(
+                    let response_l2_sq = accepts_fold_witness_flat(
                         &prepared_group.acceptance,
                         &output.witness,
                         &output.centered_per_chunk,
-                    )
-                    .then_some(output);
-                    let Some(candidate) = candidate else {
+                    );
+                    let Some(response_l2_sq) = response_l2_sq else {
                         return Ok(None);
                     };
+                    let mut candidate = output;
+                    candidate.response_l2_sq = response_l2_sq;
                     candidate_outputs.push(candidate);
                 }
             }
@@ -441,6 +444,14 @@ where
                 "fold grind preview did not match live transcript replay".to_string(),
             ));
         }
+        tracing::info!(
+            group_index = group.group_index,
+            nonce,
+            attempts = nonce + 1,
+            response_l2_sq = output.response_l2_sq,
+            response_l2_sq_cap = ?prepared_group.acceptance.response_l2_sq_cap,
+            "selected physical fold response"
+        );
     }
     Ok((candidate_outputs, nonce))
 }

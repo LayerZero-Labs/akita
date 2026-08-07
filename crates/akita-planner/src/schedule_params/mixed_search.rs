@@ -135,7 +135,7 @@ fn suffix_frontier(
                         requested_fold_shape,
                     )?
                 } else {
-                    derive_candidate_level_params(
+                    derive_candidate_level_params_frontier(
                         policy,
                         payload_mode,
                         &ring_challenge,
@@ -146,8 +146,6 @@ fn suffix_frontier(
                         None,
                         requested_fold_shape,
                     )?
-                    .into_iter()
-                    .collect()
                 };
 
                 for (params, output_witness_len) in candidates {

@@ -178,44 +178,15 @@ where
     if proof.response_l2_sq > cap {
         return Err(AkitaError::InvalidProof);
     }
+    plan.shape()
+        .validate_integer_soundness(profile, plan.fold_basis(), plan.fold_digit_count())?;
     match plan.shape() {
-        PhysicalL2NormProofShape::Direct {
-            physical_response_len,
-        } => {
+        PhysicalL2NormProofShape::Direct { .. } => {
             if !proof.subclaims.is_empty()
                 || proof.virtual_evaluations.len() != 1
                 || proof.response_l2_sq >= modulus
             {
                 return Err(AkitaError::InvalidProof);
-            }
-            let max_digit = (plan.fold_basis() / 2) as u128;
-            let mut max_response = 0u128;
-            let mut power = 1u128;
-            for _ in 0..plan.fold_digit_count() {
-                max_response = max_response
-                    .checked_add(max_digit.checked_mul(power).ok_or_else(|| {
-                        AkitaError::InvalidSetup("direct norm response bound overflow".into())
-                    })?)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("direct norm response bound overflow".into())
-                    })?;
-                power = power
-                    .checked_mul(plan.fold_basis() as u128)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("direct norm basis power overflow".into())
-                    })?;
-            }
-            let worst = (physical_response_len as u128)
-                .checked_mul(max_response.checked_mul(max_response).ok_or_else(|| {
-                    AkitaError::InvalidSetup("direct norm worst-case overflow".into())
-                })?)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("direct norm worst-case overflow".into())
-                })?;
-            if worst >= modulus {
-                return Err(AkitaError::InvalidSetup(
-                    "direct norm shape does not rule out field wraparound".into(),
-                ));
             }
         }
         PhysicalL2NormProofShape::LimbGram {
@@ -240,11 +211,6 @@ where
                         .ok_or_else(|| AkitaError::InvalidSetup("L2 limb bound overflow".into()))?,
                 )
                 .ok_or_else(|| AkitaError::InvalidSetup("L2 limb bound overflow".into()))?;
-            if claim_abs_bound >= modulus / 2 {
-                return Err(AkitaError::InvalidSetup(
-                    "L2 limb block does not rule out centered-lift ambiguity".into(),
-                ));
-            }
             let integers = proof
                 .subclaims
                 .iter()

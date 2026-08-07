@@ -10,7 +10,6 @@
 use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
 use crate::{
     CommitmentPayloadGeometry, CommittedGroupParams, DigitRangePlan, InnerCommitSecurityRoute,
-    PhysicalL2NormProofShape,
 };
 use akita_field::AkitaError;
 
@@ -32,46 +31,22 @@ fn stage1_proof_bytes(
     route: InnerCommitSecurityRoute,
 ) -> Result<usize, AkitaError> {
     let plan = DigitRangePlan::new(b)?;
-    let stage_bytes = |stage: crate::AkitaStage1StageShape| {
-        sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes) + stage.child_claims * elem_bytes
-    };
-    match route {
-        InnerCommitSecurityRoute::Linf(_) => Ok(plan
-            .stage_shapes(rounds)
-            .into_iter()
-            .map(stage_bytes)
-            .sum::<usize>()
-            + elem_bytes),
-        InnerCommitSecurityRoute::L2 {
-            norm_proof_shape, ..
-        } => {
-            norm_proof_shape.validate()?;
-            let product_bytes = plan
-                .stage_shapes(rounds)
-                .into_iter()
-                .take(plan.product_stage_arities().len())
-                .map(stage_bytes)
-                .sum::<usize>();
-            let (subclaims, virtual_evaluations) = match norm_proof_shape {
-                PhysicalL2NormProofShape::Direct { .. } => (0, 1),
-                PhysicalL2NormProofShape::LimbGram { limb_count, .. } => (
-                    norm_proof_shape.subclaim_count().ok_or_else(|| {
-                        AkitaError::InvalidSetup("L2 norm subclaim count overflow".into())
-                    })?,
-                    limb_count,
-                ),
-            };
-            // The L2 payload carries the ordinary final range evaluation, one
-            // fixed-width integer claim, all shape-derived field claims, and
-            // the fused standard leaf sumcheck. Merging the degree-two norm
-            // term adds exactly one stored coefficient to every leaf round.
-            Ok(product_bytes
-                + elem_bytes
-                + 16
-                + (subclaims + virtual_evaluations) * elem_bytes
-                + sumcheck_bytes(rounds, plan.leaf_degree() + 1, elem_bytes))
-        }
-    }
+    let (stages, norm) = plan.proof_shapes_for_route(rounds, route)?;
+    let stages_bytes = stages
+        .into_iter()
+        .map(|stage| {
+            sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes)
+                + stage.child_claims * elem_bytes
+        })
+        .sum::<usize>();
+    let norm_bytes = norm.map_or(0, |shape| {
+        16 + (shape.subclaims + shape.virtual_evaluations) * elem_bytes
+            + shape.sumcheck.into_iter().sum::<usize>() * elem_bytes
+    });
+    // The ordinary final range evaluation remains outside the optional norm
+    // payload. The fused standard leaf shape accounts for the one additional
+    // stored coefficient in every selected L2 leaf round.
+    Ok(stages_bytes + elem_bytes + norm_bytes)
 }
 
 /// Header-stripped byte size of one non-terminal folded proof level.
@@ -218,9 +193,9 @@ mod tests {
     use crate::sis::sis_l2_table_key_for_collision_sq;
     use crate::{
         terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-        FoldLevelProof, PhysicalL2NormProof, RingVec, SetupSumcheckProof, SisL2TableDigest,
-        SisModulusProfileId, TerminalLevelProof, TerminalResponse, TerminalResponseShape,
-        DEFAULT_SIS_SECURITY_POLICY, SETUP_SUMCHECK_DEGREE,
+        FoldLevelProof, PhysicalL2NormProof, PhysicalL2NormProofShape, RingVec, SetupSumcheckProof,
+        SisL2TableDigest, SisModulusProfileId, TerminalLevelProof, TerminalResponse,
+        TerminalResponseShape, DEFAULT_SIS_SECURITY_POLICY, SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;

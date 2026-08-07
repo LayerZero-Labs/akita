@@ -549,6 +549,136 @@ pub enum PhysicalL2NormProofShape {
 }
 
 impl PhysicalL2NormProofShape {
+    /// Derive the canonical no-wrap proof shape for one physical response
+    /// domain and its existing balanced digit decomposition.
+    pub fn derive(
+        modulus_profile: SisModulusProfileId,
+        physical_response_len: usize,
+        fold_basis: usize,
+        fold_digit_count: usize,
+    ) -> Result<Self, AkitaError> {
+        if physical_response_len == 0
+            || fold_digit_count == 0
+            || fold_basis < 2
+            || !fold_basis.is_power_of_two()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "L2 norm shape requires a nonempty response and balanced power-of-two digits"
+                    .into(),
+            ));
+        }
+        let direct = Self::Direct {
+            physical_response_len,
+        };
+        if direct
+            .validate_integer_soundness(modulus_profile, fold_basis, fold_digit_count)
+            .is_ok()
+        {
+            return Ok(direct);
+        }
+        let modulus = modulus_profile.modulus();
+        let digit_abs = (fold_basis / 2) as u128;
+        if modulus > i128::MAX as u128 {
+            return Err(AkitaError::InvalidSetup(
+                "L2 norm response is too wide for direct proof and its modulus has no centered-limb path"
+                    .into(),
+            ));
+        }
+        let digit_square = digit_abs
+            .checked_mul(digit_abs)
+            .ok_or_else(|| AkitaError::InvalidSetup("L2 limb digit square overflow".into()))?;
+        let max_block = modulus
+            .checked_div(2)
+            .and_then(|half| half.checked_sub(1))
+            .and_then(|limit| limit.checked_div(digit_square))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("L2 limb alphabet cannot fit a centered block".into())
+            })?;
+        let block_len = usize::try_from(max_block)
+            .unwrap_or(usize::MAX)
+            .min(physical_response_len);
+        let shape = Self::LimbGram {
+            physical_response_len,
+            block_len,
+            limb_count: fold_digit_count,
+        };
+        shape.validate_integer_soundness(modulus_profile, fold_basis, fold_digit_count)?;
+        Ok(shape)
+    }
+
+    /// Validate that a scheduled shape covers the exact digit response and
+    /// rules out field wraparound using only public bounds.
+    pub fn validate_integer_soundness(
+        self,
+        modulus_profile: SisModulusProfileId,
+        fold_basis: usize,
+        fold_digit_count: usize,
+    ) -> Result<(), AkitaError> {
+        self.validate()?;
+        if fold_digit_count == 0 || fold_basis < 2 || !fold_basis.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "L2 norm shape has an invalid balanced digit decomposition".into(),
+            ));
+        }
+        let modulus = modulus_profile.modulus();
+        let digit_abs = (fold_basis / 2) as u128;
+        match self {
+            Self::Direct {
+                physical_response_len,
+            } => {
+                let mut max_response = 0u128;
+                let mut power = 1u128;
+                for _ in 0..fold_digit_count {
+                    max_response = max_response
+                        .checked_add(digit_abs.checked_mul(power).ok_or_else(|| {
+                            AkitaError::InvalidSetup("direct norm response bound overflow".into())
+                        })?)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("direct norm response bound overflow".into())
+                        })?;
+                    power = power.checked_mul(fold_basis as u128).ok_or_else(|| {
+                        AkitaError::InvalidSetup("direct norm basis power overflow".into())
+                    })?;
+                }
+                let worst = (physical_response_len as u128)
+                    .checked_mul(max_response.checked_mul(max_response).ok_or_else(|| {
+                        AkitaError::InvalidSetup("direct norm worst-case overflow".into())
+                    })?)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("direct norm worst-case overflow".into())
+                    })?;
+                if worst >= modulus {
+                    return Err(AkitaError::InvalidSetup(
+                        "direct norm shape does not rule out field wraparound".into(),
+                    ));
+                }
+            }
+            Self::LimbGram {
+                block_len,
+                limb_count,
+                ..
+            } => {
+                if limb_count != fold_digit_count || modulus > i128::MAX as u128 {
+                    return Err(AkitaError::InvalidSetup(
+                        "L2 limb-Gram shape disagrees with its field or digit count".into(),
+                    ));
+                }
+                let claim_abs_bound =
+                    (block_len as u128)
+                        .checked_mul(digit_abs.checked_mul(digit_abs).ok_or_else(|| {
+                            AkitaError::InvalidSetup("L2 limb bound overflow".into())
+                        })?)
+                        .ok_or_else(|| AkitaError::InvalidSetup("L2 limb bound overflow".into()))?;
+                if claim_abs_bound >= modulus / 2 {
+                    return Err(AkitaError::InvalidSetup(
+                        "L2 limb block does not rule out centered-lift ambiguity".into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Validate nonzero, bounded arithmetic for the schedule-derived shape.
     pub fn validate(self) -> Result<(), AkitaError> {
         let physical_response_len = self.physical_response_len();
@@ -603,6 +733,15 @@ impl PhysicalL2NormProofShape {
                 let pairs = limb_count.checked_mul(limb_count.checked_add(1)?)? / 2;
                 blocks.checked_mul(pairs)
             }
+        }
+    }
+
+    /// Number of final Stage 1 evaluations bound into Stage 2.
+    #[must_use]
+    pub const fn virtual_evaluation_count(self) -> usize {
+        match self {
+            Self::Direct { .. } => 1,
+            Self::LimbGram { limb_count, .. } => limb_count,
         }
     }
 
@@ -1405,6 +1544,39 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn physical_norm_shape_derivation_selects_direct_or_limb_gram() {
+        let direct =
+            PhysicalL2NormProofShape::derive(SisModulusProfileId::Q128OffsetA7F7, 64, 4, 2)
+                .expect("large-field direct shape");
+        assert_eq!(
+            direct,
+            PhysicalL2NormProofShape::Direct {
+                physical_response_len: 64
+            }
+        );
+        direct
+            .validate_integer_soundness(SisModulusProfileId::Q128OffsetA7F7, 4, 2)
+            .expect("direct no-wrap validation");
+
+        let gram =
+            PhysicalL2NormProofShape::derive(SisModulusProfileId::Q32Offset99, 1 << 20, 64, 5)
+                .expect("small-field limb-Gram shape");
+        let PhysicalL2NormProofShape::LimbGram {
+            physical_response_len,
+            block_len,
+            limb_count,
+        } = gram
+        else {
+            panic!("expected limb-Gram shape");
+        };
+        assert_eq!(physical_response_len, 1 << 20);
+        assert_eq!(limb_count, 5);
+        assert!((1..=physical_response_len).contains(&block_len));
+        gram.validate_integer_soundness(SisModulusProfileId::Q32Offset99, 64, 5)
+            .expect("limb-Gram no-wrap validation");
     }
 
     #[test]

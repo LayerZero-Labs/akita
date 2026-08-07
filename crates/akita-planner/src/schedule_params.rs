@@ -13,9 +13,11 @@ use akita_field::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, BalancedSignedDigitFoldPolicy,
-    FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
+    role_a_collision_l2_sq_for_response_bound, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, sis_l2_table_key_for_collision_sq, BalancedSignedDigitFoldPolicy,
+    FoldChallengeNorms, FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec,
+    HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, PhysicalL2NormProofShape,
 };
 use akita_types::{
     level_proof_bytes, padded_setup_prefix_len, try_extension_opening_reduction_level_bytes,
@@ -39,8 +41,10 @@ mod suffix_dp;
 mod unpruned_search;
 
 pub use akita_types::suffix_opening_layout;
+#[cfg(test)]
+pub(crate) use candidate::derive_candidate_level_params;
 pub(crate) use candidate::{
-    derive_candidate_level_params, derive_candidate_level_params_all_splits,
+    derive_candidate_level_params_all_splits, derive_candidate_level_params_frontier,
 };
 pub(crate) use objective::select_complete_candidate;
 pub(crate) use setup_score::{

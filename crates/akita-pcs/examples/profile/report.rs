@@ -387,6 +387,15 @@ pub(crate) fn emit_runtime_schedule_summary(
             setup_prefix.map_or(0, |prefix| prefix.natural_len);
         let setup_prefix_padded_field_elements =
             setup_prefix.map_or(0, |prefix| prefix.n_prefix().unwrap_or(0));
+        let security_route = lp.inner_commit_matrix.security_route();
+        let (response_l2_sq_cap, norm_proof_shape) = match security_route {
+            akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
+            akita_types::InnerCommitSecurityRoute::L2 {
+                response_l2_sq_cap,
+                norm_proof_shape,
+                ..
+            } => (Some(response_l2_sq_cap), Some(norm_proof_shape)),
+        };
         tracing::info!(
             label,
             level = level_idx,
@@ -397,6 +406,9 @@ pub(crate) fn emit_runtime_schedule_summary(
             n_a = lp.inner_commit_matrix.output_rank(),
             n_b = lp.outer_commit_matrix.output_rank(),
             n_d = lp.open_commit_matrix.output_rank(),
+            security_route = ?security_route,
+            response_l2_sq_cap = ?response_l2_sq_cap,
+            norm_proof_shape = ?norm_proof_shape,
             challenge_l1_mass = lp.challenge_l1_mass(),
             log_basis_inner = lp.log_basis_inner,
             log_basis_outer = lp.log_basis_outer,
@@ -569,6 +581,24 @@ where
         .sum::<usize>();
     let stage1_range_image_evaluation_size =
         stage1.range_image_evaluation.serialized_size(Compress::No);
+    let (stage1_norm_proof_size, response_l2_sq) =
+        stage1.norm_proof.as_ref().map_or((0, None), |norm| {
+            (
+                norm.response_l2_sq.serialized_size(Compress::No)
+                    + norm
+                        .subclaims
+                        .iter()
+                        .map(|claim| claim.serialized_size(Compress::No))
+                        .sum::<usize>()
+                    + norm
+                        .virtual_evaluations
+                        .iter()
+                        .map(|evaluation| evaluation.serialized_size(Compress::No))
+                        .sum::<usize>()
+                    + norm.sumcheck.serialized_size(Compress::No),
+                Some(norm.response_l2_sq),
+            )
+        });
     let stage2_sumcheck_size = stage2_intermediate
         .sumcheck_proof
         .serialized_size(Compress::No);
@@ -597,6 +627,8 @@ where
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_range_image_evaluation_bytes = stage1_range_image_evaluation_size,
+        stage1_norm_proof_bytes = stage1_norm_proof_size,
+        response_l2_sq = ?response_l2_sq,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
         stage3_sumcheck_bytes = stage3_sumcheck_size,
         next_w_payload_bytes = next_w_payload_size,
@@ -611,6 +643,7 @@ where
     eprintln!(
         "[{label}]     stage1_range_image_evaluation={stage1_range_image_evaluation_size} bytes"
     );
+    eprintln!("[{label}]     stage1_norm_proof={stage1_norm_proof_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
@@ -627,6 +660,7 @@ where
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
             + stage1_range_image_evaluation_size
+            + stage1_norm_proof_size
             + stage2_sumcheck_size
             + stage3_sumcheck_size
             + next_w_payload_size

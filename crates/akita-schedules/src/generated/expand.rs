@@ -22,8 +22,9 @@ use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     min_secure_rank, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
-    projected_role_ring_count, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    SisTableKey,
+    projected_role_ring_count, role_a_collision_l2_sq_for_response_bound,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, sis_l2_table_key_for_collision_sq,
+    FoldChallengeNorms, SisTableKey,
 };
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommitmentRingDims, CommittedGroupParams,
@@ -374,6 +375,7 @@ impl GeneratedCommittedGroup {
         fold_level: usize,
         exact_num_digits_inner: Option<u32>,
         generated_num_digits_fold: u32,
+        response_l2_sq_cap: Option<u128>,
         input_witness_len: usize,
         fold_shape: TensorChallengeShape,
         num_claims: usize,
@@ -491,7 +493,7 @@ impl GeneratedCommittedGroup {
             num_digits_fold,
         )
         .ok_or_else(|| no_layout("A"))?;
-        let n_a = secure_rank(
+        let linf_n_a = secure_rank(
             "a",
             sis_key(
                 policy,
@@ -501,6 +503,67 @@ impl GeneratedCommittedGroup {
             ),
             inner_width,
         )?;
+        let inner_commit_matrix = if let Some(response_l2_sq_cap) = response_l2_sq_cap {
+            let physical_response_len = inner_width.checked_mul(ring_d).ok_or_else(|| {
+                AkitaError::InvalidSetup("generated L2 physical response length overflow".into())
+            })?;
+            let fold_basis = 1usize
+                .checked_shl(log_basis_open)
+                .ok_or_else(|| AkitaError::InvalidSetup("generated L2 basis overflow".into()))?;
+            if fold_level < 3
+                || num_claims != 1
+                || policy.chunks_at_level(fold_level) != 1
+                || policy.selective_l2_cap_for_candidate(
+                    fold_level,
+                    input_witness_len,
+                    physical_response_len,
+                    fold_basis,
+                    num_digits_fold,
+                ) != Some(response_l2_sq_cap)
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "generated L2 route is not admitted for this exact measured candidate".into(),
+                ));
+            }
+            let norm_proof_shape = akita_types::PhysicalL2NormProofShape::derive(
+                sis_modulus_profile,
+                physical_response_len,
+                fold_basis,
+                num_digits_fold,
+            )?;
+            let collision_l2_sq = role_a_collision_l2_sq_for_response_bound(
+                FoldChallengeNorms::new(&ring_challenge_cfg, fold_shape).l1_norm,
+                response_l2_sq_cap,
+            )
+            .ok_or_else(|| AkitaError::InvalidSetup("generated L2 collision overflow".into()))?;
+            let table_key = sis_l2_table_key_for_collision_sq(
+                sis_policy,
+                policy.sis_l2_table_digest,
+                sis_modulus_profile,
+                ring_d as u32,
+                collision_l2_sq,
+            )
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("generated L2 table key is unsupported".into())
+            })?;
+            InnerCommitMatrixParams::try_new_l2_with_min_rank(
+                table_key,
+                inner_width,
+                response_l2_sq_cap,
+                norm_proof_shape,
+            )?
+        } else {
+            InnerCommitMatrixParams::try_new(
+                sis_policy,
+                policy.sis_table_digest,
+                sis_modulus_profile,
+                linf_n_a,
+                inner_width,
+                a_bucket,
+                ring_d,
+            )?
+        };
+        let n_a = inner_commit_matrix.output_rank();
 
         let b_bucket = rounded_up_collision_inf_norm(
             sis_policy,
@@ -597,15 +660,7 @@ impl GeneratedCommittedGroup {
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
-            inner_commit_matrix: InnerCommitMatrixParams::try_new(
-                sis_policy,
-                policy.sis_table_digest,
-                sis_modulus_profile,
-                n_a,
-                inner_width,
-                a_bucket,
-                ring_d,
-            )?,
+            inner_commit_matrix,
             outer_commit_matrix: OuterCommitMatrixParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,
@@ -997,6 +1052,8 @@ mod tests {
             sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
             sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
             sis_table_digest: SisTableDigest::CURRENT,
+            sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
+            selective_l2_fold_caps: &[],
             ring_subfield_norm_bound: 1,
             claim_ext_degree: 1,
             chal_ext_degree: 1,

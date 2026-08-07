@@ -6,7 +6,7 @@ use akita_types::sis::{
     num_digits_inner, num_digits_open, role_a_collision_l2_sq_for_response_bound,
     rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, FoldChallengeNorms,
     InnerCommitMatrixParams, InnerCommitSecurityRoute, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, SisL2TableDigest, SisMatrixRole, SisTableKey,
+    OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
 };
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommittedGroupBatchProfile, CommittedGroupParams,
@@ -52,7 +52,7 @@ fn audit_inner_matrix(
         }
         InnerCommitSecurityRoute::L2 { table_key, .. } => {
             if table_key.policy != policy.sis_security_policy
-                || table_key.table_digest != SisL2TableDigest::CURRENT
+                || table_key.table_digest != policy.sis_l2_table_digest
                 || table_key.modulus_profile != policy.sis_modulus_profile
             {
                 return Err(invalid(
@@ -193,6 +193,8 @@ fn audit_committed_params(
     label: &str,
     params: &CommittedGroupParams,
     num_claims: usize,
+    fold_level: usize,
+    input_witness_len: usize,
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     if num_claims == 0 {
@@ -267,8 +269,42 @@ fn audit_committed_params(
         InnerCommitSecurityRoute::L2 {
             table_key,
             response_l2_sq_cap,
-            ..
+            norm_proof_shape,
         } => {
+            let physical_response_len = expected_a_width
+                .checked_mul(dims.d_a())
+                .ok_or_else(|| invalid(label, "L2 physical response length overflow"))?;
+            let fold_basis = 1usize
+                .checked_shl(params.log_basis_open)
+                .ok_or_else(|| invalid(label, "L2 balanced digit basis overflow"))?;
+            if fold_level < 3
+                || num_claims != 1
+                || params.witness_chunk.num_chunks != 1
+                || policy.selective_l2_cap_for_candidate(
+                    fold_level,
+                    input_witness_len,
+                    physical_response_len,
+                    fold_basis,
+                    params.num_digits_fold,
+                ) != Some(response_l2_sq_cap)
+            {
+                return Err(invalid(
+                    label,
+                    "L2 route is not an admitted exact measured later scalar fold",
+                ));
+            }
+            let expected_shape = akita_types::PhysicalL2NormProofShape::derive(
+                policy.sis_modulus_profile,
+                physical_response_len,
+                fold_basis,
+                params.num_digits_fold,
+            )?;
+            if norm_proof_shape != expected_shape {
+                return Err(invalid(
+                    label,
+                    "L2 norm proof shape disagrees with physical witness geometry",
+                ));
+            }
             let challenge =
                 FoldChallengeNorms::new(&params.fold_challenge_config, params.fold_challenge_shape);
             let collision_sq =
@@ -457,6 +493,8 @@ pub(crate) fn audit_resolved_schedule(
         "root final group",
         final_params,
         profiles.final_group.group.num_polynomials(),
+        0,
+        schedule.root.input_witness_len,
         policy,
     )?;
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
@@ -464,6 +502,8 @@ pub(crate) fn audit_resolved_schedule(
             &format!("recursive fold {index}"),
             &step.params.witness,
             1,
+            index + 1,
+            step.input_witness_len,
             policy,
         )?;
         if step.params.open_commit_matrix != step.params.witness.open_commit_matrix {

@@ -1,6 +1,7 @@
 //! Shared stage-1 tree shape and polynomial helpers.
 
-use crate::{AkitaStage1Proof, AkitaStage1StageShape};
+use crate::proof::PhysicalL2NormProofWireShape;
+use crate::{AkitaStage1Proof, AkitaStage1StageShape, InnerCommitSecurityRoute};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{append_ext_field, labels, Transcript};
 
@@ -282,6 +283,41 @@ impl DigitRangePlan {
         (0..self.stage_count())
             .filter_map(|stage_index| self.stage_shape(rounds, stage_index))
             .collect()
+    }
+
+    /// Derive the headerless Stage 1 wire shape from the scheduled A route.
+    pub fn proof_shapes_for_route(
+        self,
+        rounds: usize,
+        route: InnerCommitSecurityRoute,
+    ) -> Result<
+        (
+            Vec<AkitaStage1StageShape>,
+            Option<PhysicalL2NormProofWireShape>,
+        ),
+        AkitaError,
+    > {
+        match route {
+            InnerCommitSecurityRoute::Linf(_) => Ok((self.stage_shapes(rounds), None)),
+            InnerCommitSecurityRoute::L2 {
+                norm_proof_shape, ..
+            } => {
+                norm_proof_shape.validate()?;
+                Ok((
+                    self.stage_shapes(rounds)
+                        .into_iter()
+                        .take(self.product_stage_arities().len())
+                        .collect(),
+                    Some(PhysicalL2NormProofWireShape {
+                        subclaims: norm_proof_shape.subclaim_count().ok_or_else(|| {
+                            AkitaError::InvalidSetup("L2 norm subclaim count overflow".into())
+                        })?,
+                        virtual_evaluations: norm_proof_shape.virtual_evaluation_count(),
+                        sumcheck: vec![self.leaf_degree() + 1; rounds],
+                    }),
+                ))
+            }
+        }
     }
 
     /// Validate the complete in-memory range-proof shape without allocation.

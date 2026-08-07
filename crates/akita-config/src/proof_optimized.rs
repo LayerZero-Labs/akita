@@ -33,6 +33,100 @@ pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 /// fallback.
 pub const STANDARD_ONEHOT_CHUNK_SIZE: usize = 256;
 
+const FP128_D64_ONEHOT_L2_CAPS: &[akita_schedules::SelectiveL2FoldCap] = &[
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 3,
+        input_witness_len: 948_672,
+        physical_response_len: 65_536,
+        fold_basis: 16,
+        fold_digit_count: 3,
+        response_l2_sq_cap: 1 << 29,
+    },
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 4,
+        input_witness_len: 419_328,
+        physical_response_len: 65_536,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap: 1 << 29,
+    },
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 5,
+        input_witness_len: 223_040,
+        physical_response_len: 32_768,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap: 1 << 32,
+    },
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 6,
+        input_witness_len: 135_936,
+        physical_response_len: 16_384,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap: 1 << 32,
+    },
+];
+
+const FP32_D128_ONEHOT_L2_CAPS: &[akita_schedules::SelectiveL2FoldCap] = &[
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 3,
+        input_witness_len: 386_560,
+        physical_response_len: 32_768,
+        fold_basis: 16,
+        fold_digit_count: 3,
+        response_l2_sq_cap: 1 << 29,
+    },
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 4,
+        input_witness_len: 252_416,
+        physical_response_len: 32_768,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap: 1 << 29,
+    },
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 5,
+        input_witness_len: 130_816,
+        physical_response_len: 16_384,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap: 1 << 31,
+    },
+];
+
+const FP64_D128_ONEHOT_L2_CAPS: &[akita_schedules::SelectiveL2FoldCap] = &[
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 3,
+        input_witness_len: 282_240,
+        physical_response_len: 32_768,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap: 1 << 32,
+    },
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 4,
+        input_witness_len: 160_384,
+        physical_response_len: 32_768,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap: 1 << 31,
+    },
+];
+
+fn selective_l2_fold_caps<Cfg: 'static>() -> &'static [akita_schedules::SelectiveL2FoldCap] {
+    let config = TypeId::of::<Cfg>();
+    if config == TypeId::of::<fp128::D64OneHot>() {
+        FP128_D64_ONEHOT_L2_CAPS
+    } else if config == TypeId::of::<fp32::D128OneHot>() {
+        FP32_D128_ONEHOT_L2_CAPS
+    } else if config == TypeId::of::<fp64::D128OneHot>() {
+        FP64_D128_ONEHOT_L2_CAPS
+    } else {
+        &[]
+    }
+}
+
 /// Bound setup preprocessing work before schedule resolution.
 ///
 /// This is a verifier-facing allocation/CPU guard for untrusted serialized
@@ -493,6 +587,10 @@ macro_rules! impl_proof_optimized_preset {
                 $family
             }
 
+            fn selective_l2_fold_caps() -> &'static [akita_schedules::SelectiveL2FoldCap] {
+                $crate::proof_optimized::selective_l2_fold_caps::<Self>()
+            }
+
             fn setup_matrix_capacity(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
@@ -568,6 +666,10 @@ macro_rules! impl_proof_optimized_preset {
 
             fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
                 $family
+            }
+
+            fn selective_l2_fold_caps() -> &'static [akita_schedules::SelectiveL2FoldCap] {
+                $crate::proof_optimized::selective_l2_fold_caps::<Self>()
             }
 
             fn setup_matrix_capacity(

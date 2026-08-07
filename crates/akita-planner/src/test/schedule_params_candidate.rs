@@ -96,3 +96,55 @@ fn recursive_candidate_order_preserves_exhaustive_tie_break() {
         "the exact layout score must remain the primary objective"
     );
 }
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn recursive_frontier_retains_linf_and_smaller_l2_rank() {
+    use akita_config::{policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig};
+    use akita_types::InnerCommitSecurityRoute;
+
+    let policy = policy_of::<D64OneHot>();
+    let challenge = D64OneHot::ring_challenge_config(64).expect("D64 challenge");
+    let candidates = derive_candidate_level_params_frontier(
+        &policy,
+        akita_types::CommitmentPayloadMode::Compressed,
+        &challenge,
+        CommitmentRingDims::uniform(64),
+        948_672,
+        4,
+        3,
+        None,
+        TensorChallengeShape::Flat,
+    )
+    .expect("late-fold rank frontier");
+    let linf_rank = candidates
+        .iter()
+        .find_map(|(params, _)| {
+            matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::Linf(_)
+            )
+            .then(|| params.inner_commit_matrix.output_rank())
+        })
+        .expect("L-infinity fallback");
+    let l2_rank = candidates
+        .iter()
+        .find_map(|(params, _)| {
+            matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::L2 { .. }
+            )
+            .then(|| params.inner_commit_matrix.output_rank())
+        })
+        .expect("measured L2 candidate");
+    assert!(l2_rank < linf_rank);
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|(params, _)| params.inner_commit_matrix.output_rank())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        candidates.len(),
+        "frontier keeps at most one local layout per secure A rank"
+    );
+}

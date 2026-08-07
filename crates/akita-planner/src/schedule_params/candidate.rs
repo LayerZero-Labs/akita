@@ -5,8 +5,10 @@ use akita_schedules::planner_support::{projected_collision_role_price, sis_key_a
 mod recursive;
 mod setup_prefix;
 
+#[cfg(test)]
+pub(crate) use recursive::derive_candidate_level_params;
 pub(crate) use recursive::{
-    derive_candidate_level_params, derive_candidate_level_params_all_splits,
+    derive_candidate_level_params_all_splits, derive_candidate_level_params_frontier,
 };
 pub(super) use setup_prefix::derive_setup_prefix_group;
 pub(crate) use setup_prefix::planned_next_witness_len;
