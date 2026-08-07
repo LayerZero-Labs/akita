@@ -75,6 +75,28 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningTables<F, E> {
                 .map(|(witness, factor)| (witness, factor * *extra_factor_eval)),
         }
     }
+
+    pub(in crate::protocol::extension_opening_reduction) fn claim(&self) -> E {
+        match self {
+            Self::Dense { witness, factor } => {
+                debug_assert_eq!(witness.len(), factor.len());
+                (0..witness.len()).fold(E::zero(), |acc, row| {
+                    acc + witness.evaluation(row) * factor.evaluation(row)
+                })
+            }
+            Self::Sparse { witness, factor } => match factor {
+                SparseFactor::Dense(factor_evals) => witness.claim_with_factor(factor_evals),
+                SparseFactor::Tensor(factor) => {
+                    witness.claim_with_factor_fn(|index| factor.factor_at_index(index))
+                }
+            },
+            Self::Cylindrical {
+                inner,
+                extra_factor_eval,
+                ..
+            } => inner.claim() * *extra_factor_eval,
+        }
+    }
 }
 
 impl<F, E> ExtensionOpeningTables<F, E>

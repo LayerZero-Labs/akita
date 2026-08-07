@@ -11,9 +11,8 @@ use akita_algebra::EqPolynomial;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, ExtField, FieldCore, MulBaseUnreduced, Zero};
 use akita_sumcheck::{
-    DelayedProductRoundAccumulator, DelayedProductSum, DirectProductRoundAccumulator,
-    DirectProductSum, EvaluationTable, ProductRoundAccumulator, ProductSumAccumulator,
-    SumcheckInstanceProver,
+    DelayedProductRoundAccumulator, DirectProductRoundAccumulator, EvaluationTable,
+    ProductRoundAccumulator, SumcheckInstanceProver,
 };
 use akita_types::{
     checked_table_len, extension_opening_reduction_claim, num_rounds_from_table_len,

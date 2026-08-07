@@ -69,15 +69,16 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionProver<F, E> {
         Self::new(vec![term], input_claim)
     }
 
-    /// Compute the input sum represented by a set of terms.
+    /// Recompute the input sum represented by a set of terms.
     ///
-    /// This is useful for tests and standalone callers that do not already
-    /// have an independently derived input claim.
+    /// This scans the owned tables. It is intended for tests and standalone
+    /// callers that do not already have an independently derived input claim;
+    /// production protocol paths should pass that claim directly to [`Self::new`].
     ///
-    pub fn input_claim_from_terms(terms: &[ExtensionOpeningReductionTerm<F, E>]) -> E {
-        terms
-            .iter()
-            .fold(E::zero(), |acc, term| acc + term.coeff * term.initial_claim)
+    pub fn recompute_input_claim(terms: &[ExtensionOpeningReductionTerm<F, E>]) -> E {
+        terms.iter().fold(E::zero(), |acc, term| {
+            acc + term.coeff * term.tables.claim()
+        })
     }
 
     /// Number of sumcheck rounds for this prover instance.

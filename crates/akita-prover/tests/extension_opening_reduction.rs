@@ -334,7 +334,7 @@ fn batched_extension_opening_reduction_uses_one_common_rho() {
         ExtensionOpeningReductionTerm::new(witness_b.clone(), factor_b.clone(), coeff_b).unwrap(),
     ];
     assert_eq!(
-        ExtensionOpeningReductionProver::input_claim_from_terms(&terms),
+        ExtensionOpeningReductionProver::recompute_input_claim(&terms),
         expected_claim
     );
     let mut prover = ExtensionOpeningReductionProver::new(terms, expected_claim).unwrap();
@@ -407,9 +407,9 @@ fn sparse_tensor_factor_matches_dense_factor_rounds() {
     .unwrap();
 
     let expected_claim =
-        ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(&dense_term));
+        ExtensionOpeningReductionProver::recompute_input_claim(std::slice::from_ref(&dense_term));
     assert_eq!(
-        ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(&lazy_term,)),
+        ExtensionOpeningReductionProver::recompute_input_claim(std::slice::from_ref(&lazy_term,)),
         expected_claim
     );
 
@@ -505,9 +505,9 @@ fn sparse_tensor_factor_matches_dense_factor_rounds_at_production_lazy_depth() {
     .unwrap();
 
     let expected_claim =
-        ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(&dense_term));
+        ExtensionOpeningReductionProver::recompute_input_claim(std::slice::from_ref(&dense_term));
     assert_eq!(
-        ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(&lazy_term,)),
+        ExtensionOpeningReductionProver::recompute_input_claim(std::slice::from_ref(&lazy_term,)),
         expected_claim
     );
 
@@ -656,11 +656,11 @@ macro_rules! sparse_tensor_factor_matches_dense_fp32_test {
             )
             .unwrap();
 
-            let expected_claim = ExtensionOpeningReductionProver::input_claim_from_terms(
+            let expected_claim = ExtensionOpeningReductionProver::recompute_input_claim(
                 std::slice::from_ref(&dense_term),
             );
             assert_eq!(
-                ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(
+                ExtensionOpeningReductionProver::recompute_input_claim(std::slice::from_ref(
                     &lazy_term,
                 )),
                 expected_claim
@@ -1238,7 +1238,7 @@ mod delayed_product_sum_contract {
         let sparse = SparseExtensionOpeningWitness::new(8, entries).unwrap();
         let term = ExtensionOpeningReductionTerm::new_sparse(sparse, factor.clone(), one).unwrap();
         let input_claim =
-            ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(&term));
+            ExtensionOpeningReductionProver::recompute_input_claim(std::slice::from_ref(&term));
         let mut prover = ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
 
         let prover_poly = prover.compute_round_univariate(0, input_claim);

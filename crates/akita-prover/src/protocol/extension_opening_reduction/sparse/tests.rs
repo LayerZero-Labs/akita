@@ -202,8 +202,6 @@ fn direct_dense_tensor_term_matches_materialized_factor() {
         ExtensionOpeningReductionTerm::new_tensor(witness.clone(), &tail_point, &eta, coeff)
             .unwrap();
     let mut materialized = ExtensionOpeningReductionTerm::new(witness, factor, coeff).unwrap();
-    assert_eq!(direct.initial_claim, materialized.initial_claim);
-
     let plan = SumcheckKernelPlan::detect();
     for round in 0..tail_point.len() {
         let mut direct_round = (G::zero(), G::zero());

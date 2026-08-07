@@ -2,7 +2,9 @@
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{CanonicalBytes, CanonicalField, ExtField, TranscriptChallenge};
+use akita_field::{
+    CanonicalBytes, CanonicalField, ExtField, MulBaseUnreduced, TranscriptChallenge,
+};
 use akita_prover::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
 };
@@ -115,7 +117,7 @@ fn sparse_tensor_term<F, E>(
 ) -> ExtensionOpeningReductionTerm<F, E>
 where
     F: CanonicalField + CanonicalBytes + TranscriptChallenge,
-    E: ExtField<F>,
+    E: MulBaseUnreduced<F>,
 {
     let (split_bits, _) = tensor_opening_split::<F, E>().unwrap();
     let tail_vars = num_vars - split_bits;
@@ -152,7 +154,7 @@ fn bench_terms<F, E>(
         + akita_serialization::AkitaSerialize
         + akita_prover::kernels::sumcheck::SumcheckTableOperations<F>,
 {
-    let input_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms);
+    let input_claim = ExtensionOpeningReductionProver::recompute_input_claim(&terms);
 
     let mut group = c.benchmark_group(group_name);
     configure_group(&mut group);
@@ -184,8 +186,7 @@ fn bench_terms<F, E>(
 fn bench_sparse_onehot<F, E>(c: &mut Criterion, label: &str)
 where
     F: CanonicalField + CanonicalBytes + TranscriptChallenge,
-    E: ExtField<F>
-        + HasUnreducedOps
+    E: MulBaseUnreduced<F>
         + HasOptimizedFold
         + akita_serialization::AkitaSerialize
         + akita_prover::kernels::sumcheck::SumcheckTableOperations<F>,

@@ -430,21 +430,15 @@ impl<F: FieldCore, E: ExtField<F>> SparseExtensionOpeningWitness<F, E> {
         Self::new(table_len, entries)
     }
 
-    pub(super) fn claim_with_factor(&self, factor_evals: &[E]) -> Result<E, AkitaError> {
-        if factor_evals.len() != self.table_len {
-            return Err(AkitaError::InvalidSize {
-                expected: self.table_len,
-                actual: factor_evals.len(),
-            });
-        }
-        Ok(self
-            .indices
+    pub(super) fn claim_with_factor(&self, factor_evals: &[E]) -> E {
+        debug_assert_eq!(factor_evals.len(), self.table_len);
+        self.indices
             .iter()
             .copied()
             .enumerate()
             .fold(E::zero(), |acc, (row, index)| {
                 acc + self.values.evaluation(row) * factor_evals[index]
-            }))
+            })
     }
 
     pub(super) fn claim_with_factor_fn<P>(&self, factor_at: P) -> E

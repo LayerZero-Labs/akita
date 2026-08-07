@@ -231,13 +231,7 @@ where
         term_ranges.push(start..terms.len());
     }
 
-    let prover_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms);
-    if prover_claim != true_input_claim {
-        return Err(AkitaError::InvalidInput(
-            "extension-opening reduction input claim mismatch".to_string(),
-        ));
-    }
-    let mut prover = ExtensionOpeningReductionProver::new(terms, prover_claim)?;
+    let mut prover = ExtensionOpeningReductionProver::new(terms, true_input_claim)?;
     let (sumcheck, rho, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
         sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
     })?;

@@ -9,8 +9,6 @@ use akita_algebra::SplitEqEvals;
 pub struct ExtensionOpeningReductionTerm<F: FieldCore, E: ExtField<F>> {
     pub(in crate::protocol::extension_opening_reduction) tables: ExtensionOpeningTables<F, E>,
     pub(in crate::protocol::extension_opening_reduction) coeff: E,
-    /// Unscaled input sum validated when the term is constructed.
-    pub(in crate::protocol::extension_opening_reduction) initial_claim: E,
     /// `coeff`-scaled `(constant, quadratic)` for the next round, pre-computed
     /// by the fused fold in [`Self::ingest_challenge`] for the dense path.
     pub(in crate::protocol::extension_opening_reduction) cached_accumulate: Option<(E, E)>,
@@ -24,14 +22,12 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
     /// Returns an error if the witness/factor tables are malformed.
     pub fn new(witness_evals: Vec<E>, factor_evals: Vec<E>, coeff: E) -> Result<Self, AkitaError> {
         validate_reduction_tables(&witness_evals, &factor_evals)?;
-        let initial_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals)?;
         Ok(Self {
             tables: ExtensionOpeningTables::Dense {
                 witness: EvaluationTable::from_multilinear_evaluations(&witness_evals)?,
                 factor: EvaluationTable::from_multilinear_evaluations(&factor_evals)?,
             },
             coeff,
-            initial_claim,
             cached_accumulate: None,
         })
     }
@@ -39,8 +35,8 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
     /// Construct one dense term with the transparent tensor equality factor.
     ///
     /// The factor is written directly into its coefficient-first multilinear
-    /// table. Its input claim is accumulated in that same logical-row pass, so
-    /// this ownership boundary never materializes a temporary factor vector.
+    /// table, so this ownership boundary never materializes a temporary factor
+    /// vector.
     ///
     /// # Errors
     ///
@@ -55,23 +51,6 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
     where
         E: MulBaseUnreduced<F>,
     {
-        if E::DELAYED_PRODUCT_SUM_IS_EXACT {
-            Self::new_tensor_using::<DelayedProductSum<E>>(witness_evals, tail_point, eta, coeff)
-        } else {
-            Self::new_tensor_using::<DirectProductSum<E>>(witness_evals, tail_point, eta, coeff)
-        }
-    }
-
-    fn new_tensor_using<A>(
-        witness_evals: Vec<E>,
-        tail_point: &[E],
-        eta: &[E],
-        coeff: E,
-    ) -> Result<Self, AkitaError>
-    where
-        E: MulBaseUnreduced<F>,
-        A: ProductSumAccumulator<E>,
-    {
         let expected = checked_table_len(tail_point.len())?;
         if witness_evals.len() != expected {
             return Err(AkitaError::InvalidSize {
@@ -83,20 +62,15 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
         let equality = SplitEqEvals::new(tail_point)?;
         debug_assert_eq!(equality.len(), expected);
         let inner_len = equality.in_len();
-        let mut initial_claim = A::zero();
         let factor = EvaluationTable::from_multilinear_evaluation_fn(expected, |logical_row| {
             let equality_value =
                 equality.e_out[logical_row / inner_len] * equality.e_in[logical_row % inner_len];
-            let factor_value = projection.project(equality_value);
-            initial_claim.add_product(witness_evals[logical_row], factor_value);
-            factor_value
+            projection.project(equality_value)
         })?;
-        let initial_claim = initial_claim.finish();
         let witness = EvaluationTable::from_multilinear_evaluations(&witness_evals)?;
         Ok(Self {
             tables: ExtensionOpeningTables::Dense { witness, factor },
             coeff,
-            initial_claim,
             cached_accumulate: None,
         })
     }
@@ -117,14 +91,12 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
                 actual: factor_evals.len(),
             });
         }
-        let initial_claim = witness_evals.claim_with_factor(&factor_evals)?;
         Ok(Self {
             tables: ExtensionOpeningTables::Sparse {
                 witness: witness_evals,
                 factor: SparseFactor::Dense(factor_evals),
             },
             coeff,
-            initial_claim,
             cached_accumulate: None,
         })
     }
@@ -152,7 +124,6 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
                 actual: factor.len(),
             });
         }
-        let initial_claim = witness_evals.claim_with_factor_fn(|idx| factor.factor_at_index(idx));
         let factor = if factor.is_ready_to_materialize() {
             SparseFactor::Dense(factor.materialize_dense())
         } else {
@@ -164,7 +135,6 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
                 factor,
             },
             coeff,
-            initial_claim,
             cached_accumulate: None,
         })
     }

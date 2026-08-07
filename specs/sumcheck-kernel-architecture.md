@@ -617,12 +617,10 @@ EOR from 233 ms to 179 to 181 ms. The two complete proofs measured 1.644 and
 Dense EOR then removes the row-major factor boundary completely. One prepared
 `TensorFactorProjection` owns the validated head equality weights. A split tail
 equality source streams each projected value directly into the factor's final
-binding-order coefficient storage while the same pass accumulates the input
-claim. Exact product-sum fields delay that claim's reductions; other fields use
-the direct product fallback. The witness is converted once after the fused
-pass. This reduced the largest recursive construction again to 97.4 ms and its
-whole EOR to 153 to 154 ms. Two complete proofs measured 1.606 and 1.616 seconds
-and verified. No temporary full factor vector exists on this path.
+binding-order coefficient storage. The witness is converted once afterward.
+This reduced the largest recursive construction again to 97.4 ms and its whole
+EOR to 153 to 154 ms. Two complete proofs measured 1.606 and 1.616 seconds and
+verified. No temporary full factor vector exists on this path.
 
 The prepared projection also follows the field's product-sum policy. The fp32
 and fp64 extensions certify that a short sum of unreduced products is exact, so
@@ -631,6 +629,17 @@ times. Other fields retain direct per-product reduction. This reduced the root
 sparse term construction from about 82.8 ms to 74.6 to 74.7 ms and the largest
 recursive construction from 97.4 ms to 87.2 to 87.7 ms. Its complete EOR is
 142 ms. Two complete proofs measured 1.583 and 1.589 seconds and verified.
+
+Production EOR receives its transcript-bound input claim from the independently
+derived tensor partials. Term construction must not recompute every
+`witness[row] * factor[row]` merely to compare the tables with that same claim;
+sumcheck soundness and the final committed-witness opening reject an inconsistent
+table. The explicit `recompute_input_claim` helper remains for tests and
+standalone callers and makes its linear scan visible in its name. Removing the
+eager scans reduced root sparse construction from 74.8 ms to 15.4 to 15.5 ms
+and complete root EOR from 250 to 253 ms to 191 to 192 ms. The largest recursive
+construction fell from 87.2 to 87.7 ms to 75.8 to 77.5 ms. Complete proofs
+measured 1.496 and 1.522 seconds and verified.
 
 On the same profile, retaining Stage 1 octet classes after the third challenge
 and using the canonical Taylor kernel reduced the root Stage 1 sumcheck from
