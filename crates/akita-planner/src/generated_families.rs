@@ -96,15 +96,18 @@ const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
 const FP128_D64_ONEHOT_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
     &[PolynomialGroupLayout::singleton(32)];
 
-const FP128_D64_ONEHOT_MULTI_CHUNK_W2R2_KEYS: &[PolynomialGroupLayout] = &[
+const FP128_ONEHOT_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
+    &[PolynomialGroupLayout::singleton(32)];
+
+const FP128_ONEHOT_MULTI_CHUNK_W2R2_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
     PolynomialGroupLayout::singleton(32),
 ];
 
-const FP128_D64_ONEHOT_MULTI_CHUNK_W4R2_KEYS: &[PolynomialGroupLayout] =
+const FP128_ONEHOT_MULTI_CHUNK_W4R2_KEYS: &[PolynomialGroupLayout] =
     &[PolynomialGroupLayout::singleton(32)];
 
-const FP128_D64_DENSE_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
+const FP128_DENSE_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
     &[PolynomialGroupLayout::singleton(16)];
 
 const FP32_D128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
@@ -368,11 +371,17 @@ fn precommitted_profiles<Cfg: CommitmentConfig + 'static>(
     if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHot>()
         || std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHot>()
         || std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHotMultiChunk>()
+        || std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHotMultiChunk>()
     {
         push_unique_profile(
             &mut profiles,
             standalone_precommit_profile::<Cfg>(PolynomialGroupLayout::new(16, 1))?,
         );
+    }
+    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHot>()
+        || std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHot>()
+        || std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHotMultiChunk>()
+    {
         push_unique_profile(
             &mut profiles,
             standalone_precommit_profile::<Cfg>(PolynomialGroupLayout::new(15, 2))?,
@@ -432,6 +441,20 @@ fn direct_profile_group_batch_keys_for_cfg<Cfg: CommitmentConfig + 'static>(
     }
     if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHotMultiChunk>() {
         return recursive_d64_onehot_profile_keys::<fp128::D64OneHotMultiChunk>();
+    }
+    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHotMultiChunk>() {
+        return recursive_d64_onehot_profile_keys::<fp128::OneHotMultiChunk>();
+    }
+    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHotMultiChunkW2R2>() {
+        let group = PolynomialGroupLayout::new(14, 1);
+        let precommitted = standalone_precommit_profile::<fp128::OneHotMultiChunkW2R2>(group)?;
+        return Ok(vec![(
+            AkitaScheduleLookupKey {
+                final_group: group,
+                precommitteds: vec![precommitted],
+            },
+            vec![honest_fold_policy_of::<fp128::OneHotMultiChunkW2R2>()],
+        )]);
     }
     Ok(Vec::new())
 }
@@ -765,9 +788,9 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         precommitted_profiles: precommitted_profiles::<fp128::Dense>,
         explicit_precommitted_group: explicit_precommitted_group::<fp128::Dense>,
     },
-    // Multi-chunk (distributed-prover) companions of the D64 families. Same
-    // `(num_vars, num_polynomials)` keys as their siblings; schedules differ
-    // because the policy prices the chunked witness layout.
+    // The D64 W8R2 family remains the standalone-precommit base used by the
+    // recursive distributed configuration. Direct multi-chunk families below
+    // inherit adaptive dimension selection from `OneHot` / `Dense`.
     family_row!(
         group_batch,
         "fp128_d64_onehot_multi_chunk",
@@ -778,26 +801,34 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     ),
     family_row!(
         group_batch,
-        "fp128_d64_onehot_multi_chunk_w2r2",
-        "FP128_D64_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES",
-        "fp128-d64-onehot-multi-chunk-w2r2",
-        FP128_D64_ONEHOT_MULTI_CHUNK_W2R2_KEYS,
-        fp128::D64OneHotMultiChunkW2R2
+        "fp128_onehot_multi_chunk",
+        "FP128_ONEHOT_MULTI_CHUNK_SCHEDULES",
+        "fp128-onehot-multi-chunk",
+        FP128_ONEHOT_MULTI_CHUNK_KEYS,
+        fp128::OneHotMultiChunk
     ),
     family_row!(
         group_batch,
-        "fp128_d64_onehot_multi_chunk_w4r2",
-        "FP128_D64_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES",
-        "fp128-d64-onehot-multi-chunk-w4r2",
-        FP128_D64_ONEHOT_MULTI_CHUNK_W4R2_KEYS,
-        fp128::D64OneHotMultiChunkW4R2
+        "fp128_onehot_multi_chunk_w2r2",
+        "FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES",
+        "fp128-onehot-multi-chunk-w2r2",
+        FP128_ONEHOT_MULTI_CHUNK_W2R2_KEYS,
+        fp128::OneHotMultiChunkW2R2
     ),
     family_row!(
-        "fp128_d64_dense_multi_chunk",
-        "FP128_D64_DENSE_MULTI_CHUNK_SCHEDULES",
-        "fp128-d64-dense-multi-chunk",
-        FP128_D64_DENSE_MULTI_CHUNK_KEYS,
-        fp128::D64DenseMultiChunk
+        group_batch,
+        "fp128_onehot_multi_chunk_w4r2",
+        "FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES",
+        "fp128-onehot-multi-chunk-w4r2",
+        FP128_ONEHOT_MULTI_CHUNK_W4R2_KEYS,
+        fp128::OneHotMultiChunkW4R2
+    ),
+    family_row!(
+        "fp128_dense_multi_chunk",
+        "FP128_DENSE_MULTI_CHUNK_SCHEDULES",
+        "fp128-dense-multi-chunk",
+        FP128_DENSE_MULTI_CHUNK_KEYS,
+        fp128::DenseMultiChunk
     ),
     family_row!(
         "fp64_d128_dense",

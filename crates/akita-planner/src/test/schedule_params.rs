@@ -603,24 +603,52 @@ fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn mixed_search_rejects_direct_multi_chunk_policy() {
+fn mixed_search_supports_direct_multi_chunk_policy() {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
     let mut policy = policy_of::<D256OneHot>();
     policy.witness_chunk = akita_types::ChunkedWitnessCfg::d64_production();
-    let domain = RingDimensionSearchDomain::new([CommitmentRingDims::uniform(64)]).unwrap();
+    let domain = RingDimensionSearchDomain::new([
+        CommitmentRingDims::uniform(64),
+        CommitmentRingDims::uniform(128),
+        CommitmentRingDims::uniform(256),
+    ])
+    .unwrap();
     policy = policy_for_domain(policy, &domain);
-    let error = find_schedule(
+    let schedule = find_schedule(
         PolynomialGroupLayout::singleton(16),
         &policy,
         D256OneHot::root_honest_fold_policy(),
         &domain,
         D256OneHot::ring_challenge_config,
     )
-    .unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("does not yet support direct multi-chunk planning"));
+    .unwrap();
+    assert!(!schedule.schedule.recursive_folds.is_empty());
+    assert_eq!(
+        schedule
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .witness_chunk
+            .num_chunks,
+        8
+    );
+    assert_eq!(
+        schedule.schedule.recursive_folds[0]
+            .params
+            .witness
+            .witness_chunk
+            .num_chunks,
+        8
+    );
+    assert!(schedule
+        .schedule
+        .recursive_folds
+        .iter()
+        .skip(1)
+        .all(|fold| fold.params.witness.witness_chunk.num_chunks == 1));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -738,18 +766,16 @@ fn mixed_search_applies_setup_budget_in_physical_fields() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
-    use akita_config::{
-        policy_of, proof_optimized::fp128::D64OneHotMultiChunkW4R2, CommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp128::OneHotMultiChunkW4R2, CommitmentConfig};
 
-    let policy = policy_of::<D64OneHotMultiChunkW4R2>();
+    let policy = policy_of::<OneHotMultiChunkW4R2>();
     let domain = RingDimensionSearchDomain::uniform(64).unwrap();
     let selected = find_schedule(
         PolynomialGroupLayout::singleton(32),
         &policy,
-        D64OneHotMultiChunkW4R2::root_honest_fold_policy(),
+        OneHotMultiChunkW4R2::root_honest_fold_policy(),
         &domain,
-        D64OneHotMultiChunkW4R2::ring_challenge_config,
+        OneHotMultiChunkW4R2::ring_challenge_config,
     )
     .expect("W4R2 schedule");
 

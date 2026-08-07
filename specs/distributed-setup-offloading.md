@@ -26,8 +26,9 @@ one-hot presets:
   setup-prefix opening). Generated table: `fp128_d64_onehot_recursive`.
 - **Multi-chunk (distributed-prover) witness layout** (`ChunkedWitnessCfg`,
   `LevelParams::witness_chunk`, per-chunk folded responses `zⱼ`, shared `r̂`
-  tail). Generated tables: `fp128_d64_onehot_multi_chunk_w2r2`,
-  `fp128_d64_onehot_multi_chunk_w4r2`, etc.
+  tail). Direct generated tables now inherit the ordinary fp128 adaptive policy:
+  `fp128_onehot_multi_chunk`, `fp128_onehot_multi_chunk_w2r2`, and
+  `fp128_onehot_multi_chunk_w4r2`.
 
 They have never been combined. The setup-offloading design record
 (`specs/setup-offloading-planner.md`) explicitly lists *"Distributed or
@@ -140,7 +141,7 @@ the same planner, walker, prover, and verifier, and are mostly orthogonal:
   the plain recursive or plain multi-chunk tables.
 - **Multi-group + multi-chunk already round-trips** at runtime
   (`crates/akita-pcs/src/scheme/tests/onehot.rs::multi_group_multi_chunk_fold_round_trips`,
-  `fp128::D64OneHotMultiChunkW2R2`).
+  `fp128::OneHotMultiChunkW2R2`).
 - **Recursive setup offloading + multi-group already round-trips**
   (`crates/akita-pcs/tests/recursive_setup_e2e.rs`,
   `RecursiveCommitmentConfig<OneHotCfg>`).
@@ -163,9 +164,10 @@ the same planner, walker, prover, and verifier, and are mostly orthogonal:
   matching verifier check in
   `crates/akita-verifier/src/protocol/ring_switch.rs`.
 
-The only hard incompatibility guard is `reject_mixed_d_multi_chunk`
-(`crates/akita-verifier/src/protocol/ring_switch.rs`): multi-chunk requires
-uniform role ring dimensions. The mix is uniform `D = 64`, so it passes.
+The direct ring-relation path supports mixed A/B/D role dimensions together
+with multi-chunk witness partitions. This recursive-setup-offloading family is
+still deliberately uniform `D = 64`; adaptive direct multi-chunk catalogs are
+a separate family and do not enable recursive setup planning.
 
 ## Part 1: what landed
 

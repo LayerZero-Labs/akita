@@ -519,11 +519,6 @@ fn validate_adaptive_dimension_schedule_request(
             "adaptive search requires MinSetupMatrixFieldElementsThenProofPayload".into(),
         ));
     }
-    if policy.witness_chunk.uses_multi_chunk() {
-        return Err(AkitaError::InvalidSetup(
-            "mixed-D search does not yet support direct multi-chunk planning".into(),
-        ));
-    }
     Ok(())
 }
 

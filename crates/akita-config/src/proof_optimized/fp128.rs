@@ -57,22 +57,26 @@ impl OneHot {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D512OneHot;
 
-/// Multi-chunk (distributed-prover) companion of [`D64OneHot`]. Shares every
-/// layout parameter with its sibling but prices the chunked witness layout.
+/// Uniform-D64 multi-chunk companion retained as the base of the recursive
+/// distributed-prover preset.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHotMultiChunk;
 
-/// Multi-chunk companion with `2` witness chunks and `2` leading fold levels.
+/// Direct multi-chunk companion of [`OneHot`] using the W8R2 profile.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D64OneHotMultiChunkW2R2;
+pub struct OneHotMultiChunk;
 
-/// Multi-chunk companion with `4` witness chunks and `2` leading fold levels.
+/// Direct multi-chunk companion of [`OneHot`] using the W2R2 profile.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D64OneHotMultiChunkW4R2;
+pub struct OneHotMultiChunkW2R2;
 
-/// Multi-chunk (distributed-prover) companion of [`D64Dense`].
+/// Direct multi-chunk companion of [`OneHot`] using the W4R2 profile.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D64DenseMultiChunk;
+pub struct OneHotMultiChunkW4R2;
+
+/// Direct multi-chunk companion of [`Dense`] using the W8R2 profile.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DenseMultiChunk;
 
 impl_proof_optimized_preset!(
     D64Dense,
@@ -168,23 +172,30 @@ impl_multi_chunk_companion!(
     fp128_d64_onehot_multi_chunk_table
 );
 impl_multi_chunk_companion!(
-    D64OneHotMultiChunkW2R2,
-    D64OneHot,
-    akita_types::MultiChunkProfileId::W2R2,
-    "schedules-fp128-d64-onehot-multi-chunk-w2r2",
-    fp128_d64_onehot_multi_chunk_w2r2_table
-);
-impl_multi_chunk_companion!(
-    D64OneHotMultiChunkW4R2,
-    D64OneHot,
-    akita_types::MultiChunkProfileId::W4R2,
-    "schedules-fp128-d64-onehot-multi-chunk-w4r2",
-    fp128_d64_onehot_multi_chunk_w4r2_table
-);
-impl_multi_chunk_companion!(
-    D64DenseMultiChunk,
-    D64Dense,
+    OneHotMultiChunk,
+    OneHot,
     akita_types::MultiChunkProfileId::W8R2,
-    "schedules-fp128-d64-dense-multi-chunk",
-    fp128_d64_dense_multi_chunk_table
+    "schedules-fp128-onehot-multi-chunk",
+    fp128_onehot_multi_chunk_table
+);
+impl_multi_chunk_companion!(
+    OneHotMultiChunkW2R2,
+    OneHot,
+    akita_types::MultiChunkProfileId::W2R2,
+    "schedules-fp128-onehot-multi-chunk-w2r2",
+    fp128_onehot_multi_chunk_w2r2_table
+);
+impl_multi_chunk_companion!(
+    OneHotMultiChunkW4R2,
+    OneHot,
+    akita_types::MultiChunkProfileId::W4R2,
+    "schedules-fp128-onehot-multi-chunk-w4r2",
+    fp128_onehot_multi_chunk_w4r2_table
+);
+impl_multi_chunk_companion!(
+    DenseMultiChunk,
+    Dense,
+    akita_types::MultiChunkProfileId::W8R2,
+    "schedules-fp128-dense-multi-chunk",
+    fp128_dense_multi_chunk_table
 );

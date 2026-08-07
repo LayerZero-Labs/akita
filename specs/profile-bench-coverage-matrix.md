@@ -60,9 +60,9 @@ The checked-in workflow currently runs:
 | `onehot_fp128_multi_group` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | adaptive | `direct` | Direct multi-group coverage using the canonical adaptive fp128 one-hot catalog. |
 | `onehot_fp128_d64_multi_group_recursive` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | D64 recursive multi-group | `recursive` | Recursive setup-product coverage using the dedicated recursive companion catalog. |
 | `onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2` | fp128 | 1-of-256 one-hot batched multi-group W8R2 | 32 | 4 | D64 recursive multi-group W8R2 | `recursive` | Existing distributed recursive setup-offload row: `8` chunks, `2` leading levels. |
-| `onehot_fp128_d64_multi_chunk_w2r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W2R2 | `direct` | `2` chunks, `2` leading levels. |
-| `onehot_fp128_d64_multi_chunk_w4r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W4R2 | `direct` | `4` chunks, `2` leading levels. |
-| `onehot_fp128_d64_multi_chunk_w8r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W8R2 | `direct` | Production distributed preset (`8` chunks, `2` leading levels). |
+| `onehot_fp128_multi_chunk_w2r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | adaptive multi-chunk W2R2 | `direct` | `2` chunks, `2` leading levels. |
+| `onehot_fp128_multi_chunk_w4r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | adaptive multi-chunk W4R2 | `direct` | `4` chunks, `2` leading levels. |
+| `onehot_fp128_multi_chunk_w8r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | adaptive multi-chunk W8R2 | `direct` | Production direct distributed preset (`8` chunks, `2` leading levels). |
 
 Every active cell folds securely under honest committed-fold A-role pricing.
 The ring degree differs by field, for two distinct reasons:
