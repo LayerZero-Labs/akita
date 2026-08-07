@@ -667,6 +667,23 @@ also improved. Two complete verified proofs measured 1.487 and 1.476 seconds.
 An earlier-materialization prototype was rejected: expanding after the first
 challenge cost 17.2 ms and made the same substage 51.9 ms.
 
+High-basis polynomial leaves use the same materialized representation. The
+compact class-indexed first round remains unchanged. After its first or second
+challenge, depending on the class count, the range image and remaining equality
+weights materialize directly into coefficient-first binding-order tables. One
+runtime-selected affine-polynomial operation composes the shared degree-at-most-
+four polynomial with every row pair and accumulates all coefficients against
+the equality table. Later challenges use the same detected table fold as the
+product substages. The old row-oriented exact-prefix table and its separate fold
+implementation have no remaining production role and are removed.
+
+On the one-worker fp32 D128 Apple profile, the four polynomial leaves changed
+from 26.9, 20.6, 12.7, and 9.44 ms to 21.9 to 23.3, 17.4 to 18.4, 8.87 to 9.50,
+and 8.62 to 9.17 ms. Their combined improvement is 13 to 18 percent. The
+enclosing Stage 1 instances measured 37.6 to 39.8, 62.6 to 66.9, 33.1 to 35.7,
+and 30.6 to 32.8 ms. Complete proofs measured 1.469 and 1.420 seconds and
+verified with the unchanged 77,834-byte proof.
+
 The fp32 Stage 2 compact prefix originally widened every digit-derived product
 into four `u128` coefficient sums. Accumulating each x-column first in the exact
 `u64` short-batch representation and promoting once per output reduced the root

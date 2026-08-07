@@ -3,8 +3,9 @@
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{ExtField, FieldCore};
 use akita_sumcheck::{
-    batched_affine_product_coefficients, compute_product_round_scalar,
-    fold_and_compute_product_round_scalar, fold_first_variable_scalar, EvaluationTable,
+    batched_affine_product_coefficients, compose_polynomial_with_affine,
+    compute_product_round_scalar, fold_and_compute_product_round_scalar,
+    fold_first_variable_scalar, EvaluationTable, MAX_AFFINE_POLYNOMIAL_DEGREE,
     MAX_AFFINE_PRODUCT_DEGREE,
 };
 
@@ -110,6 +111,19 @@ where
         compute_weighted_affine_product_round_scalar(lanes, equality, arity, parent_weights)
     }
 
+    /// Compute an equality-weighted round for a degree-at-most-four polynomial.
+    fn compute_weighted_affine_polynomial_round(
+        _plan: SumcheckKernelPlan,
+        values: &EvaluationTable<F, Self>,
+        equality: &EvaluationTable<F, Self>,
+        polynomial_coefficients: &[Self],
+    ) -> [Self; MAX_AFFINE_POLYNOMIAL_DEGREE + 1]
+    where
+        Self: Sized,
+    {
+        compute_weighted_affine_polynomial_round_scalar(values, equality, polynomial_coefficients)
+    }
+
     /// Try a field-specific compact class-indexed affine-product round.
     ///
     /// Returning `None` selects the protocol's exact portable blocked
@@ -128,6 +142,37 @@ where
     {
         None
     }
+}
+
+fn compute_weighted_affine_polynomial_round_scalar<F, E>(
+    values: &EvaluationTable<F, E>,
+    equality: &EvaluationTable<F, E>,
+    polynomial_coefficients: &[E],
+) -> [E; MAX_AFFINE_POLYNOMIAL_DEGREE + 1]
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    assert!(
+        values.len().is_power_of_two() && values.len() >= 2,
+        "polynomial values must have a nontrivial power-of-two length"
+    );
+    assert_eq!(equality.len(), values.len() / 2);
+    assert!(polynomial_coefficients.len() <= MAX_AFFINE_POLYNOMIAL_DEGREE + 1);
+
+    let half = values.len() / 2;
+    let mut result = [E::zero(); MAX_AFFINE_POLYNOMIAL_DEGREE + 1];
+    for row in 0..half {
+        let left = values.evaluation(row);
+        let right = values.evaluation(row + half);
+        let coefficients =
+            compose_polynomial_with_affine(polynomial_coefficients, left, right - left);
+        let equality_weight = equality.evaluation(row);
+        for degree in 0..polynomial_coefficients.len() {
+            result[degree] += equality_weight * coefficients[degree];
+        }
+    }
+    result
 }
 
 fn compute_weighted_affine_product_round_scalar<F, E, const LANES: usize>(

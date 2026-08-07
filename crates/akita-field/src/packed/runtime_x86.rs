@@ -4,7 +4,8 @@ use super::avx2::{PackedFp32Avx2, PackedFp64Avx2};
 use super::avx512::{PackedFp32Avx512, PackedFp64Avx512};
 use super::runtime_common::{
     compute_compact_affine_product_round_packed, compute_product_round_fp_ext2_fp64_packed,
-    compute_product_round_packed, compute_weighted_affine_product_round_packed,
+    compute_product_round_packed, compute_weighted_affine_polynomial_round_packed,
+    compute_weighted_affine_product_round_packed,
     fold_and_compute_product_round_fp_ext2_fp64_packed, fold_and_compute_product_round_packed,
     fold_fp_ext2_fp64_packed,
 };
@@ -235,6 +236,50 @@ pub unsafe fn compute_weighted_affine_product_round_fp_ext4_fp32_avx512_ifma<
             equality,
             arity,
             parent_weights,
+        )
+    }
+}
+
+/// Compute an equality-weighted polynomial-composition round with AVX2.
+///
+/// # Safety
+///
+/// The caller must establish that AVX2 is available on the current CPU.
+#[target_feature(enable = "avx2")]
+pub unsafe fn compute_weighted_affine_polynomial_round_fp_ext4_fp32_avx2<const P: u32>(
+    left: CoefficientSlices<'_, P>,
+    right: CoefficientSlices<'_, P>,
+    equality: CoefficientSlices<'_, P>,
+    polynomial_coefficients: &[FpExt4<Fp32<P>>],
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        compute_weighted_affine_polynomial_round_packed::<P, PackedFp32Avx2<P>>(
+            left,
+            right,
+            equality,
+            polynomial_coefficients,
+        )
+    }
+}
+
+/// Compute an equality-weighted polynomial-composition round with AVX-512 IFMA.
+///
+/// # Safety
+///
+/// The caller must establish that AVX-512F, DQ, and IFMA are available.
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+pub unsafe fn compute_weighted_affine_polynomial_round_fp_ext4_fp32_avx512_ifma<const P: u32>(
+    left: CoefficientSlices<'_, P>,
+    right: CoefficientSlices<'_, P>,
+    equality: CoefficientSlices<'_, P>,
+    polynomial_coefficients: &[FpExt4<Fp32<P>>],
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        compute_weighted_affine_polynomial_round_packed::<P, PackedFp32Avx512<P>>(
+            left,
+            right,
+            equality,
+            polynomial_coefficients,
         )
     }
 }

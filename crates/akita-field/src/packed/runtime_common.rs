@@ -140,6 +140,84 @@ where
     sums.map(sum_fp32_lanes)
 }
 
+/// Compute an equality-weighted polynomial-composition round.
+#[inline(always)]
+pub(super) unsafe fn compute_weighted_affine_polynomial_round_packed<const P: u32, PF>(
+    left: CoefficientSlices<'_, P>,
+    right: CoefficientSlices<'_, P>,
+    equality: CoefficientSlices<'_, P>,
+    polynomial_coefficients: &[FpExt4<Fp32<P>>],
+) -> [FpExt4<Fp32<P>>; 5]
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let len = validate_weighted_affine_polynomial_slices(
+        &left,
+        &right,
+        &equality,
+        polynomial_coefficients.len(),
+        PF::WIDTH,
+    );
+    let left = left.map(|slice| slice.as_ptr());
+    let right = right.map(|slice| slice.as_ptr());
+    let equality = equality.map(|slice| slice.as_ptr());
+    let zero_value = FpExt4::<Fp32<P>>::zero();
+    let zero = PackedFpExt4::<Fp32<P>, PF>::broadcast(zero_value);
+    let coefficients: [PackedFpExt4<Fp32<P>, PF>; 5] = std::array::from_fn(|degree| {
+        PackedFpExt4::broadcast(
+            polynomial_coefficients
+                .get(degree)
+                .copied()
+                .unwrap_or(zero_value),
+        )
+    });
+    let mut sums = [zero; 5];
+
+    for row in (0..len).step_by(PF::WIDTH) {
+        // SAFETY: validation establishes one complete packed chunk in every
+        // value and equality coefficient slice.
+        let left = unsafe { read_packed_fp_ext4::<P, PF>(left, row) };
+        let right = unsafe { read_packed_fp_ext4::<P, PF>(right, row) };
+        let equality = unsafe { read_packed_fp_ext4::<P, PF>(equality, row) };
+        let composed = packed_polynomial_with_affine(coefficients, left, right - left);
+        for degree in 0..polynomial_coefficients.len() {
+            sums[degree] = sums[degree] + equality * composed[degree];
+        }
+    }
+
+    sums.map(sum_fp32_lanes)
+}
+
+#[inline(always)]
+fn packed_polynomial_with_affine<const P: u32, PF>(
+    coefficients: [PackedFpExt4<Fp32<P>, PF>; 5],
+    offset: PackedFpExt4<Fp32<P>, PF>,
+    slope: PackedFpExt4<Fp32<P>, PF>,
+) -> [PackedFpExt4<Fp32<P>, PF>; 5]
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let [constant, linear, quadratic, cubic, quartic] = coefficients;
+    let two_quadratic = quadratic + quadratic;
+    let three_cubic = cubic + cubic + cubic;
+    let four_quartic = (quartic + quartic) + (quartic + quartic);
+    let six_quartic = four_quartic + quartic + quartic;
+    let value =
+        constant + offset * (linear + offset * (quadratic + offset * (cubic + offset * quartic)));
+    let first_derivative =
+        linear + offset * (two_quadratic + offset * (three_cubic + offset * four_quartic));
+    let second_divided_derivative = quadratic + offset * (three_cubic + offset * six_quartic);
+    let third_divided_derivative = cubic + offset * four_quartic;
+    let slope_squared = slope * slope;
+    [
+        value,
+        slope * first_derivative,
+        slope_squared * second_divided_derivative,
+        slope_squared * slope * third_divided_derivative,
+        slope_squared * slope_squared * quartic,
+    ]
+}
+
 /// Compute the explicit prefix of a compact class-indexed product round.
 #[inline(always)]
 pub(super) unsafe fn compute_compact_affine_product_round_packed<
@@ -650,6 +728,29 @@ fn validate_weighted_affine_product_slices<const P: u32, const LANES: usize>(
     assert!(
         len.is_multiple_of(width),
         "weighted affine-product slice length must be a multiple of the SIMD width"
+    );
+    len
+}
+
+fn validate_weighted_affine_polynomial_slices<const P: u32>(
+    left: &CoefficientSlices<'_, P>,
+    right: &CoefficientSlices<'_, P>,
+    equality: &CoefficientSlices<'_, P>,
+    coefficient_count: usize,
+    width: usize,
+) -> usize {
+    assert!(coefficient_count <= 5);
+    let len = equality[0].len();
+    assert!(
+        left.iter()
+            .chain(right.iter())
+            .chain(equality.iter())
+            .all(|slice| slice.len() == len),
+        "weighted affine-polynomial slices must have equal lengths"
+    );
+    assert!(
+        len.is_multiple_of(width),
+        "weighted affine-polynomial slice length must be a multiple of the SIMD width"
     );
     len
 }

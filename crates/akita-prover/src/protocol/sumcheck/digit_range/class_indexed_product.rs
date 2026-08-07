@@ -2,7 +2,7 @@
 
 use super::class_indexed_state::ClassIndexedTableState;
 use super::compact_digit_source::CompactDigitSource;
-use super::exact_prefix::{materialize_remaining_equality, SplitEqualitySuffixMass};
+use super::equality_tables::{materialize_remaining_equality, SplitEqualitySuffixMass};
 use super::range_class_tables::{
     FoldedProductPairTable, OrderedProductPairCoefficients, ProductNodeTable,
     SecondRoundProductQuartetCoefficients,

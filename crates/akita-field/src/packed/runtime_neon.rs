@@ -3,7 +3,8 @@
 use super::neon::{PackedFp32Neon, PackedFp64Neon};
 use super::runtime_common::{
     compute_compact_affine_product_round_packed, compute_product_round_fp_ext2_fp64_packed,
-    compute_product_round_packed, compute_weighted_affine_product_round_packed,
+    compute_product_round_packed, compute_weighted_affine_polynomial_round_packed,
+    compute_weighted_affine_product_round_packed,
     fold_and_compute_product_round_fp_ext2_fp64_packed, fold_and_compute_product_round_packed,
     fold_fp_ext2_fp64_packed, fold_fp_ext4_fp32_packed,
 };
@@ -71,6 +72,28 @@ pub unsafe fn compute_weighted_affine_product_round_fp_ext4_fp32_neon<
             equality,
             arity,
             parent_weights,
+        )
+    }
+}
+
+/// Compute an equality-weighted polynomial-composition round with NEON.
+///
+/// # Safety
+///
+/// The caller must establish that NEON is available on the current CPU.
+#[target_feature(enable = "neon")]
+pub unsafe fn compute_weighted_affine_polynomial_round_fp_ext4_fp32_neon<const P: u32>(
+    left: [&[Fp32<P>]; 4],
+    right: [&[Fp32<P>]; 4],
+    equality: [&[Fp32<P>]; 4],
+    polynomial_coefficients: &[FpExt4<Fp32<P>>],
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        compute_weighted_affine_polynomial_round_packed::<P, PackedFp32Neon<P>>(
+            left,
+            right,
+            equality,
+            polynomial_coefficients,
         )
     }
 }

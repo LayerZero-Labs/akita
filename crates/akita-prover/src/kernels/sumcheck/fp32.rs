@@ -1,8 +1,8 @@
 //! Runtime-selected operations for quartic extensions of 32-bit fields.
 
 use super::{
-    compute_weighted_affine_product_round_scalar, Fp32Kernel, SumcheckKernelPlan,
-    SumcheckTableOperations,
+    compute_weighted_affine_polynomial_round_scalar, compute_weighted_affine_product_round_scalar,
+    Fp32Kernel, SumcheckKernelPlan, SumcheckTableOperations,
 };
 use akita_field::{Fp32, FpExt4};
 use akita_sumcheck::{
@@ -44,6 +44,19 @@ impl<const P: u32> SumcheckTableOperations<Fp32<P>> for FpExt4<Fp32<P>> {
         parent_weights: &[Self],
     ) -> [Self; 5] {
         plan.compute_weighted_affine_product_round_fp32(lanes, equality, arity, parent_weights)
+    }
+
+    fn compute_weighted_affine_polynomial_round(
+        plan: SumcheckKernelPlan,
+        values: &EvaluationTable<Fp32<P>, Self>,
+        equality: &EvaluationTable<Fp32<P>, Self>,
+        polynomial_coefficients: &[Self],
+    ) -> [Self; 5] {
+        plan.compute_weighted_affine_polynomial_round_fp32(
+            values,
+            equality,
+            polynomial_coefficients,
+        )
     }
 
     fn try_compute_compact_affine_product_round<const LANES: usize>(
@@ -341,6 +354,105 @@ impl SumcheckKernelPlan {
             }
         }
     }
+
+    /// Compute one equality-weighted fp32 polynomial-composition round.
+    pub fn compute_weighted_affine_polynomial_round_fp32<const P: u32>(
+        self,
+        values: &EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+        equality: &EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+        polynomial_coefficients: &[FpExt4<Fp32<P>>],
+    ) -> [FpExt4<Fp32<P>>; 5] {
+        validate_weighted_affine_polynomial_tables(values, equality, polynomial_coefficients.len());
+        match self.fp32_product_round {
+            Fp32Kernel::Scalar => compute_weighted_affine_polynomial_round_scalar(
+                values,
+                equality,
+                polynomial_coefficients,
+            ),
+            #[cfg(target_arch = "aarch64")]
+            Fp32Kernel::Neon => {
+                if equality.len() < 4 {
+                    compute_weighted_affine_polynomial_round_scalar(
+                        values,
+                        equality,
+                        polynomial_coefficients,
+                    )
+                } else {
+                    let (left, right) = coefficient_halves(values);
+                    let equality = equality.coefficient_slices::<4>();
+                    // SAFETY: production plans select NEON only after runtime
+                    // detection, and validation establishes complete chunks.
+                    unsafe {
+                        akita_field::packed::runtime_neon::compute_weighted_affine_polynomial_round_fp_ext4_fp32_neon(
+                            left,
+                            right,
+                            equality,
+                            polynomial_coefficients,
+                        )
+                    }
+                }
+            }
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx2 => {
+                if equality.len() < 8 {
+                    compute_weighted_affine_polynomial_round_scalar(
+                        values,
+                        equality,
+                        polynomial_coefficients,
+                    )
+                } else {
+                    let (left, right) = coefficient_halves(values);
+                    let equality = equality.coefficient_slices::<4>();
+                    // SAFETY: production plans select AVX2 only after runtime
+                    // detection, and validation establishes complete chunks.
+                    unsafe {
+                        akita_field::packed::runtime_x86::compute_weighted_affine_polynomial_round_fp_ext4_fp32_avx2(
+                            left,
+                            right,
+                            equality,
+                            polynomial_coefficients,
+                        )
+                    }
+                }
+            }
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx512Ifma => {
+                if equality.len() < 16 {
+                    compute_weighted_affine_polynomial_round_scalar(
+                        values,
+                        equality,
+                        polynomial_coefficients,
+                    )
+                } else {
+                    let (left, right) = coefficient_halves(values);
+                    let equality = equality.coefficient_slices::<4>();
+                    // SAFETY: production plans select AVX-512 only after
+                    // runtime detection, and validation establishes chunks.
+                    unsafe {
+                        akita_field::packed::runtime_x86::compute_weighted_affine_polynomial_round_fp_ext4_fp32_avx512_ifma(
+                            left,
+                            right,
+                            equality,
+                            polynomial_coefficients,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn validate_weighted_affine_polynomial_tables<const P: u32>(
+    values: &EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    equality: &EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    coefficient_count: usize,
+) {
+    assert!(
+        values.len().is_power_of_two() && values.len() >= 2,
+        "polynomial values must have a nontrivial power-of-two length"
+    );
+    assert_eq!(equality.len(), values.len() / 2);
+    assert!(coefficient_count <= 5);
 }
 
 fn validate_weighted_affine_product_tables<const P: u32, const LANES: usize>(

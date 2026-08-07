@@ -17,76 +17,6 @@ where
     })
 }
 
-/// Explicit prefix of a power-of-two table followed by one implicit default value.
-pub(super) struct ExactPrefixTable<T: Copy> {
-    domain_len: usize,
-    explicit: Vec<T>,
-    default: T,
-}
-
-impl<T: Copy> ExactPrefixTable<T> {
-    pub(super) fn new(domain_len: usize, explicit: Vec<T>, default: T) -> Result<Self, AkitaError> {
-        if domain_len == 0 || !domain_len.is_power_of_two() {
-            return Err(AkitaError::InvalidInput(format!(
-                "exact-prefix domain length must be a nonzero power of two; got {domain_len}"
-            )));
-        }
-        if explicit.len() > domain_len {
-            return Err(AkitaError::InvalidSize {
-                expected: domain_len,
-                actual: explicit.len(),
-            });
-        }
-        Ok(Self {
-            domain_len,
-            explicit,
-            default,
-        })
-    }
-
-    pub(super) fn domain_len(&self) -> usize {
-        self.domain_len
-    }
-
-    pub(super) fn explicit_len(&self) -> usize {
-        self.explicit.len()
-    }
-
-    pub(super) fn default_value(&self) -> T {
-        self.default
-    }
-
-    #[inline(always)]
-    pub(super) fn value_or_default(&self, index: usize) -> T {
-        self.explicit.get(index).copied().unwrap_or(self.default)
-    }
-
-    pub(super) fn fold_in_place(
-        &mut self,
-        mut fold_pair: impl FnMut(T, T) -> T,
-    ) -> Result<(), AkitaError> {
-        if self.domain_len < 2 {
-            return Err(AkitaError::InvalidInput(
-                "cannot fold a one-element exact-prefix table".to_string(),
-            ));
-        }
-        let next_explicit_len = self.explicit.len().div_ceil(2);
-        for pair_index in 0..next_explicit_len {
-            let left = self.value_or_default(2 * pair_index);
-            let right = self.value_or_default(2 * pair_index + 1);
-            self.explicit[pair_index] = fold_pair(left, right);
-        }
-        self.default = fold_pair(self.default, self.default);
-        self.explicit.truncate(next_explicit_len);
-        self.domain_len /= 2;
-        Ok(())
-    }
-
-    pub(super) fn final_value(&self) -> Option<T> {
-        (self.domain_len == 1).then(|| self.value_or_default(0))
-    }
-}
-
 /// Equality weight of the fully implicit pair suffix in one eq-factored round.
 pub(super) struct SplitEqualitySuffixMass<'a, E: FieldCore> {
     first: &'a [E],
@@ -151,35 +81,6 @@ mod tests {
     use akita_field::Prime128Offset275;
 
     type F = Prime128Offset275;
-
-    #[test]
-    fn exact_prefix_fold_matches_padded_table_for_every_short_prefix() {
-        let challenge = F::from_u64(17);
-        for domain_len in [2, 4, 8, 16] {
-            for explicit_len in 0..=domain_len {
-                let default = F::from_u64(91);
-                let explicit = (0..explicit_len)
-                    .map(|index| F::from_u64(index as u64 + 3))
-                    .collect::<Vec<_>>();
-                let mut compact =
-                    ExactPrefixTable::new(domain_len, explicit.clone(), default).unwrap();
-                let mut padded = explicit;
-                padded.resize(domain_len, default);
-                while padded.len() > 1 {
-                    compact
-                        .fold_in_place(|left, right| left + challenge * (right - left))
-                        .unwrap();
-                    for pair_index in 0..padded.len() / 2 {
-                        let left = padded[2 * pair_index];
-                        let right = padded[2 * pair_index + 1];
-                        padded[pair_index] = left + challenge * (right - left);
-                    }
-                    padded.truncate(padded.len() / 2);
-                }
-                assert_eq!(compact.final_value(), Some(padded[0]));
-            }
-        }
-    }
 
     #[test]
     fn split_equality_suffix_matches_dense_sum_at_every_boundary() {

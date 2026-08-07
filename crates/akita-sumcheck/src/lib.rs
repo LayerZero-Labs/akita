@@ -5,6 +5,7 @@
 //! the PCS protocol crate until their role-specific APIs are split.
 
 pub mod accum;
+pub mod affine_polynomial;
 pub mod affine_product;
 pub mod batched_sumcheck;
 pub mod compact_fold;
@@ -23,6 +24,7 @@ pub use accum::{
     DirectProductRoundAccumulator, DirectProductSum, ProductRoundAccumulator,
     ProductSumAccumulator,
 };
+pub use affine_polynomial::{compose_polynomial_with_affine, MAX_AFFINE_POLYNOMIAL_DEGREE};
 pub use affine_product::{batched_affine_product_coefficients, MAX_AFFINE_PRODUCT_DEGREE};
 pub use batched_sumcheck::{
     check_batched_output_claim, compute_batched_expected_output_claim, prove_batched_sumcheck,

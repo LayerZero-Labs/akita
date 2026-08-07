@@ -1,8 +1,8 @@
 use super::compact_digit_source::RangeImageClass;
-use super::{compose_small_poly_with_affine, MAX_TREE_STAGE_Q_DEGREE};
+use super::MAX_TREE_STAGE_Q_DEGREE;
 use akita_field::unreduced::HasOptimizedFold;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
-use akita_sumcheck::batched_affine_product_coefficients;
+use akita_sumcheck::{batched_affine_product_coefficients, compose_polynomial_with_affine};
 use akita_types::DigitRangePlan;
 
 /// Plan-derived child-node values for every range-image class.
@@ -156,7 +156,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> SecondRoundRangeQuartet
             .map(|quartet_index| {
                 let left = folded_pairs.value_by_pair_index(quartet_index / ordered_pair_count);
                 let right = folded_pairs.value_by_pair_index(quartet_index % ordered_pair_count);
-                compose_small_poly_with_affine(polynomial_coefficients, left, right - left)
+                compose_polynomial_with_affine(polynomial_coefficients, left, right - left)
             })
             .collect();
         Self {
@@ -261,7 +261,7 @@ impl<E: FieldCore + FromPrimitiveInt> OrderedRangePairCoefficients<E> {
                     class_from_index(pair_index / class_count, class_count).range_image::<E>();
                 let right =
                     class_from_index(pair_index % class_count, class_count).range_image::<E>();
-                compose_small_poly_with_affine(polynomial_coefficients, left, right - left)
+                compose_polynomial_with_affine(polynomial_coefficients, left, right - left)
             })
             .collect();
         Self { rows }
