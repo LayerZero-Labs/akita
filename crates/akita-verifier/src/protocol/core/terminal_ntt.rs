@@ -7,6 +7,7 @@ use akita_types::{
 };
 
 pub(super) const TERMINAL_I16_LOG_BASIS: u32 = 16;
+const TERMINAL_I16_ABS_BOUND: u64 = 1 << (TERMINAL_I16_LOG_BASIS - 1);
 
 /// Warm every exact terminal i16 representation selected by a validated schedule.
 pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
@@ -29,7 +30,7 @@ pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
                     "terminal A cache prefix length overflow".into(),
                 ))?;
             let tail_prefix_len =
-                if ntt_cache_requires_i16_tail::<F, D>(max_width, TERMINAL_I16_LOG_BASIS)? {
+                if ntt_cache_requires_i16_tail::<F, D>(max_width, TERMINAL_I16_ABS_BOUND)? {
                     base_prefix_len
                 } else {
                     0
@@ -39,7 +40,7 @@ pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
                     base_prefix_len,
                     tail_prefix_len,
                     max_width,
-                    TERMINAL_I16_LOG_BASIS,
+                    TERMINAL_I16_ABS_BOUND,
                 )?;
             }
             Ok::<(), AkitaError>(())
@@ -80,7 +81,7 @@ where
     let slot = {
         let _span = tracing::info_span!("terminal_ntt_a_i16_cache_lookup").entered();
         let tail_prefix_len =
-            if ntt_cache_requires_i16_tail::<F, D>(rhs.len(), TERMINAL_I16_LOG_BASIS)? {
+            if ntt_cache_requires_i16_tail::<F, D>(rhs.len(), TERMINAL_I16_ABS_BOUND)? {
                 prepared_prefix_len
             } else {
                 0
@@ -89,7 +90,7 @@ where
             prepared_prefix_len,
             tail_prefix_len,
             rhs.len(),
-            TERMINAL_I16_LOG_BASIS,
+            TERMINAL_I16_ABS_BOUND,
         )?
     };
     let _span = tracing::info_span!("terminal_ntt_a_i16_accumulate").entered();
@@ -99,17 +100,26 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_algebra::ntt::ifma52::ifma52_enabled;
     use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES};
     use akita_config::{proof_optimized::fp128::OneHot, CommitmentConfig};
     use akita_field::{Prime128Offset275 as F, Prime32Offset99 as F32};
     use akita_types::{
-        max_safe_crt_accumulation_width, select_crt_ntt_params, AkitaExpandedSetup,
-        AkitaScheduleLookupKey, AkitaSetupDescriptor, FlatMatrix, PolynomialGroupLayout,
-        ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
+        select_crt_ntt_params, AkitaExpandedSetup, AkitaScheduleLookupKey, AkitaSetupDescriptor,
+        FlatMatrix, PolynomialGroupLayout, ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
     };
     use std::sync::Arc;
 
     const D: usize = 64;
+
+    fn q128_base_cache_bytes(entries: usize) -> usize {
+        let bytes_per_coefficient = if ifma52_enabled() {
+            3 * core::mem::size_of::<u64>()
+        } else {
+            Q128_NUM_PRIMES * core::mem::size_of::<i32>()
+        };
+        entries * D * bytes_per_coefficient
+    }
 
     fn matrix() -> Vec<CyclotomicRing<F, D>> {
         (0..10)
@@ -180,7 +190,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(
-            ntt_cache_requires_i16_tail::<F, D>(5, TERMINAL_I16_LOG_BASIS)
+            ntt_cache_requires_i16_tail::<F, D>(5, TERMINAL_I16_ABS_BOUND)
                 .expect("tail capability")
         );
         assert_eq!(
@@ -189,7 +199,7 @@ mod tests {
         );
         assert_eq!(
             setup.verifier_ntt_cache_bytes().expect("cache bytes"),
-            10 * D * (Q128_NUM_PRIMES * core::mem::size_of::<i32>() + core::mem::size_of::<i16>())
+            q128_base_cache_bytes(10) + 10 * D * core::mem::size_of::<i16>()
         );
     }
 
@@ -205,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn q32_terminal_i16_width_uses_only_the_base_cache() {
+    fn q32_terminal_i16_width_uses_the_selected_exact_layout() {
         let matrix = (0..10)
             .map(|entry| {
                 CyclotomicRing::<F32, D>::from_coefficients(std::array::from_fn(|coefficient| {
@@ -229,14 +239,35 @@ mod tests {
         )
         .expect("matching public-matrix identity");
         let rhs = vec![[i16::MAX; D]; 5];
-        assert!(
-            !ntt_cache_requires_i16_tail::<F32, D>(rhs.len(), TERMINAL_I16_LOG_BASIS)
-                .expect("q32 terminal capability")
-        );
-        centered_rows(&setup, 2, &rhs, 10).expect("q32 i16 terminal matvec");
+        let needs_tail = ntt_cache_requires_i16_tail::<F32, D>(rhs.len(), TERMINAL_I16_ABS_BOUND)
+            .expect("q32 terminal capability");
+        let actual = centered_rows(&setup, 2, &rhs, 10).expect("q32 i16 terminal matvec");
+        let centered_rhs = rhs
+            .iter()
+            .map(|ring| {
+                CyclotomicRing::from_coefficients(ring.map(|value| F32::from_i64(i64::from(value))))
+            })
+            .collect::<Vec<_>>();
+        let expected = matrix
+            .chunks_exact(rhs.len())
+            .map(|row| {
+                row.iter()
+                    .zip(&centered_rhs)
+                    .fold(CyclotomicRing::zero(), |sum, (lhs, rhs)| {
+                        sum + (*lhs * *rhs)
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+        let base_bytes_per_coefficient = if ifma52_enabled() {
+            core::mem::size_of::<u64>()
+        } else {
+            Q32_NUM_PRIMES * core::mem::size_of::<i32>()
+        };
+        let tail_bytes_per_coefficient = usize::from(needs_tail) * core::mem::size_of::<i16>();
         assert_eq!(
             setup.verifier_ntt_cache_bytes().expect("cache bytes"),
-            10 * D * Q32_NUM_PRIMES * core::mem::size_of::<i32>()
+            10 * D * (base_bytes_per_coefficient + tail_bytes_per_coefficient)
         );
     }
 
@@ -266,6 +297,31 @@ mod tests {
     }
 
     #[test]
+    fn covering_cache_preserves_smaller_flat_matrix_geometry() {
+        let matrix = matrix();
+        let setup = verifier_setup(&matrix);
+        let wide_rhs = (0..5)
+            .map(|column| {
+                std::array::from_fn(|coefficient| ((column * 7 + coefficient) % 17) as i16 - 8)
+            })
+            .collect::<Vec<_>>();
+        centered_rows(&setup, 2, &wide_rhs, 10).expect("wide cached product");
+        let wide_cache_bytes = setup.verifier_ntt_cache_bytes().expect("wide cache bytes");
+
+        let narrow_rhs = &wide_rhs[..3];
+        assert_eq!(
+            centered_rows(&setup, 2, narrow_rhs, 6).expect("narrow cached product"),
+            expected(&matrix[..6], &centered_rings(narrow_rhs)),
+        );
+        assert_eq!(
+            setup
+                .verifier_ntt_cache_bytes()
+                .expect("reused cache bytes"),
+            wide_cache_bytes,
+        );
+    }
+
+    #[test]
     fn base_and_tail_requests_share_one_strongest_prefix() {
         let setup = verifier_setup(&matrix());
         let ProtocolCrtNttParams::Q128(params) =
@@ -273,34 +329,32 @@ mod tests {
         else {
             panic!("Q128 field must select Q128 params");
         };
-        let safe_width = max_safe_crt_accumulation_width::<F, _, Q128_NUM_PRIMES, D>(
-            &params,
-            1 << (TERMINAL_I16_LOG_BASIS - 1),
-        )
-        .expect("base profile supports a terminal width");
+        let safe_width = params
+            .crt_capacity()
+            .max_safe_width::<F, D>(1 << (TERMINAL_I16_LOG_BASIS - 1))
+            .expect("base profile supports a terminal width");
         assert!(safe_width < 4);
 
         let initial_tail = setup
-            .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_LOG_BASIS)
+            .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_ABS_BOUND)
             .expect("tail prefix");
         assert!(initial_tail.has_i16_tail());
 
         let combined = setup
-            .prepared_verifier_ntt_prefix::<D>(10, 0, safe_width, TERMINAL_I16_LOG_BASIS)
+            .prepared_verifier_ntt_prefix::<D>(10, 0, safe_width, TERMINAL_I16_ABS_BOUND)
             .expect("larger base-only prefix");
         assert!(combined.has_i16_tail());
         assert_eq!(
             setup.verifier_ntt_cache_bytes().expect("combined bytes"),
-            10 * D * Q128_NUM_PRIMES * core::mem::size_of::<i32>()
-                + 4 * D * core::mem::size_of::<i16>()
+            q128_base_cache_bytes(10) + 4 * D * core::mem::size_of::<i16>()
         );
         let reused_other_basis = setup
-            .prepared_verifier_ntt_prefix::<D>(10, 0, 1, 15)
+            .prepared_verifier_ntt_prefix::<D>(10, 0, 1, 1 << 14)
             .expect("same physical cache for another exact bound");
         assert!(Arc::ptr_eq(&combined, &reused_other_basis));
 
         let reused_tail = setup
-            .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_LOG_BASIS)
+            .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_ABS_BOUND)
             .expect("reused tail prefix");
         assert!(Arc::ptr_eq(&combined, &reused_tail));
     }
