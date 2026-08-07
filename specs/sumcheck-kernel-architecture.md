@@ -265,10 +265,12 @@ the function constructors so they never hold a second full representation. The
 private bit reversal helper is shared by all dense constructors.
 
 The array constructor generates one of a fixed number of independent tables
-from `(table_index, logical_row)`. With multiple workers, those tables are the
-parallel units. Each table still traverses stored rows sequentially and writes
-each coefficient slab sequentially. Parallelizing logical rows would scatter
-bit-reversed writes through every slab and is not the canonical construction.
+from `(table_index, logical_row)`. With multiple workers, independent tables and
+disjoint stored-row ranges within each table are the parallel units. Every task
+writes one contiguous range in every coefficient slab, and the one-worker path
+retains one sequential stored-row traversal. Parallelizing logical-row ranges
+would scatter bit-reversed writes through every slab and is not the canonical
+construction.
 
 `truncate` only changes the live length. It cannot grow the table. Mutable raw
 access to `coefficients`, `len`, or `stride` is not exposed.
@@ -917,12 +919,17 @@ The complete proof measured 0.653--0.678 seconds versus 0.671 seconds on the
 same-machine main trace. For fp64, the same coefficient fold fell from 48.5 ms
 to 8.6 ms and complete Stage 2 from 99.6 ms to 65.4 ms.
 
-Independent table construction follows the same policy at the ownership
-boundary. Product lanes are generated as separate binding-order tables in
-parallel, while each table retains sequential stored-row writes. This reduced
-the measured fp32 two-round product materialization from 30.1 ms to 10.6 ms.
-A rejected logical-row parallel constructor scattered bit-reversed writes and
-measured 34.8 ms instead of about 6 ms for the sequential stored-row traversal.
+Canonical table construction follows the same policy at the ownership boundary.
+Independent product lanes are generated in parallel, and each table may divide
+its stored rows into disjoint ranges that write the same range in every
+coefficient slab. The one-worker path remains sequential. Parallelizing the
+independent tables first reduced measured fp32 two-round product materialization
+from 30.1 ms to 10.6 ms. Extending the same partition to stored-row ranges fixed
+the one-table dense EOR case: in a loaded fp64 run, complete proving fell from
+1.418 to 1.065 seconds, Stage 1 from 305 to 150 ms, and two-round materialization
+from 47.5 to 19.3 ms. A rejected logical-row parallel constructor scattered
+bit-reversed writes and measured 34.8 ms instead of about 6 ms for the
+sequential stored-row traversal.
 The exact current source also passes the separate Ice Lake one-worker gate: the
 pinned fp32 D128 proof measured 3.395 seconds traced and 3.365 seconds on a warm
 untraced repeat, compared with 3.493 seconds for the prior accepted head. The

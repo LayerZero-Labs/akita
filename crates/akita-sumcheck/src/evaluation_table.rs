@@ -9,6 +9,137 @@ use akita_field::{AkitaError, ExtField, FieldCore};
 use core::fmt;
 use core::marker::PhantomData;
 
+fn initialize_multilinear_table<F, E, G>(
+    coefficients: &mut [core::mem::MaybeUninit<F>],
+    len: usize,
+    table_index: usize,
+    evaluation: &G,
+) where
+    F: FieldCore,
+    E: ExtField<F>,
+    G: Fn(usize, usize) -> E + Sync,
+{
+    #[cfg(feature = "parallel")]
+    if akita_field::parallel::__rayon_current_num_threads() > 1 {
+        initialize_multilinear_table_in_parallel::<F, E, G>(
+            coefficients,
+            len,
+            table_index,
+            evaluation,
+        );
+        return;
+    }
+
+    let mut coefficient_slices: Vec<_> = coefficients.chunks_mut(len).collect();
+    initialize_multilinear_rows_sequential::<F, E, G>(
+        &mut coefficient_slices,
+        0,
+        len,
+        table_index,
+        evaluation,
+    );
+}
+
+fn initialize_multilinear_rows_sequential<F, E, G>(
+    coefficient_slices: &mut [&mut [core::mem::MaybeUninit<F>]],
+    start: usize,
+    table_len: usize,
+    table_index: usize,
+    evaluation: &G,
+) where
+    F: FieldCore,
+    E: ExtField<F>,
+    G: Fn(usize, usize) -> E + Sync,
+{
+    for row in 0..coefficient_slices[0].len() {
+        let logical_row = EvaluationTable::<F, E>::logical_row(start + row, table_len);
+        let value = evaluation(table_index, logical_row);
+        for (coefficient, destination) in coefficient_slices.iter_mut().enumerate() {
+            destination[row].write(value.base_coefficient(coefficient));
+        }
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn initialize_multilinear_table_in_parallel<F, E, G>(
+    coefficients: &mut [core::mem::MaybeUninit<F>],
+    len: usize,
+    table_index: usize,
+    evaluation: &G,
+) where
+    F: FieldCore,
+    E: ExtField<F>,
+    G: Fn(usize, usize) -> E + Sync,
+{
+    let target_tasks = akita_field::parallel::__rayon_current_num_threads()
+        .saturating_mul(4)
+        .max(1);
+    let minimum_rows_per_task = len.div_ceil(target_tasks).max(1_024);
+    let coefficient_slices = coefficients.chunks_mut(len).collect();
+    initialize_multilinear_rows(
+        coefficient_slices,
+        0,
+        len,
+        table_index,
+        evaluation,
+        minimum_rows_per_task,
+    );
+}
+
+#[cfg(feature = "parallel")]
+fn initialize_multilinear_rows<F, E, G>(
+    mut coefficient_slices: Vec<&mut [core::mem::MaybeUninit<F>]>,
+    start: usize,
+    table_len: usize,
+    table_index: usize,
+    evaluation: &G,
+    minimum_rows_per_task: usize,
+) where
+    F: FieldCore,
+    E: ExtField<F>,
+    G: Fn(usize, usize) -> E + Sync,
+{
+    let len = coefficient_slices[0].len();
+    if len <= minimum_rows_per_task {
+        initialize_multilinear_rows_sequential::<F, E, G>(
+            &mut coefficient_slices,
+            start,
+            table_len,
+            table_index,
+            evaluation,
+        );
+        return;
+    }
+
+    let mid = len / 2;
+    let (left, right): (Vec<_>, Vec<_>) = coefficient_slices
+        .into_iter()
+        .map(|coefficient| coefficient.split_at_mut(mid))
+        .unzip();
+    akita_field::parallel::__rayon_join(
+        || {
+            initialize_multilinear_rows::<F, E, G>(
+                left,
+                start,
+                table_len,
+                table_index,
+                evaluation,
+                minimum_rows_per_task,
+            )
+        },
+        || {
+            initialize_multilinear_rows::<F, E, G>(
+                right,
+                start + mid,
+                table_len,
+                table_index,
+                evaluation,
+                minimum_rows_per_task,
+            )
+        },
+    );
+}
+
 /// Materialized field evaluations stored by base-field coefficient.
 ///
 /// Each coefficient of `E` occupies one contiguous slab of `F` values. The
@@ -378,14 +509,12 @@ where
         let tables = cfg_into_iter!(0..N)
             .map(|table_index| {
                 let mut coefficients = Self::uninitialized_coefficients(len);
-                for stored_row in 0..len {
-                    let logical_row = Self::logical_row(stored_row, len);
-                    let value = evaluation(table_index, logical_row);
-                    for coefficient in 0..<E as ExtField<F>>::EXT_DEGREE {
-                        coefficients[coefficient * len + stored_row]
-                            .write(value.base_coefficient(coefficient));
-                    }
-                }
+                initialize_multilinear_table::<F, E, G>(
+                    &mut coefficients,
+                    len,
+                    table_index,
+                    &evaluation,
+                );
 
                 // SAFETY: every coefficient slot for this table is written
                 // exactly once by its stored-row traversal.
