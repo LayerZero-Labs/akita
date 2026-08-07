@@ -4,7 +4,7 @@
 //! block geometry, and digit depths into a single struct that fully
 //! describes one recursion level.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField};
 
 use crate::descriptor_bytes::{push_u32, push_usize};
@@ -61,7 +61,6 @@ pub(crate) fn recursive_opening_num_vars_for_geometry(
 mod descriptor;
 mod precommitted;
 pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
-use descriptor::append_tensor_challenge_shape_descriptor_bytes;
 pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
 
 /// Gadget basis used by opening-digit segments in the shared D product.
@@ -105,11 +104,6 @@ pub struct CommittedGroupParams {
     /// Exact number of live blocks (`B = ceil(N / M)`).
     pub num_live_blocks: usize,
     pub fold_challenge_config: SparseChallengeConfig,
-    /// Shape of the stage-1 fold-round challenge vector at this level.
-    ///
-    /// Defaults to [`TensorChallengeShape::Flat`]. Tensor presets set selected
-    /// levels to [`TensorChallengeShape::Tensor`] during schedule construction.
-    pub fold_challenge_shape: TensorChallengeShape,
     /// Gadget decomposition depth for A/source coefficients.
     pub num_digits_inner: usize,
     /// Gadget decomposition depth for B/`t_hat` values.
@@ -280,7 +274,6 @@ impl CommittedGroupParams {
             num_positions_per_block: 0,
             num_live_blocks: 0,
             fold_challenge_config,
-            fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_inner: 0,
             num_digits_outer: 0,
             num_digits_open: 0,
@@ -341,23 +334,19 @@ impl CommittedGroupParams {
     /// Worst-case L1 mass of the fold-round challenge.
     #[inline]
     pub fn challenge_l1_mass(&self) -> usize {
-        self.fold_challenge_shape
-            .effective_l1_mass(&self.fold_challenge_config)
+        self.fold_challenge_config.l1_norm()
     }
 
-    /// Effective fold-round challenge L∞ norm `||c||_inf` at this level,
-    /// accounting for the challenge shape (flat vs tensor).
+    /// Effective fold-round challenge L∞ norm `||c||_inf` at this level.
     #[inline]
     pub fn challenge_infinity_norm(&self) -> usize {
-        self.fold_challenge_shape
-            .effective_infinity_norm(&self.fold_challenge_config)
+        self.fold_challenge_config.infinity_norm() as usize
     }
 
     /// Effective per-block worst-case `‖c‖_2²` upper bound at this fold level.
     #[inline]
     pub fn challenge_l2_sq_max(&self) -> u128 {
-        self.fold_challenge_shape
-            .effective_l2_sq_max(&self.fold_challenge_config)
+        self.fold_challenge_config.challenge_l2_sq_max()
     }
 
     /// Fold-challenge coefficient count `inner_width · D`.
@@ -366,28 +355,18 @@ impl CommittedGroupParams {
         (self.inner_width() as u128).saturating_mul(self.d_a() as u128)
     }
 
-    /// Validate the shared fold nonce from schedule-owned challenge policies.
+    /// Validate the shared fold nonce against the protocol-wide attempt cap.
     ///
     /// This verifier boundary deliberately does not reconstruct an honest
     /// source model or an honest folded-response cap. Those values guide the
-    /// prover's search only; nonce admission is fixed by each selected
-    /// group's challenge family, shape, and native A dimension.
+    /// prover's search only.
     pub fn validate_fold_grind_nonce(
         &self,
         opening_batch: &OpeningClaimsLayout,
-        max_grind_attempts: u32,
         fold_grind_nonce: u32,
     ) -> Result<(), AkitaError> {
         self.validate_opening_batch(opening_batch)?;
-        if max_grind_attempts == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "fold grind attempt budget must be positive".to_string(),
-            ));
-        }
-        if fold_grind_nonce >= max_grind_attempts {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(())
+        crate::FoldLinfProtocolBinding::CURRENT.validate_grind_nonce(fold_grind_nonce)
     }
 
     /// Exact scheduled gadget decomposition depth for the folded witness.
@@ -419,10 +398,7 @@ impl CommittedGroupParams {
         // Bind the terminal wire to the selected SIS bucket. A larger bucket
         // that the same rank happens to support is unused schedule slack.
         let collision_capacity = table_key.coeff_linf_bound;
-        let challenge = crate::sis::FoldChallengeNorms::new(
-            &self.fold_challenge_config,
-            params.fold_challenge_shape(),
-        );
+        let challenge = crate::sis::FoldChallengeNorms::new(&self.fold_challenge_config);
         crate::sis::max_response_linf_for_role_a_collision(collision_capacity, challenge.l1_norm)
             .filter(|&limit| limit > 0)
             .ok_or_else(|| {
@@ -529,7 +505,6 @@ impl CommittedGroupParams {
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
         append_schedule_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config);
-        append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         push_usize(bytes, self.num_digits_inner);
         push_usize(bytes, self.num_digits_outer);
         push_usize(bytes, self.num_digits_open);
@@ -1102,7 +1077,6 @@ impl CommittedGroupParams {
             num_positions_per_block,
             num_live_blocks,
             fold_challenge_config: self.fold_challenge_config,
-            fold_challenge_shape: self.fold_challenge_shape,
             num_digits_inner,
             num_digits_outer,
             num_digits_open,
@@ -1161,7 +1135,6 @@ impl CommittedGroupParams {
             num_positions_per_block: other.num_positions_per_block,
             num_live_blocks: other.num_live_blocks,
             fold_challenge_config: self.fold_challenge_config,
-            fold_challenge_shape: other.fold_challenge_shape,
             num_digits_inner: other.num_digits_inner,
             num_digits_outer: other.num_digits_outer,
             num_digits_open: other.num_digits_open,

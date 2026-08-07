@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::OpeningClaimsLayout;
+use akita_types::{FoldLinfProtocolBinding, OpeningClaimsLayout};
 
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
@@ -275,7 +275,7 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    params.validate_fold_grind_nonce(&scheduled.sparse_challenge_config, proof.fold_grind_nonce)?;
+    FoldLinfProtocolBinding::CURRENT.validate_grind_nonce(proof.fold_grind_nonce)?;
 
     let recursive_num_vars = params.recursive_opening_num_vars()?;
     if current_state.setup_prefix_opening.is_some() {
@@ -328,8 +328,6 @@ where
         params.num_live_blocks,
         1,
         &scheduled.sparse_challenge_config,
-        &TensorChallengeShape::Flat,
-        witness_fold_challenge_labels(),
         proof.fold_grind_nonce,
     )?;
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_replay.response);

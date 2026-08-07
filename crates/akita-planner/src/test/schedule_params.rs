@@ -9,7 +9,6 @@ fn find_schedule(
     honest_fold_policy: HonestFoldPolicySpec,
     dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     dimensions.validate_for_policy(policy)?;
     crate::planner::find_schedule(
@@ -18,7 +17,6 @@ fn find_schedule(
         &[],
         policy,
         ring_challenge_config,
-        fold_challenge_shape_at_level,
     )
 }
 
@@ -39,23 +37,13 @@ fn policy_for_domain(
 }
 
 #[test]
-fn tensor_low_length_is_selected_independently() {
-    assert_eq!(
-        optimize_fold_challenge_shape(TensorChallengeShape::Tensor { fold_low_len: 1 }, 13,)
-            .unwrap(),
-        TensorChallengeShape::Tensor { fold_low_len: 4 },
-    );
-}
-
-#[test]
 fn balanced_chunk_geometry_prices_exact_work_and_residual_imbalance() {
-    let flat = TensorChallengeShape::Flat;
     assert_eq!(
-        layout_candidate_score(100, 13, 3, flat).unwrap(),
+        layout_candidate_score(100, 13, 3).unwrap(),
         (127, 100, 13, 1)
     );
     assert_eq!(
-        layout_candidate_score(100, 12, 3, flat).unwrap(),
+        layout_candidate_score(100, 12, 3).unwrap(),
         (124, 100, 12, 0)
     );
 }
@@ -119,7 +107,6 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
         D256OneHot::root_honest_fold_policy(),
         &domain,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
     let selected_score = (
@@ -142,7 +129,6 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
         D256OneHot::root_honest_fold_policy(),
         &uniform,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
     assert!(
@@ -196,7 +182,6 @@ fn complete_suffix_can_select_l2_or_retain_linf() {
         fp128::D64OneHot::root_honest_fold_policy(),
         &fp128_domain,
         fp128::D64OneHot::ring_challenge_config,
-        fp128::D64OneHot::fold_challenge_shape_at_level,
     )
     .expect("fp128 selective L2 schedule");
     assert!(fp128_schedule.schedule.recursive_folds.iter().any(|step| {
@@ -227,7 +212,6 @@ fn complete_suffix_can_select_l2_or_retain_linf() {
         fp128::D64OneHot::root_honest_fold_policy(),
         &fp128_domain,
         fp128::D64OneHot::ring_challenge_config,
-        fp128::D64OneHot::fold_challenge_shape_at_level,
     )
     .expect("Linf comparison schedule");
     let fold_reducing = find_schedule(
@@ -236,7 +220,6 @@ fn complete_suffix_can_select_l2_or_retain_linf() {
         fp128::D64OneHot::root_honest_fold_policy(),
         &fp128_domain,
         fp128::D64OneHot::ring_challenge_config,
-        fp128::D64OneHot::fold_challenge_shape_at_level,
     )
     .expect("fold-reducing L2 schedule");
     assert_eq!(
@@ -261,7 +244,6 @@ fn complete_suffix_can_select_l2_or_retain_linf() {
         4,
         3,
         None,
-        TensorChallengeShape::Flat,
     )
     .expect("fp32 measured frontier");
     assert!(fp32_frontier.iter().any(|(params, _)| matches!(
@@ -276,7 +258,6 @@ fn complete_suffix_can_select_l2_or_retain_linf() {
         fp32::D128OneHot::root_honest_fold_policy(),
         &fp32_domain,
         fp32::D128OneHot::ring_challenge_config,
-        fp32::D128OneHot::fold_challenge_shape_at_level,
     )
     .expect("fp32 measured schedule");
     assert!(matches!(
@@ -312,7 +293,6 @@ fn measured_l2_suffix_matches_independent_all_splits_oracle() {
         policy: &policy,
         default_ring_challenge_cfg: &challenge,
         ring_challenge_config: &D64OneHot::ring_challenge_config,
-        fold_challenge_shape_at_level: &D64OneHot::fold_challenge_shape_at_level,
         num_vars: 30,
         key: PolynomialGroupLayout::singleton(30),
         setup_field_budget: policy.setup_field_budget,
@@ -377,7 +357,6 @@ fn grouped_scalar_fallback_preserves_mixed_domain() {
         &[],
         &policy,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
     let direct = mixed_search::find_schedule(
@@ -386,7 +365,6 @@ fn grouped_scalar_fallback_preserves_mixed_domain() {
         D256OneHot::root_honest_fold_policy(),
         &domain,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
 
@@ -423,7 +401,6 @@ fn pruned_mixed_search_matches_unpruned_traversal_and_is_canonical() {
         D256OneHot::root_honest_fold_policy(),
         &reversed_with_duplicate,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
     let unpruned = unpruned_search::find_schedule(
@@ -432,7 +409,6 @@ fn pruned_mixed_search_matches_unpruned_traversal_and_is_canonical() {
         D256OneHot::root_honest_fold_policy(),
         &canonical,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
     let repeated = find_schedule(
@@ -441,7 +417,6 @@ fn pruned_mixed_search_matches_unpruned_traversal_and_is_canonical() {
         D256OneHot::root_honest_fold_policy(),
         &canonical,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
 
@@ -479,7 +454,6 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
         D64OneHot::root_honest_fold_policy(),
         &domain,
         D64OneHot::ring_challenge_config,
-        D64OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
     let unpruned = unpruned_search::find_schedule(
@@ -488,7 +462,6 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
         D64OneHot::root_honest_fold_policy(),
         &domain,
         D64OneHot::ring_challenge_config,
-        D64OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
 
@@ -527,7 +500,6 @@ fn mixed_search_parallel_generation_is_descriptor_deterministic() {
                     D256OneHot::root_honest_fold_policy(),
                     &domain,
                     D256OneHot::ring_challenge_config,
-                    D256OneHot::fold_challenge_shape_at_level,
                 )
                 .expect("parallel mixed planner run")
                 .schedule
@@ -561,7 +533,6 @@ fn mixed_root_prices_eor_at_candidate_a_dimension() {
         D256OneHot::root_honest_fold_policy(),
         &domain,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .expect("mixed planner boundary schedule");
     let schedule = &selected.schedule;
@@ -631,7 +602,6 @@ fn mixed_search_skips_an_unsupported_sis_candidate_and_keeps_its_sibling() {
         D512OneHot::root_honest_fold_policy(),
         &domain,
         D512OneHot::ring_challenge_config,
-        D512OneHot::fold_challenge_shape_at_level,
     )
     .expect("the supported D64 sibling must survive");
 
@@ -674,7 +644,6 @@ fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
         D256OneHot::root_honest_fold_policy(),
         &domain,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .expect("nv36 mixed planner");
     let rank_one_capped_domain = RingDimensionSearchDomain::new([d64, d128_mixed, d128])
@@ -688,7 +657,6 @@ fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
         D256OneHot::root_honest_fold_policy(),
         &rank_one_capped_domain,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .expect("rank-one-capped nv36 planner");
     let selected_root = &selected.schedule.root.params.final_group.commitment;
@@ -743,7 +711,6 @@ fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
         D256OneHot::root_honest_fold_policy(),
         &missing_d64,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap_err();
     assert!(error
@@ -766,7 +733,6 @@ fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
         D256OneHot::root_honest_fold_policy(),
         &below_d64,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap_err();
     assert!(error.to_string().contains("component-wise at least D64"));
@@ -787,7 +753,6 @@ fn mixed_search_rejects_direct_multi_chunk_policy() {
         D256OneHot::root_honest_fold_policy(),
         &domain,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap_err();
     assert!(error
@@ -814,7 +779,6 @@ fn mixed_search_validates_key_and_policy_at_entry() {
         D256OneHot::root_honest_fold_policy(),
         &domain,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap_err();
     assert!(error
@@ -829,7 +793,6 @@ fn mixed_search_validates_key_and_policy_at_entry() {
         D256OneHot::root_honest_fold_policy(),
         &domain,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap_err();
     assert!(error
@@ -856,7 +819,6 @@ fn mixed_search_validates_key_and_policy_at_entry() {
         D256OneHot::root_honest_fold_policy(),
         &domain,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap_err();
     assert!(error.to_string().contains("exceeds bounded rollout end 6"));
@@ -897,7 +859,6 @@ fn mixed_search_applies_setup_budget_in_physical_fields() {
         D256OneHot::root_honest_fold_policy(),
         &domain,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
     let exact_fields =
@@ -910,7 +871,6 @@ fn mixed_search_applies_setup_budget_in_physical_fields() {
         D256OneHot::root_honest_fold_policy(),
         &domain,
         D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap_err();
     assert!(error.to_string().contains("no mixed-D schedule"));
@@ -931,7 +891,6 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
         D64OneHotMultiChunkW4R2::root_honest_fold_policy(),
         &domain,
         D64OneHotMultiChunkW4R2::ring_challenge_config,
-        D64OneHotMultiChunkW4R2::fold_challenge_shape_at_level,
     )
     .expect("W4R2 schedule");
 
@@ -964,7 +923,6 @@ fn recursive_exact_cutover_proof_size_is_documented() {
         D64OneHot::root_honest_fold_policy(),
         &precommit_domain,
         D64OneHot::ring_challenge_config,
-        D64OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
     let descriptor = CommittedGroupProfile::from_params(
@@ -984,7 +942,6 @@ fn recursive_exact_cutover_proof_size_is_documented() {
         ],
         &policy_of::<Recursive>(),
         Recursive::ring_challenge_config,
-        Recursive::fold_challenge_shape_at_level,
     )
     .unwrap();
 

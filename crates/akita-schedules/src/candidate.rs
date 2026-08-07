@@ -1,7 +1,7 @@
 //! Shared candidate-construction helpers.
 
 use crate::runtime::PlannerPolicy;
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::{
     min_secure_l2_rank, projected_role_ring_count, role_a_collision_l2_sq_for_response_bound,
@@ -22,7 +22,6 @@ pub struct SelectiveL2CandidateGeometry<'a> {
     pub fold_basis: usize,
     pub fold_digit_count: usize,
     pub fold_challenge_config: &'a SparseChallengeConfig,
-    pub fold_challenge_shape: TensorChallengeShape,
 }
 
 /// Derive the one canonical L2 A-matrix candidate for an exact fold geometry.
@@ -56,11 +55,7 @@ pub fn selective_l2_inner_matrix(
         geometry.fold_basis,
         geometry.fold_digit_count,
     )?;
-    let challenge_l1 = FoldChallengeNorms::new(
-        geometry.fold_challenge_config,
-        geometry.fold_challenge_shape,
-    )
-    .l1_norm;
+    let challenge_l1 = FoldChallengeNorms::new(geometry.fold_challenge_config).l1_norm;
     let collision_l2_sq =
         role_a_collision_l2_sq_for_response_bound(challenge_l1, response_l2_sq_cap)
             .ok_or_else(|| AkitaError::InvalidSetup("L2 collision bound overflow".into()))?;
@@ -195,7 +190,6 @@ mod tests {
                 fold_basis: 2,
                 fold_digit_count: 1,
                 fold_challenge_config: &challenge,
-                fold_challenge_shape: TensorChallengeShape::Flat,
             },
         )
         .expect("unsupported L2 rank must not abort the L-infinity frontier");

@@ -75,7 +75,6 @@ pub(crate) fn planned_next_witness_len(
 pub(in crate::schedule_params) fn derive_setup_prefix_group(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,
-    requested_fold_shape: TensorChallengeShape,
     log_basis_outer: u32,
     log_basis_open: u32,
     n_prefix: usize,
@@ -142,7 +141,6 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
         let Some(num_positions_per_block) = 1usize.checked_shl(position_index_bits as u32) else {
             continue;
         };
-        let fold_shape = optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
         if num_live_blocks < num_chunks {
             continue;
         }
@@ -169,7 +167,6 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
             num_fold_coeffs,
             log_basis: log_basis_open,
             challenge_config: ring_challenge_cfg,
-            challenge_shape: fold_shape,
         }) else {
             continue;
         };
@@ -180,7 +177,6 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
             d,
             log_basis_open,
             ring_challenge_cfg,
-            fold_shape,
             num_digits_fold,
         ) else {
             continue;
@@ -256,8 +252,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
             num_digits_open_val,
             num_digits_fold,
         )?;
-        let score =
-            layout_candidate_score(physical_width, num_live_blocks, num_chunks, fold_shape)?;
+        let score = layout_candidate_score(physical_width, num_live_blocks, num_chunks)?;
         if best
             .as_ref()
             .is_none_or(|(best_score, _)| score < *best_score)

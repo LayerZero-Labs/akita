@@ -33,7 +33,7 @@
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
+use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
@@ -46,10 +46,6 @@ use std::sync::{Arc, Mutex};
 
 use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::backend::tensor_fold::{
-    fill_rotated_sparse_challenge_i64, narrow_tensor_accum_to_i32, sparse_i64_mul_acc_i64,
-    validate_tensor_blocks,
-};
 use crate::compute::{
     CommitmentComputeBackend, FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan,
 };

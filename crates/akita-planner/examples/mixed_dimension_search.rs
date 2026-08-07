@@ -86,7 +86,6 @@ fn main() -> Result<(), akita_field::AkitaError> {
         &[],
         &direct_policy,
         MixedDimFp128OneHot::ring_challenge_config,
-        MixedDimFp128OneHot::fold_challenge_shape_at_level,
     )?;
     print_schedule(
         &format!("direct scalar mixed-D search (nv={num_vars})"),
@@ -102,7 +101,6 @@ fn main() -> Result<(), akita_field::AkitaError> {
         &[],
         &mixed_recursive_policy,
         MixedRecursive::ring_challenge_config,
-        MixedRecursive::fold_challenge_shape_at_level,
     )
     .expect_err("mixed-D recursive planning is intentionally deferred");
     println!("recursive mixed-D planner deferred as expected: {mixed_recursive_error}");
@@ -116,7 +114,6 @@ fn main() -> Result<(), akita_field::AkitaError> {
         &[],
         &precommit_policy,
         D64OneHot::ring_challenge_config,
-        D64OneHot::fold_challenge_shape_at_level,
     )?;
     let descriptor = CommittedGroupProfile::from_params(
         precommit_layout,
@@ -138,7 +135,6 @@ fn main() -> Result<(), akita_field::AkitaError> {
         &precommitted_honest_fold_policies,
         &recursive_policy,
         Recursive::ring_challenge_config,
-        Recursive::fold_challenge_shape_at_level,
     )?;
     println!("preserved recursive grouped planner:");
     println!(

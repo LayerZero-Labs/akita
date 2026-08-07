@@ -1,6 +1,6 @@
 //! Runtime helpers for materializing cataloged multi-group root precommits.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::{
     decomposed_t_ring_count, num_digits_open, rounded_up_collision_inf_norm,
@@ -90,7 +90,6 @@ fn materialize_precommitted_group_for_open_basis(
         ..policy.decomposition
     };
     let num_digits_open = num_digits_open(open_decomp);
-    let challenge_shape = TensorChallengeShape::Flat;
     let num_digits_fold = group.num_digits_fold;
     let required_a_bound = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
@@ -99,7 +98,6 @@ fn materialize_precommitted_group_for_open_basis(
         group.layout.inner_commit_matrix.ring_dimension(),
         log_basis_open,
         ring_challenge_cfg,
-        challenge_shape,
         num_digits_fold,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("no precommitted A-role norm".to_string()))?;

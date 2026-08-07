@@ -6,7 +6,7 @@
 //! resolution is strict: missing generated catalog rows reject instead of
 //! invoking planner search.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
@@ -16,9 +16,9 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::PolynomialGroupLayout;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims,
-    CommittedGroupParams, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
-    SetupMatrixCapacity, SisModulusProfileId,
+    AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams,
+    DecompositionParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity,
+    SisModulusProfileId,
 };
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
@@ -48,11 +48,6 @@ macro_rules! impl_multi_chunk_companion {
                 d: usize,
             ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
                 <$base as $crate::CommitmentConfig>::ring_challenge_config(d)
-            }
-            fn fold_challenge_shape_at_level(
-                inputs: akita_types::AkitaScheduleInputs,
-            ) -> akita_challenges::TensorChallengeShape {
-                <$base as $crate::CommitmentConfig>::fold_challenge_shape_at_level(inputs)
             }
             fn selection_policy() -> akita_schedules::SelectionPolicyId {
                 <$base as $crate::CommitmentConfig>::selection_policy()
@@ -105,7 +100,6 @@ pub mod proof_optimized;
 pub mod recursive_commitment;
 pub mod schedule_selection;
 pub mod setup_prefix_slots;
-pub mod tensor_verifier;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
@@ -226,17 +220,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// `InvalidSetup` if `d` is not supported.
     fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError>;
-
-    /// Stage-1 fold-round challenge policy at one schedule level.
-    ///
-    /// `Flat` requests independent fold coefficients. `Tensor { .. }` enables
-    /// tensor pricing; the planner independently enumerates the power-of-two
-    /// low-factor width and stamps the resolved shape into the schedule. The
-    /// value returned in `fold_low_len` is therefore a policy marker, not a
-    /// fixed layout width. Recursive levels remain flat unless a preset opts in.
-    fn fold_challenge_shape_at_level(_inputs: AkitaScheduleInputs) -> TensorChallengeShape {
-        TensorChallengeShape::Flat
-    }
 
     /// Exact SIS modulus profile used by security-floor lookups.
     fn sis_modulus_profile() -> SisModulusProfileId;
@@ -359,7 +342,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             &key,
             &policy_of::<Self>(),
             Self::ring_challenge_config,
-            Self::fold_challenge_shape_at_level,
             Self::schedule_catalog(),
         )
     }
@@ -381,7 +363,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             profiles,
             &policy_of::<Self>(),
             Self::ring_challenge_config,
-            Self::fold_challenge_shape_at_level,
             Self::schedule_catalog(),
         )
     }
@@ -398,7 +379,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             selection,
             &policy_of::<Self>(),
             Self::ring_challenge_config,
-            Self::fold_challenge_shape_at_level,
             Self::schedule_catalog(),
         )
     }

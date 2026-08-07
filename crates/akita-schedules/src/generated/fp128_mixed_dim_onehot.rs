@@ -4,20 +4,18 @@ use super::{
     ChunkedWitnessCfg, CommitmentPayloadMode, CommitmentRingDims, CommittedGroupProfile,
     DecompositionParams, GeneratedBlockGeometry, GeneratedCommittedGroup,
     GeneratedFoldScheduleEntry, GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix,
-    GeneratedOuterCommitMatrix, GeneratedRecursiveFold, GeneratedRootFinalChallenge,
-    GeneratedRootFinalGroup, GeneratedRootFold, GeneratedRootPrecommittedGroup,
-    GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput, GeneratedTerminalFold,
-    GeneratedWitnessPartition, InnerCommitMatrixParams, OuterCommitMatrixParams,
-    PlannerCostModelId, PolynomialGroupLayout, SelectionPolicyId, SelectiveL2FoldCap,
-    SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
-    TensorChallengeShape,
+    GeneratedOuterCommitMatrix, GeneratedRecursiveFold, GeneratedRootFinalGroup, GeneratedRootFold,
+    GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput,
+    GeneratedTerminalFold, GeneratedWitnessPartition, InnerCommitMatrixParams,
+    OuterCommitMatrixParams, PlannerCostModelId, PolynomialGroupLayout, SelectionPolicyId,
+    SelectiveL2FoldCap, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
 };
 
 #[rustfmt::skip]
 pub(crate) static FP128_MIXED_DIM_ONEHOT_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
-            final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(32, 1), num_digits_inner: 1, num_digits_fold: 3, challenge: GeneratedRootFinalChallenge::Flat,
+            final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(32, 1), num_digits_inner: 1, num_digits_fold: 3,
                 commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 16777216, positions_per_block: 32768, live_blocks: 512 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 256, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 128, log_basis: 3, slice_count: 1 } } },
             precommitted_groups: &[],
             open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 128, log_basis: 3, slice_count: 1 },
@@ -62,7 +60,6 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     basis_range: (3, 6),
     witness_chunk: ChunkedWitnessCfg { num_chunks: 1, num_activated_levels: 0 },
     recursive_setup_planning: false,
-    root_fold_shape: TensorChallengeShape::Flat,
     ring_dimension_candidates: CATALOG_RING_DIMENSION_CANDIDATES,
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 3458533356553718245,

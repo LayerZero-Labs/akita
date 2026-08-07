@@ -148,7 +148,6 @@ fn audit_precommitted_group(
             params.layout.inner_commit_matrix.ring_dimension(),
             params.log_basis_open,
             &params.fold_challenge_config,
-            akita_challenges::TensorChallengeShape::Flat,
             params.num_digits_fold,
         ),
     )?;
@@ -262,7 +261,6 @@ fn audit_committed_params(
                 dims.d_a(),
                 params.log_basis_open,
                 &params.fold_challenge_config,
-                params.fold_challenge_shape,
                 params.num_digits_fold,
             ),
         )?,
@@ -285,7 +283,6 @@ fn audit_committed_params(
                     fold_basis,
                     fold_digit_count: params.num_digits_fold,
                     fold_challenge_config: &params.fold_challenge_config,
-                    fold_challenge_shape: params.fold_challenge_shape,
                 },
             )?
             .ok_or_else(|| {

@@ -74,17 +74,13 @@ where
     fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8>;
 }
 
+/// Byte length of every fold-challenge seed.
+pub const FOLD_CHALLENGE_SEED_LEN: usize = 32;
+
 /// Preview-only seed derivation for prover-side fold Fiat–Shamir grinding.
 pub trait FoldChallengeSeedPreview {
-    /// Derive challenge bytes after a hypothetical absorb.
-    fn preview_challenge_bytes_after_absorb(&self, absorb_payload: &[u8], len: usize) -> Vec<u8>;
-
-    /// Derive challenge bytes after a hypothetical absorb/squeeze chain.
-    fn preview_challenge_bytes_after_absorb_chain(
-        &self,
-        absorbs: &[&[u8]],
-        squeeze_lens: &[usize],
-    ) -> Vec<u8>;
+    /// Derive the final seed after a hypothetical sequence of fold draws.
+    fn preview_fold_challenge_seed(&self, absorb_payloads: &[&[u8]]) -> Vec<u8>;
 }
 
 /// Append an extension-field element by absorbing its base-field coordinates.

@@ -78,7 +78,6 @@ fn recursive_split_lower_bound_prices_score_floor() {
             delta_commit: 1,
             delta_open: 4,
             num_chunks: 2,
-            requested_fold_shape: TensorChallengeShape::Flat,
         }),
         Some(5646)
     );
@@ -114,7 +113,6 @@ fn recursive_frontier_retains_every_split_and_smaller_l2_rank() {
         4,
         3,
         None,
-        TensorChallengeShape::Flat,
     )
     .expect("late-fold rank frontier");
     let linf_rank = candidates

@@ -34,7 +34,6 @@ pub mod trace_weight;
 pub mod transcript;
 pub mod witness;
 
-pub use akita_challenges::TensorChallengeShape;
 pub use compression::{
     compression_ring_dimensions, CommitmentPayloadGeometry, CommitmentPayloadMode,
     CommitmentPayloadPhase, CompressionChainPlan, CompressionChainWitness, CompressionMapPlan,
@@ -140,10 +139,10 @@ pub use schedule::{
     intermediate_w_ring_element_count_with_counts_bits, r_decomp_levels, root_input_witness_len,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
     FoldSchedule, FoldScheduleEstimate, NextWitnessBindingPolicy, PlannedFoldSchedule,
-    RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams,
-    RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, TerminalCommittedGroupParams,
-    TerminalFoldParams, TerminalFoldStep, WitnessPartition,
-    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
+    RecursiveFoldParams, RecursiveFoldStep, RootFinalGroupParams, RootFoldParams, RootFoldStep,
+    RootPrecommittedGroupParams, TerminalCommittedGroupParams, TerminalFoldParams,
+    TerminalFoldStep, WitnessPartition, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN,
+    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{

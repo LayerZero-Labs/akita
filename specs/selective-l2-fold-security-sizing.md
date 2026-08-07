@@ -87,9 +87,9 @@ S = sum over every physical A response coefficient of z_i^2.
 It is not a per row norm and it is not a per matrix column norm.
 
 The sparse challenge type already represents a polynomial in the physical
-base field ring. Its `l1_norm()` and the tensor shape's `effective_l1_mass()`
-already count physical ring coefficients. The folded response is centered and
-decomposed into the physical Z digit planes before Stage 1 checks those planes.
+base field ring. Its `l1_norm()` already counts physical ring coefficients.
+The folded response is centered and decomposed into the physical Z digit
+planes before Stage 1 checks those planes.
 
 ### Security invariants
 

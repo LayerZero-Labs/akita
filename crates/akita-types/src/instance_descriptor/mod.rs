@@ -160,7 +160,7 @@ pub struct SetupSection {
     pub setup_seed_digest: DescriptorDigest,
     /// Protocol-affecting feature mode (transparent-only after zk-strip).
     pub protocol_features: ProtocolFeatureSet,
-    /// Fold-l∞ threshold policy, grind cap, and nonce wire contract.
+    /// Fold-l∞ grind cap and nonce wire contract.
     pub fold_linf: FoldLinfProtocolBinding,
 }
 
