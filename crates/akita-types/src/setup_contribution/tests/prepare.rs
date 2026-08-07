@@ -1,4 +1,5 @@
 use super::*;
+use akita_algebra::One;
 
 #[test]
 fn prepared_relation_address_clones_share_the_equality_window() {

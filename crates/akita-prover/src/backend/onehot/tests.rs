@@ -6,15 +6,16 @@ use crate::backend::test_support::{
 use crate::compute::RootPolyMeta;
 use crate::DensePoly;
 use akita_challenges::TensorChallenges;
-use akita_field::RandomSampling;
-use akita_field::{Fp64, FpExt4, Prime128Offset275, Prime24Offset3, Prime32Offset99};
+use jolt_field::{Field, Fp64, FpExt4, Prime128Offset275, Prime24Offset3, Prime32Offset99};
+
 use akita_types::FlatMatrix;
+
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 fn materialize_onehot_as_dense<F, const D: usize, I>(poly: &OneHotPoly<F, I>) -> DensePoly<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     I: OneHotIndex,
 {
     let mut coeffs = vec![CyclotomicRing::<F, D>::zero(); poly.total_ring_elems];
@@ -32,10 +33,10 @@ where
 
 fn test_ring_scalar<F, const D: usize>(seed: u64) -> CyclotomicRing<F, D>
 where
-    F: CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
-        F::from_canonical_u128_reduced(u128::from(seed + idx as u64 + 1))
+        F::from_u128_reduced(u128::from(seed + idx as u64 + 1))
     }))
 }
 
@@ -232,10 +233,10 @@ fn tensor_column_partials_match_dense_reference() {
     let point = (0..poly.num_vars())
         .map(|idx| {
             E::from_base_slice(&[
-                F::from_canonical_u128_reduced(3 * idx as u128 + 2),
-                F::from_canonical_u128_reduced(3 * idx as u128 + 3),
-                F::from_canonical_u128_reduced(3 * idx as u128 + 5),
-                F::from_canonical_u128_reduced(3 * idx as u128 + 7),
+                F::from_u128_reduced(3 * idx as u128 + 2),
+                F::from_u128_reduced(3 * idx as u128 + 3),
+                F::from_u128_reduced(3 * idx as u128 + 5),
+                F::from_u128_reduced(3 * idx as u128 + 7),
             ])
         })
         .collect::<Vec<_>>();
@@ -288,10 +289,10 @@ fn batched_tensor_column_partials_match_individual() {
     let point = (0..polys[0].num_vars())
         .map(|idx| {
             E::from_base_slice(&[
-                F::from_canonical_u128_reduced(5 * idx as u128 + 2),
-                F::from_canonical_u128_reduced(5 * idx as u128 + 3),
-                F::from_canonical_u128_reduced(5 * idx as u128 + 5),
-                F::from_canonical_u128_reduced(5 * idx as u128 + 7),
+                F::from_u128_reduced(5 * idx as u128 + 2),
+                F::from_u128_reduced(5 * idx as u128 + 3),
+                F::from_u128_reduced(5 * idx as u128 + 5),
+                F::from_u128_reduced(5 * idx as u128 + 7),
             ])
         })
         .collect::<Vec<_>>();
@@ -344,10 +345,10 @@ fn batched_tensor_column_partials_multi_block_match_dense() {
     let point = (0..NUM_VARS)
         .map(|idx| {
             E::from_base_slice(&[
-                F::from_canonical_u128_reduced(7 * idx as u128 + 1),
-                F::from_canonical_u128_reduced(7 * idx as u128 + 2),
-                F::from_canonical_u128_reduced(7 * idx as u128 + 4),
-                F::from_canonical_u128_reduced(7 * idx as u128 + 6),
+                F::from_u128_reduced(7 * idx as u128 + 1),
+                F::from_u128_reduced(7 * idx as u128 + 2),
+                F::from_u128_reduced(7 * idx as u128 + 4),
+                F::from_u128_reduced(7 * idx as u128 + 6),
             ])
         })
         .collect::<Vec<_>>();
@@ -403,10 +404,10 @@ fn batched_tensor_column_partials_match_dense_for_fp_ext4() {
     let point = (0..NUM_VARS)
         .map(|idx| {
             E::from_base_slice(&[
-                F::from_canonical_u128_reduced(7 * idx as u128 + 1),
-                F::from_canonical_u128_reduced(7 * idx as u128 + 2),
-                F::from_canonical_u128_reduced(7 * idx as u128 + 4),
-                F::from_canonical_u128_reduced(7 * idx as u128 + 8),
+                F::from_u128_reduced(7 * idx as u128 + 1),
+                F::from_u128_reduced(7 * idx as u128 + 2),
+                F::from_u128_reduced(7 * idx as u128 + 4),
+                F::from_u128_reduced(7 * idx as u128 + 8),
             ])
         })
         .collect::<Vec<_>>();
@@ -466,16 +467,16 @@ fn tensor_packed_sparse_linear_combination_matches_individual_witnesses() {
     ];
     let coeffs = vec![
         E::from_base_slice(&[
-            F::from_canonical_u128_reduced(3),
-            F::from_canonical_u128_reduced(5),
-            F::from_canonical_u128_reduced(7),
-            F::from_canonical_u128_reduced(11),
+            F::from_u128_reduced(3),
+            F::from_u128_reduced(5),
+            F::from_u128_reduced(7),
+            F::from_u128_reduced(11),
         ]),
         E::from_base_slice(&[
-            F::from_canonical_u128_reduced(13),
-            F::from_canonical_u128_reduced(17),
-            F::from_canonical_u128_reduced(19),
-            F::from_canonical_u128_reduced(23),
+            F::from_u128_reduced(13),
+            F::from_u128_reduced(17),
+            F::from_u128_reduced(19),
+            F::from_u128_reduced(23),
         ]),
     ];
     let witnesses = polys
@@ -744,7 +745,7 @@ fn single_chunk_onehot_large_block_uses_safe_accumulator_path() {
     const D: usize = 64;
 
     let num_positions_per_block = MAX_WIDE_SHIFT_ACCUMULATIONS + 1;
-    let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
+    let max_coeff = F::from_u128_reduced((1u128 << 24) - 4);
     let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
     let a_matrix = [vec![dense_ring; num_positions_per_block]];
     let bucket: Vec<SingleChunkEntry> = (0..num_positions_per_block)
@@ -785,7 +786,7 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
     let num_digits_inner = 1;
     let num_positions_per_block = num_entries;
 
-    let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
+    let max_coeff = F::from_u128_reduced((1u128 << 24) - 4);
     let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
     let a_matrix = [vec![dense_ring; num_positions_per_block * num_digits_inner]];
 
@@ -828,7 +829,7 @@ fn multi_chunk_onehot_single_entry_overflow_splits_coeffs() {
 
     let n_a = 1;
     let num_digits_inner = 1;
-    let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
+    let max_coeff = F::from_u128_reduced((1u128 << 24) - 4);
     let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
     let a_matrix = [vec![dense_ring]];
 

@@ -5,7 +5,8 @@
 //! identical.
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_error::AkitaError;
+use jolt_field::{CanonicalEncoding, Field};
 
 use crate::compute::{
     CpuBackend, RingSwitchComputeBackend, RingSwitchQuotientKernel, RingSwitchQuotientPlan,
@@ -37,7 +38,7 @@ pub struct RingSwitchQuotientView<'a, const D: usize> {
 
 impl<F, const D: usize> RingSwitchRelationKernel<RingSwitchRelationView<'_, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn relation_rows(
         &self,
@@ -46,7 +47,7 @@ where
         plan: RingSwitchRelationPlan,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
     where
-        F: HalvingField,
+        F: Field,
     {
         self.ring_switch_relation_rows(
             prepared,
@@ -67,7 +68,7 @@ where
 
 impl<F, const D: usize> RingSwitchQuotientKernel<RingSwitchQuotientView<'_, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn quotient_rows(
         &self,
@@ -76,7 +77,7 @@ where
         plan: RingSwitchQuotientPlan,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
     where
-        F: HalvingField,
+        F: Field,
     {
         self.ring_switch_quotient_rows(
             prepared,

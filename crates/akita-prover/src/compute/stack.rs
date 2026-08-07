@@ -20,8 +20,9 @@ use crate::compute::backend::{ComputeBackendSetup, NttCacheOwnerId};
 use crate::compute::requirements::{
     NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement,
 };
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
 use akita_types::AkitaExpandedSetup;
+use jolt_field::{CanonicalEncoding, Field};
 use std::marker::PhantomData;
 
 /// A single operation context: a backend plus its validated prepared setup.
@@ -32,7 +33,7 @@ use std::marker::PhantomData;
 /// through a validating constructor.
 pub struct OperationCtx<'a, F, B>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     B: ComputeBackendSetup<F>,
 {
     backend: &'a B,
@@ -42,7 +43,7 @@ where
 
 impl<'a, F, B> OperationCtx<'a, F, B>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     B: ComputeBackendSetup<F>,
 {
     /// Build an operation context, validating `prepared` against `expanded`.
@@ -100,7 +101,7 @@ where
 /// one backend ([`ProverComputeStack::uniform`]).
 pub struct ProverComputeStack<'a, F, C, O, T, R>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
@@ -114,7 +115,7 @@ where
 
 impl<'a, F, C, O, T, R> ProverComputeStack<'a, F, C, O, T, R>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
@@ -208,7 +209,7 @@ pub type UniformProverStack<'a, F, B> = ProverComputeStack<'a, F, B, B, B, B>;
 /// selection.
 pub trait LevelProveStacks<'a, F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Commit cluster backend for stacks returned by this selector.
     type Commit: ComputeBackendSetup<F>;
@@ -232,7 +233,7 @@ pub fn prewarm_ntt_requirements<'a, F, S>(
     requirements: &NttExecutionRequirements,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + 'a,
+    F: Field + CanonicalEncoding + 'a,
     S: LevelProveStacks<'a, F> + ?Sized + 'a,
 {
     for requirement in requirements.entries() {
@@ -260,7 +261,7 @@ pub fn planned_ntt_cache_metrics<'a, F, S>(
     requirements: &NttExecutionRequirements,
 ) -> Result<Vec<PlannedNttCacheOwnerMetric>, AkitaError>
 where
-    F: FieldCore + CanonicalField + 'a,
+    F: Field + CanonicalEncoding + 'a,
     S: LevelProveStacks<'a, F> + ?Sized + 'a,
 {
     let mut owners = Vec::<PlannedNttCacheOwnerMetric>::new();
@@ -322,7 +323,7 @@ where
 
 impl<'a, F, C, O, T, R> LevelProveStacks<'a, F> for ProverComputeStack<'a, F, C, O, T, R>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
@@ -340,7 +341,7 @@ where
 
 impl<'a, F, C, O, T, R, S> LevelProveStacks<'a, F> for &S
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
@@ -373,7 +374,7 @@ where
 /// ```
 pub struct TieredProveStacks<'a, F, C, O, T, R>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
@@ -385,7 +386,7 @@ where
 
 impl<'a, F, C, O, T, R> TieredProveStacks<'a, F, C, O, T, R>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
@@ -434,7 +435,7 @@ where
 
 impl<'a, F, C, O, T, R> LevelProveStacks<'a, F> for TieredProveStacks<'a, F, C, O, T, R>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
@@ -452,7 +453,7 @@ where
 
 impl<'a, F, B> ProverComputeStack<'a, F, B, B, B, B>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     B: ComputeBackendSetup<F>,
 {
     /// Build a CPU-only / single-backend stack where every operation cluster
@@ -482,8 +483,9 @@ mod tests {
     use super::*;
     use crate::AkitaProverSetup;
     use crate::CpuBackend;
-    use akita_field::{AkitaError, Fp64};
+    use akita_error::AkitaError;
     use akita_types::SetupMatrixCapacity;
+    use jolt_field::Fp64;
 
     type F = Fp64<4294967197>;
     fn test_envelope(num_field_elements: usize) -> SetupMatrixCapacity {

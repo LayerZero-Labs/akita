@@ -5,7 +5,7 @@
 //! [`super::CommittedGroupParams`].
 
 use crate::schedule::FoldSchedule;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// Upper bound on fold levels accepted by [`validate_schedule_ring_dims`].
 pub const MAX_FOLD_LEVELS: usize = 16;

@@ -1,8 +1,11 @@
 use super::*;
+use jolt_field::solinas::parallel::*;
+use jolt_field::Zero;
+use jolt_field::{Field, Ring, Unreduced};
 
 #[inline]
 #[allow(clippy::too_many_arguments)]
-fn accumulate_fused_partial_lane_relation<E: FieldCore>(
+fn accumulate_fused_partial_lane_relation<E: Field>(
     evaluation_trace: &PreparedProverEvaluationTrace<E>,
     trace_coeff_count: usize,
     rel: &mut [E; 3],
@@ -32,10 +35,10 @@ fn accumulate_fused_partial_lane_relation<E: FieldCore>(
 
 #[inline]
 #[allow(clippy::too_many_arguments)]
-fn accumulate_fused_partial_lane_relation_signed<E: FieldCore + HasUnreducedOps>(
+fn accumulate_fused_partial_lane_relation_signed<E: Field + Unreduced>(
     evaluation_trace: &PreparedProverEvaluationTrace<E>,
     trace_coeff_count: usize,
-    rel: &mut [E::MulU64Accum; 6],
+    rel: &mut [E::SmallProduct; 6],
     w0: i64,
     dw: i64,
     p0: E,
@@ -55,7 +58,7 @@ fn accumulate_fused_partial_lane_relation_signed<E: FieldCore + HasUnreducedOps>
     accumulate_relation_coeffs_signed(rel, w0, dw, p0 + t0, p1 + t1);
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
+impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[tracing::instrument(
         skip_all,
         name = "RelationRangeImageProver::fuse_folded_partial_lane_and_compute_next_round"
@@ -442,7 +445,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..common_alpha_factor.len(),
-                || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
+                || ([E::zero(); 2], [E::SmallProduct::zero(); 6]),
                 |(mut virt, mut rel), coefficient| {
                     let coefficient_start = coefficient * self.live_lane_count;
                     let coefficient_values = &compact_witness
@@ -460,7 +463,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             block_size,
                             live_pairs,
                         );
-                        let mut inner_virt = [E::MulU64Accum::zero(); 2];
+                        let mut inner_virt = [E::SmallProduct::zero(); 2];
 
                         for lane_pair in blk..blk_end {
                             let j_low = (equality_address_base + lane_pair) & (num_first - 1);
@@ -530,7 +533,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         } else {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..common_alpha_factor.len(),
-                || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
+                || ([E::zero(); 3], [E::SmallProduct::zero(); 6]),
                 |(mut virt, mut rel), coefficient| {
                     let coefficient_start = coefficient * self.live_lane_count;
                     let coefficient_values = &compact_witness
@@ -548,7 +551,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             block_size,
                             live_pairs,
                         );
-                        let mut inner_virt = [E::MulU64Accum::zero(); 4];
+                        let mut inner_virt = [E::SmallProduct::zero(); 4];
 
                         for lane_pair in blk..blk_end {
                             let j_low = (equality_address_base + lane_pair) & (num_first - 1);

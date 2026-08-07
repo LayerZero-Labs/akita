@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore> SetupContributionPlan<E> {
+impl<E: Field> SetupContributionPlan<E> {
     #[allow(clippy::too_many_arguments)]
     pub fn prepare<F>(
         level_params: &CommittedGroupParams,
@@ -13,8 +13,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         relation_address_geometry: RelationAddressGeometry,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
-        E: MulBase<F>,
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
     {
         let _span = tracing::info_span!("setup_prepare_plan").entered();
         let full_vec_randomness = relation_address.point();
@@ -324,7 +324,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     }
 }
 
-fn validate_static_inputs<E: FieldCore>(
+fn validate_static_inputs<E: Field>(
     level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     eq_tau1: &[E],

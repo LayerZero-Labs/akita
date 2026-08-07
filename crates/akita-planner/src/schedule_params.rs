@@ -9,7 +9,7 @@
 //! pure function of `(policy, key, dimension domain)` for offline table generation.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,

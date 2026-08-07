@@ -10,7 +10,8 @@
 
 #![allow(clippy::missing_errors_doc)]
 
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
+use akita_error::AkitaError;
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -20,6 +21,7 @@ use akita_types::{
     OpeningScheduleSelection, PolynomialGroupClaims, SetupPrefixVerifierRegistry,
     MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
+
 use std::sync::Arc;
 
 /// Encoding mode used for the verifier-input blob. Held constant on both ends
@@ -56,7 +58,7 @@ fn reject_trailing_bytes(rest: &[u8]) -> Result<(), SerializationError> {
 /// `D` is the cyclotomic ring dimension picked by the host config. The
 /// guest must use the same `D` to decode `commitment`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
+pub struct AkitaJoltInputs<F: Field, const D: usize> {
     /// Domain label both prover and verifier transcripts were initialized with.
     pub transcript_domain: Vec<u8>,
     /// Number of variables of the public polynomial (informational; sanity).
@@ -75,11 +77,11 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     /// reconstructing a `Schedule` first.
     pub proof_shape: AkitaBatchedProofShape,
     /// The Akita batched proof itself. The extension field collapses to `F`
-    /// for the fp128 D64OneHot profile (`EXT_DEGREE == 1`).
+    /// for the fp128 D64OneHot profile (`DEGREE == 1`).
     pub proof: AkitaBatchedProof<F, F>,
 }
 
-impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
+impl<F: Field, const D: usize> AkitaJoltInputs<F, D> {
     /// Build the singleton verifier claim represented by this blob.
     ///
     /// The recursion profile currently ships exactly one opening for one
@@ -133,7 +135,7 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + CanonicalField + AkitaSerialize + Valid,
+    F: Field + CanonicalEncoding + AkitaSerialize + Valid,
 {
     /// Encode the bundle into a single contiguous byte vector.
     pub fn write_to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
@@ -197,9 +199,9 @@ where
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
+    F: Field
+        + CanonicalEncoding
+        + ExtField<F>
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
         + Valid,
@@ -412,10 +414,9 @@ where
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
-        + RandomSampling
+    F: Field
+        + CanonicalEncoding
+        + ExtField<F>
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
         + Valid,
@@ -451,9 +452,9 @@ where
 ))]
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
+    F: Field
+        + CanonicalEncoding
+        + ExtField<F>
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
         + Valid,
@@ -495,7 +496,7 @@ pub use akita_algebra as _akita_algebra_dep;
 mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::Prime128Offset275;
+    use jolt_field::Prime128Offset275;
     use akita_types::{
         derive_public_matrix_prefix, sample_akita_setup_seed, setup_prefix_slot_id,
         CommittedGroupProfile, CompressionChainPlan, InnerCommitMatrixParams,
@@ -503,6 +504,7 @@ mod tests {
         SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId,
         SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
     };
+    use jolt_field::Prime128Offset275;
 
     type TestF = Prime128Offset275;
     const TEST_D: usize = 32;

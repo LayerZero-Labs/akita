@@ -1,4 +1,4 @@
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{CommittedGroupParams, SetupMatrixCapacity, TerminalCommittedGroupParams};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

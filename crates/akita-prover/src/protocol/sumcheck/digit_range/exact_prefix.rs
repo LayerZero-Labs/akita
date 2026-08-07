@@ -1,4 +1,5 @@
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use jolt_field::Field;
 
 /// Explicit prefix of a power-of-two table followed by one implicit default value.
 pub(super) struct ExactPrefixTable<T: Copy> {
@@ -71,12 +72,12 @@ impl<T: Copy> ExactPrefixTable<T> {
 }
 
 /// Equality weight of the fully implicit pair suffix in one eq-factored round.
-pub(super) struct SplitEqualitySuffixMass<'a, E: FieldCore> {
+pub(super) struct SplitEqualitySuffixMass<'a, E: Field> {
     first: &'a [E],
     second: &'a [E],
 }
 
-impl<'a, E: FieldCore> SplitEqualitySuffixMass<'a, E> {
+impl<'a, E: Field> SplitEqualitySuffixMass<'a, E> {
     pub(super) fn new(first: &'a [E], second: &'a [E]) -> Result<Self, AkitaError> {
         if first.is_empty()
             || second.is_empty()
@@ -131,7 +132,9 @@ mod tests {
     use super::*;
     use akita_algebra::eq_poly::EqPolynomial;
     use akita_algebra::split_eq::GruenSplitEq;
-    use akita_field::Prime128Offset275;
+    use jolt_field::Prime128Offset275;
+    use jolt_field::Ring;
+    use jolt_field::Zero;
 
     type F = Prime128Offset275;
 

@@ -11,9 +11,7 @@ mod utils;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::uni_poly::UniPoly;
-use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
-};
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
@@ -23,11 +21,12 @@ use akita_types::{
     RingRelationInstance, SetupContributionGroupInputs, SetupContributionPlan,
     SetupPrefixProverRegistry, SetupProjectionGeometry, SETUP_SUMCHECK_DEGREE,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use product_table::RectangularSetupProductTerm;
 use std::sync::Arc;
 
 /// Output of the setup-only stage-3 prover.
-pub struct AkitaStage3ProverOutput<E: FieldCore> {
+pub struct AkitaStage3ProverOutput<E: Field> {
     /// Setup-product claim carried in the serialized stage-3 proof.
     pub setup_product_claim: E,
     /// Setup-prefix MLE value at the stage-3 challenge.
@@ -39,15 +38,15 @@ pub struct AkitaStage3ProverOutput<E: FieldCore> {
 }
 
 /// Stage-3 setup-product sumcheck prover.
-pub struct AkitaStage3Prover<'a, F: FieldCore, E: FieldCore> {
+pub struct AkitaStage3Prover<'a, F: Field, E: Field> {
     setup: RectangularSetupProductTerm<'a, F, E>,
     setup_product_claim: E,
 }
 
 impl<'a, F, E> AkitaStage3Prover<'a, F, E>
 where
-    F: FieldCore,
-    E: FieldCore + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field,
+    E: Field + Ring + MulBaseUnreduced<F>,
 {
     /// Construct a recursive setup-product sumcheck prover.
     #[allow(clippy::too_many_arguments)]
@@ -64,8 +63,8 @@ where
         transcript: &mut T,
     ) -> Result<Self, AkitaError>
     where
-        F: CanonicalField,
-        E: FpExtEncoding<F> + LiftBase<F> + AkitaSerialize,
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + ExtField<F> + AkitaSerialize,
         T: Transcript<F>,
     {
         let setup_coefficient_bits =
@@ -101,7 +100,7 @@ where
         sample_round: SampleRound,
     ) -> Result<AkitaStage3ProverOutput<E>, AkitaError>
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
         E: AkitaSerialize,
         T: Transcript<F>,
         SampleRound: FnMut(&mut T) -> E,
@@ -123,8 +122,8 @@ where
 
 impl<F, E> SumcheckInstanceProver<E> for AkitaStage3Prover<'_, F, E>
 where
-    F: FieldCore,
-    E: FieldCore + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field,
+    E: Field + Ring + MulBaseUnreduced<F>,
 {
     fn num_rounds(&self) -> usize {
         self.setup.num_rounds()
@@ -161,8 +160,8 @@ fn build_setup_product_term<'a, F, E, T>(
     transcript: &mut T,
 ) -> Result<RectangularSetupProductTerm<'a, F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBaseUnreduced<F> + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F> + AkitaSerialize,
     T: Transcript<F>,
 {
     let (geometry, mut setup_index_weight, alpha_pows) = {
@@ -259,8 +258,8 @@ fn prepare_setup_sumcheck_terms<F, E>(
     relation_address_geometry: RelationAddressGeometry,
 ) -> Result<(SetupProjectionGeometry, Vec<E>, Vec<E>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F> + ExtField<F>,
 {
     let plan = prepare_setup_contribution_plan::<F, E>(
         relation,
@@ -284,8 +283,8 @@ fn prepare_setup_contribution_plan<F, E>(
     relation_address_geometry: RelationAddressGeometry,
 ) -> Result<SetupContributionPlan<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + LiftBase<F> + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + ExtField<F> + ExtField<F>,
 {
     let opening_batch = relation.opening_batch();
     let chunk_layout = relation.segment_layout(lp, None)?;

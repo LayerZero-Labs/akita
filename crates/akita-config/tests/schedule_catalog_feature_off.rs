@@ -22,7 +22,7 @@ fn schedule_catalog_none_without_feature_rejects() {
     let err = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key))
         .expect_err("runtime schedule must reject without an enabled catalog");
     assert!(
-        matches!(err, akita_field::AkitaError::UnsupportedSchedule(_)),
+        matches!(err, akita_error::AkitaError::UnsupportedSchedule(_)),
         "expected UnsupportedSchedule, got {err:?}"
     );
 }

@@ -1,8 +1,9 @@
 //! Exact-prefix paired NTT cache used by compressed commitments.
 
 use super::ErasedCpuNttCache;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
 use akita_types::{prepare_compression_ntt_cache, AkitaExpandedSetup, PreparedNttCache};
+use jolt_field::{CanonicalEncoding, Field};
 use std::any::Any;
 use std::collections::HashMap;
 #[cfg(test)]
@@ -32,7 +33,7 @@ impl CompressionNttCache {
         f: impl FnOnce(&PreparedNttCache<D>) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let key = CompressionNttCacheKey {
             ring_d: D,
@@ -94,7 +95,7 @@ impl CompressionNttCache {
     }
 }
 
-fn build_slot<F: FieldCore + CanonicalField, const D: usize>(
+fn build_slot<F: Field + CanonicalEncoding, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     input_width: usize,
 ) -> Result<ErasedCpuNttCache, AkitaError> {
@@ -119,8 +120,8 @@ mod tests {
         CompressionComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
     };
     use crate::AkitaProverSetup;
-    use akita_field::Prime64Offset59;
     use akita_types::{NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
+    use jolt_field::Prime64Offset59;
 
     type F = Prime64Offset59;
     const D: usize = 32;

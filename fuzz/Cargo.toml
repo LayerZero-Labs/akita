@@ -8,7 +8,7 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
-akita-field = { path = "../crates/akita-field" }
+jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "eb93a031027ee735f0827edb4539e971ab5fcc0b", default-features = false, features = ["solinas"] }
 akita-serialization = { path = "../crates/akita-serialization" }
 akita-transcript = { path = "../crates/akita-transcript" }
 akita-types = { path = "../crates/akita-types" }
@@ -34,3 +34,4 @@ path = "fuzz_targets/proof_shapes.rs"
 test = false
 doc = false
 bench = false
+

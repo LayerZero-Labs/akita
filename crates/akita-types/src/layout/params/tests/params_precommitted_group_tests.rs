@@ -122,7 +122,7 @@ fn precommitted_params_reject_frozen_matrix_dimension_mismatch() {
 
 #[test]
 fn native_group_dimensions_are_independent_of_final_group_order() {
-    use akita_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128OffsetA7F7;
 
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
@@ -281,7 +281,7 @@ fn address_oracle_fixture(group_count: usize) -> (CommittedGroupParams, OpeningC
 
 #[test]
 fn compact_witness_addresses_match_independent_formula_matrix() {
-    use akita_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128OffsetA7F7;
 
     for group_count in [1usize, 2, 3] {
         let (base_lp, batch) = address_oracle_fixture(group_count);

@@ -5,7 +5,7 @@ use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_types::{dispatch_for_field, CompressionChainPlan, TerminalCommittedGroupParams};
 
 /// Public state bound for the witness produced by one intermediate fold.
-pub enum NextWitnessState<F: FieldCore> {
+pub enum NextWitnessState<F: Field> {
     /// Ordinary recursive edge, bound by the terminal compressed payload.
     OuterPayload(RingVec<F>),
     /// Last recursive edge, bound directly by the canonical inner `t` state.
@@ -13,7 +13,7 @@ pub enum NextWitnessState<F: FieldCore> {
 }
 
 /// Result of preparing the next logical recursive witness and its public state.
-pub struct NextWitnessStateOutput<F: FieldCore> {
+pub struct NextWitnessStateOutput<F: Field> {
     /// Physical witness representation when extension packing changes the logical witness.
     pub witness: Option<RecursiveWitnessFlat>,
     /// Transcript-bound public state for the next level.
@@ -42,7 +42,7 @@ pub fn commit_w<Cfg, B>(
 ) -> Result<NextWitnessStateOutput<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + HalvingField,
+    Cfg::Field: Field + CanonicalEncoding,
     B: CommitmentComputeBackend<Cfg::Field>,
 {
     let dims = commit_params.role_dims();
@@ -56,7 +56,7 @@ where
         Cfg::Field,
         dims.d_a(),
         |D_A| {
-            let packed_witness = if <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
+            let packed_witness = if <Cfg::ExtField as ExtField<Cfg::Field>>::DEGREE == 1 {
                 None
             } else {
                 Some(tensor_pack_recursive_witness::<
@@ -191,7 +191,7 @@ pub fn commit_terminal_w<Cfg, B>(
 ) -> Result<NextWitnessStateOutput<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling,
+    Cfg::Field: Field + CanonicalEncoding + Field,
     B: CommitmentComputeBackend<Cfg::Field>,
 {
     let ring_dim = commit_params.d_a();
@@ -204,7 +204,7 @@ where
         Cfg::Field,
         ring_dim,
         |D_A| {
-            let packed_witness = if <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
+            let packed_witness = if <Cfg::ExtField as ExtField<Cfg::Field>>::DEGREE == 1 {
                 None
             } else {
                 Some(tensor_pack_recursive_witness::<

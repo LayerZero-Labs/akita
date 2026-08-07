@@ -5,9 +5,9 @@ use crate::compute::plans::{
 };
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_error::AkitaError;
 use akita_types::{AkitaExpandedSetup, NttCacheKey};
+use jolt_field::{CanonicalEncoding, Field, Unreduced};
 use std::sync::Arc;
 
 /// Process-local identity of one physical backend cache owner.
@@ -27,7 +27,7 @@ impl NttCacheOwnerId {
 /// only the exact transform prefixes they need.
 pub trait ComputeBackendSetup<F>: Send + Sync
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Backend-prepared setup (ring dimension is a runtime cache key, not a type param).
     type PreparedSetup: Send + Sync;
@@ -103,7 +103,7 @@ where
 }
 
 /// Paired negacyclic and cyclic products for one compression input.
-pub struct CompressionRowsProducts<F: FieldCore, const D: usize> {
+pub struct CompressionRowsProducts<F: Field, const D: usize> {
     /// Negacyclic image committed by this map or passed to the next map.
     pub negacyclic: Vec<CyclotomicRing<F, D>>,
     /// Cyclic product used to construct the map's quotient witness.
@@ -113,7 +113,7 @@ pub struct CompressionRowsProducts<F: FieldCore, const D: usize> {
 /// Exact-prefix compression matrix operations.
 pub trait CompressionComputeBackend<F>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Current byte footprint of backend-owned compression caches, when exposed.
     ///
@@ -137,7 +137,7 @@ where
 pub trait DigitRowsComputeBackend<F>:
     ComputeBackendSetup<F> + CompressionComputeBackend<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Negacyclic single-input digit mat-vec rows.
     fn digit_rows<const D: usize>(
@@ -152,7 +152,7 @@ where
 /// Cyclic digit mat-vec operations needed by ring-switch relation code.
 pub trait CyclicRowsComputeBackend<F>: DigitRowsComputeBackend<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Cyclic single-input digit mat-vec rows.
     fn cyclic_digit_rows<const D: usize>(
@@ -167,7 +167,7 @@ where
 /// Commitment row operations for migrated root/ring commitment work.
 pub trait CommitmentComputeBackend<F>: DigitRowsComputeBackend<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Dense A-side commit rows.
     fn dense_commit_rows<const D: usize>(
@@ -183,8 +183,7 @@ where
         plan: OneHotCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>;
+        F: Unreduced;
 
     /// Sparse signed-ring A-side commit rows.
     fn sparse_ring_commit_rows<const D: usize>(
@@ -193,8 +192,7 @@ where
         plan: SparseRingCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>;
+        F: Unreduced;
 
     /// Recursive witness A-side commit rows.
     fn recursive_witness_commit_rows<const D: usize>(
@@ -207,7 +205,7 @@ where
 /// Ring-switch relation operations for migrated proving work.
 pub trait RingSwitchComputeBackend<F>: CyclicRowsComputeBackend<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Fused cyclic/quotient rows used by ring-switch finalization.
     fn ring_switch_relation_rows<const D: usize>(
@@ -216,7 +214,7 @@ where
         plan: RingSwitchRelationRowsPlan<'_, D>,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
     where
-        F: HalvingField;
+        F: Field;
 
     /// A-side quotient rows for an additional public-row segment.
     fn ring_switch_quotient_rows<const D: usize>(
@@ -225,20 +223,20 @@ where
         plan: RingSwitchQuotientRowsPlan<'_, D>,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
     where
-        F: HalvingField;
+        F: Field;
 }
 
 /// Full first-PR prover compute surface.
 pub trait ProverComputeBackend<F>:
     CommitmentComputeBackend<F> + RingSwitchComputeBackend<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
 }
 
 impl<F, B> ProverComputeBackend<F> for B
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     B: CommitmentComputeBackend<F> + RingSwitchComputeBackend<F>,
 {
 }

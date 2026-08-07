@@ -1,6 +1,7 @@
 //! Header-stripped proof-size and planned-witness sizing formulas.
 
-use akita_field::{AkitaError, CanonicalField};
+use akita_error::AkitaError;
+use jolt_field::{CanonicalEncoding, Field};
 
 use crate::sis::compute_num_digits_field_width;
 use crate::{CommittedGroupParams, PolynomialGroupLayout};
@@ -228,7 +229,7 @@ fn extension_opening_reduction_level_geometry(
 }
 
 /// Planned recursive witness size in ring elements for a singleton fold.
-pub fn planned_w_ring_element_count<F: CanonicalField>(
+pub fn planned_w_ring_element_count<F: Field + CanonicalEncoding>(
     field_bits: u32,
     lp: &CommittedGroupParams,
 ) -> Result<usize, AkitaError> {
@@ -262,7 +263,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
 }
 
 /// Planned recursive witness size in field elements for a singleton fold.
-pub fn planned_output_witness_len<F: CanonicalField>(
+pub fn planned_output_witness_len<F: Field + CanonicalEncoding>(
     field_bits: u32,
     lp: &CommittedGroupParams,
 ) -> Result<usize, AkitaError> {

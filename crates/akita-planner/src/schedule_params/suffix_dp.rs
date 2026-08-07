@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     active_setup_field_len, level_proof_bytes, terminal_response_bytes,
     try_extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, CommitmentRingDims,

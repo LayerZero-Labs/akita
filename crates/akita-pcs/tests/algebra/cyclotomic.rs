@@ -1,8 +1,11 @@
+use akita_algebra::One;
+use akita_algebra::Ring;
+use akita_algebra::Zero;
 use rand::{rngs::StdRng, SeedableRng};
 
 use akita_algebra::tables::Q32_MODULUS;
 use akita_algebra::CyclotomicRing;
-use akita_field::{Fp32, Fp64};
+use jolt_field::{Fp32, Fp64};
 
 #[test]
 fn cyclotomic_ring_negacyclic_property() {

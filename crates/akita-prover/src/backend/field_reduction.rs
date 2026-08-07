@@ -1,8 +1,7 @@
 //! Tensor extension-opening packing helpers.
 
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AdditiveGroup, CanonicalField, FromPrimitiveInt, MulBaseUnreduced};
-use akita_field::{AkitaError, ExtField, FieldCore};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring, Unreduced};
+
 use akita_types::{pack_tensor_base_lift_i8_digits, FpExtEncoding};
 use std::sync::Arc;
 
@@ -18,6 +17,7 @@ use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
     CommitInnerWitness, DecomposeFoldWitness, DensePoly, RecursiveWitnessFlat, SparseRingPoly,
 };
+use akita_error::AkitaError;
 
 /// Root polynomial obtained by tensor-projecting base-field evaluations into
 /// an extension-valued table.
@@ -25,26 +25,26 @@ use crate::{
 /// Dense roots use the ordinary dense backend. Sparse one-hot roots use signed
 /// ring coefficients so the transformed commitment path preserves sparsity.
 #[derive(Debug, Clone)]
-pub enum RootTensorProjectionPoly<F: FieldCore> {
+pub enum RootTensorProjectionPoly<F: Field> {
     /// Dense transformed root polynomial (D-free flat storage).
     Dense(DensePoly<F>),
     /// Sparse signed-ring transformed root polynomial.
     Sparse(Arc<SparseRingPoly<F>>),
 }
 
-impl<F: FieldCore> From<DensePoly<F>> for RootTensorProjectionPoly<F> {
+impl<F: Field> From<DensePoly<F>> for RootTensorProjectionPoly<F> {
     fn from(poly: DensePoly<F>) -> Self {
         Self::Dense(poly)
     }
 }
 
-impl<F: FieldCore> From<SparseRingPoly<F>> for RootTensorProjectionPoly<F> {
+impl<F: Field> From<SparseRingPoly<F>> for RootTensorProjectionPoly<F> {
     fn from(poly: SparseRingPoly<F>) -> Self {
         Self::Sparse(Arc::new(poly))
     }
 }
 
-impl<F: FieldCore> From<Arc<SparseRingPoly<F>>> for RootTensorProjectionPoly<F> {
+impl<F: Field> From<Arc<SparseRingPoly<F>>> for RootTensorProjectionPoly<F> {
     fn from(poly: Arc<SparseRingPoly<F>>) -> Self {
         Self::Sparse(poly)
     }
@@ -52,19 +52,19 @@ impl<F: FieldCore> From<Arc<SparseRingPoly<F>>> for RootTensorProjectionPoly<F> 
 
 /// Borrowed view over a committed tensor-projected root polynomial.
 #[derive(Debug, Clone, Copy)]
-pub struct RootTensorProjectionView<'a, F: FieldCore, const D: usize> {
+pub struct RootTensorProjectionView<'a, F: Field, const D: usize> {
     poly: &'a RootTensorProjectionPoly<F>,
 }
 
 /// Same-point batch view over several tensor-projected root polynomials.
 #[derive(Debug, Clone, Copy)]
-pub struct RootTensorProjectionBatchView<'a, F: FieldCore, const D: usize> {
+pub struct RootTensorProjectionBatchView<'a, F: Field, const D: usize> {
     polys: &'a [&'a RootTensorProjectionPoly<F>],
 }
 
 impl<F> RootPolyMeta<F> for RootTensorProjectionPoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     fn num_ring_elems(&self) -> usize {
         match self {
@@ -83,7 +83,7 @@ where
 
 impl<F, const D: usize> RootPolyShape<F, D> for RootTensorProjectionPoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     fn num_ring_elems(&self) -> usize {
         match self {
@@ -102,7 +102,7 @@ where
 
 impl<F, const D: usize> RootCommitSource<F, D> for RootTensorProjectionPoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     type CommitView<'a>
         = RootTensorProjectionView<'a, F, D>
@@ -116,7 +116,7 @@ where
 
 impl<F, const D: usize> RootOpeningSource<F, D> for RootTensorProjectionPoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     type OpeningView<'a>
         = RootTensorProjectionView<'a, F, D>
@@ -139,7 +139,7 @@ where
 
 impl<F, const D: usize> RootTensorSource<F, D> for RootTensorProjectionPoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     type TensorView<'a>
         = RootTensorProjectionView<'a, F, D>
@@ -162,8 +162,7 @@ where
 
 impl<F, const D: usize> RootCommitKernel<RootTensorProjectionView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
 {
     fn commit_inner(
         &self,
@@ -194,8 +193,7 @@ where
 
 impl<F, const D: usize> OpeningFoldKernel<RootTensorProjectionView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
 {
     fn evaluate_and_fold(
         &self,
@@ -253,8 +251,7 @@ where
 impl<F, const D: usize> OpeningBatchKernel<RootTensorProjectionBatchView<'_, F, D>, F, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
 {
     fn decompose_fold_batch(
         &self,
@@ -326,8 +323,7 @@ where
 impl<F, E, const D: usize> TensorProjectionKernel<RootTensorProjectionView<'_, F, D>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
     E: ExtField<F>,
 {
     fn column_partials(
@@ -412,8 +408,7 @@ where
 impl<F, E, const D: usize>
     TensorProjectionBatchKernel<RootTensorProjectionBatchView<'_, F, D>, F, E, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
     E: ExtField<F>,
 {
     fn column_partials_batch(
@@ -473,14 +468,14 @@ where
 
 fn tensor_extension_split<F, E>(context: &'static str) -> Result<(usize, usize), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
-    let split_bits = E::EXT_DEGREE.trailing_zeros() as usize;
+    let split_bits = E::DEGREE.trailing_zeros() as usize;
     let width = 1usize
         .checked_shl(split_bits as u32)
         .ok_or_else(|| AkitaError::InvalidInput("tensor extension width overflow".to_string()))?;
-    if width != E::EXT_DEGREE || !E::EXT_DEGREE.is_power_of_two() {
+    if width != E::DEGREE || !E::DEGREE.is_power_of_two() {
         return Err(AkitaError::InvalidInput(format!(
             "tensor extension {context} requires power-of-two extension degree"
         )));
@@ -494,19 +489,19 @@ pub fn tensor_pack_recursive_witness<F, E, const D: usize>(
     logical_w: &RecursiveWitnessFlat,
 ) -> Result<RecursiveWitnessFlat, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     let (_split_bits, width) = tensor_extension_split::<F, E>("packing")?;
-    let packed =
-        pack_tensor_base_lift_i8_digits::<D>(logical_w.as_i8_digits(), E::EXT_DEGREE, width)?;
+    let packed = pack_tensor_base_lift_i8_digits::<D>(logical_w.as_i8_digits(), E::DEGREE, width)?;
     RecursiveWitnessFlat::from_i8_digits(packed).align_for_commitment_ring_dim(D)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{AkitaError, FpExt4, Prime32Offset99};
+    use akita_error::AkitaError;
+    use jolt_field::{FpExt4, Prime32Offset99};
 
     #[test]
     fn recursive_tensor_pack_rejects_non_divisible_digit_count() {

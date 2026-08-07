@@ -7,12 +7,12 @@
 //! proof-byte totals.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
     extension_opening_reduction_level_bytes, level_proof_bytes, terminal_response_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, PlannedFoldSchedule, PolynomialGroupLayout,
     PrecommittedLevelParams, TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
 };
+use jolt_field::Prime128OffsetA7F7;
 
 use crate::generated::{
     validate_entry_key, GeneratedFoldScheduleEntry, GeneratedRootFinalChallenge,
@@ -23,6 +23,7 @@ use crate::runtime::{
     CandidateFoldStep, CandidateTerminalResponse,
 };
 use crate::PlannerPolicy;
+use akita_error::AkitaError;
 
 pub(crate) struct GeneratedEntryWalkOutput {
     pub planned_schedule: PlannedFoldSchedule,

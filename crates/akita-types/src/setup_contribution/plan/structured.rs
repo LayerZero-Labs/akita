@@ -7,7 +7,7 @@ use akita_algebra::{
 };
 use std::collections::BTreeMap;
 
-impl<E: FieldCore> SetupContributionPlan<E> {
+impl<E: Field> SetupContributionPlan<E> {
     /// Contract one group's structured E/T/Z terms through its canonical
     /// relation-column tensors.
     pub fn evaluate_structured_group<F>(
@@ -18,8 +18,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         alpha: E,
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + CanonicalField,
-        E: MulBase<F>,
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
     {
         let group = self
             .groups
@@ -515,8 +515,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
 fn extension_gadget<F, E>(depth: usize, log_basis: u32) -> Vec<E>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + ExtField<F>,
 {
     crate::gadget_row_scalars::<F>(depth, log_basis)
         .into_iter()
@@ -529,9 +529,7 @@ fn checked_product(lhs: usize, rhs: usize, context: &'static str) -> Result<usiz
         .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
 }
 
-fn tensor_coordinate_count<E: FieldCore>(
-    tensor: &EqPairTensorFamily<E>,
-) -> Result<usize, AkitaError> {
+fn tensor_coordinate_count<E: Field>(tensor: &EqPairTensorFamily<E>) -> Result<usize, AkitaError> {
     tensor.axes.iter().try_fold(1usize, |count, axis| {
         count
             .checked_mul(axis.len)
@@ -539,7 +537,7 @@ fn tensor_coordinate_count<E: FieldCore>(
     })
 }
 
-fn canonical_unit_tensor_key<E: FieldCore>(
+fn canonical_unit_tensor_key<E: Field>(
     tensor: &EqPairTensorFamily<E>,
     semantic_stride: usize,
     role_ratio: usize,

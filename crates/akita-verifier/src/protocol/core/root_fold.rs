@@ -26,13 +26,8 @@ pub(super) fn verify_root<F, E, T>(
     next_t_state: Option<&[u8]>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let setup_contribution_mode = next_fold_params
@@ -147,16 +142,11 @@ fn verify_root_inner<F, E, T>(
     next_witness: PreparedNextWitness<'_, F>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let prefix = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+    let prefix = if const { <E as ExtField<F>>::DEGREE == 1 } {
         if extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }

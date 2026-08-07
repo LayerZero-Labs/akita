@@ -5,9 +5,10 @@ use crate::{
     fold_high_digest, ChallengeLabels, ChallengeShape, Challenges, SparseChallenge,
     SparseChallengeConfig, TensorChallenges,
 };
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use akita_transcript::{FoldChallengeSeedPreview, Transcript};
+use jolt_field::{CanonicalEncoding, Field};
 use std::marker::PhantomData;
 
 const SPARSE_CHALLENGE_SEED_LEN: usize = 32;
@@ -215,7 +216,7 @@ impl<'a, F, T> LiveFoldDraw<'a, F, T> {
 
 impl<F, T> FoldDraw for LiveFoldDraw<'_, F, T>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
 {
     fn absorb(&mut self, label: &[u8], payload: &[u8]) {

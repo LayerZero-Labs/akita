@@ -2,7 +2,7 @@
 
 use crate::CommitmentConfig;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     AkitaScheduleInputs, ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, FoldSchedule,
     OpeningClaimsLayout, SetupMatrixCapacity, SisModulusProfileId,
@@ -120,12 +120,12 @@ mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
     use crate::PrecommittedCommitmentConfig;
-    use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         r_decomp_levels, shared_setup_fold_gadget, AkitaScheduleLookupKey, CommittedGroupProfile,
         PolynomialGroupLayout, PreparedRelationAddress, RelationAddressGeometry,
         SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
     };
+    use jolt_field::Prime128OffsetA7F7;
 
     fn scalar(value: u128) -> Prime128OffsetA7F7 {
         Prime128OffsetA7F7::from_canonical_u128(value)

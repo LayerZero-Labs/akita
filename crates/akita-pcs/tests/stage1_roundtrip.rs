@@ -1,10 +1,11 @@
 #![allow(missing_docs)]
 
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{
-    CanonicalBytes, CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FromPrimitiveInt,
-    Prime128Offset275, Prime32Offset99, Prime64Offset59, TranscriptChallenge,
+use jolt_field::Zero;
+use jolt_field::{
+    CanonicalBytes, CanonicalEncoding, Ext2, ExtField, Field, Fold, FpExt4, Prime128Offset275,
+    Prime32Offset99, Prime64Offset59, Ring, Unreduced,
 };
+
 use akita_prover::DigitRangeProver;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::multilinear_eval;
@@ -120,13 +121,8 @@ fn streaming_high_basis_handles_odd_live_prefix_without_materializing_padding() 
 
 fn assert_high_basis_extension_roundtrips<Base, E>()
 where
-    Base: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge,
-    E: FieldCore
-        + ExtField<Base>
-        + FromPrimitiveInt
-        + HasOptimizedFold
-        + HasUnreducedOps
-        + AkitaSerialize,
+    Base: Field + CanonicalEncoding + CanonicalBytes + CanonicalEncoding,
+    E: Field + ExtField<Base> + Ring + Fold + Unreduced + AkitaSerialize,
 {
     let raw_challenges = [3, 5, 7, 9].map(E::from_u64);
     for basis in [16, 32, 64] {

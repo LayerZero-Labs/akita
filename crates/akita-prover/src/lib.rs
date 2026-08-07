@@ -13,8 +13,8 @@ pub mod types;
 mod validation;
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, FieldCore};
 use akita_types::RingVec;
+use jolt_field::Field;
 
 pub use api::{
     batched_commit, batched_commit_with_params, commit, commit_final_group, commit_group,
@@ -23,6 +23,7 @@ pub use api::{
     FinalCommittedGroupWithHint, PreparedGroupProveOps, PreparedProverGroup,
 };
 
+use akita_error::AkitaError;
 pub use backend::{
     tensor_pack_recursive_witness, DensePoly, MultiChunkEntry, MultilinearPolynomial, OneHotIndex,
     OneHotPoly, RecursiveFoldSource, RecursiveWitnessFlat, RootTensorProjectionPoly,
@@ -65,7 +66,7 @@ pub use types::{ProverOpeningData, SelectedProverOpeningData};
 /// closures borrow typed ring rows via [`Self::z_folded_rings_trusted`] and
 /// [`Self::centered_coeffs_trusted`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecomposeFoldWitness<F: FieldCore> {
+pub struct DecomposeFoldWitness<F: Field> {
     /// Folded witness rows in flat ring storage.
     pub z_folded_rings: RingVec<F>,
     /// Centered integer coefficients for each [`z_folded_rings`] row, stored row-major flat.
@@ -78,7 +79,7 @@ pub struct DecomposeFoldWitness<F: FieldCore> {
     ring_dim: usize,
 }
 
-impl<F: FieldCore> DecomposeFoldWitness<F> {
+impl<F: Field> DecomposeFoldWitness<F> {
     /// Construct from typed ring rows at a kernel boundary.
     pub fn from_parts<const D: usize>(
         z_folded_rings: Vec<CyclotomicRing<F, D>>,
@@ -171,12 +172,12 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
 ///
 /// Ring dimension is stored by the single flat A-ring buffer. Public commit
 /// parameters own the source-block and row boundaries.
-pub struct CommitInnerWitness<F: FieldCore> {
+pub struct CommitInnerWitness<F: Field> {
     /// Recombined inner `A * s_i` rows in `[block][A row][coefficient]` order.
     pub inner_rows: RingVec<F>,
 }
 
-impl<F: FieldCore> CommitInnerWitness<F> {
+impl<F: Field> CommitInnerWitness<F> {
     /// Construct from typed kernel output at a commit boundary.
     pub fn from_rows<const D: usize>(
         recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,

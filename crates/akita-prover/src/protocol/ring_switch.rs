@@ -7,9 +7,7 @@ use crate::{tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveWi
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
-};
+use akita_error::AkitaError;
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::DigitBlocks;
@@ -18,6 +16,7 @@ use akita_types::{
     r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupParams,
     CompressionRelationWeights, FpExtEncoding, RingVec,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 mod coeffs;
 mod commit;
@@ -40,7 +39,7 @@ pub use relation_weights::{
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
-pub struct RingSwitchOutput<E: FieldCore> {
+pub struct RingSwitchOutput<E: Field> {
     /// Compact evaluation table of w, stored as x-outer/y-inner slices.
     pub w_evals_compact: std::sync::Arc<[i8]>,
     /// Canonical flat relation-witness domain and coefficient/lane split.

@@ -14,7 +14,7 @@ path = "src/main.rs"
 [dependencies]
 akita-recursion-glue = { path = "../glue" }
 akita-config = { path = "../../../crates/akita-config" }
-akita-field = { path = "../../../crates/akita-field" }
+jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "eb93a031027ee735f0827edb4539e971ab5fcc0b", default-features = false, features = ["solinas"] }
 akita-pcs = { path = "../../../crates/akita-pcs", default-features = false, features = [
   "parallel",
 ] }
@@ -34,7 +34,7 @@ default = ["parallel"]
 parallel = [
   "dep:rayon",
   "akita-pcs/parallel",
-  "akita-field/parallel",
+  "jolt-field/parallel",
   "akita-prover/parallel",
 ]
 

@@ -2,8 +2,8 @@
 
 use crate::Label;
 use crate::Transcript;
-use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_serialization::AkitaSerialize;
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Field};
 use spongefish::{
     DomainSeparator, DuplexSpongeInterface, Encoding, ProverState, VerifierState, WithoutInstance,
 };
@@ -63,7 +63,7 @@ where
 
 impl<F> AkitaTranscript<F, TranscriptSponge>
 where
-    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge,
+    F: Field + CanonicalEncoding + CanonicalBytes,
 {
     /// Construct a prover-side transcript with the selected backend.
     pub fn prover(session_label: &[u8], instance_bytes: &[u8]) -> Self {
@@ -106,7 +106,7 @@ where
 
 impl<F, S> AkitaTranscript<F, S>
 where
-    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge,
+    F: Field + CanonicalEncoding + CanonicalBytes,
     S: Default + DuplexSpongeInterface<U = u8>,
 {
     /// Construct a prover-side transcript from canonical instance bytes.
@@ -158,7 +158,7 @@ where
 
 impl<F, S> AkitaTranscript<F, S>
 where
-    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge,
+    F: Field + CanonicalEncoding + CanonicalBytes,
     S: DuplexSpongeInterface<U = u8>,
 {
     fn state_mut(&mut self) -> &mut TranscriptState<S> {
@@ -170,7 +170,7 @@ where
 
 impl<F, S> AkitaTranscript<F, S>
 where
-    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge,
+    F: Field + CanonicalEncoding + CanonicalBytes,
     S: DuplexSpongeInterface<U = u8>,
 {
     /// Absorb prefix-free bytes into the transcript.
@@ -289,7 +289,7 @@ where
 
 impl<F, S> Transcript<F> for AkitaTranscript<F, S>
 where
-    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
+    F: Field + CanonicalEncoding + CanonicalBytes + 'static,
     S: Default + DuplexSpongeInterface<U = u8> + Send + 'static,
 {
     fn new(domain_label: &[u8]) -> Self {
@@ -365,7 +365,7 @@ fn session_tag(session_label: &[u8]) -> [u8; 64] {
 
 impl<F, S> crate::FoldChallengeSeedPreview for AkitaTranscript<F, S>
 where
-    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge,
+    F: Field + CanonicalEncoding + CanonicalBytes,
     S: Default + DuplexSpongeInterface<U = u8> + Send + 'static,
 {
     fn preview_challenge_bytes_after_absorb(&self, absorb_payload: &[u8], len: usize) -> Vec<u8> {
@@ -384,7 +384,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128Offset275;
+    use jolt_field::Prime128Offset275;
+    use jolt_field::Ring;
 
     type F = Prime128Offset275;
 

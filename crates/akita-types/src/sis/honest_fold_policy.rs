@@ -4,7 +4,7 @@
 //! are not runtime protocol metadata and are never evaluated by the verifier.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use super::{
     decomposition_digits::balanced_digit_max, fold_witness_linf_cap_policy,

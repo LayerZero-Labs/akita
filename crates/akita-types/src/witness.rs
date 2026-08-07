@@ -7,7 +7,7 @@
 
 use std::ops::Range;
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use crate::{
     relation_rhs_layout_for, CommittedGroupParams, CompressionMapPlan, OpeningClaimsLayout,

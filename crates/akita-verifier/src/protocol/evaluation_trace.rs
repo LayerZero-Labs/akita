@@ -8,11 +8,12 @@ use std::sync::Arc;
 
 use akita_algebra::offset_eq::eval_affine_digit_intervals;
 use akita_algebra::poly::multilinear_eval;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
+use akita_error::AkitaError;
 use akita_types::{
     basis_weights, prepare_evaluation_trace_group_parameters, BasisMode, EvaluationTraceInputs,
     FpExtEncoding,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// One chunk's compact E-segment geometry, shared by every claim in its group.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,7 +26,7 @@ struct PreparedEvaluationTraceUnit {
 
 /// Verifier state for one opening group.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PreparedEvaluationTraceGroup<E: FieldCore> {
+struct PreparedEvaluationTraceGroup<E: Field> {
     block_opening_point: Arc<[E]>,
     basis: BasisMode,
     source_ring_dimension: usize,
@@ -39,12 +40,12 @@ struct PreparedEvaluationTraceGroup<E: FieldCore> {
 
 /// Succinct verifier representation of the complete evaluation-trace weight.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PreparedEvaluationTrace<E: FieldCore> {
+pub(crate) struct PreparedEvaluationTrace<E: Field> {
     groups: Vec<PreparedEvaluationTraceGroup<E>>,
     num_variables: usize,
 }
 
-impl<E: FieldCore> PreparedEvaluationTrace<E> {
+impl<E: Field> PreparedEvaluationTrace<E> {
     /// Evaluate the trace-weight MLE without constructing prover terms or
     /// scanning physical coefficient support.
     pub(crate) fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
@@ -179,8 +180,8 @@ pub(crate) fn prepare_evaluation_trace<F, E>(
     inputs: &EvaluationTraceInputs<'_, F, E>,
 ) -> Result<PreparedEvaluationTrace<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring + Field,
+    E: FpExtEncoding<F> + ExtField<F> + Ring,
 {
     let group_parameters = prepare_evaluation_trace_group_parameters::<F, E>(inputs)?;
     let mut groups = Vec::with_capacity(group_parameters.len());
@@ -271,6 +272,7 @@ mod tests {
         DigitRangePlan, OpeningClaimsLayout, PreparedOpeningPoint, RelationAddressGeometry,
         RelationRangeImagePlan, RingMultiplierOpeningPoint, WitnessLayout,
     };
+    use jolt_field::Zero;
 
     #[test]
     fn projected_subcolumn_trace_matches_dense_definition() {

@@ -28,7 +28,7 @@ pub(super) fn drive_block_chunked_matvec<F, W, const K: usize, const D: usize, A
     accumulate: Acc,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     Acc: Fn(&mut [Vec<CyclotomicCrtNtt<W, K, D>>], usize, usize) + Sync,
 {
@@ -109,7 +109,7 @@ pub(super) fn drive_single_chunked_matvec<F, W, const K: usize, const D: usize, 
     finalize: Fin,
 ) -> Vec<CyclotomicRing<F, D>>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     Acc: Fn(&mut [CyclotomicCrtNtt<W, K, D>], usize, usize) + Sync,
     Fin: Fn(&CyclotomicCrtNtt<W, K, D>, &CrtNttParamSet<W, K, D>) -> CyclotomicRing<F, D> + Sync,

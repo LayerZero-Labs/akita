@@ -1,6 +1,7 @@
 //! Challenge-free setup product geometry: projection sizing and envelope guards.
 
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use jolt_field::Field;
 
 use crate::layout::{validate_role_dims, CommitmentRingDims};
 use crate::proof::AkitaExpandedSetup;
@@ -347,7 +348,7 @@ fn checked_projection_ratio(
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when `required` exceeds the envelope.
-pub fn ensure_setup_envelope<F: FieldCore>(
+pub fn ensure_setup_envelope<F: Field>(
     expanded: &AkitaExpandedSetup<F>,
     required: usize,
     fold_ring_d: usize,
@@ -366,7 +367,7 @@ pub fn ensure_setup_envelope<F: FieldCore>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
 

@@ -6,12 +6,10 @@ use akita_config::{
     bind_transcript_instance_descriptor, effective_batched_schedule,
     ensure_verifier_schedule_fits_setup, CommitmentConfig,
 };
-use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
-};
+use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
 /// Reject malformed proof carriers against the selected schedule before any
 /// transcript replay or proof-owned buffer is cloned.
@@ -20,8 +18,8 @@ fn validate_proof_against_schedule<F, E>(
     schedule: &FoldSchedule,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + Valid,
-    E: FieldCore + Valid,
+    F: Field + Valid,
+    E: Field + Valid,
 {
     proof.check().map_err(|_| AkitaError::InvalidProof)?;
 
@@ -139,13 +137,8 @@ pub(crate) fn verify<F, E, T>(
     schedule: &FoldSchedule,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + PseudoMersenne + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let root_step = schedule.root_fold();
@@ -225,14 +218,9 @@ pub fn batched_verify<Cfg, T>(
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field:
-        FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField + Valid,
+    Cfg::Field: Field + CanonicalEncoding + Field + PseudoMersenne + Field + Valid,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>
-        + FrobeniusExtField<Cfg::Field>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + Valid,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
     T: Transcript<Cfg::Field>,
 {
     let selection = statement.selection();
@@ -370,8 +358,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Fp32;
     use akita_types::{RingVec, RingView};
+    use jolt_field::Fp32;
+    use jolt_field::Zero;
 
     type F = Fp32<251>;
     const D: usize = 32;

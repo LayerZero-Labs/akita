@@ -5,8 +5,9 @@
 //! carries from arbitrary physical offsets. [`eq_eval_at_index`] is the scalar
 //! equality primitive shared by the kernel and direct callers.
 
-use crate::{AkitaError, FieldCore};
-use akita_field::parallel::*;
+use crate::Field;
+use akita_error::AkitaError;
+use jolt_field::solinas::parallel::*;
 use std::collections::BTreeMap;
 
 mod tensor_pair;
@@ -25,7 +26,7 @@ pub const MAX_COMPACT_STRIDE_TERMS: usize = 1 << 28;
 /// `F`. Keeping these operations abstract lets the trace evaluator preserve
 /// its factored extension coordinates without introducing another address
 /// kernel.
-pub trait AffineWeight<F: FieldCore>: Clone + Send + Sync {
+pub trait AffineWeight<F: Field>: Clone + Send + Sync {
     /// Additive identity carrying the same algebra metadata as `self`.
     fn zero_like(&self) -> Self;
 
@@ -42,7 +43,7 @@ pub trait AffineWeight<F: FieldCore>: Clone + Send + Sync {
     fn multiply(&self, rhs: &Self) -> Self;
 }
 
-impl<F: FieldCore> AffineWeight<F> for F {
+impl<F: Field> AffineWeight<F> for F {
     fn zero_like(&self) -> Self {
         Self::zero()
     }
@@ -111,7 +112,7 @@ pub fn eval_affine_digit_intervals<F, A>(
     base_scales: &[F],
 ) -> Result<A, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     A: AffineWeight<F>,
 {
     let template = high_weights
@@ -314,7 +315,7 @@ fn accumulate_affine_rows<F, A>(
     rows: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     A: AffineWeight<F>,
 {
     let low_len = low_weights.len().max(1);
@@ -453,7 +454,7 @@ fn build_affine_low_summaries<F, A>(
     carry_count: usize,
 ) -> Result<Vec<A>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     A: AffineWeight<F>,
 {
     if low_weights.is_empty() {
@@ -564,7 +565,7 @@ fn build_geometric_low_summaries<F, A>(
     carry_count: usize,
 ) -> Result<Option<Vec<A>>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     A: AffineWeight<F>,
 {
     let delta = digit_weights.len();
@@ -762,7 +763,7 @@ fn accumulate_high_rows_bucketed<F, A>(
     summaries: &[A],
 ) -> Result<bool, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     A: AffineWeight<F>,
 {
     if !first_scales.is_empty() && first_scales.len() != first_addresses.len() {
@@ -929,7 +930,7 @@ pub const OFFSET_EQ_HIGH_BITS_CAP: usize = 16;
 /// This obeys the verifier no-panic contract: construction validates and caps
 /// both table widths, the lookups are range-checked, and no unbounded
 /// allocation is performed.
-pub struct OffsetEqWindow<F: FieldCore> {
+pub struct OffsetEqWindow<F: Field> {
     low_bits: usize,
     low_mask: usize,
     eq_low: Vec<F>,
@@ -937,7 +938,7 @@ pub struct OffsetEqWindow<F: FieldCore> {
     high_challenges: Vec<F>,
 }
 
-impl<F: FieldCore> OffsetEqWindow<F> {
+impl<F: Field> OffsetEqWindow<F> {
     /// Build a window over `challenges` using the default low-bit cap.
     ///
     /// # Errors
@@ -1029,7 +1030,7 @@ impl<F: FieldCore> OffsetEqWindow<F> {
 }
 
 /// Evaluate `eq(r, index)` for a single hypercube index in little-endian order.
-pub fn eq_eval_at_index<F: FieldCore>(x_challenges: &[F], index: usize) -> F {
+pub fn eq_eval_at_index<F: Field>(x_challenges: &[F], index: usize) -> F {
     if x_challenges.len() < usize::BITS as usize && index >= (1usize << x_challenges.len()) {
         return F::zero();
     }

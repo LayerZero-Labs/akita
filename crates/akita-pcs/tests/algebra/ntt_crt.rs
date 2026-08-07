@@ -6,11 +6,13 @@ use akita_algebra::tables::{
     Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, Q64_PRIMES,
 };
 use akita_algebra::NttPrime;
+use akita_algebra::Ring;
+use akita_algebra::Zero;
 use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, LimbQ,
     MontCoeff, ScalarBackend,
 };
-use akita_field::{Fp128, Fp32, Fp64, Prime128Offset275};
+use jolt_field::{Fp128, Fp32, Fp64, Prime128Offset275};
 
 #[test]
 fn limbq_from_to_u128_round_trip() {

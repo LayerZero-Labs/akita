@@ -5,12 +5,12 @@ use akita_challenges::{
     ChallengeShape, Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw, SparseChallenge,
     SparseChallengeConfig, TensorChallenges,
 };
-use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::{
     ABSORB_FOLD_HIGH, ABSORB_SPARSE_CHALLENGE, CHALLENGE_FOLD_HIGH, CHALLENGE_FOLD_LOW,
     CHALLENGE_WITNESS_FOLD, DOMAIN_AKITA_PROTOCOL,
 };
 use akita_transcript::{AkitaTranscript, Transcript};
+use jolt_field::{CanonicalEncoding, Field, Fp64, One, Ring, Zero};
 
 /// Stage-1 fold label bundle reused by every tensor-vs-flat sampling test.
 fn fold_challenge_labels() -> ChallengeLabels<'static> {
@@ -57,7 +57,7 @@ fn l1_norm(c: &SparseChallenge) -> u64 {
 }
 
 /// Local helper: scalar power table `[1, alpha, alpha^2, ..., alpha^{D-1}]`.
-fn scalar_powers<F: FieldCore, const D: usize>(alpha: F) -> Vec<F> {
+fn scalar_powers<F: Field, const D: usize>(alpha: F) -> Vec<F> {
     (0..D)
         .scan(F::one(), |power, _| {
             let out = *power;
@@ -68,7 +68,7 @@ fn scalar_powers<F: FieldCore, const D: usize>(alpha: F) -> Vec<F> {
 }
 
 /// Local helper: convert to dense ring coefficients for layout/validation tests.
-fn sparse_challenge_to_dense<F: FieldCore + CanonicalField, const D: usize>(
+fn sparse_challenge_to_dense<F: Field + CanonicalEncoding, const D: usize>(
     c: &SparseChallenge,
 ) -> Result<[F; D], &'static str> {
     if c.positions.len() != c.coeffs.len() {
@@ -93,11 +93,11 @@ fn sparse_challenge_to_dense<F: FieldCore + CanonicalField, const D: usize>(
     Ok(out)
 }
 
-fn dense_hamming_weight<F: FieldCore, const D: usize>(coeffs: &[F; D]) -> usize {
+fn dense_hamming_weight<F: Field, const D: usize>(coeffs: &[F; D]) -> usize {
     coeffs.iter().filter(|coeff| !coeff.is_zero()).count()
 }
 
-fn dense_negacyclic_mul<F: FieldCore, const D: usize>(lhs: &[F; D], rhs: &[F; D]) -> [F; D] {
+fn dense_negacyclic_mul<F: Field, const D: usize>(lhs: &[F; D], rhs: &[F; D]) -> [F; D] {
     let mut out = [F::zero(); D];
     for (i, &left) in lhs.iter().enumerate() {
         if left.is_zero() {
@@ -118,14 +118,14 @@ fn dense_negacyclic_mul<F: FieldCore, const D: usize>(lhs: &[F; D], rhs: &[F; D]
     out
 }
 
-fn eval_dense_at_pows<F: FieldCore, const D: usize>(coeffs: &[F; D], alpha_pows: &[F]) -> F {
+fn eval_dense_at_pows<F: Field, const D: usize>(coeffs: &[F; D], alpha_pows: &[F]) -> F {
     coeffs
         .iter()
         .zip(alpha_pows.iter())
         .fold(F::zero(), |acc, (&coeff, &power)| acc + coeff * power)
 }
 
-fn tensor_product_eval<F: FieldCore + CanonicalField, const D: usize>(
+fn tensor_product_eval<F: Field + CanonicalEncoding, const D: usize>(
     fold_high: &SparseChallenge,
     fold_low: &SparseChallenge,
     alpha_pows: &[F],
@@ -599,7 +599,7 @@ fn fold_high_digest_rejects_duplicate_positions() {
 
     let err = fold_high_digest(&fold_high, 1, 1, TD).unwrap_err();
 
-    assert!(matches!(err, akita_field::AkitaError::InvalidInput(msg) if msg.contains("unique")));
+    assert!(matches!(err, akita_error::AkitaError::InvalidInput(msg) if msg.contains("unique")));
 }
 
 #[test]
@@ -658,7 +658,7 @@ fn tensor_public_evals_reject_malformed_low_length() {
         };
         let err = tensor.evals_at_pows::<F, F>(&alpha_pows).unwrap_err();
         assert!(
-            matches!(err, akita_field::AkitaError::InvalidInput(msg) if msg.contains("power-of-two low length"))
+            matches!(err, akita_error::AkitaError::InvalidInput(msg) if msg.contains("power-of-two low length"))
         );
 
         let high_weights = vec![F::zero(); tensor.fold_high_len()];
@@ -672,7 +672,7 @@ fn tensor_public_evals_reject_malformed_low_length() {
             )
             .unwrap_err();
         assert!(
-            matches!(err, akita_field::AkitaError::InvalidInput(msg) if msg.contains("power-of-two low length"))
+            matches!(err, akita_error::AkitaError::InvalidInput(msg) if msg.contains("power-of-two low length"))
         );
     }
 }

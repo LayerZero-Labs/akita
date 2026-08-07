@@ -7,25 +7,24 @@ use crate::compute::{
 };
 use crate::{PreparedProverGroup, RootTensorProjectionPoly};
 use akita_challenges::Challenges;
-use akita_field::unreduced::ReduceTo;
-use akita_field::AdditiveGroup;
 use akita_types::LevelParamsLike;
+use jolt_field::Ring;
+use jolt_field::Unreduced;
 
-pub(crate) struct PreparedGroupOpening<F: FieldCore, E: FieldCore> {
+pub(crate) struct PreparedGroupOpening<F: Field, E: Field> {
     pub(in crate::protocol) point: PreparedOpeningPoint<F, E>,
     pub(in crate::protocol) folded_by_claim: Vec<RingVec<F>>,
     pub(in crate::protocol) scalar_openings: Vec<E>,
 }
 
-pub(crate) trait RootProverGroupMeta<F: FieldCore> {
+pub(crate) trait RootProverGroupMeta<F: Field> {
     fn num_polynomials(&self) -> usize;
     fn num_vars(&self) -> Result<usize, AkitaError>;
 }
 
 pub(crate) trait RootProverGroupOpening<F, E, B>: RootProverGroupMeta<F>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Ring + Unreduced + Field + CanonicalEncoding + 'static,
     E: FpExtEncoding<F> + ExtField<F> + AkitaSerialize,
     B: ComputeBackendSetup<F> + DigitRowsComputeBackend<F>,
 {
@@ -52,8 +51,7 @@ where
 
 pub(crate) trait RootProverGroupTensor<F, E, B>: RootProverGroupMeta<F>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Ring + Unreduced + Field + CanonicalEncoding + 'static,
     E: ExtField<F> + MulBaseUnreduced<F>,
     B: ComputeBackendSetup<F>,
 {
@@ -85,7 +83,7 @@ where
 
 impl<F, P> RootProverGroupMeta<F> for PreparedProverGroup<'_, P>
 where
-    F: FieldCore,
+    F: Field,
     P: crate::compute::RootPolyMeta<F>,
 {
     fn num_polynomials(&self) -> usize {
@@ -112,8 +110,7 @@ where
 
 impl<F, E, P, B> RootProverGroupOpening<F, E, B> for PreparedProverGroup<'_, P>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    F: Ring + Unreduced + Field + CanonicalEncoding + 'static,
     E: FpExtEncoding<F> + ExtField<F> + AkitaSerialize,
     P: RuntimeRootProvePoly<F>,
     B: ComputeBackendSetup<F> + DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, P>,
@@ -207,8 +204,7 @@ where
 
 impl<F, E, P, B> RootProverGroupTensor<F, E, B> for PreparedProverGroup<'_, P>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Ring + Unreduced + Field + CanonicalEncoding + akita_serialization::AkitaSerialize + 'static,
     E: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F>,
     P: RuntimeRootProvePoly<F>,
     B: ComputeBackendSetup<F> + RuntimeTensorBackendFor<F, P, E>,

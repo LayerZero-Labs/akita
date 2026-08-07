@@ -1,7 +1,7 @@
 //! Univariate polynomial types: dense coefficient form and compressed representation.
 
-use crate::FieldCore;
-use crate::FromPrimitiveInt;
+use crate::Field;
+use crate::Ring;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -9,12 +9,12 @@ use std::io::{Read, Write};
 
 /// Univariate polynomial in coefficient form: `p(X) = Σ_{i=0}^d coeffs[i] * X^i`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UniPoly<E: FieldCore> {
+pub struct UniPoly<E: Field> {
     /// Coefficients from low degree to high degree.
     pub coeffs: Vec<E>,
 }
 
-impl<E: FieldCore> UniPoly<E> {
+impl<E: Field> UniPoly<E> {
     /// Construct from coefficients in increasing-degree order.
     pub fn from_coeffs(coeffs: Vec<E>) -> Self {
         Self { coeffs }
@@ -61,7 +61,7 @@ impl<E: FieldCore> UniPoly<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt> UniPoly<E> {
+impl<E: Field + Ring> UniPoly<E> {
     /// Interpolate from evaluations at equispaced integer points `x = 0, 1, ..., d`.
     ///
     /// Uses Newton forward-difference interpolation: compute divided differences,
@@ -127,13 +127,13 @@ impl<E: FieldCore + FromPrimitiveInt> UniPoly<E> {
     }
 }
 
-impl<E: Valid + FieldCore> Valid for UniPoly<E> {
+impl<E: Valid + Field> Valid for UniPoly<E> {
     fn check(&self) -> Result<(), SerializationError> {
         self.coeffs.check()
     }
 }
 
-impl<E: FieldCore + AkitaSerialize> AkitaSerialize for UniPoly<E> {
+impl<E: Field + AkitaSerialize> AkitaSerialize for UniPoly<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -147,7 +147,7 @@ impl<E: FieldCore + AkitaSerialize> AkitaSerialize for UniPoly<E> {
     }
 }
 
-impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for UniPoly<E> {
+impl<E: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for UniPoly<E> {
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(
@@ -172,12 +172,12 @@ impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for
 ///
 /// `c1 = hint - 2*c0 - Σ_{i=2..d} ci`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompressedUniPoly<E: FieldCore> {
+pub struct CompressedUniPoly<E: Field> {
     /// Coefficients excluding the linear term: `[c0, c2, c3, ..., cd]`.
     pub coeffs_except_linear_term: Vec<E>,
 }
 
-impl<E: FieldCore> CompressedUniPoly<E> {
+impl<E: Field> CompressedUniPoly<E> {
     /// Degree of the underlying uncompressed polynomial.
     ///
     /// `compress()` stores `[c0, c2, ..., cd]` — exactly `d` entries for
@@ -239,13 +239,13 @@ impl<E: FieldCore> CompressedUniPoly<E> {
     }
 }
 
-impl<E: Valid + FieldCore> Valid for CompressedUniPoly<E> {
+impl<E: Valid + Field> Valid for CompressedUniPoly<E> {
     fn check(&self) -> Result<(), SerializationError> {
         self.coeffs_except_linear_term.check()
     }
 }
 
-impl<E: FieldCore + AkitaSerialize> AkitaSerialize for CompressedUniPoly<E> {
+impl<E: Field + AkitaSerialize> AkitaSerialize for CompressedUniPoly<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -265,9 +265,7 @@ impl<E: FieldCore + AkitaSerialize> AkitaSerialize for CompressedUniPoly<E> {
     }
 }
 
-impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for CompressedUniPoly<E>
-{
+impl<E: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for CompressedUniPoly<E> {
     /// Degree of the polynomial (= number of coefficients to read).
     type Context = usize;
     fn deserialize_with_mode<R: Read>(

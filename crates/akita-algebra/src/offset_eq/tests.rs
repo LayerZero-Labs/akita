@@ -1,7 +1,9 @@
+use jolt_field::{Fp64, One, Ring, Zero};
+
 use super::*;
 use crate::eq_poly::EqPolynomial;
-use crate::RandomSampling;
-use akita_field::Fp64;
+use crate::Field;
+
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rand::SeedableRng;
@@ -820,7 +822,7 @@ enum CompactOuterWeights<'a, F> {
     Tensor(&'a [&'a [F]]),
 }
 
-impl<F: FieldCore> CompactOuterWeights<'_, F> {
+impl<F: Field> CompactOuterWeights<'_, F> {
     fn len(&self) -> Result<usize, AkitaError> {
         match self {
             Self::Dense(weights) => Ok(weights.len()),
@@ -883,7 +885,7 @@ impl<F: FieldCore> CompactOuterWeights<'_, F> {
 ///
 /// Returns an error for malformed geometry, arithmetic overflow, a domain that
 /// cannot be represented by `usize`, or work above [`MAX_COMPACT_STRIDE_TERMS`].
-fn eval_compact_stride_eq<F: FieldCore>(
+fn eval_compact_stride_eq<F: Field>(
     challenges: &[F],
     offset: usize,
     stride: usize,
@@ -987,7 +989,7 @@ fn visit_eq_interval<F, Visit>(
     visit: &mut Visit,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     Visit: FnMut(usize, F) -> Result<(), AkitaError>,
 {
     let node_end = node_start
@@ -1047,7 +1049,7 @@ where
 ///
 /// Returns [`AkitaError::InvalidInput`] if `offset + factor.len()` overflows
 /// `usize`.
-fn eval_offset_eq_interval<F: FieldCore>(
+fn eval_offset_eq_interval<F: Field>(
     x_challenges: &[F],
     offset: usize,
     scale: F,
@@ -1118,7 +1120,7 @@ fn eval_offset_eq_interval<F: FieldCore>(
 ///
 /// Returns an error if `values` is not power-of-two sized, if `eq_low` has the
 /// wrong length, or if `offset_low` does not lie inside the peeled block.
-fn summarize_pow2_block_carries<F: FieldCore>(
+fn summarize_pow2_block_carries<F: Field>(
     eq_low: &[F],
     offset_low: usize,
     values: &[F],

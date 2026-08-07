@@ -7,8 +7,7 @@
 mod recursive_prefixes;
 
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::HasWide;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
+use akita_error::AkitaError;
 use akita_prover::AkitaProverSetup;
 use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]
@@ -23,6 +22,8 @@ use akita_types::{
     AkitaScheduleLookupKey, AkitaSetupDescriptor, AkitaSetupSeed, FlatMatrix,
     PolynomialGroupLayout, SetupPrefixProverRegistry,
 };
+use jolt_field::{CanonicalEncoding, Field, Unreduced};
+
 #[cfg(feature = "disk-persistence")]
 use std::fmt::Write as _;
 #[cfg(feature = "disk-persistence")]
@@ -48,7 +49,7 @@ fn validate_loaded_prefix_registry_coverage<F, Cfg>(
     max_num_batched_polys: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     Cfg: CommitmentConfig<Field = F>,
 {
     if !Cfg::recursive_setup_planning() {
@@ -77,7 +78,7 @@ pub fn new_prover_setup<F, Cfg>(
     max_num_batched_polys: usize,
 ) -> Result<AkitaProverSetup<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + Valid,
+    F: Field + CanonicalEncoding + Unreduced + Valid + akita_serialization::AkitaSerialize,
     Cfg: CommitmentConfig<Field = F>,
 {
     if max_num_batched_polys == 0 {
@@ -185,7 +186,7 @@ fn prefix_registry_cache_file_name<Cfg: CommitmentConfig>(
 }
 
 #[cfg(feature = "disk-persistence")]
-fn public_matrix_cache_file_name<F: CanonicalField>(
+fn public_matrix_cache_file_name<F: Field + CanonicalEncoding>(
     setup_seed: &AkitaSetupSeed,
 ) -> Result<String, AkitaError> {
     let digest = setup_seed_digest(setup_seed)
@@ -236,7 +237,7 @@ pub(crate) fn get_prefix_registry_storage_path<Cfg: CommitmentConfig>(
 }
 
 #[cfg(feature = "disk-persistence")]
-fn get_public_matrix_storage_path<F: CanonicalField>(
+fn get_public_matrix_storage_path<F: Field + CanonicalEncoding>(
     setup_seed: &AkitaSetupSeed,
 ) -> Result<PathBuf, AkitaError> {
     let mut path = cache_directory().ok_or_else(|| {
@@ -305,7 +306,7 @@ fn atomic_write_cache(
 }
 
 #[cfg(feature = "disk-persistence")]
-fn serialize_public_matrix_cache<F: FieldCore + AkitaSerialize>(
+fn serialize_public_matrix_cache<F: Field + AkitaSerialize>(
     expanded: &AkitaExpandedSetup<F>,
     writer: &mut std::io::BufWriter<fs::File>,
 ) -> Result<(), SerializationError> {
@@ -322,7 +323,7 @@ fn serialize_public_matrix_cache<F: FieldCore + AkitaSerialize>(
 
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn save_prover_setup<
-    F: FieldCore + CanonicalField + RandomSampling + Valid + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + Valid + akita_serialization::AkitaSerialize,
     Cfg: CommitmentConfig<Field = F>,
 >(
     setup: &AkitaProverSetup<F>,
@@ -415,7 +416,7 @@ pub(crate) fn save_prover_setup<
 
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn load_prover_setup<
-    F: FieldCore + Valid + CanonicalField + RandomSampling + HalvingField + AkitaSerialize,
+    F: Field + Valid + CanonicalEncoding + AkitaSerialize,
     Cfg: CommitmentConfig<Field = F>,
 >(
     max_num_vars: usize,
@@ -529,7 +530,7 @@ pub(crate) fn load_prover_setup<
 }
 
 #[cfg(feature = "disk-persistence")]
-fn deserialize_cached_public_matrix<F: FieldCore + Valid + AkitaDeserialize<Context = ()>>(
+fn deserialize_cached_public_matrix<F: Field + Valid + AkitaDeserialize<Context = ()>>(
     reader: &mut impl Read,
     minimum_num_field_elements: usize,
     expected_setup_seed: &AkitaSetupSeed,
@@ -569,7 +570,7 @@ fn deserialize_cached_public_matrix<F: FieldCore + Valid + AkitaDeserialize<Cont
 }
 
 #[cfg(feature = "disk-persistence")]
-fn validate_cached_matrix<F: FieldCore + CanonicalField + RandomSampling + Valid>(
+fn validate_cached_matrix<F: Field + CanonicalEncoding + Valid>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError> {
     setup

@@ -6,6 +6,9 @@ The structural and representational optimizations that close the gap between the
 protocol-level description and the reported performance. Most of these are
 documented in the paper's implementation appendix.
 
+Paths under `crates/jolt-field` refer to the canonical package in the Jolt
+repository.
+
 ## Compute backends
 
 The compute-backend abstraction (CPU cutover landed; Metal/GPU is roadmap) and
@@ -26,7 +29,7 @@ kernels.
 
 **Sources to fold in**
 
-- `crates/akita-field/src/packed/`, `crates/akita-field/src/unreduced/`.
+- `crates/jolt-field/src/packed/`, `crates/jolt-field/src/unreduced/`.
 - Paper App B.1 (field arithmetic), B.2 (ring arithmetic, CRT+NTT, SIMD), `sec:akita-fft`.
 - `docs/crt-ntt-capacity-profile.md` (generated table — embed + keep regen command).
 - `specs/avx-simd-port.md`, `specs/fp31-field-optimization-retrospective.md`, `specs/crt-ntt-accumulation-safety.md`.

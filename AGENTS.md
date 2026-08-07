@@ -33,7 +33,6 @@ graphs differ:
 ```bash
 cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence -- -D warnings
 cargo clippy --all --all-targets --release --no-default-features -- -D warnings
-cargo clippy -p akita-field --all-targets --release --features jolt-compat -- -D warnings
 ```
 
 Run path-specific workflows such as portability, Jolt compatibility, fuzzing,

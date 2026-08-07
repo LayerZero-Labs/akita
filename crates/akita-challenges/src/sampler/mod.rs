@@ -13,10 +13,10 @@ pub(crate) use position_sample::MAX_STACK_RING_DIM;
 pub(crate) use signed_sparse::SignedSparseScratch;
 pub(crate) use xof::XofCursor;
 
-use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
+use akita_error::AkitaError;
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalEncoding, Field};
 
 use crate::{SparseChallenge, SparseChallengeConfig};
 
@@ -35,7 +35,7 @@ pub fn sample_sparse_challenges<F, T>(
     grind_nonce: u32,
 ) -> Result<Vec<SparseChallenge>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
 {
     if ring_d > MAX_STACK_RING_DIM {

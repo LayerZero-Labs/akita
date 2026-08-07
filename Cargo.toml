@@ -3,7 +3,7 @@ members = [
   "crates/akita-algebra",
   "crates/akita-challenges",
   "crates/akita-config",
-  "crates/akita-field",
+  "crates/akita-error",
   "crates/akita-pcs",
   "crates/akita-serialization",
   "crates/akita-setup",
@@ -103,3 +103,4 @@ print_stderr = "allow"
 inherits = "release"
 debug-assertions = true
 overflow-checks = true
+

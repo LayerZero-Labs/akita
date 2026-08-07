@@ -5,18 +5,16 @@ use crate::compute::{
     RuntimeTensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
-use akita_field::unreduced::ReduceTo;
-use akita_field::AdditiveGroup;
 
 fn validate_non_eor_root_opening_shape<F, E>(
     ring_d: usize,
     alpha_bits: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: FpExtEncoding<F>,
 {
-    let ext_degree = <E as ExtField<F>>::EXT_DEGREE;
+    let ext_degree = <E as ExtField<F>>::DEGREE;
     if ext_degree == 0
         || !ring_d.is_multiple_of(ext_degree)
         || !(ring_d / ext_degree).is_power_of_two()
@@ -47,19 +45,12 @@ fn prepare_root<F, E, T, P, C, O, TS, R>(
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + FromPrimitiveInt
-        + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    F: Field + CanonicalEncoding + Unreduced + Ring + akita_serialization::AkitaSerialize + 'static,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
@@ -77,7 +68,7 @@ where
     let needs_extension_reduction =
         root_tensor_projection_enabled::<F, E>(root_ring_d, opening_num_vars);
 
-    if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+    if const { <E as ExtField<F>>::DEGREE == 1 } {
         prepare_single_field_fold::<F, E, T, P, _, C, O, TS, R>(
             stack,
             claims,
@@ -134,20 +125,18 @@ pub(crate) fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg>(
     basis: BasisMode,
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + PseudoMersenneField
-        + FromPrimitiveInt
+    F: Field
+        + CanonicalEncoding
+        + Unreduced
+        + PseudoMersenne
+        + Ring
+        + akita_serialization::AkitaSerialize
         + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,

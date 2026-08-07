@@ -3,6 +3,7 @@ use crate::{
     CommittedGroupParams, CommittedGroupProfile, OpeningClaimsLayout, OuterCommitMatrixParams,
     PolynomialGroupLayout, PrecommittedLevelParams, SisModulusProfileId,
 };
+use akita_algebra::Zero;
 use akita_challenges::SparseChallengeConfig;
 
 fn sample_level_params() -> CommittedGroupParams {
@@ -258,7 +259,7 @@ fn setup_prefix_params_project_b_width_for_smaller_outer_dimension() {
 
 #[test]
 fn select_setup_prefix_slot_uses_exact_registry_match() {
-    use akita_field::Prime32Offset99 as F;
+    use jolt_field::Prime32Offset99 as F;
 
     let level_params = prefix_eligible_level_params();
     let source_ring_dimension = 32;
@@ -383,7 +384,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
 
 #[test]
 fn select_setup_prefix_slot_rejects_missing_registry_entry() {
-    use akita_field::Prime32Offset99 as F;
+    use jolt_field::Prime32Offset99 as F;
 
     let mut level_params = prefix_eligible_level_params();
     let d_setup = 64;
@@ -411,7 +412,7 @@ fn select_setup_prefix_slot_rejects_missing_registry_entry() {
 
 #[test]
 fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
-    use akita_field::Prime32Offset99 as F;
+    use jolt_field::Prime32Offset99 as F;
 
     let commitment_params =
         setup_prefix_precommitted_params(&sample_level_params(), 64).expect("prefix params");
@@ -485,7 +486,7 @@ fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
 
 #[test]
 fn verifier_registry_duplicate_insert_does_not_replace_existing_slot() {
-    use akita_field::Prime32Offset99 as F;
+    use jolt_field::Prime32Offset99 as F;
 
     let commitment_params =
         setup_prefix_precommitted_params(&sample_level_params(), 64).expect("prefix params");

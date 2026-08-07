@@ -12,7 +12,7 @@ The active design frontier (keep as live specs):
 `setup-layout-repack`,
 `setup-offloading-planner`, `eor-streamed-prover`, `packed-sumcheck`,
 `planner-incidence-generalization`, `single-point-opening-batch`,
-`akita-field-refactor`, `akita-compute-backend-metal` (Metal tail),
+`jolt-field-unification`, `akita-compute-backend-metal` (Metal tail),
 `crt-ntt-prime-profiles`, `large-digit-ntt-infrastructure`,
 `transcript-immediate-fixes`.
 

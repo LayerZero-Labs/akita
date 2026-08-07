@@ -18,11 +18,12 @@
 
 #![allow(missing_docs)]
 
+use jolt_field::{CanonicalEncoding, One, Zero};
+
 mod common;
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
@@ -33,6 +34,7 @@ use common::{
     dense_field_evals, init_rayon_pool, opening_from_poly, prove_input, random_point,
     run_on_large_stack, verify_input, F,
 };
+
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -362,7 +364,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         .map(|idx| {
             let mut rng = StdRng::seed_from_u64(0xbeef_cafe_0000 + idx as u64);
             let evals: Vec<F> = (0..1usize << poly_nv)
-                .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+                .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
                 .collect();
             DensePoly::<F>::from_field_evals(poly_nv, D, &evals).expect("dense poly")
         })

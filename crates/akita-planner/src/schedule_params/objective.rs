@@ -1,4 +1,4 @@
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use super::{candidate_schedule_descriptor_bytes, ScheduleCandidate};
 use crate::{PlannerPolicy, SelectionPolicyId};

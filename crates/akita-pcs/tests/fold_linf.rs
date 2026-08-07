@@ -1,8 +1,9 @@
 #![allow(missing_docs)]
 
+use jolt_field::One;
 mod common;
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};

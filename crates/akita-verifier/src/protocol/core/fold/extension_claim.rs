@@ -4,12 +4,12 @@ use super::super::*;
 use super::{absorb_protocol_opening_points, FoldPrefix};
 use akita_types::{dispatch_for_field, Commitment, TerminalCommittedGroupParams};
 
-pub(in crate::protocol::core) struct PreparedProtocolPoint<F: FieldCore, E: FieldCore> {
+pub(in crate::protocol::core) struct PreparedProtocolPoint<F: Field, E: Field> {
     pub(in crate::protocol::core) prepared: PreparedOpeningPoint<F, E>,
     pub(in crate::protocol::core) protocol: Vec<E>,
 }
 
-pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
+pub(in crate::protocol::core) struct FoldEorReplay<F: Field, E: Field> {
     pub(in crate::protocol::core) groups: Vec<PreparedProtocolPoint<F, E>>,
     pub(in crate::protocol::core) final_relation: Option<(E, Vec<E>)>,
 }
@@ -21,7 +21,7 @@ struct EorReductionShape {
     num_rounds: usize,
 }
 
-struct EorSumcheckReplay<E: FieldCore> {
+struct EorSumcheckReplay<E: Field> {
     rho: Vec<E>,
     final_claim: E,
     final_factors: Vec<E>,
@@ -33,7 +33,7 @@ fn eor_reduction_shape<F, E>(
     num_claims: usize,
 ) -> Result<EorReductionShape, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     let (split_bits, width) =
@@ -61,7 +61,7 @@ fn eor_input_claim_from_partials<F, E>(
     row_coefficients: &[E],
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     if shape.width == 0
@@ -92,7 +92,7 @@ fn verify_eor_sumcheck<F, E, T>(
     transcript: &mut T,
 ) -> Result<Option<EorSumcheckReplay<E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F> + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -210,8 +210,8 @@ pub(in crate::protocol::core) fn verify_terminal_fold_eor<F, E, T>(
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
@@ -246,8 +246,8 @@ fn verify_terminal_fold_eor_kernel<F, E, T, const D: usize>(
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     if challenge_point.len() > opening_batch.max_num_vars() || opening_batch.num_groups() != 1 {
@@ -304,8 +304,8 @@ pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let replay = verify_eor_sumcheck::<F, E, T>(
@@ -378,8 +378,8 @@ pub(in crate::protocol::core) fn verify_extension_claim_root_prefix<F, E, T>(
     transcript: &mut T,
 ) -> Result<FoldPrefix<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let mut group_points = Vec::with_capacity(opening_batch.num_groups());
@@ -481,8 +481,8 @@ pub(in crate::protocol::core) fn verify_extension_claim_terminal_suffix<F, E, T>
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let row_coefficients = derive_public_row_coefficients::<F, E, T>(
@@ -503,7 +503,7 @@ where
         params.d_a(),
         params.num_positions_per_block,
         params.num_live_blocks,
-        E::EXT_DEGREE > 1,
+        E::DEGREE > 1,
         transcript,
     )
     .map_err(|error| {
@@ -537,8 +537,8 @@ pub(in crate::protocol::core) fn verify_extension_claim_suffix_prefix<F, E, T>(
     transcript: &mut T,
 ) -> Result<FoldPrefix<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let FoldEorReplay {
@@ -552,7 +552,7 @@ where
         opening_batch,
         basis,
         lp,
-        E::EXT_DEGREE > 1,
+        E::DEGREE > 1,
         transcript,
     )?;
     let protocol_point_refs = groups
@@ -575,10 +575,12 @@ where
 mod tests {
     use super::*;
     use akita_algebra::CompressedUniPoly;
-    use akita_field::{FpExt4, Prime32Offset99};
     use akita_sumcheck::SumcheckProof;
     use akita_transcript::AkitaTranscript;
     use akita_types::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
+    use jolt_field::One;
+    use jolt_field::Zero;
+    use jolt_field::{FpExt4, Prime32Offset99};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;

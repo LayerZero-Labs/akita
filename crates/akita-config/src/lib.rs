@@ -7,11 +7,8 @@
 //! invoking planner search.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
-};
 use akita_schedules::PlannerPolicy;
-use akita_serialization::Valid;
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::PolynomialGroupLayout;
@@ -20,6 +17,7 @@ use akita_types::{
     CommittedGroupParams, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
     SetupMatrixCapacity, SisModulusProfileId,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
 /// parameter to a base `Cfg` and overrides only the multi-chunk witness config
@@ -37,14 +35,14 @@ macro_rules! impl_multi_chunk_companion {
             const D: usize = <$base as $crate::CommitmentConfig>::D;
             const RING_DIMENSION_CANDIDATES: &'static [akita_types::CommitmentRingDims] =
                 <$base as $crate::CommitmentConfig>::RING_DIMENSION_CANDIDATES;
-            const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
+            const DEGREE: usize = <$base as $crate::CommitmentConfig>::DEGREE;
 
             fn decomposition() -> akita_types::DecompositionParams {
                 <$base as $crate::CommitmentConfig>::decomposition()
             }
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
                 <$base as $crate::CommitmentConfig>::ring_challenge_config(d)
             }
             fn fold_challenge_shape_at_level(
@@ -64,7 +62,7 @@ macro_rules! impl_multi_chunk_companion {
             fn setup_matrix_capacity(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixCapacity, akita_field::AkitaError> {
+            ) -> Result<akita_types::SetupMatrixCapacity, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_setup_matrix_capacity::<$cfg>(
                     max_num_vars,
                     max_num_batched_polys,
@@ -92,7 +90,7 @@ macro_rules! impl_multi_chunk_companion {
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
+            ) -> Result<akita_types::FoldSchedule, akita_error::AkitaError> {
                 Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key(
                     layout,
                 )?)
@@ -110,6 +108,7 @@ pub mod tensor_verifier;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
+use akita_error::AkitaError;
 pub use akita_schedules::ResolvedScheduleRow;
 pub use precommitted_commitment::{
     committed_group_params, committed_group_profile, PrecommittedCommitmentConfig,
@@ -143,8 +142,8 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
         sis_table_digest: akita_types::sis::SisTableDigest::CURRENT,
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
-        claim_ext_degree: Cfg::EXT_DEGREE,
-        chal_ext_degree: Cfg::EXT_DEGREE,
+        claim_ext_degree: Cfg::DEGREE,
+        chal_ext_degree: Cfg::DEGREE,
         basis_range: Cfg::basis_range(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning,
@@ -168,7 +167,7 @@ pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::Hones
 /// extension opening with base-field committed witnesses internally.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by ring commitments, setup matrices, and SIS bounds.
-    type Field: CanonicalField + FieldCore;
+    type Field: Field + CanonicalEncoding + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid;
 
     /// Field used by public openings and all proof scalars.
     type ExtField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field> + Valid;
@@ -178,12 +177,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// This is the `K` consumed by [`field_reduction::psi_embed`] and
     /// [`field_reduction::embed_subfield`] in `akita-types`, and the `K` that
     /// validates `SubfieldParams<D, K>`. Default body delegates to
-    /// `<ExtField as ExtField<Field>>::EXT_DEGREE`; presets should not
+    /// `<ExtField as ExtField<Field>>::DEGREE`; presets should not
     /// override unless they have a reason to disagree with that.
     ///
     /// [`field_reduction::psi_embed`]: akita_types::field_reduction::psi_embed
     /// [`field_reduction::embed_subfield`]: akita_types::field_reduction::embed_subfield
-    const EXT_DEGREE: usize = <Self::ExtField as ExtField<Self::Field>>::EXT_DEGREE;
+    const DEGREE: usize = <Self::ExtField as ExtField<Self::Field>>::DEGREE;
 
     /// Absorb an extension-field element into a base-field transcript.
     fn append_extension_field<T: Transcript<Self::Field>>(
@@ -246,7 +245,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// synthetic or miswired field cannot silently inherit a nearby profile.
     fn validate_sis_modulus_profile() -> Result<(), AkitaError> {
         let modulus = (-Self::Field::from_u64(1))
-            .to_canonical_u128()
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
             .checked_add(1)
             .ok_or_else(|| AkitaError::InvalidSetup("SIS field modulus overflow".to_string()))?;
         if Self::sis_modulus_profile().matches_modulus(modulus) {
@@ -267,7 +267,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// coefficient can contribute through paired ring lanes, so SIS A-role
     /// collision pricing uses a conservative factor of two.
     fn ring_subfield_embedding_norm_bound() -> u32 {
-        if Self::EXT_DEGREE == 1 {
+        if Self::DEGREE == 1 {
             1
         } else {
             2
@@ -446,10 +446,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp32, FpExt4};
     use akita_transcript::{
         append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript,
     };
+    use jolt_field::Ring;
+    use jolt_field::{Fp32, FpExt4};
 
     type Base = Fp32<251>;
     type BaseExt = FpExt4<Base>;
@@ -526,10 +527,10 @@ mod tests {
     #[test]
     fn ext_degree_default_matches_ext_field_degree() {
         assert_eq!(
-            SingleExtensionConfig::EXT_DEGREE,
-            <BaseExt as ExtField<Base>>::EXT_DEGREE
+            SingleExtensionConfig::DEGREE,
+            <BaseExt as ExtField<Base>>::DEGREE
         );
-        assert_eq!(SingleExtensionConfig::EXT_DEGREE, 4);
+        assert_eq!(SingleExtensionConfig::DEGREE, 4);
     }
 
     #[test]

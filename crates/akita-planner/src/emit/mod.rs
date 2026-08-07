@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, CommittedGroupProfile,
@@ -701,7 +701,7 @@ fn materialized_entry(
     };
     match result {
         Ok(schedule) => Ok(Some((key, schedule))),
-        Err(akita_field::AkitaError::UnsupportedSchedule(_)) => Ok(None),
+        Err(akita_error::AkitaError::UnsupportedSchedule(_)) => Ok(None),
         Err(error) => {
             let kind = if key.precommitteds.is_empty() {
                 "regen"

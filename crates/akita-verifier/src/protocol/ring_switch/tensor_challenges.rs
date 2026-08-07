@@ -1,9 +1,10 @@
 use akita_challenges::TensorChallenges as TensorChallengeSet;
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
+use akita_error::AkitaError;
+use jolt_field::{ExtField, Field, Ring};
 
 /// Challenge evaluations used by relation-matrix challenge replay.
 #[derive(Clone)]
-pub(crate) enum PreparedChallengeEvals<F: FieldCore> {
+pub(crate) enum PreparedChallengeEvals<F: Field> {
     Flat(Vec<F>),
     Tensor {
         challenges: TensorChallengeSet,
@@ -16,7 +17,7 @@ pub(crate) struct PreparedAffineFactors<F> {
     pub(crate) low: Vec<F>,
 }
 
-impl<F: FieldCore> PreparedChallengeEvals<F> {
+impl<F: Field> PreparedChallengeEvals<F> {
     /// Evaluate one claim's outer fold weights as separate high/low factors.
     ///
     /// Flat challenges use an exact live prefix in a power-of-two low vector.
@@ -28,8 +29,8 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
         num_live_blocks: usize,
     ) -> Result<PreparedAffineFactors<F>, AkitaError>
     where
-        Base: FieldCore + FromPrimitiveInt,
-        F: MulBase<Base>,
+        Base: Field + Ring,
+        F: ExtField<Base>,
     {
         match self {
             Self::Flat(c_alphas) => {

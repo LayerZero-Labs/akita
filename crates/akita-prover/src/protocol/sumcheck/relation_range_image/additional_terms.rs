@@ -1,14 +1,15 @@
 //! Sparse compact-geometry relation and restricted-binary terms.
 
 use akita_algebra::{offset_eq::OffsetEqWindow, poly::trim_trailing_zeros, UniPoly};
-use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
+use akita_error::AkitaError;
 use akita_sumcheck::reduce_signed_accum;
+use jolt_field::Unreduced;
+use jolt_field::{Field, Zero};
 use std::cmp::Ordering;
 use std::ops::Range;
 
 #[derive(Clone, Copy)]
-struct SparseWeight<E: FieldCore> {
+struct SparseWeight<E: Field> {
     index: usize,
     linear: E,
     binary: E,
@@ -20,14 +21,14 @@ struct SparseWeight<E: FieldCore> {
 /// Witness values are read from `RelationRangeImageProver`'s existing compact
 /// or folded table, avoiding a full-domain field copy and keeping the addend's
 /// work proportional to its live support.
-pub(crate) struct AdditionalRelationTerms<E: FieldCore> {
+pub(crate) struct AdditionalRelationTerms<E: Field> {
     weights: Vec<SparseWeight<E>>,
     binary_batching: E,
     input_claim: E,
     domain_len: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
+impl<E: Field> AdditionalRelationTerms<E> {
     pub(crate) fn new(
         compact_witness: &[i8],
         domain_len: usize,
@@ -224,7 +225,7 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
         first_challenge: Option<E>,
     ) -> UniPoly<E>
     where
-        E: HasUnreducedOps,
+        E: Unreduced,
     {
         if first_challenge.is_none() {
             return self.round_polynomial_compact_initial(compact_witness);
@@ -251,9 +252,9 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
     /// compact ordinary-relation kernel used by the surrounding Stage 2 prover.
     fn round_polynomial_compact_initial(&self, compact_witness: &[i8]) -> UniPoly<E>
     where
-        E: HasUnreducedOps,
+        E: Unreduced,
     {
-        let mut coefficients = [E::MulU64Accum::zero(); 8];
+        let mut coefficients = [E::SmallProduct::zero(); 8];
         let mut cursor = 0usize;
         while cursor < self.weights.len() {
             let parent = self.weights[cursor].index >> 1;
@@ -380,7 +381,8 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
 mod tests {
     use super::*;
     use akita_algebra::offset_eq::eq_eval_at_index;
-    use akita_field::Prime128OffsetA7F7 as F;
+    use jolt_field::Prime128OffsetA7F7 as F;
+    use jolt_field::{One, Ring, Zero};
 
     fn equality_point(domain_len: usize) -> Vec<F> {
         (0..domain_len.trailing_zeros() as usize)

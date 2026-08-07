@@ -6,8 +6,9 @@ use crate::backend::tensor_fold::{
 };
 use crate::DecomposeFoldWitness;
 use akita_challenges::TensorChallenges as TensorChallengeSet;
-use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field, Ring};
 
 pub(super) fn decompose_fold_batched_tensor_sparse<F, const D: usize>(
     polys: &[&SparseRingPoly<F>],
@@ -16,7 +17,7 @@ pub(super) fn decompose_fold_batched_tensor_sparse<F, const D: usize>(
     num_digits: usize,
 ) -> Result<DecomposeFoldWitness<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
 {
     let cached_blocks = polys
         .iter()
@@ -41,7 +42,10 @@ where
         })?;
     let accum_i64 = sparse_accumulate_tensor::<D>(&flat_blocks, tensor, inner_width, num_digits)?;
     let coeff_accum = narrow_tensor_accum_to_i32::<D>(accum_i64)?;
-    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let modulus = (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1;
     Ok(build_decompose_fold_witness::<F, D>(coeff_accum, modulus))
 }
 

@@ -4,7 +4,7 @@ use super::*;
 /// large enough to amortize scheduling while exposing hundreds of root jobs.
 pub(super) const SETUP_SCAN_JOB_RINGS: usize = 2048;
 
-impl<E: FieldCore> SetupContributionGroupPlan<E> {
+impl<E: Field> SetupContributionGroupPlan<E> {
     pub(crate) fn refresh_segments(
         &mut self,
         d_weights: &[E],
@@ -38,7 +38,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn build_packed_segments<E: FieldCore>(
+pub(super) fn build_packed_segments<E: Field>(
     d_col_start: usize,
     e_eq_len: usize,
     t_cols: usize,

@@ -10,11 +10,6 @@ use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{CommitInnerWitness, RootTensorProjectionPoly};
 use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
-};
 use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
@@ -22,6 +17,10 @@ use akita_types::{
     CompressionChainPlan, DigitBlocks, FpExtEncoding, OpeningClaimsLayout,
     OpeningScheduleSelection, PolynomialGroupLayout, RingVec,
 };
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field, Ring, Unreduced};
+
+use akita_error::AkitaError;
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
 ///
@@ -47,7 +46,7 @@ pub(crate) fn validate_commit_inner_shape<F, const D: usize>(
     n_a: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     inner.ensure_ring_dim::<D>()?;
 
@@ -80,7 +79,7 @@ pub(crate) fn validate_commit_level_params<F>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     if params.num_live_blocks == 0 || params.num_positions_per_block == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -163,9 +162,9 @@ fn validate_commit_profile<F>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
-    profile.validate_frozen_precommit(F::modulus_bits())?;
+    profile.validate_frozen_precommit(F::MODULUS_BITS)?;
     validate_i8_setup_log_basis(
         profile.log_basis_inner,
         "for i8 witness commitment decomposition",
@@ -228,7 +227,7 @@ pub fn prepare_commit_inputs<F, P>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<OpeningClaimsLayout, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyMeta<F>,
 {
     if polys.is_empty() {
@@ -275,8 +274,7 @@ fn tensor_project_roots<F, P, E, B>(
     polys: &[P],
 ) -> Result<Vec<RootTensorProjectionPoly<F>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: FpExtEncoding<F>,
     P: RuntimeRootCommitPoly<F>,
     B: RuntimeRootCommitBackend<F, P, E>,
@@ -302,14 +300,7 @@ fn commit_with_validated_params<F, P, B>(
     params: &CommittedGroupParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
         + RootCommitSource<F, 128>
@@ -433,14 +424,7 @@ fn commit_with_validated_profile<F, P, B>(
     profile: &CommittedGroupProfile,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
         + RootCommitSource<F, 128>
@@ -575,14 +559,7 @@ pub fn commit_with_params<F, P, B>(
     params: &CommittedGroupParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
         + RootCommitSource<F, 128>
@@ -615,7 +592,7 @@ fn root_transform_ring_dim<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    if Cfg::EXT_DEGREE == 1 {
+    if Cfg::DEGREE == 1 {
         return Ok(None);
     }
     let schedule = Cfg::get_params_for_prove(opening_batch)?;
@@ -654,14 +631,7 @@ pub fn commit<Cfg, P, B>(
 ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    Cfg::Field: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
     B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
@@ -708,7 +678,7 @@ pub fn prepare_batched_commit_inputs<F, P>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<OpeningClaimsLayout, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyMeta<F>,
 {
     if polys.is_empty() {
@@ -746,7 +716,7 @@ fn validate_group_commit_inputs<F, P>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<PolynomialGroupLayout, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyMeta<F>,
 {
     let opening_batch = prepare_commit_inputs::<F, P>(polys, setup)?;
@@ -773,14 +743,7 @@ pub fn commit_group<Cfg, P, B>(
 ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    Cfg::Field: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
     B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
@@ -875,14 +838,7 @@ pub fn commit_final_group<Cfg, P, B>(
 ) -> Result<FinalCommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    Cfg::Field: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
     B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
@@ -939,14 +895,7 @@ pub fn batched_commit<Cfg, P, B>(
 ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    Cfg::Field: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
     B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
@@ -996,14 +945,7 @@ pub fn batched_commit_with_params<F, P, B>(
     params: &CommittedGroupParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
         + RootCommitSource<F, 128>
@@ -1023,8 +965,8 @@ mod tests {
     use crate::AkitaProverSetup;
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::Fp64;
     use akita_types::{OpenCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId};
+    use jolt_field::Fp64;
 
     type F = Fp64<4294967197>;
     const D: usize = 64;

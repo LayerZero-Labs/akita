@@ -1,6 +1,6 @@
 //! Declarative NTT requirements for one resolved prover execution.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     CommittedGroupParams, FoldSchedule, NttCacheKey, NttTransformDomain, PrecommittedLevelParams,
     SetupPrefixSlotId, TerminalCommittedGroupParams,

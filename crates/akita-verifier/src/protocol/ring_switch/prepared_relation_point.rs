@@ -6,13 +6,14 @@
 #[cfg(test)]
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::{evaluate_power_sequence_mle, scalar_powers};
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
 #[cfg(test)]
 use akita_types::{CommitmentRingDims, RingRole};
 use akita_types::{PreparedRelationAddress, RelationAddressGeometry};
+use jolt_field::Field;
 use std::sync::Arc;
 
-pub(super) struct PreparedRolePoint<E: FieldCore> {
+pub(super) struct PreparedRolePoint<E: Field> {
     pub(super) ring_dim: usize,
     pub(super) powers: Arc<[E]>,
     pub(super) lane_powers: Arc<[E]>,
@@ -24,7 +25,7 @@ pub(super) struct PreparedRolePoint<E: FieldCore> {
 /// roles. The remaining point addresses relation lanes followed by semantic
 /// witness columns. Role-native setup columns split one A-role witness column
 /// into `d_a / d_role` subcolumns.
-pub(super) struct PreparedRelationPoint<E: FieldCore> {
+pub(super) struct PreparedRelationPoint<E: Field> {
     relation_address_geometry: RelationAddressGeometry,
     common_alpha_evaluation: E,
     alpha: E,
@@ -37,7 +38,7 @@ pub(super) struct PreparedRelationPoint<E: FieldCore> {
     additional: Vec<Arc<PreparedRolePoint<E>>>,
 }
 
-impl<E: FieldCore> PreparedRelationPoint<E> {
+impl<E: Field> PreparedRelationPoint<E> {
     pub(super) fn new(
         point: &[E],
         alpha: E,
@@ -247,7 +248,10 @@ impl<E: FieldCore> PreparedRelationPoint<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128OffsetA7F7;
+    use jolt_field::One;
+    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Ring;
+    use jolt_field::Zero;
 
     type F = Prime128OffsetA7F7;
 

@@ -2,7 +2,6 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::kernels::linear::{
     decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense,
@@ -11,6 +10,8 @@ use akita_prover::kernels::linear::{
 use akita_prover::DensePoly;
 use akita_types::{prepare_ntt_cache, NttCacheMode};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use jolt_field::{CanonicalEncoding, Ring};
+
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -25,7 +26,7 @@ fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
     let decomp = Cfg::decomposition();
     if decomp.log_commit_bound >= 128 {
         (0..len)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
             .collect()
     } else {
         let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);

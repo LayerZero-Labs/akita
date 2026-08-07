@@ -11,8 +11,8 @@ use crate::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
-use akita_field::{AkitaError, FieldCore};
-use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
+use akita_error::AkitaError;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// Ring-column counts per witness segment in emission order (`z ‖ e ‖ t ‖ …`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +30,7 @@ pub struct RingRelationOpeningCounts {
 }
 
 /// Witness segment lengths shared by prover emission, layout offsets, and M-table sizing.
-pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
+pub fn ring_relation_segment_lengths<F: Field + CanonicalEncoding>(
     lp: &CommittedGroupParams,
     opening_counts: RingRelationOpeningCounts,
 ) -> Result<RingRelationSegmentLengths, AkitaError> {
@@ -85,7 +85,7 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
 /// closures borrow typed role-local ring rows via [`Self::v_trusted`],
 /// and [`Self::row_coefficient_rings_trusted`].
 #[derive(Debug, Clone)]
-pub struct RingRelationInstance<F: FieldCore> {
+pub struct RingRelationInstance<F: Field> {
     group_challenges: Vec<Challenges>,
     group_opening_points: Vec<RingOpeningPoint<F>>,
     group_ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F>>,
@@ -97,7 +97,7 @@ pub struct RingRelationInstance<F: FieldCore> {
     role_dims: CommitmentRingDims,
 }
 
-impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
+impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
     /// Construct a validated ring-relation statement from D-free ring storage.
     ///
     /// Does not sample from the transcript; callers must absorb/sample before calling.
@@ -352,7 +352,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         row_coefficients: &[E],
     ) -> Result<(Vec<F>, RingVec<F>), AkitaError>
     where
-        F: FromPrimitiveInt,
+        F: Ring,
         E: FpExtEncoding<F> + ExtField<F>,
     {
         let mut gamma = Vec::with_capacity(row_coefficients.len());
@@ -426,8 +426,10 @@ mod tests {
         relation_rhs_coeff_len, relation_rhs_layout_for, InnerCommitMatrixParams,
         OuterCommitMatrixParams, PolynomialGroupLayout,
     };
+    use akita_algebra::One;
+    use akita_algebra::Zero;
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
-    use akita_field::Fp32;
+    use jolt_field::Fp32;
 
     type F = Fp32<251>;
     const D: usize = 32;

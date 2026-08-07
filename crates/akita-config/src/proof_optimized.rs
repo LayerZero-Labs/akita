@@ -4,14 +4,15 @@
 //! [`akita_types`] SIS primitives and generated schedule tables.
 
 use super::CommitmentConfig;
-use akita_field::AkitaError;
-use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use akita_error::AkitaError;
 use akita_types::{
     setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
     verifier_setup_matrix_capacity_for_schedule, AkitaExpandedSetup, AkitaScheduleLookupKey,
     CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
     SetupMatrixCapacity,
 };
+use jolt_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -310,7 +311,7 @@ where
 /// Offloaded producer edges are covered by verifier-visible setup-prefix
 /// commitments and do not require their natural source prefixes here.
 pub fn ensure_verifier_schedule_fits_setup(
-    setup: &AkitaExpandedSetup<impl akita_field::FieldCore>,
+    setup: &AkitaExpandedSetup<impl jolt_field::Field>,
     schedule: &FoldSchedule,
     layout: &OpeningClaimsLayout,
 ) -> Result<(), AkitaError> {
@@ -485,7 +486,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
             }
 
@@ -496,7 +497,7 @@ macro_rules! impl_proof_optimized_preset {
             fn setup_matrix_capacity(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixCapacity, akita_field::AkitaError> {
+            ) -> Result<akita_types::SetupMatrixCapacity, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_setup_matrix_capacity::<Self>(
                     max_num_vars,
                     max_num_batched_polys,
@@ -531,7 +532,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
+            ) -> Result<akita_types::FoldSchedule, akita_error::AkitaError> {
                 Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key(
                     layout,
                 )?)
@@ -562,7 +563,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
             }
 
@@ -573,7 +574,7 @@ macro_rules! impl_proof_optimized_preset {
             fn setup_matrix_capacity(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixCapacity, akita_field::AkitaError> {
+            ) -> Result<akita_types::SetupMatrixCapacity, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_setup_matrix_capacity::<Self>(
                     max_num_vars,
                     max_num_batched_polys,
@@ -608,7 +609,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
+            ) -> Result<akita_types::FoldSchedule, akita_error::AkitaError> {
                 Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key(
                     layout,
                 )?)

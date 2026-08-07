@@ -1,5 +1,5 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use crate::descriptor_bytes::push_usize;
 use crate::schedule::CommittedGroupProfile;

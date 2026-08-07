@@ -1,6 +1,8 @@
 use super::*;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Fold, Ring, Unreduced};
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
+impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(super) fn compute_current_round_poly_from_state(&mut self) -> UniPoly<E> {
         let t_scan = Instant::now();
         let use_deferred_compact_prefix = self.using_deferred_compact_prefix();
@@ -97,9 +99,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E>
-    for RelationRangeImageProver<E>
-{
+impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationRangeImageProver<E> {
     fn num_rounds(&self) -> usize {
         self.num_vars
     }

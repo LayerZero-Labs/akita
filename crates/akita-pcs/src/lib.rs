@@ -16,7 +16,8 @@
 //! ## Structure
 //!
 //! ### Core Modules
-//! - `akita-field` - Field traits, concrete fields, packing, and core error types
+//! - `jolt-field` - Shared field traits, concrete fields, packing, and FFT helpers
+//! - `akita-error` - Akita protocol errors
 //! - `akita-serialization` - Serialization abstractions
 //! - `akita-algebra` - Modules, rings, NTTs, and polynomial helpers
 //! - `akita-transcript` - Fiat-Shamir transcript implementations and labels
@@ -44,22 +45,9 @@ mod scheme;
 mod test_support;
 
 pub use akita_algebra::Module;
-pub use akita_field::AkitaError;
-// Specialized field surfaces mirror akita-field's curated facades.
-pub use akita_field::{
-    cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
-};
-pub use akita_field::{fft, packed, unreduced};
-pub use akita_field::{
-    is_registered_prime_offset, pseudo_mersenne_modulus, registered_prime_offset_spec,
-    AdditiveGroup, BalancedDigitLookup, CanonicalField, ExtField, FieldCore, Fp128, Fp32, Fp64,
-    FpExt2, FpExt2Config, FpExt4, FpExt4MulBackend, FpExt8, FromPrimitiveInt, HalvingField,
-    Invertible, LiftBase, Prime128Offset159, Prime128Offset2355, Prime128Offset275,
-    Prime128OffsetA7F7, Prime24Offset3, Prime30Offset35, Prime31Offset19, Prime32Offset99,
-    Prime40Offset195, Prime48Offset59, Prime56Offset27, Prime64Offset59, PrimeOffsetSpec,
-    PseudoMersenneField, RandomSampling, SmoothFftField, PRIME_OFFSET_IMPLEMENTED_MAX_BITS,
-    PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
-};
+// Specialized field surfaces mirror jolt-field's curated facades.
+pub use akita_algebra::fft;
+pub use akita_algebra::fft::SmoothFftField;
 pub use akita_prover::{
     CommitmentComputeBackend, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
     CyclicRowsComputeBackend, DecomposeFoldWitness, DenseCommitInput, DenseCommitRowsPlan,

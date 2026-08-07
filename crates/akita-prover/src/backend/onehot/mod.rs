@@ -34,11 +34,9 @@ use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
-};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring, Unreduced};
+
 use akita_types::{FpExtEncoding, RingMatrixView};
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -73,6 +71,7 @@ pub(crate) mod test_helpers;
 #[cfg(test)]
 mod tests;
 
+use akita_error::AkitaError;
 pub(crate) use blocks::{FlatBlocks, OneHotBlocks};
 pub(crate) use column_sweep::column_sweep_ajtai_onehot;
 pub(super) use entries::{shift_accumulation_count, OneHotEntry};

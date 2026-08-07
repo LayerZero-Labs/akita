@@ -6,13 +6,12 @@
 
 use super::{prepared_relation_point::PreparedRelationPoint, RelationMatrixEvaluator};
 use akita_algebra::offset_eq::OffsetEqWindow;
-use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced,
-};
+use akita_error::AkitaError;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, relation_rhs_layout_for, AkitaExpandedSetup,
     FpExtEncoding, RelationAddressGeometry, RelationRowFamily,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 pub(super) fn evaluate_relation_at_point<F, E>(
     evaluator: &RelationMatrixEvaluator<E>,
@@ -22,8 +21,8 @@ pub(super) fn evaluate_relation_at_point<F, E>(
     deferred_setup_claim: Option<E>,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
 {
     let context = evaluator
         .flat_context
@@ -118,8 +117,8 @@ fn evaluate_quotient_tail<F, E>(
     prepared_point: &PreparedRelationPoint<E>,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F>,
 {
     let context = evaluator
         .flat_context
@@ -178,7 +177,7 @@ where
     Ok(evaluation)
 }
 
-fn evaluate_lane_segment<E: FieldCore>(
+fn evaluate_lane_segment<E: Field>(
     equality_window: &OffsetEqWindow<E>,
     lane_start: usize,
     lane_alpha_powers: &[E],

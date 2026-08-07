@@ -6,14 +6,14 @@ use crate::compute::{
 use akita_challenges::{
     witness_fold_challenge_labels, Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw,
 };
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
     golomb_rice_total_wire_bits, golomb_rice_values_within_cap, golomb_rice_zigzag_width,
     CommittedGroupParams, FoldLinfProtocolBinding, LevelParamsLike, OpeningClaimsLayout,
     TerminalCommittedGroupParams, TerminalResponseShape,
 };
+use jolt_field::{CanonicalEncoding, Field, Ring, Unreduced};
 
 use super::ring_relation::{
     aggregate_decompose_fold_witnesses, build_point_decompose_fold_witness,
@@ -28,19 +28,19 @@ use akita_types::dispatch_for_field;
 /// to this module instead of infecting the public [`Transcript`] trait surface.
 pub trait ProverTranscriptGrind<F>: Transcript<F> + FoldChallengeSeedPreview
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
 }
 
 impl<F> ProverTranscriptGrind<F> for AkitaTranscript<F, TranscriptSponge> where
-    F: FieldCore + CanonicalField + akita_field::CanonicalBytes + akita_field::TranscriptChallenge
+    F: Field + CanonicalEncoding + jolt_field::CanonicalBytes + jolt_field::CanonicalEncoding
 {
 }
 
 #[cfg(feature = "logging-transcript")]
 impl<F, T> ProverTranscriptGrind<F> for akita_transcript::LoggingTranscript<T>
 where
-    F: FieldCore + CanonicalField + akita_field::CanonicalBytes + akita_field::TranscriptChallenge,
+    F: Field + CanonicalEncoding + jolt_field::CanonicalBytes + jolt_field::CanonicalEncoding,
     T: ProverTranscriptGrind<F>,
 {
 }
@@ -69,7 +69,7 @@ fn coeff_within_digit_bounds(coeff: i32, ctx: &FoldGrindAcceptanceCtx) -> bool {
 }
 
 #[cfg(test)]
-fn accepts_fold_witness<F: CanonicalField, const D: usize>(
+fn accepts_fold_witness<F: Field + CanonicalEncoding, const D: usize>(
     ctx: &FoldGrindAcceptanceCtx,
     witness: &DecomposeFoldWitness<F>,
     z_folded_centered_per_chunk: &[Vec<[i32; D]>],
@@ -87,7 +87,7 @@ fn accepts_fold_witness<F: CanonicalField, const D: usize>(
     true
 }
 
-fn accepts_fold_witness_flat<F: CanonicalField>(
+fn accepts_fold_witness_flat<F: Field + CanonicalEncoding>(
     ctx: &FoldGrindAcceptanceCtx,
     witness: &DecomposeFoldWitness<F>,
     centered_per_chunk: &[Vec<Vec<i32>>],
@@ -119,13 +119,13 @@ impl<G> Clone for FoldGrindGroup<'_, '_, G> {
     }
 }
 
-pub(crate) struct FoldGrindGroupOutput<F: FieldCore> {
+pub(crate) struct FoldGrindGroupOutput<F: Field> {
     pub(crate) witness: DecomposeFoldWitness<F>,
     pub(crate) centered_per_chunk: Vec<Vec<Vec<i32>>>,
     pub(crate) challenges: Challenges,
 }
 
-pub(crate) struct TerminalFoldGrindOutput<F: FieldCore> {
+pub(crate) struct TerminalFoldGrindOutput<F: Field> {
     pub(crate) witness: DecomposeFoldWitness<F>,
     pub(crate) nonce: u32,
 }
@@ -143,8 +143,7 @@ pub(crate) fn sample_terminal_fold_response<F, P, B, T>(
     shape: &TerminalResponseShape,
 ) -> Result<TerminalFoldGrindOutput<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     P: RootOpeningSource<F, 32>
         + RootOpeningSource<F, 64>
         + RootOpeningSource<F, 128>
@@ -271,7 +270,7 @@ pub(in crate::protocol) fn fold_probe_witness_kernel<F, P, B, const D: usize>(
     params: &(impl LevelParamsLike + ?Sized),
 ) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<[i32; D]>>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     P: RootOpeningSource<F, D>,
     B: crate::compute::ComputeBackendSetup<F>
         + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
@@ -347,10 +346,9 @@ fn sample_multi_group_fold_decompose_witnesses_native<F, E, G, B, T>(
     max_grind_attempts: u32,
 ) -> Result<(Vec<FoldGrindGroupOutput<F>>, u32), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: akita_types::FpExtEncoding<F>
-        + akita_field::ExtField<F>
+        + jolt_field::ExtField<F>
         + akita_serialization::AkitaSerialize,
     G: crate::protocol::core::RootProverGroupOpening<F, E, B>,
     B: crate::compute::ComputeBackendSetup<F> + crate::DigitRowsComputeBackend<F>,
@@ -437,10 +435,9 @@ pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, G, B, T>(
     _tail_t_vectors: Option<usize>,
 ) -> Result<(Vec<FoldGrindGroupOutput<F>>, u32), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     E: akita_types::FpExtEncoding<F>
-        + akita_field::ExtField<F>
+        + jolt_field::ExtField<F>
         + akita_serialization::AkitaSerialize,
     G: crate::protocol::core::RootProverGroupOpening<F, E, B>,
     B: crate::compute::ComputeBackendSetup<F> + crate::DigitRowsComputeBackend<F>,
@@ -490,7 +487,7 @@ mod tests {
     use super::*;
     use akita_algebra::CyclotomicRing;
 
-    type F = akita_field::Prime128Offset275;
+    type F = jolt_field::Prime128Offset275;
 
     #[test]
     fn joint_grind_skips_different_group_first_nonces() {

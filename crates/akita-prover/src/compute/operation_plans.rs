@@ -1,7 +1,8 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
 use akita_types::{CommittedGroupParams, CommittedGroupProfile};
+use jolt_field::Field;
 
 // ===========================================================================
 // Open, source-typed operation boundary (PO1)
@@ -74,7 +75,7 @@ impl CommitInnerPlan {
 /// multiplier points (scalar folds) and ring multiplier points (sparse
 /// ring-multiplier accumulation).
 #[derive(Debug, Clone, Copy)]
-pub enum OpeningFoldPlan<'a, F: FieldCore, const D: usize> {
+pub enum OpeningFoldPlan<'a, F: Field, const D: usize> {
     /// Base multiplier point: scalar fold weights.
     Base {
         /// Outer evaluation scalars applied to the folded blocks.
@@ -95,7 +96,7 @@ pub enum OpeningFoldPlan<'a, F: FieldCore, const D: usize> {
     },
 }
 
-impl<F: FieldCore, const D: usize> OpeningFoldPlan<'_, F, D> {
+impl<F: Field, const D: usize> OpeningFoldPlan<'_, F, D> {
     pub(crate) fn num_positions_per_block(self) -> usize {
         match self {
             Self::Base {
@@ -146,7 +147,7 @@ impl<F: FieldCore, const D: usize> OpeningFoldPlan<'_, F, D> {
 
 /// Fused evaluate-and-fold output.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpeningFoldOutput<F: FieldCore, const D: usize> {
+pub struct OpeningFoldOutput<F: Field, const D: usize> {
     /// Evaluation of the polynomial at the opening point.
     pub eval: CyclotomicRing<F, D>,
     /// Folded witness rows in ring form.

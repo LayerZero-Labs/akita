@@ -1,6 +1,6 @@
 //! Canonical setup-matrix field-capacity accounting.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use super::setup_prefix::{active_setup_field_len, suffix_opening_layout};
 use crate::{

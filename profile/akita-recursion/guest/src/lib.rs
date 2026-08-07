@@ -20,7 +20,7 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::BasisMode;

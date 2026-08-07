@@ -6,6 +6,8 @@
 
 use std::io::{Read, Write};
 
+mod field_impls;
+
 /// Default maximum number of elements accepted by self-described validated
 /// vector decoding.
 ///

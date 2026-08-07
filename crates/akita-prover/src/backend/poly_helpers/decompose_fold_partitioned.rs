@@ -7,8 +7,8 @@ use super::rotated_accum::{
 use super::{decompose_ring_interleaved, fill_rotated_challenge, sparse_mul_acc, DecomposeParams};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_field::parallel::*;
-use akita_field::CanonicalField;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 
 type RotatedTable<const D: usize> = Option<[[i16; D]; D]>;
 
@@ -35,7 +35,7 @@ fn partition_thread_count(num_positions_per_block: usize) -> usize {
     num_threads.min(num_positions_per_block.max(1)).max(1)
 }
 
-enum ElementFoldSource<'a, F: CanonicalField, const D: usize> {
+enum ElementFoldSource<'a, F: Field + CanonicalEncoding, const D: usize> {
     Predecomposed {
         digit_planes: &'a [[i8; D]],
         num_rings: usize,
@@ -46,7 +46,7 @@ enum ElementFoldSource<'a, F: CanonicalField, const D: usize> {
     },
 }
 
-impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
+impl<F: Field + CanonicalEncoding, const D: usize> ElementFoldSource<'_, F, D> {
     fn num_rings(&self) -> usize {
         match self {
             Self::Predecomposed { num_rings, .. } => *num_rings,
@@ -117,7 +117,7 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
     }
 }
 
-fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
+fn element_partitioned_decompose_fold<F: Field + CanonicalEncoding, const D: usize>(
     source: ElementFoldSource<'_, F, D>,
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
@@ -184,8 +184,8 @@ pub fn cached_digit_decompose_fold_partitioned<const D: usize>(
     num_digits: usize,
 ) -> Vec<[i32; D]> {
     let num_rings = digit_planes.len() / num_digits;
-    // `F` is unused for the predecomposed source; any `CanonicalField` instantiates the driver.
-    element_partitioned_decompose_fold::<akita_field::Prime128Offset275, D>(
+    // `F` is unused for the predecomposed source; any `CanonicalEncoding` instantiates the driver.
+    element_partitioned_decompose_fold::<jolt_field::Prime128Offset275, D>(
         ElementFoldSource::Predecomposed {
             digit_planes,
             num_rings,
@@ -197,7 +197,7 @@ pub fn cached_digit_decompose_fold_partitioned<const D: usize>(
 }
 
 /// Element-partitioned accumulation for multi-digit dense witnesses.
-pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usize>(
+pub fn balanced_ring_decompose_fold_partitioned<F: Field + CanonicalEncoding, const D: usize>(
     coeffs: &[CyclotomicRing<F, D>],
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,

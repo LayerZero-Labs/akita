@@ -7,7 +7,7 @@ use crate::compute::{
     RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
     RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
-use akita_field::MulBaseUnreduced;
+use jolt_field::MulBaseUnreduced;
 
 /// Inner (low) coordinate count for the factorized one-hot column-partials
 /// fast path. The high opening coordinates split into `inner_bits` low bits
@@ -23,7 +23,7 @@ const ONEHOT_TENSOR_PARTIALS_INNER_BITS: usize = 12;
 /// dispatch dimension: the underlying polynomial stores flat logical data,
 /// and the view fixes the ring dimension the kernels operate at.
 #[derive(Debug, Clone, Copy)]
-pub struct OneHotView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+pub struct OneHotView<'a, F: Field, const D: usize, I: OneHotIndex = usize> {
     poly: &'a OneHotPoly<F, I>,
 }
 
@@ -31,13 +31,13 @@ pub struct OneHotView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> 
 ///
 /// `D` is the kernel dispatch dimension, as in [`OneHotView`].
 #[derive(Debug, Clone, Copy)]
-pub struct OneHotBatchView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+pub struct OneHotBatchView<'a, F: Field, const D: usize, I: OneHotIndex = usize> {
     polys: &'a [&'a OneHotPoly<F, I>],
 }
 
 impl<F, I> RootPolyMeta<F> for OneHotPoly<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     fn num_ring_elems(&self) -> usize {
@@ -51,7 +51,7 @@ where
 
 impl<F, const D: usize, I> RootPolyShape<F, D> for OneHotPoly<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     fn num_ring_elems(&self) -> usize {
@@ -69,7 +69,7 @@ where
 
 impl<F, const D: usize, I> RootCommitSource<F, D> for OneHotPoly<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     type CommitView<'a>
@@ -84,7 +84,7 @@ where
 
 impl<F, const D: usize, I> RootOpeningSource<F, D> for OneHotPoly<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     type OpeningView<'a>
@@ -108,7 +108,7 @@ where
 
 impl<F, const D: usize, I> RootTensorSource<F, D> for OneHotPoly<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     type TensorView<'a>
@@ -132,7 +132,7 @@ where
 
 impl<F, const D: usize, I> RootCommitKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
     fn commit_inner(
@@ -147,7 +147,7 @@ where
 
 impl<F, const D: usize, I> OpeningFoldKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
     fn evaluate_and_fold(
@@ -198,7 +198,7 @@ where
 
 impl<F, const D: usize, I> OpeningBatchKernel<OneHotBatchView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
     fn decompose_fold_batch(
@@ -245,7 +245,7 @@ where
 impl<F, E, const D: usize, I> TensorProjectionKernel<OneHotView<'_, F, D, I>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
     E: ExtField<F>,
     I: OneHotIndex,
 {
@@ -287,7 +287,7 @@ where
 impl<F, E, const D: usize, I> TensorProjectionBatchKernel<OneHotBatchView<'_, F, D, I>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
     E: ExtField<F>,
     I: OneHotIndex,
 {
@@ -315,7 +315,7 @@ where
 
 impl<F, I: OneHotIndex> OneHotPoly<F, I>
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
 {
     pub(crate) fn fold_blocks<const D: usize>(
         &self,
@@ -565,7 +565,7 @@ where
 
     pub(crate) fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
     where
-        E: akita_field::ExtField<F>,
+        E: jolt_field::ExtField<F>,
     {
         let field_elems = self.direct_field_evals()?;
         akita_types::tensor_packed_witness_evals::<F, E>(self.num_vars, &field_elems)
@@ -736,7 +736,7 @@ where
         &self,
     ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
-        F: CanonicalField + FromPrimitiveInt,
+        F: Field + CanonicalEncoding + Ring,
         E: FpExtEncoding<F>,
     {
         Ok(self.tensor_packed_sparse_ring_poly::<E, D>()?.into())

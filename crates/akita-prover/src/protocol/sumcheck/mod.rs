@@ -16,12 +16,12 @@ pub use relation_range_image::RelationRangeImageProver;
 
 // --- Shared helpers ------------------------------------------------------
 
-use akita_field::FieldCore;
+use jolt_field::Field;
 
 /// Fold adjacent evaluations in a live-prefix row at a challenge `r`, treating
 /// indices past the materialized prefix as implicit zero-padding.
 #[inline]
-pub(crate) fn fold_prefix_pair_with_zero_padding<E: FieldCore>(row: &[E], left: usize, r: E) -> E {
+pub(crate) fn fold_prefix_pair_with_zero_padding<E: Field>(row: &[E], left: usize, r: E) -> E {
     let v0 = row.get(left).copied().unwrap_or_else(E::zero);
     let v1 = row.get(left + 1).copied().unwrap_or_else(E::zero);
     v0 + r * (v1 - v0)

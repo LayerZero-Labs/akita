@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
+impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     /// Build the low-basis prover from the compact witness table.
     pub(crate) fn new(
         digit_witness: std::sync::Arc<[i8]>,

@@ -1,16 +1,17 @@
 use super::compact_digit_source::RangeImageClass;
 use super::{compose_small_poly_with_affine, MAX_TREE_STAGE_Q_DEGREE};
-use akita_field::unreduced::HasOptimizedFold;
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
+use jolt_field::{Field, Fold, Ring};
+
+use akita_error::AkitaError;
 use akita_types::DigitRangePlan;
 
 /// Plan-derived child-node values for every range-image class.
-pub(super) struct ProductNodeTable<E: FieldCore, const LANES: usize> {
+pub(super) struct ProductNodeTable<E: Field, const LANES: usize> {
     rows: Vec<[E; LANES]>,
     class_count: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt, const LANES: usize> ProductNodeTable<E, LANES> {
+impl<E: Field + Ring, const LANES: usize> ProductNodeTable<E, LANES> {
     pub(super) fn new(
         plan: DigitRangePlan,
         leaf_polynomials: &[Vec<E>],
@@ -60,18 +61,18 @@ impl<E: FieldCore + FromPrimitiveInt, const LANES: usize> ProductNodeTable<E, LA
 }
 
 /// Child-node rows folded at the first challenge, indexed by an ordered class pair.
-pub(super) struct FoldedProductPairTable<E: FieldCore, const LANES: usize> {
+pub(super) struct FoldedProductPairTable<E: Field, const LANES: usize> {
     rows: Vec<[E; LANES]>,
     ordered_pair_count: usize,
 }
 
 /// Round-one product coefficients indexed by two first-challenge-folded class pairs.
-pub(super) struct SecondRoundProductQuartetCoefficients<E: FieldCore> {
+pub(super) struct SecondRoundProductQuartetCoefficients<E: Field> {
     rows: Vec<[E; MAX_TREE_STAGE_Q_DEGREE + 1]>,
     ordered_pair_count: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> SecondRoundProductQuartetCoefficients<E> {
+impl<E: Field + Ring + Fold> SecondRoundProductQuartetCoefficients<E> {
     pub(super) fn new<const LANES: usize>(
         folded_pairs: &FoldedProductPairTable<E, LANES>,
         arity: usize,
@@ -104,12 +105,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> SecondRoundProductQuart
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold, const LANES: usize>
-    FoldedProductPairTable<E, LANES>
-{
+impl<E: Field + Ring + Fold, const LANES: usize> FoldedProductPairTable<E, LANES> {
     pub(super) fn new(nodes: &ProductNodeTable<E, LANES>, challenge: E) -> Self {
         let class_count = nodes.class_count;
-        let fold_context = E::precompute_fold(challenge);
+        let fold_context = E::precompute(challenge);
         let rows = (0..class_count * class_count)
             .map(|pair_index| {
                 let left = nodes.row(class_from_index(pair_index / class_count, class_count));
@@ -130,18 +129,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold, const LANES: usize>
 }
 
 /// Range-image values folded at the first challenge, indexed by an ordered class pair.
-pub(super) struct FoldedRangeImagePairTable<E: FieldCore> {
+pub(super) struct FoldedRangeImagePairTable<E: Field> {
     values: Vec<E>,
     ordered_pair_count: usize,
 }
 
 /// Round-one range-polynomial coefficients indexed by two folded class pairs.
-pub(super) struct SecondRoundRangeQuartetCoefficients<E: FieldCore> {
+pub(super) struct SecondRoundRangeQuartetCoefficients<E: Field> {
     rows: Vec<[E; MAX_TREE_STAGE_Q_DEGREE + 1]>,
     ordered_pair_count: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> SecondRoundRangeQuartetCoefficients<E> {
+impl<E: Field + Ring + Fold> SecondRoundRangeQuartetCoefficients<E> {
     pub(super) fn new(
         folded_pairs: &FoldedRangeImagePairTable<E>,
         polynomial_coefficients: &[E],
@@ -170,9 +169,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> SecondRoundRangeQuartet
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> FoldedRangeImagePairTable<E> {
+impl<E: Field + Ring + Fold> FoldedRangeImagePairTable<E> {
     pub(super) fn new(class_count: usize, challenge: E) -> Self {
-        let fold_context = E::precompute_fold(challenge);
+        let fold_context = E::precompute(challenge);
         let values = (0..class_count * class_count)
             .map(|pair_index| {
                 let left = class_from_index(pair_index / class_count, class_count).range_image();
@@ -199,7 +198,7 @@ fn class_from_index(index: usize, class_count: usize) -> RangeImageClass {
     )
 }
 
-pub(super) fn product_coefficients<E: FieldCore, const LANES: usize>(
+pub(super) fn product_coefficients<E: Field, const LANES: usize>(
     left: [E; LANES],
     right: [E; LANES],
     arity: usize,
@@ -243,7 +242,7 @@ pub(super) fn product_coefficients<E: FieldCore, const LANES: usize>(
 }
 
 #[inline(always)]
-fn quadratic_affine_product<E: FieldCore>(
+fn quadratic_affine_product<E: Field>(
     left: [E; 2],
     right: [E; 2],
 ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
@@ -259,7 +258,7 @@ fn quadratic_affine_product<E: FieldCore>(
 }
 
 #[inline(always)]
-fn quartic_affine_product<E: FieldCore>(
+fn quartic_affine_product<E: Field>(
     left: [E; 4],
     right: [E; 4],
 ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
@@ -274,11 +273,11 @@ fn quartic_affine_product<E: FieldCore>(
     ]
 }
 
-pub(super) struct OrderedProductPairCoefficients<E: FieldCore> {
+pub(super) struct OrderedProductPairCoefficients<E: Field> {
     rows: Vec<[E; MAX_TREE_STAGE_Q_DEGREE + 1]>,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> OrderedProductPairCoefficients<E> {
+impl<E: Field + Ring> OrderedProductPairCoefficients<E> {
     pub(super) fn new<const LANES: usize>(
         nodes: &ProductNodeTable<E, LANES>,
         class_count: usize,
@@ -310,11 +309,11 @@ impl<E: FieldCore + FromPrimitiveInt> OrderedProductPairCoefficients<E> {
 }
 
 /// Complete round-zero polynomial coefficients indexed by two range-image classes.
-pub(super) struct OrderedRangePairCoefficients<E: FieldCore> {
+pub(super) struct OrderedRangePairCoefficients<E: Field> {
     rows: Vec<[E; MAX_TREE_STAGE_Q_DEGREE + 1]>,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> OrderedRangePairCoefficients<E> {
+impl<E: Field + Ring> OrderedRangePairCoefficients<E> {
     pub(super) fn new(class_count: usize, polynomial_coefficients: &[E]) -> Self {
         let rows = (0..class_count * class_count)
             .map(|pair_index| {
@@ -340,11 +339,12 @@ impl<E: FieldCore + FromPrimitiveInt> OrderedRangePairCoefficients<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128Offset275;
+    use jolt_field::One;
+    use jolt_field::Prime128Offset275;
 
     type F = Prime128Offset275;
 
-    fn product_coefficients_reference<E: FieldCore, const LANES: usize>(
+    fn product_coefficients_reference<E: Field, const LANES: usize>(
         left: [E; LANES],
         right: [E; LANES],
         arity: usize,
@@ -370,7 +370,7 @@ mod tests {
         batched
     }
 
-    fn compose_affine_reference<E: FieldCore>(coefficients: &[E], offset: E, slope: E) -> [E; 5] {
+    fn compose_affine_reference<E: Field>(coefficients: &[E], offset: E, slope: E) -> [E; 5] {
         let mut output = [E::zero(); 5];
         let mut power = [E::zero(); 5];
         power[0] = E::one();
@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn ordered_pairs_match_node_evaluation_for_every_high_basis_substage() {
         let challenge = F::from_u64(13);
-        let fold_context = F::precompute_fold(challenge);
+        let fold_context = F::precompute(challenge);
         for basis in [16, 32, 64] {
             let plan = DigitRangePlan::new(basis).unwrap();
             let leaf_polynomials = plan.leaf_coeffs::<F>();
@@ -458,7 +458,7 @@ mod tests {
     #[test]
     fn ordered_range_pairs_match_direct_affine_composition() {
         let challenge = F::from_u64(13);
-        let fold_context = F::precompute_fold(challenge);
+        let fold_context = F::precompute(challenge);
         for basis in [16, 32, 64] {
             let plan = DigitRangePlan::new(basis).unwrap();
             let coefficients = plan

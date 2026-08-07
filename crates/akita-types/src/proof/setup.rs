@@ -2,12 +2,14 @@
 
 use super::setup_prefix::SetupPrefixVerifierRegistry;
 use crate::FlatMatrix;
-#[allow(unused_imports)]
-use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+#[allow(unused_imports)]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
+
+use akita_error::AkitaError;
 use rand_core::{CryptoRng, RngCore};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
@@ -107,7 +109,7 @@ pub struct AkitaSetupDescriptor {
 /// Base role matrices (A, B, D) are packed row/column prefix views of
 /// `shared_matrix`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaExpandedSetup<F: FieldCore> {
+pub struct AkitaExpandedSetup<F: Field> {
     /// Setup seed and runtime layout metadata.
     pub seed: AkitaSetupDescriptor,
     /// Shared 1D flat backing vector.
@@ -116,7 +118,7 @@ pub struct AkitaExpandedSetup<F: FieldCore> {
 
 /// Verifier setup artifact derived from prover setup.
 #[derive(Debug, Clone)]
-pub struct AkitaVerifierSetup<F: FieldCore> {
+pub struct AkitaVerifierSetup<F: Field> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Public setup-prefix commitment metadata for setup-claim offloading.
@@ -126,15 +128,15 @@ pub struct AkitaVerifierSetup<F: FieldCore> {
     verifier_ntt: Arc<crate::ntt_cache::VerifierNttCache>,
 }
 
-impl<F: FieldCore> PartialEq for AkitaVerifierSetup<F> {
+impl<F: Field> PartialEq for AkitaVerifierSetup<F> {
     fn eq(&self, other: &Self) -> bool {
         self.expanded == other.expanded && self.prefix_slots == other.prefix_slots
     }
 }
 
-impl<F: FieldCore> Eq for AkitaVerifierSetup<F> {}
+impl<F: Field> Eq for AkitaVerifierSetup<F> {}
 
-impl<F: FieldCore> AkitaVerifierSetup<F> {
+impl<F: Field> AkitaVerifierSetup<F> {
     /// Construct verifier setup state from expanded setup and structurally checked prefix metadata.
     ///
     /// This constructor binds the registry to the public matrix identity. It
@@ -167,7 +169,7 @@ impl<F: FieldCore> AkitaVerifierSetup<F> {
     }
 }
 
-impl<F: FieldCore + CanonicalField> AkitaVerifierSetup<F> {
+impl<F: Field + CanonicalEncoding> AkitaVerifierSetup<F> {
     /// Return an exact or covering negacyclic prefix, preparing it on demand.
     pub fn prepared_verifier_ntt_prefix<const D: usize>(
         &self,
@@ -190,7 +192,7 @@ impl<F: FieldCore + CanonicalField> AkitaVerifierSetup<F> {
     }
 }
 
-impl<F: FieldCore> AkitaExpandedSetup<F> {
+impl<F: Field> AkitaExpandedSetup<F> {
     /// Build an expanded setup from a trusted matrix the caller has already
     /// derived from `seed.setup_seed`.
     ///
@@ -222,7 +224,7 @@ impl<F: FieldCore> AkitaExpandedSetup<F> {
 
 impl<F> AkitaExpandedSetup<F>
 where
-    F: FieldCore + CanonicalField + RandomSampling + Valid,
+    F: Field + CanonicalEncoding + Valid,
 {
     /// Build an expanded setup from untrusted parts and verify the materialized
     /// matrix against the public seed.
@@ -261,13 +263,13 @@ pub fn sample_akita_setup_seed() -> AkitaSetupSeed {
 /// ring-matrix views. Equal field-length requests therefore derive identical
 /// coefficient prefixes for every schedule.
 ///
-/// Each page owns one SHAKE256 stream and repeated [`RandomSampling::random`]
+/// Each page owns one SHAKE256 stream and repeated [`Field::random`]
 /// calls consume that stream sequentially. Pages may be derived in parallel,
 /// while concatenation in page-index order preserves deterministic prefix
 /// semantics.
 #[tracing::instrument(skip_all, name = "derive_public_matrix_prefix")]
 #[must_use]
-pub fn derive_public_matrix_prefix<F: FieldCore + CanonicalField + RandomSampling>(
+pub fn derive_public_matrix_prefix<F: Field + CanonicalEncoding>(
     num_field_elements: usize,
     id: &AkitaSetupSeed,
 ) -> FlatMatrix<F> {
@@ -291,7 +293,7 @@ pub fn derive_public_matrix_prefix<F: FieldCore + CanonicalField + RandomSamplin
 ///
 /// Returns an error if either side is structurally malformed or if the matrix
 /// field-element count differs from the seed.
-pub fn validate_public_matrix_shape_matches_seed<F: FieldCore + Valid>(
+pub fn validate_public_matrix_shape_matches_seed<F: Field + Valid>(
     shared_matrix: &FlatMatrix<F>,
     seed: &AkitaSetupDescriptor,
 ) -> Result<(), SerializationError> {
@@ -312,9 +314,7 @@ pub fn validate_public_matrix_shape_matches_seed<F: FieldCore + Valid>(
 ///
 /// Returns an error if the matrix shape is malformed or if any coefficient
 /// differs from the seed-derived public matrix.
-pub fn validate_public_matrix_matches_seed<
-    F: FieldCore + CanonicalField + RandomSampling + Valid,
->(
+pub fn validate_public_matrix_matches_seed<F: Field + CanonicalEncoding + Valid>(
     shared_matrix: &FlatMatrix<F>,
     seed: &AkitaSetupDescriptor,
 ) -> Result<(), SerializationError> {
@@ -346,7 +346,7 @@ struct SetupSeedPageXof {
 }
 
 impl SetupSeedPageXof {
-    fn new<F: CanonicalField>(id: &AkitaSetupSeed, page_index: usize) -> Self {
+    fn new<F: Field + CanonicalEncoding>(id: &AkitaSetupSeed, page_index: usize) -> Self {
         let mut xof = Shake256::default();
         absorb_len_prefixed(&mut xof, b"domain", PUBLIC_MATRIX_DOMAIN);
         let derivation_tag = match id.derivation {
@@ -367,7 +367,7 @@ impl SetupSeedPageXof {
     }
 }
 
-fn field_modulus_bytes<F: CanonicalField>() -> [u8; 32] {
+fn field_modulus_bytes<F: Field + CanonicalEncoding>() -> [u8; 32] {
     let modulus = crate::field_modulus::<F>().to_be_bytes();
     let mut encoded = [0u8; 32];
     encoded[16..].copy_from_slice(&modulus);
@@ -559,7 +559,7 @@ impl AkitaDeserialize for AkitaSetupDescriptor {
     }
 }
 
-impl<F: FieldCore + CanonicalField + RandomSampling + Valid> Valid for AkitaExpandedSetup<F> {
+impl<F: Field + CanonicalEncoding + Valid> Valid for AkitaExpandedSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.seed.check()?;
         self.shared_matrix.check()?;
@@ -568,7 +568,7 @@ impl<F: FieldCore + CanonicalField + RandomSampling + Valid> Valid for AkitaExpa
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaExpandedSetup<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for AkitaExpandedSetup<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -585,8 +585,8 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaExpandedSetup<F> {
     }
 }
 
-impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaDeserialize<Context = ()>>
-    AkitaDeserialize for AkitaExpandedSetup<F>
+impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for AkitaExpandedSetup<F>
 {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
@@ -616,7 +616,7 @@ impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaDeserialize<C
     }
 }
 
-impl<F: FieldCore + CanonicalField + RandomSampling + Valid> Valid for AkitaVerifierSetup<F> {
+impl<F: Field + CanonicalEncoding + Valid> Valid for AkitaVerifierSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
         if self.prefix_slots.setup_seed() != &self.expanded.seed.setup_seed {
@@ -628,7 +628,7 @@ impl<F: FieldCore + CanonicalField + RandomSampling + Valid> Valid for AkitaVeri
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaVerifierSetup<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for AkitaVerifierSetup<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         writer: W,
@@ -644,8 +644,8 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaVerifierSetup<F> {
     }
 }
 
-impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaDeserialize<Context = ()>>
-    AkitaDeserialize for AkitaVerifierSetup<F>
+impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for AkitaVerifierSetup<F>
 {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
@@ -671,7 +671,8 @@ impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaDeserialize<C
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp32, Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+    use akita_algebra::Zero;
+    use jolt_field::{Fp32, Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
     type F = Prime128Offset275;
     const D: usize = 4;
@@ -950,15 +951,13 @@ mod tests {
     #[test]
     fn paged_derivation_golden_vector() {
         let seed = AkitaSetupSeed::shake256_paged_v1([31u8; 32]);
-        fn samples<F: FieldCore + CanonicalField + RandomSampling>(
-            seed: &AkitaSetupSeed,
-        ) -> [u128; 3] {
+        fn samples<F: Field + CanonicalEncoding>(seed: &AkitaSetupSeed) -> [u128; 3] {
             let page_field_elements = seed.derivation.page_field_elements();
             let derived = derive_public_matrix_prefix::<F>(page_field_elements + 64, seed);
             let canonical = derived
                 .as_field_slice()
                 .iter()
-                .map(|value| value.to_canonical_u128())
+                .map(|value| value.to_u128_checked().expect("canonical base-field value"))
                 .collect::<Vec<_>>();
             [
                 canonical[0],

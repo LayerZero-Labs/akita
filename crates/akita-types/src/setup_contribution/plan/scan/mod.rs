@@ -1,9 +1,10 @@
 mod group;
 
 use super::*;
+use akita_algebra::cfg_try_fold_reduce;
 use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
 
-impl<E: FieldCore> SetupContributionPlan<E> {
+impl<E: Field> SetupContributionPlan<E> {
     pub fn evaluate_direct<F>(
         &self,
         setup: &AkitaExpandedSetup<F>,
@@ -12,7 +13,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         alpha_pows_d: &[E],
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         self.evaluate_role_dims_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
@@ -26,7 +27,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         alpha_pows_d: &[E],
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let geometry = self.projection_geometry;
@@ -86,7 +87,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         projections: &[[RoleProjection<E>; 3]],
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore,
+        F: Field,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let fused_groups = self.groups.len() > 1;
@@ -163,7 +164,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         projections: &[[RoleProjection<E>; 3]],
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore,
+        F: Field,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let setup_flat = setup_view.as_slice();

@@ -22,7 +22,7 @@ struct CenteredRhsBounds {
 /// products with their exact row bounds, eliminating redundant DRAM reads.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn fused_split_eq_quotients_with_params<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -142,7 +142,7 @@ pub(super) fn fused_split_eq_quotients_with_params<
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn fused_split_eq_quotients_one_shot<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -286,7 +286,7 @@ fn fused_split_eq_quotients_one_shot<
 }
 
 fn accumulate_cyclic_i8_rows<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -382,12 +382,14 @@ fn centered_rows_abs_bound<const D: usize>(rows: &[[i32; D]], len: usize) -> u64
         .unwrap_or(0)
 }
 
-fn centered_i32_ring<F: CanonicalField, const D: usize>(coeffs: &[i32; D]) -> CyclotomicRing<F, D> {
+fn centered_i32_ring<F: Field + CanonicalEncoding, const D: usize>(
+    coeffs: &[i32; D],
+) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(from_fn(|k| F::from_i64(coeffs[k] as i64)))
 }
 
 fn accumulate_centered_quotient_rows<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -501,7 +503,7 @@ fn accumulate_centered_quotient_rows<
 }
 
 fn accumulate_centered_quotient_rows_field<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -546,10 +548,7 @@ fn accumulate_centered_quotient_rows_field<
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[tracing::instrument(skip_all, name = "fused_split_eq_quotients")]
 #[cfg(test)]
-pub(crate) fn fused_split_eq_quotients<
-    F: FieldCore + CanonicalField + HalvingField,
-    const D: usize,
->(
+pub(crate) fn fused_split_eq_quotients<F: Field + CanonicalEncoding + Field, const D: usize>(
     slot: &PreparedNttCache<D>,
     n_d: usize,
     n_b: usize,
@@ -583,7 +582,7 @@ pub(crate) fn fused_split_eq_quotients<
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn fused_split_eq_quotients_prover_bounds<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     const D: usize,
 >(
     negacyclic_slot: &PreparedNttCache<D>,
@@ -624,7 +623,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn fused_split_eq_quotients_with_digit_bound<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding + Field,
     const D: usize,
 >(
     negacyclic_slot: &PreparedNttCache<D>,

@@ -2,7 +2,7 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_field::Prime128OffsetA7F7;
+use akita_algebra::Zero;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
@@ -14,6 +14,8 @@ use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion,
     SamplingMode,
 };
+use jolt_field::Prime128OffsetA7F7;
+
 use std::time::Duration;
 
 type F = Prime128OffsetA7F7;

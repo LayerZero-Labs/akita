@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_schedules::suffix_opening_layout;
 use akita_types::{
     active_setup_field_len, padded_setup_prefix_len, AkitaScheduleLookupKey, FoldSchedule,

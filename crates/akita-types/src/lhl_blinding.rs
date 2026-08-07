@@ -3,7 +3,7 @@
 //! This module is always compiled. The transparent protocol does not use it;
 //! it documents the digit-plane sizing discipline and anchors post-audit ZK work.
 
-use akita_field::CanonicalField;
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Statistical security target used by the LHL hiding mask.
 pub const LHL_STATISTICAL_SECURITY_BITS: usize = 128;
@@ -39,7 +39,7 @@ pub fn blinding_digit_plane_count_from_bits(
 
 /// Number of fresh digit-ring planes needed for an output in
 /// `R_q^{output_ring_len}`.
-pub fn blinding_digit_plane_count<F: CanonicalField>(
+pub fn blinding_digit_plane_count<F: Field + CanonicalEncoding>(
     output_ring_len: usize,
     ring_dimension: usize,
     log_basis: u32,
@@ -48,7 +48,7 @@ pub fn blinding_digit_plane_count<F: CanonicalField>(
         output_ring_len,
         ring_dimension,
         log_basis,
-        F::modulus_bits() as usize,
+        F::MODULUS_BITS as usize,
     )
 }
 

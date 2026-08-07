@@ -2,7 +2,8 @@
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_algebra::ring::eval_ring_at_pows_fast;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, ExtField, FieldCore, MulBaseUnreduced};
+use akita_error::AkitaError;
+use jolt_field::{ExtField, Field, MulBaseUnreduced};
 
 #[derive(Clone)]
 pub(crate) struct GroupSetupSegment<E> {
@@ -80,14 +81,14 @@ pub(super) enum RoleProjection<E> {
     },
 }
 
-impl<E: FieldCore> RoleProjection<E> {
+impl<E: Field> RoleProjection<E> {
     #[inline(always)]
     pub(super) fn is_identity(&self) -> bool {
         matches!(self, Self::Identity)
     }
 }
 
-pub(super) fn role_projection<E: FieldCore>(
+pub(super) fn role_projection<E: Field>(
     alpha_pows: &[E],
     base_pows: &[E],
     expected_ratio: usize,
@@ -142,7 +143,7 @@ pub(super) fn base_ring_segment_inner_sum_typed<
     a_projection: &RoleProjection<E>,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
     let setup = setup_flat
@@ -188,7 +189,7 @@ pub(super) fn for_each_base_ring_segment_weight_typed<
     mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
 ) -> Result<(), AkitaError>
 where
-    E: FieldCore,
+    E: Field,
 {
     let len = range
         .end
@@ -268,7 +269,7 @@ fn base_ring_segment_weight_at<E, const HAS_D: bool, const HAS_B: bool, const HA
     a_projection: &RoleProjection<E>,
 ) -> Result<E, AkitaError>
 where
-    E: FieldCore,
+    E: Field,
 {
     let mut weight = E::zero();
     if HAS_D {
@@ -302,7 +303,7 @@ where
 }
 
 #[inline(always)]
-fn projected_role_weight_at<E: FieldCore>(
+fn projected_role_weight_at<E: Field>(
     base_idx: usize,
     start_abs: usize,
     row_weight: E,
@@ -340,7 +341,7 @@ pub(super) fn evaluate_weighted_setup_row<Base, E>(
     alpha_pows: &[E],
 ) -> Result<E, AkitaError>
 where
-    Base: FieldCore,
+    Base: Field,
     E: ExtField<Base> + MulBaseUnreduced<Base>,
 {
     use super::super::checked_slice;

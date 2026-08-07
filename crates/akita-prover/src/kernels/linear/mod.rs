@@ -10,8 +10,9 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
 };
-use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_error::AkitaError;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 use std::array::from_fn;
 use std::mem::size_of;
 

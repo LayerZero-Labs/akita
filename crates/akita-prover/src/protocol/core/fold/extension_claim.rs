@@ -4,8 +4,7 @@ use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeOpeningProveBackendFor,
 };
 use crate::RootTensorProjectionPoly;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::AdditiveGroup;
+use jolt_field::Unreduced;
 
 pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, G> {
     CurrentClaims,
@@ -26,19 +25,18 @@ pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, V,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + RandomSampling
-        + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    F: Field
+        + CanonicalEncoding
+        + Ring
+        + Unreduced
+        + Field
+        + 'static
+        + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,

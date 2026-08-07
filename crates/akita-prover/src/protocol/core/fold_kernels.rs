@@ -10,12 +10,12 @@ use crate::compute::{
     ComputeBackendSetup, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
 };
 /// Batched trace-target data derived from folded claim openings.
-pub(in crate::protocol::core) struct TraceTarget<E: FieldCore> {
+pub(in crate::protocol::core) struct TraceTarget<E: Field> {
     pub(in crate::protocol::core) trace_eval_target: E,
 }
 
 /// Extract the typed fold/position ring-weight slices from a multiplier point.
-pub(in crate::protocol::core) fn multiplier_ring_weights<F: FieldCore, const D: usize>(
+pub(in crate::protocol::core) fn multiplier_ring_weights<F: Field, const D: usize>(
     point: &RingMultiplierOpeningPoint<F>,
 ) -> Result<MultiplierWeightSlices<'_, F, D>, AkitaError> {
     let live_block_weights = point.fold_rings_trusted::<D>()?.ok_or_else(|| {
@@ -35,7 +35,7 @@ fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
     num_positions_per_block: usize,
 ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     Q: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
@@ -66,8 +66,8 @@ pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, E, Q, B, c
     num_positions_per_block: usize,
 ) -> Result<FoldedClaimEvals<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore,
+    F: Field + CanonicalEncoding,
+    E: Field,
     Q: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
@@ -104,7 +104,7 @@ pub(in crate::protocol::core) fn prepare_and_evaluate_opening_group<F, E, Q, B, 
     alpha_bits: usize,
 ) -> Result<(PreparedOpeningPoint<F, E>, FoldedClaimEvals<F, D>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + ExtField<F>,
     Q: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
@@ -139,7 +139,7 @@ pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     transcript: &mut T,
 ) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F>,
     T: Transcript<F>,
 {
@@ -223,10 +223,10 @@ pub(in crate::protocol::core) fn scalar_opening_from_folded_ring<F, E, const D: 
     basis: BasisMode,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
     E: FpExtEncoding<F>,
 {
-    if <E as ExtField<F>>::EXT_DEGREE == 1 {
+    if <E as ExtField<F>>::DEGREE == 1 {
         return (*folded_ring * prepared_point.packed_inner_trusted::<D>()?.sigma_m1())
             .coefficients()
             .first()
@@ -234,15 +234,15 @@ where
             .map(E::lift_base)
             .ok_or_else(|| AkitaError::InvalidInput("empty folded opening ring".to_string()));
     }
-    if !D.is_multiple_of(<E as ExtField<F>>::EXT_DEGREE)
-        || !(D / <E as ExtField<F>>::EXT_DEGREE).is_power_of_two()
+    if !D.is_multiple_of(<E as ExtField<F>>::DEGREE)
+        || !(D / <E as ExtField<F>>::DEGREE).is_power_of_two()
     {
         return Err(AkitaError::InvalidInput(
             "extension-field degree must divide the ring dimension into power-of-two slots"
                 .to_string(),
         ));
     }
-    let packed_slots = D / <E as ExtField<F>>::EXT_DEGREE;
+    let packed_slots = D / <E as ExtField<F>>::DEGREE;
     let packed_inner_bits = packed_slots.trailing_zeros() as usize;
     if inner_opening_point.len() > packed_inner_bits
         && inner_opening_point[packed_inner_bits..]
@@ -271,7 +271,7 @@ pub(in crate::protocol::core) fn row_coefficient_rings<F, E, const D: usize>(
     coefficients: &[E],
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
     E: FpExtEncoding<F>,
 {
     coefficients
@@ -289,7 +289,7 @@ where
 }
 
 /// Prepared public evaluation-trace claim and its per-opening coefficients (#314 Stage-2).
-pub(in crate::protocol::core) struct PreparedEvaluationTraceClaim<E: FieldCore> {
+pub(in crate::protocol::core) struct PreparedEvaluationTraceClaim<E: Field> {
     pub(in crate::protocol::core) claimed_evaluation: E,
     pub(in crate::protocol::core) claim_coefficients: Vec<E>,
 }
@@ -302,7 +302,7 @@ pub(in crate::protocol::core) fn prepare_evaluation_trace_claim<F, E, T>(
     transcript: &mut T,
 ) -> Result<(PreparedEvaluationTraceClaim<E>, Vec<E>), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F>,
     T: Transcript<F>,
 {

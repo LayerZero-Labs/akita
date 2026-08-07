@@ -1,4 +1,5 @@
 use super::*;
+use jolt_field::One;
 
 type PrecommitCommitter = PrecommittedOneHotScheme;
 

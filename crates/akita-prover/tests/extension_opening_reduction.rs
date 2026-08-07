@@ -1,10 +1,10 @@
 #![allow(missing_docs)]
 
 use akita_algebra::poly::multilinear_eval;
-use akita_field::{
-    AkitaError, Ext2, ExtField, FieldCore, FpExt4, Prime128Offset275, Prime24Offset3,
-    Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime64Offset59,
-};
+use akita_algebra::One;
+use akita_algebra::Ring;
+use akita_algebra::Zero;
+use akita_error::AkitaError;
 use akita_prover::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
@@ -20,6 +20,10 @@ use akita_types::{
     tensor_row_partials_from_columns, ExtensionOpeningFactorTerm, ExtensionOpeningReductionFactor,
     ExtensionOpeningReductionRoundResult, ExtensionOpeningTensorPartials,
     EXTENSION_OPENING_REDUCTION_DEGREE,
+};
+use jolt_field::{
+    Ext2, ExtField, Field, FpExt4, Prime128Offset275, Prime24Offset3, Prime30Offset35,
+    Prime31Offset19, Prime32Offset99, Prime64Offset59,
 };
 
 type F = Prime128Offset275;
@@ -118,7 +122,7 @@ fn sparse_witness_sorted_constructor_combines_without_sorting() {
 
 fn lifted_multilinear_eval<B, E>(evals: &[B], point: &[E]) -> E
 where
-    B: FieldCore,
+    B: Field,
     E: ExtField<B>,
 {
     let mut layer = evals.iter().copied().map(E::lift_base).collect::<Vec<_>>();
@@ -155,11 +159,8 @@ fn tensor_partials_recompose_logical_extension_opening() {
         column_partials,
         row_partials,
     };
-    assert_eq!(
-        partials.column_partials.len(),
-        <E as ExtField<B>>::EXT_DEGREE
-    );
-    assert_eq!(partials.row_partials.len(), <E as ExtField<B>>::EXT_DEGREE);
+    assert_eq!(partials.column_partials.len(), <E as ExtField<B>>::DEGREE);
+    assert_eq!(partials.row_partials.len(), <E as ExtField<B>>::DEGREE);
 
     let logical_claim = derive_tensor_extension_opening_claim_from_partials::<B, E>(
         &point,
@@ -278,14 +279,14 @@ fn row_factor_batches_multiple_opening_points() {
 #[test]
 fn factor_rejects_malformed_shapes() {
     let err = ExtensionOpeningReductionFactor::<F>::from_terms(Vec::new()).unwrap_err();
-    assert!(matches!(err, akita_field::AkitaError::InvalidInput(_)));
+    assert!(matches!(err, akita_error::AkitaError::InvalidInput(_)));
 
     let err = ExtensionOpeningReductionFactor::from_terms(vec![
         ExtensionOpeningFactorTerm::new(vec![F::one(), F::zero()], F::one()),
         ExtensionOpeningFactorTerm::new(vec![F::one()], F::one()),
     ])
     .unwrap_err();
-    assert!(matches!(err, akita_field::AkitaError::InvalidSize { .. }));
+    assert!(matches!(err, akita_error::AkitaError::InvalidSize { .. }));
 }
 
 #[test]
@@ -799,7 +800,7 @@ fn detached_verifier_checks_transparent_factor_against_opened_witness() {
             opened_witness,
             factor_eval,
         ),
-        Err(akita_field::AkitaError::InvalidProof)
+        Err(akita_error::AkitaError::InvalidProof)
     ));
 }
 
@@ -819,7 +820,7 @@ fn extension_opening_reduction_rejects_wrong_final_oracle() {
 
     let bad_factor_evals: Vec<F> = (0..8).map(|i| F::from_u64((2 * i + 10) as u64)).collect();
     let err = verify_eor_full(&witness_evals, &bad_factor_evals, &proof).unwrap_err();
-    assert!(matches!(err, akita_field::AkitaError::InvalidProof));
+    assert!(matches!(err, akita_error::AkitaError::InvalidProof));
 }
 
 #[test]
@@ -872,12 +873,12 @@ fn proof_claim(witness_evals: &[F], factor_evals: &[F]) -> F {
 }
 
 // ---------------------------------------------------------------------------
-// Regression: EOR round messages must honor `DELAYED_PRODUCT_SUM_IS_EXACT`.
+// Regression: EOR round messages must honor `SUM_IS_EXACT`.
 //
 // `accumulate_dense_round`, `fused_fold_and_accumulate`, and the sparse
-// `accumulate_entries_with_factor` sum `mul_to_product_accum` products and
+// `accumulate_entries_with_factor` sum `mul_unreduced` products and
 // reduce once. That is only sound when the field's accumulator is exact w.r.t.
-// per-term `Mul`. For a field that leaves `DELAYED_PRODUCT_SUM_IS_EXACT` at its
+// per-term `Mul`. For a field that leaves `SUM_IS_EXACT` at its
 // conservative `false` default, the prover must reduce every product first, or
 // the round coefficients silently drift and the prover's claim diverges.
 //
@@ -888,8 +889,8 @@ fn proof_claim(witness_evals: &[F], factor_evals: &[F]) -> F {
 // assert the emitted round messages stay byte-identical to per-term `Mul`.
 mod delayed_product_sum_contract {
     use super::*;
-    use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-    use akita_field::{AdditiveGroup, Invertible, One, RingCore, Zero};
+    use jolt_field::{AdditiveGroup, Field, One, Ring, Zero};
+    use jolt_field::{Fold, Unreduced};
     use std::fmt;
     use std::iter::{Product, Sum};
     use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -898,8 +899,8 @@ mod delayed_product_sum_contract {
 
     /// `u64` product accumulator that adds modulo `2^64`. Each stored value is a
     /// canonical residue `< p < 2^64`, but summing several near-`p` residues
-    /// wraps, so `reduce(Σ mul_to_product_accum)` diverges from `Σ a*b` — exactly
-    /// the hazard `DELAYED_PRODUCT_SUM_IS_EXACT = false` exists to flag.
+    /// wraps, so `reduce(Σ mul_unreduced)` diverges from `Σ a*b` — exactly
+    /// the hazard `SUM_IS_EXACT = false` exists to flag.
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     struct WrappingU64Accum(u64);
 
@@ -954,7 +955,7 @@ mod delayed_product_sum_contract {
     impl AdditiveGroup for WrappingU64Accum {}
 
     /// Field wrapper over `Prime64Offset59` whose only non-standard behavior is
-    /// the lossy product accumulator above plus `DELAYED_PRODUCT_SUM_IS_EXACT =
+    /// the lossy product accumulator above plus `SUM_IS_EXACT =
     /// false`. All ordinary arithmetic delegates to the exact inner field, so a
     /// per-term `Mul` computation is trivially the ground truth.
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
@@ -1061,17 +1062,32 @@ mod delayed_product_sum_contract {
         }
     }
     impl AdditiveGroup for LossyField {}
-    impl RingCore for LossyField {}
-    impl Invertible for LossyField {
+    impl Ring for LossyField {
+        fn from_u64(v: u64) -> Self {
+            Self(Inner::from_u64(v))
+        }
+        fn from_i64(v: i64) -> Self {
+            Self(Inner::from_i64(v))
+        }
+        fn from_u128(v: u128) -> Self {
+            Self(Inner::from_u128(v))
+        }
+        fn from_i128(v: i128) -> Self {
+            Self(Inner::from_i128(v))
+        }
+    }
+    impl Field for LossyField {
         fn inverse(&self) -> Option<Self> {
             self.0.inverse().map(Self)
         }
+        fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
+            Self(Inner::random(rng))
+        }
     }
-    impl FieldCore for LossyField {}
 
-    impl HasOptimizedFold for LossyField {
-        type FoldCtx = Self;
-        fn precompute_fold(r: Self) -> Self {
+    impl Fold for LossyField {
+        type Ctx = Self;
+        fn precompute(r: Self) -> Self {
             r
         }
         fn fold_one(r: &Self, even: Self, odd: Self) -> Self {
@@ -1079,25 +1095,41 @@ mod delayed_product_sum_contract {
         }
     }
 
-    impl HasUnreducedOps for LossyField {
-        type MulU64Accum = WrappingU64Accum;
-        type ProductAccum = WrappingU64Accum;
+    impl Unreduced for LossyField {
+        type SmallProduct = WrappingU64Accum;
+        type Product = WrappingU64Accum;
 
         // Deliberately inexact: the accumulator wraps mod 2^64, so a delayed
         // batch sum diverges from per-term `Mul` once the sum crosses 2^64.
-        const DELAYED_PRODUCT_SUM_IS_EXACT: bool = false;
+        const SUM_IS_EXACT: bool = false;
 
         fn mul_u64_unreduced(self, small: u64) -> WrappingU64Accum {
             WrappingU64Accum((self.0 * Inner::from_u64(small)).to_limbs())
         }
-        fn mul_to_product_accum(self, other: Self) -> WrappingU64Accum {
+        fn mul_unreduced(self, other: Self) -> WrappingU64Accum {
             WrappingU64Accum((self.0 * other.0).to_limbs())
         }
-        fn reduce_mul_u64_accum(accum: WrappingU64Accum) -> Self {
+        fn reduce_small_product(accum: WrappingU64Accum) -> Self {
             Self(Inner::from_u64(accum.0))
         }
-        fn reduce_product_accum(accum: WrappingU64Accum) -> Self {
+        fn reduce_product(accum: WrappingU64Accum) -> Self {
             Self(Inner::from_u64(accum.0))
+        }
+
+        // The wide (i32-lane) path is not exercised by these tests; reuse the
+        // wrapping accumulator so the impl stays total.
+        type Wide = WrappingU64Accum;
+        fn scale_wide(self, small: i32) -> WrappingU64Accum {
+            WrappingU64Accum(self.0.to_limbs().wrapping_mul(small as i64 as u64))
+        }
+        fn reduce_wide(wide: WrappingU64Accum) -> Self {
+            Self(Inner::from_u64(wide.0))
+        }
+    }
+
+    impl From<LossyField> for WrappingU64Accum {
+        fn from(x: LossyField) -> Self {
+            Self(x.0.to_limbs())
         }
     }
 
@@ -1147,9 +1179,9 @@ mod delayed_product_sum_contract {
         let delayed = {
             let mut accum = WrappingU64Accum::zero();
             for i in 0..half {
-                accum += witness[2 * i].mul_to_product_accum(factor[2 * i]);
+                accum += witness[2 * i].mul_unreduced(factor[2 * i]);
             }
-            LossyField::reduce_product_accum(accum)
+            LossyField::reduce_product(accum)
         };
         assert_ne!(
             per_term, delayed,

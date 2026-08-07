@@ -4,16 +4,14 @@ use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, Prepa
 use crate::compute::{ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack};
 use crate::protocol::core::RootProverGroupOpening;
 use crate::{ProverOpeningData, ProverTranscriptGrind};
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
-    MulBaseUnreduced, RandomSampling,
-};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced};
+
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{BasisMode, CommittedGroupParams, FpExtEncoding};
 
-/// Prepare a fold level when claim and coefficient fields coincide (`EXT_DEGREE == 1`).
+/// Prepare a fold level when claim and coefficient fields coincide (`DEGREE == 1`).
 ///
 /// This path never runs extension-opening reduction or root tensor projection.
 #[allow(clippy::too_many_arguments)]
@@ -27,19 +25,18 @@ pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, V, C,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + RandomSampling
-        + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    F: Field
+        + CanonicalEncoding
+        + Ring
+        + Unreduced
+        + Field
+        + 'static
+        + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,

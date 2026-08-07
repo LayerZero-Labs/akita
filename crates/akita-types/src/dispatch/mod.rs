@@ -10,7 +10,8 @@ mod policy;
 
 use crate::layout::{CommitmentRingDims, RingRole};
 use akita_algebra::ntt::tables::{Q32_MODULUS, Q64_MODULUS};
-use akita_field::{AkitaError, CanonicalField};
+use akita_error::AkitaError;
+use jolt_field::{CanonicalEncoding, Field};
 
 pub use policy::{
     compression_ring_dim_supported_for_tier, inner_ring_dim_supported_for_tier, ntt_max_ring_d,
@@ -47,13 +48,16 @@ pub enum ProtocolDispatchSlot {
 ///
 /// Uses the identity: the canonical form of `-1` in `Z_q` is `q - 1`.
 #[inline]
-pub fn field_modulus<F: CanonicalField>() -> u128 {
-    (-F::one()).to_canonical_u128() + 1
+pub fn field_modulus<F: Field + CanonicalEncoding>() -> u128 {
+    (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1
 }
 
 /// Classify `F` into a dispatch tier from its modulus (Q32 / Q64 / Q128 CRT bands).
 #[inline]
-pub fn protocol_dispatch_tier<F: CanonicalField>() -> ProtocolRingDispatchTierId {
+pub fn protocol_dispatch_tier<F: Field + CanonicalEncoding>() -> ProtocolRingDispatchTierId {
     let modulus = field_modulus::<F>();
     if modulus <= Q32_MODULUS as u128 {
         ProtocolRingDispatchTierId::Fp32
@@ -74,7 +78,7 @@ pub fn ntt_ring_degree_supported_for_tier(tier: ProtocolRingDispatchTierId, d: u
 /// Whether `d` is a supported NTT ring degree for PCS field `F`.
 #[inline]
 #[must_use]
-pub fn ntt_ring_degree_supported_for_field<F: CanonicalField>(d: usize) -> bool {
+pub fn ntt_ring_degree_supported_for_field<F: Field + CanonicalEncoding>(d: usize) -> bool {
     ntt_ring_degree_supported_for_tier(protocol_dispatch_tier::<F>(), d)
 }
 
@@ -86,7 +90,7 @@ pub fn ntt_ring_degree_supported_for_field<F: CanonicalField>(d: usize) -> bool 
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when a role dimension is unsupported.
-pub fn validate_role_dims_for_field<F: CanonicalField>(
+pub fn validate_role_dims_for_field<F: Field + CanonicalEncoding>(
     dims: CommitmentRingDims,
 ) -> Result<(), AkitaError> {
     let tier = protocol_dispatch_tier::<F>();
@@ -149,7 +153,7 @@ pub fn validate_role_dispatch<const D: usize>(
 mod tests {
     use super::*;
     use crate::dispatch_for_field;
-    use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn protocol_dispatch_tier_classifies_fields() {

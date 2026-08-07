@@ -10,8 +10,9 @@ use crate::DecomposeFoldWitness;
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::TensorChallenges as TensorChallengeSet;
-use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 
 pub(super) fn decompose_fold_batched_tensor_dense<F, const D: usize>(
     polys: &[&DensePoly<F>],
@@ -21,13 +22,16 @@ pub(super) fn decompose_fold_batched_tensor_dense<F, const D: usize>(
     log_basis: u32,
 ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     if polys.is_empty() {
         return Ok(None);
     }
 
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1;
     let num_live_blocks_per_claim = validate_tensor_blocks::<D>(
         tensor,
         polys
@@ -164,7 +168,7 @@ fn accumulate_cached_digit_planes_tensor<const D: usize>(
     Ok(chunks.into_iter().flatten().collect())
 }
 
-fn balanced_ring_decompose_fold_tensor_partitioned<F: CanonicalField, const D: usize>(
+fn balanced_ring_decompose_fold_tensor_partitioned<F: Field + CanonicalEncoding, const D: usize>(
     poly_coeffs: &[&[CyclotomicRing<F, D>]],
     tensor: &TensorChallengeSet,
     num_live_blocks_per_claim: usize,

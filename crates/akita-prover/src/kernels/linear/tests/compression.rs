@@ -3,14 +3,11 @@ use crate::kernels::linear::{
     mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_single_i8_cyclic, validate_compression_batch_shape,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::{
-    CanonicalField, FieldCore, FromPrimitiveInt, Prime128OffsetA7F7, Prime32Offset99,
-    Prime64Offset59,
-};
 use akita_types::layout::FlatMatrix;
 use akita_types::prepare_compression_ntt_cache;
+use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
-fn assert_compression_batch<F: FieldCore + CanonicalField + FromPrimitiveInt, const D: usize>() {
+fn assert_compression_batch<F: Field + CanonicalEncoding, const D: usize>() {
     let column_count = 3;
     let matrix = (0..column_count)
         .map(|index| {
@@ -52,7 +49,7 @@ fn assert_compression_batch<F: FieldCore + CanonicalField + FromPrimitiveInt, co
     }
 }
 
-fn schoolbook_cyclic_digit_product<F: FieldCore + FromPrimitiveInt, const D: usize>(
+fn schoolbook_cyclic_digit_product<F: Field, const D: usize>(
     matrix: &[CyclotomicRing<F, D>],
     digits: &[[i8; D]],
 ) -> CyclotomicRing<F, D> {

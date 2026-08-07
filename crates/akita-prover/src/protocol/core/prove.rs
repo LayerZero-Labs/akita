@@ -10,9 +10,8 @@ use crate::RootTensorProjectionPoly;
 use akita_config::{
     effective_batched_schedule, ensure_prover_schedule_fits_setup, CommitmentConfig,
 };
-use akita_field::unreduced::ReduceTo;
-use akita_field::{AdditiveGroup, CanonicalField};
 use akita_types::OpeningScheduleSelection;
+use jolt_field::CanonicalEncoding;
 
 /// Drive batched proving end-to-end under config `Cfg`.
 ///
@@ -43,24 +42,12 @@ pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R>(
 ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField,
+    Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne,
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>
-        + ExtField<Cfg::Field>
-        + FrobeniusExtField<Cfg::Field>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    Cfg::ExtField:
+        FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Unreduced + Fold + Ring + AkitaSerialize,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    Cfg::Field: FromPrimitiveInt + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+    Cfg::Field: Ring + 'static,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O, TS>,
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
@@ -145,24 +132,12 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R>(
 ) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, usize), AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField,
+    Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne,
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>
-        + ExtField<Cfg::Field>
-        + FrobeniusExtField<Cfg::Field>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    Cfg::ExtField:
+        FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Unreduced + Fold + Ring + AkitaSerialize,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    Cfg::Field: FromPrimitiveInt + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+    Cfg::Field: Ring + 'static,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O, TS>,
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>

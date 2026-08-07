@@ -1,8 +1,10 @@
 //! Shared commitment-scheme API contracts.
 
 use crate::{BasisMode, GroupBatchStatement};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalEncoding, ExtField, Field};
+
+use akita_error::AkitaError;
 use std::borrow::Cow;
 
 /// Opening-point coordinates used by batched verification inputs.
@@ -19,7 +21,7 @@ pub type OpeningPoints<'a, F> = Cow<'a, [F]>;
 /// depend on it without importing commitment/proving machinery.
 pub trait CommitmentVerifier<F>: Clone + Send + Sync + 'static
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Verifier setup parameters.
     type VerifierSetup: Clone + Send + Sync;

@@ -19,11 +19,14 @@ fn expand_onehot_accum<const D: usize>(
     expanded
 }
 
-fn finish_decompose_fold<F: CanonicalField, const D: usize>(
+fn finish_decompose_fold<F: Field + CanonicalEncoding, const D: usize>(
     compressed_accum: Vec<[i32; D]>,
     num_digits: usize,
 ) -> DecomposeFoldWitness<F> {
-    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let modulus = (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1;
     let coeff_accum = {
         let _span = tracing::info_span!("onehot_expand_accum").entered();
         expand_onehot_accum(compressed_accum, num_digits)
@@ -41,7 +44,7 @@ fn decompose_fold_from_views<E, F, const D: usize>(
 ) -> DecomposeFoldWitness<F>
 where
     E: OneHotEntry,
-    F: CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     let compressed_accum = {
         let _span = tracing::info_span!("onehot_accumulate").entered();
@@ -55,7 +58,7 @@ where
     finish_decompose_fold(compressed_accum, num_digits)
 }
 
-impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
+impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
     pub(super) fn decompose_fold_onehot<E, const D: usize>(
         &self,
         blocks: &FlatBlocks<E>,
@@ -65,7 +68,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     ) -> DecomposeFoldWitness<F>
     where
         E: OneHotEntry,
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let num_live_blocks = challenges.len().min(blocks.num_live_blocks());
         let block_views: Vec<&[E]> = (0..blocks.num_live_blocks())
@@ -87,7 +90,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         num_digits: usize,
     ) -> Option<DecomposeFoldWitness<F>>
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let total_blocks = challenges.len();
         let cached_blocks = polys
@@ -123,7 +126,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         num_digits: usize,
     ) -> Option<DecomposeFoldWitness<F>>
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let total_blocks = challenges.len();
         let cached_blocks = polys
@@ -160,7 +163,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         num_digits: usize,
     ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError>
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let Some(first) = polys.first() else {
             return Ok(None);
@@ -170,7 +173,10 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             .expect("OneHotPoly::decompose_fold_batched_tensor_onehot: invalid num_positions_per_block for first polynomial");
         let expected_blocks = tensor.total_blocks()?;
         validate_tensor_blocks::<D>(tensor, expected_blocks)?;
-        let modulus = (-F::one()).to_canonical_u128() + 1;
+        let modulus = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
 
         let cached_blocks = polys
             .iter()

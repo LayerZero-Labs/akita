@@ -9,8 +9,10 @@ use crate::{
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::scalar_powers;
+use akita_algebra::One;
+use akita_algebra::Zero;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::Prime128OffsetA7F7;
+use jolt_field::Prime128OffsetA7F7;
 
 mod address_spans;
 mod fused_scan;

@@ -8,7 +8,7 @@
 
 use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     accumulate_matrix_field_elements_for_level, AkitaScheduleInputs, CommitmentRingDims,
     CommittedGroupParams, CommittedGroupProfile, DecompositionParams, FoldSchedule,

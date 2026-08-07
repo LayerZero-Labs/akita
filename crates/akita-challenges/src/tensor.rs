@@ -21,8 +21,9 @@
 
 use crate::challenge::accumulate_small_signed;
 use crate::{SparseChallenge, SparseChallengeConfig};
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
+use akita_error::AkitaError;
 use akita_transcript::labels;
+use jolt_field::{ExtField, Field, Ring};
 use sha3::{Digest, Sha3_256};
 
 const FOLD_HIGH_DIGEST_DOMAIN: &[u8] = b"akita/fold-high-digest/v1";
@@ -267,8 +268,8 @@ impl Challenges {
         alpha_pows: &[E],
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + MulBase<F>,
+        F: Field + Ring,
+        E: Field + ExtField<F>,
     {
         match self {
             Self::Sparse { challenges, .. } => challenges
@@ -300,8 +301,8 @@ impl Challenges {
     /// per-challenge evaluation rejects its input.
     pub fn evals_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<Vec<E>, AkitaError>
     where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + MulBase<F>,
+        F: Field + Ring,
+        E: Field + ExtField<F>,
     {
         match self {
             Self::Sparse { challenges, .. } => challenges
@@ -506,8 +507,8 @@ impl TensorChallenges {
         alpha_pows: &[E],
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + MulBase<F>,
+        F: Field + Ring,
+        E: Field + ExtField<F>,
     {
         let ring_d = alpha_pows.len();
         if ring_d < 2 {
@@ -540,8 +541,8 @@ impl TensorChallenges {
     /// Returns an error if challenge shape validation or evaluation fails.
     pub fn evals_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<Vec<E>, AkitaError>
     where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + MulBase<F>,
+        F: Field + Ring,
+        E: Field + ExtField<F>,
     {
         let ring_d = alpha_pows.len();
         if ring_d < 2 {
@@ -615,8 +616,8 @@ impl TensorChallenges {
         alpha_pows: &[E],
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + MulBase<F>,
+        F: Field + Ring,
+        E: Field + ExtField<F>,
     {
         let ring_d = alpha_pows.len();
         if ring_d < 2 {
@@ -757,8 +758,8 @@ fn reduced_tensor_product_eval_at_pows<F, E>(
     alpha_pow_d_plus_one: E,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
-    E: FieldCore + MulBase<F>,
+    F: Field + Ring,
+    E: Field + ExtField<F>,
 {
     let quotient_eval = tensor_product_quotient_eval::<F, E>(high, low, alpha_pows)?;
     Ok(high_eval * low_eval - alpha_pow_d_plus_one * quotient_eval)
@@ -771,8 +772,8 @@ fn tensor_product_quotient_eval<F, E>(
     alpha_pows: &[E],
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
-    E: FieldCore + MulBase<F>,
+    F: Field + Ring,
+    E: Field + ExtField<F>,
 {
     let ring_d = alpha_pows.len();
     high.validate_dyn(ring_d)?;
@@ -804,8 +805,8 @@ fn accumulate_sparse_scaled<F, E, const D: usize>(
     scale: E,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
-    E: FieldCore + MulBase<F>,
+    F: Field + Ring,
+    E: Field + ExtField<F>,
 {
     if out.len() != D {
         return Err(AkitaError::InvalidSize {
@@ -822,14 +823,14 @@ where
     Ok(())
 }
 
-fn eval_dense_at_pows<E: FieldCore>(coeffs: &[E], alpha_pows: &[E]) -> E {
+fn eval_dense_at_pows<E: Field>(coeffs: &[E], alpha_pows: &[E]) -> E {
     coeffs
         .iter()
         .zip(alpha_pows.iter())
         .fold(E::zero(), |acc, (&coeff, &power)| acc + coeff * power)
 }
 
-fn eval_dense_negacyclic_product_at_pows<E: FieldCore, const D: usize>(
+fn eval_dense_negacyclic_product_at_pows<E: Field, const D: usize>(
     high: &[E; D],
     low: &[E; D],
     alpha_pows: &[E],

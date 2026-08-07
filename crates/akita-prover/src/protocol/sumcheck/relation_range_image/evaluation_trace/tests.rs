@@ -1,21 +1,22 @@
 use super::*;
+use jolt_field::Zero;
 
 use akita_algebra::{poly::multilinear_eval, CyclotomicRing};
 use akita_config::{proof_optimized::fp128, CommitmentConfig};
-use akita_field::{Ext2, ExtField, FromPrimitiveInt};
 use akita_types::{
     basis_weights_prefix, r_decomp_levels, ring_opening_point_from_field, BasisMode,
     DigitRangePlan, EvaluationTraceInputs, FpExtEncoding, OpeningClaimsLayout,
     PreparedOpeningPoint, RelationAddressGeometry, RelationRangeImagePlan,
     RingMultiplierOpeningPoint, WitnessLayout,
 };
+use jolt_field::{Ext2, ExtField, Ring};
 
 type Cfg = fp128::D128Dense;
 type F = fp128::Field;
 const D: usize = Cfg::D;
 const NUM_VARIABLES: usize = 16;
 
-fn fold_prepared_trace_at_point<E: FieldCore>(
+fn fold_prepared_trace_at_point<E: Field>(
     mut trace: PreparedProverEvaluationTrace<E>,
     live_len: usize,
     coeff_count: usize,
@@ -34,7 +35,7 @@ fn fold_prepared_trace_at_point<E: FieldCore>(
     trace.get(0, 0, 1)
 }
 
-fn materialize_semantic_trace_oracle<E: FieldCore>(
+fn materialize_semantic_trace_oracle<E: Field>(
     weights: &EvaluationTraceWeights<E>,
     output_scale: E,
 ) -> Vec<E> {
@@ -76,7 +77,7 @@ fn materialize_semantic_trace_oracle<E: FieldCore>(
 
 fn assert_prepared_opening_support_matches_semantic_trace<E>(basis: BasisMode)
 where
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + Ring,
 {
     let opening_batch = OpeningClaimsLayout::new(NUM_VARIABLES, 2).unwrap();
     let level_params = Cfg::get_params_for_batched_commitment(&opening_batch).unwrap();

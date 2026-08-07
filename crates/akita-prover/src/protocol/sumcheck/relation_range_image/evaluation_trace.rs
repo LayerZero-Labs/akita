@@ -3,8 +3,9 @@
 use super::fold_two_round_quad;
 use std::{mem, sync::Arc};
 
-use akita_field::{AkitaError, FieldCore};
-use akita_field::{CanonicalField, ExtField, FromPrimitiveInt, Invertible};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+
+use akita_error::AkitaError;
 use akita_types::{
     basis_weights_prefix, prepare_evaluation_trace_group_parameters, BasisMode,
     EvaluationTraceInputs, FpExtEncoding,
@@ -20,7 +21,7 @@ struct EvaluationTraceSegment {
 
 /// One opening claim's rank-one evaluation-trace factors and physical support.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct EvaluationTraceTerm<E: FieldCore> {
+struct EvaluationTraceTerm<E: Field> {
     coefficient: E,
     block_opening_point: Arc<[E]>,
     basis: BasisMode,
@@ -35,7 +36,7 @@ struct EvaluationTraceTerm<E: FieldCore> {
 
 /// Complete nonempty evaluation-trace weight function over one flat witness domain.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct EvaluationTraceWeights<E: FieldCore> {
+pub(crate) struct EvaluationTraceWeights<E: Field> {
     terms: Vec<EvaluationTraceTerm<E>>,
     physical_field_len: usize,
     #[cfg(test)]
@@ -47,8 +48,8 @@ pub(crate) fn build_evaluation_trace_weights<F, E>(
     inputs: EvaluationTraceInputs<'_, F, E>,
 ) -> Result<EvaluationTraceWeights<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring + Field,
+    E: FpExtEncoding<F> + ExtField<F> + Ring,
 {
     let group_parameters = prepare_evaluation_trace_group_parameters::<F, E>(&inputs)?;
     let mut terms = Vec::with_capacity(inputs.claim_coefficients.len());
@@ -119,7 +120,7 @@ where
 }
 
 /// One opening block/digit contribution over contiguous common-coordinate lanes.
-struct PreparedOpeningSupport<E: FieldCore> {
+struct PreparedOpeningSupport<E: Field> {
     first_lane: usize,
     source_lane_start: usize,
     lane_count: usize,
@@ -128,13 +129,13 @@ struct PreparedOpeningSupport<E: FieldCore> {
 }
 
 #[derive(Clone)]
-struct PreparedLaneTerm<E: FieldCore> {
+struct PreparedLaneTerm<E: Field> {
     factor: E,
     source_index: usize,
     lane: usize,
 }
 
-struct PreparedTraceSource<E: FieldCore> {
+struct PreparedTraceSource<E: Field> {
     values: Vec<E>,
     lane_count: usize,
 }
@@ -144,14 +145,14 @@ struct PreparedTraceSource<E: FieldCore> {
 /// Block, claim, and digit scalars are compiled once. The source-coordinate trace stays
 /// factored while coefficient coordinates are folded; lane challenges then merge the
 /// prepared support directly. No full coefficient-domain trace table is materialized.
-pub(crate) struct PreparedProverEvaluationTrace<E: FieldCore> {
+pub(crate) struct PreparedProverEvaluationTrace<E: Field> {
     lane_terms: Vec<Vec<PreparedLaneTerm<E>>>,
     sources: Vec<PreparedTraceSource<E>>,
     live_lane_count: usize,
     coeff_count: usize,
 }
 
-impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
+impl<E: Field> PreparedProverEvaluationTrace<E> {
     pub(crate) fn final_value(&self) -> Result<E, AkitaError> {
         if self.live_lane_count != 1 || self.coeff_count != 1 {
             return Err(AkitaError::InvalidProof);

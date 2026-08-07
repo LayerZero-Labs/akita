@@ -3,17 +3,15 @@
 use crate::protocol::evaluation_trace::PreparedEvaluationTrace;
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
-    MulBaseUnreduced,
-};
+use akita_error::AkitaError;
 use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{
     AkitaExpandedSetup, CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
-pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore> {
+pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     batching_coeff: E,
     range_image_evaluation: E,
     witness_eval: E,
@@ -35,8 +33,8 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore> {
 
 impl<'a, F, E> AkitaStage2Verifier<'a, F, E>
 where
-    F: FieldCore + CanonicalField + HalvingField,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
 {
     /// Construct a verifier from the shared stage-2 context and the witness
     /// oracle selected by the current proof level.
@@ -94,8 +92,8 @@ where
 
 impl<'a, F, E> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E>
 where
-    F: FieldCore + CanonicalField + HalvingField,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
 {
     fn num_rounds(&self) -> usize {
         self.num_rounds

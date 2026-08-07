@@ -8,23 +8,19 @@ use crate::workload::{
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::HasWide;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::TranscriptChallenge;
-use akita_field::{
-    CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
-};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupParams, FpExtEncoding, MultiChunkProfileId,
     PolynomialGroupLayout,
 };
+use jolt_field::{
+    CanonicalBytes, CanonicalEncoding, ExtField, Field, Fold, PseudoMersenne, Ring, Unreduced,
+};
 
 type F = fp128::Field;
 
 fn fp128_prime_label() -> String {
-    match <F as PseudoMersenneField>::MODULUS_OFFSET {
+    match <F as PseudoMersenne>::OFFSET {
         2355 => "q=2^128-2355".to_string(),
         // Prime128OffsetA7F7: p = 2^128 - 2^32 + 22537 = 2^128 - 0xFFFFA7F7.
         0xFFFFA7F7 => "q=2^128-2^32+22537".to_string(),
@@ -53,23 +49,16 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     title: &str,
     nv: usize,
 ) where
-    FF: CanonicalField
+    FF: Field
+        + CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
+        + Ring
+        + PseudoMersenne
+        + Unreduced
         + Valid
         + AkitaSerialize
         + 'static,
-    Cfg::ExtField: FrobeniusExtField<FF>
-        + FpExtEncoding<FF>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize
-        + Valid,
+    Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize + Valid,
 {
     // The dense profile opens one polynomial at one point, so the schedule key
     // is the singleton root the prover actually resolves via
@@ -90,23 +79,16 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     nv: usize,
     num_polys: usize,
 ) where
-    FF: CanonicalField
+    FF: Field
+        + CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
+        + Ring
+        + PseudoMersenne
+        + Unreduced
         + Valid
         + AkitaSerialize
         + 'static,
-    Cfg::ExtField: FrobeniusExtField<FF>
-        + FpExtEncoding<FF>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize
-        + Valid,
+    Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize + Valid,
 {
     tracing::info!("{}", title);
     if num_polys == 1 {
@@ -664,7 +646,7 @@ pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
 pub(crate) fn log_active_fp128_prime_probe() {
     tracing::info!(
         "fp128 protocol prime active: modulus_offset = 0x{:x}, probe(2^128 + 1) = 0x{:x}",
-        <F as PseudoMersenneField>::MODULUS_OFFSET,
+        <F as PseudoMersenne>::OFFSET,
         F::solinas_reduce(&[1u64, 0, 1]).to_canonical_u128(),
     );
 }

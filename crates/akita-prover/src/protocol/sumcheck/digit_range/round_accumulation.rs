@@ -1,11 +1,10 @@
 use super::exact_prefix::SplitEqualitySuffixMass;
 use super::MAX_TREE_STAGE_Q_DEGREE;
-use akita_field::parallel::*;
-use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{FieldCore, Zero};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Unreduced, Zero};
 
 #[inline]
-fn accumulate_canonical_blocks<E: FieldCore>(
+fn accumulate_canonical_blocks<E: Field>(
     first: &[E],
     second: &[E],
     explicit_pair_count: usize,
@@ -42,7 +41,7 @@ fn accumulate_canonical_blocks<E: FieldCore>(
 }
 
 #[inline(always)]
-pub(super) fn add_scaled_round_coefficients<E: FieldCore>(
+pub(super) fn add_scaled_round_coefficients<E: Field>(
     destination: &mut [E; MAX_TREE_STAGE_Q_DEGREE + 1],
     source: &[E; MAX_TREE_STAGE_Q_DEGREE + 1],
     scale: E,
@@ -52,7 +51,7 @@ pub(super) fn add_scaled_round_coefficients<E: FieldCore>(
     }
 }
 
-fn accumulate_delayed_blocks<E: FieldCore + HasUnreducedOps>(
+fn accumulate_delayed_blocks<E: Field + Unreduced>(
     first: &[E],
     second: &[E],
     explicit_pair_count: usize,
@@ -61,21 +60,21 @@ fn accumulate_delayed_blocks<E: FieldCore + HasUnreducedOps>(
     let explicit_block_count = explicit_pair_count.div_ceil(first.len());
     cfg_fold_reduce!(
         0..explicit_block_count,
-        || [E::ProductAccum::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
+        || [E::Product::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
         |mut outer, second_index| {
             let block_start = second_index * first.len();
             let block_end = explicit_pair_count.min(block_start + first.len());
-            let mut inner = [E::ProductAccum::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
+            let mut inner = [E::Product::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
             for pair_index in block_start..block_end {
                 let source = coefficients_at(pair_index);
                 let first_weight = first[pair_index - block_start];
                 for (destination, source) in inner.iter_mut().zip(source) {
-                    *destination += first_weight.mul_to_product_accum(source);
+                    *destination += first_weight.mul_unreduced(source);
                 }
             }
             let second_weight = second[second_index];
             for (destination, inner) in outer.iter_mut().zip(inner) {
-                *destination += second_weight.mul_to_product_accum(E::reduce_product_accum(inner));
+                *destination += second_weight.mul_unreduced(E::reduce_product(inner));
             }
             outer
         },
@@ -86,10 +85,10 @@ fn accumulate_delayed_blocks<E: FieldCore + HasUnreducedOps>(
             left
         }
     )
-    .map(E::reduce_product_accum)
+    .map(E::reduce_product)
 }
 
-pub(super) fn accumulate_equality_weighted_round<E: FieldCore + HasUnreducedOps>(
+pub(super) fn accumulate_equality_weighted_round<E: Field + Unreduced>(
     first: &[E],
     second: &[E],
     explicit_pair_count: usize,
@@ -97,7 +96,7 @@ pub(super) fn accumulate_equality_weighted_round<E: FieldCore + HasUnreducedOps>
     default_coefficients: [E; MAX_TREE_STAGE_Q_DEGREE + 1],
 ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
     debug_assert!(explicit_pair_count <= first.len() * second.len());
-    let mut coefficients = if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+    let mut coefficients = if E::SUM_IS_EXACT {
         accumulate_delayed_blocks(first, second, explicit_pair_count, &coefficients_at)
     } else {
         accumulate_canonical_blocks(first, second, explicit_pair_count, &coefficients_at)
@@ -112,9 +111,9 @@ pub(super) fn accumulate_equality_weighted_round<E: FieldCore + HasUnreducedOps>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{FpExt4, FromPrimitiveInt, Prime128Offset275, Prime32Offset99};
+    use jolt_field::{FpExt4, Prime128Offset275, Prime32Offset99, Ring};
 
-    fn check_blocked_accumulation<E: FieldCore + FromPrimitiveInt + HasUnreducedOps>() {
+    fn check_blocked_accumulation<E: Field + Ring + Unreduced>() {
         let first = [2, 3, 5, 7].map(E::from_u64);
         let second = [11, 13, 17, 19].map(E::from_u64);
         let rows = (0..first.len() * second.len())

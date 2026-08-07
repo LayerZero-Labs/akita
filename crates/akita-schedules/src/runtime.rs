@@ -1,7 +1,7 @@
 //! Planner-free runtime schedule expansion support.
 
 use akita_challenges::TensorChallengeShape;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldSchedule,
     FoldScheduleEstimate, PlannedFoldSchedule, PolynomialGroupLayout, RecursiveFoldParams,

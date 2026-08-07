@@ -1,6 +1,6 @@
 use super::*;
-use akita_field::unreduced::{Fp128x8i32, Fp64x4i32};
-use akita_field::{Fp64, Prime128Offset275};
+use jolt_field::{Fp128x8i32, Fp64, Fp64x4i32, Prime128Offset275};
+
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -10,7 +10,7 @@ const D: usize = 64;
 
 #[test]
 fn cyclotomic_ring_satisfies_jolt_ring_core() {
-    fn assert_ring_core<R: RingCore>() {}
+    fn assert_ring_core<R: Ring>() {}
     assert_ring_core::<CyclotomicRing<F64, D>>();
 
     let x = CyclotomicRing::<F64, D>::x();
@@ -202,7 +202,7 @@ fn asymmetric_centering_boundary_roundtrip_fp128() {
             q - 1,
         ];
         let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|i| {
-            F128::from_canonical_u128_reduced(boundary_values[i % boundary_values.len()])
+            F128::from_u128_reduced(boundary_values[i % boundary_values.len()])
         }));
 
         let mut digits = vec![CyclotomicRing::<F128, D>::zero(); levels];
@@ -231,7 +231,7 @@ fn flat_coefficient_decomposition_matches_ring_digit_layout() {
         2 => -F128::one(),
         3 => F128::from_u64((index * 17) as u64),
         4 => F128::from_i64(-((index * 19) as i64)),
-        _ => F128::from_canonical_u128_reduced(u128::MAX - index as u128),
+        _ => F128::from_u128_reduced(u128::MAX - index as u128),
     }));
 
     for (levels, log_basis) in [(128, 1), (64, 2), (32, 4), (16, 8)] {

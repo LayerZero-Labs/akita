@@ -1,6 +1,8 @@
 use super::*;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Ring, Unreduced};
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
+impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[inline]
     pub(super) fn direct_fold_w_quad_two_rounds(
         w00: i8,

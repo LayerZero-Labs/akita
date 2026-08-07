@@ -7,7 +7,7 @@
 
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_challenges::{witness_fold_challenge_labels, Challenges, FoldDraw, LiveFoldDraw};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
 use akita_transcript::labels::{self, ABSORB_OPENING_PAYLOAD};
@@ -17,6 +17,7 @@ use akita_types::{
     append_digit_range_child_claims, AkitaStage1Proof, CommittedGroupParams,
     DigitRangeEqualityPoint, DigitRangePlan, OpeningClaimsLayout,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 type DigitRangeVerifyOutput<E> = Vec<E>;
 
@@ -45,7 +46,7 @@ pub(crate) fn derive_multi_group_stage1_challenges<F, T>(
     grind_nonce: u32,
 ) -> Result<Vec<Challenges>, AkitaError>
 where
-    F: FieldCore + CanonicalField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     T: Transcript<F>,
 {
     append_flat_coefficients(
@@ -76,7 +77,7 @@ where
     Ok(group_challenges)
 }
 
-struct ProductSubcheckVerifier<'a, E: FieldCore> {
+struct ProductSubcheckVerifier<'a, E: Field> {
     equality_point: Vec<E>,
     input_claim: E,
     child_claims: &'a [E],
@@ -84,7 +85,7 @@ struct ProductSubcheckVerifier<'a, E: FieldCore> {
     arity: usize,
 }
 
-impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductSubcheckVerifier<'_, E> {
+impl<E: Field> EqFactoredSumcheckInstanceVerifier<E> for ProductSubcheckVerifier<'_, E> {
     type RoundState = GruenSplitEq<E>;
 
     fn num_rounds(&self) -> usize {
@@ -123,7 +124,7 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductSubcheckVeri
     }
 }
 
-struct RangePolynomialLeafVerifier<E: FieldCore> {
+struct RangePolynomialLeafVerifier<E: Field> {
     plan: DigitRangePlan,
     equality_point: Vec<E>,
     input_claim: E,
@@ -131,7 +132,7 @@ struct RangePolynomialLeafVerifier<E: FieldCore> {
     range_image_evaluation: E,
 }
 
-impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for RangePolynomialLeafVerifier<E> {
+impl<E: Field> EqFactoredSumcheckInstanceVerifier<E> for RangePolynomialLeafVerifier<E> {
     type RoundState = GruenSplitEq<E>;
 
     fn num_rounds(&self) -> usize {
@@ -163,12 +164,12 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for RangePolynomialLeaf
 }
 
 /// Stage-1 range-check verifier, including the root/leaf tree choreography.
-pub struct AkitaStage1Verifier<E: FieldCore> {
+pub struct AkitaStage1Verifier<E: Field> {
     equality_point: DigitRangeEqualityPoint<E>,
     plan: DigitRangePlan,
 }
 
-impl<E: FieldCore> AkitaStage1Verifier<E> {
+impl<E: Field> AkitaStage1Verifier<E> {
     /// Construct the stage-1 verifier from a checked range topology.
     pub fn new(equality_point: DigitRangeEqualityPoint<E>, plan: DigitRangePlan) -> Self {
         Self {
@@ -178,7 +179,7 @@ impl<E: FieldCore> AkitaStage1Verifier<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
+impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
     /// Verify the full stage-1 tree proof and return the final `stage1_point`.
     ///
     /// # Errors
@@ -191,7 +192,7 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
         transcript: &mut T,
     ) -> Result<DigitRangeVerifyOutput<E>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         E: ExtField<F>,
         T: Transcript<F>,
     {

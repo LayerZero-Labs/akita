@@ -1,7 +1,7 @@
 //! Root schedule planning.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::sis::{
     compute_num_digits_field_width, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, num_digits_inner, num_digits_open, rounded_up_collision_inf_norm,

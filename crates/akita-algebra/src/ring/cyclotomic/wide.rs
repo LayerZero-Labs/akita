@@ -1,4 +1,5 @@
 use super::*;
+use jolt_field::Unreduced;
 
 /// Wide (unreduced) cyclotomic ring element for carry-free accumulation.
 ///
@@ -22,7 +23,7 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
 
     /// Convert a reduced `CyclotomicRing<F, D>` into wide form.
     #[inline]
-    pub fn from_ring<F: FieldCore>(ring: &CyclotomicRing<F, D>) -> Self
+    pub fn from_ring<F: Field>(ring: &CyclotomicRing<F, D>) -> Self
     where
         W: From<F>,
     {
@@ -33,12 +34,9 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
 
     /// Reduce all coefficients back to canonical field form.
     #[inline]
-    pub fn reduce<F: FieldCore>(&self) -> CyclotomicRing<F, D>
-    where
-        W: ReduceTo<F>,
-    {
+    pub fn reduce<F: Unreduced<Wide = W>>(&self) -> CyclotomicRing<F, D> {
         CyclotomicRing {
-            coeffs: from_fn(|i| self.coeffs[i].reduce()),
+            coeffs: from_fn(|i| F::reduce_wide(self.coeffs[i])),
         }
     }
 

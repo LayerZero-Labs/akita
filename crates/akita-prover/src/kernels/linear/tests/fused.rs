@@ -1,4 +1,5 @@
 use super::*;
+use jolt_field::{One, Ring};
 
 #[test]
 fn fused_split_eq_quotients_uses_all_cyclic_role_rows() {
@@ -51,7 +52,7 @@ fn fused_split_eq_q128_quotient_chunks_before_crt_wrap() {
     const D: usize = 32;
     let cols = 4;
     let modulus = (-F::one()).to_canonical_u128() + 1;
-    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let half = F::from_u128_reduced(modulus / 2);
     let row = CyclotomicRing::from_coefficients([half; D]);
     let flat_rows = vec![row; cols];
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
@@ -83,7 +84,7 @@ fn fused_split_eq_q128_quotient_falls_back_when_one_term_exceeds_crt() {
     const D: usize = 128;
     let cols = 1;
     let modulus = (-F::one()).to_canonical_u128() + 1;
-    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let half = F::from_u128_reduced(modulus / 2);
     let row = CyclotomicRing::from_coefficients([half; D]);
     let flat = FlatMatrix::from_ring_slice(&[row]);
     let slot = prepare_both_transforms(
@@ -109,7 +110,7 @@ fn fused_split_eq_uses_actual_centered_bound_when_hint_is_underreported() {
     const D: usize = 32;
     let cols = 4;
     let modulus = (-F::one()).to_canonical_u128() + 1;
-    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let half = F::from_u128_reduced(modulus / 2);
     let row = CyclotomicRing::from_coefficients([half; D]);
     let flat_rows = vec![row; cols];
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
@@ -141,7 +142,7 @@ fn fused_split_eq_q128_cyclic_i8_chunks_before_crt_wrap() {
     const D: usize = 64;
     let cols = 2_050;
     let modulus = (-F::one()).to_canonical_u128() + 1;
-    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let half = F::from_u128_reduced(modulus / 2);
     let row = CyclotomicRing::from_coefficients([half; D]);
     let flat_rows = vec![row; cols];
     let flat = FlatMatrix::from_ring_slice(&flat_rows);

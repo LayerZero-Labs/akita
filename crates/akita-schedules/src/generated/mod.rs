@@ -420,11 +420,11 @@ mod mixed_dimension_key_tests {
 pub(crate) fn validate_entry_key(
     generated: &GeneratedFoldScheduleEntry,
     key: &akita_types::AkitaScheduleLookupKey,
-) -> Result<(), akita_field::AkitaError> {
+) -> Result<(), akita_error::AkitaError> {
     if schedule_key_eq(generated, key) {
         Ok(())
     } else {
-        Err(akita_field::AkitaError::InvalidSetup(
+        Err(akita_error::AkitaError::InvalidSetup(
             "generated schedule key mismatch".to_string(),
         ))
     }
@@ -436,7 +436,7 @@ pub(crate) fn validate_certified_bases(
     log_basis_open: u32,
     policy: &crate::PlannerPolicy,
     context: &str,
-) -> Result<(), akita_field::AkitaError> {
+) -> Result<(), akita_error::AkitaError> {
     let (min, max) = policy.basis_range;
     for (role, basis) in [
         ("inner", log_basis_inner),
@@ -444,13 +444,13 @@ pub(crate) fn validate_certified_bases(
         ("open", log_basis_open),
     ] {
         if basis < min || basis > max {
-            return Err(akita_field::AkitaError::InvalidSetup(format!(
+            return Err(akita_error::AkitaError::InvalidSetup(format!(
                 "{context} {role} basis {basis} outside policy range [{min}, {max}]"
             )));
         }
     }
     if log_basis_open < log_basis_inner || log_basis_open < log_basis_outer {
-        return Err(akita_field::AkitaError::InvalidSetup(format!(
+        return Err(akita_error::AkitaError::InvalidSetup(format!(
             "{context} certified open basis must dominate inner and outer bases"
         )));
     }

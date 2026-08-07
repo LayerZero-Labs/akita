@@ -1,5 +1,5 @@
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 #[inline]
 fn accumulate_small_signed_i64(dst: &mut i64, value: i64, coeff: i64) {

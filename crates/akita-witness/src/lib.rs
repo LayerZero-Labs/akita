@@ -18,8 +18,8 @@
 //! there is exactly one witness-view layer (never invent a second one).
 //!
 //! The crate sits below `akita-sumcheck` and `akita-prover` in the dependency
-//! graph and depends only on `akita-field`. It is verifier-reachable, so every
-//! shape check is panic-free and returns [`akita_field::AkitaError`].
+//! graph and depends only on `jolt-field`. It is verifier-reachable, so every
+//! shape check is panic-free and returns [`akita_error::AkitaError`].
 
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]

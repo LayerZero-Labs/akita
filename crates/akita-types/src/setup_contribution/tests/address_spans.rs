@@ -1,4 +1,6 @@
 use super::*;
+use akita_algebra::One;
+use akita_algebra::Zero;
 
 #[test]
 fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {

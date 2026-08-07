@@ -1,11 +1,9 @@
-//! Single-field fold verifier prefix (`EXT_DEGREE == 1`): no EOR replay.
+//! Single-field fold verifier prefix (`DEGREE == 1`): no EOR replay.
 
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction symbols in scope.
 use super::FoldPrefix;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-};
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::ABSORB_EVALUATION_CLAIMS;
 use akita_transcript::{append_ext_field, Transcript};
@@ -14,12 +12,13 @@ use akita_types::{
     prepare_opening_point, BasisMode, Commitment, CommittedGroupParams, FpExtEncoding,
     OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, TerminalCommittedGroupParams,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 pub(in crate::protocol::core) fn absorb_protocol_opening_points<F, E, T>(
     protocol_points: &[&[E]],
     transcript: &mut T,
 ) where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -42,8 +41,8 @@ pub(in crate::protocol::core) fn verify_single_field_root_prefix<F, E, T>(
     transcript: &mut T,
 ) -> Result<FoldPrefix<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
@@ -98,8 +97,8 @@ pub(in crate::protocol::core) fn prepare_single_field_terminal_suffix<F, E, T>(
     transcript: &mut T,
 ) -> Result<Vec<PreparedOpeningPoint<F, E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let prepared_point = dispatch_for_field!(
@@ -130,8 +129,8 @@ pub(in crate::protocol::core) fn prepare_single_field_suffix_groups<F, E>(
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<Vec<PreparedOpeningPoint<F, E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + ExtField<F> + Ring + AkitaSerialize,
 {
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
     let final_group_index = opening_batch.root_final_group_index()?;

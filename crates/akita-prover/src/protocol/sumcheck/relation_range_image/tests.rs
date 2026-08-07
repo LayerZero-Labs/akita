@@ -1,9 +1,11 @@
+use jolt_field::One;
+use jolt_field::Zero;
 mod trace_prefix;
 
 use super::*;
 use crate::protocol::sumcheck::digit_range::direct_range_leaf::pad_compact_witness;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::Prime128Offset275;
+use jolt_field::Prime128Offset275;
 
 type F = Prime128Offset275;
 

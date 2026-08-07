@@ -1,15 +1,16 @@
 //! Exact negacyclic NTT kernels for terminal verifier matrix relations.
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
 use akita_types::{
     dispatch_for_field, ntt_cache_requires_i16_tail, AkitaVerifierSetup, FoldSchedule,
 };
+use jolt_field::{CanonicalEncoding, Field};
 
 pub(super) const TERMINAL_I16_LOG_BASIS: u32 = 16;
 
 /// Warm every exact terminal i16 representation selected by a validated schedule.
-pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
+pub(super) fn warm_for_schedule<F: Field + CanonicalEncoding>(
     setup: &AkitaVerifierSetup<F>,
     schedule: &FoldSchedule,
 ) -> Result<(), AkitaError> {
@@ -55,7 +56,7 @@ pub(super) fn centered_rows<F, const D: usize>(
     prepared_prefix_len: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     let _span = tracing::info_span!(
         "terminal_ntt_a_product",
@@ -101,12 +102,13 @@ mod tests {
     use super::*;
     use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES};
     use akita_config::{proof_optimized::fp128::D64OneHot, CommitmentConfig};
-    use akita_field::{Prime128Offset275 as F, Prime32Offset99 as F32};
     use akita_types::{
         max_safe_crt_accumulation_width, select_crt_ntt_params, AkitaExpandedSetup,
         AkitaScheduleLookupKey, AkitaSetupDescriptor, FlatMatrix, PolynomialGroupLayout,
         ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
     };
+    use jolt_field::Ring;
+    use jolt_field::{Prime128Offset275 as F, Prime32Offset99 as F32};
     use std::sync::Arc;
 
     const D: usize = 64;

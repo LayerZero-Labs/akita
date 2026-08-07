@@ -48,8 +48,7 @@ fn column_sweep_core<E, F, const D: usize>(
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     E: OneHotEntry,
-    F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Unreduced,
 {
     let num_live_blocks = blocks.len();
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
@@ -185,8 +184,7 @@ pub(crate) fn column_sweep_ajtai_onehot<E, F, const D: usize>(
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     E: OneHotEntry,
-    F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Unreduced,
 {
     let num_live_blocks = blocks.len();
     debug_assert!(

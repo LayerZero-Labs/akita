@@ -6,11 +6,13 @@ use crate::proof::batch::append_claim_values_to_transcript;
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupDescriptor;
 use crate::{CommittedGroup, OpeningScheduleSelection};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_error::AkitaError;
+use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 /// Per-group opening geometry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -235,7 +237,7 @@ impl OpeningClaimsLayout {
         transcript: &mut T,
     ) -> Result<(), AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         T: Transcript<F>,
     {
         self.check()?;
@@ -255,7 +257,7 @@ impl OpeningClaimsLayout {
         openings: &[E],
     ) -> Result<E, AkitaError>
     where
-        E: FieldCore,
+        E: Field,
     {
         if row_coefficients.len() != self.num_total_polynomials() {
             return Err(AkitaError::InvalidSize {
@@ -289,7 +291,7 @@ impl OpeningClaimsLayout {
         group_factors: &[E],
     ) -> Result<Vec<E>, AkitaError>
     where
-        E: FieldCore,
+        E: Field,
     {
         if row_coefficients.len() != self.num_total_polynomials() {
             return Err(AkitaError::InvalidSize {
@@ -382,12 +384,12 @@ pub struct OpeningClaims<'a, F: Clone, C = ()> {
 /// The schedule selection is batch-level. Individual commitments remain
 /// reusable and carry only their exact algebraic profiles.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GroupBatchStatement<'a, E: Clone, F: FieldCore> {
+pub struct GroupBatchStatement<'a, E: Clone, F: Field> {
     selection: OpeningScheduleSelection,
     claims: OpeningClaims<'a, E, &'a CommittedGroup<F>>,
 }
 
-impl<'a, E: Clone, F: FieldCore> GroupBatchStatement<'a, E, F> {
+impl<'a, E: Clone, F: Field> GroupBatchStatement<'a, E, F> {
     /// Bind ordered self-describing claims to an approved schedule row.
     ///
     /// # Errors
@@ -559,7 +561,7 @@ pub fn derive_public_row_coefficients<F, L, T>(
     transcript: &mut T,
 ) -> Result<Vec<L>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     L: ExtField<F>,
     T: Transcript<F>,
 {
@@ -590,8 +592,10 @@ fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128OffsetA7F7;
+    use akita_algebra::Ring;
+    use akita_algebra::Zero;
     use akita_transcript::AkitaTranscript;
+    use jolt_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
 

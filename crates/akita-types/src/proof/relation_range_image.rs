@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use crate::{
     CommitmentRingDims, DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout,

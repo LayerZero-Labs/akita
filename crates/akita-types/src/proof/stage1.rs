@@ -1,13 +1,14 @@
 //! Shared stage-1 tree shape and polynomial helpers.
 
 use crate::{AkitaStage1Proof, AkitaStage1StageShape};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
 use akita_transcript::{append_ext_field, labels, Transcript};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// Absorb digit-range product child claims in their canonical transcript order.
 pub fn append_digit_range_child_claims<F, E, T>(claims: &[E], transcript: &mut T)
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
     T: Transcript<F>,
 {
@@ -98,12 +99,12 @@ impl FlatBooleanDomain {
 /// performs that one protocol-defined permutation and records the low-bit
 /// boundary needed by the current compact kernels.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DigitRangeEqualityPoint<E: FieldCore> {
+pub struct DigitRangeEqualityPoint<E: Field> {
     coordinates: Vec<E>,
     low_variable_count: usize,
 }
 
-impl<E: FieldCore> DigitRangeEqualityPoint<E> {
+impl<E: Field> DigitRangeEqualityPoint<E> {
     /// Reorder checked column-then-ring challenges into flat binding order.
     ///
     /// # Errors
@@ -290,7 +291,7 @@ impl DigitRangePlan {
     ///
     /// Returns an error if the number of substages, rounds, polynomial degree,
     /// or child claims differs from this plan.
-    pub fn validate_proof_shape<E: FieldCore>(
+    pub fn validate_proof_shape<E: Field>(
         self,
         proof: &AkitaStage1Proof<E>,
         rounds: usize,
@@ -330,7 +331,7 @@ impl DigitRangePlan {
     }
 
     /// Coefficients of the final range-leaf polynomials.
-    pub fn leaf_coeffs<E: FieldCore + FromPrimitiveInt>(self) -> Vec<Vec<E>> {
+    pub fn leaf_coeffs<E: Field + Ring>(self) -> Vec<Vec<E>> {
         stage1_root_values::<E>(self.basis())
             .chunks(4)
             .map(poly_coeffs_from_roots)
@@ -338,7 +339,7 @@ impl DigitRangePlan {
     }
 
     /// Evaluate the complete balanced-digit range polynomial at `range_image`.
-    pub fn evaluate_range_polynomial<E: FieldCore + FromPrimitiveInt>(self, range_image: E) -> E {
+    pub fn evaluate_range_polynomial<E: Field + Ring>(self, range_image: E) -> E {
         let mut value = E::one();
         for root in stage1_root_values::<E>(self.basis()) {
             value *= range_image - root;
@@ -347,7 +348,7 @@ impl DigitRangePlan {
     }
 
     /// Evaluate one leaf polynomial at a range-image value.
-    pub fn evaluate_leaf_polynomial<E: FieldCore>(self, coeffs: &[E], range_image: E) -> E {
+    pub fn evaluate_leaf_polynomial<E: Field>(self, coeffs: &[E], range_image: E) -> E {
         coeffs
             .iter()
             .rev()
@@ -356,7 +357,7 @@ impl DigitRangePlan {
     }
 
     /// Return powers of the interstage batching challenge.
-    pub fn interstage_batch_weights<E: FieldCore>(self, gamma: E, count: usize) -> Vec<E> {
+    pub fn interstage_batch_weights<E: Field>(self, gamma: E, count: usize) -> Vec<E> {
         let mut weights = Vec::with_capacity(count);
         let mut weight = E::one();
         for _ in 0..count {
@@ -367,7 +368,7 @@ impl DigitRangePlan {
     }
 
     /// Batch child claims using the current interstage weights.
-    pub fn batch_claims<E: FieldCore>(self, weights: &[E], claims: &[E]) -> Result<E, AkitaError> {
+    pub fn batch_claims<E: Field>(self, weights: &[E], claims: &[E]) -> Result<E, AkitaError> {
         if weights.len() != claims.len() {
             return Err(AkitaError::InvalidSize {
                 expected: weights.len(),
@@ -381,7 +382,7 @@ impl DigitRangePlan {
     }
 
     /// Batch leaf-polynomial coefficient vectors using interstage weights.
-    pub fn batch_leaf_polynomials<E: FieldCore>(
+    pub fn batch_leaf_polynomials<E: Field>(
         self,
         weights: &[E],
         leaf_polynomials: &[Vec<E>],
@@ -403,7 +404,7 @@ impl DigitRangePlan {
     }
 }
 
-fn stage1_root_values<E: FieldCore + FromPrimitiveInt>(b: usize) -> Vec<E> {
+fn stage1_root_values<E: Field + Ring>(b: usize) -> Vec<E> {
     let half = b / 2;
     (0..half)
         .map(|k| {
@@ -413,7 +414,7 @@ fn stage1_root_values<E: FieldCore + FromPrimitiveInt>(b: usize) -> Vec<E> {
         .collect()
 }
 
-fn poly_coeffs_from_roots<E: FieldCore>(roots: &[E]) -> Vec<E> {
+fn poly_coeffs_from_roots<E: Field>(roots: &[E]) -> Vec<E> {
     let mut coeffs = vec![E::one()];
     for &root in roots {
         let mut next = vec![E::zero(); coeffs.len() + 1];
@@ -429,7 +430,8 @@ fn poly_coeffs_from_roots<E: FieldCore>(roots: &[E]) -> Vec<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128Offset275;
+    use akita_algebra::One;
+    use jolt_field::Prime128Offset275;
 
     type F = Prime128Offset275;
 

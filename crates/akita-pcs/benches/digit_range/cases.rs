@@ -1,6 +1,7 @@
-use akita_field::Prime128Offset275;
 use akita_prover::DigitRangeProver;
 use akita_types::{DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
+use jolt_field::Prime128Offset275;
+use jolt_field::Ring;
 use std::sync::Arc;
 
 pub(crate) type BenchmarkField = Prime128Offset275;

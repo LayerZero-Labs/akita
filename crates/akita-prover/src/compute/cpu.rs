@@ -19,8 +19,8 @@ use crate::kernels::linear::{
     CrtI8CapacityProfile,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
+use jolt_field::{CanonicalEncoding, Field, Unreduced};
+
 use akita_types::{
     dispatch_for_field, prepare_ntt_cache, AkitaExpandedSetup, NttCacheKey, NttCacheMode,
     NttTransformDomain, PreparedNttCache,
@@ -34,6 +34,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 mod compression_cache;
 
+use akita_error::AkitaError;
 use compression_cache::CompressionNttCache;
 
 /// CPU backend using the existing Rust/Rayon kernels.
@@ -50,7 +51,7 @@ type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
 /// of that prefix single-flight. Diagnostic compression caches remain in a
 /// separate namespace.
 #[derive(Debug)]
-pub struct CpuPreparedSetup<F: FieldCore> {
+pub struct CpuPreparedSetup<F: Field> {
     expanded: Arc<AkitaExpandedSetup<F>>,
     shared_ntt: Mutex<HashMap<NttCacheKey, Arc<NttSlotCell>>>,
     compression_ntt: CompressionNttCache,
@@ -117,7 +118,7 @@ impl From<CrtI8CapacityProfile> for PreparedCrtNttProfile {
     }
 }
 
-impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
+impl<F: Field + CanonicalEncoding> CpuPreparedSetup<F> {
     pub(crate) fn with_shared_ntt<const D: usize, R>(
         &self,
         key: NttCacheKey,
@@ -252,7 +253,7 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
     }
 }
 
-fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
+fn build_ntt_slot_for_key<F: Field + CanonicalEncoding>(
     expanded: &AkitaExpandedSetup<F>,
     key: NttCacheKey,
 ) -> Result<ErasedCpuNttCache, AkitaError> {
@@ -273,7 +274,7 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     })
 }
 
-fn record_ntt_profile_on_prepared<F: FieldCore>(
+fn record_ntt_profile_on_prepared<F: Field>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
     profile: CrtI8CapacityProfile,
@@ -287,7 +288,7 @@ fn record_ntt_profile_on_prepared<F: FieldCore>(
     Ok(())
 }
 
-fn prepare_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
+fn prepare_ntt_slot_on_prepared<F: Field + CanonicalEncoding>(
     prepared: &CpuPreparedSetup<F>,
     requested_key: NttCacheKey,
 ) -> Result<Arc<ErasedCpuNttCache>, AkitaError> {
@@ -366,7 +367,7 @@ fn prepare_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     }
 }
 
-fn ensure_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
+fn ensure_ntt_slot_on_prepared<F: Field + CanonicalEncoding>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
@@ -398,7 +399,7 @@ fn validate_digit_row_request(
 
 impl<F> ComputeBackendSetup<F> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     type PreparedSetup = CpuPreparedSetup<F>;
 
@@ -442,7 +443,7 @@ where
 
 impl<F> CommitmentComputeBackend<F> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn dense_commit_rows<const D: usize>(
         &self,
@@ -534,8 +535,7 @@ where
         plan: OneHotCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+        F: Unreduced,
     {
         let active_a_cols = plan
             .num_positions_per_block
@@ -573,8 +573,7 @@ where
         plan: SparseRingCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+        F: Unreduced,
     {
         let active_a_cols = plan
             .num_positions_per_block
@@ -697,7 +696,7 @@ where
 
 impl<F> DigitRowsComputeBackend<F> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn digit_rows<const D: usize>(
         &self,
@@ -725,7 +724,7 @@ where
 
 impl<F> CompressionComputeBackend<F> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {
         Some(prepared.compression_ntt_cache_bytes())
@@ -756,7 +755,7 @@ where
 
 impl<F> CyclicRowsComputeBackend<F> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn cyclic_digit_rows<const D: usize>(
         &self,
@@ -779,7 +778,7 @@ where
 
 impl<F> RingSwitchComputeBackend<F> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn ring_switch_relation_rows<const D: usize>(
         &self,
@@ -787,7 +786,7 @@ where
         plan: RingSwitchRelationRowsPlan<'_, D>,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
     where
-        F: HalvingField,
+        F: Field,
     {
         let mut cyclic_requirement: Option<NttCacheKey> = None;
         for (rows, width) in [
@@ -864,7 +863,7 @@ where
         plan: RingSwitchQuotientRowsPlan<'_, D>,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
     where
-        F: HalvingField,
+        F: Field,
     {
         let cyclic = NttCacheKey::from_matrix_shape(
             D,
@@ -910,8 +909,8 @@ mod tests {
     use crate::kernels::linear::{mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic};
     use crate::validation::MAX_I8_LOG_BASIS;
     use crate::AkitaProverSetup;
-    use akita_field::Prime64Offset59;
     use akita_types::SetupMatrixCapacity;
+    use jolt_field::Prime64Offset59;
     use std::sync::Arc;
 
     type F = Prime64Offset59;

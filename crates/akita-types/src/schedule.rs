@@ -6,7 +6,8 @@ use crate::{
     CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
     PolynomialGroupLayout, RelationAddressGeometry, SetupContributionMode, TerminalResponseShape,
 };
-use akita_field::{AkitaError, CanonicalField};
+use akita_error::AkitaError;
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Public inputs that deterministically select one level's active Akita params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -346,7 +347,7 @@ impl CommittedGroupBatchProfile {
 }
 
 /// Number of gadget decomposition levels needed for `r` over field `F`.
-pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
+pub fn r_decomp_levels<F: Field + CanonicalEncoding>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
     let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
     crate::sis::compute_num_digits_field_width(field_bits, log_basis)
@@ -356,14 +357,14 @@ pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
 ///
 /// Uses the identity: the canonical form of `-1` in `Z_q` is `q - 1`.
 #[inline]
-pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
+pub fn detect_field_modulus<F: Field + CanonicalEncoding>() -> u128 {
     crate::dispatch::field_modulus::<F>()
 }
 
 /// Total ring elements in an intermediate recursive witness polynomial.
 /// Terminal witnesses are quotient-free and must be sized from their
 /// [`crate::TerminalResponseShape`] instead.
-pub fn intermediate_w_ring_element_count_with_counts<F: CanonicalField>(
+pub fn intermediate_w_ring_element_count_with_counts<F: Field + CanonicalEncoding>(
     lp: &CommittedGroupParams,
     num_polynomials: usize,
     num_z_segments: usize,
@@ -797,7 +798,7 @@ impl FoldSchedule {
         let (first_successor_d, first_successor_opening_num_vars) =
             self.recursive_folds.first().map_or_else(
                 || {
-                    Ok((
+                    Ok::<_, AkitaError>((
                         self.terminal.params.witness.d_a(),
                         self.terminal.params.witness.recursive_opening_num_vars()?,
                     ))
@@ -853,7 +854,7 @@ impl FoldSchedule {
             let (successor_d, successor_opening_num_vars) =
                 self.recursive_folds.get(index + 1).map_or_else(
                     || {
-                        Ok((
+                        Ok::<_, AkitaError>((
                             self.terminal.params.witness.d_a(),
                             self.terminal.params.witness.recursive_opening_num_vars()?,
                         ))

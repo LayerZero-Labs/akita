@@ -179,7 +179,7 @@ for a stacked follow-up.
 `role-native-projected-digit-layout.md`, `setup-layout-repack.md`,
 `setup-offloading-planner.md`,
 `eor-streamed-prover.md`, `packed-sumcheck.md`,
-`planner-incidence-generalization.md`, `akita-field-refactor.md`,
+`planner-incidence-generalization.md`,
 `akita-compute-backend-metal.md`, `crt-ntt-prime-profiles.md`,
 `large-digit-ntt-infrastructure.md`,
 `transcript-immediate-fixes.md`, `eor-sumcheck-prover-acceleration.md`,

@@ -7,11 +7,11 @@ use crate::CommitmentConfig;
 pub mod fp128 {
     use super::CommitmentConfig;
     use akita_challenges::TensorChallengeShape;
-    use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         AkitaScheduleInputs, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
         SisModulusProfileId,
     };
+    use jolt_field::Prime128OffsetA7F7;
 
     /// Base field for the fp128 tensor-verifier presets.
     pub type Field = Prime128OffsetA7F7;
@@ -37,7 +37,7 @@ pub mod fp128 {
 
         fn ring_challenge_config(
             d: usize,
-        ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+        ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
             crate::proof_optimized::proof_optimized_ring_challenge_config(d)
         }
 
@@ -59,7 +59,7 @@ pub mod fp128 {
         fn setup_matrix_capacity(
             max_num_vars: usize,
             max_num_batched_polys: usize,
-        ) -> Result<akita_types::SetupMatrixCapacity, akita_field::AkitaError> {
+        ) -> Result<akita_types::SetupMatrixCapacity, akita_error::AkitaError> {
             crate::proof_optimized::proof_optimized_setup_matrix_capacity::<Self>(
                 max_num_vars,
                 max_num_batched_polys,
@@ -95,7 +95,7 @@ pub mod fp128 {
 
         fn get_params_for_prove(
             layout: &OpeningClaimsLayout,
-        ) -> Result<FoldSchedule, akita_field::AkitaError> {
+        ) -> Result<FoldSchedule, akita_error::AkitaError> {
             Self::runtime_schedule(crate::proof_optimized::proof_optimized_schedule_key(
                 layout,
             )?)

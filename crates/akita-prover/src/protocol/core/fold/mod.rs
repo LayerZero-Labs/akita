@@ -8,8 +8,6 @@ use crate::compute::{
 };
 use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
 use crate::protocol::sumcheck::DigitRangeProver;
-use akita_field::unreduced::ReduceTo;
-use akita_field::AdditiveGroup;
 
 use akita_types::{
     dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, OpeningClaimsLayout,
@@ -21,7 +19,7 @@ pub(in crate::protocol::core) use extension_claim::{
 };
 pub(in crate::protocol::core) use single_field::prepare_single_field_fold;
 
-pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
+pub(in crate::protocol::core) struct PreparedFold<F: Field, E: Field> {
     pub(in crate::protocol::core) instance: RingRelationInstance<F>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F>,
     pub(in crate::protocol::core) opening_payload: RingVec<F>,
@@ -40,7 +38,7 @@ pub(super) fn prepare_non_eor_opening<'a, F, E, P, V>(
     validate_non_eor: V,
 ) -> Result<Vec<Vec<E>>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
     P: RootProverGroupMeta<F>,
     V: FnOnce() -> Result<(), AkitaError>,
@@ -59,8 +57,8 @@ where
 /// Borrowed/owned argument bundle for [`finish_prepared_fold`].
 pub(super) struct FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore,
+    F: Field + CanonicalEncoding,
+    E: Field,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
@@ -85,19 +83,18 @@ pub(super) fn finish_prepared_fold<'a, 'p, F, E, T, Q, C, O, TS, R>(
     args: FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + RandomSampling
-        + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    F: Field
+        + CanonicalEncoding
+        + Ring
+        + Unreduced
+        + Field
+        + 'static
+        + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
@@ -323,19 +320,19 @@ pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, Cfg>(
     prepared_fold: PreparedFold<F, E>,
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField
+    F: Field
+        + CanonicalEncoding
+        + Field
+        + Unreduced
+        + Field
+        + Field
+        + PseudoMersenne
         + AkitaSerialize,
     E: ExtField<F>
         + FpExtEncoding<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
@@ -448,7 +445,7 @@ where
     let evaluation_trace_row = lp.evaluation_trace_row_index(opening_batch)?;
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     let trace_opening_claim = evaluation_trace_weight * prepared_fold.evaluation_trace_claim;
-    ensure_trace_stage2_supported(E::EXT_DEGREE)?;
+    ensure_trace_stage2_supported(E::DEGREE)?;
     let evaluation_trace_points = &prepared_fold.evaluation_trace_points;
     let trace_preparation_span = tracing::info_span!(
         "stage2_evaluation_trace_preparation",
@@ -587,8 +584,8 @@ pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
     plan: &RelationRangeImagePlan,
 ) -> Result<(AkitaStage1Proof<E>, Vec<E>, E), AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -637,8 +634,8 @@ fn prove_stage2<F, E, T>(
     plan: RelationRangeImagePlan,
 ) -> Result<RelationRangeImageProveResult<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
@@ -734,13 +731,13 @@ pub(in crate::protocol::core) fn prove_stage3<F, E, T>(
     transcript: &mut T,
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: FpExtEncoding<F>
-        + FromPrimitiveInt
-        + LiftBase<F>
+        + Ring
+        + ExtField<F>
         + AkitaSerialize
-        + akita_field::unreduced::HasUnreducedOps
-        + akita_field::MulBaseUnreduced<F>,
+        + jolt_field::Unreduced
+        + jolt_field::MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     match setup_contribution_mode {

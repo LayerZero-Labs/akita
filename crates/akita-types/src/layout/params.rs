@@ -5,7 +5,8 @@
 //! describes one recursion level.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{AkitaError, CanonicalField};
+use akita_error::AkitaError;
+use jolt_field::{CanonicalEncoding, Field};
 
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;
@@ -948,7 +949,7 @@ impl CommittedGroupParams {
 
     /// Exact live next-witness length in field elements for scalar or
     /// multi-group folds.
-    pub fn output_witness_len<F: CanonicalField>(
+    pub fn output_witness_len<F: Field + CanonicalEncoding>(
         &self,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {

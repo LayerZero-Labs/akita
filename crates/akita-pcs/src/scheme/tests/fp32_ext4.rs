@@ -1,7 +1,9 @@
 use super::*;
 use akita_config::proof_optimized::fp32;
-use akita_field::ExtField;
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use jolt_field::ExtField;
+use jolt_field::One;
+use jolt_field::Zero;
 
 type SmallCfg = fp32::D128OneHot;
 type SmallF = fp32::Field;

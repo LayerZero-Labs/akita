@@ -17,15 +17,14 @@ use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::{CyclotomicRing, SplitEqEvals};
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
-use akita_field::parallel::*;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
-};
+use akita_error::AkitaError;
 use akita_types::{embed_ring_subfield_vector, tensor_column_partials_split_fold, FpExtEncoding};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 impl<F> DensePoly<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     pub(crate) fn fold_blocks<const D: usize>(
         &self,
@@ -202,11 +201,11 @@ where
         &self,
     ) -> Result<DensePoly<F>, AkitaError>
     where
-        F: CanonicalField + FromPrimitiveInt,
+        F: Field + CanonicalEncoding + Ring,
         E: FpExtEncoding<F>,
     {
         let evals = self.tensor_packed_extension_evals::<E, D>()?;
-        let packed_len = D / E::EXT_DEGREE;
+        let packed_len = D / E::DEGREE;
         if packed_len == 0 {
             return Err(AkitaError::InvalidInput(
                 "extension degree exceeds root ring dimension".to_string(),
@@ -231,7 +230,7 @@ where
         &self,
     ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
-        F: CanonicalField + FromPrimitiveInt,
+        F: Field + CanonicalEncoding + Ring,
         E: FpExtEncoding<F>,
     {
         Ok(self.tensor_packed_extension_poly::<E, D>()?.into())
@@ -260,11 +259,17 @@ where
                     num_digits,
                 )
             };
-            let modulus = (-F::one()).to_canonical_u128() + 1;
+            let modulus = (-F::one())
+                .to_u128_checked()
+                .expect("canonical prime-field value fits in u128")
+                + 1;
             return build_decompose_fold_witness::<F, D>(coeff_accum, modulus);
         }
 
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
         let threshold = decompose_centering_threshold(num_digits, log_basis, q);
         let params = DecomposeParams {
             threshold,

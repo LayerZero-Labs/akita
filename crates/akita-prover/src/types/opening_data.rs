@@ -3,13 +3,14 @@ use crate::backend::RecursiveFoldSource;
 use crate::compute::RootPolyMeta;
 use crate::protocol::core::RootProverGroupMeta;
 use crate::PreparedProverGroup;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_error::AkitaError;
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaCommitmentHint, Commitment, CommittedGroup, CommittedGroupParams, OpeningClaims,
     OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupClaims, PolynomialGroupLayout,
     SetupPrefixSlot,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 /// Exact top-level row selection paired with its prover opening material.
 pub type SelectedProverOpeningData<'a, PointF, G, CommitF> = (
@@ -18,12 +19,12 @@ pub type SelectedProverOpeningData<'a, PointF, G, CommitF> = (
 );
 
 #[derive(Debug, Clone)]
-struct ProverGroupInput<G, CommitF: FieldCore> {
+struct ProverGroupInput<G, CommitF: Field> {
     hint: AkitaCommitmentHint<CommitF>,
     group: G,
 }
 
-impl<G, CommitF: FieldCore> ProverGroupInput<G, CommitF> {
+impl<G, CommitF: Field> ProverGroupInput<G, CommitF> {
     fn new(hint: AkitaCommitmentHint<CommitF>, group: G) -> Self {
         Self { hint, group }
     }
@@ -37,7 +38,7 @@ impl<G, CommitF: FieldCore> ProverGroupInput<G, CommitF> {
     }
 }
 
-fn bind_group_inputs<G, CommitF: FieldCore>(
+fn bind_group_inputs<G, CommitF: Field>(
     hints: Vec<AkitaCommitmentHint<CommitF>>,
     groups: Vec<G>,
 ) -> Result<Vec<ProverGroupInput<G, CommitF>>, AkitaError> {
@@ -55,12 +56,12 @@ fn bind_group_inputs<G, CommitF: FieldCore>(
 
 /// Prover opening input: public claims plus ordered group-local prover material.
 #[derive(Debug, Clone)]
-pub struct ProverOpeningData<'a, PointF: Clone, G, CommitF: FieldCore> {
+pub struct ProverOpeningData<'a, PointF: Clone, G, CommitF: Field> {
     opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
     group_inputs: Vec<ProverGroupInput<G, CommitF>>,
 }
 
-impl<'a, PointF: Clone, P, CommitF: FieldCore>
+impl<'a, PointF: Clone, P, CommitF: Field>
     ProverOpeningData<'a, PointF, PreparedProverGroup<'a, P>, CommitF>
 where
     P: RootPolyMeta<CommitF>,
@@ -115,7 +116,7 @@ where
 }
 
 #[allow(private_bounds)]
-impl<'a, PointF: Clone, G, CommitF: FieldCore> ProverOpeningData<'a, PointF, G, CommitF>
+impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, CommitF>
 where
     G: RootProverGroupMeta<CommitF>,
 {
@@ -219,7 +220,7 @@ where
         transcript: &mut T,
     ) -> Result<(), AkitaError>
     where
-        CommitF: CanonicalField,
+        CommitF: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
         PointF: ExtField<CommitF>,
         T: Transcript<CommitF>,
     {
@@ -297,8 +298,8 @@ where
 impl<'a, PointF, CommitF>
     ProverOpeningData<'a, PointF, PreparedProverGroup<'a, RecursiveFoldSource<CommitF>>, CommitF>
 where
-    PointF: FieldCore,
-    CommitF: FieldCore,
+    PointF: Field,
+    CommitF: Field,
 {
     /// Build recursive suffix opening data, with an optional setup-prefix group.
     #[allow(clippy::too_many_arguments)]
@@ -361,12 +362,13 @@ where
 mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::Fp32;
     use akita_transcript::labels::ABSORB_COMMITMENT;
     use akita_transcript::AkitaTranscript;
     use akita_types::{
         CommittedGroupProfile, PrecommittedLevelParams, RingVec, SisModulusProfileId,
     };
+    use jolt_field::Fp32;
+    use jolt_field::Zero;
 
     type F = Fp32<251>;
 

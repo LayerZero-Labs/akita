@@ -25,18 +25,17 @@ use super::plans::{
 };
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
-};
+use akita_error::AkitaError;
 use akita_types::{AkitaExpandedSetup, FpExtEncoding, NttCacheKey};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring, Unreduced};
+
 use std::sync::Arc;
 
 macro_rules! delegate_compute_backend_setup {
     ($ty:ty) => {
         impl<F> ComputeBackendSetup<F> for $ty
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
         {
             type PreparedSetup = <CpuBackend as ComputeBackendSetup<F>>::PreparedSetup;
 
@@ -77,7 +76,7 @@ macro_rules! delegate_digit_rows {
     ($ty:ty) => {
         impl<F> DigitRowsComputeBackend<F> for $ty
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
         {
             fn digit_rows<const D: usize>(
                 &self,
@@ -96,7 +95,7 @@ macro_rules! delegate_compression {
     ($ty:ty) => {
         impl<F> CompressionComputeBackend<F> for $ty
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
         {
             fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {
                 CpuBackend.compression_cache_bytes(prepared)
@@ -117,7 +116,7 @@ macro_rules! delegate_cyclic_rows {
     ($ty:ty) => {
         impl<F> CyclicRowsComputeBackend<F> for $ty
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
         {
             fn cyclic_digit_rows<const D: usize>(
                 &self,
@@ -136,7 +135,7 @@ macro_rules! delegate_opening_kernels {
     ($ty:ty) => {
         impl<S, F, const D: usize> OpeningFoldKernel<S, F, D> for $ty
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
             CpuBackend: OpeningFoldKernel<S, F, D>,
         {
             fn evaluate_and_fold(
@@ -160,7 +159,7 @@ macro_rules! delegate_opening_kernels {
 
         impl<S, F, const D: usize> OpeningBatchKernel<S, F, D> for $ty
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
             CpuBackend: OpeningBatchKernel<S, F, D>,
         {
             fn decompose_fold_batch(
@@ -179,7 +178,7 @@ macro_rules! delegate_tensor_kernels {
     ($ty:ty) => {
         impl<S, F, E, const D: usize> TensorProjectionKernel<S, F, E, D> for $ty
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
             E: ExtField<F>,
             CpuBackend: TensorProjectionKernel<S, F, E, D>,
         {
@@ -190,7 +189,7 @@ macro_rules! delegate_tensor_kernels {
                 logical_point: &[E],
             ) -> Result<Vec<E>, AkitaError>
             where
-                E: akita_field::MulBaseUnreduced<F>,
+                E: jolt_field::MulBaseUnreduced<F>,
             {
                 CpuBackend.column_partials(prepared, source, logical_point)
             }
@@ -209,7 +208,7 @@ macro_rules! delegate_tensor_kernels {
                 source: S,
             ) -> Result<crate::backend::RootTensorProjectionPoly<F>, AkitaError>
             where
-                F: FromPrimitiveInt,
+                F: Ring,
                 E: FpExtEncoding<F>,
             {
                 CpuBackend.root_projection(prepared, source)
@@ -218,7 +217,7 @@ macro_rules! delegate_tensor_kernels {
 
         impl<S, F, E, const D: usize> TensorProjectionBatchKernel<S, F, E, D> for $ty
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
             E: ExtField<F>,
             CpuBackend: TensorProjectionBatchKernel<S, F, E, D>,
         {
@@ -229,7 +228,7 @@ macro_rules! delegate_tensor_kernels {
                 logical_point: &[E],
             ) -> Result<Vec<Vec<E>>, AkitaError>
             where
-                E: akita_field::MulBaseUnreduced<F>,
+                E: jolt_field::MulBaseUnreduced<F>,
             {
                 CpuBackend.column_partials_batch(prepared, source, logical_point)
             }
@@ -255,7 +254,7 @@ macro_rules! delegate_root_commit_kernel {
     ($ty:ty) => {
         impl<S, F, const D: usize> RootCommitKernel<S, F, D> for $ty
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
             CpuBackend: RootCommitKernel<S, F, D>,
         {
             fn commit_inner(
@@ -274,7 +273,7 @@ macro_rules! delegate_ring_switch_kernels {
     ($ty:ty) => {
         impl<S, F, const D: usize> RingSwitchRelationKernel<S, F, D> for $ty
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
             CpuBackend: RingSwitchRelationKernel<S, F, D>,
         {
             fn relation_rows(
@@ -284,7 +283,7 @@ macro_rules! delegate_ring_switch_kernels {
                 plan: RingSwitchRelationPlan,
             ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
             where
-                F: HalvingField,
+                F: Field,
             {
                 CpuBackend.relation_rows(prepared, source, plan)
             }
@@ -292,7 +291,7 @@ macro_rules! delegate_ring_switch_kernels {
 
         impl<S, F, const D: usize> RingSwitchQuotientKernel<S, F, D> for $ty
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
             CpuBackend: RingSwitchQuotientKernel<S, F, D>,
         {
             fn quotient_rows(
@@ -302,7 +301,7 @@ macro_rules! delegate_ring_switch_kernels {
                 plan: RingSwitchQuotientPlan,
             ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
             where
-                F: HalvingField,
+                F: Field,
             {
                 CpuBackend.quotient_rows(prepared, source, plan)
             }
@@ -322,7 +321,7 @@ delegate_root_commit_kernel!(CommitCluster);
 
 impl<F> CommitmentComputeBackend<F> for CommitCluster
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn dense_commit_rows<const D: usize>(
         &self,
@@ -338,8 +337,7 @@ where
         plan: OneHotCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+        F: Unreduced,
     {
         CpuBackend.onehot_commit_rows(prepared, plan)
     }
@@ -350,8 +348,7 @@ where
         plan: SparseRingCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+        F: Unreduced,
     {
         CpuBackend.sparse_ring_commit_rows(prepared, plan)
     }
@@ -393,7 +390,7 @@ delegate_ring_switch_kernels!(RingSwitchCluster);
 
 impl<F> RingSwitchComputeBackend<F> for RingSwitchCluster
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn ring_switch_relation_rows<const D: usize>(
         &self,
@@ -401,7 +398,7 @@ where
         plan: RingSwitchRelationRowsPlan<'_, D>,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
     where
-        F: HalvingField,
+        F: Field,
     {
         CpuBackend.ring_switch_relation_rows(prepared, plan)
     }
@@ -412,7 +409,7 @@ where
         plan: RingSwitchQuotientRowsPlan<'_, D>,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
     where
-        F: HalvingField,
+        F: Field,
     {
         CpuBackend.ring_switch_quotient_rows(prepared, plan)
     }

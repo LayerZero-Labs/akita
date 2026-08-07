@@ -9,26 +9,27 @@ use super::poly::DensePoly;
 use crate::compute::{
     RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape, RootTensorSource,
 };
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use jolt_field::Field;
 
 /// Borrowed single-polynomial view over dense ring storage at dimension `D`.
 ///
 /// One view type backs the commit, opening-fold, and tensor-projection kernels;
 /// the kernel trait it is passed to selects the operation.
 #[derive(Debug, Clone, Copy)]
-pub struct DenseView<'a, F: FieldCore, const D: usize> {
+pub struct DenseView<'a, F: Field, const D: usize> {
     pub(super) poly: &'a DensePoly<F>,
 }
 
 /// Same-point batch view over several dense polynomials at dimension `D`.
 #[derive(Debug, Clone, Copy)]
-pub struct DenseBatchView<'a, F: FieldCore, const D: usize> {
+pub struct DenseBatchView<'a, F: Field, const D: usize> {
     pub(super) polys: &'a [&'a DensePoly<F>],
 }
 
 impl<F> RootPolyMeta<F> for DensePoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     fn num_ring_elems(&self) -> usize {
         self.meta_ring_elems()
@@ -41,7 +42,7 @@ where
 
 impl<F, const D: usize> RootPolyShape<F, D> for DensePoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     fn num_ring_elems(&self) -> usize {
         self.num_ring_elems_at(D)
@@ -54,7 +55,7 @@ where
 
 impl<F, const D: usize> RootCommitSource<F, D> for DensePoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     type CommitView<'a>
         = DenseView<'a, F, D>
@@ -69,7 +70,7 @@ where
 
 impl<F, const D: usize> RootOpeningSource<F, D> for DensePoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     type OpeningView<'a>
         = DenseView<'a, F, D>
@@ -96,7 +97,7 @@ where
 
 impl<F, const D: usize> RootTensorSource<F, D> for DensePoly<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     type TensorView<'a>
         = DenseView<'a, F, D>

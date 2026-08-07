@@ -10,14 +10,11 @@ use crate::ProverTranscriptGrind;
 use crate::{
     PreparedGroupProveOps, RecursiveFoldSource, RootTensorProjectionPoly, SelectedProverOpeningData,
 };
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
-    MulBaseUnreduced, RandomSampling,
-};
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{BasisMode, CommittedGroupProfile, FpExtEncoding, OpeningScheduleSelection};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring, Unreduced};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -27,7 +24,7 @@ use akita_types::{BasisMode, CommittedGroupProfile, FpExtEncoding, OpeningSchedu
 /// bundles.
 pub trait CommitmentProver<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Prover setup parameters.
     type ProverSetup: Clone + Send + Sync;
@@ -71,8 +68,7 @@ where
         stack: &UniformProverStack<'_, F, B>,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
-        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+        F: Ring + Unreduced + Field + 'static,
         Self::ExtField: FpExtEncoding<F>,
         P: RuntimeRootCommitPoly<F>,
         B: RuntimeRootCommitBackend<F, P, Self::ExtField>;
@@ -92,8 +88,7 @@ where
         stack: &UniformProverStack<'_, F, B>,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
-        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+        F: Ring + Unreduced + Field + 'static,
         Self::ExtField: FpExtEncoding<F>,
         P: RuntimeRootCommitPoly<F>,
         B: RuntimeRootCommitBackend<F, P, Self::ExtField>;
@@ -116,8 +111,7 @@ where
         precommitteds: Vec<CommittedGroupProfile>,
     ) -> Result<(Self::Commitment, Self::CommitHint, OpeningScheduleSelection), AkitaError>
     where
-        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+        F: Ring + Unreduced + Field + 'static,
         Self::ExtField: FpExtEncoding<F>,
         P: RuntimeRootCommitPoly<F>,
         B: RuntimeRootCommitBackend<F, P, Self::ExtField>;
@@ -141,8 +135,7 @@ where
     ) -> Result<Self::BatchedProof, AkitaError>
     where
         T: Transcript<F> + ProverTranscriptGrind<F>,
-        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+        F: Ring + Unreduced + Field + 'static,
         P: PreparedGroupProveOps<F, Self::ExtField, B, B>,
         B: ComputeBackendSetup<F>
             + CommitmentComputeBackend<F>

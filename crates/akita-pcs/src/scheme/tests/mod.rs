@@ -26,6 +26,7 @@ use akita_types::{
     AkitaCommitmentHint, CommittedGroup, CommittedGroupBatchProfile, GroupBatchStatement,
     OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
 };
+use jolt_field::Zero;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 type Cfg = fp128::D64Dense;
@@ -342,7 +343,7 @@ fn dense_opening(evals: &[F], point: &[F]) -> F {
 fn debug_random_point(nv: usize) -> Vec<OneHotF> {
     let mut rng = StdRng::seed_from_u64(0xcafe_babe);
     (0..nv)
-        .map(|_| OneHotF::from_canonical_u128_reduced(rng.r#gen::<u128>()))
+        .map(|_| OneHotF::from_u128_reduced(rng.r#gen::<u128>()))
         .collect()
 }
 

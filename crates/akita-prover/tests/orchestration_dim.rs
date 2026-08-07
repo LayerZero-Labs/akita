@@ -10,6 +10,7 @@ use akita_types::{
     CommittedGroupBatchProfile, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
     RingRole,
 };
+use jolt_field::Zero;
 
 #[test]
 fn batched_selection_preserves_typed_schedule_topology() {

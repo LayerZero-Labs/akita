@@ -5,7 +5,7 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_config::{committed_group_profile, policy_of, CommitmentConfig};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     schedule_row_digest, AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupBatchProfile,
     DecompositionParams, FoldSchedule, OpeningClaimsLayout, OpeningScheduleSelection,

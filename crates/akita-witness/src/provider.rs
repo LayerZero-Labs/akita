@@ -7,7 +7,8 @@
 //! expression. Resolution is fallible so unknown openings or malformed backing
 //! tables are rejected with [`AkitaError`] instead of panicking.
 
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use jolt_field::Field;
 
 use crate::PolynomialView;
 
@@ -18,7 +19,7 @@ use crate::PolynomialView;
 /// single opening vocabulary (e.g. the protocol layer's opening enum). The view
 /// borrows from the provider, so a provider materializes or stores its backing
 /// evaluation tables and lends them out for the duration of a resolution.
-pub trait WitnessProvider<F: FieldCore> {
+pub trait WitnessProvider<F: Field> {
     /// Identifier selecting which witness oracle to view.
     type OpeningId;
 
@@ -37,7 +38,7 @@ pub trait WitnessProvider<F: FieldCore> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Fp64;
+    use jolt_field::{Fp64, Ring};
 
     type F = Fp64<4294967197>;
 

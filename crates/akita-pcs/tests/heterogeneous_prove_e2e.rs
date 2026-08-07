@@ -12,6 +12,7 @@ use akita_types::{
     lagrange_weights, BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
     PolynomialGroupClaims,
 };
+use jolt_field::{Ring, Zero};
 mod common;
 use common::selected_prover_data;
 use std::any::TypeId;

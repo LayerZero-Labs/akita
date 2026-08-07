@@ -38,7 +38,7 @@
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_planner::generated_families::{
     emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
 };
@@ -548,7 +548,7 @@ fn table_backed_expanded(
     family: &GeneratedFamily,
     catalog: akita_schedules::GeneratedScheduleTable,
     key: PolynomialGroupLayout,
-) -> Result<FoldSchedule, akita_field::AkitaError> {
+) -> Result<FoldSchedule, akita_error::AkitaError> {
     let lookup_key = AkitaScheduleLookupKey::single(key);
     if let Some(entry) = table_entry(catalog, &lookup_key) {
         return schedule_from_entry(

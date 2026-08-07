@@ -1,6 +1,6 @@
 //! Checked coefficient geometry for the compact relation witness.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use super::stage1::FlatBooleanDomain;
 use crate::layout::{

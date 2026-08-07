@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn mat_vec_mul_i8_with_params_impl<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -105,7 +105,7 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
 }
 
 pub(super) fn mat_vec_mul_i8_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -122,7 +122,7 @@ pub(super) fn mat_vec_mul_i8_with_params<
 }
 
 pub(super) fn mat_vec_mul_i8_dense_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,

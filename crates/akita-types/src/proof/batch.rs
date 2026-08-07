@@ -10,16 +10,18 @@ use akita_algebra::{
     ring::{eval_flat_ring_at_pows_fast, eval_ring_at_pows_fast},
     CyclotomicRing,
 };
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
+use akita_error::AkitaError;
+use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVAL_OPENINGS_FIELD};
 use akita_transcript::{append_ext_field, Transcript};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 /// Recursive opening point prepared for ring-level replay.
 ///
 /// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
 /// borrow the ψ-packed inner ring via [`Self::packed_inner_trusted`].
 #[derive(Debug, Clone)]
-pub struct PreparedOpeningPoint<F: FieldCore, E: FieldCore> {
+pub struct PreparedOpeningPoint<F: Field, E: Field> {
     /// Opening point padded to the recursive verifier's target variable count.
     pub padded_point: Vec<E>,
     /// Ring-level outer opening point.
@@ -34,7 +36,7 @@ pub struct PreparedOpeningPoint<F: FieldCore, E: FieldCore> {
     ring_dim: usize,
 }
 
-impl<F: FieldCore, E: FieldCore> PreparedOpeningPoint<F, E> {
+impl<F: Field, E: Field> PreparedOpeningPoint<F, E> {
     /// Construct from typed kernel output at an opening-point boundary.
     pub fn from_parts<const D: usize>(
         padded_point: Vec<E>,
@@ -100,7 +102,7 @@ impl<F: FieldCore, E: FieldCore> PreparedOpeningPoint<F, E> {
 /// inside `dispatch_ring_dim` borrow typed rows via
 /// [`Self::position_rings_trusted`] and [`Self::fold_rings_trusted`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RingMultiplierOpeningPoint<F: FieldCore> {
+pub enum RingMultiplierOpeningPoint<F: Field> {
     /// Degree-one openings, where multipliers are ordinary base scalars.
     Base(RingOpeningPoint<F>),
     /// True ring multipliers used by extension-valued openings.
@@ -112,7 +114,7 @@ pub enum RingMultiplierOpeningPoint<F: FieldCore> {
     },
 }
 
-impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
+impl<F: Field> RingMultiplierOpeningPoint<F> {
     /// Keep base-field scalar weights in their compact scalar form.
     pub fn from_base(point: &RingOpeningPoint<F>) -> Self {
         Self::Base(point.clone())
@@ -374,7 +376,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         alpha_pows: &[E],
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         match self {
@@ -460,11 +462,11 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     }
 }
 
-fn flat_ring_is_constant<F: FieldCore>(coeffs: &[F], ring_dim: usize) -> bool {
+fn flat_ring_is_constant<F: Field>(coeffs: &[F], ring_dim: usize) -> bool {
     ring_dim > 0 && coeffs.len() == ring_dim && coeffs[1..].iter().all(|coeff| coeff.is_zero())
 }
 
-fn flat_rings_are_constant<F: FieldCore>(coeffs: &[F], ring_dim: usize) -> bool {
+fn flat_rings_are_constant<F: Field>(coeffs: &[F], ring_dim: usize) -> bool {
     ring_dim > 0
         && coeffs.len().is_multiple_of(ring_dim)
         && coeffs
@@ -479,7 +481,7 @@ fn ring_multiplier_opening_point_from_ext<F, E, const D: usize>(
     basis: BasisMode,
 ) -> Result<RingMultiplierOpeningPoint<F>, AkitaError>
 where
-    F: FieldCore + akita_field::FromPrimitiveInt,
+    F: Field + jolt_field::Ring,
     E: FpExtEncoding<F>,
 {
     if !num_positions_per_block.is_power_of_two() || num_live_blocks == 0 {
@@ -528,7 +530,7 @@ where
 /// Absorb public claim-field evaluations into the base-field transcript.
 pub fn append_claim_values_to_transcript<F, E, T>(values: &[E], transcript: &mut T)
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     E: ExtField<F>,
     T: Transcript<F>,
 {
@@ -562,7 +564,7 @@ pub fn append_batched_commitments_to_transcript<F, T>(
     transcript: &mut T,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     T: Transcript<F>,
 {
     commitment.append_to_transcript(ABSORB_COMMITMENT, ring_dim, transcript)
@@ -616,7 +618,7 @@ pub fn validate_batched_inputs<F, E>(
     for_prover: bool,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
 {
     let label = if for_prover {
         "batched_prove"
@@ -692,7 +694,7 @@ pub fn prepare_opening_point<F, E, const D: usize>(
     alpha_bits: usize,
 ) -> Result<PreparedOpeningPoint<F, E>, AkitaError>
 where
-    F: FieldCore + akita_field::FromPrimitiveInt,
+    F: Field + jolt_field::Ring,
     E: FpExtEncoding<F>,
 {
     let _span = tracing::info_span!("ring_opening_point").entered();
@@ -719,7 +721,7 @@ where
     let mut padded_point = opening_point.to_vec();
     padded_point.resize(target_num_vars, E::zero());
 
-    if E::EXT_DEGREE == 1 {
+    if E::DEGREE == 1 {
         let base_point = padded_point
             .iter()
             .map(|coord| {
@@ -748,14 +750,14 @@ where
         ));
     }
 
-    if !D.is_multiple_of(E::EXT_DEGREE) || !(D / E::EXT_DEGREE).is_power_of_two() {
+    if !D.is_multiple_of(E::DEGREE) || !(D / E::DEGREE).is_power_of_two() {
         return Err(AkitaError::InvalidInput(
             "challenge-field degree must divide the ring dimension into power-of-two slots"
                 .to_string(),
         ));
     }
 
-    let trace_inner_point_len = (D / E::EXT_DEGREE).trailing_zeros() as usize;
+    let trace_inner_point_len = (D / E::DEGREE).trailing_zeros() as usize;
     if padded_point[trace_inner_point_len..alpha_bits]
         .iter()
         .any(|coord| !coord.is_zero())
@@ -809,10 +811,10 @@ pub fn ring_subfield_packed_extension_opening_point<F, E, const D: usize>(
     point: &[E],
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
-    let k = E::EXT_DEGREE;
+    let k = E::DEGREE;
     if k == 1 {
         return Ok(point.to_vec());
     }
@@ -859,16 +861,16 @@ pub fn folded_root_supports_opening_shape<F, E, const D: usize>(
     alpha_bits: usize,
 ) -> bool
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
-    if E::EXT_DEGREE == 1 {
+    if E::DEGREE == 1 {
         return true;
     }
-    if !D.is_multiple_of(E::EXT_DEGREE) || !(D / E::EXT_DEGREE).is_power_of_two() {
+    if !D.is_multiple_of(E::DEGREE) || !(D / E::DEGREE).is_power_of_two() {
         return false;
     }
-    let packed_slots = D / E::EXT_DEGREE;
+    let packed_slots = D / E::DEGREE;
     let packed_inner_bits = packed_slots.trailing_zeros() as usize;
     if packed_inner_bits > alpha_bits {
         return false;
@@ -917,18 +919,20 @@ pub(crate) fn root_tensor_projection_enabled_for_width(
 /// no typed ring work happens here).
 pub fn root_tensor_projection_enabled<F, E>(ring_d: usize, num_vars: usize) -> bool
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
-    root_tensor_projection_enabled_for_width(E::EXT_DEGREE, ring_d, num_vars)
+    root_tensor_projection_enabled_for_width(E::DEGREE, ring_d, num_vars)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::SisModulusProfileId;
+    use akita_algebra::Ring;
+    use akita_algebra::Zero;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::{Fp32, FpExt4, LiftBase};
+    use jolt_field::{ExtField, Fp32, FpExt4};
 
     type F = Fp32<251>;
     type E = FpExt4<F>;
@@ -1020,10 +1024,10 @@ mod tests {
     fn eor_predicates_match_geometry_table() {
         // Claim field coincides with coefficient field: never.
         assert!(!root_tensor_projection_enabled::<F, F>(64, 10));
-        const { assert!(<F as ExtField<F>>::EXT_DEGREE <= 1) };
+        const { assert!(<F as ExtField<F>>::DEGREE <= 1) };
 
         // Proper extension: suffix always; root follows tensor gate.
-        const { assert!(<E as ExtField<F>>::EXT_DEGREE > 1) };
+        const { assert!(<E as ExtField<F>>::DEGREE > 1) };
         assert!(root_tensor_projection_enabled::<F, E>(8, 3));
         assert!(!root_tensor_projection_enabled::<F, E>(4, 2));
 

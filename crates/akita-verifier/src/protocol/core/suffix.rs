@@ -2,7 +2,7 @@ use super::*;
 use akita_types::OpeningClaimsLayout;
 
 /// Verifier state carried between suffix fold levels.
-pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
+pub(super) struct SuffixVerifierState<'a, F: Field, E: Field> {
     /// Current opening point for the committed suffix witness.
     pub opening_point: Vec<E>,
     /// Claimed opening value for the current commitment.
@@ -16,12 +16,12 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
     pub setup_prefix_opening: Option<SetupPrefixOpening<E>>,
 }
 
-pub(super) enum SuffixWitnessState<'a, F: FieldCore> {
+pub(super) enum SuffixWitnessState<'a, F: Field> {
     Commitment(&'a RingVec<F>),
     TerminalT(Vec<u8>),
 }
 
-fn suffix_commitment_payloads<F: FieldCore>(
+fn suffix_commitment_payloads<F: Field>(
     setup: &AkitaVerifierSetup<F>,
     lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
@@ -65,13 +65,13 @@ fn suffix_commitment_payloads<F: FieldCore>(
     Ok(ordered)
 }
 
-struct FoldReplayPayload<'a, F: FieldCore, E: FieldCore> {
+struct FoldReplayPayload<'a, F: Field, E: Field> {
     extension_opening_reduction: Option<&'a ExtensionOpeningReductionProof<E>>,
     fold_grind_nonce: u32,
     kind: FoldReplayKind<'a, F, E>,
 }
 
-enum FoldReplayKind<'a, F: FieldCore, E: FieldCore> {
+enum FoldReplayKind<'a, F: Field, E: Field> {
     Recursive {
         v: &'a RingVec<F>,
         stage1: &'a AkitaStage1Proof<E>,
@@ -101,13 +101,8 @@ pub(super) fn verify_suffix<'a, F, E, T>(
     mut current_state: SuffixVerifierState<'a, F, E>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + PseudoMersenne + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     for (offset, fold) in recursive_folds.iter().enumerate() {
@@ -242,13 +237,13 @@ fn verify_terminal_suffix<F, E, T>(
     scheduled: &TerminalFoldParams,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
+    F: Field
+        + CanonicalEncoding
+        + Field
+        + PseudoMersenne
+        + Field
+        + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let params = &scheduled.witness;
@@ -286,7 +281,7 @@ where
     }
     let protocol_point = current_state.opening_point.clone();
     let opening_batch = OpeningClaimsLayout::new(protocol_point.len(), 1)?;
-    let (prepared_points, final_relation) = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+    let (prepared_points, final_relation) = if const { <E as ExtField<F>>::DEGREE == 1 } {
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }
@@ -371,13 +366,13 @@ fn prepare_fold_replay<'a, F, E, T>(
     output_witness_len: usize,
 ) -> Result<PreparedFoldReplay<'a, F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
+    F: Field
+        + CanonicalEncoding
+        + Field
+        + PseudoMersenne
+        + Field
+        + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let role_dims = lp.role_dims();
@@ -437,7 +432,7 @@ where
     if openings.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }
-    let prefix = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+    let prefix = if const { <E as ExtField<F>>::DEGREE == 1 } {
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }

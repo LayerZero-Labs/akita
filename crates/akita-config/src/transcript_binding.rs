@@ -8,13 +8,14 @@
 //! construction is sourced from a single `Cfg`-driven implementation.
 
 use crate::CommitmentConfig;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaExpandedSetup, AkitaInstanceDescriptor, AlgebraSection, BasisMode, CallSection,
     FoldSchedule, FpExtEncoding, OpeningClaimsLayout, OpeningScheduleSelection, PlanSection,
     SetupSection,
 };
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Bind the canonical [`AkitaInstanceDescriptor`] bytes into a transcript.
 ///
@@ -42,7 +43,7 @@ pub fn bind_transcript_instance_descriptor<F, T, Cfg>(
     transcript: &mut T,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ExtField: FpExtEncoding<F>,

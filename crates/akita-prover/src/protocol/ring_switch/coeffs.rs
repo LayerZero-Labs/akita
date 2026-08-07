@@ -15,7 +15,7 @@ use akita_types::{
     RingVec, WitnessLayout,
 };
 
-pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore> {
+pub(crate) struct PreparedRingSwitchGroup<'a, F: Field> {
     pub(crate) params: &'a dyn LevelParamsLike,
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) e_hat: DigitBlocks,
@@ -76,7 +76,7 @@ fn emit_packed_negative_binary(
     Ok(())
 }
 
-fn emit_compression_witness<F: FieldCore>(
+fn emit_compression_witness<F: Field>(
     out: &mut [i8],
     layout: &WitnessLayout,
     compression: &CompressionWitnessMaterialization<F>,
@@ -106,7 +106,7 @@ fn emit_compression_witness<F: FieldCore>(
 }
 
 /// Emit one group's physical Z, E, and T planes through the canonical layout.
-fn emit_group_witness_segments<F: CanonicalField>(
+fn emit_group_witness_segments<F: Field + CanonicalEncoding>(
     out: &mut [i8],
     layout: &WitnessLayout,
     group_id: usize,
@@ -155,7 +155,7 @@ fn emit_group_witness_segments<F: CanonicalField>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_group_native_a_segments<F: CanonicalField, const D_GROUP: usize>(
+fn emit_group_native_a_segments<F: Field + CanonicalEncoding, const D_GROUP: usize>(
     out: &mut [i8],
     layout: &WitnessLayout,
     group_id: usize,
@@ -232,12 +232,7 @@ pub fn ring_switch_build_w<F, B>(
     lp: &CommittedGroupParams,
 ) -> Result<RecursiveWitnessFlat, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + AkitaSerialize,
+    F: Field + CanonicalEncoding + Ring + AkitaSerialize,
     B: RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = instance.opening_batch();
@@ -500,7 +495,7 @@ fn decompose_z_folded_planes<const D: usize>(
     Ok(all_planes)
 }
 
-fn emit_r_rows<F: CanonicalField>(
+fn emit_r_rows<F: Field + CanonicalEncoding>(
     out: &mut [i8],
     layout: &WitnessLayout,
     r: &RelationQuotientOutput<F>,
@@ -510,7 +505,10 @@ fn emit_r_rows<F: CanonicalField>(
     if layout.r_rows().len() != r.rows().len() || layout.quotient_depth() != levels {
         return Err(AkitaError::InvalidProof);
     }
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("canonical prime-field value fits in u128")
+        + 1;
     let decompose_params = BalancedDecomposePow2Params::new(levels, log_basis, q);
     for (row_index, row) in r.rows().iter().enumerate() {
         let row_layout = layout
@@ -554,7 +552,7 @@ fn emit_r_rows<F: CanonicalField>(
     Ok(())
 }
 
-fn decompose_r_row<F: CanonicalField, const D: usize>(
+fn decompose_r_row<F: Field + CanonicalEncoding, const D: usize>(
     coeffs: &[F],
     levels: usize,
     params: &BalancedDecomposePow2Params,

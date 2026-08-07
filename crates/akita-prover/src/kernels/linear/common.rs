@@ -21,7 +21,7 @@ pub(super) fn is_zero_centered_row<const D: usize>(row: &[i32; D]) -> bool {
     row.iter().all(|&d| d == 0)
 }
 
-pub(super) fn quotient_from_cyclic_and_negacyclic<F: FieldCore + HalvingField, const D: usize>(
+pub(super) fn quotient_from_cyclic_and_negacyclic<F: Field, const D: usize>(
     cyclic: &CyclotomicRing<F, D>,
     negacyclic: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {
@@ -30,7 +30,7 @@ pub(super) fn quotient_from_cyclic_and_negacyclic<F: FieldCore + HalvingField, c
     CyclotomicRing::from_coefficients(from_fn(|k| (cyc[k] - neg[k]).half()))
 }
 
-pub(super) fn add_cyclic_product_into<F: FieldCore, const D: usize>(
+pub(super) fn add_cyclic_product_into<F: Field, const D: usize>(
     acc: &mut CyclotomicRing<F, D>,
     lhs: &CyclotomicRing<F, D>,
     rhs: &CyclotomicRing<F, D>,

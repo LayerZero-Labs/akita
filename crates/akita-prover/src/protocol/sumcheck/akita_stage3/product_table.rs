@@ -4,13 +4,14 @@ use super::utils::{accumulate_right_round, fold_left_round, fold_right_round, pr
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_algebra::uni_poly::UniPoly;
-use akita_field::parallel::*;
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBaseUnreduced, Zero};
+use akita_error::AkitaError;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, MulBaseUnreduced, Ring, Zero};
 
 /// One dense factored setup-product term
 /// `sum_{left,right} table[left,right] * left_factor[left] * right_factor[right]`.
 #[cfg(test)]
-pub(super) struct FactoredProductTerm<E: FieldCore> {
+pub(super) struct FactoredProductTerm<E: Field> {
     table: Vec<E>,
     left_factor: Vec<E>,
     right_factor: Vec<E>,
@@ -28,7 +29,7 @@ pub(super) struct FactoredProductTerm<E: FieldCore> {
 /// the Stage-3 suffix-opening projection while storing only one contracted
 /// coefficient vector and one contracted setup-index vector in the extension
 /// field.
-pub(super) struct RectangularSetupProductTerm<'a, F: FieldCore, E: FieldCore> {
+pub(super) struct RectangularSetupProductTerm<'a, F: Field, E: Field> {
     setup: &'a [F],
     required_rows: usize,
     row_capacity: usize,
@@ -45,8 +46,8 @@ pub(super) struct RectangularSetupProductTerm<'a, F: FieldCore, E: FieldCore> {
 
 impl<'a, F, E> RectangularSetupProductTerm<'a, F, E>
 where
-    F: FieldCore,
-    E: FieldCore + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field,
+    E: Field + Ring + MulBaseUnreduced<F>,
 {
     pub(super) fn new(
         setup: &'a [F],
@@ -90,9 +91,7 @@ where
             let accumulators = cfg_fold_reduce!(
                 0..required_rows,
                 || (0..coefficient_len)
-                    .map(|_| {
-                        <E as akita_field::unreduced::HasUnreducedOps>::ProductAccum::zero()
-                    })
+                    .map(|_| { <E as jolt_field::Unreduced>::Product::zero() })
                     .collect::<Vec<_>>(),
                 |mut accumulators, setup_index| {
                     let row_start = setup_index * coefficient_len;
@@ -101,7 +100,7 @@ where
                         .iter_mut()
                         .zip(&setup[row_start..row_start + coefficient_len])
                     {
-                        *accumulator += factor.mul_base_to_product_accum(coefficient);
+                        *accumulator += factor.mul_base_unreduced(coefficient);
                     }
                     accumulators
                 },
@@ -114,7 +113,7 @@ where
             );
             accumulators
                 .into_iter()
-                .map(E::reduce_product_accum)
+                .map(E::reduce_product)
                 .collect::<Vec<_>>()
         };
         let input_claim = coefficient_table
@@ -233,7 +232,7 @@ where
 }
 
 #[cfg(test)]
-impl<E: FieldCore + FromPrimitiveInt> FactoredProductTerm<E> {
+impl<E: Field + Ring> FactoredProductTerm<E> {
     /// Construct a dense factored product-sumcheck term.
     ///
     /// Returns an error if factor lengths are not powers of two, are empty, or
@@ -316,7 +315,7 @@ impl<E: FieldCore + FromPrimitiveInt> FactoredProductTerm<E> {
 mod tests {
     use super::*;
     use akita_algebra::ring::scalar_powers;
-    use akita_field::Prime128Offset275 as F;
+    use jolt_field::Prime128Offset275 as F;
 
     fn scalar(value: u64) -> F {
         F::from_u64(value)

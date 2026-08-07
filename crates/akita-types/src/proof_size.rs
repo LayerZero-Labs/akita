@@ -9,7 +9,7 @@
 
 use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
 use crate::{CommitmentPayloadGeometry, CommittedGroupParams, DigitRangePlan};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// Fixed wire size of `fold_grind_nonce` on every fold level proof.
 pub const FOLD_GRIND_NONCE_BYTES: usize = 4;
@@ -162,13 +162,14 @@ mod tests {
     //! [`level_proof_bytes`] formula at every supported log_basis.
 
     use super::*;
+    use akita_algebra::Zero;
 
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::AkitaError;
-    use akita_field::{CanonicalField, FieldCore, Prime128OffsetA7F7};
+    use akita_error::AkitaError;
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::EqFactoredUniPoly;
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
+    use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7};
 
     use crate::golomb_rice::golomb_rice_encode_vec;
     use crate::{
@@ -183,7 +184,7 @@ mod tests {
         lp: &CommittedGroupParams,
         num_claims: usize,
     ) -> (TerminalResponse<F>, TerminalResponseShape) {
-        let field_bits = F::modulus_bits();
+        let field_bits = F::MODULUS_BITS;
         let shape = TerminalResponseShape::from_groups(
             lp,
             field_bits,
@@ -212,7 +213,7 @@ mod tests {
         (witness, shape)
     }
 
-    fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
+    fn dummy_sumcheck<F: Field>(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
             round_polys: (0..rounds)
                 .map(|_| CompressedUniPoly {
@@ -222,7 +223,7 @@ mod tests {
         }
     }
 
-    fn dummy_eq_factored_sumcheck<F: FieldCore>(
+    fn dummy_eq_factored_sumcheck<F: Field>(
         rounds: usize,
         degree: usize,
     ) -> EqFactoredSumcheckProof<F> {
@@ -238,7 +239,7 @@ mod tests {
         }
     }
 
-    fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
+    fn dummy_stage1_proof<F: Field>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
         AkitaStage1Proof {
             stages: DigitRangePlan::new(b)
                 .expect("test range basis")
@@ -255,7 +256,7 @@ mod tests {
 
     /// Build a degree-[`SETUP_SUMCHECK_DEGREE`] stage-3 setup-product proof
     /// whose round count matches the setup verifier rounds.
-    fn dummy_stage3_proof<F: FieldCore>(d: usize, setup_ring_len: usize) -> SetupSumcheckProof<F> {
+    fn dummy_stage3_proof<F: Field>(d: usize, setup_ring_len: usize) -> SetupSumcheckProof<F> {
         let ring_bits = d.trailing_zeros() as usize;
         let lambda_bits = setup_ring_len.next_power_of_two().trailing_zeros() as usize;
         let rounds = ring_bits + lambda_bits;
@@ -272,7 +273,7 @@ mod tests {
         }
     }
 
-    fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
+    fn exact_level_proof_bytes<F: Field + CanonicalEncoding + AkitaSerialize>(
         lp: &CommittedGroupParams,
         next_lp: &CommittedGroupParams,
         output_witness_len: usize,

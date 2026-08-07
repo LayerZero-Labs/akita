@@ -22,8 +22,9 @@ pub(crate) mod direct_range_leaf;
 mod exact_prefix;
 mod range_class_tables;
 mod round_accumulation;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, Ring, Unreduced};
+
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::EqFactoredSumcheckInstanceProverExt;
 use akita_transcript::labels;
@@ -41,7 +42,7 @@ type DigitRangeProveOutput<E> = (AkitaStage1Proof<E>, Vec<E>);
 const MAX_TREE_STAGE_Q_DEGREE: usize = 4;
 const MAX_QUARTET_TABLE_CLASS_COUNT: usize = 8;
 
-struct ProductSubcheckInput<'a, E: FieldCore> {
+struct ProductSubcheckInput<'a, E: Field> {
     source: CompactDigitSource,
     plan: DigitRangePlan,
     leaf_polynomials: &'a [Vec<E>],
@@ -56,8 +57,8 @@ fn prove_class_indexed_product_subcheck<F, E, T, const LANES: usize>(
     transcript: &mut T,
 ) -> Result<(AkitaStage1StageProof<E>, Vec<E>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + Ring + Fold + Unreduced + AkitaSerialize,
     T: Transcript<F>,
 {
     let mut stage = ClassIndexedProductSubcheckProver::<E, LANES>::new(
@@ -82,7 +83,7 @@ where
     ))
 }
 
-fn compose_small_poly_with_affine<E: FieldCore>(coeffs: &[E], offset: E, slope: E) -> [E; 5] {
+fn compose_small_poly_with_affine<E: Field>(coeffs: &[E], offset: E, slope: E) -> [E; 5] {
     debug_assert!(coeffs.len() <= MAX_TREE_STAGE_Q_DEGREE + 1);
     let [constant, linear, quadratic, cubic, quartic] = match coeffs {
         [] => return [E::zero(); 5],
@@ -125,7 +126,7 @@ fn compose_small_poly_with_affine<E: FieldCore>(coeffs: &[E], offset: E, slope: 
 }
 
 /// Stage-1 range-check prover, including the root/leaf tree choreography.
-pub struct DigitRangeProver<E: FieldCore> {
+pub struct DigitRangeProver<E: Field> {
     digit_source: CompactDigitSource,
     equality_point: Vec<E>,
     plan: DigitRangePlan,
@@ -134,7 +135,7 @@ pub struct DigitRangeProver<E: FieldCore> {
     low_variable_count: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> DigitRangeProver<E> {
+impl<E: Field + Ring> DigitRangeProver<E> {
     /// Build the prover from the shared compact digit witness and checked layout.
     ///
     /// # Errors
@@ -173,9 +174,7 @@ impl<E: FieldCore + FromPrimitiveInt> DigitRangeProver<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + AkitaSerialize>
-    DigitRangeProver<E>
-{
+impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
     /// Produce the full stage-1 tree proof and return the final `stage1_point`.
     ///
     /// # Errors
@@ -184,7 +183,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
     /// and leaf-stage proofs.
     pub fn prove<F, T>(self, transcript: &mut T) -> Result<DigitRangeProveOutput<E>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         E: ExtField<F>,
         T: Transcript<F>,
     {

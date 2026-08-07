@@ -1,5 +1,5 @@
 use super::*;
-use akita_field::MulBaseUnreduced;
+use jolt_field::MulBaseUnreduced;
 
 /// Complete the ring switch after the caller has bound the next witness.
 ///
@@ -27,8 +27,8 @@ pub fn ring_switch_finalize<F, E, T>(
     gamma: Option<&[E]>,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let default_gamma;

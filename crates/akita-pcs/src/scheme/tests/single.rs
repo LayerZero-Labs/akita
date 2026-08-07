@@ -1,4 +1,5 @@
 use super::*;
+use jolt_field::{One, Zero};
 
 #[test]
 fn verify_passes_for_consistent_opening() {

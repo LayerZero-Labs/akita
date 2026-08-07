@@ -13,7 +13,9 @@ use crate::{
     OpeningClaimsLayout, SisModulusProfileId, WitnessLayout,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::{Ext2, Prime128OffsetA7F7};
+use akita_algebra::One;
+use akita_algebra::Ring;
+use jolt_field::{Ext2, Prime128OffsetA7F7};
 
 type F = Prime128OffsetA7F7;
 const D: usize = 8;

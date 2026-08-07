@@ -1,7 +1,7 @@
 //! Runtime helpers for materializing cataloged multi-group root precommits.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::sis::{
     decomposed_t_ring_count, num_digits_open, rounded_up_collision_inf_norm,
     rounded_up_role_a_inf_norm, InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole,

@@ -5,13 +5,15 @@ use akita_algebra::tables::{
     q128_primes, q32_garner, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES,
     Q32_PRIMES,
 };
+use akita_algebra::One;
+use akita_algebra::Ring;
 use akita_algebra::{
     mat_vec_i16_with_tail, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
     I16TailParams, MontCoeff,
 };
-use akita_field::{Fp64, HalvingField, Prime128Offset159, Prime128OffsetA7F7};
 use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use jolt_field::{Field, Fp64, Prime128Offset159, Prime128OffsetA7F7};
 
 type F = Fp64<{ Q32_MODULUS }>;
 type R = CyclotomicRing<F, 64>;

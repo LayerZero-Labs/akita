@@ -1,10 +1,9 @@
 use super::*;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Ring, Unreduced};
 
 #[allow(clippy::too_many_arguments)]
-fn fold_lane_and_compute_next_round<
-    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
-    const SKIP_LINEAR: bool,
->(
+fn fold_lane_and_compute_next_round<E: Field + Ring + Unreduced, const SKIP_LINEAR: bool>(
     prover: &RelationRangeImageProver<E>,
     source: &[E],
     target: &mut [E],
@@ -75,7 +74,7 @@ fn fold_lane_and_compute_next_round<
     (virt, rel)
 }
 
-fn add_round_terms<E: FieldCore>(left: &mut ([E; 3], [E; 3]), right: ([E; 3], [E; 3])) {
+fn add_round_terms<E: Field>(left: &mut ([E; 3], [E; 3]), right: ([E; 3], [E; 3])) {
     for (left_term, right_term) in left.0.iter_mut().zip(right.0) {
         *left_term += right_term;
     }
@@ -84,7 +83,7 @@ fn add_round_terms<E: FieldCore>(left: &mut ([E; 3], [E; 3]), right: ([E; 3], [E
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
+impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[tracing::instrument(
         skip_all,
         name = "RelationRangeImageProver::fuse_folded_coefficients_and_compute_next_round"

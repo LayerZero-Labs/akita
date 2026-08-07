@@ -2,21 +2,20 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
-use akita_field::parallel::*;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
-};
+use akita_error::AkitaError;
 use akita_types::{
     decode_terminal_z_golomb_payload, dispatch_for_field, recover_ring_subfield_inner_product,
     AkitaVerifierSetup, FpExtEncoding, PreparedOpeningPoint, RingMultiplierOpeningPoint,
     TerminalCommittedGroupParams, TerminalResponse,
 };
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 fn sparse_challenge_ring<F, const D: usize>(
     challenge: &SparseChallenge,
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
 {
     challenge.validate::<D>()?;
     let mut coeffs = [F::zero(); D];
@@ -33,7 +32,7 @@ fn challenge_rings<F, const D: usize>(
     challenges: &Challenges,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
 {
     match challenges {
         Challenges::Sparse { challenges, .. } => challenges
@@ -57,7 +56,7 @@ fn ring_dot<F, const D: usize>(
     input: &[CyclotomicRing<F, D>],
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
 {
     if row.len() != input.len() {
         return Err(AkitaError::InvalidProof);
@@ -73,7 +72,7 @@ where
 #[inline]
 fn centered_ring<F, const D: usize>(coeffs: &[i16; D]) -> CyclotomicRing<F, D>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
 {
     CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
         F::from_i64(i64::from(coeffs[index]))
@@ -98,7 +97,7 @@ fn check_a_rows<F, const D: usize>(
     prepared_prefix_len: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
 {
     if t.len()
         != challenges
@@ -153,7 +152,7 @@ pub(super) fn verify_terminal_ring_relations<F>(
     terminal_response: &TerminalResponse<F>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
+    F: Field + CanonicalEncoding + Ring + Field,
 {
     let witness = terminal_response;
     if witness.layout.ring_dimension != params.d_a() || witness.layout.groups.len() != 1 {
@@ -346,7 +345,7 @@ pub(super) fn verify_terminal_trace<F, E>(
     target: E,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
     E: ExtField<F> + FpExtEncoding<F>,
 {
     let witness = terminal_response;
@@ -398,7 +397,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128OffsetA7F7;
+    use jolt_field::One;
+    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Zero;
 
     type F = Prime128OffsetA7F7;
 
@@ -416,7 +417,7 @@ mod tests {
         z: CyclotomicRing<F, D>,
     }
 
-    fn cyclic_product<F: FieldCore, const D: usize>(
+    fn cyclic_product<F: Field, const D: usize>(
         lhs: &CyclotomicRing<F, D>,
         rhs: &CyclotomicRing<F, D>,
     ) -> CyclotomicRing<F, D> {
@@ -486,7 +487,7 @@ mod tests {
         expected_reduced: CyclotomicRing<F, D>,
     ) -> CyclotomicRing<F, D>
     where
-        F: FieldCore + HalvingField,
+        F: Field + Field,
     {
         let actual_quotient = CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
             (actual_cyclic.coefficients()[index] - actual_reduced.coefficients()[index]).half()

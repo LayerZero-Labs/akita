@@ -1,14 +1,18 @@
 use super::*;
 
-impl<F: FieldCore + RandomSampling, const D: usize> RandomSampling for CyclotomicRing<F, D> {
-    fn random<R: RngCore>(rng: &mut R) -> Self {
+impl<F: Field, const D: usize> CyclotomicRing<F, D> {
+    /// Samples a ring element with uniformly random coefficients.
+    ///
+    /// Inherent because the rebuilt `jolt-field` folds sampling into `Field`,
+    /// and `CyclotomicRing` is a ring, not a field.
+    pub fn random<R: RngCore>(rng: &mut R) -> Self {
         Self {
             coeffs: from_fn(|_| F::random(rng)),
         }
     }
 }
 
-impl<F: FieldCore, const D: usize> AddAssign for CyclotomicRing<F, D> {
+impl<F: Field, const D: usize> AddAssign for CyclotomicRing<F, D> {
     fn add_assign(&mut self, rhs: Self) {
         for (dst, src) in self.coeffs.iter_mut().zip(rhs.coeffs.iter()) {
             *dst = *dst + *src;
@@ -16,7 +20,7 @@ impl<F: FieldCore, const D: usize> AddAssign for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> SubAssign for CyclotomicRing<F, D> {
+impl<F: Field, const D: usize> SubAssign for CyclotomicRing<F, D> {
     fn sub_assign(&mut self, rhs: Self) {
         for (dst, src) in self.coeffs.iter_mut().zip(rhs.coeffs.iter()) {
             *dst = *dst - *src;
@@ -24,7 +28,7 @@ impl<F: FieldCore, const D: usize> SubAssign for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> Add for CyclotomicRing<F, D> {
+impl<F: Field, const D: usize> Add for CyclotomicRing<F, D> {
     type Output = Self;
     fn add(mut self, rhs: Self) -> Self {
         self += rhs;
@@ -32,7 +36,7 @@ impl<F: FieldCore, const D: usize> Add for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> Sub for CyclotomicRing<F, D> {
+impl<F: Field, const D: usize> Sub for CyclotomicRing<F, D> {
     type Output = Self;
     fn sub(mut self, rhs: Self) -> Self {
         self -= rhs;
@@ -40,7 +44,7 @@ impl<F: FieldCore, const D: usize> Sub for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> Neg for CyclotomicRing<F, D> {
+impl<F: Field, const D: usize> Neg for CyclotomicRing<F, D> {
     type Output = Self;
     fn neg(self) -> Self {
         let mut out = self.coeffs;
@@ -51,27 +55,27 @@ impl<F: FieldCore, const D: usize> Neg for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> MulAssign for CyclotomicRing<F, D> {
+impl<F: Field, const D: usize> MulAssign for CyclotomicRing<F, D> {
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
     }
 }
 
-impl<'a, F: FieldCore, const D: usize> Add<&'a Self> for CyclotomicRing<F, D> {
+impl<'a, F: Field, const D: usize> Add<&'a Self> for CyclotomicRing<F, D> {
     type Output = Self;
     fn add(self, rhs: &'a Self) -> Self {
         self + *rhs
     }
 }
 
-impl<'a, F: FieldCore, const D: usize> Sub<&'a Self> for CyclotomicRing<F, D> {
+impl<'a, F: Field, const D: usize> Sub<&'a Self> for CyclotomicRing<F, D> {
     type Output = Self;
     fn sub(self, rhs: &'a Self) -> Self {
         self - *rhs
     }
 }
 
-impl<'a, F: FieldCore, const D: usize> Mul<&'a Self> for CyclotomicRing<F, D> {
+impl<'a, F: Field, const D: usize> Mul<&'a Self> for CyclotomicRing<F, D> {
     type Output = Self;
     fn mul(self, rhs: &'a Self) -> Self {
         self * *rhs
@@ -83,7 +87,7 @@ impl<'a, F: FieldCore, const D: usize> Mul<&'a Self> for CyclotomicRing<F, D> {
 /// For each pair `(i, j)`:
 /// - If `i + j < D`: accumulate `a_i * b_j` at index `i + j`.
 /// - If `i + j >= D`: accumulate `-(a_i * b_j)` at index `(i + j) - D`.
-impl<F: FieldCore, const D: usize> Mul for CyclotomicRing<F, D> {
+impl<F: Field, const D: usize> Mul for CyclotomicRing<F, D> {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self {
         let mut out = [F::zero(); D];
@@ -102,7 +106,7 @@ impl<F: FieldCore, const D: usize> Mul for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> Zero for CyclotomicRing<F, D> {
+impl<F: Field, const D: usize> Zero for CyclotomicRing<F, D> {
     #[inline]
     fn zero() -> Self {
         Self {
@@ -116,7 +120,7 @@ impl<F: FieldCore, const D: usize> Zero for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> One for CyclotomicRing<F, D> {
+impl<F: Field, const D: usize> One for CyclotomicRing<F, D> {
     #[inline]
     fn one() -> Self {
         let mut coeffs = [F::zero(); D];
@@ -125,7 +129,7 @@ impl<F: FieldCore, const D: usize> One for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> fmt::Display for CyclotomicRing<F, D> {
+impl<F: Field, const D: usize> fmt::Display for CyclotomicRing<F, D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("CyclotomicRing")
             .field(&self.coeffs.as_slice())
@@ -133,34 +137,52 @@ impl<F: FieldCore, const D: usize> fmt::Display for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> Sum for CyclotomicRing<F, D> {
+impl<F: Field, const D: usize> Sum for CyclotomicRing<F, D> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |acc, x| acc + x)
     }
 }
 
-impl<'a, F: FieldCore, const D: usize> Sum<&'a Self> for CyclotomicRing<F, D> {
+impl<'a, F: Field, const D: usize> Sum<&'a Self> for CyclotomicRing<F, D> {
     fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |acc, x| acc + *x)
     }
 }
 
-impl<F: FieldCore, const D: usize> Product for CyclotomicRing<F, D> {
+impl<F: Field, const D: usize> Product for CyclotomicRing<F, D> {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * x)
     }
 }
 
-impl<'a, F: FieldCore, const D: usize> Product<&'a Self> for CyclotomicRing<F, D> {
+impl<'a, F: Field, const D: usize> Product<&'a Self> for CyclotomicRing<F, D> {
     fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * *x)
     }
 }
 
-impl<F: FieldCore, const D: usize> AdditiveGroup for CyclotomicRing<F, D> {}
-impl<F: FieldCore, const D: usize> RingCore for CyclotomicRing<F, D> {}
+impl<F: Field, const D: usize> AdditiveGroup for CyclotomicRing<F, D> {}
+impl<F: Field, const D: usize> Ring for CyclotomicRing<F, D> {
+    // The integer embedding maps into the constant coefficient, matching the
+    // `F -> CyclotomicRing` embedding used throughout the ring backends.
+    fn from_u64(v: u64) -> Self {
+        Self::from_slice(&[F::from_u64(v)])
+    }
 
-impl<F: FieldCore + Valid, const D: usize> Valid for CyclotomicRing<F, D> {
+    fn from_i64(v: i64) -> Self {
+        Self::from_slice(&[F::from_i64(v)])
+    }
+
+    fn from_u128(v: u128) -> Self {
+        Self::from_slice(&[F::from_u128(v)])
+    }
+
+    fn from_i128(v: i128) -> Self {
+        Self::from_slice(&[F::from_i128(v)])
+    }
+}
+
+impl<F: Field + Valid, const D: usize> Valid for CyclotomicRing<F, D> {
     fn check(&self) -> Result<(), SerializationError> {
         for x in self.coeffs.iter() {
             x.check()?;
@@ -169,7 +191,7 @@ impl<F: FieldCore + Valid, const D: usize> Valid for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize for CyclotomicRing<F, D> {
+impl<F: Field + AkitaSerialize, const D: usize> AkitaSerialize for CyclotomicRing<F, D> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -189,7 +211,7 @@ impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize for Cyclotomi
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, const D: usize> AkitaDeserialize
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>, const D: usize> AkitaDeserialize
     for CyclotomicRing<F, D>
 {
     type Context = ();
@@ -212,7 +234,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, const D: usize> Akit
     }
 }
 
-impl<F: FieldCore, const D: usize> Default for CyclotomicRing<F, D> {
+impl<F: Field, const D: usize> Default for CyclotomicRing<F, D> {
     fn default() -> Self {
         Self::zero()
     }

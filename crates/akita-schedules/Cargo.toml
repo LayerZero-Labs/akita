@@ -62,7 +62,8 @@ fp64-d256-onehot = []
 
 [dependencies]
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
-akita-field = { version = "0.1.0", path = "../akita-field" }
+jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "eb93a031027ee735f0827edb4539e971ab5fcc0b", default-features = false, features = ["solinas"] }
+akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 
 [lints]

@@ -7,12 +7,14 @@ use crate::compute::{
 };
 use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_types::{
     dispatch_for_field, setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup,
     CompressionChainPlan, PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment,
     SetupPrefixSlot,
 };
+use jolt_field::{CanonicalEncoding, Field};
+
+use akita_error::AkitaError;
 
 /// Commit one padded flat prefix of the shared setup matrix.
 ///
@@ -34,7 +36,7 @@ pub fn commit_setup_prefix<F, const D: usize, B>(
     natural_len: usize,
 ) -> Result<SetupPrefixSlot<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
+    F: Field + CanonicalEncoding,
     B: CommitmentComputeBackend<F>,
 {
     if natural_len == 0 || natural_len > n_prefix {
@@ -180,7 +182,7 @@ fn extract_setup_prefix_ring_elems<F, const D: usize>(
     natural_len: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
 {
     let fields = expanded.shared_matrix().as_field_slice();
     let padded_field_len = padded_ring_slots.checked_mul(D).ok_or_else(|| {
@@ -205,7 +207,7 @@ fn setup_prefix_block_slices<F, const D: usize>(
     num_positions_per_block: usize,
 ) -> Result<Vec<&[CyclotomicRing<F, D>]>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
 {
     if num_live_blocks
         .checked_mul(num_positions_per_block)
@@ -231,11 +233,12 @@ mod tests {
     use crate::compute::{ComputeBackendSetup, CpuBackend};
     use crate::AkitaProverSetup;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::Prime128OffsetA7F7 as F;
     use akita_types::{
         active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
         OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId,
     };
+    use jolt_field::Prime128OffsetA7F7 as F;
+    use jolt_field::Zero;
 
     fn prefix_level_params(ring_dimension: usize) -> CommittedGroupParams {
         CommittedGroupParams::params_only(

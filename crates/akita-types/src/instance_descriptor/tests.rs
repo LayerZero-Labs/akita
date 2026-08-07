@@ -6,7 +6,7 @@ use crate::{
     TerminalFoldStep, TerminalResponseShape, WitnessPartition,
 };
 use akita_challenges::SparseChallengeConfig;
-use akita_field::Prime32Offset99;
+use jolt_field::Prime32Offset99;
 
 fn sample_schedule() -> FoldSchedule {
     let sparse = SparseChallengeConfig::pm1_only(3);

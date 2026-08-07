@@ -3,7 +3,7 @@
 use crate::{
     CompressionChainPlan, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedLevelParams,
 };
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_serialization::SerializationError;
 
 use super::padded_setup_prefix_len;

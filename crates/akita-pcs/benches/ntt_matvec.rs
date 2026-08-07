@@ -3,13 +3,13 @@
 use std::time::Duration;
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_prover::kernels::linear::mat_vec_mul_ntt_digits_i8;
 use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode, PreparedNttCache};
 use criterion::{
     black_box, criterion_group, criterion_main, measurement::WallTime, BenchmarkGroup, BenchmarkId,
     Criterion, Throughput,
 };
+use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7};
 
 type F = Prime128OffsetA7F7;
 
@@ -26,7 +26,7 @@ fn sample_matrix<const D: usize>(rank: usize, width: usize) -> Vec<CyclotomicRin
                     .wrapping_mul(0x9E37_79B1_85EB_CA87)
                     .wrapping_add((coefficient as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F));
                 let high = low.rotate_left(29) ^ 0xD6E8_FEB8_6659_FD93;
-                F::from_canonical_u128_reduced(u128::from(low) | (u128::from(high) << 64))
+                F::from_u128_reduced(u128::from(low) | (u128::from(high) << 64))
             }))
         })
         .collect()

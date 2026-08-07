@@ -30,11 +30,13 @@ use crate::{
     SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
     TerminalResponse, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
+use akita_algebra::Zero;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{AkitaError, CanonicalField, FieldCore, Prime128OffsetA7F7};
+use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_sumcheck::EqFactoredUniPoly;
 use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
+use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7};
 
 type F = Prime128OffsetA7F7;
 
@@ -575,7 +577,7 @@ fn terminal_response_fixture(
     lp: &CommittedGroupParams,
     num_claims: usize,
 ) -> (TerminalResponse<F>, TerminalResponseShape) {
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let shape = TerminalResponseShape::from_groups(
         lp,
         field_bits,
@@ -603,7 +605,7 @@ fn terminal_response_fixture(
     (witness, shape)
 }
 
-fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
+fn dummy_sumcheck<F: Field>(rounds: usize, degree: usize) -> SumcheckProof<F> {
     SumcheckProof {
         round_polys: (0..rounds)
             .map(|_| CompressedUniPoly {
@@ -613,7 +615,7 @@ fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F
     }
 }
 
-fn dummy_eq_factored_sumcheck<F: FieldCore>(
+fn dummy_eq_factored_sumcheck<F: Field>(
     rounds: usize,
     degree: usize,
 ) -> EqFactoredSumcheckProof<F> {
@@ -629,7 +631,7 @@ fn dummy_eq_factored_sumcheck<F: FieldCore>(
     }
 }
 
-fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
+fn dummy_stage1_proof<F: Field>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
     AkitaStage1Proof {
         stages: DigitRangePlan::new(b)
             .expect("test range basis")
@@ -644,7 +646,7 @@ fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof
     }
 }
 
-fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
+fn exact_level_proof_bytes<F: Field + CanonicalEncoding + AkitaSerialize>(
     lp: &CommittedGroupParams,
     next_lp: &CommittedGroupParams,
     output_witness_len: usize,

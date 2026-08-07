@@ -2,7 +2,6 @@
 
 #![allow(missing_docs)]
 
-use akita_field::Prime128OffsetA7F7 as F;
 use akita_types::{
     validate_role_dims, validate_role_dispatch, validate_schedule_ring_dims, CommitmentRingDims,
     CommittedGroupParams, FoldSchedule, RingRole, RingView, RootFinalChallenge,
@@ -10,6 +9,7 @@ use akita_types::{
     TailSegmentGroupLayout, TailSegmentLayout, TerminalCommittedGroupParams, TerminalFoldParams,
     TerminalFoldStep, TerminalResponseShape, WitnessPartition,
 };
+use jolt_field::{Prime128OffsetA7F7 as F, Zero};
 
 #[test]
 fn role_dims_accept_either_b_d_order_below_a() {

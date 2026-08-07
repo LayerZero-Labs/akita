@@ -1,11 +1,12 @@
 use super::{eq_eval_at_index, OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
-use crate::{AkitaError, FieldCore};
-use akita_field::parallel::*;
+use crate::Field;
+use akita_error::AkitaError;
+use jolt_field::solinas::parallel::*;
 use std::collections::BTreeMap;
 
 /// Weights carried by one affine tensor axis.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum EqPairTensorWeights<F: FieldCore> {
+pub enum EqPairTensorWeights<F: Field> {
     /// Every coordinate has coefficient one.
     Unit,
     /// Coordinate weights in increasing axis order.
@@ -18,7 +19,7 @@ pub enum EqPairTensorWeights<F: FieldCore> {
 /// equality addresses. A zero stride is permitted on either side because
 /// setup row and fold axes act on only one equality domain.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EqPairTensorAxis<F: FieldCore> {
+pub struct EqPairTensorAxis<F: Field> {
     /// Number of coordinates on the axis.
     pub len: usize,
     /// Address increment per coordinate in the left equality domain.
@@ -29,7 +30,7 @@ pub struct EqPairTensorAxis<F: FieldCore> {
     pub weights: EqPairTensorWeights<F>,
 }
 
-impl<F: FieldCore> EqPairTensorAxis<F> {
+impl<F: Field> EqPairTensorAxis<F> {
     /// Construct an axis whose coordinate coefficients are all one.
     #[must_use]
     pub const fn unit(len: usize, left_stride: usize, right_stride: usize) -> Self {
@@ -69,7 +70,7 @@ impl<F: FieldCore> EqPairTensorAxis<F> {
 /// turns the uniform ring-dimension case into the same long affine streams as
 /// the former specialized evaluator.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EqPairTensorFamily<F: FieldCore> {
+pub struct EqPairTensorFamily<F: Field> {
     /// Base address in the left equality domain.
     pub left_offset: usize,
     /// Base address in the right equality domain.
@@ -80,7 +81,7 @@ pub struct EqPairTensorFamily<F: FieldCore> {
     pub axes: Vec<EqPairTensorAxis<F>>,
 }
 
-impl<F: FieldCore> EqPairTensorFamily<F> {
+impl<F: Field> EqPairTensorFamily<F> {
     /// Validate and normalize a tensor family.
     ///
     /// # Errors
@@ -171,7 +172,7 @@ impl<F: FieldCore> EqPairTensorFamily<F> {
 ///
 /// Returns an error for malformed geometry, address overflow, unsupported
 /// equality arity, or recurrence work above [`MAX_COMPACT_STRIDE_TERMS`].
-pub fn eval_eq_pair_tensor_families<F: FieldCore>(
+pub fn eval_eq_pair_tensor_families<F: Field>(
     left_challenges: &[F],
     right_challenges: &[F],
     families: &[EqPairTensorFamily<F>],
@@ -240,7 +241,7 @@ pub fn eval_eq_pair_tensor_families<F: FieldCore>(
 ///
 /// Returns an error for an invalid equality window, malformed tensor address,
 /// output overflow, or work above [`MAX_COMPACT_STRIDE_TERMS`].
-pub fn materialize_eq_tensor_left<F: FieldCore>(
+pub fn materialize_eq_tensor_left<F: Field>(
     equality: &OffsetEqWindow<F>,
     families: &[EqPairTensorFamily<F>],
     output_len: usize,
@@ -295,12 +296,12 @@ pub fn materialize_eq_tensor_left<F: FieldCore>(
     Ok(output)
 }
 
-struct DenseLeftTensorView<'a, F: FieldCore> {
+struct DenseLeftTensorView<'a, F: Field> {
     family: &'a EqPairTensorFamily<F>,
     destination_axis: usize,
 }
 
-fn materialize_dense_left_overlap<F: FieldCore>(
+fn materialize_dense_left_overlap<F: Field>(
     equality: &OffsetEqWindow<F>,
     families: &[EqPairTensorFamily<F>],
     output_len: usize,
@@ -407,7 +408,7 @@ fn materialize_dense_left_overlap<F: FieldCore>(
     Ok(Some(output))
 }
 
-fn dense_left_destination_axis<F: FieldCore>(family: &EqPairTensorFamily<F>) -> Option<usize> {
+fn dense_left_destination_axis<F: Field>(family: &EqPairTensorFamily<F>) -> Option<usize> {
     let mut destination = None;
     for (index, axis) in family.axes.iter().enumerate() {
         if axis.left_stride == 1 && matches!(axis.weights, EqPairTensorWeights::Unit) {
@@ -421,7 +422,7 @@ fn dense_left_destination_axis<F: FieldCore>(family: &EqPairTensorFamily<F>) -> 
     destination
 }
 
-fn contract_residual_tensor_axes<F: FieldCore>(
+fn contract_residual_tensor_axes<F: Field>(
     equality: &OffsetEqWindow<F>,
     family: &EqPairTensorFamily<F>,
     destination_axis: usize,
@@ -485,7 +486,7 @@ fn contract_residual_tensor_axes<F: FieldCore>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn visit_tensor_coordinates<F: FieldCore>(
+fn visit_tensor_coordinates<F: Field>(
     family: &EqPairTensorFamily<F>,
     axis_index: usize,
     left_offset: usize,
@@ -536,7 +537,7 @@ fn visit_tensor_coordinates<F: FieldCore>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn collect_tensor_family_seeds<F: FieldCore>(
+fn collect_tensor_family_seeds<F: Field>(
     family: &EqPairTensorFamily<F>,
     stream_axis: Option<usize>,
     axis_index: usize,
@@ -630,7 +631,7 @@ struct EqPairSeed<F> {
     weight: F,
 }
 
-fn eval_tensor_seed_batch<F: FieldCore>(
+fn eval_tensor_seed_batch<F: Field>(
     left_challenges: &[F],
     right_challenges: &[F],
     left_stride: usize,
@@ -748,7 +749,7 @@ fn eval_tensor_seed_batch<F: FieldCore>(
     Ok(acc)
 }
 
-fn finish_seed_states<F: FieldCore>(
+fn finish_seed_states<F: Field>(
     left_challenges: &[F],
     right_challenges: &[F],
     mut bit: usize,
@@ -806,7 +807,7 @@ fn finish_seed_states<F: FieldCore>(
         .sum())
 }
 
-fn equality_carry_step<F: FieldCore>(challenge: Option<F>, carry: usize) -> Option<(usize, F)> {
+fn equality_carry_step<F: Field>(challenge: Option<F>, carry: usize) -> Option<(usize, F)> {
     if let Some(challenge) = challenge {
         Some((
             carry >> 1,
@@ -823,7 +824,7 @@ fn equality_carry_step<F: FieldCore>(challenge: Option<F>, carry: usize) -> Opti
     }
 }
 
-fn eq_eval_checked<F: FieldCore>(challenges: &[F], index: usize) -> F {
+fn eq_eval_checked<F: Field>(challenges: &[F], index: usize) -> F {
     if challenges.len() < usize::BITS as usize && index >= 1usize << challenges.len() {
         F::zero()
     } else {

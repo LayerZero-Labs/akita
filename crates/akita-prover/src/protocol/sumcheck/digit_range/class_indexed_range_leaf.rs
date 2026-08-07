@@ -11,17 +11,18 @@ use super::{
     compose_small_poly_with_affine, MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE,
 };
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Fold, Ring, Unreduced};
+
+use akita_error::AkitaError;
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
 
-struct CompactRangeLeafState<E: FieldCore> {
+struct CompactRangeLeafState<E: Field> {
     source: CompactDigitSource,
     pair_coefficients: OrderedRangePairCoefficients<E>,
 }
 
-struct FirstChallengeFoldedRangeLeafState<E: FieldCore> {
+struct FirstChallengeFoldedRangeLeafState<E: Field> {
     source: CompactDigitSource,
     folded_pairs: FoldedRangeImagePairTable<E>,
     cached_second_round_coefficients: [E; MAX_TREE_STAGE_Q_DEGREE + 1],
@@ -30,7 +31,7 @@ struct FirstChallengeFoldedRangeLeafState<E: FieldCore> {
 type RangeImageTableState<E> =
     ClassIndexedTableState<CompactRangeLeafState<E>, FirstChallengeFoldedRangeLeafState<E>, E>;
 
-fn accumulate_round<E: FieldCore + HasUnreducedOps>(
+fn accumulate_round<E: Field + Unreduced>(
     equality_prefix_weights: &[E],
     equality_suffix_weights: &[E],
     explicit_pair_count: usize,
@@ -53,7 +54,7 @@ fn accumulate_round<E: FieldCore + HasUnreducedOps>(
 }
 
 /// Final equality-factored quartic over the virtual range-image table.
-pub(super) struct ClassIndexedRangeLeafProver<E: FieldCore> {
+pub(super) struct ClassIndexedRangeLeafProver<E: Field> {
     range_image: RangeImageTableState<E>,
     split_eq: GruenSplitEq<E>,
     input_claim: E,
@@ -62,7 +63,7 @@ pub(super) struct ClassIndexedRangeLeafProver<E: FieldCore> {
     rounds_completed: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> ClassIndexedRangeLeafProver<E> {
+impl<E: Field + Ring> ClassIndexedRangeLeafProver<E> {
     pub(super) fn new(
         source: CompactDigitSource,
         equality_point: &[E],
@@ -105,8 +106,8 @@ impl<E: FieldCore + FromPrimitiveInt> ClassIndexedRangeLeafProver<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
-    EqFactoredSumcheckInstanceProver<E> for ClassIndexedRangeLeafProver<E>
+impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
+    for ClassIndexedRangeLeafProver<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_rounds
@@ -266,7 +267,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
                         kernel_strategy = "factorized-pair-rescan",
                     )
                     .entered();
-                    let fold_context = E::precompute_fold(challenge);
+                    let fold_context = E::precompute(challenge);
                     let explicit = cfg_into_iter!(0..source.quartet_count())
                         .map(|quartet_index| {
                             let (left_pair, right_pair) =
@@ -338,7 +339,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
                 domain_len = table.domain_len(),
             )
             .entered();
-            let fold_context = E::precompute_fold(challenge);
+            let fold_context = E::precompute(challenge);
             table
                 .fold_in_place(|left, right| E::fold_one(&fold_context, left, right))
                 .expect("validated exact-prefix range-image state can fold");

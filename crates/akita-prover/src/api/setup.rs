@@ -1,12 +1,13 @@
 //! Prover setup artifact and config-free setup expansion helpers.
 
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
     derive_public_matrix_prefix, sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor,
     AkitaVerifierSetup, FlatMatrix, SetupMatrixCapacity, SetupPrefixProverRegistry,
     SetupPrefixVerifierRegistry,
 };
+use jolt_field::{CanonicalEncoding, Field};
 use std::sync::Arc;
 
 /// Prover setup artifact.
@@ -14,7 +15,7 @@ use std::sync::Arc;
 /// Backend-prepared compute state is intentionally not stored here. Host code
 /// prepares a compute backend from the expanded setup when it wants to prove.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaProverSetup<F: FieldCore> {
+pub struct AkitaProverSetup<F: Field> {
     /// Expanded matrix stage used by the prover.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Preprocessed setup-prefix commitment slots for setup-claim offloading.
@@ -25,7 +26,7 @@ pub struct AkitaProverSetup<F: FieldCore> {
     pub prefix_slots: SetupPrefixProverRegistry<F>,
 }
 
-impl<F: FieldCore> AkitaProverSetup<F> {
+impl<F: Field> AkitaProverSetup<F> {
     /// Generate a prover setup from already-computed setup capacity bounds.
     ///
     /// The caller supplies config-derived provisioning bounds in base-field
@@ -43,7 +44,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
         setup_capacity: SetupMatrixCapacity,
     ) -> Result<Self, AkitaError>
     where
-        F: CanonicalField + RandomSampling + AkitaSerialize,
+        F: Field + CanonicalEncoding + AkitaSerialize,
     {
         let setup_seed = sample_akita_setup_seed();
         let seed = AkitaSetupDescriptor {
@@ -129,7 +130,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     /// Returns an error if the expanded setup does not match its seed.
     pub fn from_validated_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
     where
-        F: CanonicalField + RandomSampling + Valid,
+        F: Field + CanonicalEncoding + Valid,
     {
         expanded.check().map_err(|err| {
             AkitaError::InvalidSetup(format!("expanded setup validation failed: {err}"))
@@ -150,7 +151,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     /// metadata is malformed.
     pub fn from_seed_validated_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
     where
-        F: CanonicalField + Valid,
+        F: Field + CanonicalEncoding + Valid,
     {
         expanded.seed().check().map_err(|err| {
             AkitaError::InvalidSetup(format!("expanded setup seed validation failed: {err}"))
@@ -172,9 +173,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     }
 }
 
-impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaSerialize> Valid
-    for AkitaProverSetup<F>
-{
+impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> Valid for AkitaProverSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
         if self.prefix_slots.setup_seed() != &self.expanded.seed().setup_seed {
@@ -189,7 +188,7 @@ impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaSerialize> Va
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128Offset275;
+    use jolt_field::Prime128Offset275;
 
     #[test]
     fn generate_with_capacity_rejects_zero_setup_len() {

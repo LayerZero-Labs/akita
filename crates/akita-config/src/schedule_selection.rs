@@ -1,11 +1,12 @@
 //! Shared batched schedule selection for prove and verify entry points.
 
 use crate::CommitmentConfig;
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
 use akita_types::{
     dispatch_for_field, folded_root_supports_opening_shape, root_tensor_projection_enabled,
     FpExtEncoding, OpeningClaimsLayout,
 };
+use jolt_field::Field;
 
 /// Select the effective folded runtime schedule for a batched opening.
 ///
@@ -26,7 +27,7 @@ pub fn effective_batched_schedule<Cfg>(
 ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore,
+    Cfg::Field: Field,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
 {
     let num_vars = opening_batch.max_num_vars();

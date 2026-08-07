@@ -8,19 +8,19 @@
 
 #![allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
-use akita_algebra::CyclotomicRing;
-use akita_challenges::{SparseChallenge, TensorChallenges};
-use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
-
 use crate::backend::poly_helpers::{
     balanced_tight_digit_fold_partitioned, build_decompose_fold_witness,
 };
 use crate::compute::{CommitInnerPlan, CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
+use akita_algebra::CyclotomicRing;
+use akita_challenges::{SparseChallenge, TensorChallenges};
+use akita_error::AkitaError;
 use akita_types::{
     tensor_column_partials_from_base_evals, tensor_packed_witness_evals, FpExtEncoding,
     WitnessLayout,
 };
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::{marker::PhantomData, sync::Arc};
 
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
@@ -110,7 +110,7 @@ impl RecursiveWitnessFlat {
         self.digits.is_empty()
     }
 
-    pub fn view<F: FieldCore, const D: usize>(
+    pub fn view<F: Field, const D: usize>(
         &self,
     ) -> Result<SuffixWitnessView<'_, F, D>, AkitaError> {
         let digits = match (&self.commitment_digits, self.commitment_ring_dim) {
@@ -135,7 +135,7 @@ impl AsRef<[i8]> for RecursiveWitnessFlat {
 
 /// D-specific zero-copy view over a flat recursive witness digit buffer.
 #[derive(Debug, Clone, Copy)]
-pub struct SuffixWitnessView<'a, F: FieldCore, const D: usize> {
+pub struct SuffixWitnessView<'a, F: Field, const D: usize> {
     coeffs: &'a [[i8; D]],
     live_ring_elems: usize,
     padded_ring_elems: usize,
@@ -143,7 +143,7 @@ pub struct SuffixWitnessView<'a, F: FieldCore, const D: usize> {
     _marker: PhantomData<F>,
 }
 
-impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
+impl<'a, F: Field, const D: usize> SuffixWitnessView<'a, F, D> {
     pub fn from_i8_digits(digits: &'a [i8]) -> Result<Self, AkitaError> {
         Self::from_recursive_witness(digits, digits.len(), None)
     }
@@ -215,7 +215,7 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
 
 impl<'a, F, const D: usize> SuffixWitnessView<'a, F, D>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     pub(crate) fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
         let expected_len = self.padded_ring_elems.checked_mul(D).ok_or_else(|| {
@@ -243,7 +243,7 @@ where
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
     where
-        E: akita_field::MulBaseUnreduced<F>,
+        E: jolt_field::MulBaseUnreduced<F>,
     {
         let num_vars = self.num_vars();
         if logical_point.len() != num_vars {
@@ -261,7 +261,7 @@ where
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
-        E: akita_field::MulBaseUnreduced<F>,
+        E: jolt_field::MulBaseUnreduced<F>,
     {
         polys
             .iter()
@@ -456,7 +456,10 @@ where
             ));
         }
 
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("canonical prime-field value fits in u128")
+            + 1;
         let coeffs = self.coeffs;
         let coeff_accum =
             balanced_tight_digit_fold_partitioned::<D>(coeffs, challenges, num_positions_per_block);
@@ -537,7 +540,6 @@ use crate::compute::{
     TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
-use akita_field::MulBaseUnreduced;
 
 fn padded_ring_elems_for_digits<const D: usize>(digits: &[i8]) -> usize {
     digits.len().div_ceil(D).next_power_of_two().max(1)
@@ -545,14 +547,14 @@ fn padded_ring_elems_for_digits<const D: usize>(digits: &[i8]) -> usize {
 
 /// Same-point batch view over several [`RecursiveWitnessFlat`] suffix witnesses.
 #[derive(Debug, Clone, Copy)]
-pub struct SuffixWitnessBatchView<'a, F: FieldCore, const D: usize> {
+pub struct SuffixWitnessBatchView<'a, F: Field, const D: usize> {
     polys: &'a [&'a RecursiveWitnessFlat],
     _marker: PhantomData<F>,
 }
 
 impl<F, const D: usize> RootPolyShape<F, D> for RecursiveWitnessFlat
 where
-    F: FieldCore,
+    F: Field,
 {
     fn num_ring_elems(&self) -> usize {
         padded_ring_elems_for_digits::<D>(&self.digits)
@@ -583,7 +585,7 @@ where
 /// `num_vars`.
 impl<F> RootPolyMeta<F> for RecursiveWitnessFlat
 where
-    F: FieldCore,
+    F: Field,
 {
     fn num_ring_elems(&self) -> usize {
         self.digits.len().max(1)
@@ -597,7 +599,7 @@ where
 
 impl<F, const D: usize> RootOpeningSource<F, D> for RecursiveWitnessFlat
 where
-    F: FieldCore,
+    F: Field,
 {
     type OpeningView<'v>
         = SuffixWitnessView<'v, F, D>
@@ -623,7 +625,7 @@ where
 
 impl<F, const D: usize> RootTensorSource<F, D> for RecursiveWitnessFlat
 where
-    F: FieldCore,
+    F: Field,
 {
     type TensorView<'v>
         = SuffixWitnessView<'v, F, D>
@@ -649,7 +651,7 @@ where
 
 impl<F, const D: usize> OpeningFoldKernel<SuffixWitnessView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn evaluate_and_fold(
         &self,
@@ -705,7 +707,7 @@ where
 
 impl<F, const D: usize> OpeningBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn decompose_fold_batch(
         &self,
@@ -743,7 +745,7 @@ where
 impl<F, E, const D: usize> TensorProjectionKernel<SuffixWitnessView<'_, F, D>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
     E: ExtField<F>,
 {
     fn column_partials(
@@ -786,7 +788,7 @@ where
 impl<F, E, const D: usize> TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     fn column_partials_batch(
@@ -826,7 +828,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128OffsetA7F7 as F;
+    use jolt_field::Prime128OffsetA7F7 as F;
 
     #[test]
     fn suffix_opening_views_borrow_flat_digit_buffer() {
@@ -866,7 +868,7 @@ mod tests {
     #[test]
     fn suffix_root_projection_is_rejected() {
         const D: usize = 16;
-        type E = akita_field::FpExt4<F>;
+        type E = jolt_field::FpExt4<F>;
         let digits: Vec<i8> = (0..64).map(|idx| (idx % 5) as i8 - 2).collect();
         let witness = RecursiveWitnessFlat::from_i8_digits(digits);
         let view = witness.tensor_view().expect("tensor view");
@@ -883,9 +885,7 @@ mod tests {
     fn logical_rows_are_contiguous_for_partial_final_fold() {
         let digits: Vec<i8> = (0..20).collect();
         let w = RecursiveWitnessFlat::from_i8_digits(digits);
-        let view = w
-            .view::<akita_field::Prime128OffsetA7F7, 2>()
-            .expect("view");
+        let view = w.view::<jolt_field::Prime128OffsetA7F7, 2>().expect("view");
         let num_live_blocks = 4;
         let num_positions_per_block = (w.live_coeff_len() / 2).div_ceil(num_live_blocks);
 

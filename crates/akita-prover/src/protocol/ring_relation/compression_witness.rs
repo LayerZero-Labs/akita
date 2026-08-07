@@ -5,11 +5,12 @@ use crate::compute::compression::{
     CompressionExecutionReport,
 };
 use crate::compute::{CompressionComputeBackend, OperationCtx};
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_error::AkitaError;
 use akita_types::{
     AkitaCommitmentHint, CompressionChainPlan, CompressionChainWitness, CompressionTerminalPayload,
     RelationRhsLayout, RingVec,
 };
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Semantic source of one compression chain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -32,7 +33,7 @@ pub(crate) struct CompressionWitnessMaterialization<F> {
     sources: Vec<CompressionSourceWitness<F>>,
 }
 
-impl<F: FieldCore> CompressionWitnessMaterialization<F> {
+impl<F: Field> CompressionWitnessMaterialization<F> {
     pub(crate) fn source(
         &self,
         id: CompressionSourceId,
@@ -44,7 +45,7 @@ impl<F: FieldCore> CompressionWitnessMaterialization<F> {
     }
 }
 
-impl<F: FieldCore + CanonicalField> CompressionSourceWitness<F> {
+impl<F: Field + CanonicalEncoding> CompressionSourceWitness<F> {
     pub(crate) fn from_outer_hint(
         group_index: usize,
         plan: &CompressionChainPlan,
@@ -60,7 +61,7 @@ impl<F: FieldCore + CanonicalField> CompressionSourceWitness<F> {
     }
 }
 
-fn into_source<F: FieldCore>(
+fn into_source<F: Field>(
     output: CompressionExecutionOutput<CompressionSourceId, F>,
 ) -> CompressionSourceWitness<F> {
     CompressionSourceWitness {
@@ -85,7 +86,7 @@ pub(crate) fn materialize_compression_witness<F, B>(
     AkitaError,
 >
 where
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     B: CompressionComputeBackend<F>,
 {
     if outer_sources.len() != layout.groups.len() {

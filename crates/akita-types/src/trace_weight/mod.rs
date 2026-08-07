@@ -45,11 +45,12 @@ pub(crate) use test_only::trace_weight_mle_eval;
 #[cfg(test)]
 mod test_only {
     use akita_algebra::poly::multilinear_eval;
-    use akita_field::{AkitaError, FieldCore};
+    use akita_error::AkitaError;
+    use jolt_field::Field;
 
     use super::layout::TraceWeightLayout;
 
-    pub(crate) fn trace_weight_mle_eval<E: FieldCore>(
+    pub(crate) fn trace_weight_mle_eval<E: Field>(
         layout: &TraceWeightLayout,
         table: &[E],
         col_point: &[E],
