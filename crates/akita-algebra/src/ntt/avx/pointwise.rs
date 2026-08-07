@@ -560,20 +560,79 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
     }
 }
 
+/// Pair-pack exactly six `i16` CRT entries in place for AVX-512VNNI dots.
+///
+/// Each adjacent source pair becomes an even-coefficient pair stream followed
+/// by an odd-coefficient pair stream in the same two backing arrays. Packing
+/// once lets every matrix row reuse the transformed rhs without repeating the
+/// interleave instructions in the pointwise kernel.
+///
+/// # Safety
+///
+/// The caller must ensure AVX-512F/BW are available. `rhs` must point to six
+/// distinct writable arrays of `d` `i16` elements. `d` must be even.
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn pack_i16_dot_rhs_6_avx512(rhs: *const *mut i16, d: usize) {
+    const EVEN_WORDS: __mmask32 = 0x5555_5555;
+
+    let mut i = 0usize;
+    while i + 32 <= d {
+        for pair in 0..(I16_VNNI_DOT_BATCH / 2) {
+            // SAFETY: guaranteed by the pointer contract and loop bound.
+            unsafe {
+                let even_ptr = *rhs.add(pair * 2);
+                let odd_ptr = *rhs.add(pair * 2 + 1);
+                let rhs0 = _mm512_loadu_si512(even_ptr.add(i).cast());
+                let rhs1 = _mm512_loadu_si512(odd_ptr.add(i).cast());
+                let even = _mm512_mask_mov_epi16(_mm512_slli_epi32::<16>(rhs1), EVEN_WORDS, rhs0);
+                let odd = _mm512_mask_mov_epi16(rhs1, EVEN_WORDS, _mm512_srli_epi32::<16>(rhs0));
+                _mm512_storeu_si512(even_ptr.add(i).cast(), even);
+                _mm512_storeu_si512(odd_ptr.add(i).cast(), odd);
+            }
+        }
+        i += 32;
+    }
+
+    if i < d {
+        debug_assert_eq!((d - i) % 2, 0);
+        for pair in 0..(I16_VNNI_DOT_BATCH / 2) {
+            let mut rhs0 = [0_i16; 32];
+            let mut rhs1 = [0_i16; 32];
+            let remaining = d - i;
+            // SAFETY: guaranteed by the pointer contract and tail bound.
+            unsafe {
+                let even_ptr = *rhs.add(pair * 2);
+                let odd_ptr = *rhs.add(pair * 2 + 1);
+                for offset in 0..remaining {
+                    rhs0[offset] = *even_ptr.add(i + offset);
+                    rhs1[offset] = *odd_ptr.add(i + offset);
+                }
+                for offset in 0..(remaining / 2) {
+                    let dst = i + offset * 2;
+                    *even_ptr.add(dst) = rhs0[offset * 2];
+                    *even_ptr.add(dst + 1) = rhs1[offset * 2];
+                    *odd_ptr.add(dst) = rhs0[offset * 2 + 1];
+                    *odd_ptr.add(dst + 1) = rhs1[offset * 2 + 1];
+                }
+            }
+        }
+    }
+}
+
 /// AVX-512VNNI pointwise dot accumulation for exactly six `i16` CRT entries.
 ///
-/// Adjacent columns are interleaved in registers so each `vpdpwssd` computes
-/// two products per frequency. Three instructions therefore cover the six
-/// columns, followed by one Montgomery reduction. The input arrays remain in
-/// Akita's canonical coefficient order; a later prepared-layout experiment
-/// can remove this dynamic interleave without changing the arithmetic kernel.
+/// Adjacent lhs columns are interleaved in registers. The corresponding rhs
+/// arrays must already have been pair-packed by [`pack_i16_dot_rhs_6_avx512`].
+/// Three `vpdpwssd` instructions cover the six products for each parity, then
+/// one Montgomery reduction returns each frequency to the canonical range.
 ///
 /// # Safety
 ///
 /// The caller must ensure AVX2 and AVX-512F/DQ/BW/VNNI are available. `acc` must be valid
 /// for `d` writable `i16` elements. Every pointer in the six-entry `lhs` and
 /// `rhs` arrays must be valid for `d` readable `i16` elements and obey Rust's
-/// aliasing rules with `acc`. All values must lie in `(-p, p)` for `p < 2^14`.
+/// aliasing rules with `acc`. The rhs arrays must have the packed layout above.
+/// All values must lie in `(-p, p)` for `p < 2^14`.
 #[target_feature(enable = "avx2,avx512f,avx512dq,avx512bw,avx512vnni")]
 pub(crate) unsafe fn pointwise_dot_acc_6_i16_avx512vnni(
     acc: *mut i16,
@@ -598,19 +657,15 @@ pub(crate) unsafe fn pointwise_dot_acc_6_i16_avx512vnni(
             unsafe {
                 let lhs0 = _mm512_loadu_si512((*lhs.add(column)).add(i).cast());
                 let lhs1 = _mm512_loadu_si512((*lhs.add(column + 1)).add(i).cast());
-                let rhs0 = _mm512_loadu_si512((*rhs.add(column)).add(i).cast());
-                let rhs1 = _mm512_loadu_si512((*rhs.add(column + 1)).add(i).cast());
+                let rhs_even = _mm512_loadu_si512((*rhs.add(column)).add(i).cast());
+                let rhs_odd = _mm512_loadu_si512((*rhs.add(column + 1)).add(i).cast());
 
                 let lhs_even =
                     _mm512_mask_mov_epi16(_mm512_slli_epi32::<16>(lhs1), EVEN_WORDS, lhs0);
-                let rhs_even =
-                    _mm512_mask_mov_epi16(_mm512_slli_epi32::<16>(rhs1), EVEN_WORDS, rhs0);
                 even = _mm512_dpwssd_epi32(even, lhs_even, rhs_even);
 
                 let lhs_odd =
                     _mm512_mask_mov_epi16(lhs1, EVEN_WORDS, _mm512_srli_epi32::<16>(lhs0));
-                let rhs_odd =
-                    _mm512_mask_mov_epi16(rhs1, EVEN_WORDS, _mm512_srli_epi32::<16>(rhs0));
                 odd = _mm512_dpwssd_epi32(odd, lhs_odd, rhs_odd);
             }
         }
@@ -648,11 +703,19 @@ pub(crate) unsafe fn pointwise_dot_acc_6_i16_avx512vnni(
         let prime = NttPrime::compute(p);
         while i < d {
             let mut products = 0_i32;
-            for column in 0..I16_VNNI_DOT_BATCH {
+            for pair in 0..(I16_VNNI_DOT_BATCH / 2) {
+                let packed = if i % 2 == 0 {
+                    // Even coefficients occupy the first array in each pair.
+                    unsafe { (*rhs.add(pair * 2)).add(i) }
+                } else {
+                    // Odd coefficients occupy the second array in each pair.
+                    unsafe { (*rhs.add(pair * 2 + 1)).add(i - 1) }
+                };
                 // SAFETY: guaranteed by the pointer contract and tail bound.
                 unsafe {
-                    products += i32::from(*(*lhs.add(column)).add(i))
-                        * i32::from(*(*rhs.add(column)).add(i));
+                    products += i32::from(*(*lhs.add(pair * 2)).add(i)) * i32::from(*packed);
+                    products +=
+                        i32::from(*(*lhs.add(pair * 2 + 1)).add(i)) * i32::from(*packed.add(1));
                 }
             }
             let correction = (products as i16).wrapping_mul(pinv);

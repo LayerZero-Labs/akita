@@ -799,7 +799,7 @@ fn avx512vnni_six_way_i16_dot_matches_scalar_with_tail() {
         return;
     }
     let prime = NttPrime::compute(15361_i16);
-    const D: usize = 47;
+    const D: usize = 80;
     let acc_init = random_mont_array_i16::<D>(prime, 0xd0d0);
     let lhs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
         if column == 0 {
@@ -808,19 +808,24 @@ fn avx512vnni_six_way_i16_dot_matches_scalar_with_tail() {
             random_mont_array_i16::<D>(prime, 0x1100 + column as u64)
         }
     });
-    let rhs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
+    let mut rhs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
         random_mont_array_i16::<D>(prime, 0x2200 + column as u64)
     });
+    let scalar_rhs = rhs.clone();
     let lhs_ptrs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
         lhs[column].as_ptr().cast::<i16>()
     });
+    let rhs_base = rhs.as_mut_ptr();
     let rhs_ptrs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
-        rhs[column].as_ptr().cast::<i16>()
+        // SAFETY: `column` is bounded by the six-element rhs array.
+        unsafe { (*rhs_base.add(column)).as_mut_ptr().cast::<i16>() }
     });
 
     let mut avx_acc = acc_init;
     // SAFETY: guarded by runtime AVX2 and AVX-512F/DQ/BW/VNNI detection above.
     unsafe {
+        pack_i16_dot_rhs_6_avx512(rhs_ptrs.as_ptr(), D);
+        let rhs_ptrs = rhs_ptrs.map(|pointer| pointer.cast_const());
         pointwise_dot_acc_6_i16_avx512vnni(
             avx_acc.as_mut_ptr().cast::<i16>(),
             lhs_ptrs.as_ptr(),
@@ -833,7 +838,7 @@ fn avx512vnni_six_way_i16_dot_matches_scalar_with_tail() {
 
     let mut scalar_acc = acc_init;
     for column in 0..I16_VNNI_DOT_BATCH {
-        scalar_pointwise_i16(&mut scalar_acc, &lhs[column], &rhs[column], prime);
+        scalar_pointwise_i16(&mut scalar_acc, &lhs[column], &scalar_rhs[column], prime);
     }
     for (index, (actual, expected)) in avx_acc.into_iter().zip(scalar_acc).enumerate() {
         assert_eq!(

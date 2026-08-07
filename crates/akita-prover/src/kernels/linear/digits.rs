@@ -135,13 +135,12 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
                                 CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut)
                             }),
                         );
-                        for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
-                            acc.add_assign_pointwise_dot(
-                                &mat_row[batch_start..batch_end],
-                                &transformed,
-                                params,
-                            );
-                        }
+                        CyclotomicCrtNtt::add_assign_pointwise_dot_rows(
+                            &mut accs[block_idx],
+                            |row| &ntt_mat[row][batch_start..batch_end],
+                            &mut transformed,
+                            params,
+                        );
                     }
                 }
             } else if CHECK_ZERO {
