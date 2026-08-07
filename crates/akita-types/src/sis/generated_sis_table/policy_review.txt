@@ -2,7 +2,7 @@ Akita SIS generated-table policy review
 policy=Quantum128BitADPS16
 estimator_revision=akita-sis-estimator-adps16-quantum-lgsa-v1
 optimizer_profile=local-minimum+proven-pruned-certification
-certificate_domain=exhaustive beta [40,65536); for each beta, LGSA complete-profile transition and predecessor plus zeta 0 and 1
+certificate_domain=proven-pruned beta from 40 to the capped Euclidean baseline, with ADPS16 lower-bound early stop; for each visited beta, LGSA complete-profile transition and predecessor plus zeta 0 and 1
 modulus_profiles=q32:2^32-99,q64:2^64-59,q128:2^128-(2^32-22537)
 norm=coefficient-l-infinity
 shape=LGSA

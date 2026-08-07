@@ -17,6 +17,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::LazyLock;
 
+mod boundary;
+
+use boundary::{certified_boundary_from_hint, max_true_in_prefix};
+
 /// Estimator projection of the runtime's canonical coefficient buckets.
 pub static COEFF_LINF_BUCKETS: LazyLock<Vec<u64>> = LazyLock::new(|| {
     akita_types::sis::COEFF_LINF_BUCKETS
@@ -44,6 +48,13 @@ pub const DEFAULT_SEARCH_CAP: u64 = 6_400_000_000_000;
 /// Legacy L2 generator cap retained for the independent Euclidean table.
 /// The quantum infinity table itself uses [`DEFAULT_SEARCH_CAP`] uniformly.
 pub const D128_SEARCH_CAP: u64 = DEFAULT_SEARCH_CAP;
+
+/// Search domain recorded for production boundary certificates.
+pub const PRODUCTION_CERTIFICATE_DOMAIN: &str = concat!(
+    "proven-pruned beta from 40 to the capped Euclidean baseline, ",
+    "with ADPS16 lower-bound early stop; for each visited beta, ",
+    "LGSA complete-profile transition and predecessor plus zeta 0 and 1"
+);
 
 /// Optimizer profile used to discover and certify scalar boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,14 +149,18 @@ impl Default for InfinityWidthTableConfig {
     }
 }
 
-/// Whether a config is the complete current generation domain.
-pub fn is_full_infinity_width_table_config(config: &InfinityWidthTableConfig) -> bool {
+/// Whether a config may publish the canonical production artifact.
+///
+/// Comparison profiles may generate CSV output, but production Rust output
+/// must use the profile that certifies every discovered boundary.
+pub fn is_production_infinity_width_table_config(config: &InfinityWidthTableConfig) -> bool {
     same_set(&config.profiles, FAMILIES)
         && same_set(&config.ring_dims, RING_DIMS)
         && same_set(&config.coeff_linf_bounds, &COEFF_LINF_BUCKETS)
         && config.max_rank == DEFAULT_MAX_RANK
         && config.policy == SisSecurityPolicy::Quantum128BitADPS16
         && config.search_cap.is_none()
+        && config.profile == InfinityWidthProfile::LocalMinimum
 }
 
 /// ADPS16 quantum certificate costs for one accepted or rejected boundary.
@@ -609,111 +624,6 @@ fn certify_boundary(
     Ok((result.max_value, result.next_value, result.hit_cap))
 }
 
-fn certified_boundary_from_hint<F>(
-    cap: u64,
-    hint: u64,
-    mut predicate: F,
-) -> Result<PrefixSearchResult>
-where
-    F: FnMut(u64) -> Result<bool>,
-{
-    if cap == 0 {
-        return invalid_config("search_cap", "search cap must be positive");
-    }
-    let hint = hint.clamp(1, cap);
-    if predicate(hint)? {
-        if hint == cap {
-            return Ok(PrefixSearchResult {
-                max_value: cap,
-                next_value: None,
-                hit_cap: true,
-            });
-        }
-        let next = hint + 1;
-        if !predicate(next)? {
-            return Ok(PrefixSearchResult {
-                max_value: hint,
-                next_value: Some(next),
-                hit_cap: false,
-            });
-        }
-        let mut low = next;
-        let mut step = 2u64;
-        loop {
-            let high = low.saturating_add(step).min(cap);
-            if predicate(high)? {
-                low = high;
-                if low == cap {
-                    return Ok(PrefixSearchResult {
-                        max_value: cap,
-                        next_value: None,
-                        hit_cap: true,
-                    });
-                }
-                step = step.saturating_mul(2);
-            } else {
-                return binary_certified_boundary(low, high, predicate);
-            }
-        }
-    }
-
-    if hint == 1 {
-        return Ok(PrefixSearchResult {
-            max_value: 0,
-            next_value: Some(1),
-            hit_cap: false,
-        });
-    }
-    let previous = hint - 1;
-    if predicate(previous)? {
-        return Ok(PrefixSearchResult {
-            max_value: previous,
-            next_value: Some(hint),
-            hit_cap: false,
-        });
-    }
-    let mut high = previous;
-    let mut step = 1u64;
-    loop {
-        let low = high.saturating_sub(step).max(1);
-        if predicate(low)? {
-            return binary_certified_boundary(low, high, predicate);
-        }
-        if low == 1 {
-            return Ok(PrefixSearchResult {
-                max_value: 0,
-                next_value: Some(1),
-                hit_cap: false,
-            });
-        }
-        high = low;
-        step = step.saturating_mul(2);
-    }
-}
-
-fn binary_certified_boundary<F>(
-    mut low: u64,
-    mut high: u64,
-    mut predicate: F,
-) -> Result<PrefixSearchResult>
-where
-    F: FnMut(u64) -> Result<bool>,
-{
-    while low + 1 < high {
-        let mid = low + (high - low) / 2;
-        if predicate(mid)? {
-            low = mid;
-        } else {
-            high = mid;
-        }
-    }
-    Ok(PrefixSearchResult {
-        max_value: low,
-        next_value: Some(high),
-        hit_cap: false,
-    })
-}
-
 fn row_search_cap(d: u32, requested: Option<u64>) -> Result<u64> {
     if d == 0 {
         return Err(EstimatorError::InvalidParameter {
@@ -774,67 +684,6 @@ fn security_met(rop: CostValue, target: f64) -> bool {
         || matches!(rop, CostValue::ProvenAboveTarget(lower_bound)
             if (lower_bound.log2.is_finite() && lower_bound.log2 >= target)
                 || (lower_bound.log2.is_infinite() && lower_bound.log2.is_sign_positive()))
-}
-
-fn max_true_in_prefix<F>(start: u64, cap: u64, mut predicate: F) -> Result<PrefixSearchResult>
-where
-    F: FnMut(u64) -> Result<bool>,
-{
-    if start == 0 || cap < start {
-        return invalid_config("search range", "must satisfy 0 < start <= cap");
-    }
-    // Security is a prefix in the column count. If the first admitted width
-    // already fails, no later width can recover; scanning for a later `true`
-    // would both violate that contract and become linear in a multi-trillion
-    // search cap.
-    if !predicate(start)? {
-        return Ok(PrefixSearchResult {
-            max_value: 0,
-            next_value: Some(start),
-            hit_cap: false,
-        });
-    }
-    let mut low = start;
-    let mut high = start.checked_mul(2).unwrap_or(cap).min(cap);
-    if high == low && high < cap {
-        high = high
-            .checked_add(1)
-            .ok_or_else(|| EstimatorError::InvalidConfig {
-                field: "search_cap",
-                reason: "search probe overflow".to_string(),
-            })?;
-    }
-    while high < cap && predicate(high)? {
-        low = high;
-        high = high.checked_mul(2).unwrap_or(cap).min(cap);
-    }
-    if high == cap && predicate(cap)? {
-        return Ok(PrefixSearchResult {
-            max_value: cap,
-            next_value: None,
-            hit_cap: true,
-        });
-    }
-    while low + 1 < high {
-        let mid = low + (high - low) / 2;
-        if predicate(mid)? {
-            low = mid;
-        } else {
-            high = mid;
-        }
-    }
-    Ok(PrefixSearchResult {
-        max_value: low,
-        next_value: Some(high),
-        hit_cap: false,
-    })
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PrefixSearchResult {
-    max_value: u64,
-    next_value: Option<u64>,
-    hit_cap: bool,
 }
 
 fn validate_rank_monotonicity(rows: &[InfinityWidthRow]) -> Result<()> {
@@ -917,178 +766,4 @@ fn same_set<T: Copy + Ord>(left: &[T], right: &[T]) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn prefix_search_finds_last_true_value() {
-        assert_eq!(
-            max_true_in_prefix(1, 16, |value| Ok(value <= 9))
-                .unwrap()
-                .max_value,
-            9
-        );
-    }
-
-    #[test]
-    fn prefix_search_stops_when_the_first_width_is_insecure() {
-        let mut probes = 0;
-        let result = max_true_in_prefix(1, DEFAULT_SEARCH_CAP, |_| {
-            probes += 1;
-            Ok(false)
-        })
-        .unwrap();
-        assert_eq!(result.max_value, 0);
-        assert_eq!(result.next_value, Some(1));
-        assert_eq!(probes, 1);
-    }
-
-    #[test]
-    fn certificate_search_brackets_distant_boundaries() {
-        for (cap, hint, boundary) in [
-            (1_000_000, 3, 800_000),
-            (1_000_000, 900_000, 17),
-            (1_000_000, 900_000, 0),
-            (1_000_000, 3, 1_000_000),
-        ] {
-            let mut probes = 0;
-            let result = certified_boundary_from_hint(cap, hint, |value| {
-                probes += 1;
-                Ok(value <= boundary)
-            })
-            .unwrap();
-            assert_eq!(result.max_value, boundary);
-            assert_eq!(result.hit_cap, boundary == cap);
-            assert_eq!(result.next_value, (boundary < cap).then_some(boundary + 1));
-            assert!(
-                probes < 64,
-                "hint={hint} boundary={boundary} probes={probes}"
-            );
-        }
-    }
-
-    #[test]
-    fn infinity_never_counts_as_secure() {
-        assert!(!security_met(CostValue::Infinity, 128.0));
-        assert!(secure_or_error(CostValue::Infinity, 128.0).is_err());
-    }
-
-    #[test]
-    fn csv_has_no_classical_columns() {
-        assert!(!InfinityWidthRow::csv_header().contains("classical"));
-    }
-
-    #[test]
-    fn runtime_table_emits_direct_q128_d512_rows() {
-        let rows = [10, 20, 30, 40]
-            .into_iter()
-            .enumerate()
-            .map(|(index, max_width)| InfinityWidthRow {
-                modulus_profile: AkitaModulusProfileId::Q128OffsetA7F7,
-                d: 512,
-                rank: u32::try_from(index + 1).unwrap(),
-                coeff_linf_bound: 2,
-                max_width,
-                policy: SisSecurityPolicy::Quantum128BitADPS16,
-                search_cap: DEFAULT_SEARCH_CAP,
-                hit_cap: false,
-                profile: InfinityWidthProfile::LocalMinimum,
-                max_costs: None,
-                next_costs: None,
-            })
-            .collect::<Vec<_>>();
-        let runtime_rows = runtime_width_rows(&rows, 4).unwrap();
-        assert_eq!(
-            runtime_rows,
-            [RuntimeWidthRow {
-                modulus_profile: AkitaModulusProfileId::Q128OffsetA7F7,
-                d: 512,
-                coeff_linf_bound: 2,
-                widths: vec![10, 20, 30, 40],
-            }]
-        );
-    }
-
-    #[test]
-    fn generation_filters_to_canonical_production_and_compression_cells() {
-        assert!(reachable_role_cell(
-            AkitaModulusProfileId::Q128OffsetA7F7,
-            64,
-            15
-        ));
-        assert!(!reachable_role_cell(
-            AkitaModulusProfileId::Q128OffsetA7F7,
-            32,
-            2
-        ));
-        assert!(reachable_role_cell(
-            AkitaModulusProfileId::Q128OffsetA7F7,
-            64,
-            2
-        ));
-        assert!(reachable_role_cell(
-            AkitaModulusProfileId::Q128OffsetA7F7,
-            512,
-            2
-        ));
-        assert!(!reachable_role_cell(
-            AkitaModulusProfileId::Q64Offset59,
-            512,
-            2
-        ));
-        assert!(!reachable_role_cell(
-            AkitaModulusProfileId::Q128OffsetA7F7,
-            16,
-            15
-        ));
-        assert!(reachable_role_cell(
-            AkitaModulusProfileId::Q128OffsetA7F7,
-            16,
-            1
-        ));
-        assert!(reachable_role_cell(
-            AkitaModulusProfileId::Q64Offset59,
-            16,
-            1
-        ));
-        assert!(reachable_role_cell(
-            AkitaModulusProfileId::Q32Offset99,
-            32,
-            1
-        ));
-        assert!(!reachable_role_cell(
-            AkitaModulusProfileId::Q128OffsetA7F7,
-            32,
-            1
-        ));
-        assert!(!reachable_role_cell(
-            AkitaModulusProfileId::Q64Offset59,
-            64,
-            1
-        ));
-        assert!(!reachable_role_cell(
-            AkitaModulusProfileId::Q32Offset99,
-            128,
-            1
-        ));
-    }
-
-    #[test]
-    fn q128_d512_rows_are_estimated_directly() {
-        let config = InfinityWidthTableConfig {
-            profiles: vec![AkitaModulusProfileId::Q128OffsetA7F7],
-            ring_dims: vec![512],
-            coeff_linf_bounds: vec![67_108_863],
-            max_rank: 2,
-            search_cap: Some(100_000),
-            profile: InfinityWidthProfile::LatticeEstimatorParity,
-            ..InfinityWidthTableConfig::default()
-        };
-        let rows = generate_infinity_width_rows(&config).unwrap();
-        validate_infinity_width_rows(&rows).unwrap();
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|row| row.d == 512));
-        assert_eq!(rows[0].max_width, 94_477);
-        assert_eq!(rows[1].max_width, 100_000);
-    }
-}
+mod tests;

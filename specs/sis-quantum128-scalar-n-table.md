@@ -97,9 +97,11 @@ For a candidate scalar instance `(modulus_profile, B, n, m)`, run the infinity
 norm LGSA optimizer under the dedicated ADPS16 quantum cost model with exponent
 `0.2650`.
 
-Base-table generation may use `local-minimum` discovery, but certifies its
-accepted boundary and immediate rejected successor with exhaustive beta search
-and proven-pruned full-domain zeta search. For fixed beta under ADPS16/LGSA,
+Base-table generation uses `local-minimum` discovery, then certifies its
+accepted boundary and immediate rejected successor with proven-pruned beta and
+full-domain zeta search. The beta search visits values from 40 through the
+capped Euclidean baseline and stops once the monotone ADPS16 reduction-cost
+lower bound exceeds the best complete candidate. For fixed beta under ADPS16/LGSA,
 the modeled attack minimum occurs at the complete-profile transition or its
 immediate predecessor, with the zero-coordinate boundary represented by
 `zeta = 0` and `zeta = 1`. Checking those candidates covers the wide D512

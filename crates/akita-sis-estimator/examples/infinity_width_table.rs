@@ -1,8 +1,8 @@
 use akita_sis_estimator::{
     width_table::{
-        generate_infinity_width_rows, is_full_infinity_width_table_config, runtime_width_rows,
-        validate_infinity_width_rows, InfinityWidthProfile, InfinityWidthRow,
-        InfinityWidthTableConfig, RuntimeWidthRow,
+        generate_infinity_width_rows, is_production_infinity_width_table_config,
+        runtime_width_rows, validate_infinity_width_rows, InfinityWidthProfile, InfinityWidthRow,
+        InfinityWidthTableConfig, RuntimeWidthRow, PRODUCTION_CERTIFICATE_DOMAIN,
     },
     AkitaModulusProfileId,
 };
@@ -32,12 +32,8 @@ enum OutputFormat {
 
 fn main() {
     let args = Args::parse_or_exit();
-    if args.format == OutputFormat::RustSplit && !is_full_infinity_width_table_config(&args.config)
-    {
-        fatal(
-            "rust-split output requires the complete production table config; use CSV for partial comparison jobs",
-        );
-    }
+    validate_output_request(args.format, args.skip_validation, &args.config)
+        .unwrap_or_else(|error| fatal(error));
     let t0 = Instant::now();
     let rows = generate_infinity_width_rows(&args.config)
         .unwrap_or_else(|error| fatal(&format!("width-table generation failed: {error}")));
@@ -56,6 +52,25 @@ fn main() {
         rows.len(),
         t0.elapsed().as_secs_f64()
     );
+}
+
+fn validate_output_request(
+    format: OutputFormat,
+    skip_validation: bool,
+    config: &InfinityWidthTableConfig,
+) -> Result<(), &'static str> {
+    if format != OutputFormat::RustSplit {
+        return Ok(());
+    }
+    if skip_validation {
+        return Err("rust-split output requires table validation");
+    }
+    if !is_production_infinity_width_table_config(config) {
+        return Err(
+            "rust-split output requires the complete certified production table config; use CSV for comparison profiles or partial jobs",
+        );
+    }
+    Ok(())
 }
 
 impl Args {
@@ -241,7 +256,7 @@ fn policy_review_source(rows: &[InfinityWidthRow], config: &InfinityWidthTableCo
 policy={}\n\
 estimator_revision=akita-sis-estimator-adps16-quantum-lgsa-v1\n\
 optimizer_profile={}\n\
-certificate_domain=exhaustive beta [40,65536); for each beta, LGSA complete-profile transition and predecessor plus zeta 0 and 1\n\
+certificate_domain={}\n\
 modulus_profiles=q32:2^32-99,q64:2^64-59,q128:2^128-(2^32-22537)\n\
 norm=coefficient-l-infinity\n\
 shape=LGSA\n\
@@ -256,6 +271,7 @@ monotonicity=validated across rank and coefficient-bound axes\n\
 structured_attack_review=The scalarized estimate does not model ring/module structure, CRT splitting, subfield projection, or role-specific matrix structure. No extra numerical adjustment is applied; public claims remain explicitly limited to the scalarized ADPS16 quantum LGSA attack model.\n",
         config.policy.label(),
         config.profile.label(),
+        PRODUCTION_CERTIFICATE_DOMAIN,
         config
             .policy
             .adps16_quantum_constraint()
@@ -467,4 +483,32 @@ fn usage(code: i32) -> ! {
 fn fatal(message: &str) -> ! {
     eprintln!("error: {message}");
     process::exit(2);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn production_rust_output_requires_the_certified_profile() {
+        let mut config = InfinityWidthTableConfig::default();
+        config.profile = InfinityWidthProfile::LatticeEstimatorParity;
+        assert!(validate_output_request(OutputFormat::RustSplit, false, &config).is_err());
+        assert!(validate_output_request(OutputFormat::Csv, false, &config).is_ok());
+    }
+
+    #[test]
+    fn production_rust_output_requires_validation() {
+        let config = InfinityWidthTableConfig::default();
+        assert!(validate_output_request(OutputFormat::RustSplit, true, &config).is_err());
+        assert!(validate_output_request(OutputFormat::RustSplit, false, &config).is_ok());
+    }
+
+    #[test]
+    fn policy_review_records_the_canonical_certificate_domain() {
+        let source = policy_review_source(&[], &InfinityWidthTableConfig::default());
+        assert!(source.contains(&format!(
+            "certificate_domain={PRODUCTION_CERTIFICATE_DOMAIN}\n"
+        )));
+    }
 }

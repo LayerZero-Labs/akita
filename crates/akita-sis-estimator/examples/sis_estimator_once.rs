@@ -216,13 +216,7 @@ impl Profile {
             Self::LocalMinimum => EstimateConfig::lattice_estimator_parity(),
             Self::ProvenPruned => EstimateConfig::akita_infinity_table(),
             Self::ExhaustiveSerial => InfinityWidthProfile::ExhaustiveSerial.config(),
-            Self::ExhaustiveParallel => EstimateConfig {
-                optimizer: OptimizerConfig::OptimizeZeta {
-                    beta: SearchMode::ExhaustiveParallel,
-                    zeta: SearchMode::ExhaustiveParallel,
-                },
-                ..EstimateConfig::default()
-            },
+            Self::ExhaustiveParallel => InfinityWidthProfile::ExhaustiveParallel.config(),
         }
     }
 
@@ -312,5 +306,22 @@ mod tests {
                 zeta: SearchMode::Exhaustive,
             }
         );
+    }
+
+    #[test]
+    fn exhaustive_profiles_use_the_quantum_lgsa_model() {
+        for profile in [Profile::ExhaustiveSerial, Profile::ExhaustiveParallel] {
+            let config = profile.config();
+            assert_eq!(
+                config.red_cost_model,
+                akita_sis_estimator::ReductionCostModel::Adps16 {
+                    mode: akita_sis_estimator::Adps16Mode::Quantum,
+                }
+            );
+            assert_eq!(
+                config.red_shape_model,
+                akita_sis_estimator::ShapeModel::Lgsa
+            );
+        }
     }
 }
