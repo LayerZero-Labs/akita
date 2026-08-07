@@ -3,6 +3,7 @@
 pub mod crt_ntt_repr;
 pub mod cyclotomic;
 pub mod eval;
+mod ifma52;
 
 pub use crt_ntt_repr::{
     mat_vec_i16_with_tail, CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet,
@@ -15,3 +16,4 @@ pub use eval::{
     eval_flat_ring_at_pows, eval_flat_ring_at_pows_fast, eval_ring_at, eval_ring_at_pows,
     eval_ring_at_pows_fast, evaluate_power_sequence_mle, scalar_powers, scalar_powers_with_stride,
 };
+pub use ifma52::{Ifma52NttMatrix, Ifma52Params};

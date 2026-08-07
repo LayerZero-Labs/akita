@@ -10,9 +10,9 @@
 //! shuffles. Because `len` is always a power of two, each stage hits exactly
 //! one width with no remainder.
 //!
-//! These kernels are selected when `AKITA_AVX512_NTT=1` and full AVX-512
-//! support is present. The true 256-bit AVX2 transform is the default because
-//! it wins every measured target degree on Ice Lake.
+//! These kernels are not selected by production dispatch. They remain available
+//! to direct architecture tests and benchmark-only experiments; the true
+//! 256-bit AVX2 transform wins every measured target degree on Ice Lake.
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::*;

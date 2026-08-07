@@ -5,12 +5,15 @@ pub mod avx;
 pub mod butterfly;
 pub mod crt;
 pub mod forward_dif_tail_policy;
+pub mod ifma52;
 #[cfg(target_arch = "aarch64")]
 pub mod neon;
+mod plan;
 pub mod prime;
 pub mod tables;
 
 pub use butterfly::NttTwiddles;
-pub use crt::{GarnerData, LimbQ, RADIX_BITS};
+pub use crt::{CrtCapacity, GarnerData, LimbQ, RADIX_BITS};
 pub use forward_dif_tail_policy::forward_dif_tail_eligible;
+pub use plan::NttKernelPlan;
 pub use prime::{MontCoeff, NttPrime, PrimeWidth};

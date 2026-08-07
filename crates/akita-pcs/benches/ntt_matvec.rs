@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, Prime128OffsetA7F7};
+use akita_field::{CanonicalField, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_prover::kernels::linear::mat_vec_mul_ntt_digits_i8;
 use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode, PreparedNttCache};
 use criterion::{
@@ -68,6 +68,144 @@ fn prepare<const D: usize>(
     prepare_ntt_cache(view, mode).expect("benchmark NTT cache")
 }
 
+fn sample_q64_matrix<const D: usize>(
+    rank: usize,
+    width: usize,
+) -> Vec<CyclotomicRing<Prime64Offset59, D>> {
+    (0..rank * width)
+        .map(|entry| {
+            CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
+                Prime64Offset59::from_u64(
+                    entry
+                        .wrapping_mul(65_537)
+                        .wrapping_add(coefficient.wrapping_mul(4_099)) as u64,
+                )
+            }))
+        })
+        .collect()
+}
+
+fn sample_q32_matrix<const D: usize>(
+    rank: usize,
+    width: usize,
+) -> Vec<CyclotomicRing<Prime32Offset99, D>> {
+    (0..rank * width)
+        .map(|entry| {
+            CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
+                Prime32Offset99::from_u64(
+                    entry
+                        .wrapping_mul(65_537)
+                        .wrapping_add(coefficient.wrapping_mul(4_099)) as u64,
+                )
+            }))
+        })
+        .collect()
+}
+
+fn bench_q32_exact_shape<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    rank: usize,
+    width: usize,
+) {
+    let matrix = sample_q32_matrix::<D>(rank, width);
+    let flat = FlatMatrix::from_ring_slice(&matrix);
+    let cache = prepare_ntt_cache(
+        flat.ring_view::<D>(rank, width).expect("Q32 matrix view"),
+        NttCacheMode::ExactNegacyclic {
+            width,
+            rhs_abs_bound: 1 << 15,
+        },
+    )
+    .expect("Q32 exact cache");
+    let profile = if cache.uses_ifma52() {
+        "ifma52_i16"
+    } else {
+        "i32"
+    };
+    let rhs = sample_i16_digits::<D>(width, 16);
+    group.throughput(Throughput::Elements((rank * width * D) as u64));
+    group.bench_function(
+        BenchmarkId::new(profile, format!("d{D}_r{rank}_w{width}")),
+        |bench| {
+            bench.iter(|| {
+                black_box(
+                    cache
+                        .mat_vec_i16::<Prime32Offset99>(16, rank, black_box(&rhs))
+                        .expect("Q32 exact matvec"),
+                )
+            })
+        },
+    );
+}
+
+fn bench_q64_exact_shape<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    rank: usize,
+    width: usize,
+) {
+    let matrix = sample_q64_matrix::<D>(rank, width);
+    let flat = FlatMatrix::from_ring_slice(&matrix);
+    let cache = prepare_ntt_cache(
+        flat.ring_view::<D>(rank, width).expect("Q64 matrix view"),
+        NttCacheMode::ExactNegacyclic {
+            width,
+            rhs_abs_bound: 1 << 15,
+        },
+    )
+    .expect("Q64 exact cache");
+    let profile = if cache.uses_ifma52() { "ifma52" } else { "i32" };
+    let rhs = sample_i16_digits::<D>(width, 16);
+    group.throughput(Throughput::Elements((rank * width * D) as u64));
+    group.bench_function(
+        BenchmarkId::new(profile, format!("d{D}_r{rank}_w{width}")),
+        |bench| {
+            bench.iter(|| {
+                black_box(
+                    cache
+                        .mat_vec_i16::<Prime64Offset59>(16, rank, black_box(&rhs))
+                        .expect("Q64 exact matvec"),
+                )
+            })
+        },
+    );
+}
+
+fn bench_q128_exact_shape<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    rank: usize,
+    width: usize,
+) {
+    let matrix = sample_matrix::<D>(rank, width);
+    let flat = FlatMatrix::from_ring_slice(&matrix);
+    let cache = prepare_ntt_cache(
+        flat.ring_view::<D>(rank, width).expect("Q128 matrix view"),
+        NttCacheMode::ExactNegacyclic {
+            width,
+            rhs_abs_bound: 1 << 15,
+        },
+    )
+    .expect("Q128 exact cache");
+    let profile = if cache.uses_ifma52() {
+        "ifma52_i16"
+    } else {
+        "i32"
+    };
+    let rhs = sample_i16_digits::<D>(width, 16);
+    group.throughput(Throughput::Elements((rank * width * D) as u64));
+    group.bench_function(
+        BenchmarkId::new(profile, format!("d{D}_r{rank}_w{width}")),
+        |bench| {
+            bench.iter(|| {
+                black_box(
+                    cache
+                        .mat_vec_i16::<F>(16, rank, black_box(&rhs))
+                        .expect("Q128 exact matvec"),
+                )
+            })
+        },
+    );
+}
+
 fn i8_matvec<const D: usize>(
     cache: &PreparedNttCache<D>,
     rank: usize,
@@ -99,7 +237,13 @@ fn bench_shape<const D: usize>(
     });
 
     for log_basis in [8, 10, 11] {
-        let cache = prepare(&matrix, NttCacheMode::ExactNegacyclic { width, log_basis });
+        let cache = prepare(
+            &matrix,
+            NttCacheMode::ExactNegacyclic {
+                width,
+                rhs_abs_bound: 1 << (log_basis - 1),
+            },
+        );
         let digits = if log_basis == 8 {
             i8_digits
                 .iter()
@@ -149,7 +293,13 @@ fn bench_equal_output_shape<const D: usize>(
             .map(|ring| ring.map(i16::from))
             .collect::<Vec<_>>();
         let i8_reference = i8_matvec(&i8_cache, rank, width, &i8_digits, log_basis);
-        let cache = prepare(&matrix, NttCacheMode::ExactNegacyclic { width, log_basis });
+        let cache = prepare(
+            &matrix,
+            NttCacheMode::ExactNegacyclic {
+                width,
+                rhs_abs_bound: 1 << (log_basis - 1),
+            },
+        );
         let layout = if cache.has_i16_tail() { "tail" } else { "base" };
         assert_eq!(
             cache
@@ -189,7 +339,13 @@ fn bench_equal_output_shape<const D: usize>(
 
     for log_basis in [10, 11] {
         let digits = sample_i16_digits::<D>(width, log_basis);
-        let cache = prepare(&matrix, NttCacheMode::ExactNegacyclic { width, log_basis });
+        let cache = prepare(
+            &matrix,
+            NttCacheMode::ExactNegacyclic {
+                width,
+                rhs_abs_bound: 1 << (log_basis - 1),
+            },
+        );
         let layout = if cache.has_i16_tail() { "tail" } else { "base" };
         group.bench_function(
             BenchmarkId::new(format!("i16_l{log_basis}_{layout}"), &shape),
@@ -243,12 +399,96 @@ fn bench_equal_output(c: &mut Criterion) {
     equal_io.finish();
 }
 
+fn bench_q64_exact(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ntt_matvec_q64/exact_i16/r4_w128");
+    bench_q64_exact_shape::<64>(&mut group, 4, 128);
+    bench_q64_exact_shape::<128>(&mut group, 4, 128);
+    bench_q64_exact_shape::<256>(&mut group, 4, 128);
+    bench_q64_exact_shape::<512>(&mut group, 4, 128);
+    group.finish();
+}
+
+fn bench_q32_exact(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ntt_matvec_q32/exact_i16/r4_w128");
+    bench_q32_exact_shape::<64>(&mut group, 4, 128);
+    bench_q32_exact_shape::<128>(&mut group, 4, 128);
+    bench_q32_exact_shape::<256>(&mut group, 4, 128);
+    bench_q32_exact_shape::<512>(&mut group, 4, 128);
+    group.finish();
+}
+
+fn bench_q32_one_core_traversal_shape<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    rank: usize,
+) {
+    const WIDTH: usize = 128;
+    const BLOCKS: usize = 64;
+    let matrix = sample_q32_matrix::<D>(rank, WIDTH);
+    let flat = FlatMatrix::from_ring_slice(&matrix);
+    let cache = prepare_ntt_cache(
+        flat.ring_view::<D>(rank, WIDTH)
+            .expect("Q32 traversal matrix view"),
+        NttCacheMode::BothTransforms,
+    )
+    .expect("Q32 traversal cache");
+    let digit_blocks: Vec<Vec<[i8; D]>> = (0..BLOCKS)
+        .map(|block| {
+            let mut digits = sample_i8_digits::<D>(WIDTH, 6);
+            for (column, ring) in digits.iter_mut().enumerate() {
+                ring.rotate_left((block + column) % D);
+            }
+            digits
+        })
+        .collect();
+    let blocks: Vec<&[[i8; D]]> = digit_blocks.iter().map(Vec::as_slice).collect();
+    group.throughput(Throughput::Elements((BLOCKS * rank * WIDTH * D) as u64));
+    group.bench_function(format!("d{D}_b{BLOCKS}_r{rank}_w{WIDTH}"), |bench| {
+        bench.iter(|| {
+            black_box(
+                mat_vec_mul_ntt_digits_i8::<Prime32Offset99, D>(
+                    &cache,
+                    rank,
+                    WIDTH,
+                    black_box(&blocks),
+                    6,
+                )
+                .expect("Q32 one-core traversal matvec"),
+            )
+        })
+    });
+}
+
+fn bench_q32_one_core_traversal(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ntt_matvec_q32/one_core_traversal/b64_r4_w128");
+    bench_q32_one_core_traversal_shape::<64>(&mut group, 4);
+    bench_q32_one_core_traversal_shape::<128>(&mut group, 4);
+    bench_q32_one_core_traversal_shape::<256>(&mut group, 4);
+    bench_q32_one_core_traversal_shape::<512>(&mut group, 4);
+    group.finish();
+
+    let mut group = c.benchmark_group("ntt_matvec_q32/one_core_traversal/b64_r11_w128");
+    bench_q32_one_core_traversal_shape::<64>(&mut group, 11);
+    bench_q32_one_core_traversal_shape::<128>(&mut group, 11);
+    bench_q32_one_core_traversal_shape::<256>(&mut group, 11);
+    bench_q32_one_core_traversal_shape::<512>(&mut group, 11);
+    group.finish();
+}
+
+fn bench_q128_exact(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ntt_matvec_q128/exact_i16/r4_w128");
+    bench_q128_exact_shape::<64>(&mut group, 4, 128);
+    bench_q128_exact_shape::<128>(&mut group, 4, 128);
+    bench_q128_exact_shape::<256>(&mut group, 4, 128);
+    bench_q128_exact_shape::<512>(&mut group, 4, 128);
+    group.finish();
+}
+
 criterion_group! {
     name = ntt_matvec;
     config = Criterion::default()
         .sample_size(10)
         .warm_up_time(Duration::from_millis(200))
         .measurement_time(Duration::from_secs(1));
-    targets = bench_rank_ring_dim, bench_width, bench_equal_output
+    targets = bench_rank_ring_dim, bench_width, bench_equal_output, bench_q64_exact, bench_q32_exact, bench_q128_exact, bench_q32_one_core_traversal
 }
 criterion_main!(ntt_matvec);

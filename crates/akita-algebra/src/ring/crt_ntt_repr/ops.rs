@@ -3,13 +3,12 @@ use std::mem::size_of;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use std::mem::MaybeUninit;
 
-use crate::backend::{NttPrimeOps, ScalarBackend};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::ntt::avx::{self, AvxNttMode};
 use crate::ntt::butterfly::forward_ntt;
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
-use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
+use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
 use crate::{AkitaError, CanonicalField, CyclotomicRing, FieldCore};
 
 use super::{CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut};
@@ -35,6 +34,21 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         rhs: &[[i16; D]],
         params: &CrtNttParamSet<W, K, D>,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        let accumulators = Self::mat_vec_i16_ntt(matrix, num_rows, num_cols, rhs, params)?;
+        Ok(accumulators
+            .iter()
+            .map(|accumulator| accumulator.to_ring(params))
+            .collect())
+    }
+
+    /// Multiply a prepared matrix by signed-i16 rings, retaining CRT+NTT form.
+    pub(super) fn mat_vec_i16_ntt(
+        matrix: &[Self],
+        num_rows: usize,
+        num_cols: usize,
+        rhs: &[[i16; D]],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Result<Vec<Self>, AkitaError> {
         if rhs.len() != num_cols {
             return Err(AkitaError::InvalidProof);
         }
@@ -45,7 +59,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             AkitaError::InvalidSetup("prepared NTT matrix prefix is undersized".into())
         })?;
         if num_rows == 0 || num_cols == 0 {
-            return Ok(vec![CyclotomicRing::zero(); num_rows]);
+            return Ok(vec![Self::zero(); num_rows]);
         }
 
         let rhs_abs_bound = rhs
@@ -56,27 +70,120 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .unwrap_or(0) as i32;
         let lut = CenteredMontLut::new(params, rhs_abs_bound);
         let mut accumulators = vec![Self::zero(); num_rows];
-        for (column, digits) in rhs.iter().enumerate() {
-            if digits.iter().all(|&digit| digit == 0) {
+        if !params.uses_lazy_i32_dot() {
+            for (column, digits) in rhs.iter().enumerate() {
+                if digits.iter().all(|&digit| digit == 0) {
+                    continue;
+                }
+                let centered = digits.map(i32::from);
+                let transformed = Self::from_centered_i32_with_lut(&centered, params, &lut);
+                for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
+                {
+                    accumulator.add_assign_pointwise_mul(&row[column], &transformed, params);
+                }
+            }
+            return Ok(accumulators);
+        }
+
+        const BATCH: usize = I32_LAZY_DOT_BATCH;
+        let mut transformed = Vec::with_capacity(BATCH);
+        for batch_start in (0..num_cols).step_by(BATCH) {
+            let batch_end = (batch_start + BATCH).min(num_cols);
+            transformed.clear();
+            for digits in &rhs[batch_start..batch_end] {
+                if digits.iter().all(|&digit| digit == 0) {
+                    break;
+                }
+                let centered = digits.map(i32::from);
+                transformed.push(Self::from_centered_i32_with_lut(&centered, params, &lut));
+            }
+
+            if transformed.len() == batch_end - batch_start {
+                for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
+                {
+                    accumulator.add_assign_pointwise_dot(
+                        &row[batch_start..batch_end],
+                        &transformed,
+                        params,
+                    );
+                }
                 continue;
             }
-            let centered = digits.map(i32::from);
-            let transformed = Self::from_centered_i32_with_lut(&centered, params, &lut);
-            for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols)) {
-                let matrix_entry = row.get(column).ok_or_else(|| {
-                    AkitaError::InvalidSetup("prepared NTT matrix row is undersized".into())
-                })?;
-                accumulator.add_assign_pointwise_mul_with_params(
-                    matrix_entry,
-                    &transformed,
-                    params,
-                );
+
+            // Preserve the zero-ring fast path when a batch is not fully dense.
+            for (offset, digits) in rhs[batch_start..batch_end].iter().enumerate() {
+                if digits.iter().all(|&digit| digit == 0) {
+                    continue;
+                }
+                let centered = digits.map(i32::from);
+                let transformed = Self::from_centered_i32_with_lut(&centered, params, &lut);
+                let column = batch_start + offset;
+                for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
+                {
+                    accumulator.add_assign_pointwise_mul(&row[column], &transformed, params);
+                }
             }
         }
-        Ok(accumulators
-            .iter()
-            .map(|accumulator| accumulator.to_ring_with_params(params))
-            .collect())
+        Ok(accumulators)
+    }
+
+    /// Accumulate a short pointwise dot product in CRT+NTT domain.
+    ///
+    /// The prepared backend chooses whether to fuse the products or apply the
+    /// canonical single-product primitive repeatedly.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the slices differ in length or exceed the backend-independent
+    /// six-product arithmetic ceiling.
+    #[inline(always)]
+    pub fn add_assign_pointwise_dot(
+        &mut self,
+        lhs: &[Self],
+        rhs: &[Self],
+        params: &CrtNttParamSet<W, K, D>,
+    ) {
+        assert_eq!(lhs.len(), rhs.len(), "pointwise dot length mismatch");
+        assert!(
+            lhs.len() <= I32_LAZY_DOT_BATCH,
+            "pointwise dot exceeds lazy reduction bound"
+        );
+
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if params.uses_lazy_i32_dot() {
+            for k in 0..K {
+                let lhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
+                    lhs.get(index).map_or(std::ptr::null(), |entry| {
+                        entry.limbs[k].as_ptr().cast::<i32>()
+                    })
+                });
+                let rhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
+                    rhs.get(index).map_or(std::ptr::null(), |entry| {
+                        entry.limbs[k].as_ptr().cast::<i32>()
+                    })
+                });
+                let prime = params.primes[k];
+                // SAFETY: the stored plan proves AVX2 support. Pointer arrays
+                // contain `lhs.len()` valid D-element limbs, and the dispatch
+                // predicate also proves `W == i32`.
+                unsafe {
+                    avx::pointwise_dot_acc_i32(
+                        self.limbs[k].as_mut_ptr().cast::<i32>(),
+                        lhs_pointers.as_ptr(),
+                        rhs_pointers.as_ptr(),
+                        lhs.len(),
+                        D,
+                        prime.p.to_i64() as i32,
+                        prime.pinv.to_i64() as i32,
+                    )
+                }
+            }
+            return;
+        }
+
+        for (lhs, rhs) in lhs.iter().zip(rhs) {
+            self.add_assign_pointwise_mul(lhs, rhs, params);
+        }
     }
 
     #[inline(always)]
@@ -103,16 +210,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             acc_limb[idx] = prime.reduce_range(sum);
             idx += 1;
         }
-    }
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    #[inline(always)]
-    fn x86_pointwise_mode() -> Option<AvxNttMode> {
-        let mode = avx::avx_ntt_mode()?;
-        if size_of::<W>() == size_of::<i16>() {
-            return avx::use_avx2_transform_ntt().then_some(AvxNttMode::Avx2);
-        }
-        (size_of::<W>() == size_of::<i32>()).then_some(mode)
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -172,14 +269,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         scratch: &mut [[MontCoeff<W>; D]; K],
     ) {
         #[cfg(target_arch = "aarch64")]
-        if neon::use_neon_ntt() {
+        if params.kernel_plan.uses_neon() {
             for (k, (scratch_limb, tw)) in
                 scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
             {
                 for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
                     *dst = lut.get(k, digit);
                 }
-                forward_ntt(scratch_limb, params.primes[k], tw);
+                forward_ntt(scratch_limb, params.primes[k], tw, params.kernel_plan);
             }
 
             for (k, rhs_limb) in scratch.iter().enumerate() {
@@ -210,12 +307,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        let x86_mode = Self::x86_pointwise_mode();
+        let x86_mode = params.kernel_plan.x86_pointwise_mode();
         for (k, (scratch_limb, tw)) in scratch.iter_mut().zip(params.twiddles.iter()).enumerate() {
             for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
                 *dst = lut.get(k, digit);
             }
-            forward_ntt(scratch_limb, params.primes[k], tw);
+            forward_ntt(scratch_limb, params.primes[k], tw, params.kernel_plan);
 
             let prime = params.primes[k];
             let acc_limb = &mut self.limbs[k];
@@ -260,14 +357,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         debug_assert_eq!(accs.len(), ntt_mat.len());
 
         #[cfg(target_arch = "aarch64")]
-        if neon::use_neon_ntt() {
+        if params.kernel_plan.uses_neon() {
             for (k, (scratch_limb, tw)) in
                 scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
             {
                 for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
                     *dst = lut.get(k, digit);
                 }
-                forward_ntt(scratch_limb, params.primes[k], tw);
+                forward_ntt(scratch_limb, params.primes[k], tw, params.kernel_plan);
             }
 
             for (k, rhs_limb) in scratch.iter().enumerate() {
@@ -301,12 +398,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        let x86_mode = Self::x86_pointwise_mode();
+        let x86_mode = params.kernel_plan.x86_pointwise_mode();
         for (k, (scratch_limb, tw)) in scratch.iter_mut().zip(params.twiddles.iter()).enumerate() {
             for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
                 *dst = lut.get(k, digit);
             }
-            forward_ntt(scratch_limb, params.primes[k], tw);
+            forward_ntt(scratch_limb, params.primes[k], tw, params.kernel_plan);
 
             let prime = params.primes[k];
             for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
@@ -334,60 +431,128 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
     /// Add another CRT+NTT element and reduce each coefficient with the matching
     /// prime to maintain valid Montgomery ranges.
-    pub fn add_reduced(&self, rhs: &Self, primes: &[NttPrime<W>; K]) -> Self {
+    pub fn add_reduced(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if size_of::<W>() == size_of::<i32>() && avx::use_avx2_transform_ntt() {
-            let mut out = MaybeUninit::<Self>::uninit();
-            let out_ptr = out.as_mut_ptr().cast::<i32>();
-            for (k, prime) in primes.iter().enumerate() {
-                let p = prime.p.to_i64() as i32;
+        if size_of::<W>() == size_of::<i32>() && params.kernel_plan.uses_x86_transform() {
+            let mut output = MaybeUninit::<Self>::uninit();
+            let output_ptr = output.as_mut_ptr().cast::<i32>();
+            for (k, prime) in params.primes.iter().enumerate() {
                 unsafe {
                     avx::add_reduce_i32(
-                        out_ptr.add(k * D),
+                        output_ptr.add(k * D),
                         self.limbs[k].as_ptr() as *const i32,
                         rhs.limbs[k].as_ptr() as *const i32,
                         D,
-                        p,
-                    )
+                        prime.p.to_i64() as i32,
+                    );
                 }
             }
-            // SAFETY: the SIMD loop initializes all `D` coefficients in every
-            // limb of the transparent nested-array representation.
-            return unsafe { out.assume_init() };
+            // SAFETY: the SIMD loop initializes every coefficient in the
+            // transparent nested-array representation.
+            return unsafe { output.assume_init() };
         }
-        self.add_reduced_with_backend::<ScalarBackend>(rhs, primes)
-    }
 
-    /// Add another CRT+NTT element and reduce using a bundled parameter set.
-    pub fn add_reduced_with_params(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        self.add_reduced(rhs, &params.primes)
-    }
-
-    /// Add another CRT+NTT element and reduce each coefficient with the matching
-    /// prime through an explicit backend implementation.
-    pub fn add_reduced_with_backend<B: NttPrimeOps<W, D>>(
-        &self,
-        rhs: &Self,
-        primes: &[NttPrime<W>; K],
-    ) -> Self {
-        let mut out = self.clone();
-        for (k, (limb, rhs_limb)) in out.limbs.iter_mut().zip(rhs.limbs.iter()).enumerate() {
-            let prime = primes[k];
-            for (a, b) in limb.iter_mut().zip(rhs_limb.iter()) {
-                let sum = MontCoeff::from_raw(a.raw().wrapping_add(b.raw()));
-                *a = B::reduce_range(prime, sum);
+        let mut output = [[MontCoeff::from_raw(W::default()); D]; K];
+        for (k, ((dst_limb, lhs_limb), rhs_limb)) in output
+            .iter_mut()
+            .zip(self.limbs.iter())
+            .zip(rhs.limbs.iter())
+            .enumerate()
+        {
+            let prime = params.primes[k];
+            for ((dst, lhs), rhs) in dst_limb.iter_mut().zip(lhs_limb).zip(rhs_limb) {
+                let sum = MontCoeff::from_raw(lhs.raw().wrapping_add(rhs.raw()));
+                *dst = prime.reduce_range(sum);
             }
         }
-        out
+        Self { limbs: output }
+    }
+
+    /// Add another CRT+NTT element in place and reduce each coefficient.
+    pub fn add_assign_reduced(&mut self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) {
+        #[cfg(all(target_arch = "aarch64", feature = "parallel"))]
+        if params.kernel_plan.uses_neon() {
+            for k in 0..K {
+                let prime = params.primes[k];
+                unsafe {
+                    if size_of::<W>() == size_of::<i32>() {
+                        neon::add_reduce_i32(
+                            self.limbs[k].as_mut_ptr() as *mut i32,
+                            rhs.limbs[k].as_ptr() as *const i32,
+                            D,
+                            prime.p.to_i64() as i32,
+                        );
+                    } else {
+                        neon::add_reduce_i16(
+                            self.limbs[k].as_mut_ptr() as *mut i16,
+                            rhs.limbs[k].as_ptr() as *const i16,
+                            D,
+                            prime.p.to_i64() as i16,
+                        );
+                    }
+                }
+            }
+            return;
+        }
+
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if let Some(mode) = params.kernel_plan.x86_pointwise_mode() {
+            if size_of::<W>() == size_of::<i16>() {
+                for k in 0..K {
+                    let prime = params.primes[k];
+                    unsafe {
+                        avx::add_reduce_i16(
+                            self.limbs[k].as_mut_ptr() as *mut i16,
+                            rhs.limbs[k].as_ptr() as *const i16,
+                            D,
+                            prime.p.to_i64() as i16,
+                        );
+                    }
+                }
+                return;
+            }
+            if size_of::<W>() == size_of::<i32>() {
+                for k in 0..K {
+                    let prime = params.primes[k];
+                    unsafe {
+                        match mode {
+                            AvxNttMode::Avx2 => avx::add_reduce_i32(
+                                self.limbs[k].as_mut_ptr() as *mut i32,
+                                self.limbs[k].as_ptr() as *const i32,
+                                rhs.limbs[k].as_ptr() as *const i32,
+                                D,
+                                prime.p.to_i64() as i32,
+                            ),
+                            AvxNttMode::Avx512 => avx::add_reduce_i32_avx512(
+                                self.limbs[k].as_mut_ptr() as *mut i32,
+                                self.limbs[k].as_ptr() as *const i32,
+                                rhs.limbs[k].as_ptr() as *const i32,
+                                D,
+                                prime.p.to_i64() as i32,
+                            ),
+                        }
+                    }
+                }
+                return;
+            }
+        }
+
+        for (k, (limb, rhs_limb)) in self.limbs.iter_mut().zip(rhs.limbs.iter()).enumerate() {
+            let prime = params.primes[k];
+            for (a, b) in limb.iter_mut().zip(rhs_limb.iter()) {
+                let sum = MontCoeff::from_raw(a.raw().wrapping_add(b.raw()));
+                *a = prime.reduce_range(sum);
+            }
+        }
     }
 
     /// Subtract another CRT+NTT element and reduce.
-    pub fn sub_reduced(&self, rhs: &Self, primes: &[NttPrime<W>; K]) -> Self {
+    pub fn sub_reduced(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if size_of::<W>() == size_of::<i32>() && avx::use_avx2_transform_ntt() {
+        if size_of::<W>() == size_of::<i32>() && params.kernel_plan.uses_x86_transform() {
             let mut out = MaybeUninit::<Self>::uninit();
             let out_ptr = out.as_mut_ptr().cast::<i32>();
-            for (k, prime) in primes.iter().enumerate() {
+            for (k, prime) in params.primes.iter().enumerate() {
                 let p = prime.p.to_i64() as i32;
                 unsafe {
                     avx::sub_reduce_i32(
@@ -403,39 +568,25 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             // limb of the transparent nested-array representation.
             return unsafe { out.assume_init() };
         }
-        self.sub_reduced_with_backend::<ScalarBackend>(rhs, primes)
-    }
-
-    /// Subtract another CRT+NTT element and reduce using a bundled parameter set.
-    pub fn sub_reduced_with_params(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        self.sub_reduced(rhs, &params.primes)
-    }
-
-    /// Subtract another CRT+NTT element and reduce through an explicit backend.
-    pub fn sub_reduced_with_backend<B: NttPrimeOps<W, D>>(
-        &self,
-        rhs: &Self,
-        primes: &[NttPrime<W>; K],
-    ) -> Self {
         let mut out = self.clone();
         for (k, (limb, rhs_limb)) in out.limbs.iter_mut().zip(rhs.limbs.iter()).enumerate() {
-            let prime = primes[k];
+            let prime = params.primes[k];
             for (a, b) in limb.iter_mut().zip(rhs_limb.iter()) {
                 let diff = MontCoeff::from_raw(a.raw().wrapping_sub(b.raw()));
-                *a = B::reduce_range(prime, diff);
+                *a = prime.reduce_range(diff);
             }
         }
         out
     }
 
     /// Negate each CRT+NTT coefficient and reduce.
-    pub fn neg_reduced(&self, primes: &[NttPrime<W>; K]) -> Self {
+    pub fn neg_reduced(&self, params: &CrtNttParamSet<W, K, D>) -> Self {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         if size_of::<W>() == size_of::<i32>() {
-            if let Some(mode) = Self::x86_pointwise_mode() {
+            if let Some(mode) = params.kernel_plan.x86_pointwise_mode() {
                 let mut out = MaybeUninit::<Self>::uninit();
                 let out_ptr = out.as_mut_ptr().cast::<i32>();
-                for (k, prime) in primes.iter().enumerate() {
+                for (k, prime) in params.primes.iter().enumerate() {
                     let p = prime.p.to_i64() as i32;
                     unsafe {
                         match mode {
@@ -459,38 +610,25 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 return unsafe { out.assume_init() };
             }
         }
-        self.neg_reduced_with_backend::<ScalarBackend>(primes)
-    }
-
-    /// Negate each CRT+NTT coefficient and reduce using a bundled parameter set.
-    pub fn neg_reduced_with_params(&self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        self.neg_reduced(&params.primes)
-    }
-
-    /// Negate each CRT+NTT coefficient and reduce through an explicit backend.
-    pub fn neg_reduced_with_backend<B: NttPrimeOps<W, D>>(
-        &self,
-        primes: &[NttPrime<W>; K],
-    ) -> Self {
         let mut out = self.clone();
         for (k, limb) in out.limbs.iter_mut().enumerate() {
-            let prime = primes[k];
+            let prime = params.primes[k];
             for a in limb.iter_mut() {
                 let neg = MontCoeff::from_raw(a.raw().wrapping_neg());
-                *a = B::reduce_range(prime, neg);
+                *a = prime.reduce_range(neg);
             }
         }
         out
     }
 
     /// Pointwise multiplication in CRT+NTT domain.
-    pub fn pointwise_mul(&self, rhs: &Self, primes: &[NttPrime<W>; K]) -> Self {
+    pub fn pointwise_mul(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         if size_of::<W>() == size_of::<i32>() {
-            if let Some(mode) = Self::x86_pointwise_mode() {
+            if let Some(mode) = params.kernel_plan.x86_pointwise_mode() {
                 let mut out = MaybeUninit::<Self>::uninit();
                 let out_ptr = out.as_mut_ptr().cast::<i32>();
-                for (k, prime) in primes.iter().copied().enumerate() {
+                for (k, prime) in params.primes.iter().copied().enumerate() {
                     // SAFETY: `Self` and `MontCoeff<W>` are transparent over
                     // nested contiguous arrays. The width check above proves
                     // that each coefficient occupies one `i32`, and every
@@ -522,13 +660,20 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 return unsafe { out.assume_init() };
             }
         }
-        self.pointwise_mul_with_backend::<ScalarBackend>(rhs, primes)
-    }
-
-    /// Pointwise multiplication in CRT+NTT domain using a bundled parameter set.
-    #[inline(always)]
-    pub fn pointwise_mul_with_params(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        self.pointwise_mul(rhs, &params.primes)
+        let mut out = [[MontCoeff::from_raw(W::default()); D]; K];
+        for (k, ((output, lhs), rhs)) in out
+            .iter_mut()
+            .zip(self.limbs.iter())
+            .zip(rhs.limbs.iter())
+            .enumerate()
+        {
+            let prime = params.primes[k];
+            prime.pointwise_mul(output, lhs, rhs);
+            for coefficient in output.iter_mut() {
+                *coefficient = prime.reduce_range(*coefficient);
+            }
+        }
+        Self { limbs: out }
     }
 
     /// Accumulate `lhs * rhs` into `self` in CRT+NTT domain.
@@ -536,14 +681,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// On AArch64, this uses the fused NEON pointwise-multiply-accumulate kernel
     /// when available; otherwise it falls back to the scalar loop.
     #[inline(always)]
-    pub fn add_assign_pointwise_mul_with_params(
+    pub fn add_assign_pointwise_mul(
         &mut self,
         lhs: &Self,
         rhs: &Self,
         params: &CrtNttParamSet<W, K, D>,
     ) {
         #[cfg(target_arch = "aarch64")]
-        if neon::use_neon_ntt() {
+        if params.kernel_plan.uses_neon() {
             for k in 0..K {
                 let prime = params.primes[k];
                 unsafe {
@@ -572,7 +717,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        let x86_mode = Self::x86_pointwise_mode();
+        let x86_mode = params.kernel_plan.x86_pointwise_mode();
         for k in 0..K {
             let prime = params.primes[k];
             let acc_limb = &mut self.limbs[k];
@@ -590,29 +735,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             }
             Self::add_assign_pointwise_mul_limb(acc_limb, lhs_limb, rhs_limb, prime);
         }
-    }
-
-    /// Pointwise multiplication in CRT+NTT domain through an explicit backend.
-    pub fn pointwise_mul_with_backend<B: NttPrimeOps<W, D>>(
-        &self,
-        rhs: &Self,
-        primes: &[NttPrime<W>; K],
-    ) -> Self {
-        let mut out = [[MontCoeff::from_raw(W::default()); D]; K];
-        for (k, ((o, a), b)) in out
-            .iter_mut()
-            .zip(self.limbs.iter())
-            .zip(rhs.limbs.iter())
-            .enumerate()
-        {
-            let prime = primes[k];
-            B::pointwise_mul(prime, o, a, b);
-            // Keep coefficients in a bounded range for subsequent inverse NTT.
-            for c in o.iter_mut() {
-                *c = B::reduce_range(prime, *c);
-            }
-        }
-        Self { limbs: out }
     }
 
     /// Apply `sigma_{-1}` directly in NTT domain (`slot[j] -> slot[D-1-j]`).

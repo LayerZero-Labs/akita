@@ -8,7 +8,7 @@ pub(super) fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, c
     rhs: &CyclotomicCrtNtt<W, K, D>,
     params: &CrtNttParamSet<W, K, D>,
 ) {
-    acc.add_assign_pointwise_mul_with_params(lhs, rhs, params);
+    acc.add_assign_pointwise_mul(lhs, rhs, params);
 }
 
 #[inline]
@@ -64,24 +64,6 @@ pub(super) const SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS: usize = 16;
 #[inline]
 pub(super) fn validate_i8_log_basis(log_basis: u32) -> Result<(), AkitaError> {
     validate_i8_input_log_basis(log_basis, "for i8 NTT kernels")
-}
-
-#[cfg(not(feature = "parallel"))]
-#[allow(dead_code)]
-#[inline]
-pub(super) fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
-    acc: &mut CyclotomicCrtNtt<W, K, D>,
-    other: &CyclotomicCrtNtt<W, K, D>,
-    params: &CrtNttParamSet<W, K, D>,
-) {
-    for k in 0..K {
-        let prime = params.primes[k];
-        for d in 0..D {
-            let sum =
-                MontCoeff::from_raw(acc.limbs[k][d].raw().wrapping_add(other.limbs[k][d].raw()));
-            acc.limbs[k][d] = prime.reduce_range(sum);
-        }
-    }
 }
 
 #[inline]
@@ -193,86 +175,12 @@ pub(super) fn capacity_safe_i8_chunk_width(
     }
 }
 
-#[cfg(feature = "parallel")]
 #[inline]
+#[cfg(feature = "parallel")]
 pub(super) fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
     acc: &mut CyclotomicCrtNtt<W, K, D>,
     other: &CyclotomicCrtNtt<W, K, D>,
     params: &CrtNttParamSet<W, K, D>,
 ) {
-    #[cfg(target_arch = "aarch64")]
-    if neon::use_neon_ntt() {
-        for k in 0..K {
-            let prime = params.primes[k];
-            unsafe {
-                if size_of::<W>() == size_of::<i32>() {
-                    neon::add_reduce_i32(
-                        acc.limbs[k].as_mut_ptr() as *mut i32,
-                        other.limbs[k].as_ptr() as *const i32,
-                        D,
-                        prime.p.to_i64() as i32,
-                    );
-                } else {
-                    neon::add_reduce_i16(
-                        acc.limbs[k].as_mut_ptr() as *mut i16,
-                        other.limbs[k].as_ptr() as *const i16,
-                        D,
-                        prime.p.to_i64() as i16,
-                    );
-                }
-            }
-        }
-        return;
-    }
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if let Some(mode) = avx::avx_ntt_mode() {
-        if size_of::<W>() == size_of::<i16>() && avx::use_avx2_transform_ntt() {
-            for k in 0..K {
-                let prime = params.primes[k];
-                unsafe {
-                    avx::add_reduce_i16(
-                        acc.limbs[k].as_mut_ptr() as *mut i16,
-                        other.limbs[k].as_ptr() as *const i16,
-                        D,
-                        prime.p.to_i64() as i16,
-                    );
-                }
-            }
-            return;
-        }
-        if size_of::<W>() == size_of::<i32>() {
-            for k in 0..K {
-                let prime = params.primes[k];
-                unsafe {
-                    match mode {
-                        AvxNttMode::Avx2 => avx::add_reduce_i32(
-                            acc.limbs[k].as_mut_ptr() as *mut i32,
-                            acc.limbs[k].as_ptr() as *const i32,
-                            other.limbs[k].as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                        ),
-                        AvxNttMode::Avx512 => avx::add_reduce_i32_avx512(
-                            acc.limbs[k].as_mut_ptr() as *mut i32,
-                            acc.limbs[k].as_ptr() as *const i32,
-                            other.limbs[k].as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                        ),
-                    }
-                }
-            }
-            return;
-        }
-    }
-
-    for k in 0..K {
-        let prime = params.primes[k];
-        for d in 0..D {
-            let sum =
-                MontCoeff::from_raw(acc.limbs[k][d].raw().wrapping_add(other.limbs[k][d].raw()));
-            acc.limbs[k][d] = prime.reduce_range(sum);
-        }
-    }
+    acc.add_assign_reduced(other, params);
 }
