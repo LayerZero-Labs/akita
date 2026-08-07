@@ -125,10 +125,3 @@ pub(super) fn fold_left_round<E: FieldCore>(
     fold_factor_in_place(left_factor, challenge);
     *table = folded_table;
 }
-
-pub(super) fn fold_dense_left_round<E: FieldCore>(table: &mut Vec<E>, challenge: E) {
-    let half = table.len() / 2;
-    *table = cfg_into_iter!(0..half)
-        .map(|idx| fold_pair(table[2 * idx], table[2 * idx + 1], challenge))
-        .collect();
-}

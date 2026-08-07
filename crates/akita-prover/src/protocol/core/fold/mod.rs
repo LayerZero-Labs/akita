@@ -337,7 +337,8 @@ where
         + HasOptimizedFold
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
-        + AkitaSerialize,
+        + AkitaSerialize
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
     O: ComputeBackendSetup<F>,
@@ -740,7 +741,8 @@ where
         + LiftBase<F>
         + AkitaSerialize
         + akita_field::unreduced::HasUnreducedOps
-        + akita_field::MulBaseUnreduced<F>,
+        + akita_field::MulBaseUnreduced<F>
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F>,
 {
     match setup_contribution_mode {

@@ -522,6 +522,16 @@ Stage 2 fell from about 258 ms to 229 to 230 ms. An explicit NEON multiply was
 rejected because it measured 98 to 99 ms; LLVM's scalar source shape generated
 the better loop.
 
+Stage 3 now stores its coefficient and setup-index phases in `EvaluationTable`
+and uses the same detected fold, product-round, and fused fold-plus-next-round
+operations as dense EOR. The linear coefficient is derived from the carried
+claim instead of accumulated separately. On the one-worker fp128 D64 recursive
+profile, the old Stage 3 measured 94.5 ms and the canonical path measured 95.8
+to 95.9 ms, a 1.5 percent difference within the two-percent fp128 gate. The
+sumcheck portion improved from 50.0 ms to 49.4 to 49.5 ms. Logical-order direct
+construction avoids a rejected temporary-vector transpose that had measured
+224 ms for Stage 3.
+
 ### Existing state changes
 
 The cutover evolves current owners rather than adding parallel wrappers:
@@ -580,7 +590,7 @@ small public API boundaries and must not survive in a production round loop.
   trace values.
 - [ ] Stage 1 keeps i8 and i16 values compact and materializes directly into the
   canonical table.
-- [ ] Stage 3 materialized multilinear tables use the same representation or a
+- [x] Stage 3 materialized multilinear tables use the same representation or a
   benchmark documents why a named small table remains scalar.
 - [ ] fp64 keeps the measured faster operation on each supported architecture.
   Apple Silicon is measured. Ice Lake remains pending. The Apple Silicon fp128

@@ -281,7 +281,8 @@ where
     /// Build a dense multilinear table from logical LSB-first generated rows.
     ///
     /// The stored rows are in binding order, so the next variable selects
-    /// between two contiguous halves.
+    /// between two contiguous halves. The generator is called in ascending
+    /// logical-row order so producers can retain sequential source access.
     ///
     /// # Errors
     ///
@@ -294,9 +295,20 @@ where
         G: FnMut(usize) -> E,
     {
         Self::validate_multilinear_len(len)?;
-        Ok(Self::from_evaluation_fn(len, |stored_row| {
-            evaluation(Self::logical_row(stored_row, len))
-        }))
+        let mut coefficients = Self::uninitialized_coefficients(len);
+        for logical_row in 0..len {
+            let value = evaluation(logical_row);
+            let stored_row = Self::logical_row(logical_row, len);
+            for coefficient in 0..<E as ExtField<F>>::EXT_DEGREE {
+                coefficients[coefficient * len + stored_row]
+                    .write(value.base_coefficient(coefficient));
+            }
+        }
+
+        // SAFETY: bit reversal permutes the rows, so every coefficient slot is
+        // written exactly once by the nested loops above.
+        let coefficients = unsafe { coefficients.assume_init() };
+        Ok(Self::from_initialized(coefficients, len))
     }
 
     /// Build a dense multilinear table from logical LSB-first coefficients.
