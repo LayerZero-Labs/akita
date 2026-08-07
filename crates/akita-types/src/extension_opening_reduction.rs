@@ -464,13 +464,27 @@ where
 
     /// Project one extension value into the tensor factor.
     #[inline]
-    pub fn project(&self, value: E) -> E {
-        self.weights
-            .iter()
-            .enumerate()
-            .fold(E::zero(), |acc, (coordinate, weight)| {
-                acc + weight.mul_base(value.base_coefficient(coordinate))
-            })
+    pub fn project(&self, value: E) -> E
+    where
+        E: MulBaseUnreduced<F>,
+    {
+        if !E::DELAYED_PRODUCT_SUM_IS_EXACT {
+            return self
+                .weights
+                .iter()
+                .enumerate()
+                .fold(E::zero(), |acc, (coordinate, weight)| {
+                    acc + weight.mul_base(value.base_coefficient(coordinate))
+                });
+        }
+        let sum = self.weights.iter().enumerate().fold(
+            E::ProductAccum::zero(),
+            |mut acc, (coordinate, weight)| {
+                acc += weight.mul_base_to_product_accum(value.base_coefficient(coordinate));
+                acc
+            },
+        );
+        E::reduce_product_accum(sum)
     }
 }
 
@@ -484,7 +498,7 @@ where
 pub fn tensor_equality_factor_evals<F, E>(tail_point: &[E], eta: &[E]) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore,
-    E: ExtField<F>,
+    E: MulBaseUnreduced<F>,
 {
     let projection = TensorFactorProjection::<F, E>::new(eta)?;
     let mut out = EqPolynomial::evals(tail_point)?;

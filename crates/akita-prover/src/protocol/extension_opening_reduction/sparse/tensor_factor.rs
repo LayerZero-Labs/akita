@@ -34,7 +34,7 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
     ) -> Result<Self, AkitaError>
     where
         F: FieldCore,
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         let (split_bits, width) = tensor_opening_split::<F, E>()?;
         if eta.len() != split_bits {

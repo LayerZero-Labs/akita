@@ -1,6 +1,6 @@
 use super::*;
 use akita_field::RandomSampling;
-use akita_field::{FpExt4, Prime24Offset3};
+use akita_field::{FpExt4, MulBase, Prime24Offset3};
 use akita_types::tensor_equality_factor_evals;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
@@ -219,6 +219,31 @@ fn direct_dense_tensor_term_matches_materialized_factor() {
         direct.final_witness_and_factor_evals(),
         materialized.final_witness_and_factor_evals()
     );
+}
+
+#[test]
+fn delayed_tensor_projection_matches_direct_products() {
+    use akita_field::{FpExt4, Prime32Offset99};
+    type B = Prime32Offset99;
+    type G = FpExt4<B>;
+
+    let mut rng = StdRng::seed_from_u64(0x7e05_4acc);
+    let eta = (0..2).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
+    let weights = EqPolynomial::evals(&eta).unwrap();
+    let projection = TensorFactorProjection::<B, G>::new(&eta).unwrap();
+    for _ in 0..256 {
+        let value = G::random(&mut rng);
+        let direct = weights
+            .iter()
+            .enumerate()
+            .fold(G::zero(), |acc, (coordinate, weight)| {
+                acc + <G as MulBase<B>>::mul_base(
+                    *weight,
+                    <G as ExtField<B>>::base_coefficient(&value, coordinate),
+                )
+            });
+        assert_eq!(projection.project(value), direct);
+    }
 }
 
 #[test]

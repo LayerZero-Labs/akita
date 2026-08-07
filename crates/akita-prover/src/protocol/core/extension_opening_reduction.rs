@@ -374,7 +374,7 @@ fn try_sparse_extension_opening_reduction_terms<F, E, P, B, const D: usize>(
 ) -> Result<Option<Vec<ExtensionOpeningReductionTerm<F, E>>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F>,
+    E: MulBaseUnreduced<F>,
     P: RootTensorSource<F, D>,
     B: ComputeBackendSetup<F>
         + for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>,

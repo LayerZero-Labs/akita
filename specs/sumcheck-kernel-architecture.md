@@ -617,6 +617,14 @@ pass. This reduced the largest recursive construction again to 97.4 ms and its
 whole EOR to 153 to 154 ms. Two complete proofs measured 1.606 and 1.616 seconds
 and verified. No temporary full factor vector exists on this path.
 
+The prepared projection also follows the field's product-sum policy. The fp32
+and fp64 extensions certify that a short sum of unreduced products is exact, so
+their four extension-times-base coordinate products reduce once instead of four
+times. Other fields retain direct per-product reduction. This reduced the root
+sparse term construction from about 82.8 ms to 74.6 to 74.7 ms and the largest
+recursive construction from 97.4 ms to 87.2 to 87.7 ms. Its complete EOR is
+142 ms. Two complete proofs measured 1.583 and 1.589 seconds and verified.
+
 On the same profile, retaining Stage 1 octet classes after the third challenge
 and using the canonical Taylor kernel reduced the root Stage 1 sumcheck from
 160 to 161 ms to 138 to 139 ms. Its largest next-round polynomial fell from

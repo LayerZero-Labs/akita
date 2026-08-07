@@ -53,7 +53,7 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
         coeff: E,
     ) -> Result<Self, AkitaError>
     where
-        E: HasUnreducedOps,
+        E: MulBaseUnreduced<F>,
     {
         if E::DELAYED_PRODUCT_SUM_IS_EXACT {
             Self::new_tensor_using::<DelayedProductSum<E>>(witness_evals, tail_point, eta, coeff)
@@ -69,7 +69,7 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
         coeff: E,
     ) -> Result<Self, AkitaError>
     where
-        E: HasUnreducedOps,
+        E: MulBaseUnreduced<F>,
         A: ProductSumAccumulator<E>,
     {
         let expected = checked_table_len(tail_point.len())?;
@@ -141,7 +141,10 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
         eta: Vec<E>,
         coeff: E,
         materialize_at: usize,
-    ) -> Result<Self, AkitaError> {
+    ) -> Result<Self, AkitaError>
+    where
+        E: MulBaseUnreduced<F>,
+    {
         let factor = TensorEqualityFactor::new::<F>(tail_point, eta, materialize_at)?;
         if witness_evals.table_len() != factor.len() {
             return Err(AkitaError::InvalidSize {
