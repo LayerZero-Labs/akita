@@ -1,4 +1,9 @@
+#[cfg(target_arch = "aarch64")]
+use std::mem::size_of;
+
 use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt, inverse_ntt_cyclic};
+#[cfg(target_arch = "aarch64")]
+use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, PrimeWidth};
 use crate::ring::cyclotomic::CyclotomicRing;
 
@@ -6,6 +11,116 @@ use super::lut::{CenteredPrimeReducer, CenteredPrimeWideReducer};
 use super::{
     CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut,
 };
+
+enum CenteredI16NttStrategy<W: PrimeWidth, const K: usize> {
+    Lut(CenteredMontLut<W, K>),
+    #[cfg(target_arch = "aarch64")]
+    NeonI16,
+    #[cfg(target_arch = "aarch64")]
+    NeonI32,
+}
+
+/// Prepared conversion policy for repeated centered-i16 NTT inputs.
+pub(super) struct CenteredI16NttConverter<'a, W: PrimeWidth, const K: usize, const D: usize> {
+    params: &'a CrtNttParamSet<W, K, D>,
+    strategy: CenteredI16NttStrategy<W, K>,
+}
+
+impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<'a, W, K, D> {
+    pub(super) fn new(params: &'a CrtNttParamSet<W, K, D>, rhs: &[[i16; D]]) -> Self {
+        #[cfg(target_arch = "aarch64")]
+        if params.kernel_plan.uses_neon() {
+            if size_of::<W>() == size_of::<i16>() {
+                return Self {
+                    params,
+                    strategy: CenteredI16NttStrategy::NeonI16,
+                };
+            }
+            if size_of::<W>() == size_of::<i32>() {
+                return Self {
+                    params,
+                    strategy: CenteredI16NttStrategy::NeonI32,
+                };
+            }
+        }
+
+        let rhs_abs_bound = rhs
+            .iter()
+            .flatten()
+            .map(|&digit| i32::from(digit).unsigned_abs())
+            .max()
+            .unwrap_or(0) as i32;
+        Self {
+            params,
+            strategy: CenteredI16NttStrategy::Lut(CenteredMontLut::new(params, rhs_abs_bound)),
+        }
+    }
+
+    pub(super) fn transform(&self, coefficients: &[i16; D]) -> CyclotomicCrtNtt<W, K, D> {
+        match &self.strategy {
+            CenteredI16NttStrategy::Lut(lut) => {
+                let centered = coefficients.map(i32::from);
+                CyclotomicCrtNtt::from_centered_i32_with_lut(&centered, self.params, lut)
+            }
+            #[cfg(target_arch = "aarch64")]
+            CenteredI16NttStrategy::NeonI16 => self.transform_neon_i16(coefficients),
+            #[cfg(target_arch = "aarch64")]
+            CenteredI16NttStrategy::NeonI32 => self.transform_neon_i32(coefficients),
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    fn transform_neon_i16(&self, coefficients: &[i16; D]) -> CyclotomicCrtNtt<W, K, D> {
+        debug_assert_eq!(size_of::<W>(), size_of::<i16>());
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for ((limb, prime), twiddles) in limbs
+            .iter_mut()
+            .zip(self.params.primes.iter())
+            .zip(self.params.twiddles.iter())
+        {
+            // SAFETY: `new` selects this strategy only for the sealed i16
+            // residue width. The source and destination arrays are disjoint.
+            unsafe {
+                neon::centered_i16_to_mont_i16(
+                    limb.as_mut_ptr().cast::<i16>(),
+                    coefficients.as_ptr(),
+                    D,
+                    prime.p.to_i64() as i16,
+                    prime.pinv.to_i64() as i16,
+                    prime.montsq.to_i64() as i16,
+                );
+            }
+            forward_ntt(limb, *prime, twiddles, self.params.kernel_plan);
+        }
+        CyclotomicCrtNtt { limbs }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    fn transform_neon_i32(&self, coefficients: &[i16; D]) -> CyclotomicCrtNtt<W, K, D> {
+        debug_assert_eq!(size_of::<W>(), size_of::<i32>());
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for ((limb, prime), twiddles) in limbs
+            .iter_mut()
+            .zip(self.params.primes.iter())
+            .zip(self.params.twiddles.iter())
+        {
+            // SAFETY: `new` selects this strategy only for the sealed i32
+            // residue width. The source and destination arrays are disjoint.
+            unsafe {
+                neon::centered_i16_to_mont_i32(
+                    limb.as_mut_ptr().cast::<i32>(),
+                    coefficients.as_ptr(),
+                    D,
+                    prime.p.to_i64() as i32,
+                    prime.pinv.to_i64() as i32,
+                    prime.montsq.to_i64() as i32,
+                );
+            }
+            forward_ntt(limb, *prime, twiddles, self.params.kernel_plan);
+        }
+        CyclotomicCrtNtt { limbs }
+    }
+}
 
 impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     pub(crate) fn centered_coefficients_with_params(

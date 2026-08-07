@@ -676,21 +676,26 @@ footprint: a tail adds exactly `tail_prefix_len * D * 2` bytes, and base-only
 schedules allocate zero tail bytes. Cache construction may grow only in
 proportion to transforms actually requested.
 
-### Deferred kernel hypotheses and future work
+### Completed NEON follow-up and future work
 
-These items are deliberately outside this PR. They are hypotheses to test with
-component benchmarks before changing arithmetic or prepared layout.
+The AArch64 follow-up implements the production-12289 fused forward tail and
+inverse head, direct signed-`i16` Montgomery ingress for both residue widths,
+and scalar differential coverage at the supported protocol dimensions. Its
+benchmark grid covers Q32/Q64 D64 through D1024, Q128 D64 through D512, and
+ranks 1, 2, 4, and 8.
+
+The remaining items are hypotheses to test with component benchmarks before
+changing arithmetic or prepared layout.
 
 | Direction | Hypothesis and required evidence |
 | --- | --- |
-| component benchmark grid | Add forward, inverse, pointwise, LUT conversion, reconstruction, and complete-matvec measurements for D64/D128/D256/D512, i32 base primes, and production 12289. Use longer alternating SIMD/scalar runs before drawing a ring-degree conclusion. |
-| NEON i16 small stages | A fused vector forward tail for `len = 2, 1` can remove `D` scalar Montgomery products per RHS transform and the final full-array reduction. A vector inverse head should be evaluated separately because terminal widths make forward work dominant. |
+| isolated component attribution | The broad transform and complete-matvec grid is implemented. Add isolated LUT-conversion and reconstruction measurements, and use longer alternating SIMD/scalar runs before drawing a ring-degree conclusion. |
 | NEON lane scheduling | Unrolling independent four-lane widening operations may hide multiply latency without the D64 regression observed for blanket eight-lane butterflies. Test eight-lane direct arithmetic first on streaming twists and then only on selected wide stages. |
 | batched RHS columns | Preparing and accumulating several columns together may reduce accumulator traffic and expose independent Montgomery chains, especially for rank-1 D512. Measure register pressure and temporary-cache footprint for each field tier. |
 | validated LUT access | `CenteredMontLut` exactly covers the data-derived bound, so an internally unchecked lookup after boundary validation may remove redundant per-coefficient `Option` handling. Preserve verifier rejection at the outer boundary. |
 | AVX2 i32 stages | The pointwise path already has an eight-lane Montgomery primitive. Evaluate eight lanes for transform stages `len >= 8`, four lanes at `len = 4`, and the existing fused tail. |
 | AVX2/AVX-512 i16 | Replace AVX2 scalar stages below `len = 16` with width-aware or fused stages before considering a 32-lane AVX-512BW kernel. AVX-512 frequency effects require machine-specific measurement. |
-| backend tests | Keep production-prime i16 and IFMA52 differential coverage through D512, including nonzero matvecs at each supported dimension; scalar ring arithmetic remains authoritative. |
+| backend tests | Production-prime NEON i16 differential tests cover the scalar-fallback geometry and D64 through D1024; IFMA52 differential coverage includes nonzero matvecs through D512. Add D512 AVX-512 i32 transform coverage, and keep scalar ring arithmetic authoritative. |
 
 No future optimization may bake one common ring degree into the abstraction,
 make the tail unconditional, expose CPU storage through backend traits, or
@@ -794,7 +799,7 @@ tradeoff. It must not reproduce the capacity formula in planner-local code.
 | Review concern | Primary files |
 | --- | --- |
 | digit mathematics and storage | `crates/akita-algebra/src/ring/cyclotomic/decomposition.rs`, `book/src/foundations/gadget-decomposition.md` |
-| prime/order and SIMD arithmetic | `crates/akita-algebra/src/ntt/tables.rs`, `ntt/avx/`, `ntt/neon.rs`, `ntt/butterfly.rs` |
+| prime/order and SIMD arithmetic | `crates/akita-algebra/src/ntt/tables.rs`, `crates/akita-algebra/src/ntt/avx/`, `crates/akita-algebra/src/ntt/neon/i16_kernels.rs`, `crates/akita-algebra/src/ntt/neon/i32_kernels.rs`, `crates/akita-algebra/src/ntt/neon/tests.rs`, `crates/akita-algebra/src/ntt/butterfly.rs` |
 | CRT exactness and reconstruction | `crates/akita-algebra/src/ring/crt_ntt_repr/`, `crates/akita-types/src/ntt_cache.rs` |
 | cache API and type erasure | `crates/akita-types/src/ntt_cache.rs`, `crates/akita-types/src/proof/setup.rs` |
 | terminal verifier and no-panic behavior | `crates/akita-verifier/src/protocol/core/terminal_direct.rs`, `terminal_ntt.rs`, `verify.rs` |

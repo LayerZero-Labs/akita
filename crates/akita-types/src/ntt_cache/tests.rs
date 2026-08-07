@@ -377,6 +377,18 @@ fn signed_i16_cache_checks_shape_and_digit_class() {
         .mat_vec_i16::<Prime32Offset99>(10, 1, &[[0; D]])
         .is_ok());
 
+    let full_i16 = prepare_ntt_cache(
+        flat.ring_view::<D>(1, 2).expect("matrix view"),
+        NttCacheMode::ExactNegacyclic {
+            width: 2,
+            rhs_abs_bound: 1 << 15,
+        },
+    )
+    .expect("full-i16 cache");
+    assert!(full_i16
+        .mat_vec_i16::<Prime32Offset99>(16, 1, &[[i16::MIN; D], [i16::MAX; D]])
+        .is_ok());
+
     let short = prepare_ntt_cache(
         flat.ring_view::<D>(1, 1).expect("matrix view"),
         NttCacheMode::ExactNegacyclic {
