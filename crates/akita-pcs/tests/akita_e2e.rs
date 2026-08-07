@@ -33,7 +33,7 @@ use std::sync::{Mutex, Once};
 use std::time::Instant;
 
 mod common;
-use common::opening_from_poly;
+use common::opening_from_poly_for_layout;
 
 type F = fp128::Field;
 const ONEHOT_K: usize = 256;
@@ -365,7 +365,7 @@ fn chunked_multi_chunk_prove_verify() {
             .collect();
         let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).unwrap();
         let pt = random_point::<F>(NV);
-        let expected_opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
+        let expected_opening = common::opening_from_poly::<D, _>(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -437,18 +437,18 @@ fn adaptive_dense_prove_verify() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         type Cfg = fp128::Dense;
-        const D: usize = Cfg::D;
 
         let layout = singleton_layout::<Cfg>(DENSE_TEST_NV);
+        let root_d = layout.d_a();
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         let evals: Vec<F> = (0..1usize << DENSE_TEST_NV)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let poly = DensePoly::<F>::from_field_evals(DENSE_TEST_NV, D, &evals).unwrap();
+        let poly = DensePoly::<F>::from_field_evals(DENSE_TEST_NV, root_d, &evals).unwrap();
         let pt = random_point::<F>(DENSE_TEST_NV);
-        let expected_opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
+        let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout);
 
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(DENSE_TEST_NV);
@@ -624,13 +624,13 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         type Cfg = fp128::OneHot;
-        const D: usize = Cfg::D;
         const NV: usize = 20;
 
         let opening_batch = akita_types::OpeningClaimsLayout::new(NV, 2).expect("opening_batch");
         let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+        let root_d = layout.d_a();
         let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
-            .checked_mul(D)
+            .checked_mul(root_d)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
         assert_eq!(total_chunks * ONEHOT_K, total_field);
@@ -641,14 +641,14 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
                 let indices: Vec<Option<usize>> = (0..total_chunks)
                     .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
                     .collect();
-                OneHotPoly::<F>::new(ONEHOT_K, D, indices).unwrap()
+                OneHotPoly::<F>::new(ONEHOT_K, root_d, indices).unwrap()
             })
             .collect();
         let poly_refs: Vec<&OneHotPoly<F>> = polys.iter().collect();
         let point = random_point(NV);
         let openings: Vec<F> = polys
             .iter()
-            .map(|poly| opening_from_poly::<D, _>(poly, &point, &layout))
+            .map(|poly| opening_from_poly_for_layout(poly, &point, &layout))
             .collect();
 
         #[cfg(feature = "disk-persistence")]
@@ -831,12 +831,12 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         type Cfg = fp128::OneHot;
-        const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
         let layout = singleton_layout::<Cfg>(nv);
+        let root_d = layout.d_a();
         let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
-            .checked_mul(D)
+            .checked_mul(root_d)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
         assert_eq!(total_chunks * ONEHOT_K, total_field);
@@ -845,9 +845,9 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let indices: Vec<Option<usize>> = (0..total_chunks)
             .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
             .collect();
-        let onehot_poly = OneHotPoly::<F>::new(ONEHOT_K, D, indices).unwrap();
+        let onehot_poly = OneHotPoly::<F>::new(ONEHOT_K, root_d, indices).unwrap();
         let pt = random_point::<F>(nv);
-        let expected_opening = opening_from_poly::<D, _>(&onehot_poly, &pt, &layout);
+        let expected_opening = opening_from_poly_for_layout(&onehot_poly, &pt, &layout);
 
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
@@ -932,12 +932,12 @@ fn batched_onehot_same_point_round_trip() {
         // NV=20 is large enough to include a recursive suffix in the generated
         // adaptive two-claim schedule.
         type Cfg = fp128::OneHot;
-        const D: usize = Cfg::D;
         const NV: usize = 20;
 
         let nv = NV;
         let opening_batch = akita_types::OpeningClaimsLayout::new(nv, 2).expect("opening_batch");
         let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+        let root_d = layout.d_a();
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(NV),
         ))
@@ -956,7 +956,7 @@ fn batched_onehot_same_point_round_trip() {
             "fixture must cross a production fold with an exact partial final row"
         );
         let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
-            .checked_mul(D)
+            .checked_mul(root_d)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
         assert_eq!(total_chunks * ONEHOT_K, total_field);
@@ -969,13 +969,13 @@ fn batched_onehot_same_point_round_trip() {
         let indices_b: Vec<Option<usize>> = (0..total_chunks)
             .map(|_| Some(rng_b.gen_range(0..ONEHOT_K)))
             .collect();
-        let poly_a = OneHotPoly::<F>::new(ONEHOT_K, D, indices_a).unwrap();
-        let poly_b = OneHotPoly::<F>::new(ONEHOT_K, D, indices_b).unwrap();
+        let poly_a = OneHotPoly::<F>::new(ONEHOT_K, root_d, indices_a).unwrap();
+        let poly_b = OneHotPoly::<F>::new(ONEHOT_K, root_d, indices_b).unwrap();
         let poly_group = [&poly_a, &poly_b];
         let pt = random_point(nv);
         let openings = [
-            opening_from_poly::<D, _>(&poly_a, &pt, &layout),
-            opening_from_poly::<D, _>(&poly_b, &pt, &layout),
+            opening_from_poly_for_layout(&poly_a, &pt, &layout),
+            opening_from_poly_for_layout(&poly_b, &pt, &layout),
         ];
 
         #[cfg(feature = "disk-persistence")]
@@ -1071,13 +1071,13 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         type Cfg = fp128::OneHot;
-        const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
         let layout =
             akita_batched_root_layout::<Cfg>(nv, SAME_POINT_ONEHOT_BATCH_SIZE).expect("layout");
+        let root_d = layout.d_a();
         let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
-            .checked_mul(D)
+            .checked_mul(root_d)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
         assert_eq!(total_chunks * ONEHOT_K, total_field);
@@ -1088,14 +1088,14 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
                 let indices: Vec<Option<usize>> = (0..total_chunks)
                     .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
                     .collect();
-                OneHotPoly::<F>::new(ONEHOT_K, D, indices).unwrap()
+                OneHotPoly::<F>::new(ONEHOT_K, root_d, indices).unwrap()
             })
             .collect();
         let poly_group: Vec<&OneHotPoly<F>> = polys.iter().collect();
         let pt = random_point(nv);
         let openings: Vec<F> = polys
             .iter()
-            .map(|poly| opening_from_poly::<D, _>(poly, &pt, &layout))
+            .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout))
             .collect();
 
         #[cfg(feature = "disk-persistence")]

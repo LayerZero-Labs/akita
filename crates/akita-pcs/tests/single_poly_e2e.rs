@@ -121,7 +121,6 @@ fn run_single_onehot(nv: usize) {
 // ---------------------------------------------------------------------------
 
 type DenseCfg = fp128::Dense;
-const DENSE_D: usize = DenseCfg::D;
 
 fn run_single_dense(nv: usize) {
     init_rayon_pool();
@@ -130,12 +129,13 @@ fn run_single_dense(nv: usize) {
             &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
+        let root_d = layout.d_a();
 
         let evals = dense_field_evals(nv, 0xface_feed_0000 + nv as u64);
-        let poly = DensePoly::<F>::from_field_evals(nv, DENSE_D, &evals).expect("dense poly");
+        let poly = DensePoly::<F>::from_field_evals(nv, root_d, &evals).expect("dense poly");
 
         let pt = random_point(nv, 0xbabe_0000 + nv as u64);
-        let expected_opening = opening_from_poly::<DENSE_D, _>(&poly, &pt, &layout);
+        let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, 1).unwrap();
         let commit_prepared = CpuBackend.prepare_setup(&setup).unwrap();

@@ -30,7 +30,7 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, BasisMode, SetupMatrixCapacity};
 use common::{
-    dense_field_evals, init_rayon_pool, opening_from_poly, prove_input, random_point,
+    dense_field_evals, init_rayon_pool, opening_from_poly_for_layout, prove_input, random_point,
     run_on_large_stack, verify_input, F,
 };
 use rand::rngs::StdRng;
@@ -115,12 +115,13 @@ where
         akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
     let layout = Cfg::get_params_for_batched_commitment(&opening_layout).expect("layout");
     let schedule = Cfg::get_params_for_prove(&opening_layout).expect("schedule");
+    let root_d = layout.d_a();
 
     let evals = dense_field_evals(poly_nv, 0xdead_beef_0000 + poly_nv as u64);
-    let poly = DensePoly::<F>::from_field_evals(poly_nv, D, &evals).expect("dense poly");
+    let poly = DensePoly::<F>::from_field_evals(poly_nv, root_d, &evals).expect("dense poly");
 
     let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
-    let expected_opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
+    let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout);
 
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -218,20 +219,21 @@ where
         akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
     let layout = Cfg::get_params_for_batched_commitment(&opening_layout).expect("layout");
     let schedule = Cfg::get_params_for_prove(&opening_layout).expect("schedule");
+    let root_d = layout.d_a();
     let k = 256;
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     assert_eq!(
-        total_ring * D,
+        total_ring * root_d,
         1usize << poly_nv,
         "onehot layout mismatch at nv={poly_nv}"
     );
-    let total_chunks = total_ring * D / k;
+    let total_chunks = total_ring * root_d / k;
 
     let mut rng = StdRng::seed_from_u64(0xdead_beef_0001 + poly_nv as u64);
     let indices: Vec<Option<usize>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..k)))
         .collect();
-    let poly = OneHotPoly::<F, usize>::new(k, D, indices.clone()).expect("onehot poly");
+    let poly = OneHotPoly::<F, usize>::new(k, root_d, indices.clone()).expect("onehot poly");
 
     let pt = random_point(poly_nv, 0xcafe_0001 + poly_nv as u64);
     let expected_opening = onehot_lagrange_opening(&indices, k, &pt);
@@ -354,24 +356,24 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     assert_eq!(Cfg::D, D);
     assert!(commit_batch >= 1);
 
-    let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
-    )
-    .expect("layout");
+    let layout =
+        akita_config::test_support::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
+            .expect("batched layout");
+    let root_d = layout.d_a();
     let polys: Vec<DensePoly<F>> = (0..commit_batch)
         .map(|idx| {
             let mut rng = StdRng::seed_from_u64(0xbeef_cafe_0000 + idx as u64);
             let evals: Vec<F> = (0..1usize << poly_nv)
                 .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
                 .collect();
-            DensePoly::<F>::from_field_evals(poly_nv, D, &evals).expect("dense poly")
+            DensePoly::<F>::from_field_evals(poly_nv, root_d, &evals).expect("dense poly")
         })
         .collect();
 
     let pt = random_point(poly_nv, 0xbabe_0000 + poly_nv as u64);
     let openings: Vec<F> = polys
         .iter()
-        .map(|poly| opening_from_poly::<D, _>(poly, &pt, &layout))
+        .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout))
         .collect();
 
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
@@ -418,12 +420,9 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 
 /// Batched onehot round-trip.
 ///
-/// Important: onehot polys bake their `(block_index_bits, position_index_bits)` block split in at
-/// construction time, unlike dense polys which rebuild blocks from the
-/// prover-supplied `num_positions_per_block`. Under batched commits that split must match
-/// the layout the prover will use, which is
-/// `test_support::akita_batched_root_layout(nv, setup_polys)` — i.e., sized
-/// for the setup's `max_num_batched_polys`, not for a lone poly.
+/// The construction dimension is metadata rather than storage authority, but
+/// it must still match the root layout so setup-capacity failures are tested
+/// with a polynomial of exactly `poly_nv` variables.
 fn run_onehot_batched_e2e<Cfg, const D: usize>(
     setup_nv: usize,
     setup_polys: usize,
@@ -439,10 +438,11 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let layout =
         akita_config::test_support::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
             .expect("batched layout");
+    let root_d = layout.d_a();
     let k = 256;
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
-    assert_eq!(total_ring * D, 1usize << poly_nv);
-    let total_chunks = total_ring * D / k;
+    assert_eq!(total_ring * root_d, 1usize << poly_nv);
+    let total_chunks = total_ring * root_d / k;
 
     let (polys, onehot_indices): (Vec<_>, Vec<_>) = (0..commit_batch)
         .map(|idx| {
@@ -450,7 +450,8 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
             let indices: Vec<Option<usize>> = (0..total_chunks)
                 .map(|_| Some(rng.gen_range(0..k)))
                 .collect();
-            let poly = OneHotPoly::<F, usize>::new(k, D, indices.clone()).expect("onehot poly");
+            let poly =
+                OneHotPoly::<F, usize>::new(k, root_d, indices.clone()).expect("onehot poly");
             (poly, indices)
         })
         .unzip();

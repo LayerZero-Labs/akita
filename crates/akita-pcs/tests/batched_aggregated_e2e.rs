@@ -34,12 +34,14 @@ use common::*;
 const DENSE_ONEHOT_K: usize = DENSE_D;
 
 fn make_dense_cfg_onehot_poly(layout: &CommittedGroupParams, seed: u64) -> OneHotPoly<F, u8> {
-    let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
+    let root_d = layout.d_a();
+    let total_field = layout.num_live_blocks * layout.num_positions_per_block * root_d;
+    assert!(total_field.is_multiple_of(DENSE_ONEHOT_K));
     let mut rng = StdRng::seed_from_u64(seed);
-    let indices: Vec<Option<u8>> = (0..total_ring)
+    let indices: Vec<Option<u8>> = (0..total_field / DENSE_ONEHOT_K)
         .map(|_| Some(rng.gen_range(0..DENSE_ONEHOT_K) as u8))
         .collect();
-    OneHotPoly::<F, u8>::new(DENSE_ONEHOT_K, DENSE_D, indices)
+    OneHotPoly::<F, u8>::new(DENSE_ONEHOT_K, root_d, indices)
         .expect("onehot poly under dense config")
 }
 
