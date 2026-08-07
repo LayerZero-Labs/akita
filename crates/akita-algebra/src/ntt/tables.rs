@@ -1,6 +1,6 @@
 //! Deterministic parameter presets for small-prime CRT arithmetic.
 //!
-//! Q32: `logq = 32` with two `i32` NTT-friendly primes.
+//! Q32: `logq = 32` with two `i32` primes, plus an exact five-`i16` profile.
 //! Q64: `logq = 64` with three `i32` NTT-friendly primes.
 //! Q128: `logq = 128` with five `i32` NTT-friendly primes.
 
@@ -24,6 +24,9 @@ pub const Q32_MAX_RING_D: usize = 2048;
 
 /// Number of CRT primes for the `logq = 32` parameter set.
 pub const Q32_NUM_PRIMES: usize = 2;
+
+/// Number of primes in the exact Q32 i16 profile for D64/D128/D256.
+pub const Q32_I16_NUM_PRIMES: usize = 5;
 
 /// The modulus `q = 2^32 - 99`.
 pub const Q32_MODULUS: u64 = (1u64 << 32) - 99;
@@ -50,6 +53,39 @@ pub const I16_TAIL_PRIME: NttPrime<i16> = NttPrime {
     mont: 4091,
     montsq: -1337,
 };
+
+/// Exact Q32 profile for 14-bit SIMD arithmetic through ring degree 256.
+///
+/// Its roughly 68-bit CRT product covers the production Q32 digit bounds at
+/// D64/D128/D256. D512 deliberately stays on the i32 profile because only
+/// three primes below `2^14` support a 1024-th root of unity.
+pub const Q32_I16_PRIMES: [NttPrime<i16>; Q32_I16_NUM_PRIMES] = [
+    NttPrime {
+        p: 10753,
+        pinv: -10751,
+        mont: 1018,
+        montsq: 4036,
+    },
+    NttPrime {
+        p: 11777,
+        pinv: -11775,
+        mont: -5126,
+        montsq: 1389,
+    },
+    I16_TAIL_PRIME,
+    NttPrime {
+        p: 13313,
+        pinv: -13311,
+        mont: -1029,
+        montsq: -6199,
+    },
+    NttPrime {
+        p: 15361,
+        pinv: -15359,
+        mont: 4092,
+        montsq: 974,
+    },
+];
 
 /// Raw 30-bit primes for Q128 (`logq = 128`, K=5).
 ///
@@ -267,6 +303,16 @@ mod tests {
             NttPrime::compute(12289_i16),
         ];
         assert_i16_prime_profile(&primes);
+    }
+
+    #[test]
+    fn verify_q32_i16_prime_derived_constants() {
+        assert_i16_prime_profile(&Q32_I16_PRIMES);
+        let product = Q32_I16_PRIMES
+            .iter()
+            .map(|prime| prime.p as u128)
+            .product::<u128>();
+        assert!(product > 1u128 << 68);
     }
 
     #[test]

@@ -4,28 +4,28 @@ macro_rules! dispatch_slot {
     ($slot:expr, $num_rows:expr, $num_cols:expr, $func:ident $(, $arg:expr)*) => {{
         let nr: usize = $num_rows;
         let nc: usize = $num_cols;
+        macro_rules! run_base {
+            ($base:expr) => {{
+                let base = $base;
+                let neg = base.negacyclic().ok_or_else(|| {
+                    AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
+                })?;
+                let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
+                $func(&rows, $($arg,)* base.params())
+            }};
+        }
         if let Some(base) = $slot.q32_base() {
-            let neg = base.negacyclic().ok_or_else(|| {
-                    AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
-                })?;
-                let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
-            $func(&rows, $($arg,)* base.params())
+            run_base!(base)
+        } else if let Some(base) = $slot.q32_i16_base() {
+            run_base!(base)
         } else if let Some(base) = $slot.q64_base() {
-            let neg = base.negacyclic().ok_or_else(|| {
-                    AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
-                })?;
-                let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
-            $func(&rows, $($arg,)* base.params())
+            run_base!(base)
         } else if let Some(base) = $slot.q128_base() {
-            let neg = base.negacyclic().ok_or_else(|| {
-                    AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
-                })?;
-                let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
-            $func(&rows, $($arg,)* base.params())
+            run_base!(base)
         } else {
-                return Err(AkitaError::InvalidSetup(
-                    "signed-i8 matvec requires a base-profile NTT cache".into(),
-                ));
+            return Err(AkitaError::InvalidSetup(
+                "signed-i8 matvec requires a base-profile NTT cache".into(),
+            ));
         }
     }};
 }

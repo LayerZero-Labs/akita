@@ -62,10 +62,11 @@ jobs:
       - name: Run IFMA tests with scalar fallback forbidden
         env:
           AKITA_REQUIRE_IFMA52: "1"
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: qemu-x86_64 -cpu max
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: qemu-x86_64 -cpu max,+avx512ifma,+avx512vnni
         run: |
-          cargo test --release --target x86_64-unknown-linux-gnu -p akita-algebra --lib ifma52
           AKITA_REQUIRE_AVX512VNNI=1 cargo test --release --target x86_64-unknown-linux-gnu -p akita-algebra --lib avx512vnni_six_way_i16_dot
+          AKITA_IFMA52=0 AKITA_REQUIRE_AVX512VNNI=1 cargo test --release --target x86_64-unknown-linux-gnu -p akita-types --lib q32_i16_vnni_exact_cache
+          cargo test --release --target x86_64-unknown-linux-gnu -p akita-algebra --lib ifma52
           cargo test --release --target x86_64-unknown-linux-gnu -p akita-types --lib ntt_cache
           cargo test --release --target x86_64-unknown-linux-gnu -p akita-verifier --lib terminal_ntt
 

@@ -72,7 +72,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .unwrap_or(0) as i32;
         let lut = CenteredMontLut::new(params, rhs_abs_bound);
         let mut accumulators = vec![Self::zero(); num_rows];
-        if !params.uses_lazy_i32_dot() {
+        let pointwise_dot_batch_size = params.pointwise_dot_batch_size();
+        if pointwise_dot_batch_size == 1 {
             for (column, digits) in rhs.iter().enumerate() {
                 if digits.iter().all(|&digit| digit == 0) {
                     continue;
@@ -87,10 +88,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             return Ok(accumulators);
         }
 
-        const BATCH: usize = I32_LAZY_DOT_BATCH;
-        let mut transformed = Vec::with_capacity(BATCH);
-        for batch_start in (0..num_cols).step_by(BATCH) {
-            let batch_end = (batch_start + BATCH).min(num_cols);
+        let mut transformed = Vec::with_capacity(pointwise_dot_batch_size);
+        for batch_start in (0..num_cols).step_by(pointwise_dot_batch_size) {
+            let batch_end = (batch_start + pointwise_dot_batch_size).min(num_cols);
             transformed.clear();
             for digits in &rhs[batch_start..batch_end] {
                 if digits.iter().all(|&digit| digit == 0) {

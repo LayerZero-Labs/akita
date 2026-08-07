@@ -4,8 +4,8 @@ use akita_algebra::ntt::ifma52::{ifma52_enabled, IFMA52_PRIMES};
 use akita_algebra::ntt::prime::PrimeWidth;
 use akita_algebra::ntt::tables::{
     q128_primes, validate_profile_crt_ring_degree, I16_TAIL_PRIME, Q128_MAX_RING_D, Q128_MODULUS,
-    Q128_NUM_PRIMES, Q32_MAX_RING_D, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MAX_RING_D,
-    Q64_MODULUS, Q64_NUM_PRIMES, Q64_PRIMES,
+    Q128_NUM_PRIMES, Q32_I16_NUM_PRIMES, Q32_I16_PRIMES, Q32_MAX_RING_D, Q32_MODULUS,
+    Q32_NUM_PRIMES, Q32_PRIMES, Q64_MAX_RING_D, Q64_MODULUS, Q64_NUM_PRIMES, Q64_PRIMES,
 };
 use akita_algebra::{
     CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt, I16TailParams, Ifma52NttMatrix, Ifma52Params,
@@ -297,7 +297,7 @@ pub struct PreparedIfma52I16Tail<const D: usize> {
 #[derive(Debug)]
 pub struct PreparedNttCache<const D: usize>(PreparedNttCacheRepr<D>);
 
-/// Read-only typed view of one prepared i32 base profile.
+/// Read-only typed view of one prepared base profile.
 #[derive(Clone, Copy)]
 pub struct PreparedNttBaseView<'a, W: PrimeWidth, const K: usize, const D: usize> {
     negacyclic: Option<&'a [CyclotomicCrtNtt<W, K, D>]>,
@@ -328,6 +328,11 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> PreparedNttBaseView<'a, 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 enum PreparedNttCacheRepr<const D: usize> {
+    #[non_exhaustive]
+    Q32I16 {
+        neg: Vec<CyclotomicCrtNtt<i16, Q32_I16_NUM_PRIMES, D>>,
+        params: CrtNttParamSet<i16, Q32_I16_NUM_PRIMES, D>,
+    },
     #[non_exhaustive]
     Q32 {
         neg: Option<Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>>,
@@ -403,6 +408,13 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             }};
         }
         match self {
+            Self::Q32I16 { neg, params } => {
+                if neg.is_empty() || params.primes != Q32_I16_PRIMES || !(64..=256).contains(&D) {
+                    return Err(AkitaError::InvalidSetup(
+                        "prepared Q32 i16 NTT cache is inconsistent".into(),
+                    ));
+                }
+            }
             Self::Q32 {
                 neg,
                 cyc,
@@ -478,6 +490,9 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             }};
         }
         match self {
+            Self::Q32I16 { neg, .. } => {
+                neg.len() * D * Q32_I16_NUM_PRIMES * core::mem::size_of::<i16>()
+            }
             Self::Q32 { neg, cyc, tail, .. } => bytes!(neg, cyc, tail, Q32_NUM_PRIMES),
             Self::Q32Ifma52 { neg, tail, .. } => {
                 neg.cache_bytes()
@@ -501,6 +516,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
     #[must_use]
     const fn has_cyclic(&self) -> bool {
         match self {
+            Self::Q32I16 { .. } => false,
             Self::Q32 { cyc, .. } => cyc.is_some(),
             Self::Q32Ifma52 { .. } => false,
             Self::Q64 { cyc, .. } => cyc.is_some(),
@@ -514,6 +530,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
     #[must_use]
     const fn has_negacyclic(&self) -> bool {
         match self {
+            Self::Q32I16 { .. } => true,
             Self::Q32 { neg, .. } => neg.is_some(),
             Self::Q32Ifma52 { .. } => true,
             Self::Q64 { neg, .. } => neg.is_some(),
@@ -527,6 +544,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
     #[must_use]
     const fn has_i16_tail(&self) -> bool {
         match self {
+            Self::Q32I16 { .. } => false,
             Self::Q32 { tail, .. } => tail.is_some(),
             Self::Q32Ifma52 { tail, .. } => tail.is_some(),
             Self::Q64 { tail, .. } => tail.is_some(),
@@ -546,7 +564,9 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
     ) -> Result<Vec<akita_algebra::CyclotomicRing<F, D>>, AkitaError> {
         self.validate()?;
         let prepared_tier = match self {
-            Self::Q32 { .. } | Self::Q32Ifma52 { .. } => ProtocolRingDispatchTierId::Fp32,
+            Self::Q32I16 { .. } | Self::Q32 { .. } | Self::Q32Ifma52 { .. } => {
+                ProtocolRingDispatchTierId::Fp32
+            }
             Self::Q64 { .. } | Self::Q64Ifma52 { .. } => ProtocolRingDispatchTierId::Fp64,
             Self::Q128 { .. } | Self::Q128Ifma52 { .. } => ProtocolRingDispatchTierId::Fp128,
         };
@@ -556,6 +576,18 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             ));
         }
         match self {
+            Self::Q32I16 { neg, params } => {
+                let rhs_abs_bound = validate_i16_rhs(log_basis, rhs)?;
+                if !params
+                    .crt_capacity()
+                    .supports::<F, D>(rhs.len(), rhs_abs_bound)
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "signed-i16 matvec exceeds prepared Q32 i16 capacity".into(),
+                    ));
+                }
+                CyclotomicCrtNtt::mat_vec_i16(neg, num_rows, rhs.len(), rhs, params)
+            }
             Self::Q32 {
                 neg,
                 params,
@@ -674,6 +706,19 @@ impl<const D: usize> PreparedNttCache<D> {
                 | PreparedNttCacheRepr::Q64Ifma52 { .. }
                 | PreparedNttCacheRepr::Q128Ifma52 { .. }
         )
+    }
+
+    /// Borrow the exact Q32 i16 base and its bound parameters.
+    #[must_use]
+    pub fn q32_i16_base(&self) -> Option<PreparedNttBaseView<'_, i16, Q32_I16_NUM_PRIMES, D>> {
+        match &self.0 {
+            PreparedNttCacheRepr::Q32I16 { neg, params } => Some(PreparedNttBaseView {
+                negacyclic: Some(neg),
+                cyclic: None,
+                params,
+            }),
+            _ => None,
+        }
     }
 
     /// Borrow the Q32 i32 base domains and their bound parameters.
