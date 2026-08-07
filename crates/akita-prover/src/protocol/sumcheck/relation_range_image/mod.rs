@@ -206,6 +206,18 @@ pub(crate) fn accumulate_relation_coeffs<E: FieldCore>(
 }
 
 #[inline]
+fn accumulate_relation_products<E, A>(rel: &mut [A; 3], w0: E, dw: E, p0: E, dp: E)
+where
+    E: FieldCore + HasUnreducedOps,
+    A: ProductSumAccumulator<E>,
+{
+    rel[0].add_product(w0, p0);
+    rel[1].add_product(w0, dp);
+    rel[1].add_product(dw, p0);
+    rel[2].add_product(dw, dp);
+}
+
+#[inline]
 pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
     rel: &mut [E::MulU64Accum; 6],
     w0: i64,

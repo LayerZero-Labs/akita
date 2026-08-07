@@ -622,6 +622,15 @@ handoff from 53.7 to 53.8 ms to 38.7 to 38.8 ms and complete root Stage 2 from
 209 to 210 ms to 194 ms. The second complete proof measured 1.768 seconds and
 verified.
 
+Later Stage 2 coefficient folds preserve those factors as well. Each round
+contracts the folded witness separately against common alpha and each prepared
+trace source, then applies the lane-constant factor to the three relation
+coefficients. On the same one-worker profile, the four root coefficient rounds
+changed from about 34.0, 18.3, 10.6, and 6.7 ms to 27.1, 15.6, 9.8, and 7.0 ms.
+Complete root Stage 2 measured 183 to 184 ms in two verified samples. The
+coefficient loops read the witness once per retained source instead of
+materializing full factor rows that would be immediately consumed.
+
 Stage 3 now stores its coefficient and setup-index phases in `EvaluationTable`
 and uses the same detected fold, product-round, and fused fold-plus-next-round
 operations as dense EOR. The linear coefficient is derived from the carried

@@ -56,10 +56,7 @@ fn materialize_compact_lane_and_compute_next<
 
             let alpha0 = alpha_round2[left];
             let alpha_delta = alpha_round2[left + 1] - alpha0;
-            alpha_rel[0].add_product(w0, alpha0);
-            alpha_rel[1].add_product(w0, alpha_delta);
-            alpha_rel[1].add_product(dw, alpha0);
-            alpha_rel[2].add_product(dw, alpha_delta);
+            accumulate_relation_products(&mut alpha_rel, w0, dw, alpha0, alpha_delta);
         }
 
         let e_out = e_second[j_high];
@@ -81,10 +78,7 @@ fn materialize_compact_lane_and_compute_next<
             let dw = lane_out[left + 1] - w0;
             let source0 = source_values[left];
             let source_delta = source_values[left + 1] - source0;
-            source_rel[0].add_product(w0, source0);
-            source_rel[1].add_product(w0, source_delta);
-            source_rel[1].add_product(dw, source0);
-            source_rel[2].add_product(dw, source_delta);
+            accumulate_relation_products(&mut source_rel, w0, dw, source0, source_delta);
         }
         for (coefficient, source) in rel.iter_mut().zip(source_rel) {
             *coefficient += factor * source.finish();

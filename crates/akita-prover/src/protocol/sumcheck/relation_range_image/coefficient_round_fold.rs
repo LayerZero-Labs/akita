@@ -22,7 +22,7 @@ fn fold_lane_and_compute_next_round<
     let next_coefficient_half = next_coeff_count / 2;
     let equality_address_base = lane * next_coefficient_half;
     let mut virt: [A; 3] = std::array::from_fn(|_| A::zero());
-    let mut rel: [A; 3] = std::array::from_fn(|_| A::zero());
+    let mut alpha_rel: [A; 3] = std::array::from_fn(|_| A::zero());
     let mut blk = 0usize;
 
     while blk < next_coefficient_half {
@@ -55,18 +55,9 @@ fn fold_lane_and_compute_next_round<
             }
             inner_virt[2].add_product(e_in, dw * dw);
 
-            let p0 = next_alpha_factor[left] * lane_weight;
-            let p1 = next_alpha_factor[left + 1] * lane_weight;
-            let trace_index = lane * next_coeff_count + left;
-            let (t0, t1) = prover
-                .evaluation_trace
-                .pair_from_flat_index(trace_index, next_coeff_count);
-            let p0 = p0 + t0;
-            let dp = p1 + t1 - p0;
-            rel[0].add_product(w0, p0);
-            rel[1].add_product(w0, dp);
-            rel[1].add_product(dw, p0);
-            rel[2].add_product(dw, dp);
+            let alpha0 = next_alpha_factor[left];
+            let alpha_delta = next_alpha_factor[left + 1] - alpha0;
+            accumulate_relation_products(&mut alpha_rel, w0, dw, alpha0, alpha_delta);
         }
 
         let e_out = e_second[j_high];
@@ -79,7 +70,25 @@ fn fold_lane_and_compute_next_round<
         blk = blk_end;
     }
 
-    (virt.map(A::finish), rel.map(A::finish))
+    let mut rel = alpha_rel.map(|accum| lane_weight * accum.finish());
+    prover
+        .evaluation_trace
+        .for_each_source_in_lane(lane, |factor, source_values| {
+            let mut source_rel: [A; 3] = std::array::from_fn(|_| A::zero());
+            for coefficient_pair in 0..next_coefficient_half {
+                let left = 2 * coefficient_pair;
+                let w0 = target[left];
+                let dw = target[left + 1] - w0;
+                let source0 = source_values[left];
+                let source_delta = source_values[left + 1] - source0;
+                accumulate_relation_products(&mut source_rel, w0, dw, source0, source_delta);
+            }
+            for (coefficient, source) in rel.iter_mut().zip(source_rel) {
+                *coefficient += factor * source.finish();
+            }
+        });
+
+    (virt.map(A::finish), rel)
 }
 
 fn add_round_terms<E: FieldCore>(left: &mut ([E; 3], [E; 3]), right: ([E; 3], [E; 3])) {
