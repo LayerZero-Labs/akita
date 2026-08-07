@@ -29,7 +29,7 @@ fn random_mont_array_i16<const D: usize>(prime: NttPrime<i16>, seed: u64) -> [Mo
     })
 }
 
-const TEST_PRIME_I32: i32 = 1073707009;
+const TEST_PRIME_I32: i32 = 1073692673;
 const TEST_PRIME_I16: i16 = crate::ntt::tables::I16_TAIL_PRIME.p;
 
 fn assert_neon_ntt_i32_matches_scalar<const D: usize>() {
@@ -69,6 +69,7 @@ fn neon_ntt_i32_matches_scalar_at_target_dimensions() {
     assert_neon_ntt_i32_matches_scalar::<256>();
     assert_neon_ntt_i32_matches_scalar::<512>();
     assert_neon_ntt_i32_matches_scalar::<1024>();
+    assert_neon_ntt_i32_matches_scalar::<2048>();
 }
 
 #[test]
@@ -335,6 +336,7 @@ fn neon_ntt_i16_matches_scalar_at_fallback_and_target_dimensions() {
     assert_neon_ntt_i16_matches_scalar::<256>();
     assert_neon_ntt_i16_matches_scalar::<512>();
     assert_neon_ntt_i16_matches_scalar::<1024>();
+    assert_neon_ntt_i16_matches_scalar::<2048>();
 }
 
 #[test]
