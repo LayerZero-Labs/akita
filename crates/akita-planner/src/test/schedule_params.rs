@@ -905,7 +905,7 @@ fn recursive_adaptive_search_selects_schedule_dimensions_and_setup_prefixes() {
             .commitment
             .open_commit_matrix
             .input_width(),
-        89_440,
+        88_408,
         "root D width projects the main group once and then adds both frozen precommit segments"
     );
     assert_eq!(

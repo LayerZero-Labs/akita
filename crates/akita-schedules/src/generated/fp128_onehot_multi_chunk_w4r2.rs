@@ -46,7 +46,7 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     family_name: "fp128_onehot_multi_chunk_w4r2",
     protocol_epoch: 3,
     cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
-    selection_policy: SelectionPolicyId::MinAdaptiveARankDimensionThenSetupAndProof,
+    selection_policy: SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload,
     setup_field_budget: None,
     min_offloaded_witness_contraction: 3,
     sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
