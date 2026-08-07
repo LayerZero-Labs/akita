@@ -28,7 +28,7 @@ normal release link look like a verifier regression.
 
 The default direct **fp128** one-hot preset is adaptive: generated tables choose
 the first two fold levels and use D64 for the uniform suffix. Direct dense uses
-the same adaptive policy. Recursive, tensor, and multi-chunk companion presets
+the same adaptive policy. Recursive and multi-chunk companion presets
 remain D64. Shipped direct tables are `fp128_onehot` and `fp128_dense`.
 **fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
 `D32OneHot` preset.

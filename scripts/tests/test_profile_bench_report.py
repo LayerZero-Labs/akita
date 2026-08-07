@@ -407,9 +407,46 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertIn("8.0 MiB", report)
         self.assertIn("4,096 bytes", report)
         self.assertIn("nv32Onehot256", report)
-        self.assertIn("D=64", report)
+        self.assertNotIn("D=64", report)
         self.assertNotIn("Proof B", report)
         self.assertNotIn("Setup Mode", report)
+
+    def test_adaptive_case_label_omits_ring_dimensions_and_mixed_dimension_config(self) -> None:
+        from scripts.profile_bench_report import human_case_label, normalize_case_summary
+
+        summary = normalize_case_summary(
+            {
+                "mode": "onehot_fp128",
+                "num_vars": 32,
+                "num_polys": 1,
+                "exit_code": 0,
+                "planned_levels": [
+                    {"level": 0, "d_a": 256, "d_b": 64, "d_d": 64}
+                ],
+            }
+        )
+
+        self.assertEqual(human_case_label(summary), "Fp128 - nv32Onehot256")
+
+    def test_case_label_keeps_non_dimension_topology_variant(self) -> None:
+        from scripts.profile_bench_report import human_case_label, normalize_case_summary
+
+        summary = normalize_case_summary(
+            {
+                "mode": "onehot_fp128_d64_multi_chunk_w4r2",
+                "num_vars": 32,
+                "num_polys": 1,
+                "exit_code": 0,
+                "planned_levels": [
+                    {"level": 0, "d_a": 64, "d_b": 64, "d_d": 64}
+                ],
+            }
+        )
+
+        self.assertEqual(
+            human_case_label(summary),
+            "Fp128 - nv32Onehot256 - MultiChunkW4R2",
+        )
 
     def test_full_report_renders_overhauled_tables(self) -> None:
         from scripts.profile_bench_report import render_report
