@@ -1,7 +1,5 @@
 # Security model
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
-
 One canonical security narrative: the hardness assumption, how Ajtai ranks
 connect to security bits, the weak-binding fold price, and the current SIS table
 model. Keep the marketing claim separate from audited reality. See
@@ -37,10 +35,15 @@ successor witnesses, cutoff kind, cap provenance, and role provenance. These
 are audit inputs, not verifier-visible state, and are committed separately from
 the runtime table digest.
 
-The planner derives role bounds as coefficient-`L∞` values because those are the
-values enforced by the protocol. It does not convert production role bounds
-through a Euclidean `d * B^2` key. The Euclidean estimator code remains an
-offline comparison path.
+The planner has two production tables for the committed A role. The default
+table uses a coefficient `L∞` bound. A separate Euclidean table is available
+only when the selected fold proves a complete physical squared `L2` norm. Both
+tables use the 128 bit quantum ADPS16 policy and have separate digests.
+
+For the Euclidean table, the scalar SIS dimensions are `n = rank * D` and
+`m = width * D`. The length bound is the square root of the complete collision
+norm. The complete norm already includes every scalar coordinate, so the
+planner does not multiply it by the matrix width again.
 
 The production lookup is table-only. Verifier-reachable code must reject a
 missing table row or unsupported floor with `AkitaError`; it must not run the
@@ -66,9 +69,31 @@ implementation acceptance criteria live in
 
 ## Norm bounds and weak binding
 
-The fold-response bounds, the committed-fold price as relaxed binding, the
-batched weak-opening definition, and why range checks do not lower the binding
-norm. Keep the fold-reprice correction explicit.
+Every committed level records one A role security route. The coefficient
+`L∞` route is always available. A later nonterminal fold may also have an `L2`
+candidate when its preset supplies a measured cap for that exact fold level,
+incoming witness length, response length, digit basis, and digit count. The
+root, early folds, and terminal response do not use the `L2` route.
+
+Let `kappa_1` be the maximum physical coefficient `L1` norm of the fold
+challenge. Let `Z_inf` be the accepted physical coefficient bound on the
+response, and let `S` be the accepted squared norm of the complete physical
+response. The two collision bounds are
+
+```text
+C_inf  = 8 * kappa_1 * Z_inf
+C_2_sq = 64 * kappa_1^2 * S.
+```
+
+These formulas use the physical ring coefficients that enter the A role
+Module SIS kernel. The small field extension embedding has already produced
+those coefficients. Applying the Hachi logical to physical conversion at this
+point would count that conversion twice.
+
+An `L∞` schedule carries no norm proof. An `L2` schedule binds its cap and
+integer proof shape into the schedule descriptor. The verifier proves the norm
+of the same physical Z coefficients used by the security calculation and then
+checks the public cap. The existing digit range proof remains mandatory.
 
 **Sources to fold in**
 
@@ -76,5 +101,5 @@ norm. Keep the fold-reprice correction explicit.
 - Paper §3.12 `sec:batched-soundness` (`def:batched-weak-opening`, `lem:batched-weak-binding`, `prop:committed-fold-price`).
 - `specs/weak-binding-norm-fix.md` (fold reprice — keep the correction section).
 - `specs/fold-linf-rejection.md` (fold digit-count tightening).
-- `specs/selective-l2-fold-security-sizing.md` (active physical norm correction
+- `specs/selective-l2-fold-security-sizing.md` (implemented physical norm correction
   and optional L2 route).

@@ -1,7 +1,5 @@
 # Configuration and planning
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
-
 How a preset turns into a concrete recursion schedule: the single
 `CommitmentConfig` trait, the `LevelParams` it produces, and the planner that
 selects (or searches for) the schedule and prices its proof size.
@@ -54,3 +52,23 @@ owns shipped table data. The verifier-reachable proof-size formula.
 - Paper §3.11 `sec:akita-planner` (objective/constraints, the dynamic program, generated schedules).
 - `crates/akita-config/src/generated_families.rs`, `crates/akita-schedules/src/generated/`, `crates/akita-planner/src/resolve.rs` (`resolve_schedule`).
 - `book/src/usage/profiling.md`, `specs/profile-bench-coverage-matrix.md`, `.github/workflows/profile-bench.yml`.
+
+### Selective physical L2 candidates
+
+The coefficient `L∞` route remains the default at every fold. A preset may
+also supply a squared physical `L2` cap for an exact later nonterminal fold
+candidate. The cap key includes the fold level, incoming witness length,
+physical response length, fold basis, and fold digit count. A cap does not
+apply to another row or to a successor whose witness length changed.
+
+The planner keeps the best local layout for each distinct secure A rank. It
+then compares the complete suffix for each retained rank. The comparison
+includes the norm proof, A payload, next witness, later folds, and terminal
+response. A smaller A rank can reduce the next witness enough to remove a fold,
+but the planner keeps `L∞` when the extra norm proof costs more than the suffix
+saves.
+
+Generated schedule identity includes the cap policy and the separate L2 table
+digest. Runtime expansion derives the route, cap, proof shape, and A rank from
+that identity. A mismatch between the preset policy and generated catalog is
+an error.

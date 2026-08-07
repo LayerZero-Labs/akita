@@ -4,7 +4,7 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-08-06 |
-| Status        | active |
+| Status        | implemented |
 | PR            | [#369](https://github.com/LayerZero-Labs/akita/pull/369) |
 | Supersedes    | The physical A role embedding factor in `weak-binding-norm-fix.md` |
 | Superseded-by | |
