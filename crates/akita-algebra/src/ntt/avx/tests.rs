@@ -787,6 +787,7 @@ fn avx2_pointwise_mul_acc_i16_matches_scalar_with_tail() {
 fn avx512vnni_six_way_i16_dot_matches_scalar_with_tail() {
     let available = std::is_x86_feature_detected!("avx2")
         && std::is_x86_feature_detected!("avx512f")
+        && std::is_x86_feature_detected!("avx512dq")
         && std::is_x86_feature_detected!("avx512bw")
         && std::is_x86_feature_detected!("avx512vnni");
     if !available {
@@ -818,7 +819,7 @@ fn avx512vnni_six_way_i16_dot_matches_scalar_with_tail() {
     });
 
     let mut avx_acc = acc_init;
-    // SAFETY: guarded by runtime AVX2 and AVX-512F/BW/VNNI detection above.
+    // SAFETY: guarded by runtime AVX2 and AVX-512F/DQ/BW/VNNI detection above.
     unsafe {
         pointwise_dot_acc_6_i16_avx512vnni(
             avx_acc.as_mut_ptr().cast::<i16>(),

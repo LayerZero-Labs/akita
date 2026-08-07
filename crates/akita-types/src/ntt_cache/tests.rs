@@ -180,6 +180,7 @@ fn q32_i16_vnni_exact_cache_matches_ring_arithmetic() {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     let available = std::is_x86_feature_detected!("avx2")
         && std::is_x86_feature_detected!("avx512f")
+        && std::is_x86_feature_detected!("avx512dq")
         && std::is_x86_feature_detected!("avx512bw")
         && std::is_x86_feature_detected!("avx512vnni")
         && std::env::var("AKITA_IFMA52").ok().as_deref() == Some("0");

@@ -570,11 +570,11 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
 ///
 /// # Safety
 ///
-/// The caller must ensure AVX2 and AVX-512F/BW/VNNI are available. `acc` must be valid
+/// The caller must ensure AVX2 and AVX-512F/DQ/BW/VNNI are available. `acc` must be valid
 /// for `d` writable `i16` elements. Every pointer in the six-entry `lhs` and
 /// `rhs` arrays must be valid for `d` readable `i16` elements and obey Rust's
 /// aliasing rules with `acc`. All values must lie in `(-p, p)` for `p < 2^14`.
-#[target_feature(enable = "avx2,avx512f,avx512bw,avx512vnni")]
+#[target_feature(enable = "avx2,avx512f,avx512dq,avx512bw,avx512vnni")]
 pub(crate) unsafe fn pointwise_dot_acc_6_i16_avx512vnni(
     acc: *mut i16,
     lhs: *const *const i16,
