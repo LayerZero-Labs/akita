@@ -11,7 +11,7 @@
 
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
-use crate::{AdditiveGroup, CanonicalField, FieldCore};
+use crate::{AdditiveGroup, CanonicalField, FieldCore, FromPrimitiveInt};
 
 use super::prime::{Fp128, Fp32, Fp64};
 
@@ -635,6 +635,18 @@ pub trait HasUnreducedOps: FieldCore {
     fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum;
     /// Widening `self × other` with no reduction.
     fn mul_to_product_accum(self, other: Self) -> Self::ProductAccum;
+
+    /// Widening `self × small` into the full-product accumulator.
+    ///
+    /// Long compact-table scans use this operation when the full accumulator
+    /// has materially more reduction headroom than `MulU64Accum`.
+    #[inline]
+    fn mul_u64_to_product_accum(self, small: u64) -> Self::ProductAccum
+    where
+        Self: FromPrimitiveInt,
+    {
+        self.mul_to_product_accum(Self::from_u64(small))
+    }
 
     /// Reduce a narrow-mul accumulator to a canonical field element.
     fn reduce_mul_u64_accum(accum: Self::MulU64Accum) -> Self;

@@ -583,6 +583,17 @@ impl<const P: u32> HasUnreducedOps for FpExt4<Fp32<P>> {
     }
 
     #[inline]
+    fn mul_u64_to_product_accum(self, small: u64) -> Self::ProductAccum {
+        // A coefficient product is below 2^96 even for a full-width `u64`.
+        // Four u128 slots remove one reduction per coefficient while retaining
+        // ample headroom for Akita's long compact-table scans.
+        FpExt4Fp32ProductAccum(
+            self.coeffs
+                .map(|coeff| coeff.to_limbs() as u128 * small as u128),
+        )
+    }
+
+    #[inline]
     fn reduce_mul_u64_accum(accum: Self::MulU64Accum) -> Self {
         accum
     }
@@ -685,6 +696,11 @@ macro_rules! impl_fp_ext4_unreduced_identity {
             #[inline]
             fn mul_to_product_accum(self, other: Self) -> Self {
                 self * other
+            }
+            #[inline]
+            fn mul_u64_to_product_accum(self, small: u64) -> Self {
+                let small = $base::<$p>::from_u64(small);
+                Self::new(self.coeffs.map(|coeff| coeff * small))
             }
             #[inline]
             fn reduce_mul_u64_accum(accum: Self) -> Self {

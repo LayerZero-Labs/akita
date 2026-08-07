@@ -4,7 +4,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::parallel::*;
 use akita_field::unreduced::HasUnreducedOps;
 use akita_field::{FieldCore, FromPrimitiveInt, Zero};
-use akita_sumcheck::{reduce_signed_accum, UniPoly};
+use akita_sumcheck::UniPoly;
 
 /// Boolean corner in the `{0, 1}^2` sub-grid of the stage-2 full domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -280,19 +280,19 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
         0..live_x_cols,
         || {
             (
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
                 [E::ProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::ProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::ProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::ProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::ProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
             )
         },
         |(mut norm_pos, mut norm_neg, mut rel_accum, mut trace_pos, mut trace_neg), x_idx| {
             let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
             let eq_x_weight = eq_x[x_idx];
             let row_val = relation_matrix_col_evals[x_idx];
-            let mut x_rel_pos = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
-            let mut x_rel_neg = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_rel_pos = [E::ProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_rel_neg = [E::ProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate() {
                 let base = 4 * y_quad;
                 let lookup_idx = lookup_index_fn([
@@ -325,7 +325,8 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
                 );
             }
             for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
-                let x_rel = reduce_signed_accum::<E>(x_rel_pos[idx], x_rel_neg[idx]);
+                let x_rel = E::reduce_product_accum(x_rel_pos[idx])
+                    - E::reduce_product_accum(x_rel_neg[idx]);
                 rel_accum[idx] += row_val.mul_to_product_accum(x_rel);
             }
             (norm_pos, norm_neg, rel_accum, trace_pos, trace_neg)
@@ -356,12 +357,13 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
             )
         }
     );
-    let norm_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] =
-        std::array::from_fn(|idx| reduce_signed_accum::<E>(norm_pos[idx], norm_neg[idx]));
+    let norm_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] = std::array::from_fn(|idx| {
+        E::reduce_product_accum(norm_pos[idx]) - E::reduce_product_accum(norm_neg[idx])
+    });
     let relation_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] =
         std::array::from_fn(|idx| {
-            E::reduce_product_accum(rel_accum[idx])
-                + reduce_signed_accum::<E>(trace_pos[idx], trace_neg[idx])
+            E::reduce_product_accum(rel_accum[idx]) + E::reduce_product_accum(trace_pos[idx])
+                - E::reduce_product_accum(trace_neg[idx])
         });
     Some(Stage2BivariateSkipProof {
         norm: Stage2CompressedGrid {

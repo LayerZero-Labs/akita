@@ -102,6 +102,29 @@ fn fp32_accumulate_matches_scalar() {
 }
 
 #[test]
+fn fp32_ext4_mul_u64_product_accum_matches_scalar() {
+    use crate::FpExt4;
+
+    type E = FpExt4<F32>;
+
+    let mut rng = StdRng::seed_from_u64(0x3232_4445);
+    let n = 500;
+    let values: Vec<E> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let smalls: Vec<u64> = (0..n).map(|_| rng.next_u64()).collect();
+    let scalar_sum = values
+        .iter()
+        .zip(&smalls)
+        .fold(E::zero(), |acc, (&value, &small)| {
+            acc + value * E::from_u64(small)
+        });
+    let accum_sum = values.iter().zip(&smalls).fold(
+        <<E as HasUnreducedOps>::ProductAccum as num_traits::Zero>::zero(),
+        |acc, (&value, &small)| acc + value.mul_u64_to_product_accum(small),
+    );
+    assert_eq!(E::reduce_product_accum(accum_sum), scalar_sum);
+}
+
+#[test]
 fn fp64_roundtrip() {
     let mut rng = StdRng::seed_from_u64(0x6464_6464);
     for _ in 0..1000 {
