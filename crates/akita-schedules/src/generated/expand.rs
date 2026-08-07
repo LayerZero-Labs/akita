@@ -10,14 +10,13 @@
 //! replay path), so every fallible step returns [`AkitaError`] rather than
 //! panicking.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
 use crate::generated::{
     GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix,
     GeneratedPrecommittedProfile, GeneratedSetupPrefixInput, GeneratedTerminalFold,
 };
-use crate::runtime::optimize_fold_challenge_shape;
 use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -72,7 +71,6 @@ impl GeneratedSetupPrefixInput {
         self,
         policy: &PlannerPolicy,
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-        fold_shape: TensorChallengeShape,
         log_basis_open: u32,
     ) -> Result<PrecommittedLevelParams, AkitaError> {
         super::validate_certified_bases(
@@ -103,7 +101,6 @@ impl GeneratedSetupPrefixInput {
         let num_positions_per_block =
             generated_count(geometry.positions_per_block, "positions per block")?;
         let num_live_blocks = generated_count(geometry.live_blocks, "live block count")?;
-        let fold_shape = optimize_fold_challenge_shape(fold_shape, num_live_blocks)?;
         let n_prefix = num_live_ring_elements_per_claim
             .checked_mul(d_a)
             .ok_or_else(|| {
@@ -139,11 +136,6 @@ impl GeneratedSetupPrefixInput {
                 log_basis_open
             ))
         };
-        if fold_shape != TensorChallengeShape::Flat {
-            return Err(AkitaError::InvalidSetup(
-                "generated setup-prefix challenge shape mismatch".into(),
-            ));
-        }
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| no_layout("A"))?;
         let num_digits_fold = usize::try_from(self.num_digits_fold).map_err(|_| {
@@ -163,7 +155,6 @@ impl GeneratedSetupPrefixInput {
             d_a,
             log_basis_open,
             &ring_challenge_cfg,
-            fold_shape,
             num_digits_fold,
             policy.ring_subfield_norm_bound,
         )
@@ -376,7 +367,6 @@ impl GeneratedCommittedGroup {
         exact_num_digits_inner: Option<u32>,
         generated_num_digits_fold: u32,
         input_witness_len: usize,
-        fold_shape: TensorChallengeShape,
         num_claims: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
         setup_prefix_group: Option<GeneratedSetupPrefixInput>,
@@ -430,7 +420,6 @@ impl GeneratedCommittedGroup {
                 num_live_blocks,
             )));
         }
-        let fold_shape = optimize_fold_challenge_shape(fold_shape, num_live_blocks)?;
 
         // Per-role rounded-up collision buckets + committed widths, via the
         // `akita_types::sis` primitives. The B/D widths carry the `num_claims`
@@ -488,7 +477,6 @@ impl GeneratedCommittedGroup {
             ring_d,
             log_basis_open,
             &ring_challenge_cfg,
-            fold_shape,
             num_digits_fold,
             policy.ring_subfield_norm_bound,
         )
@@ -537,7 +525,6 @@ impl GeneratedCommittedGroup {
             let commitment_params = group.expand_to_precommitted_group(
                 policy,
                 &ring_challenge_config,
-                TensorChallengeShape::Flat,
                 log_basis_open,
             )?;
             let n_prefix = 1usize
@@ -630,7 +617,6 @@ impl GeneratedCommittedGroup {
             num_live_blocks,
             num_positions_per_block,
             fold_challenge_config: ring_challenge_cfg,
-            fold_challenge_shape: fold_shape,
             num_digits_inner,
             num_digits_outer,
             num_digits_open,
@@ -655,7 +641,6 @@ impl GeneratedCommittedGroup {
         &self,
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-        fold_shape: TensorChallengeShape,
         main_num_polys: usize,
         num_digits_inner: u32,
         num_digits_fold: u32,
@@ -698,7 +683,6 @@ impl GeneratedCommittedGroup {
         }
         let num_positions_per_block =
             generated_count(self.geometry.positions_per_block, "positions per block")?;
-        let fold_shape = optimize_fold_challenge_shape(fold_shape, num_live_blocks)?;
 
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
@@ -737,7 +721,6 @@ impl GeneratedCommittedGroup {
             ring_d,
             log_basis_open,
             &ring_challenge_cfg,
-            fold_shape,
             num_digits_fold,
             policy.ring_subfield_norm_bound,
         )
@@ -849,7 +832,6 @@ impl GeneratedCommittedGroup {
             num_live_blocks,
             num_positions_per_block,
             fold_challenge_config: ring_challenge_cfg,
-            fold_challenge_shape: fold_shape,
             num_digits_inner,
             num_digits_outer,
             num_digits_open: num_digits_open_val,
@@ -1042,12 +1024,7 @@ mod tests {
         };
 
         let expanded = input
-            .expand_to_precommitted_group(
-                &recursive_fp128_policy(),
-                &ring_challenge_config,
-                TensorChallengeShape::Flat,
-                3,
-            )
+            .expand_to_precommitted_group(&recursive_fp128_policy(), &ring_challenge_config, 3)
             .expect("audited mixed-dimension setup-prefix layout");
 
         assert_eq!(&*requested_dimensions.borrow(), &[128]);

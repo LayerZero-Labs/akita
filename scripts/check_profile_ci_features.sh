@@ -23,7 +23,6 @@ MODE_FEATURE = {
     "onehot_fp128": "schedules-fp128-onehot",
     "onehot_fp128_d64_multi_group_recursive": "schedules-fp128-d64-onehot-recursive",
     "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2": "schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2",
-    "onehot_fp128_d64_tensor": "schedules-fp128-d64-onehot-tensor",
     "onehot_fp128_d64_multi_chunk_w8r2": "schedules-fp128-d64-onehot-multi-chunk",
     "onehot_fp128_d64_multi_chunk_w2r2": "schedules-fp128-d64-onehot-multi-chunk-w2r2",
     "onehot_fp128_d64_multi_chunk_w4r2": "schedules-fp128-d64-onehot-multi-chunk-w4r2",

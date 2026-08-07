@@ -16,7 +16,6 @@ fn miswired_catalog_rejects_before_lookup() {
         key,
         &policy_of::<fp128::Dense>(),
         fp128::Dense::ring_challenge_config,
-        fp128::Dense::fold_challenge_shape_at_level,
         Some(wrong_catalog),
     )
     .expect_err("adaptive dense preset must reject adaptive one-hot catalog");

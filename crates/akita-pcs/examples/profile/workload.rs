@@ -60,7 +60,6 @@ fn planned_payload_bytes<Cfg: CommitmentConfig>(
                 &key,
                 &akita_config::policy_of::<Cfg>(),
                 Cfg::ring_challenge_config,
-                Cfg::fold_challenge_shape_at_level,
             )
             .expect("generated schedule estimate");
         }
@@ -73,7 +72,6 @@ fn planned_payload_bytes<Cfg: CommitmentConfig>(
         &precommitted_honest_fold_policies,
         &akita_config::policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
     )
     .and_then(|planned| planned.estimate.estimated_proof_payload_bytes())
     .expect("runtime schedule estimate")

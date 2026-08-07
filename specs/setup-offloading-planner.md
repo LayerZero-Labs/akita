@@ -618,7 +618,6 @@ ring_d      = SETUP_OFFLOAD_D_SETUP
 log_basis   = successor fold log_basis
 delta_open  = successor fold delta_open
 delta_commit= successor fold delta_commit
-fold shape  = successor fold challenge shape
 ```
 
 It owns:
@@ -710,7 +709,7 @@ For each existing `block_index_bits` candidate:
    precommitted group:
    - `group = PolynomialGroupLayout::singleton(log2(n_prefix))`;
    - `num_live_blocks_prefix * num_positions_per_block_prefix = n_prefix / D_setup`;
-   - `log_basis`, digit depths, fold shape, and ring dimension are shared with
+   - `log_basis`, digit depths, and ring dimension are shared with
      the current fold candidate;
    - `n_a_prefix`, `n_b_prefix`, `A_prefix`, and `B_prefix` are derived for the
      prefix group itself.

@@ -602,7 +602,7 @@ a block, not alpha exponents or source ring-coordinate order. Evaluation-trace t
 source_address = D_source * opening_column + ring_coordinate
 ```
 
-against the same flat challenge vector. No source-to-destination trace remap is allowed.
+against the same challenge vector. No source-to-destination trace remap is allowed.
 
 ### Existing PR evidence and what it does not prove
 
@@ -836,7 +836,7 @@ retain only succinct state. A simple verifier evaluator may be a function rather
 state type; no type is introduced solely to mirror prover structure.
 
 For the verifier relation matrix, PR #312 is also the source-level baseline. Its prepared
-tensor/flat challenge evaluations, equality-window and affine-interval contractions,
+sparse challenge evaluations, equality-window and affine-interval contractions,
 setup-plan reuse, and quotient-tail contraction remain the optimized primitives. The
 stabilized evaluator assembles the relation formula once and selects inner primitives
 from checked address geometry; it does not retain a uniform/mixed pair of complete formula

@@ -641,7 +641,6 @@ fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
         &akita_config::policy_of::<fp128::D256OneHot>(),
         fp128::D256OneHot::root_honest_fold_policy(),
         fp128::D256OneHot::ring_challenge_config,
-        fp128::D256OneHot::fold_challenge_shape_at_level,
     )
     .expect("synthetic D256 precommit profile");
     let key = akita_types::AkitaScheduleLookupKey {

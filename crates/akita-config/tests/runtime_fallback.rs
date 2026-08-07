@@ -33,6 +33,31 @@ fn table_miss_key(num_vars: usize) -> PolynomialGroupLayout {
     PolynomialGroupLayout::new(num_vars, 3)
 }
 
+fn assert_schedule_eq(
+    label: &str,
+    lhs: &akita_types::FoldSchedule,
+    rhs: &akita_types::FoldSchedule,
+) {
+    assert_eq!(
+        format!("{:?}", lhs.root),
+        format!("{:?}", rhs.root),
+        "{label}: root diverges"
+    );
+    assert_eq!(
+        format!("{:?}", lhs.recursive_folds),
+        format!("{:?}", rhs.recursive_folds),
+        "{label}: recursive folds diverge"
+    );
+    assert_eq!(
+        lhs.terminal.input_witness_len, rhs.terminal.input_witness_len,
+        "{label}: terminal witness lengths diverge"
+    );
+    assert_eq!(
+        lhs.terminal.params.response_shape, rhs.terminal.params.response_shape,
+        "{label}: terminal witness shapes diverge"
+    );
+}
+
 fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
     let key = table_miss_key(num_vars);
 
@@ -76,7 +101,6 @@ fn fixed_width_selection_resolves_the_same_exact_generated_row() {
         &key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("prover selects exact generated row");
@@ -84,7 +108,6 @@ fn fixed_width_selection_resolves_the_same_exact_generated_row() {
         selected.selection(),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("verifier resolves public row selection");
@@ -103,7 +126,6 @@ fn fixed_width_selection_resolves_the_same_exact_generated_row() {
             unknown,
             &policy_of::<Cfg>(),
             Cfg::ring_challenge_config,
-            Cfg::fold_challenge_shape_at_level,
             Some(catalog),
         ),
         Err(akita_field::AkitaError::UnsupportedSchedule(_))
@@ -120,7 +142,6 @@ fn cached_catalog_rows_do_not_bypass_runtime_hook_validation() {
         &entry.to_runtime_lookup_key(),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("prime the materialized-catalog cache");
@@ -133,7 +154,6 @@ fn cached_catalog_rows_do_not_bypass_runtime_hook_validation() {
                 "test runtime-hook drift".to_string(),
             ))
         },
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect_err("a cache hit must still execute the supplied runtime hook");
@@ -172,7 +192,6 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_terminal_a() {
         &entry.to_runtime_lookup_key(),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("valid generated row");
@@ -233,7 +252,6 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
         &entry.to_runtime_lookup_key(),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("valid generated row");
@@ -335,15 +353,9 @@ fn runtime_rejects_malformed_extension_geometry_without_panicking() {
     let reject = |mutate: fn(&mut PlannerPolicy)| {
         let mut policy = policy_of::<Cfg>();
         mutate(&mut policy);
-        resolve_schedule(
-            key,
-            &policy,
-            Cfg::ring_challenge_config,
-            Cfg::fold_challenge_shape_at_level,
-            catalog,
-        )
-        .expect_err("malformed extension geometry must reject")
-        .to_string()
+        resolve_schedule(key, &policy, Cfg::ring_challenge_config, catalog)
+            .expect_err("malformed extension geometry must reject")
+            .to_string()
     };
 
     assert!(reject(|policy| policy.claim_ext_degree = 0).contains("nonzero power of two"));
@@ -391,7 +403,6 @@ fn adaptive_dense_plans_multi_group_roots_at_uniform_suffix_dimension() {
         &precommitted_honest_fold_policies,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
     )
     .expect("adaptive dense grouped schedule");
     planned
@@ -443,4 +454,65 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
         // Must return without panicking; either branch (Ok/Err) is fine.
         let _ = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key));
     }
+}
+fn committed_descriptor<Cfg: CommitmentConfig>(
+    group: PolynomialGroupLayout,
+) -> CommittedGroupProfile {
+    let params = akita_config::committed_group_params::<Cfg>(&group)
+        .expect("heterogeneous group must resolve");
+    CommittedGroupProfile::from_params(group, &params)
+}
+
+#[test]
+fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order() {
+    type Cfg = fp128::OneHot;
+    let onehot_16 = committed_descriptor::<Cfg>(PolynomialGroupLayout::new(14, 1));
+    let dense = committed_descriptor::<fp128::Dense>(PolynomialGroupLayout::new(15, 2));
+    let key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(16, 1),
+        precommitteds: vec![onehot_16, dense],
+    };
+
+    let precommitted_honest_fold_policies = vec![
+        akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
+            akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
+                Cfg::decomposition().field_bits(),
+                akita_types::sis::FoldWitnessNorms::new(1, 4),
+            ),
+        ),
+        akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
+            akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+                Cfg::decomposition().field_bits(),
+                akita_types::sis::FoldWitnessNorms::bounded(3, Cfg::D),
+            ),
+        ),
+    ];
+    let planned = find_schedule(
+        &key,
+        Cfg::root_honest_fold_policy(),
+        &precommitted_honest_fold_policies,
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )
+    .expect("heterogeneous group batch must plan offline");
+
+    let runtime = Cfg::runtime_schedule(key.clone()).expect("curated mixed catalog row");
+    assert_schedule_eq("curated mixed row replay", &runtime, &planned.schedule);
+
+    let reordered = AkitaScheduleLookupKey {
+        precommitteds: vec![dense, onehot_16],
+        ..key
+    };
+    assert_ne!(
+        key.canonical_descriptor_bytes(),
+        reordered.canonical_descriptor_bytes(),
+        "ordered per-group contracts must be part of catalog identity"
+    );
+    assert!(
+        matches!(
+            Cfg::runtime_schedule(reordered),
+            Err(akita_field::AkitaError::UnsupportedSchedule(_))
+        ),
+        "an unlisted mixed ordering must reject without runtime planner search"
+    );
 }

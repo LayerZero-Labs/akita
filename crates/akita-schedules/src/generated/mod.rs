@@ -37,15 +37,8 @@ pub struct GeneratedCommittedGroup {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeneratedRootFinalChallenge {
-    Flat,
-    Tensor { fold_low_len: u32 },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRootFinalGroup {
     pub layout: akita_types::PolynomialGroupLayout,
-    pub challenge: GeneratedRootFinalChallenge,
     pub num_digits_inner: u32,
     pub num_digits_fold: u32,
     pub commitment: GeneratedCommittedGroup,
@@ -159,7 +152,6 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub witness_chunk: akita_types::ChunkedWitnessCfg,
     pub recursive_setup_planning: bool,
 
-    pub root_fold_shape: akita_challenges::TensorChallengeShape,
     /// Complete uniform or adaptive dimension policy used to generate this catalog.
     pub ring_dimension_schedule_mode: crate::RingDimensionScheduleMode,
     pub ring_dimensions: &'static [usize],
@@ -180,7 +172,7 @@ pub mod validate;
 pub(crate) mod walk;
 pub use crate::{
     ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, PlannerCostModelId,
-    RingDimensionScheduleMode, SelectionPolicyId, SisSecurityPolicyId, TensorChallengeShape,
+    RingDimensionScheduleMode, SelectionPolicyId, SisSecurityPolicyId,
 };
 pub use akita_types::{
     CommitmentPayloadMode, CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
@@ -481,10 +473,6 @@ pub mod fp128_d64_onehot_recursive_multi_chunk_w8r2;
 pub mod fp128_d64_onehot_recursive_multi_chunk_w8r2_precommitted;
 #[cfg(feature = "fp128-d64-onehot-recursive")]
 pub mod fp128_d64_onehot_recursive_precommitted;
-#[cfg(feature = "fp128-d64-onehot-tensor")]
-pub mod fp128_d64_onehot_tensor;
-#[cfg(feature = "fp128-d64-onehot-tensor")]
-pub mod fp128_d64_onehot_tensor_precommitted;
 #[cfg(feature = "fp128-dense")]
 pub mod fp128_dense;
 #[cfg(feature = "fp128-dense")]
@@ -565,15 +553,6 @@ pub fn fp128_d64_onehot_recursive_multi_chunk_w8r2_table() -> GeneratedScheduleT
         entries: fp128_d64_onehot_recursive_multi_chunk_w8r2::FP128_D64_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES,
         precommitted_profiles: fp128_d64_onehot_recursive_multi_chunk_w8r2_precommitted::FP128_D64_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_d64_onehot_recursive_multi_chunk_w8r2::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d64-onehot-tensor")]
-pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_onehot_tensor::FP128_D64_ONEHOT_TENSOR_SCHEDULES,
-        precommitted_profiles: fp128_d64_onehot_tensor_precommitted::FP128_D64_ONEHOT_TENSOR_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_onehot_tensor::CATALOG_IDENTITY,
     }
 }
 

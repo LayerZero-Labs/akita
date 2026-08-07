@@ -1,11 +1,11 @@
 //! Recursive setup-offloading config adapter.
 
 use crate::CommitmentConfig;
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, ChunkedWitnessCfg, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
-    SetupMatrixCapacity, SisModulusProfileId,
+    ChunkedWitnessCfg, DecompositionParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity,
+    SisModulusProfileId,
 };
 #[cfg(any(
     feature = "schedules-fp128-d64-onehot-recursive",
@@ -32,10 +32,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
 
     fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
         Cfg::ring_challenge_config(d)
-    }
-
-    fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
-        Cfg::fold_challenge_shape_at_level(inputs)
     }
 
     fn sis_modulus_profile() -> SisModulusProfileId {
@@ -100,7 +96,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
             &key,
             &crate::policy_of::<Self>(),
             Self::ring_challenge_config,
-            Self::fold_challenge_shape_at_level,
             Self::schedule_catalog(),
         )
     }

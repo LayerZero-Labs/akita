@@ -1,11 +1,10 @@
 //! Planner-free runtime schedule expansion support.
 
-use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::{
     ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldSchedule,
     FoldScheduleEstimate, PlannedFoldSchedule, PolynomialGroupLayout, RecursiveFoldParams,
-    RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
+    RecursiveFoldStep, RootFinalGroupParams, RootFoldParams, RootFoldStep,
     RootPrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
     TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
     DEFAULT_SIS_SECURITY_POLICY,
@@ -380,46 +379,6 @@ fn validate_dimension_list(
     Ok(())
 }
 
-/// Resolve the tensor low length independently from the block split.
-pub fn optimize_fold_challenge_shape(
-    requested: TensorChallengeShape,
-    num_live_blocks: usize,
-) -> Result<TensorChallengeShape, AkitaError> {
-    if num_live_blocks == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "fold-shape optimization requires a positive num_live_blocks".to_string(),
-        ));
-    }
-    if matches!(requested, TensorChallengeShape::Flat) {
-        return Ok(TensorChallengeShape::Flat);
-    }
-
-    let capacity = num_live_blocks.checked_next_power_of_two().ok_or_else(|| {
-        AkitaError::InvalidSetup("tensor low-length capacity overflow".to_string())
-    })?;
-    let mut best = None;
-    let mut low_len = 1usize;
-    loop {
-        let high_len = num_live_blocks.div_ceil(low_len);
-        let work = high_len
-            .checked_add(low_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("tensor verifier-work overflow".to_string()))?;
-        if best.is_none_or(|(best_work, best_low)| (work, low_len) < (best_work, best_low)) {
-            best = Some((work, low_len));
-        }
-        if low_len == capacity {
-            break;
-        }
-        low_len = low_len.checked_mul(2).ok_or_else(|| {
-            AkitaError::InvalidSetup("tensor low-length enumeration overflow".to_string())
-        })?;
-    }
-    let (_, fold_low_len) = best.ok_or_else(|| {
-        AkitaError::InvalidSetup("tensor low-length enumeration was empty".to_string())
-    })?;
-    Ok(TensorChallengeShape::Tensor { fold_low_len })
-}
-
 #[derive(Clone, Debug)]
 /// One fully priced non-terminal fold awaiting schedule materialization.
 pub struct CandidateFoldStep {
@@ -509,12 +468,6 @@ pub fn materialize_candidate_schedule(
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    challenge: match root.params.fold_challenge_shape {
-                        TensorChallengeShape::Flat => RootFinalChallenge::Flat,
-                        TensorChallengeShape::Tensor { fold_low_len } => {
-                            RootFinalChallenge::Tensor { fold_low_len }
-                        }
-                    },
                     commitment: root.params.clone(),
                 },
                 precommitted_groups: root

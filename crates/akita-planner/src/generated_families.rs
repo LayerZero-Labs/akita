@@ -21,18 +21,15 @@ use crate::{
     derive_standalone_precommit_profile, find_schedule, runtime_schedule_key_cmp, EmitSpec,
     PlannerPolicy,
 };
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule,
-    PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule, PolynomialGroupLayout,
 };
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::{
-    honest_fold_policy_of, policy_of, tensor_verifier, CommitmentConfig, RecursiveCommitmentConfig,
-};
+use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig, RecursiveCommitmentConfig};
 
 type RegenScheduleCacheMap =
     HashMap<(TypeId, AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>), FoldSchedule>;
@@ -94,9 +91,6 @@ const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(44),
     PolynomialGroupLayout::singleton(50),
 ];
-
-const FP128_D64_ONEHOT_TENSOR_KEYS: &[PolynomialGroupLayout] =
-    &[PolynomialGroupLayout::singleton(26)];
 
 const FP128_D64_ONEHOT_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
     &[PolynomialGroupLayout::singleton(32)];
@@ -165,7 +159,6 @@ pub struct GeneratedFamily {
     pub table_backed: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
     pub policy: fn() -> PlannerPolicy,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
     /// Standalone precommit profiles emitted for this family.
     pub precommitted_profiles: fn() -> Result<Vec<CommittedGroupProfile>, AkitaError>,
     /// Build one caller-requested precommit descriptor and its honest fold policy.
@@ -220,7 +213,6 @@ fn plan_regen<Cfg: CommitmentConfig>(
         precommitted_honest_fold_policies,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
     )?;
     planned.schedule.validate_structure()?;
     Ok(planned.schedule)
@@ -241,7 +233,6 @@ fn regen_fp128_onehot(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaE
         &[],
         &policy,
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
     )?
     .schedule)
 }
@@ -255,7 +246,6 @@ fn regen_fp128_dense(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaEr
         &[],
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
     )?
     .schedule)
 }
@@ -353,7 +343,6 @@ fn standalone_precommit_profile<Cfg: CommitmentConfig>(
         &policy_of::<Cfg>(),
         honest_fold_policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
     )
 }
 
@@ -619,8 +608,6 @@ macro_rules! family_row {
             table_backed: table_backed::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
-            fold_challenge_shape_at_level:
-                <$cfg as CommitmentConfig>::fold_challenge_shape_at_level,
             precommitted_profiles: precommitted_profiles::<$cfg>,
             explicit_precommitted_group: explicit_precommitted_group::<$cfg>,
         }
@@ -640,8 +627,6 @@ macro_rules! family_row {
             table_backed: table_backed::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
-            fold_challenge_shape_at_level:
-                <$cfg as CommitmentConfig>::fold_challenge_shape_at_level,
             precommitted_profiles: precommitted_profiles::<$cfg>,
             explicit_precommitted_group: explicit_precommitted_group::<$base_cfg>,
         }
@@ -659,8 +644,6 @@ macro_rules! family_row {
             table_backed: table_backed::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
-            fold_challenge_shape_at_level:
-                <$cfg as CommitmentConfig>::fold_challenge_shape_at_level,
             precommitted_profiles: precommitted_profiles::<$cfg>,
             explicit_precommitted_group: explicit_precommitted_group::<$cfg>,
         }
@@ -682,7 +665,6 @@ pub fn wiring_emit_spec(family: &GeneratedFamily, output_dir: std::path::PathBuf
         regen: family.regen,
         regen_group_batch: family.regen_group_batch,
         ring_challenge_config: family.ring_challenge_config,
-        fold_challenge_shape_at_level: family.fold_challenge_shape_at_level,
         precommitted_profiles: Vec::new(),
         generator_command: "",
     }
@@ -711,7 +693,6 @@ pub fn emit_spec_for_family(
         regen: family.regen,
         regen_group_batch: family.regen_group_batch,
         ring_challenge_config: family.ring_challenge_config,
-        fold_challenge_shape_at_level: family.fold_challenge_shape_at_level,
         precommitted_profiles,
         generator_command,
     })
@@ -744,8 +725,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         table_backed: table_backed::<fp128::OneHot>,
         policy: family_policy::<fp128::OneHot>,
         ring_challenge_config: <fp128::OneHot as CommitmentConfig>::ring_challenge_config,
-        fold_challenge_shape_at_level:
-            <fp128::OneHot as CommitmentConfig>::fold_challenge_shape_at_level,
         precommitted_profiles: precommitted_profiles::<fp128::OneHot>,
         explicit_precommitted_group: explicit_precommitted_group::<fp128::OneHot>,
     },
@@ -782,19 +761,9 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         table_backed: table_backed::<fp128::Dense>,
         policy: family_policy::<fp128::Dense>,
         ring_challenge_config: <fp128::Dense as CommitmentConfig>::ring_challenge_config,
-        fold_challenge_shape_at_level:
-            <fp128::Dense as CommitmentConfig>::fold_challenge_shape_at_level,
         precommitted_profiles: precommitted_profiles::<fp128::Dense>,
         explicit_precommitted_group: explicit_precommitted_group::<fp128::Dense>,
     },
-    family_row!(
-        group_batch,
-        "fp128_d64_onehot_tensor",
-        "FP128_D64_ONEHOT_TENSOR_SCHEDULES",
-        "fp128-d64-onehot-tensor",
-        FP128_D64_ONEHOT_TENSOR_KEYS,
-        tensor_verifier::fp128::D64OneHotTensor
-    ),
     // Multi-chunk (distributed-prover) companions of the D64 families. Same
     // `(num_vars, num_polynomials)` keys as their siblings; schedules differ
     // because the policy prices the chunked witness layout.
