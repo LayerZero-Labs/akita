@@ -362,6 +362,38 @@ materializing `E` values:
 5. Compute the next round while writing that table when a fused pass saves a
    second read.
 
+For a basis-4 or basis-8 Stage 1 leaf, three bound low variables determine each
+remaining row from one byte-sized or word-sized octet class. The prover keeps
+that fact explicit for one additional sparse low-variable round:
+
+```text
+FoldedOctets {
+    class_codes: one u16 per live row,
+    class_values: one E per possible octet class,
+    class_taylor_coefficients: Q and its first three normalized derivatives,
+}
+```
+
+Basis 4 has 256 classes and basis 8 has 65,536. The third challenge evaluates
+each possible class once. The next round reads class codes and computes its
+quartic coefficients from the cached Taylor row. The following challenge folds
+the coded rows and materializes only the already halved field table. The state
+cannot survive into the x-variable phase or the final evaluation.
+
+The canonical quartic entry formula is the Taylor expansion at the left child:
+
+```text
+Q(left + delta X) = t0 + t1 delta X + t2 delta^2 X^2
+                    + t3 delta^3 X^3 + delta^4 X^4
+```
+
+where `t0 = Q(left)`, `t1 = Q'(left)`, `t2 = Q''(left)/2`, and
+`t3 = Q'''(left)/6`. Compact class tables and ordinary materialized rounds use
+the same Taylor helpers. The sparse low-variable traversal accepts an entry
+coefficient producer, so coded and materialized states share the equality
+accumulation and challenge-fold implementation rather than carrying parallel
+sumcheck algorithms.
+
 AVX512 byte and word operations require AVX512BW. The fp32 fold uses AVX512F,
 AVX512DQ, and AVX512IFMA. Without IFMA, the current plan falls back to AVX2
 instead of assuming that a wider register wins. An operation that uses 128 or
@@ -549,6 +581,14 @@ seconds versus a 1.893-second pushed-head sample while unrelated Stage 1 and
 Stage 2 spans were slower in the new run. The protocol-local 12 percent EOR gain
 is stable; whole-proof attribution requires pinned Ice Lake confirmation.
 
+On the same profile, retaining Stage 1 octet classes after the third challenge
+and using the canonical Taylor kernel reduced the root Stage 1 sumcheck from
+160 to 161 ms to 138 to 139 ms. Its largest next-round polynomial fell from
+55.1 ms to 34.5 to 34.6 ms. Building codes, class values, and cached Taylor
+rows cost 7.2 to 7.3 ms. The following fused rounds measured 31.0 to 31.1 ms,
+17.2 to 17.4 ms, and 10.7 to 10.8 ms. Both complete proofs verified; the second
+whole-proof sample measured 1.874 seconds.
+
 The fp32 Stage 2 compact prefix originally widened every digit-derived product
 into four `u128` coefficient sums. Accumulating each x-column first in the exact
 `u64` short-batch representation and promoting once per output reduced the root
@@ -576,6 +616,7 @@ The cutover evolves current owners rather than adding parallel wrappers:
 | `ExtensionOpeningTables::Dense` | witness and factor `EvaluationTable<F, E>` values |
 | `SparseExtensionOpeningWitness` | index sidecar plus one `EvaluationTable<F, E>` for materialized values; bounded private palette while repeated merge-free values remain compact |
 | `SparseFactor::Dense` | `EvaluationTable<F, E>` |
+| `LowBasisRangeImageStorage::FoldedOctets` | one `u16` class code per row plus bounded class value and Taylor tables until the next sparse low-variable fold |
 | `LowBasisRangeImageStorage::Materialized` | `EvaluationTable<F, E>` |
 | Stage 2 `WitnessState::FoldedSuffix` | `EvaluationTable<F, E>` |
 | Materialized Stage 2 factors and trace values | `EvaluationTable<F, E>` where they are full live row tables |

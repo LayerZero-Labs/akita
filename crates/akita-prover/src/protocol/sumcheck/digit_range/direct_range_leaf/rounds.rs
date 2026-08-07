@@ -50,14 +50,40 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                     if use_prefix_x_round {
                         self.compute_round_materialized_prefix_x(range_image)
                     } else if use_sparse_x_y_round {
-                        self.compute_round_materialized_sparse_x_y(range_image)
+                        self.compute_round_sparse_x_y(range_image.len(), |out, index| {
+                            let left = range_image[index];
+                            compute_entry_coefficients(
+                                out,
+                                &self.polynomial_precomputation,
+                                left,
+                                range_image[index + 1] - left,
+                            );
+                        })
                     } else {
-                        compute_range_round_polynomial_from_range_image(
+                        compute_range_round_polynomial_from_entry_coefficients(
                             &self.split_eq,
                             &self.polynomial_precomputation,
-                            |j| (range_image[2 * j], range_image[2 * j + 1]),
+                            |out, j| {
+                                let left = range_image[2 * j];
+                                compute_entry_coefficients(
+                                    out,
+                                    &self.polynomial_precomputation,
+                                    left,
+                                    range_image[2 * j + 1] - left,
+                                );
+                            },
                         )
                     }
+                }
+                LowBasisRangeImageStorage::FoldedOctets(range_image) => {
+                    debug_assert!(use_sparse_x_y_round);
+                    self.compute_round_sparse_x_y(range_image.len(), |out, index| {
+                        range_image.entry_coefficients(
+                            out,
+                            self.polynomial_precomputation.degree_q,
+                            index,
+                        );
+                    })
                 }
             }
         };
@@ -138,6 +164,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                     LowBasisRangeImageStorage::Materialized(_) => {
                         panic!("two-round prefix expected compact table")
                     }
+                    LowBasisRangeImageStorage::FoldedOctets(_) => {
+                        panic!("two-round prefix expected compact table")
+                    }
                 };
                 if self.defers_compact_range_image_through_third_round() {
                     self.ensure_initial_round_prefix().second_challenge = Some(r);
@@ -157,6 +186,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                             _ => unreachable!("third-round deferral requires a low basis"),
                         },
                         LowBasisRangeImageStorage::Materialized(_) => {
+                            unreachable!(
+                                "three-round compact range-image deferral requires compact storage"
+                            )
+                        }
+                        LowBasisRangeImageStorage::FoldedOctets(_) => {
                             unreachable!(
                                 "three-round compact range-image deferral requires compact storage"
                             )
@@ -190,6 +224,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                             }
                         }
                         LowBasisRangeImageStorage::Materialized(_) => {
+                            unreachable!("two-round prefix should hold compact table")
+                        }
+                        LowBasisRangeImageStorage::FoldedOctets(_) => {
                             unreachable!("two-round prefix should hold compact table")
                         }
                     };
@@ -228,25 +265,37 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                         "three-round compact range-image transition requires compact storage"
                     )
                 }
+                LowBasisRangeImageStorage::FoldedOctets(_) => {
+                    unreachable!(
+                        "three-round compact range-image transition requires compact storage"
+                    )
+                }
             };
             self.range_image = match std::mem::replace(
                 &mut self.range_image,
                 LowBasisRangeImageStorage::Materialized(Vec::new()),
             ) {
                 LowBasisRangeImageStorage::Compact(compact_range_image) => {
-                    let range_image = if self.next_use_sparse_x_y_round_after_current() {
-                        let (range_image, round_poly) = self
-                            .materialize_compact_third_round_and_compute_next(
-                                &compact_range_image,
-                                y_len,
-                                r0,
-                                r1,
-                                r,
-                            );
+                    if self.next_use_sparse_x_y_round_after_current() {
+                        let range_image = self.build_folded_octet_range_image(
+                            &compact_range_image,
+                            y_len,
+                            r0,
+                            r1,
+                            r,
+                        );
+                        let round_poly =
+                            self.compute_round_sparse_x_y(range_image.len(), |out, index| {
+                                range_image.entry_coefficients(
+                                    out,
+                                    self.polynomial_precomputation.degree_q,
+                                    index,
+                                );
+                            });
                         self.cached_round_poly = Some(round_poly);
-                        range_image
+                        LowBasisRangeImageStorage::FoldedOctets(range_image)
                     } else {
-                        match self.basis {
+                        let range_image = match self.basis {
                             4 => Self::materialize_binary_range_image_after_third_round(
                                 &compact_range_image,
                                 self.live_x_cols,
@@ -264,11 +313,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                                 r,
                             ),
                             _ => unreachable!("third-round deferral requires a low basis"),
-                        }
-                    };
-                    LowBasisRangeImageStorage::Materialized(range_image)
+                        };
+                        LowBasisRangeImageStorage::Materialized(range_image)
+                    }
                 }
                 LowBasisRangeImageStorage::Materialized(_) => unreachable!(),
+                LowBasisRangeImageStorage::FoldedOctets(_) => unreachable!(),
             };
             self.rounds_completed += 1;
             if self.rounds_completed < self.num_vars {
@@ -295,6 +345,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
             LowBasisRangeImageStorage::Materialized(range_image) => {
                 range_image.len() / self.live_x_cols
             }
+            LowBasisRangeImageStorage::FoldedOctets(range_image) => {
+                range_image.len() / self.live_x_cols
+            }
         };
 
         self.range_image = match std::mem::replace(
@@ -315,6 +368,28 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                 };
                 LowBasisRangeImageStorage::Materialized(range_image)
             }
+            LowBasisRangeImageStorage::FoldedOctets(range_image) => {
+                debug_assert!(use_sparse_x_y_round);
+                let next_range_image = if fuse_next_sparse_x_y {
+                    let (next_range_image, round_poly) = self
+                        .fuse_sparse_x_y_fold_and_compute_round(
+                            range_image.len(),
+                            |index| range_image.value(index),
+                            r,
+                        );
+                    self.cached_round_poly = Some(round_poly);
+                    next_range_image
+                } else {
+                    Self::fold_range_image_sparse_x_y(
+                        range_image.len(),
+                        |index| range_image.value(index),
+                        self.live_x_cols,
+                        y_len,
+                        r,
+                    )
+                };
+                LowBasisRangeImageStorage::Materialized(next_range_image)
+            }
             LowBasisRangeImageStorage::Materialized(range_image) => {
                 if use_prefix_x_round {
                     if fuse_next_materialized_prefix_x {
@@ -333,13 +408,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                     }
                 } else if use_sparse_x_y_round {
                     if fuse_next_sparse_x_y {
-                        let (next_range_image, round_poly) =
-                            self.fuse_materialized_sparse_x_y_and_compute_round(&range_image, r);
+                        let (next_range_image, round_poly) = self
+                            .fuse_sparse_x_y_fold_and_compute_round(
+                                range_image.len(),
+                                |index| range_image[index],
+                                r,
+                            );
                         self.cached_round_poly = Some(round_poly);
                         LowBasisRangeImageStorage::Materialized(next_range_image)
                     } else {
                         let next_range_image = Self::fold_range_image_sparse_x_y(
-                            &range_image,
+                            range_image.len(),
+                            |index| range_image[index],
                             self.live_x_cols,
                             y_len,
                             r,
