@@ -346,6 +346,29 @@ where
         &self.coefficients[start..start + self.len]
     }
 
+    /// Return all live coefficient slices as separate borrows.
+    ///
+    /// The const length must equal `E::EXT_DEGREE`. This form lets a kernel
+    /// load several coefficient slabs together while checking the table shape
+    /// once outside the row loop.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `N != E::EXT_DEGREE`.
+    pub fn coefficient_slices<const N: usize>(&self) -> [&[F]; N] {
+        assert_eq!(
+            N,
+            <E as ExtField<F>>::EXT_DEGREE,
+            "coefficient slice count must match the extension degree"
+        );
+        let len = self.len;
+        let stride = self.stride;
+        std::array::from_fn(|coefficient| {
+            let start = coefficient * stride;
+            &self.coefficients[start..start + len]
+        })
+    }
+
     /// Return one coefficient's mutable live stored rows.
     ///
     /// # Panics
@@ -504,7 +527,7 @@ mod tests {
     use akita_algebra::poly::fold_evals_in_place;
     use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
     use akita_field::{
-        Ext2, ExtField, FieldCore, FpExt4, FpExt8, Prime128Offset275, Prime32Offset99, Zero,
+        Ext2, ExtField, FieldCore, FpExt4, FpExt8, Prime128Offset275, Prime32Offset99,
     };
 
     type F = Prime32Offset99;
@@ -674,7 +697,7 @@ mod tests {
 
     #[test]
     fn product_round_matches_logical_pairs_with_delayed_reduction() {
-        assert!(E::DELAYED_PRODUCT_SUM_IS_EXACT);
+        const { assert!(E::DELAYED_PRODUCT_SUM_IS_EXACT) };
         for len in [2, 4, 8, 16, 32] {
             check_product_round::<F, E>(
                 (0..len).map(value).collect(),
@@ -686,7 +709,7 @@ mod tests {
     #[test]
     fn product_round_matches_logical_pairs_with_direct_reduction() {
         type G = Prime128Offset275;
-        assert!(!G::DELAYED_PRODUCT_SUM_IS_EXACT);
+        const { assert!(!G::DELAYED_PRODUCT_SUM_IS_EXACT) };
         for len in [2, 4, 8, 16, 32] {
             check_product_round::<G, G>(
                 (0..len)

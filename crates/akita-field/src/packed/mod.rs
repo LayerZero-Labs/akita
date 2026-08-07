@@ -7,6 +7,13 @@ pub(crate) mod avx512;
 pub(crate) mod ext;
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub(crate) mod neon;
+#[cfg(any(
+    target_arch = "x86_64",
+    all(target_arch = "aarch64", target_feature = "neon")
+))]
+mod runtime_common;
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+pub mod runtime_neon;
 #[cfg(target_arch = "x86_64")]
 pub mod runtime_x86;
 

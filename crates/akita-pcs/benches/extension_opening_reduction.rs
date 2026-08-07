@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_config::proof_optimized::{fp32, fp64};
+use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, TranscriptChallenge};
 use akita_prover::protocol::extension_opening_reduction::{
@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 const DEFAULT_NUM_VARS: usize = 26;
 const DEFAULT_NUM_POLYS: usize = 4;
+const DEFAULT_DENSE_TABLE_VARS: usize = 18;
 const ONEHOT_K: usize = 256;
 
 fn env_usize(name: &str, default: usize) -> usize {
@@ -139,8 +140,11 @@ where
     .unwrap()
 }
 
-fn bench_case<F, E>(c: &mut Criterion, label: &str)
-where
+fn bench_terms<F, E>(
+    c: &mut Criterion,
+    group_name: String,
+    terms: Vec<ExtensionOpeningReductionTerm<F, E>>,
+) where
     F: CanonicalField + CanonicalBytes + TranscriptChallenge,
     E: ExtField<F>
         + HasUnreducedOps
@@ -148,15 +152,9 @@ where
         + akita_serialization::AkitaSerialize
         + akita_prover::kernels::sumcheck::SumcheckTableOperations<F>,
 {
-    let num_vars = env_usize("AKITA_EOR_NUM_VARS", DEFAULT_NUM_VARS);
-    let num_polys = env_usize("AKITA_EOR_NUM_POLYS", DEFAULT_NUM_POLYS);
-    let term = sparse_tensor_term::<F, E>(num_vars, num_polys);
-    let terms = vec![term];
     let input_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms);
 
-    let mut group = c.benchmark_group(format!(
-        "extension_opening_reduction/{label}/onehot_nv{num_vars}_np{num_polys}"
-    ));
+    let mut group = c.benchmark_group(group_name);
     configure_group(&mut group);
     group.bench_function("prove_sumcheck", |b| {
         b.iter_custom(|iters| {
@@ -183,9 +181,57 @@ where
     group.finish();
 }
 
+fn bench_sparse_onehot<F, E>(c: &mut Criterion, label: &str)
+where
+    F: CanonicalField + CanonicalBytes + TranscriptChallenge,
+    E: ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + akita_serialization::AkitaSerialize
+        + akita_prover::kernels::sumcheck::SumcheckTableOperations<F>,
+{
+    let num_vars = env_usize("AKITA_EOR_NUM_VARS", DEFAULT_NUM_VARS);
+    let num_polys = env_usize("AKITA_EOR_NUM_POLYS", DEFAULT_NUM_POLYS);
+    let term = sparse_tensor_term::<F, E>(num_vars, num_polys);
+    bench_terms(
+        c,
+        format!("extension_opening_reduction/{label}/onehot_nv{num_vars}_np{num_polys}"),
+        vec![term],
+    );
+}
+
+fn bench_dense<F, E>(c: &mut Criterion, label: &str)
+where
+    F: CanonicalField + CanonicalBytes + TranscriptChallenge,
+    E: ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + akita_serialization::AkitaSerialize
+        + akita_prover::kernels::sumcheck::SumcheckTableOperations<F>,
+{
+    let table_vars = env_usize("AKITA_EOR_DENSE_TABLE_VARS", DEFAULT_DENSE_TABLE_VARS);
+    let table_len = 1usize << table_vars;
+    let mut rng = StdRng::seed_from_u64(0x6465_6e73_655f_656f);
+    let witness = (0..table_len)
+        .map(|_| random_ext::<F, E>(&mut rng))
+        .collect();
+    let factor = (0..table_len)
+        .map(|_| random_ext::<F, E>(&mut rng))
+        .collect();
+    let term = ExtensionOpeningReductionTerm::<F, E>::new(witness, factor, E::one()).unwrap();
+    bench_terms(
+        c,
+        format!("extension_opening_reduction/{label}/dense_tv{table_vars}"),
+        vec![term],
+    );
+}
+
 fn bench_extension_opening_reduction(c: &mut Criterion) {
-    bench_case::<fp32::Field, fp32::ExtensionField>(c, "fp32_d64");
-    bench_case::<fp64::Field, fp64::ExtensionField>(c, "fp64_d64");
+    bench_sparse_onehot::<fp32::Field, fp32::ExtensionField>(c, "fp32_d64");
+    bench_sparse_onehot::<fp64::Field, fp64::ExtensionField>(c, "fp64_d64");
+    bench_dense::<fp32::Field, fp32::ExtensionField>(c, "fp32");
+    bench_dense::<fp64::Field, fp64::ExtensionField>(c, "fp64");
+    bench_dense::<fp128::Field, fp128::Field>(c, "fp128");
 }
 
 criterion_group! {

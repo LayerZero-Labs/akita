@@ -6,7 +6,7 @@ pub(crate) const FP64_WIDTH: usize = 4;
 /// AVX2 packed arithmetic for `Fp64<P>`, processing 4 lanes.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct PackedFp64Avx2<const P: u64>(pub [Fp64<P>; FP64_WIDTH]);
+pub(crate) struct PackedFp64Avx2<const P: u64>(pub [Fp64<P>; FP64_WIDTH]);
 
 impl<const P: u64> PackedFp64Avx2<P> {
     const BITS: u32 = 64 - P.leading_zeros();

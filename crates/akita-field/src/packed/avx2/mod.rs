@@ -4,13 +4,13 @@
 
 use super::{PackedField, PackedValue};
 use crate::ext::FpExt2Config;
-use crate::Fp32;
-use crate::Invertible;
 #[cfg(all(
     target_feature = "avx2",
     not(all(target_feature = "avx512f", target_feature = "avx512dq"))
 ))]
-use crate::{Fp128, Fp64};
+use crate::Fp128;
+use crate::Invertible;
+use crate::{Fp32, Fp64};
 use core::arch::x86_64::*;
 use core::fmt;
 use core::mem::transmute;
@@ -24,10 +24,6 @@ unsafe fn movehdup_epi32(x: __m256i) -> __m256i {
     _mm256_castps_si256(_mm256_movehdup_ps(_mm256_castsi256_ps(x)))
 }
 
-#[cfg(all(
-    target_feature = "avx2",
-    not(all(target_feature = "avx512f", target_feature = "avx512dq"))
-))]
 #[inline(always)]
 unsafe fn moveldup_epi32(x: __m256i) -> __m256i {
     _mm256_castps_si256(_mm256_moveldup_ps(_mm256_castsi256_ps(x)))
@@ -35,10 +31,6 @@ unsafe fn moveldup_epi32(x: __m256i) -> __m256i {
 
 /// 64×64→128 schoolbook multiply using 32×32→64 partial products.
 /// Returns (hi, lo) representing the 128-bit product.
-#[cfg(all(
-    target_feature = "avx2",
-    not(all(target_feature = "avx512f", target_feature = "avx512dq"))
-))]
 #[inline]
 unsafe fn mul64_64_256(x: __m256i, y: __m256i) -> (__m256i, __m256i) {
     let x_hi = movehdup_epi32(x);
@@ -71,10 +63,6 @@ unsafe fn mul64_64_256(x: __m256i, y: __m256i) -> (__m256i, __m256i) {
 ))]
 mod fp128;
 mod fp32;
-#[cfg(all(
-    target_feature = "avx2",
-    not(all(target_feature = "avx512f", target_feature = "avx512dq"))
-))]
 mod fp64;
 #[cfg(all(
     target_feature = "avx2",
@@ -82,8 +70,4 @@ mod fp64;
 ))]
 pub(crate) use fp128::*;
 pub(crate) use fp32::*;
-#[cfg(all(
-    target_feature = "avx2",
-    not(all(target_feature = "avx512f", target_feature = "avx512dq"))
-))]
 pub(crate) use fp64::*;

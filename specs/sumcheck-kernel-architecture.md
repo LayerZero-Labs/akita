@@ -412,6 +412,10 @@ the host architecture permits it.
 
 For `FpExt2<Fp64>`, the table has two fp64 sections. The implementation must
 measure the scalar wide path against SIMD before choosing a default operation.
+The choice is per operation. On Apple Silicon, the scalar product round is
+faster while NEON wins for the fused fold and next product round. The detected
+plan therefore mixes those choices instead of assigning one tier to every fp64
+operation.
 
 For the fp128 identity field, the table has one fp128 section. Its memory payload
 is the same as the current `Vec<Fp128>`. The initial operation remains scalar
@@ -419,6 +423,22 @@ unless a measured SIMD kernel wins end to end.
 
 The table and scalar reference also support `FpExt8` if a configuration needs it.
 This does not require an optimized `FpExt8` kernel in the first cutover.
+
+The first dense EOR acceptance measurement used 65,536 rows and one Rayon
+worker on Apple Silicon. The old row-major EOR and the accepted coefficient-first
+operations measured:
+
+| Field | Old median | Accepted median | Change |
+|---|---:|---:|---:|
+| fp32 quartic extension | 1.811366 ms | 1.3728 ms | 24.2 percent faster |
+| fp64 quadratic extension | 0.800049 ms | 0.80775 ms | 0.96 percent slower, statistically unchanged |
+| fp128 identity field | 1.028971 ms | 1.0120 ms | 1.65 percent faster |
+
+The fp64 all-NEON plan measured 0.89332 ms. The accepted mixed plan keeps the
+initial product round scalar and uses NEON for fused rounds. A generic scalar
+slice experiment was rejected because it measured 4.5623 ms for fp32, 1.2935 ms
+for fp64, and 1.0500 ms for fp128. Field-shaped kernels are required; extension
+degree alone is not a sufficient hot-loop abstraction.
 
 ### Existing state changes
 
@@ -463,7 +483,7 @@ small public API boundaries and must not survive in a production round loop.
 - [ ] Dense binding order conversion and every later fold match the current LSB
   first scalar evaluation for random tables at 1 to 20 variables.
 - [ ] A production portable x86 release detects AVX2 and AVX512 at runtime.
-- [ ] A production aarch64 release detects NEON at runtime.
+- [x] A production aarch64 release detects NEON at runtime.
 - [ ] Safe production callers cannot construct or forge a target specific plan.
 - [ ] Scalar and every supported CPU operation produce identical round
   polynomials, folded tables, final evaluations, proof bytes, and transcript
@@ -478,8 +498,9 @@ small public API boundaries and must not survive in a production round loop.
   canonical table.
 - [ ] Stage 3 materialized multilinear tables use the same representation or a
   benchmark documents why a named small table remains scalar.
-- [ ] fp64 keeps the measured faster operation. fp128 has no more than a 2
-  percent one worker regression.
+- [ ] fp64 keeps the measured faster operation on each supported architecture.
+  Apple Silicon is measured. Ice Lake remains pending. The Apple Silicon fp128
+  path is 1.65 percent faster than the old path.
 - [ ] No proof size, setup size, schedule, security estimate, or verifier timing
   changes beyond benchmark noise.
 - [ ] Release assembly for each accepted SIMD operation contains the expected
