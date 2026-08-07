@@ -6,17 +6,15 @@
 //! expand every typed fold once and recompute witness transitions and
 //! proof-byte totals.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
     extension_opening_reduction_level_bytes, level_proof_bytes, terminal_response_bytes,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedLevelParams, TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
+    AkitaScheduleLookupKey, PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams,
+    TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
 };
 
-use crate::generated::{
-    validate_entry_key, GeneratedFoldScheduleEntry, GeneratedRootFinalChallenge,
-};
+use crate::generated::{validate_entry_key, GeneratedFoldScheduleEntry};
 use crate::group_batch::multi_group_root_precommitted_groups_for_open_basis;
 use crate::runtime::{
     materialize_candidate_schedule, planned_next_witness_len, stage3_payload_bytes_for_successor,
@@ -33,7 +31,6 @@ pub(crate) fn walk_generated_schedule_entry(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<GeneratedEntryWalkOutput, AkitaError> {
     key.validate(policy.decomposition.field_bits())?;
     validate_entry_key(entry, key)?;
@@ -45,29 +42,6 @@ pub(crate) fn walk_generated_schedule_entry(
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = policy.challenge_field_bits()?;
     let root_eor_key = PolynomialGroupLayout::new(key.max_num_vars(), key.num_polynomials()?);
-    let stored_root_shape = match entry.root.final_group.challenge {
-        GeneratedRootFinalChallenge::Flat => TensorChallengeShape::Flat,
-        GeneratedRootFinalChallenge::Tensor { fold_low_len } => TensorChallengeShape::Tensor {
-            fold_low_len: fold_low_len as usize,
-        },
-    };
-    let configured_root_shape = crate::runtime::optimize_fold_challenge_shape(
-        fold_challenge_shape_at_level(AkitaScheduleInputs {
-            num_vars: key.final_group.num_vars(),
-            level: 0,
-            input_witness_len: expected_root_w_len,
-        }),
-        usize::try_from(entry.root.final_group.commitment.geometry.live_blocks).map_err(|_| {
-            AkitaError::InvalidSetup(
-                "generated root live block count does not fit the target platform".to_string(),
-            )
-        })?,
-    )?;
-    if stored_root_shape != configured_root_shape {
-        return Err(AkitaError::InvalidSetup(
-            "generated root challenge does not match the catalog family".to_string(),
-        ));
-    }
     let mut root_params = if is_multi_group {
         let (precommitted_groups, precommitted_d_width) =
             multi_group_root_precommitted_groups_for_open_basis(
@@ -85,7 +59,6 @@ pub(crate) fn walk_generated_schedule_entry(
             .expand_to_multi_group_root_level_params_with_setup(
                 policy,
                 ring_challenge_config,
-                stored_root_shape,
                 key.final_group.num_polynomials(),
                 entry.root.final_group.num_digits_inner,
                 entry.root.final_group.num_digits_fold,
@@ -106,7 +79,6 @@ pub(crate) fn walk_generated_schedule_entry(
                 Some(entry.root.final_group.num_digits_inner),
                 entry.root.final_group.num_digits_fold,
                 expected_root_w_len,
-                stored_root_shape,
                 key.final_group.num_polynomials(),
                 entry.root.open_commit_matrix,
                 None,
@@ -143,7 +115,6 @@ pub(crate) fn walk_generated_schedule_entry(
             None,
             fold.num_digits_fold,
             input_witness_len,
-            TensorChallengeShape::Flat,
             1,
             fold.open_commit_matrix,
             fold.incoming_setup_prefix,

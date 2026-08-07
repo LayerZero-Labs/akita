@@ -55,7 +55,6 @@ The checked-in workflow currently runs:
 | `onehot_fp32_d128` | fp32 | 1-of-256 one-hot | 28 | 1 | D128 | `direct` | Smallest securable fp32 one-hot under honest pricing. Capped at nv=28: the ext-degree-4 challenge schedule keeps a large un-folded witness, so at nv>=30 the prover's eq-evaluation table exceeds the 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling. |
 | `onehot_fp64_d128` | fp64 | 1-of-256 one-hot | 28 | 1 | D128 | `direct` | Smallest securable fp64 one-hot under honest pricing. Capped at nv=28 for the same eq-table-budget reason as the fp32 cell. |
 | `dense_fp128_d64` | fp128 | dense | 24 | 1 | D64 | `direct` | fp128 dense smoke at the proof-size-optimal ring dimension (D64 beats D128 by ~18-22%). |
-| `onehot_fp128_d64_tensor` | fp128 | 1-of-256 one-hot tensor | 26 | 1 | D64 tensor | `direct` | Tensor-root profile capped at nv=26 to keep hosted-runner setup size tractable. |
 | `onehot_fp128_d64` | fp128 | 1-of-256 one-hot | 32 | 1 | D64 | `direct` | Explicit fp128 one-hot mode at the proof-size-optimal ring dimension. fp128 folds aggressively enough to stay at nv=32 under the eq-table budget. |
 | `onehot_fp128_d64` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D64 | `direct` | Preserves same-point batched one-hot coverage. |
 | `onehot_fp128_d64_multi_group_recursive` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | D64 recursive multi-group | `direct` | Direct setup-contribution baseline for the recursive setup comparison skill's canonical multi-group profile. |
@@ -304,14 +303,6 @@ mode surface is now explicit:
 The old `full*` and bare `onehot*` names are removed. `AGENTS.md` now points the
 canonical profiling command at `AKITA_MODE=onehot_fp128_d64`. This is an
 explicit per-field D cutover, not a renamed adaptive selector.
-
-The profile example also exposes `onehot_fp128_d64_tensor` because the tensor
-verifier preset and generated tables are D64-only. It runs in the active CI
-benchmark matrix at nv=26 in its own group (`2-fp128-tensor`), not nv=32: under
-the 138-bit L-infinity SIS floors the tensor root split is top-heavy, so the
-public setup matrix grows ~4x per +2 nv (~1 GiB at nv=26, ~72 GiB at nv=32,
-which OOM-aborts the runner). nv=26 keeps its footprint on par with the flat
-`onehot_fp128_d64` nv=32 cell. The mode remains excluded from `AKITA_MODE=all`.
 
 ### Benchmark Runner And Artifacts
 

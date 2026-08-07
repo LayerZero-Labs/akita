@@ -45,30 +45,6 @@ fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usi
     }
 }
 
-#[inline(always)]
-fn add_tensor_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
-    quotient: &mut [F],
-    fold_high: &SparseChallenge,
-    fold_low: &SparseChallenge,
-    ring: &CyclotomicRing<F, D>,
-) {
-    let rc = ring.coefficients();
-    for (&high_pos, &high_coeff) in fold_high.positions.iter().zip(fold_high.coeffs.iter()) {
-        for (&low_pos, &low_coeff) in fold_low.positions.iter().zip(fold_low.coeffs.iter()) {
-            let degree = high_pos as usize + low_pos as usize;
-            let (pos, sign) = if degree < D {
-                (degree, 1i64)
-            } else {
-                (degree - D, -1i64)
-            };
-            let coeff = sign * i64::from(high_coeff) * i64::from(low_coeff);
-            for s in (D - pos)..D {
-                accumulate_small_signed(&mut quotient[pos + s - D], rc[s], coeff);
-            }
-        }
-    }
-}
-
 fn parallel_high_half_accumulate<F, R, const D: usize>(
     challenges: &Challenges,
     ring_fn: R,
@@ -77,17 +53,7 @@ where
     F: FieldCore + CanonicalField + Send + Sync,
     R: Fn(usize) -> Option<CyclotomicRing<F, D>> + Sync,
 {
-    let tensor_blocks_per_claim = match challenges {
-        Challenges::Tensor { factored } => {
-            factored.validate::<D>()?;
-            Some(factored.num_live_blocks_per_claim)
-        }
-        Challenges::Sparse { .. } => None,
-    };
-    let total = match challenges {
-        Challenges::Tensor { factored } => factored.total_blocks()?,
-        Challenges::Sparse { .. } => challenges.logical_len(),
-    };
+    let total = challenges.len();
     let out = cfg_fold_reduce!(
         0..total,
         || vec![F::zero(); D],
@@ -95,26 +61,7 @@ where
             let Some(ring) = ring_fn(i) else {
                 return acc;
             };
-            match challenges {
-                Challenges::Sparse {
-                    challenges: sparse, ..
-                } => add_sparse_ring_product_high_half::<F, D>(&mut acc, &sparse[i], &ring),
-                Challenges::Tensor { factored } => {
-                    let num_live_blocks_per_claim = tensor_blocks_per_claim.unwrap_or(0);
-                    let claim_idx = i / num_live_blocks_per_claim;
-                    let local_idx = i % num_live_blocks_per_claim;
-                    let high_idx =
-                        claim_idx * factored.fold_high_len() + (local_idx / factored.fold_low_len);
-                    let low_idx =
-                        claim_idx * factored.fold_low_len + (local_idx % factored.fold_low_len);
-                    add_tensor_ring_product_high_half::<F, D>(
-                        &mut acc,
-                        &factored.fold_high[high_idx],
-                        &factored.fold_low[low_idx],
-                        &ring,
-                    );
-                }
-            }
+            add_sparse_ring_product_high_half::<F, D>(&mut acc, &challenges.as_slice()[i], &ring);
             acc
         },
         |mut a: Vec<F>, b: Vec<F>| {
@@ -538,14 +485,14 @@ where
         let expected_recomposed_coeffs = n_a
             .checked_mul(group_dims.d_a())
             .ok_or(AkitaError::InvalidProof)?;
-        if challenges.logical_len() != expected_blocks
+        if challenges.len() != expected_blocks
             || group.e_folded.coeff_len() != expected_e_coeffs
             || group.e_hat.total_planes() != expected_e_planes
             || group.e_hat.digit_stride() != group_dims.d_d()
         {
             return Err(AkitaError::InvalidInput(format!(
                 "relation quotient group shape mismatch: challenges={} e_folded={} recomposed={} e_planes={} e_stride={} expected_blocks={} expected_e_planes={} expected_d_d={}",
-                challenges.logical_len(),
+                challenges.len(),
                 group.e_folded.coeff_len() / group_dims.d_a(),
                 group.recomposed_inner_rows.coeff_len() / expected_recomposed_coeffs,
                 group.e_hat.total_planes(),
@@ -832,7 +779,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::test_support::tensor_oracle_challenges;
     use akita_challenges::SparseChallenge;
     use akita_field::Prime128OffsetA7F7 as F;
 
@@ -866,27 +812,36 @@ mod tests {
     }
 
     #[test]
-    fn tensor_high_half_streaming_matches_ring_multiplication_reference() {
+    fn sparse_high_half_streaming_matches_ring_multiplication_reference() {
         const D: usize = 8;
-        let tensor = tensor_oracle_challenges::<D>();
-        let rings = (0..tensor.total_blocks().unwrap())
+        let sparse = vec![
+            SparseChallenge {
+                positions: vec![0, 7],
+                coeffs: vec![1, -1],
+            },
+            SparseChallenge {
+                positions: vec![2, 4],
+                coeffs: vec![1, 2],
+            },
+            SparseChallenge {
+                positions: vec![1],
+                coeffs: vec![-1],
+            },
+            SparseChallenge {
+                positions: vec![3, 6],
+                coeffs: vec![1, 1],
+            },
+        ];
+        let rings = (0..sparse.len())
             .map(|idx| (idx != 3).then(|| ring::<D>(10 * idx as u64)))
             .collect::<Vec<_>>();
-        let challenges = Challenges::Tensor {
-            factored: tensor.clone(),
-        };
+        let challenges = Challenges::from_sparse(sparse.clone(), sparse.len(), 1).unwrap();
 
         let got = parallel_high_half_accumulate::<F, _, D>(&challenges, |idx| rings[idx]).unwrap();
         let mut expected = vec![F::zero(); D];
-        for (idx, ring) in rings
-            .iter()
-            .enumerate()
-            .take(tensor.total_blocks().unwrap())
-        {
+        for (idx, ring) in rings.iter().enumerate() {
             if let Some(ring) = ring {
-                let (_, _, fold_high, fold_low) = tensor.factors_for_logical_block(idx).unwrap();
-                let challenge = sparse_challenge_as_ring::<D>(fold_high)
-                    * sparse_challenge_as_ring::<D>(fold_low);
+                let challenge = sparse_challenge_as_ring::<D>(&sparse[idx]);
                 add_ring_product_reference_high_half::<D>(&mut expected, &challenge, ring);
             }
         }

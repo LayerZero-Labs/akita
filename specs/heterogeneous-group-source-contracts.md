@@ -105,7 +105,7 @@ The verifier MUST know:
 - the ordered selected schedule row;
 - each intermediate `log_basis` and `num_digits_fold`;
 - the exact matrices and their security parameters;
-- each challenge configuration and challenge shape;
+- each challenge configuration;
 - the shared nonce range and transcript position;
 - each terminal response admission cap;
 - each terminal Golomb-Rice remainder width and payload byte budget.
@@ -168,7 +168,6 @@ pub struct HonestFoldSizingQuery<'a> {
     pub num_fold_coeffs: usize,
     pub log_basis: u32,
     pub challenge_config: &'a SparseChallengeConfig,
-    pub challenge_shape: TensorChallengeShape,
 }
 
 pub trait HonestFoldPolicy {
@@ -195,8 +194,7 @@ parallel MAY require `HonestFoldPolicy + Sync` at that call site.
 ring dimension.
 
 `num_claims` and `num_live_blocks` are REQUIRED because they determine the
-number and structure of fold contributions. They remain separate because a
-tensor policy can use them differently.
+number and structure of fold contributions.
 
 `num_chunks` is REQUIRED because the prover emits and the verifier admits one
 physical response window per chunk. It MUST be positive and no greater than
@@ -216,8 +214,7 @@ physical geometry used by new sizing policies.
 `log_basis` is REQUIRED because the policy selects a balanced digit depth and
 snap acts on digit boundaries.
 
-`challenge_config` and `challenge_shape` are REQUIRED because they define the
-challenge law.
+`challenge_config` is REQUIRED because it defines the challenge law.
 
 `field_bits` MUST NOT appear in this query. A field-specific policy MUST carry
 its calibration when the group configuration constructs it. Hard field
@@ -281,9 +278,7 @@ In particular:
 
 - Fp32 policies MUST retain the existing `3/4` snap ratio.
 - All existing wider field policies MUST retain the existing `1/2` snap ratio.
-- Existing flat and tensor tail formulas MUST remain unchanged.
-- Existing certified and worst-case family selection MUST remain unchanged.
-- Existing `WorstCaseBetaOnly` rows MUST remain unsnapped.
+- The signed-sparse tail formula MUST remain unchanged.
 
 The policy object owns the field-specific calibration. The query does not carry
 `field_bits`.
@@ -307,7 +302,7 @@ proof size review, and a protocol identity change.
 
 ### Applicability
 
-The exact unit one-hot model applies only to a flat challenge when every logical
+The exact unit one-hot model applies when every logical
 witness block has at most one nonzero coefficient and that coefficient has
 absolute value one.
 
@@ -614,8 +609,7 @@ Tests MUST cover the following:
 - every selected one-hot digit depth is no greater than the preserved
   pre-cutover result;
 - at least one row tightens when the exact model supports a smaller depth;
-- unsupported challenge shapes and source conditions use the preserved
-  fallback.
+- unsupported source conditions use the preserved fallback.
 
 ### Intermediate admission tests
 
@@ -645,7 +639,7 @@ Tests MUST prove that:
 
 The generated schedule drift guards MUST pass after regeneration.
 
-Dense, one-hot, tensor, extension field, mixed group, recursive, terminal, and
+Dense, one-hot, extension field, mixed group, recursive, terminal, and
 setup prefix end-to-end tests MUST pass.
 
 The profile benchmark report MUST compare pre-cutover and post-cutover values

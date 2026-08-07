@@ -109,7 +109,7 @@ batch — exactly as the generated table
 - Chunk profiles other than `W8R2` (`num_chunks = 8`, `num_activated_levels = 2`).
   Other profiles (`W2R2`, `W4R2`, …) follow the same recipe but are out of scope
   for this rollout.
-- Dense (`fp128_d64_dense`) or tensor-verifier companions.
+- Dense (`fp128_d64_dense`) companions.
 - Distributing setup preprocessing across machines. Setup-prefix commitments are
   a single-node preprocessing artifact; only the *witness fold* is distributed.
 - Changing the `SetupContributionMode` call-wide argument or the setup-prefix

@@ -129,10 +129,10 @@ fn fold_nonce_accepts_only_the_global_attempt_range() {
     let attempts = crate::FoldLinfProtocolBinding::CURRENT.max_grind_attempts;
 
     params
-        .validate_fold_grind_nonce(&opening_batch, attempts, attempts - 1)
+        .validate_fold_grind_nonce(&opening_batch, attempts - 1)
         .expect("last in-range nonce");
     assert!(params
-        .validate_fold_grind_nonce(&opening_batch, attempts, attempts)
+        .validate_fold_grind_nonce(&opening_batch, attempts)
         .is_err());
 }
 

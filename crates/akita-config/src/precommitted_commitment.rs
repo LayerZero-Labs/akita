@@ -7,13 +7,12 @@
 //! worst-case envelope over every supported basis.
 
 use crate::{policy_of, CommitmentConfig};
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    accumulate_matrix_field_elements_for_level, AkitaScheduleInputs, CommitmentRingDims,
-    CommittedGroupParams, CommittedGroupProfile, DecompositionParams, FoldSchedule,
-    OpenCommitMatrixParams, OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixCapacity,
-    SisModulusProfileId,
+    accumulate_matrix_field_elements_for_level, CommitmentRingDims, CommittedGroupParams,
+    CommittedGroupProfile, DecompositionParams, FoldSchedule, OpenCommitMatrixParams,
+    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixCapacity, SisModulusProfileId,
 };
 use std::marker::PhantomData;
 
@@ -35,10 +34,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
 
     fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
         Cfg::ring_challenge_config(d)
-    }
-
-    fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
-        Cfg::fold_challenge_shape_at_level(inputs)
     }
 
     fn sis_modulus_profile() -> SisModulusProfileId {
@@ -136,7 +131,6 @@ pub fn committed_group_profile<Cfg: CommitmentConfig>(
         key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Cfg::schedule_catalog(),
     )
 }
@@ -169,7 +163,6 @@ fn precommit_profile_as_commit_params<Cfg: CommitmentConfig>(
         fold_challenge_config: Cfg::ring_challenge_config(
             profile.inner_commit_matrix.ring_dimension(),
         )?,
-        fold_challenge_shape: TensorChallengeShape::Flat,
         num_digits_inner: profile.num_digits_inner,
         num_digits_outer: profile.num_digits_outer,
         num_digits_open: profile.num_digits_outer,
