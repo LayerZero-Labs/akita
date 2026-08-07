@@ -179,9 +179,6 @@ jobs:
       - name: Verify profile-ci feature coverage
         run: ./scripts/check_profile_ci_features.sh
 
-      - name: Generate schedule tables
-        run: scripts/generate-schedule-tables.sh
-
       - name: Build merge-base profile binary
         if: github.event_name == 'pull_request' && env.AKITA_BENCH_BASELINE_MODES_OK == '1'
         env:
@@ -195,9 +192,10 @@ jobs:
           fi
           (
             cd "$RUNNER_TEMP/bench-base" &&
-            if [ -x ./scripts/generate-schedule-tables.sh ]; then
-              ./scripts/generate-schedule-tables.sh
-            fi
+            # Profile benchmarks consume the generated tables committed at
+            # each revision. Schedule-generation drift is enforced by the
+            # dedicated CI guard, so regenerating here only warms unrelated
+            # build artifacts and delays every matrix cell.
             if python3 scripts/cargo_feature_exists.py akita-pcs profile-ci; then
               CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
                 cargo build --release --quiet --example profile \
