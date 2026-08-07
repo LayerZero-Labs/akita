@@ -356,3 +356,18 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         Self { coeffs }
     }
 }
+
+impl<F: FieldCore + CanonicalField, const D: usize> CyclotomicRing<F, D> {
+    pub(crate) fn centered_coefficients_i128(&self) -> [i128; D] {
+        let modulus = (-F::one()).to_canonical_u128() + 1;
+        let half_modulus = modulus / 2;
+        self.coeffs.map(|coefficient| {
+            let canonical = coefficient.to_canonical_u128();
+            if canonical > half_modulus {
+                -((modulus - canonical) as i128)
+            } else {
+                canonical as i128
+            }
+        })
+    }
+}

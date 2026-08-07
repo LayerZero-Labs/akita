@@ -174,7 +174,7 @@ impl<F: FieldCore + CanonicalField> AkitaVerifierSetup<F> {
         num_ring_elements: usize,
         tail_num_ring_elements: usize,
         width: usize,
-        log_basis: u32,
+        rhs_abs_bound: u64,
     ) -> Result<Arc<crate::PreparedNttCache<D>>, AkitaError> {
         let key = crate::NttCacheKey {
             ring_d: D,
@@ -185,7 +185,10 @@ impl<F: FieldCore + CanonicalField> AkitaVerifierSetup<F> {
             &self.expanded,
             key,
             tail_num_ring_elements,
-            crate::NttCacheMode::ExactNegacyclic { width, log_basis },
+            crate::NttCacheMode::ExactNegacyclic {
+                width,
+                rhs_abs_bound,
+            },
         )
     }
 }
