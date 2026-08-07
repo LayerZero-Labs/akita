@@ -201,6 +201,32 @@ impl<F: FieldCore, E: ExtField<F>> SparseExtensionOpeningWitness<F, E> {
         self.values.evaluation(row)
     }
 
+    /// Read the unique sparse entries belonging to one adjacent logical pair.
+    ///
+    /// Construction and every fold keep indices strictly sorted and unique,
+    /// so a pair contains either one child or the consecutive even and odd
+    /// children. Returning the next row lets hot traversals avoid a general
+    /// duplicate-combining loop for an invariant that cannot occur here.
+    #[inline(always)]
+    pub(super) fn pair_at_row(&self, row: usize, end: usize) -> (usize, E, E, usize) {
+        debug_assert!(row < end);
+        debug_assert!(end <= self.indices.len());
+        let index = self.indices[row];
+        let pair = index >> 1;
+        let value = self.values.evaluation(row);
+        let next = row + 1;
+        if next < end && self.indices[next] >> 1 == pair {
+            debug_assert_eq!(index & 1, 0);
+            debug_assert_eq!(self.indices[next], index + 1);
+            return (pair, value, self.values.evaluation(next), next + 1);
+        }
+        if index & 1 == 0 {
+            (pair, value, E::zero(), next)
+        } else {
+            (pair, E::zero(), value, next)
+        }
+    }
+
     /// Combine sparse witnesses over the same table domain.
     ///
     /// # Errors
@@ -376,19 +402,8 @@ where
         let mut acc = A::zero();
         let mut row = rows.start;
         while row < rows.end {
-            let pair = self.indices[row] / 2;
-            let mut w0 = E::zero();
-            let mut w1 = E::zero();
-            while row < rows.end && self.indices[row] / 2 == pair {
-                let index = self.indices[row];
-                let value = self.values.evaluation(row);
-                if index & 1 == 0 {
-                    w0 += value;
-                } else {
-                    w1 += value;
-                }
-                row += 1;
-            }
+            let (pair, w0, w1, next_row) = self.pair_at_row(row, rows.end);
+            row = next_row;
 
             let (a0, a1) = factor_pair(pair);
             let da = a1 - a0;
@@ -671,18 +686,9 @@ impl<F: FieldCore, E: ExtField<F>> SparseExtensionOpeningWitness<F, E> {
         let mut input_row = 0;
         let mut output_row = 0;
         while input_row < self.indices.len() {
-            let pair = self.indices[input_row] / 2;
-            let mut value = E::zero();
-            while input_row < self.indices.len() && self.indices[input_row] / 2 == pair {
-                let index = self.indices[input_row];
-                let entry = self.values.evaluation(input_row);
-                value += if index & 1 == 0 {
-                    entry * one_minus
-                } else {
-                    entry * r_round
-                };
-                input_row += 1;
-            }
+            let (pair, zero, one, next_row) = self.pair_at_row(input_row, self.indices.len());
+            input_row = next_row;
+            let value = zero * one_minus + one * r_round;
             if value != E::zero() {
                 self.indices[output_row] = pair;
                 self.values.set_evaluation(output_row, value);

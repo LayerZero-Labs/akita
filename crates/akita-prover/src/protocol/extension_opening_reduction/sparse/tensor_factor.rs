@@ -409,18 +409,8 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
         let mut round = GroupedRoundAccumulator::<E, N>::new();
         let mut row = rows.start;
         while row < rows.end {
-            let pair = witness.indices[row] >> 1;
-            let mut witness_zero = E::zero();
-            let mut witness_one = E::zero();
-            while row < rows.end && witness.indices[row] >> 1 == pair {
-                let value = witness.values.evaluation(row);
-                if witness.indices[row] & 1 == 0 {
-                    witness_zero += value;
-                } else {
-                    witness_one += value;
-                }
-                row += 1;
-            }
+            let (pair, witness_zero, witness_one, next_row) = witness.pair_at_row(row, rows.end);
+            row = next_row;
             round.add_pair(self, pair, witness_zero, witness_one);
         }
         round.finish(self)
@@ -469,18 +459,9 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
         let mut next_one = E::zero();
 
         while input_row < witness.indices.len() {
-            let pair = witness.indices[input_row] >> 1;
-            let mut witness_zero = E::zero();
-            let mut witness_one = E::zero();
-            while input_row < witness.indices.len() && witness.indices[input_row] >> 1 == pair {
-                let value = witness.values.evaluation(input_row);
-                if witness.indices[input_row] & 1 == 0 {
-                    witness_zero += value;
-                } else {
-                    witness_one += value;
-                }
-                input_row += 1;
-            }
+            let (pair, witness_zero, witness_one, next_row) =
+                witness.pair_at_row(input_row, witness.indices.len());
+            input_row = next_row;
 
             let folded = E::fold_one(&fold, witness_zero, witness_one);
             if folded == E::zero() {

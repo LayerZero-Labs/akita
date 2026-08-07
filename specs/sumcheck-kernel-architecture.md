@@ -497,6 +497,14 @@ converted the nearly dense sparse witness and its tensor factor to dense tables
 measured 206 to 209 ms depending on the transition point; factor materialization
 cost more than the later dense SIMD rounds saved, so the cutover was removed.
 
+Sparse indices are strictly sorted and unique after construction and after
+every fold. One adjacent logical pair therefore contains at most its even and
+odd child; it never needs a general duplicate-combining loop. Reading that
+canonical pair shape once and sharing it across grouped accumulation, fused
+folding, and the ordinary sparse fallback reduced the same fp32 benchmark to a
+182.94 ms clean median. This is 40.0 percent below the 305.00 ms sparse-table
+baseline.
+
 ### Existing state changes
 
 The cutover evolves current owners rather than adding parallel wrappers:
