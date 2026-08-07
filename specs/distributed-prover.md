@@ -76,8 +76,9 @@ $(X^d+1)$ quotient. (See `crates/akita-types/src/proof/ring_relation.rs`.)
 
 Partition the block index set $[B]$ into $W$ balanced contiguous windows with
 boundary $s_i = \lfloor iB/W\rfloor$. Window $i$ owns $[s_i,s_{i+1})$.
-Require $B\ge W$ and $W$ a power of two. This rule makes every partition at
-$2W$ windows refine the partition at $W$ windows.
+Require $B>0$ and $W$ a supported power of two. When $B<W$, consecutive
+boundaries may be equal, so some windows are empty. This rule makes every
+partition at $2W$ windows refine the partition at $W$ windows.
 Window $i$ gets its **own** sub-witness
 $\mathbf w_i = (\widehat{\mathbf e}_i,\widehat{\mathbf t}_i,\mathbf z_i)$ where:
 
@@ -119,7 +120,7 @@ This is the layout the [planner](distributed-planner.md) prices
 - `z_len_i = num_digits_fold · num_digits_inner · num_positions_per_block` (replicated, full),
 - `e_len_i = num_digits_open · num_claims · blocks_in_chunk(i)` (partitioned),
 - `t_len_i = num_digits_open · n_a · num_t_vectors · blocks_in_chunk(i)` (partitioned),
-- per-window stride `L = z_len_i + e_len_i + t_len_i`,
+- per-window length `L_i = z_len_i + e_len_i + t_len_i`,
 - one shared `r̂` tail of `num_rows · r_decomp_levels(log_basis)` after window $W-1$,
   where `num_rows` is the **single-machine** relation row count (the windows stack
   horizontally — same rows, partitioned columns — and the partial quotients sum,
@@ -161,7 +162,6 @@ Validate at this boundary, before any witness math (no-panic contract):
 |------|-------|
 | `num_chunks == 0` | `InvalidSetup` |
 | `num_chunks > 1` and not a power of two | `InvalidSetup` |
-| `num_chunks > lp.num_live_blocks` | `InvalidSetup` |
 | `num_chunks > 1` under `feature = "zk"` | `InvalidSetup` |
 
 (`zk` blinding segments are not specified for the chunked witness yet; reject
@@ -185,10 +185,11 @@ Each $\mathbf z_i$ is the same full `inner_width` size as the single fold (it is
 partial sum, not a $1/W$ slice) and is decomposed by `num_digits_fold` exactly as
 today. The fold challenge $\mathbf c$ is the **same single transcript-sampled
 vector**; window $i$ uses the slice $c_j, j\in\mathcal I_i$ indexed by the
-**global** block (so the verifier reads $c_\alpha$ at global block
-$iB_{\mathsf{loc}}+\text{block\_local}$). The fold-grind L∞ cap is unchanged: each
-$\mathbf z_i$ is a sub-sum of the global fold under the same challenge, so it
-respects the same per-fold cap the planner sized.
+**global** block. If `block_local` indexes window $i$, the global block is
+$s_i+\text{block\_local}$. An empty window has an empty challenge slice and the
+honest prover emits the all-zero $\mathbf z_i$. The fold-grind L∞ cap is
+unchanged: each nonempty $\mathbf z_i$ is a sub-sum of the global fold under the
+same challenge, so it respects the same per-fold cap the planner sized.
 
 Output: `z_folded_rings_per_chunk: Vec<Vec<CyclotomicRing<F,D>>>` of length $W$
 (the $W = 1$ case is a one-element vector = today's single `z_folded_rings`).
@@ -318,7 +319,8 @@ quotient tail.
   and each $\mathbf z_i$ is full `inner_width`. (The witness keeps the $W$ responses
   separate; the identity is a correctness check on Step 1.)
 - **Global fold challenge.** $\mathbf c$ is the same single transcript-sampled
-  vector; window $i$ uses its global-block-indexed slice.
+  vector; window $i$ uses its global-block-indexed slice beginning at $s_i$.
+  An empty slice produces the canonical all-zero honest fold response.
 - **Quotient unchanged.** $\widehat{\mathbf r}$ is identical to the original
   relation's quotient — one shared tail with the **single-machine** row count,
   computed once ($\widehat{\mathbf r} = \sum_i\widehat{\mathbf r}_i$, not scaled
@@ -421,8 +423,11 @@ the same preset for `W ∈ {1,2,4,8}`, `num_positions_per_block` pow2 (root) and
    chunked relation row.
 4. **Proof-size parity** vs the planner schedule.
 5. **End-to-end roundtrip** (gated on verifier landing).
-6. **Determinism** and **no-panic negatives** (bad `num_chunks`,
-   `num_chunks > num_live_blocks`, zk+chunked).
+6. **Empty-window positive:** `num_live_blocks = 4`, `num_chunks = 8` uses the
+   exact proportional boundaries, preserves all eight `z` segments, and emits
+   empty `e` and `t` segments for empty windows.
+7. **Determinism** and **no-panic negatives** (zero or unsupported
+   `num_chunks`, zk+chunked).
 
 ### Performance
 

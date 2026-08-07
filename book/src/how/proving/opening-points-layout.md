@@ -84,7 +84,10 @@ Chunks own contiguous ranges of the exact `F` live blocks. For chunk `i` of
 ```
 
 The ranges stay exact and contain no padding. Their lengths differ by at most
-one block. All supported chunk counts are powers of two. Therefore, every finer
+one block. If `P > F`, repeated boundaries give empty ranges while preserving
+all `P` machine slots. An empty slot has no E or T coefficients, but it keeps
+the full replicated Z segment and the honest prover fills that segment with
+zero. All supported chunk counts are powers of two. Therefore, every finer
 chunk partition refines every coarser partition.
 
 Each commitment group owns a fold challenge with `F` independent sparse

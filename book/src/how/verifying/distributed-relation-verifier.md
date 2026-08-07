@@ -40,7 +40,7 @@ worth fixing up front:
 
 - **Partitioned segments** ($\hat e$, $\hat t$). Machine $P_j$ owns the blocks
   $\mathcal I_j \subset [B]$, so its $\hat e^{(j)}, \hat t^{(j)}$ cover only
-  $|\mathcal I_j| = B/\mathcal M$ blocks. The union over machines is the full
+  $B_j := |\mathcal I_j|$ blocks. The union over machines is the full
   $\hat e$ (resp. $\hat t$); the $\mathcal M$ repetitions *tile the same data*, so
   their combined cost equals the single-machine cost.
 - **Replicated segments** ($z$). Machine $P_j$'s partial fold
@@ -112,7 +112,10 @@ $$
 so every range has either $\lfloor B/\mathcal M\rfloor$ or
 $\lceil B/\mathcal M\rceil$ blocks. When $\mathcal M$ divides $B$, this is
 $[\,jB_{\mathsf{loc}},\,(j{+}1)B_{\mathsf{loc}}\,)$ with
-$B_{\mathsf{loc}} := B/\mathcal M$ blocks each. The public matrices $A$, $B$, $D$ are column views of one
+$B_{\mathsf{loc}} := B/\mathcal M$ blocks each. Define
+$s_j := \lfloor jB/\mathcal M\rfloor$ and $B_j := s_{j+1}-s_j$. When
+$B<\mathcal M$, some consecutive boundaries are equal and those machines own
+empty ranges. The public matrices $A$, $B$, $D$ are column views of one
 seed-expanded matrix, so **every machine regenerates the same public columns
 locally** — the fact that keeps the verifier's dominant cost flat.
 
@@ -120,21 +123,21 @@ locally** — the fact that keeps the verifier's dominant cost flat.
 
 The distributed prover assembles the next-level witness **one machine block at a
 time**: machine $P_j$ contributes its local witness
-$w_j = (\hat e^{(j)}, \hat t^{(j)}, z^{(j)})$ as a single contiguous unit, and the
+$w_j = (z^{(j)}, \hat e^{(j)}, \hat t^{(j)})$ as a single contiguous unit, and the
 lone summed quotient $\hat r$ tails the whole thing (see the
 [distributed prover](../proving/distributed-prover.md), "Ring-switch lift and
 next-level commitment"):
 
 ```text
-[ e^(0) | t^(0) | z^(0) ][ e^(1) | t^(1) | z^(1) ] … [ e^(M-1) | t^(M-1) | z^(M-1) ][ r ]
+[ z^(0) | e^(0) | t^(0) ][ z^(1) | e^(1) | t^(1) ] … [ z^(M-1) | e^(M-1) | t^(M-1) ][ r ]
 └─────── w_0 ───────┘└─────── w_1 ───────┘          └──────── w_{M-1} ────────┘
 ```
 
 So **the contiguous unit is the machine block $w_j$, not the component.** A single
 component — say `e_hat` — is therefore *not* one fused region: its $\mathcal M$
 pieces $\hat e^{(0)}, \dots, \hat e^{(\mathcal M-1)}$ are scattered through the
-witness, one inside each $w_j$, with that machine's $\hat t^{(j)}, z^{(j)}$ (and
-the next machine's block) sitting *between* consecutive e-pieces. That gap — "the
+witness, one inside each $w_j$. Machine $j$'s $\hat t^{(j)}$ and machine
+$j+1$'s $z^{(j+1)}$ sit *between* consecutive e-pieces. That gap — "the
 space related to other stuff" between `e^(0)` and `e^(1)` — is the normal shape,
 and it does **not** complicate the verifier.
 
@@ -148,53 +151,51 @@ segment's start offset* (`e_start`, `t_start`, `z_start`) and peels the block
 window relative to that offset, using the at-most-one-carry split to absorb any
 misalignment.
 
-The distributed layout changes nothing structural here — it just has **more
-offsets**: $\mathcal M$ `e_hat` offsets, $\mathcal M$ `t_hat` offsets, $\mathcal M$
-`z_hat` offsets, one per machine block. Writing
-$L := |w_j| = |\hat e^{(j)}| + |\hat t^{(j)}| + |z^{(j)}|$ for the size of one
-machine block, machine $j$'s pieces start at
+The distributed layout changes nothing structural here. It has $\mathcal M$
+offsets for each component, one per machine block. Let
+$L_j := |\hat e^{(j)}| + |\hat t^{(j)}| + |z^{(j)}|$ and let
+$o_j := \sum_{k<j}L_k$ be the prefix-sum offset of machine block $j$. Its pieces
+start at
 
 $$
-e^{(j)}_{\text{start}} = jL, \qquad
-t^{(j)}_{\text{start}} = jL + |\hat e^{(j)}|, \qquad
-z^{(j)}_{\text{start}} = jL + |\hat e^{(j)}| + |\hat t^{(j)}|
+z^{(j)}_{\text{start}} = o_j, \qquad
+e^{(j)}_{\text{start}} = o_j + |z^{(j)}|, \qquad
+t^{(j)}_{\text{start}} = o_j + |z^{(j)}| + |\hat e^{(j)}|
 $$
 
 (plus the witness's base offset). The verifier evaluates each piece at its own
-offset and sums; the "space between" two e-pieces is just the numeric difference
-$e^{(j+1)}_{\text{start}} - e^{(j)}_{\text{start}} = L$, which the offset-equality
-factorization handles exactly as it already handles the gap between `e_hat` and
-`z_hat` in the single-machine layout.
+offset and sums. Prefix sums are required because $L_j$ varies with $B_j$.
 
 Each piece keeps its single-machine internal axis order, with the block sub-axis
-shrunk to $B_{\mathsf{loc}}$ for the partitioned `e`/`t` pieces:
+shrunk to $B_j$ for the partitioned `e`/`t` pieces:
 
 | piece | size | axis order (outermost → innermost) | kind |
 |---|---|---|---|
-| `e_hat^(j)` | `do · C · B_loc` | `dig → claim → block_local` | partitioned |
-| `t_hat^(j)` | `do · n_A · C · B_loc` | `a_row → dig → claim → block_local` | partitioned |
+| `e_hat^(j)` | `do · C · B_j` | `dig → claim → block_local` | partitioned |
+| `t_hat^(j)` | `do · n_A · C · B_j` | `a_row → dig → claim → block_local` | partitioned |
 | `z_hat^(j)` | `dc · df · num_positions_per_block` | `dc → df → blk` | **replicated** |
 | `r_tail` | `rows · levels` | `level → row` (single) | shared |
 
 The machine index is *not* an axis inside a piece — it is the outer grouping that
 selects which block $w_j$ (hence which offset) a piece lives in. The `e`/`t` block
-sub-axis shrinks from `B` to `B_loc` because each machine holds only its
-`B_loc` blocks; the `z` block sub-axis stays the full `num_positions_per_block` because the fold
-is replicated, and `z_hat^(j)` is repeated $\mathcal M$ times.
+sub-axis shrinks from `B` to `B_j` because each machine holds only its assigned
+blocks. The `z` block sub-axis stays the full `num_positions_per_block` because
+the fold is replicated, and `z_hat^(j)` is repeated $\mathcal M$ times. If
+$B_j=0$, the `e_hat^(j)` and `t_hat^(j)` pieces are empty while `z_hat^(j)` keeps
+its full width. The honest prover writes zero in that `z_hat^(j)` piece.
 
 > The "global block" point now reads cleanly off this layout: inside `e_hat^(j)`
-> the block index restarts at `block_local ∈ [0, B_loc)`, but it names the global
-> block `blk_g = j·B_loc + block_local`, which is what the folding challenge
+> the block index restarts at `block_local ∈ [0, B_j)`, but it names the global
+> block `blk_g = s_j + block_local`, which is what the folding challenge
 > `c_α` is indexed by (see the e-tensor section).
 
-### Why the block axis is still peelable, and why one `eq_low` still serves all
+### Equal-partition peelable fast path
 
-`matrix_evaluation` peels the block window because `B` is a power of two and the
-block axis is innermost. Since $\mathcal M = 2^N$ divides $B = 2^r$, each
-machine's sub-window $B_{\mathsf{loc}} = B/\mathcal M$ is again a power of two, so
-`block_local` occupies a clean $\log_2 B_{\mathsf{loc}}$-bit window and the
-per-machine peel (with `block_local` innermost and `(claim, dig)` in the high
-bits) works exactly as single-machine.
+This subsection applies only when every $B_j$ equals the same power-of-two
+$B_{\mathsf{loc}}=B/\mathcal M$. `matrix_evaluation` can then peel the block
+window exactly as in the single-machine case. Uneven partitions, including the
+empty ranges created by $B<\mathcal M$, use the dense per-piece path described
+below and skip empty `e` and `t` pieces.
 
 One `eq_low` table still serves every machine — and this holds *regardless* of the
 per-machine offsets, despite the gaps. The `eq_low` table is just the equality
@@ -220,11 +221,9 @@ What *does* grow with $\mathcal M$ are the cheap high tables: `eq_high_e`,
 `M·DF·DC`). These are precompute-once field tables, not $\alpha$-evaluations, so
 the growth is negligible.
 
-(Because the canonical deployment uses $\mathcal M = 2^N$, $B_{\mathsf{loc}}$ is
-always a power of two and the per-machine `e_hat`/`t_hat` peel always applies; a
-non-power-of-two machine count would fall back to a dense per-machine evaluation,
-exactly as the `z`-tensor does for non-power-of-two `num_positions_per_block`. See the closing
-note.)
+The fast path depends on equal power-of-two windows, not merely on a
+power-of-two machine count. See the closing partition-shape note for the dense
+fallback.
 
 ## Tensor components
 
@@ -244,10 +243,10 @@ once, at the end.
 #### The cell formula (per machine)
 
 Machine $j$'s `e_hat^(j)` cell is indexed by `(dig, claim, block_local)` with
-`block_local` $\in [0, B_{\mathsf{loc}})$. Its local column coordinate is
+`block_local` $\in [0, B_j)$. Its local column coordinate is
 
 $$
-c \;=\; \text{block\_local} \;+\; B_{\mathsf{loc}} \cdot (\text{claim} + C \cdot \text{dig}),
+c \;=\; \text{block\_local} \;+\; B_j \cdot (\text{claim} + C \cdot \text{dig}),
 $$
 
 the global column is $e^{(j)}_{\text{start}} + c$, and the entry is
@@ -255,36 +254,35 @@ the global column is $e^{(j)}_{\text{start}} + c$, and the entry is
 $$
 M(i, c) \;=\; c_{\alpha}[\text{claim}, \text{blk}_g] \cdot g_{\text{open}}[\text{dig}],
 \qquad
-\text{blk}_g := j\,B_{\mathsf{loc}} + \text{block\_local},
+\text{blk}_g := s_j + \text{block\_local},
 $$
 
 where $\text{blk}_g$ is the **global** block index. Three things differ from the
-single-machine cell: (i) the block window is $B_{\mathsf{loc}}$, not $B$; (ii) the
+single-machine cell: (i) the block window is $B_j$, not $B$; (ii) the
 consistency challenge $c_{\alpha}$ is read at the global block $\text{blk}_g$, so
 the verifier indexes the *same* full $c_{\alpha}$ table at machine $j$'s slice;
 (iii) the offset is machine $j$'s $e^{(j)}_{\text{start}}$. As in the
 single-machine case, $c_{\alpha}$ **couples claim and block**, so it does not
 factor into separate per-claim and per-block scalars.
 
-> **Why the global block, and why $\text{blk}_g = j\,B_{\mathsf{loc}} + \text{block\_local}$.**
+> **Why the global block, and why $\text{blk}_g = s_j + \text{block\_local}$.**
 > The folding challenges are a *single global vector* $c = (c_1, \dots, c_B)$ that
 > the verifier samples **once**, indexed by global block. Machine $P_j$ gets no
 > fresh randomness — it uses the slice $c^{(j)} = \{c_i : i \in \mathcal I_j\}$
 > (the $(c^{(j)})^{\top}\!\otimes G$ row of $M_j$ in the distributed prover's
 > partial root relation). The scalar that multiplies a fold block is the challenge
 > *for that block*, and blocks are numbered globally. A column of `e_hat^(j)` is
-> addressed by the **local** index $\text{block\_local} \in [0, B_{\mathsf{loc}})$,
+> addressed by the **local** index $\text{block\_local} \in [0, B_j)$,
 > but it represents a **global** block; because $P_j$ owns the contiguous range
-> $\mathcal I_j = [jB_{\mathsf{loc}}, (j{+}1)B_{\mathsf{loc}})$, the global index is
-> its base offset $jB_{\mathsf{loc}}$ plus the local position:
-> $\text{blk}_g = jB_{\mathsf{loc}} + \text{block\_local}$. Writing
+> $\mathcal I_j = [s_j,s_{j+1})$, the global index is its base offset $s_j$ plus
+> the local position: $\text{blk}_g = s_j + \text{block\_local}$. Writing
 > $c_{\alpha}[\text{claim}, \text{block\_local}]$ would be wrong — it would name a
-> block on machine $0$. Concretely with $B = 8$, $\mathcal M = 2$
-> ($B_{\mathsf{loc}} = 4$): machine $1$'s local block $0$ is global block $4$ and
-> carries $c_{\alpha}[\text{claim}, 4]$. Reading $c_{\alpha}$ at the global block
+> block on machine $0$. Concretely with $B = 77$, $\mathcal M = 8$, machine $1$
+> starts at $s_1=9$, so its local block $0$ is global block $9$ and carries
+> $c_{\alpha}[\text{claim}, 9]$. Reading $c_{\alpha}$ at the global block
 > is also what keeps the block scan equal to the single-machine cost: every global
 > block $0..B$ is visited exactly once, only reordered into $\mathcal M$ chunks of
-> $B_{\mathsf{loc}}$.
+> their exact $B_j$.
 
 #### The naive evaluation
 
@@ -293,20 +291,21 @@ acc = 0
 for j     in 0..M:
   for dig   in 0..do:
     for claim in 0..C:
-      for block_local in 0..B_loc:
-        blk_g = j*B_loc + block_local
-        c     = block_local + B_loc*(claim + C*dig)
+      for block_local in 0..B_j:
+        blk_g = s_j + block_local
+        c     = block_local + B_j*(claim + C*dig)
         acc += row_weight[i] * c_alpha[claim][blk_g] * g_open[dig]
                    * eq(e_start[j] + c, r_col)
 ```
 
-The triple-plus-machine loop costs $O(\mathcal M \cdot B_{\mathsf{loc}} \cdot C \cdot \text{do})
-= O(B \cdot C \cdot \text{do})$ — the *same total* as the single-machine naive
-scan — plus a dense `eq` table.
+Because $\sum_j B_j=B$, the triple-plus-machine loop costs
+$O(B \cdot C \cdot \text{do})$, the same total as the single-machine naive
+scan, plus a dense `eq` table. Empty pieces do no work.
 
-#### The optimization: per-(machine, claim) block summaries
+#### Equal-partition optimization: per-(machine, claim) block summaries
 
-Peel the $B_{\mathsf{loc}}$ block window exactly as single-machine, now per
+When the equal-partition fast-path condition holds, peel the
+$B_{\mathsf{loc}}$ block window exactly as single-machine, now per
 machine. Split $e^{(j)}_{\text{start}} = e^{(j)}_{\text{lo}} + B_{\mathsf{loc}}\, e^{(j)}_{\text{hi}}$;
 the low part $s = e^{(j)}_{\text{lo}} + \text{block\_local}$ produces at most one
 carry, and the equality factors into `eq_low` (the shared low-window table) and
@@ -368,14 +367,14 @@ block-diagonal in the `a_row` axis.
 Machine $j$'s `t_hat^(j)` cell is indexed by `(a_row, dig, claim, block_local)`:
 
 $$
-c \;=\; \text{block\_local} \;+\; B_{\mathsf{loc}} \cdot (\text{claim} + C \cdot \text{dig} + C \cdot \text{do} \cdot \text{a\_row}),
+c \;=\; \text{block\_local} \;+\; B_j \cdot (\text{claim} + C \cdot \text{dig} + C \cdot \text{do} \cdot \text{a\_row}),
 $$
 
 with entry, on the matching `a_row` row,
 
 $$
 M(\text{a\_row}, c) \;=\; c_{\alpha}[\text{claim}, \text{blk}_g] \cdot g_{\text{open}}[\text{dig}],
-\qquad \text{blk}_g := j\,B_{\mathsf{loc}} + \text{block\_local},
+\qquad \text{blk}_g := s_j + \text{block\_local},
 $$
 
 weighted by `row_weight[a_row]`. This is the same claim-and-block-coupled
@@ -383,7 +382,8 @@ $c_{\alpha}$ as the `e_hat` component, with the extra `a_row` axis tensored on.
 
 #### The optimization: reuse the per-(machine, claim) block summaries
 
-The block-dependent factor $c_{\alpha}[\text{claim}, \text{blk}_g] \cdot
+On the equal-partition fast path, the block-dependent factor
+$c_{\alpha}[\text{claim}, \text{blk}_g] \cdot
 \mathrm{eq}_{\text{low}}(\cdot)$ is **identical** to the `e_hat` component's. As
 shown in the layout section, every `e_hat^(j)` and `t_hat^(j)` shares the same
 low-window residue, so the carry split matches per machine and the per-(machine,
@@ -597,10 +597,12 @@ precomputed weight vector changed (`Z_comb` instead of `Z_col`).
 
 - **`W_col[c]` (`D · e_hat`).** Decode $c$ to `(dig, blk_g, claim)` as
   single-machine, then translate to the distributed `e_hat` address: the machine
-  is `mac = blk_g / B_loc`, the in-machine block is
-  `block_local = blk_g mod B_loc`, and the column lands in machine `mac`'s piece
-  via the peeled `eq_low`/`eq_high_e` product. $O(1)$ per cell, same total column
-  count.
+  is the unique `mac` whose exact range satisfies
+  $s_{\mathsf{mac}}\le\text{blk}_g<s_{\mathsf{mac}+1}$, and
+  `block_local = blk_g - s_mac`. A precomputed block-to-machine map or a search
+  over the public boundaries provides this translation. The equal-partition
+  fast path reduces it to division and remainder. The column then lands in
+  machine `mac`'s piece. The total column count is unchanged.
 - **`T_col[g][c]` (`B · t_hat`).** The same with the extra `a_row` axis and
   per-group sparsity, against the distributed `t_hat` layout; reuses
   `eq_high_t`.
@@ -618,9 +620,9 @@ precomputed weight vector changed (`Z_comb` instead of `Z_col`).
 `matrix_evaluation` reconciles **M-layout** (block innermost, defines the MLE)
 with **D-physical layout** (digit innermost, the prover's commit order) by walking
 $c$ in D-physical order and baking the M-layout translation into the column
-patterns. The distributed layout adds exactly one axis to that translation: the
-**machine index sits in the high bits of the block coordinate**
-(`blk_g = mac · B_loc + block_local`). The column-pattern builds absorb it; the
+patterns. The distributed layout adds one public range lookup to that
+translation: `blk_g = s_mac + block_local`. The machine index is not generally
+a high-bit slice of the block coordinate. The column-pattern builds absorb it; the
 hot per-row loop never sees layouts or machines — it is still a dot product of
 $\alpha$-evaluated entries against a precomputed weight vector.
 
@@ -646,13 +648,12 @@ $\alpha$-evaluation floor.
 ## Cost summary: component by component
 
 Putting the components side by side against the single-machine verifier
-($B_{\mathsf{loc}} = B/\mathcal M$, $A_{\text{cols}} = $ width of `A` = the `z`
-ambient size):
+($\sum_j B_j=B$, $A_{\text{cols}} = $ width of `A` = the `z` ambient size):
 
 | component | single-machine | distributed (verifier total over all $\mathcal M$) | delta |
 |---|---|---|---|
-| `e_hat` consistency | $O(C(B + \text{do}))$ | $O(\mathcal M\,C\,B_{\mathsf{loc}} + \mathcal M\,C\,\text{do}) = O(C\,B + \mathcal M\,C\,\text{do})$ | heavy term $\mathcal M\,C\,B_{\mathsf{loc}} = C\,B$ unchanged; light $\times \mathcal M$ |
-| `t_hat` consistency | $O(C\,B + n_A C\,\text{do})$ | $O(\mathcal M\,C\,B_{\mathsf{loc}} + \mathcal M\,n_A C\,\text{do}) = O(C\,B + \mathcal M\,n_A C\,\text{do})$ | heavy term $= C\,B$ unchanged; light $\times \mathcal M$ |
+| `e_hat` consistency | $O(C(B + \text{do}))$ | $O(C\sum_j B_j + \mathcal M\,C\,\text{do}) = O(C\,B + \mathcal M\,C\,\text{do})$ | heavy term unchanged; light $\times \mathcal M$ |
+| `t_hat` consistency | $O(C\,B + n_A C\,\text{do})$ | $O(C\sum_j B_j + \mathcal M\,n_A C\,\text{do}) = O(C\,B + \mathcal M\,n_A C\,\text{do})$ | heavy term unchanged; light $\times \mathcal M$ |
 | `z_hat` tensor (replicated) | $O(\text{block\_len} + \text{DF}\,\text{DC})$ | $O(\mathcal M\,\text{block\_len} + \mathcal M\,\text{DF}\,\text{DC})$ | cheap term $\times \mathcal M$ (no tiling) |
 | `D·e_hat`, `B·t_hat` setup scan | $\alpha$-evals over full $\hat e$, $\hat t$ | identical | none |
 | **`A·G_fold·z_hat` setup scan (dominant)** | $O(r_{\max}\,n_{\text{cols}}\,D)$ $\alpha$-evals | **$O(r_{\max}\,n_{\text{cols}}\,D)$ $\alpha$-evals** | **none** |
@@ -661,11 +662,10 @@ ambient size):
 
 The distributed column is the verifier's **total** work (it is one entity that
 sums over all $\mathcal M$ machines), not the per-machine work. For the
-*partitioned* `e_hat`/`t_hat` block scan the per-machine cost is
-$C\,B_{\mathsf{loc}}$, but the $\mathcal M$ pieces *tile* the same $B$ blocks, so
-the total is $\mathcal M \cdot C\,B_{\mathsf{loc}} = C\,B$ — written with $B$, not
-$B_{\mathsf{loc}}$, precisely because it does not shrink per machine and does not
-grow with $\mathcal M$. The *replicated* `z_hat` is the opposite: each of the
+*partitioned* `e_hat`/`t_hat` block scan the per-machine cost is $C\,B_j$, but the
+$\mathcal M$ pieces *tile* the same $B$ blocks, so the total is
+$C\sum_j B_j=C\,B$. This remains true for uneven and empty ranges. The
+*replicated* `z_hat` is the opposite: each of the
 $\mathcal M$ copies carries the full `num_positions_per_block`, the pieces duplicate rather than
 tile, so the $\mathcal M$ survives in $\mathcal M\,\text{block\_len}$.
 
@@ -693,29 +693,25 @@ This is the precise sense in which the distributed-relation verifier has
 with overhead that is logarithmic in the machine count plus a negligible
 field-arithmetic pre-pass.
 
-## A note on partition shape (power-of-two machines)
-
-> **Status: design constraint, not yet implemented.** Recorded so the
-> peelability reasoning does not have to be re-derived.
+## Partition shape and the equal-partition fast path
 
 The per-machine fast path requires an equal block window
 $B_{\mathsf{loc}} = B/\mathcal M$ to be a power of two, so that `block_local`
 occupies a contiguous low-bit window and the two-bucket carry split is defined
 (the same condition `num_positions_per_block` must satisfy in the `z`-tensor Case 1). This holds
 **iff $\mathcal M$ divides exact live $B$ and $B/\mathcal M$ is a power of two**.
-At a root level, where $B=B_{\mathsf{dom}}=2^{r_{\mathsf{blk}}}$, the canonical
-choice $\mathcal M=2^N\le B$ satisfies this automatically. A recursive level can
+At a root level, where $B=B_{\mathsf{dom}}=2^{r_{\mathsf{blk}}}$, a choice
+$\mathcal M=2^N\le B$ satisfies this automatically. A recursive level can
 have $B<B_{\mathsf{dom}}$ and must not substitute $B_{\mathsf{dom}}$ merely to
 recover equal chunks.
 
-For other machine counts (not a power of two, or $\mathcal M \nmid B$) the
-contiguous partition still makes sense but $B_{\mathsf{loc}}$ is no longer a clean
-low-bit window, so the per-machine `e_hat`/`t_hat` contribution would use a dense
-per-machine evaluation — the exact analogue of the `z`-tensor dense fallback (Case
-2), at cost proportional to the machine's segment size. The combined work is still
-$O(C \cdot B)$ for the block scan, so this affects only the constant, not the
-dominant $\alpha$-evaluation cost. The recommended deployment keeps $\mathcal M$ a
-power of two so every segment lands on the peeled fast path.
+For uneven partitions, including $B<\mathcal M$, each `e_hat`/`t_hat`
+contribution uses a dense per-piece evaluation with its exact $B_j$, the analogue
+of the `z`-tensor dense fallback (Case 2). Empty pieces are skipped. The combined
+work is still $O(C \cdot B)$ for the block scan because $\sum_j B_j=B$, so this
+affects only the constant, not the dominant $\alpha$-evaluation cost. A
+power-of-two machine count alone does not justify the peeled path; exact live
+$B$ must also divide evenly and produce a power-of-two quotient.
 
 ## Relationship to setup-claim offloading
 

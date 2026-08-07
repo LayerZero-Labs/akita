@@ -89,8 +89,9 @@ batch — exactly as the generated table
   `active_setup_field_len` computes the setup-matrix footprint from role
   dimensions, so `natural_len` (hence `n_prefix`) is identical to the
   non-chunked recursive schedule. The setup-prefix precommitted **group's**
-  block geometry differs, because a chunked consuming fold requires
-  `num_live_blocks >= num_chunks`.
+  block geometry differs. A chunked consuming fold retains its full chunk count
+  even when `num_live_blocks < num_chunks`; proportional boundaries then create
+  empty block ranges.
 - **Every group is chunked the same way.** The canonical `WitnessLayout` is
   chunk-major with authenticated group order inside each chunk: at a chunked
   fold, the main witness group **and** every precommitted group (including the
@@ -130,8 +131,8 @@ the same planner, walker, prover, and verifier, and are mostly orthogonal:
   `num_chunks = policy.chunks_at_level(fold_level)` and threads it through both
   the folded-witness sizing (`grouped_setup_prefix_next_witness_len`,
   `grouped_segment_rings` scale `z_hat` by `num_chunks`) and the setup-prefix
-  group derivation (`derive_setup_prefix_group`, which skips splits with
-  `num_live_blocks < num_chunks`).
+  group derivation (`derive_setup_prefix_group`, which retains all supported
+  splits and represents `num_live_blocks < num_chunks` with empty ranges).
 - **Generated walker** stamps `lp.witness_chunk = policy.witness_chunk_for_level(fold_level)`
   on recursive folds too (`crates/akita-planner/src/generated/walk.rs`, both the
   scalar and multi-group walkers), and expands `FoldWithSetupMetadata` generically.
@@ -191,11 +192,10 @@ The following are already implemented and verified (the
    `crates/akita-config/tests/generated_tables.rs`
    (`family_catalog_is_linked`, `family_catalog`,
    `assert_family_group_batch_table_hit`, `resolve_family_group_batch_schedule`).
-5. **Planner fix.** `find_schedule`
-   (`crates/akita-planner/src/planner.rs`) now skips a chunked root fold
-   candidate whose **main** group has `num_live_blocks < num_chunks` (previously
-   only precommitted groups were checked; the main-group case was unreachable
-   until a multi-group family started emitting chunked roots).
+5. **Planner compatibility.** `find_schedule`
+   (`crates/akita-planner/src/planner.rs`) admits chunked root and precommitted
+   groups with `num_live_blocks < num_chunks`. Their exact proportional range
+   tables contain empty slots and preserve the requested chunk count.
 6. **Generated table.** `crates/akita-schedules/src/generated/fp128_d64_onehot_recursive_multi_chunk_w8r2.rs`
    plus `mod.rs` wiring. The multi-group profiling row
    (`final_group = (32, 2)`, two `(16, 1)` precommits) is:
@@ -260,11 +260,11 @@ materializes exactly the setup-prefix slots the mix schedule references, at
 
 **Why it should work.** `natural_len` is chunk-independent (setup-matrix
 footprint), and the slot id's block geometry is exactly the planner's
-`derive_setup_prefix_group` output, which enforced `num_live_blocks >= num_chunks`
-(the generated table shows the carried setup-prefix group with
-`num_live_blocks = 2048` at L1 and `1024` at L2, both `>= 8`). The commitment is
-chunk-independent — chunking only affects how the
-*fold response* is later laid out, not the committed prefix rows.
+`derive_setup_prefix_group` output. The generated table happens to use
+`num_live_blocks = 2048` at L1 and `1024` at L2, both greater than 8, but this
+is not a validity condition. Smaller groups use empty proportional ranges. The
+commitment is chunk-independent; chunking only affects how the *fold response*
+is later laid out, not the committed prefix rows.
 
 **Risk to close.** Two prefix-geometry code paths exist:
 `derive_setup_prefix_group` (planner, chunk-aware) and

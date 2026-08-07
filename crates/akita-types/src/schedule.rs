@@ -440,8 +440,9 @@ pub fn intermediate_w_ring_element_count_with_counts_bits(
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when `num_chunks == 0`, `num_chunks > 1`
-/// is not a power of two, there are fewer live blocks than chunks, or
-/// any width product overflows. Never panics — verifier-reachable through the runtime DP fallback.
+/// is not a power of two, or any width product overflows. Empty chunk ranges do
+/// not change the partitioned E/T total, and every chunk retains its Z copy.
+/// Never panics because the runtime DP fallback is verifier reachable.
 pub fn intermediate_w_ring_element_count_for_chunks(
     field_bits: u32,
     lp: &CommittedGroupParams,
@@ -466,12 +467,6 @@ pub fn intermediate_w_ring_element_count_for_chunks(
             "intermediate_w_ring_element_count_for_chunks: num_chunks must be a power of two"
                 .to_string(),
         ));
-    }
-    if lp.num_live_blocks < num_chunks {
-        return Err(AkitaError::InvalidSetup(format!(
-            "intermediate_w_ring_element_count_for_chunks: num_live_blocks={} smaller than num_chunks={num_chunks}",
-            lp.num_live_blocks
-        )));
     }
     let overflow = || AkitaError::InvalidSetup("chunked witness width overflow".to_string());
     let single =

@@ -468,8 +468,31 @@ where
 mod tests {
     use super::*;
     use akita_algebra::CyclotomicRing;
+    use akita_challenges::SparseChallenge;
 
     type F = akita_field::Prime128Offset275;
+
+    #[test]
+    fn empty_chunk_window_has_zero_fold_challenges() {
+        let challenges = Challenges::from_sparse(
+            vec![
+                SparseChallenge {
+                    positions: vec![0],
+                    coeffs: vec![1],
+                };
+                4
+            ],
+            4,
+            1,
+        )
+        .expect("challenges");
+        let empty = window_sparse_challenges(&challenges, 2..2).expect("empty window");
+
+        assert!(empty
+            .as_slice()
+            .iter()
+            .all(|challenge| challenge.positions.is_empty() && challenge.coeffs.is_empty()));
+    }
 
     #[test]
     fn joint_grind_skips_different_group_first_nonces() {

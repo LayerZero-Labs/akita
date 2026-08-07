@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao |
 | Created | 2026-08-06 |
 | Status | active |
-| PR | [#364](https://github.com/LayerZero-Labs/akita/pull/364) |
+| PR | [#372](https://github.com/LayerZero-Labs/akita/pull/372) |
 | Supersedes | The residual chunk rules in `distributed-prover.md`, `distributed-planner.md`, and `digit-innermost-layout.md` |
 | Superseded-by | |
 | Book-chapter | book/src/how/proving/opening-points-layout.md |
@@ -42,7 +42,8 @@ calculation.
 The following properties must hold:
 
 - `P` is one or a power of two no greater than 64.
-- `P` is no greater than `B`, so every range is nonempty.
+- `B` is positive. `P` may exceed `B`. The partition still contains exactly
+  `P` ranges, and consecutive equal boundaries represent empty machine slots.
 - Ranges are ordered, contiguous, and cover `[0, B)` exactly once.
 - Range lengths differ by at most one block.
 - If `P` divides `Q`, every boundary for `P` is also a boundary for `Q`.
@@ -65,6 +66,16 @@ P = 4: [0, 2), [2, 5), [5, 7), [7, 10)
 
 The boundary at five appears in both partitions.
 
+When there are more parts than blocks, the same formula places empty ranges at
+the repeated floor boundaries. Four blocks split into eight parts give
+
+```text
+[0, 0), [0, 1), [1, 1), [1, 2), [2, 2), [2, 3), [3, 3), [3, 4)
+```
+
+Each empty slot keeps its replicated Z segment. Its E and T segments are empty,
+and the honest prover writes zero into Z because its challenge window is empty.
+
 ### Non-Goals
 
 - This PR does not add B commitment slicing.
@@ -83,8 +94,10 @@ The boundary at five appears in both partitions.
       counts from 1 through 512 and supported part counts through 64.
 - [x] A ten-block regression distinguishes the new nested four-part partition
       from the old crossing partition.
-- [x] Invalid zero, non-power-of-two, over-cap, and over-partitioned counts
-      return `AkitaError::InvalidSetup`.
+- [x] Invalid zero, non-power-of-two, and over-cap counts return
+      `AkitaError::InvalidSetup`.
+- [x] Over-partitioned positive block counts preserve all slots with canonical
+      empty ranges.
 - [x] Endpoint calculation succeeds for `usize::MAX` live blocks.
 - [x] Existing multi-chunk prover and verifier tests pass.
 - [x] Generated schedule parameters stay unchanged apart from catalog identity.
@@ -93,9 +106,9 @@ The boundary at five appears in both partitions.
 
 ### Testing Strategy
 
-The unit tests in `akita-types` check the partition laws directly. Existing
-layout tests then check that E and T ranges still tile the exact live blocks and
-that Z remains replicated once per chunk.
+The unit tests in `akita-types` check the partition laws directly, including
+`B < P`. Layout tests check that E and T still tile the live blocks, that empty
+slots have empty E and T ranges, and that Z remains replicated once per chunk.
 
 The planner tests check that challenge work reads the same canonical ranges.
 The existing multi-group and multi-chunk proof tests provide end to end prover

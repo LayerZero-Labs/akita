@@ -141,9 +141,6 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
         let Some(num_positions_per_block) = 1usize.checked_shl(position_index_bits as u32) else {
             continue;
         };
-        if num_live_blocks < num_chunks {
-            continue;
-        }
         let Some(width_s) =
             decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
         else {
