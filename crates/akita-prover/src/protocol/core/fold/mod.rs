@@ -641,10 +641,15 @@ fn prove_stage2<F, E, T>(
     evaluation_trace: PreparedProverEvaluationTrace<E>,
     trace_opening_claim: E,
     plan: RelationRangeImagePlan,
-) -> Result<RelationRangeImageProveResult<E>, AkitaError>
+) -> Result<RelationRangeImageProveResult<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
+    E: ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();

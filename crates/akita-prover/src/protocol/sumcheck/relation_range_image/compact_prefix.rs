@@ -97,7 +97,11 @@ fn add_compact_round_terms<E: FieldCore>(left: &mut ([E; 3], [E; 3]), right: ([E
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
+impl<F, E> RelationRangeImageProver<F, E>
+where
+    F: FieldCore,
+    E: ExtField<F> + FromPrimitiveInt + HasUnreducedOps,
+{
     #[inline]
     pub(super) fn direct_fold_w_quad_two_rounds(
         w00: i8,

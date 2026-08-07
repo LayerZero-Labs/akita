@@ -1,6 +1,10 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
+impl<F, E> RelationRangeImageProver<F, E>
+where
+    F: FieldCore,
+    E: ExtField<F> + FromPrimitiveInt + HasUnreducedOps,
+{
     /// Create a fused stage-2 virtual-claim + relation sumcheck prover.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "RelationRangeImageProver::new")]
@@ -111,6 +115,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
 
         Ok(Self {
             witness_state: WitnessState::CompactPrefix(w_evals_compact),
+            kernel_plan: SumcheckKernelPlan::detect(),
             b,
             batching_coeff,
             range_image_evaluation,
@@ -121,6 +126,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             additional_relation_terms,
             evaluation_trace,
             live_lane_count,
+            lanes_in_binding_order: false,
             lane_bits,
             num_vars,
             relation_trace_claim,
@@ -144,7 +150,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         match &self.witness_state {
             WitnessState::FoldedSuffix(folded_witness) => {
                 assert_eq!(folded_witness.len(), 1, "witness suffix not fully folded");
-                folded_witness[0]
+                folded_witness.evaluation(0)
             }
             WitnessState::CompactPrefix(_) => {
                 panic!("witness remained in compact-prefix state after final fold")
@@ -184,9 +190,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 };
                 additional.round_polynomial_compact(compact_witness, first_challenge)
             }
-            WitnessState::FoldedSuffix(folded_witness) => {
-                additional.round_polynomial_folded(folded_witness)
-            }
+            WitnessState::FoldedSuffix(folded_witness) => additional.round_polynomial_folded(
+                folded_witness,
+                self.live_lane_count,
+                self.lanes_in_binding_order,
+                self.common_alpha_factor.len(),
+            ),
         })
     }
 
@@ -236,14 +245,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     pub(super) fn use_partial_lane_round(&self) -> bool {
         self.rounds_completed >= self.coefficient_bits()
             && self.lane_rounds_completed() < self.lane_bits
-            && self.live_lane_count < self.current_lane_capacity()
+            && (!self.lanes_in_binding_order || self.live_lane_count < self.current_lane_capacity())
     }
 
     #[inline]
     pub(super) fn next_uses_partial_lane_round(&self) -> bool {
         self.rounds_completed >= self.coefficient_bits()
             && self.lane_rounds_completed() + 1 < self.lane_bits
-            && self.live_lane_count.div_ceil(2) < (self.current_lane_capacity() / 2)
+            && (!self.lanes_in_binding_order
+                || self.live_lane_count.div_ceil(2) < (self.current_lane_capacity() / 2))
     }
 
     #[inline]

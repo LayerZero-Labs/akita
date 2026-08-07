@@ -105,8 +105,8 @@ pub struct RecursiveSuffixOutcome<F: FieldCore, E: FieldCore> {
     pub num_levels: usize,
 }
 
-pub(in crate::protocol::core) type RelationRangeImageProveResult<E> =
-    (SumcheckProof<E>, Vec<E>, RelationRangeImageProver<E>);
+pub(in crate::protocol::core) type RelationRangeImageProveResult<F, E> =
+    (SumcheckProof<E>, Vec<E>, RelationRangeImageProver<F, E>);
 
 pub(in crate::protocol::core) struct Stage3ProveOutput<E: FieldCore> {
     pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,

@@ -8,10 +8,46 @@ use super::runtime_common::{
     compute_weighted_affine_product_round_packed,
     fold_and_compute_product_round_fp_ext2_fp64_packed, fold_and_compute_product_round_packed,
     fold_and_compute_sparse_affine_polynomial_round_packed,
+    fold_and_compute_stage2_coefficient_round_packed,
     fold_class_coded_and_compute_sparse_affine_polynomial_round_packed, fold_fp_ext2_fp64_packed,
     fold_fp_ext4_fp32_packed,
 };
 use crate::{Fp32, Fp64, FpExt2, FpExt2Config, FpExt4};
+
+/// Fold one binding-order Stage 2 coefficient coordinate with NEON.
+///
+/// # Safety
+///
+/// The caller must establish that NEON is available on the current CPU.
+#[allow(clippy::too_many_arguments)]
+#[target_feature(enable = "neon")]
+pub unsafe fn fold_and_compute_stage2_coefficient_round_fp_ext4_fp32_neon<const P: u32>(
+    witness: [&mut [Fp32<P>]; 4],
+    live_lane_count: usize,
+    old_coefficient_count: usize,
+    next_alpha_factor: &[FpExt4<Fp32<P>>],
+    relation_lane_weights: &[FpExt4<Fp32<P>>],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    challenge: FpExt4<Fp32<P>>,
+    include_norm_linear: bool,
+) -> ([FpExt4<Fp32<P>>; 3], [FpExt4<Fp32<P>>; 3]) {
+    // SAFETY: this target function enables the feature required by the packed
+    // backend; the shared traversal validates the table and factor shapes.
+    unsafe {
+        fold_and_compute_stage2_coefficient_round_packed::<P, PackedFp32Neon<P>>(
+            witness,
+            live_lane_count,
+            old_coefficient_count,
+            next_alpha_factor,
+            relation_lane_weights,
+            first_equality,
+            second_equality,
+            challenge,
+            include_norm_linear,
+        )
+    }
+}
 
 /// Fold fp32 quartic-extension slices four rows at a time with NEON.
 ///

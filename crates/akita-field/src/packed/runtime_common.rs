@@ -461,6 +461,152 @@ where
     }
 }
 
+/// Fold one binding-order Stage 2 coefficient coordinate and compute the next
+/// norm and ordinary-relation round in the same packed traversal.
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+pub(super) unsafe fn fold_and_compute_stage2_coefficient_round_packed<const P: u32, PF>(
+    witness: [&mut [Fp32<P>]; 4],
+    live_lane_count: usize,
+    old_coefficient_count: usize,
+    next_alpha_factor: &[FpExt4<Fp32<P>>],
+    relation_lane_weights: &[FpExt4<Fp32<P>>],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    challenge: FpExt4<Fp32<P>>,
+    include_norm_linear: bool,
+) -> ([FpExt4<Fp32<P>>; 3], [FpExt4<Fp32<P>>; 3])
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    assert!(old_coefficient_count.is_power_of_two() && old_coefficient_count >= 4);
+    assert!(witness
+        .iter()
+        .all(|coefficient| coefficient.len() == live_lane_count * old_coefficient_count));
+    assert!(relation_lane_weights.len() >= live_lane_count);
+    assert!(!first_equality.is_empty() && first_equality.len().is_power_of_two());
+    assert!(!second_equality.is_empty());
+
+    let next_coefficient_count = old_coefficient_count / 2;
+    let next_pair_count = next_coefficient_count / 2;
+    assert_eq!(next_alpha_factor.len(), next_coefficient_count);
+    assert!(
+        first_equality.len() * second_equality.len() >= live_lane_count * next_pair_count,
+        "split equality table does not cover the live Stage 2 rows"
+    );
+
+    let witness = witness.map(|coefficient| coefficient.as_mut_ptr());
+    let witness_read = witness.map(|pointer| pointer.cast_const());
+    let zero_value = FpExt4::<Fp32<P>>::zero();
+    let zero = PackedFpExt4::<Fp32<P>, PF>::broadcast(zero_value);
+    let one = PackedFpExt4::<Fp32<P>, PF>::broadcast(FpExt4::one());
+    let challenge = PackedFpExt4::<Fp32<P>, PF>::broadcast(challenge);
+    let mut norm = [zero; 3];
+    let mut relation = [zero; 3];
+
+    let old_half = live_lane_count * next_coefficient_count;
+    let next_half = live_lane_count * next_pair_count;
+    let lanes_use_binding_order = live_lane_count == relation_lane_weights.len();
+    for stored_pair in 0..next_pair_count {
+        let logical_pair = reverse_power_of_two_index(stored_pair, next_pair_count);
+        let pair_start = stored_pair * live_lane_count;
+        let alpha_0 = PackedFpExt4::broadcast(next_alpha_factor[stored_pair]);
+        let alpha_1 = PackedFpExt4::broadcast(next_alpha_factor[stored_pair + next_pair_count]);
+        let alpha_delta = alpha_1 - alpha_0;
+
+        for stored_lane in (0..live_lane_count).step_by(PF::WIDTH) {
+            let active_lanes = (live_lane_count - stored_lane).min(PF::WIDTH);
+            let row_0 = pair_start + stored_lane;
+            let row_1 = row_0 + next_half;
+            let load = |row| unsafe {
+                if active_lanes == PF::WIDTH {
+                    read_packed_fp_ext4::<P, PF>(witness_read, row)
+                } else {
+                    gather_packed_fp_ext4::<P, PF>(witness_read, active_lanes, |lane| row + lane)
+                }
+            };
+            let source_00 = load(row_0);
+            let source_01 = load(row_0 + old_half);
+            let source_10 = load(row_1);
+            let source_11 = load(row_1 + old_half);
+            let folded_0 = source_00 + (source_01 - source_00) * challenge;
+            let folded_1 = source_10 + (source_11 - source_10) * challenge;
+
+            if active_lanes == PF::WIDTH {
+                unsafe {
+                    write_packed_fp_ext4(witness, row_0, folded_0);
+                    write_packed_fp_ext4(witness, row_1, folded_1);
+                }
+            } else {
+                for lane in 0..active_lanes {
+                    unsafe {
+                        write_scattered_fp_ext4_lane(witness, row_0 + lane, folded_0, lane);
+                        write_scattered_fp_ext4_lane(witness, row_1 + lane, folded_1, lane);
+                    }
+                }
+            }
+
+            let first = packed_extension_values::<P, PF>(|lane| {
+                if lane >= active_lanes {
+                    return zero_value;
+                }
+                let lane = stored_lane + lane;
+                let logical_lane = if lanes_use_binding_order {
+                    reverse_power_of_two_index(lane, live_lane_count)
+                } else {
+                    lane
+                };
+                let address = logical_lane * next_pair_count + logical_pair;
+                first_equality[address & (first_equality.len() - 1)]
+            });
+            let second = packed_extension_values::<P, PF>(|lane| {
+                if lane >= active_lanes {
+                    return zero_value;
+                }
+                let lane = stored_lane + lane;
+                let logical_lane = if lanes_use_binding_order {
+                    reverse_power_of_two_index(lane, live_lane_count)
+                } else {
+                    lane
+                };
+                let address = logical_lane * next_pair_count + logical_pair;
+                second_equality[address / first_equality.len()]
+            });
+            let equality = first * second;
+            let witness_delta = folded_1 - folded_0;
+            norm[0] = norm[0] + equality * folded_0 * (folded_0 + one);
+            if include_norm_linear {
+                norm[1] = norm[1] + equality * witness_delta * (folded_0 + folded_0 + one);
+            }
+            norm[2] = norm[2] + equality * witness_delta * witness_delta;
+
+            let lane_weight = packed_extension_values::<P, PF>(|lane| {
+                if lane < active_lanes {
+                    relation_lane_weights[stored_lane + lane]
+                } else {
+                    zero_value
+                }
+            });
+            relation[0] = relation[0] + lane_weight * folded_0 * alpha_0;
+            relation[1] =
+                relation[1] + lane_weight * (folded_0 * alpha_delta + witness_delta * alpha_0);
+            relation[2] = relation[2] + lane_weight * witness_delta * alpha_delta;
+        }
+    }
+
+    (norm.map(sum_fp32_lanes), relation.map(sum_fp32_lanes))
+}
+
+#[inline(always)]
+fn reverse_power_of_two_index(index: usize, len: usize) -> usize {
+    debug_assert!(len.is_power_of_two());
+    if len <= 1 {
+        0
+    } else {
+        index.reverse_bits() >> (usize::BITS - len.trailing_zeros())
+    }
+}
+
 #[inline(always)]
 unsafe fn fold_and_compute_sparse_affine_polynomial_round_from_source_packed<const P: u32, PF>(
     pair_count: usize,
@@ -888,6 +1034,44 @@ where
             unsafe { *coefficients[coefficient].add(row + lane) }
         })
     }))
+}
+
+#[inline(always)]
+unsafe fn gather_packed_fp_ext4<const P: u32, PF>(
+    coefficients: [*const Fp32<P>; 4],
+    active_lanes: usize,
+    mut row_at: impl FnMut(usize) -> usize,
+) -> PackedFpExt4<Fp32<P>, PF>
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    PackedFpExt4::new(std::array::from_fn(|coefficient| {
+        PF::from_fn(|lane| {
+            if lane < active_lanes {
+                unsafe { *coefficients[coefficient].add(row_at(lane)) }
+            } else {
+                Fp32::zero()
+            }
+        })
+    }))
+}
+
+#[inline(always)]
+unsafe fn write_scattered_fp_ext4_lane<const P: u32, PF>(
+    coefficients: [*mut Fp32<P>; 4],
+    row: usize,
+    value: PackedFpExt4<Fp32<P>, PF>,
+    packed_lane: usize,
+) where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    for (coefficient, packed) in value.coeffs.into_iter().enumerate() {
+        unsafe {
+            coefficients[coefficient]
+                .add(row)
+                .write(packed.extract(packed_lane))
+        };
+    }
 }
 
 #[inline(always)]

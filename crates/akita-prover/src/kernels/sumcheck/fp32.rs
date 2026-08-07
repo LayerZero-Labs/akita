@@ -2,7 +2,8 @@
 
 use super::{
     compute_weighted_affine_polynomial_round_scalar, compute_weighted_affine_product_round_scalar,
-    Fp32Kernel, SumcheckKernelPlan, SumcheckTableOperations,
+    fold_and_compute_stage2_coefficient_round_scalar, Fp32Kernel, SumcheckKernelPlan,
+    SumcheckTableOperations,
 };
 use akita_field::{Fp32, FpExt4};
 use akita_sumcheck::{
@@ -134,9 +135,118 @@ impl<const P: u32> SumcheckTableOperations<Fp32<P>> for FpExt4<Fp32<P>> {
             degree,
         )
     }
+
+    fn fold_and_compute_stage2_coefficient_round(
+        plan: SumcheckKernelPlan,
+        witness: &mut EvaluationTable<Fp32<P>, Self>,
+        live_lane_count: usize,
+        old_coefficient_count: usize,
+        next_alpha_factor: &[Self],
+        relation_lane_weights: &[Self],
+        first_equality: &[Self],
+        second_equality: &[Self],
+        challenge: Self,
+        include_norm_linear: bool,
+    ) -> ([Self; 3], [Self; 3]) {
+        plan.fold_and_compute_stage2_coefficient_round_fp32(
+            witness,
+            live_lane_count,
+            old_coefficient_count,
+            next_alpha_factor,
+            relation_lane_weights,
+            first_equality,
+            second_equality,
+            challenge,
+            include_norm_linear,
+        )
+    }
 }
 
 impl SumcheckKernelPlan {
+    /// Fold a binding-order fp32 Stage 2 coefficient coordinate and compute
+    /// its next norm and ordinary-relation round.
+    #[allow(clippy::too_many_arguments)]
+    pub fn fold_and_compute_stage2_coefficient_round_fp32<const P: u32>(
+        self,
+        witness: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+        live_lane_count: usize,
+        old_coefficient_count: usize,
+        next_alpha_factor: &[FpExt4<Fp32<P>>],
+        relation_lane_weights: &[FpExt4<Fp32<P>>],
+        first_equality: &[FpExt4<Fp32<P>>],
+        second_equality: &[FpExt4<Fp32<P>>],
+        challenge: FpExt4<Fp32<P>>,
+        include_norm_linear: bool,
+    ) -> ([FpExt4<Fp32<P>>; 3], [FpExt4<Fp32<P>>; 3]) {
+        let next_len = live_lane_count * (old_coefficient_count / 2);
+        let result = match self.fp32_stage2_coefficient_round {
+            Fp32Kernel::Scalar => fold_and_compute_stage2_coefficient_round_scalar(
+                witness,
+                live_lane_count,
+                old_coefficient_count,
+                next_alpha_factor,
+                relation_lane_weights,
+                first_equality,
+                second_equality,
+                challenge,
+                include_norm_linear,
+            ),
+            #[cfg(target_arch = "aarch64")]
+            Fp32Kernel::Neon => {
+                let coefficients = witness.coefficient_slices_mut::<4>();
+                unsafe {
+                    akita_field::packed::runtime_neon::fold_and_compute_stage2_coefficient_round_fp_ext4_fp32_neon(
+                        coefficients,
+                        live_lane_count,
+                        old_coefficient_count,
+                        next_alpha_factor,
+                        relation_lane_weights,
+                        first_equality,
+                        second_equality,
+                        challenge,
+                        include_norm_linear,
+                    )
+                }
+            }
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx2 => {
+                let coefficients = witness.coefficient_slices_mut::<4>();
+                unsafe {
+                    akita_field::packed::runtime_x86::fold_and_compute_stage2_coefficient_round_fp_ext4_fp32_avx2(
+                        coefficients,
+                        live_lane_count,
+                        old_coefficient_count,
+                        next_alpha_factor,
+                        relation_lane_weights,
+                        first_equality,
+                        second_equality,
+                        challenge,
+                        include_norm_linear,
+                    )
+                }
+            }
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx512Ifma => {
+                let coefficients = witness.coefficient_slices_mut::<4>();
+                unsafe {
+                    akita_field::packed::runtime_x86::fold_and_compute_stage2_coefficient_round_fp_ext4_fp32_avx512_ifma(
+                        coefficients,
+                        live_lane_count,
+                        old_coefficient_count,
+                        next_alpha_factor,
+                        relation_lane_weights,
+                        first_equality,
+                        second_equality,
+                        challenge,
+                        include_norm_linear,
+                    )
+                }
+            }
+        };
+        witness.truncate(next_len);
+        result
+    }
+
     /// Fold one fp32 quartic-extension table using the detected operation.
     pub fn fold_first_variable_fp32<const P: u32>(
         self,

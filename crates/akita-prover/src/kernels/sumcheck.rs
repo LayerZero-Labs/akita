@@ -5,8 +5,8 @@ use akita_field::{ExtField, FieldCore};
 use akita_sumcheck::{
     batched_affine_product_coefficients, compose_polynomial_with_affine,
     compute_product_round_scalar, fold_and_compute_product_round_scalar,
-    fold_first_variable_scalar, EvaluationTable, MAX_AFFINE_POLYNOMIAL_DEGREE,
-    MAX_AFFINE_PRODUCT_DEGREE,
+    fold_first_variable_scalar, DelayedProductSum, DirectProductSum, EvaluationTable,
+    ProductSumAccumulator, MAX_AFFINE_POLYNOMIAL_DEGREE, MAX_AFFINE_PRODUCT_DEGREE,
 };
 
 mod fp32;
@@ -23,6 +23,7 @@ pub struct SumcheckKernelPlan {
     pub(super) fp32_fold: Fp32Kernel,
     pub(super) fp32_product_round: Fp32Kernel,
     pub(super) fp32_fold_and_product_round: Fp32Kernel,
+    pub(super) fp32_stage2_coefficient_round: Fp32Kernel,
     pub(super) fp64_fold: Fp64Kernel,
     pub(super) fp64_product_round: Fp64Kernel,
     pub(super) fp64_fold_and_product_round: Fp64Kernel,
@@ -192,6 +193,196 @@ where
     {
         None
     }
+
+    /// Fold one Stage 2 coefficient coordinate in place and compute the next
+    /// norm and ordinary-relation round from the folded witness.
+    #[allow(clippy::too_many_arguments)]
+    fn fold_and_compute_stage2_coefficient_round(
+        _plan: SumcheckKernelPlan,
+        witness: &mut EvaluationTable<F, Self>,
+        live_lane_count: usize,
+        old_coefficient_count: usize,
+        next_alpha_factor: &[Self],
+        relation_lane_weights: &[Self],
+        first_equality: &[Self],
+        second_equality: &[Self],
+        challenge: Self,
+        include_norm_linear: bool,
+    ) -> ([Self; 3], [Self; 3])
+    where
+        Self: Sized,
+    {
+        fold_and_compute_stage2_coefficient_round_scalar(
+            witness,
+            live_lane_count,
+            old_coefficient_count,
+            next_alpha_factor,
+            relation_lane_weights,
+            first_equality,
+            second_equality,
+            challenge,
+            include_norm_linear,
+        )
+    }
+}
+
+/// Return one contiguous block that shares a value from the outer split
+/// equality table.
+#[inline]
+pub(crate) fn stage2_equality_block(
+    address_base: usize,
+    block_start: usize,
+    first_len: usize,
+    first_bits: usize,
+    block_size: usize,
+    live_pairs: usize,
+) -> (usize, usize) {
+    debug_assert!(first_len.is_power_of_two());
+    let address = address_base + block_start;
+    let second_index = address >> first_bits;
+    let bucket_remaining = first_len - (address & (first_len - 1));
+    let block_end = (block_start + block_size.min(bucket_remaining)).min(live_pairs);
+    (second_index, block_end)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn fold_and_compute_stage2_coefficient_round_scalar<F, E>(
+    witness: &mut EvaluationTable<F, E>,
+    live_lane_count: usize,
+    old_coefficient_count: usize,
+    next_alpha_factor: &[E],
+    relation_lane_weights: &[E],
+    first_equality: &[E],
+    second_equality: &[E],
+    challenge: E,
+    include_norm_linear: bool,
+) -> ([E; 3], [E; 3])
+where
+    F: FieldCore,
+    E: ExtField<F> + HasOptimizedFold + HasUnreducedOps,
+{
+    if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+        fold_and_compute_stage2_coefficient_round_with::<F, E, DelayedProductSum<E>>(
+            witness,
+            live_lane_count,
+            old_coefficient_count,
+            next_alpha_factor,
+            relation_lane_weights,
+            first_equality,
+            second_equality,
+            challenge,
+            include_norm_linear,
+        )
+    } else {
+        fold_and_compute_stage2_coefficient_round_with::<F, E, DirectProductSum<E>>(
+            witness,
+            live_lane_count,
+            old_coefficient_count,
+            next_alpha_factor,
+            relation_lane_weights,
+            first_equality,
+            second_equality,
+            challenge,
+            include_norm_linear,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fold_and_compute_stage2_coefficient_round_with<F, E, A>(
+    witness: &mut EvaluationTable<F, E>,
+    live_lane_count: usize,
+    old_coefficient_count: usize,
+    next_alpha_factor: &[E],
+    relation_lane_weights: &[E],
+    first_equality: &[E],
+    second_equality: &[E],
+    challenge: E,
+    include_norm_linear: bool,
+) -> ([E; 3], [E; 3])
+where
+    F: FieldCore,
+    E: ExtField<F> + HasOptimizedFold + HasUnreducedOps,
+    A: ProductSumAccumulator<E>,
+{
+    assert!(old_coefficient_count.is_power_of_two() && old_coefficient_count >= 4);
+    assert_eq!(witness.len(), live_lane_count * old_coefficient_count);
+    assert!(relation_lane_weights.len() >= live_lane_count);
+    assert!(first_equality.len().is_power_of_two());
+    let next_coefficient_count = old_coefficient_count / 2;
+    let next_pair_count = next_coefficient_count / 2;
+    assert_eq!(next_alpha_factor.len(), next_coefficient_count);
+    assert!(
+        first_equality.len() * second_equality.len() >= live_lane_count * next_pair_count,
+        "split equality table does not cover the live Stage 2 rows"
+    );
+
+    let fold = E::precompute_fold(challenge);
+    let mut total_norm: [A; 3] = std::array::from_fn(|_| A::zero());
+    let mut total_relation: [A; 3] = std::array::from_fn(|_| A::zero());
+
+    let old_half = live_lane_count * next_coefficient_count;
+    let next_half = live_lane_count * next_pair_count;
+    let lanes_use_binding_order = live_lane_count == relation_lane_weights.len();
+    for stored_pair in 0..next_pair_count {
+        let logical_pair = reverse_power_of_two_index(stored_pair, next_pair_count);
+        let alpha_0 = next_alpha_factor[stored_pair];
+        let alpha_delta = next_alpha_factor[stored_pair + next_pair_count] - alpha_0;
+        let pair_start = stored_pair * live_lane_count;
+        for (stored_lane, &lane_weight) in relation_lane_weights
+            .iter()
+            .take(live_lane_count)
+            .enumerate()
+        {
+            let row_0 = pair_start + stored_lane;
+            let row_1 = row_0 + next_half;
+            let witness_0 = E::fold_one(
+                &fold,
+                witness.evaluation(row_0),
+                witness.evaluation(row_0 + old_half),
+            );
+            let witness_1 = E::fold_one(
+                &fold,
+                witness.evaluation(row_1),
+                witness.evaluation(row_1 + old_half),
+            );
+            witness.set_evaluation(row_0, witness_0);
+            witness.set_evaluation(row_1, witness_1);
+
+            let logical_lane = if lanes_use_binding_order {
+                reverse_power_of_two_index(stored_lane, live_lane_count)
+            } else {
+                stored_lane
+            };
+            let equality_address = logical_lane * next_pair_count + logical_pair;
+            let equality = first_equality[equality_address & (first_equality.len() - 1)]
+                * second_equality[equality_address / first_equality.len()];
+            let witness_delta = witness_1 - witness_0;
+            total_norm[0].add_product(equality, witness_0 * (witness_0 + E::one()));
+            if include_norm_linear {
+                total_norm[1]
+                    .add_product(equality, witness_delta * (witness_0 + witness_0 + E::one()));
+            }
+            total_norm[2].add_product(equality, witness_delta * witness_delta);
+
+            total_relation[0].add_product(witness_0, lane_weight * alpha_0);
+            total_relation[1].add_product(witness_0, lane_weight * alpha_delta);
+            total_relation[1].add_product(witness_delta, lane_weight * alpha_0);
+            total_relation[2].add_product(witness_delta, lane_weight * alpha_delta);
+        }
+    }
+    witness.truncate(live_lane_count * next_coefficient_count);
+    (total_norm.map(A::finish), total_relation.map(A::finish))
+}
+
+#[inline]
+fn reverse_power_of_two_index(index: usize, len: usize) -> usize {
+    debug_assert!(len.is_power_of_two());
+    if len <= 1 {
+        0
+    } else {
+        index.reverse_bits() >> (usize::BITS - len.trailing_zeros())
+    }
 }
 
 fn compute_weighted_affine_polynomial_round_scalar<F, E>(
@@ -268,6 +459,7 @@ impl SumcheckKernelPlan {
             fp32_fold: fp32,
             fp32_product_round: fp32,
             fp32_fold_and_product_round: fp32,
+            fp32_stage2_coefficient_round: fp32,
             fp64_fold: fp64,
             fp64_product_round: Fp64Kernel::Scalar,
             fp64_fold_and_product_round: fp64,
@@ -279,6 +471,7 @@ impl SumcheckKernelPlan {
         fp32_fold: Fp32Kernel::Scalar,
         fp32_product_round: Fp32Kernel::Scalar,
         fp32_fold_and_product_round: Fp32Kernel::Scalar,
+        fp32_stage2_coefficient_round: Fp32Kernel::Scalar,
         fp64_fold: Fp64Kernel::Scalar,
         fp64_product_round: Fp64Kernel::Scalar,
         fp64_fold_and_product_round: Fp64Kernel::Scalar,
@@ -289,6 +482,7 @@ impl SumcheckKernelPlan {
         fp32_fold: Fp32Kernel::Neon,
         fp32_product_round: Fp32Kernel::Neon,
         fp32_fold_and_product_round: Fp32Kernel::Neon,
+        fp32_stage2_coefficient_round: Fp32Kernel::Neon,
         fp64_fold: Fp64Kernel::Neon,
         fp64_product_round: Fp64Kernel::Neon,
         fp64_fold_and_product_round: Fp64Kernel::Neon,
@@ -299,6 +493,7 @@ impl SumcheckKernelPlan {
         fp32_fold: Fp32Kernel::Avx2,
         fp32_product_round: Fp32Kernel::Avx2,
         fp32_fold_and_product_round: Fp32Kernel::Avx2,
+        fp32_stage2_coefficient_round: Fp32Kernel::Avx2,
         fp64_fold: Fp64Kernel::Avx2,
         fp64_product_round: Fp64Kernel::Avx2,
         fp64_fold_and_product_round: Fp64Kernel::Avx2,
@@ -309,6 +504,7 @@ impl SumcheckKernelPlan {
         fp32_fold: Fp32Kernel::Avx512Ifma,
         fp32_product_round: Fp32Kernel::Avx512Ifma,
         fp32_fold_and_product_round: Fp32Kernel::Avx512Ifma,
+        fp32_stage2_coefficient_round: Fp32Kernel::Avx512Ifma,
         fp64_fold: Fp64Kernel::Avx512,
         fp64_product_round: Fp64Kernel::Avx512,
         fp64_fold_and_product_round: Fp64Kernel::Avx512,

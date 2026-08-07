@@ -317,6 +317,62 @@ fn compare_sparse_affine_polynomial_fold_plan(plan: SumcheckKernelPlan) {
     }
 }
 
+fn compare_stage2_coefficient_round_plan(plan: SumcheckKernelPlan) {
+    for old_coefficient_count in [4usize, 8, 16] {
+        for live_lane_count in [1usize, 3, 7] {
+            let len = live_lane_count * old_coefficient_count;
+            let witness = EvaluationTable::<F, E>::from_evaluation_fn(len, value);
+            let next_coefficient_count = old_coefficient_count / 2;
+            let pair_count = live_lane_count * (next_coefficient_count / 2);
+            let first_equality_len = pair_count.next_power_of_two().min(4);
+            let second_equality_len = pair_count.div_ceil(first_equality_len).next_power_of_two();
+            let next_alpha_factor = (0..next_coefficient_count)
+                .map(|row| value(len + row + 17))
+                .collect::<Vec<_>>();
+            let relation_lane_weights = (0..live_lane_count.next_power_of_two())
+                .map(|row| value(len + row + 41))
+                .collect::<Vec<_>>();
+            let first_equality = (0..first_equality_len)
+                .map(|row| value(len + row + 73))
+                .collect::<Vec<_>>();
+            let second_equality = (0..second_equality_len)
+                .map(|row| value(len + row + 101))
+                .collect::<Vec<_>>();
+            let challenge = value(len + 131);
+
+            for include_norm_linear in [false, true] {
+                let mut expected_witness = witness.clone();
+                let expected = SumcheckKernelPlan::SCALAR
+                    .fold_and_compute_stage2_coefficient_round_fp32(
+                        &mut expected_witness,
+                        live_lane_count,
+                        old_coefficient_count,
+                        &next_alpha_factor,
+                        &relation_lane_weights,
+                        &first_equality,
+                        &second_equality,
+                        challenge,
+                        include_norm_linear,
+                    );
+                let mut actual_witness = witness.clone();
+                let actual = plan.fold_and_compute_stage2_coefficient_round_fp32(
+                    &mut actual_witness,
+                    live_lane_count,
+                    old_coefficient_count,
+                    &next_alpha_factor,
+                    &relation_lane_weights,
+                    &first_equality,
+                    &second_equality,
+                    challenge,
+                    include_norm_linear,
+                );
+                assert_eq!(actual_witness, expected_witness);
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+}
+
 fn compare_fp64_plan(plan: SumcheckKernelPlan) {
     for len in [2, 4, 8, 16, 32, 64, 256] {
         let source: Vec<_> = (0..len).map(value64).collect();
@@ -381,6 +437,7 @@ fn detected_fp32_fold_matches_scalar() {
     compare_compact_affine_product_plan::<8>(SumcheckKernelPlan::detect(), 4);
     compare_class_coded_affine_polynomial_plan(SumcheckKernelPlan::detect());
     compare_sparse_affine_polynomial_fold_plan(SumcheckKernelPlan::detect());
+    compare_stage2_coefficient_round_plan(SumcheckKernelPlan::detect());
     compare_fp64_plan(SumcheckKernelPlan::detect());
 }
 
@@ -400,6 +457,7 @@ fn supported_x86_fp32_folds_match_scalar() {
         compare_compact_affine_product_plan::<8>(SumcheckKernelPlan::AVX2, 4);
         compare_class_coded_affine_polynomial_plan(SumcheckKernelPlan::AVX2);
         compare_sparse_affine_polynomial_fold_plan(SumcheckKernelPlan::AVX2);
+        compare_stage2_coefficient_round_plan(SumcheckKernelPlan::AVX2);
         compare_fp64_plan(SumcheckKernelPlan::AVX2);
     }
     if std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512ifma") {
@@ -415,6 +473,7 @@ fn supported_x86_fp32_folds_match_scalar() {
         compare_compact_affine_product_plan::<8>(SumcheckKernelPlan::AVX512_IFMA, 4);
         compare_class_coded_affine_polynomial_plan(SumcheckKernelPlan::AVX512_IFMA);
         compare_sparse_affine_polynomial_fold_plan(SumcheckKernelPlan::AVX512_IFMA);
+        compare_stage2_coefficient_round_plan(SumcheckKernelPlan::AVX512_IFMA);
         compare_fp64_plan(SumcheckKernelPlan::AVX512_IFMA);
     }
 }
@@ -435,6 +494,7 @@ fn supported_neon_fp32_folds_match_scalar() {
         compare_compact_affine_product_plan::<8>(SumcheckKernelPlan::NEON, 4);
         compare_class_coded_affine_polynomial_plan(SumcheckKernelPlan::NEON);
         compare_sparse_affine_polynomial_fold_plan(SumcheckKernelPlan::NEON);
+        compare_stage2_coefficient_round_plan(SumcheckKernelPlan::NEON);
         compare_fp64_plan(SumcheckKernelPlan::NEON);
     }
 }
