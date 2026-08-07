@@ -57,8 +57,8 @@ The checked-in workflow currently runs:
 | `dense_fp128_d64` | fp128 | dense | 24 | 1 | D64 | `direct` | fp128 dense smoke at the proof-size-optimal ring dimension (D64 beats D128 by ~18-22%). |
 | `onehot_fp128_d64` | fp128 | 1-of-256 one-hot | 32 | 1 | D64 | `direct` | Explicit fp128 one-hot mode at the proof-size-optimal ring dimension. fp128 folds aggressively enough to stay at nv=32 under the eq-table budget. |
 | `onehot_fp128_d64` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D64 | `direct` | Preserves same-point batched one-hot coverage. |
-| `onehot_fp128_d64_multi_group_recursive` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | D64 recursive multi-group | `direct` | Direct setup-contribution baseline for the recursive setup comparison skill's canonical multi-group profile. |
-| `onehot_fp128_d64_multi_group_recursive` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | D64 recursive multi-group | `recursive` | Same multi-group profile with `SetupContributionMode::Recursive`, so CI tracks recursive setup-product verifier work against the direct baseline. |
+| `onehot_fp128_multi_group` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | adaptive | `direct` | Direct multi-group coverage using the canonical adaptive fp128 one-hot catalog. |
+| `onehot_fp128_d64_multi_group_recursive` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | D64 recursive multi-group | `recursive` | Recursive setup-product coverage using the dedicated recursive companion catalog. |
 | `onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2` | fp128 | 1-of-256 one-hot batched multi-group W8R2 | 32 | 4 | D64 recursive multi-group W8R2 | `recursive` | Existing distributed recursive setup-offload row: `8` chunks, `2` leading levels. |
 | `onehot_fp128_d64_multi_chunk_w2r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W2R2 | `direct` | `2` chunks, `2` leading levels. |
 | `onehot_fp128_d64_multi_chunk_w4r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W4R2 | `direct` | `4` chunks, `2` leading levels. |

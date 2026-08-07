@@ -93,6 +93,9 @@ CASE_METADATA: dict[str, CaseMetadata] = {
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "mixed D256 to D64"
     ),
     "dense_fp128": CaseMetadata("fp128", "dense", "dense", "mixed D256 to D64"),
+    "onehot_fp128_multi_group": CaseMetadata(
+        "fp128", "onehot", "multi-group one-hot", "multi-group"
+    ),
     "onehot_fp128_d64_multi_group_recursive": CaseMetadata(
         "fp128", "onehot", "multi-group one-hot", "D64 recursive multi-group"
     ),

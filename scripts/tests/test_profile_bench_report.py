@@ -428,6 +428,26 @@ class ProfileBenchReportTests(unittest.TestCase):
 
         self.assertEqual(human_case_label(summary), "Fp128 - nv32Onehot256")
 
+    def test_adaptive_multi_group_case_label_omits_ring_dimensions(self) -> None:
+        from scripts.profile_bench_report import human_case_label, normalize_case_summary
+
+        summary = normalize_case_summary(
+            {
+                "mode": "onehot_fp128_multi_group",
+                "num_vars": 32,
+                "num_polys": 4,
+                "exit_code": 0,
+                "planned_levels": [
+                    {"level": 0, "d_a": 256, "d_b": 64, "d_d": 64}
+                ],
+            }
+        )
+
+        self.assertEqual(
+            human_case_label(summary),
+            "Fp128 - nv32Onehot256 - Batched4 - MultiGroup",
+        )
+
     def test_case_label_keeps_non_dimension_topology_variant(self) -> None:
         from scripts.profile_bench_report import human_case_label, normalize_case_summary
 

@@ -2,8 +2,8 @@
 
 use crate::report::print_layout;
 use crate::workload::{
-    onehot_k_for_num_vars, run_batched_onehot, run_dense_for, run_onehot,
-    run_recursive_multi_group_onehot,
+    onehot_k_for_num_vars, profile_setup_contribution_mode, run_batched_onehot, run_dense_for,
+    run_onehot, run_recursive_multi_group_onehot,
 };
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
@@ -17,7 +17,7 @@ use akita_field::{
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupParams, FpExtEncoding, MultiChunkProfileId,
-    PolynomialGroupLayout,
+    PolynomialGroupLayout, SetupContributionMode,
 };
 
 type F = fp128::Field;
@@ -184,6 +184,10 @@ const PROFILE_CI_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128,
     },
     ProfileMode {
+        name: "onehot_fp128_multi_group",
+        run: run_profile_onehot_fp128_multi_group,
+    },
+    ProfileMode {
         name: "onehot_fp128_d64_multi_group_recursive",
         run: run_profile_onehot_fp128_d64_multi_group_recursive,
     },
@@ -222,6 +226,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "onehot_fp128",
         run: run_profile_onehot_fp128,
+    },
+    ProfileMode {
+        name: "onehot_fp128_multi_group",
+        run: run_profile_onehot_fp128_multi_group,
     },
     ProfileMode {
         name: "onehot_fp128_d64_multi_group_recursive",
@@ -288,6 +296,7 @@ fn profile_modes() -> &'static [ProfileMode] {
 /// Modes registered for explicit `AKITA_MODE=…` runs but omitted from `all`.
 #[cfg(not(feature = "profile-onehot-fp128-d64"))]
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
+    "onehot_fp128_multi_group",
     "onehot_fp128_d64_multi_chunk_w2r2",
     "onehot_fp128_d64_multi_chunk_w4r2",
     "onehot_fp128_d64_multi_chunk_w8r2",
@@ -383,14 +392,11 @@ fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
     run_onehot::<F, { Cfg::D }, Cfg>("onehot_fp128", nv, &layout, Some(&schedule), false);
 }
 
-/// Shared driver for the recursive multi-group profiles. Every such profile
+/// Shared driver for the multi-group profiles. Every such profile
 /// fixes the same shape (two precommitted 16-var singleton groups + a 32-var
 /// main group with 2 polynomials, i.e. `num_polys == 4`); only the base preset
 /// (`Cfg`) and the `layout_note` describing its witness layout differ.
-fn run_recursive_multi_group_mode<
-    const D: usize,
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
->(
+fn run_multi_group_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     label: &str,
     layout_note: &str,
     nv: usize,
@@ -408,9 +414,24 @@ fn run_recursive_multi_group_mode<
     run_recursive_multi_group_onehot::<F, D, Cfg>(label, 16, 32, 2);
 }
 
+fn run_profile_onehot_fp128_multi_group(nv: usize, num_polys: usize) {
+    type Cfg = fp128::OneHot;
+    assert_eq!(
+        profile_setup_contribution_mode(),
+        SetupContributionMode::Direct,
+        "onehot_fp128_multi_group supports direct setup contribution only"
+    );
+    run_multi_group_mode::<{ Cfg::D }, Cfg>(
+        "onehot_fp128_multi_group",
+        "generated per-level dimensions",
+        nv,
+        num_polys,
+    );
+}
+
 fn run_profile_onehot_fp128_d64_multi_group_recursive(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64OneHot;
-    run_recursive_multi_group_mode::<{ Cfg::D }, Cfg>(
+    run_multi_group_mode::<{ Cfg::D }, Cfg>(
         "onehot_fp128_d64_multi_group_recursive",
         "recursive setup",
         nv,
@@ -426,7 +447,7 @@ fn run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2(
     // levels); the recursive adapter (applied inside
     // `run_recursive_multi_group_onehot`) adds setup offloading.
     type Cfg = fp128::D64OneHotMultiChunk;
-    run_recursive_multi_group_mode::<{ Cfg::D }, Cfg>(
+    run_multi_group_mode::<{ Cfg::D }, Cfg>(
         "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
         "recursive setup offloading + W8R2 chunked witness: num_chunks=8 x 2 leading levels",
         nv,

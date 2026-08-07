@@ -71,9 +71,9 @@ jobs:
               onehot_fp32_d128:28:1
               onehot_fp64_d128:28:1
               onehot_fp128:32:1
-          - name: 4-multi-group-recursive-direct
+          - name: 4-multi-group-direct
             cases: |
-              onehot_fp128_d64_multi_group_recursive:32:4:direct
+              onehot_fp128_multi_group:32:4:direct
           - name: 5-multi-group-recursive
             cases: |
               onehot_fp128_d64_multi_group_recursive:32:4:recursive

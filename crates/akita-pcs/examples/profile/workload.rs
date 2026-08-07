@@ -299,9 +299,9 @@ fn assert_runtime_matches_planned_proof_size(
     }
 }
 
-/// Required setup-contribution mode for the config-typed recursive multi-group
-/// profile. Scalar profiles are direct by construction.
-fn profile_setup_contribution_mode() -> SetupContributionMode {
+/// Required setup-contribution mode for config-typed multi-group profiles.
+/// Scalar profiles are direct by construction.
+pub(crate) fn profile_setup_contribution_mode() -> SetupContributionMode {
     match std::env::var("AKITA_SETUP_MODE").ok().as_deref() {
         Some("recursive") => SetupContributionMode::Recursive,
         Some("direct") | None => SetupContributionMode::Direct,
