@@ -52,17 +52,22 @@ jobs:
           cargo test --release -p akita-verifier --lib terminal_ntt
 
   avx512-ifma:
-    name: AVX-512IFMA exact NTT (emulated)
+    name: AVX-512 IFMA/VNNI exact NTT (emulated)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
-      - name: Install x86-64 instruction emulator
-        run: sudo apt-get update && sudo apt-get install --yes qemu-user
-      - name: Run IFMA tests with scalar fallback forbidden
+      - name: Install Intel Software Development Emulator
+        run: |
+          curl --fail --location --silent --show-error --output /tmp/intel-sde.tar.xz https://downloadmirror.intel.com/924984/sde-external-10.13.1-2026-07-28-lin.tar.xz
+          echo '94e97d623fec54385686e1e7ba65ebc9941748c05ee451423948334892bf2b50  /tmp/intel-sde.tar.xz' | sha256sum --check
+          sudo mkdir --parents /opt/intel-sde
+          sudo tar --extract --xz --file /tmp/intel-sde.tar.xz --strip-components=1 --directory /opt/intel-sde
+          sudo sysctl --write kernel.yama.ptrace_scope=0
+      - name: Run IFMA and VNNI tests with fallback forbidden
         env:
           AKITA_REQUIRE_IFMA52: "1"
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: qemu-x86_64 -cpu max,+avx512ifma,+avx512vnni
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /opt/intel-sde/sde64 -icx --
         run: |
           AKITA_REQUIRE_AVX512VNNI=1 cargo test --release --target x86_64-unknown-linux-gnu -p akita-algebra --lib avx512vnni_six_way_i16_dot
           AKITA_IFMA52=0 AKITA_REQUIRE_AVX512VNNI=1 cargo test --release --target x86_64-unknown-linux-gnu -p akita-types --lib q32_i16_vnni_exact_cache
