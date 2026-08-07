@@ -419,23 +419,23 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
 }
 
 fn bench_dense_nv14(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::D64Dense::D }, fp128::D64Dense>(c, "dense-d64", 14);
+    bench_dense_phases::<{ fp128::Dense::D }, fp128::Dense>(c, "dense-adaptive", 14);
 }
 fn bench_dense_nv16(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::D64Dense::D }, fp128::D64Dense>(c, "dense-d64", 16);
+    bench_dense_phases::<{ fp128::Dense::D }, fp128::Dense>(c, "dense-adaptive", 16);
 }
 fn bench_dense_nv24(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::D64Dense::D }, fp128::D64Dense>(c, "dense-d64", 24);
+    bench_dense_phases::<{ fp128::Dense::D }, fp128::Dense>(c, "dense-adaptive", 24);
 }
 
 fn bench_onehot_nv15(c: &mut Criterion) {
-    bench_onehot_phases::<{ fp128::D64OneHot::D }, fp128::D64OneHot>(c, "onehot-d64", 15);
+    bench_onehot_phases::<{ fp128::OneHot::D }, fp128::OneHot>(c, "onehot-adaptive", 15);
 }
 fn bench_onehot_nv20(c: &mut Criterion) {
-    bench_onehot_phases::<{ fp128::D64OneHot::D }, fp128::D64OneHot>(c, "onehot-d64", 20);
+    bench_onehot_phases::<{ fp128::OneHot::D }, fp128::OneHot>(c, "onehot-adaptive", 20);
 }
 fn bench_onehot_nv25(c: &mut Criterion) {
-    bench_onehot_phases::<{ fp128::D64OneHot::D }, fp128::D64OneHot>(c, "onehot-d64", 25);
+    bench_onehot_phases::<{ fp128::OneHot::D }, fp128::OneHot>(c, "onehot-adaptive", 25);
 }
 
 criterion_group!(

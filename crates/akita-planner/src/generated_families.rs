@@ -81,6 +81,7 @@ const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::new(20, 2),
     PolynomialGroupLayout::new(20, 4),
+    PolynomialGroupLayout::singleton(25),
     PolynomialGroupLayout::singleton(28),
     PolynomialGroupLayout::singleton(30),
     PolynomialGroupLayout::new(30, 4),
