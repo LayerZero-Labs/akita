@@ -29,10 +29,12 @@ pub(crate) fn recursive_fold_level_params_candidate(
         .ok_or_else(|| {
             AkitaError::InvalidSetup("recursive candidate position count overflow".to_string())
         })?;
-    let num_live_blocks = num_ring_elems.div_ceil(num_positions_per_block);
-    if num_live_blocks < num_chunks {
+    let exact_num_live_blocks = num_ring_elems.div_ceil(num_positions_per_block);
+    if exact_num_live_blocks < num_chunks {
         return Ok(None);
     }
+    let num_live_blocks =
+        akita_types::pad_live_blocks_for_chunks(exact_num_live_blocks, num_chunks)?;
     let fold_challenge_shape =
         optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
     let decomp = DecompositionParams {
@@ -138,7 +140,11 @@ pub(crate) fn recursive_fold_level_params_candidate(
         inner_commit_matrix,
         outer_commit_matrix,
         open_commit_matrix,
-        num_live_ring_elements_per_claim: num_ring_elems,
+        num_live_ring_elements_per_claim: num_live_blocks
+            .checked_mul(num_positions_per_block)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("recursive candidate source length overflow".to_string())
+            })?,
         num_positions_per_block,
         num_live_blocks,
         fold_challenge_config: *ring_challenge_cfg,
@@ -237,7 +243,9 @@ pub(super) fn recursive_split_lower_bound(input: RecursiveSplitLowerBoundInput) 
     }
     let p = input.reduced_vars.checked_sub(input.r)?;
     let num_positions_per_block = 1usize.checked_shl(p as u32)?;
-    let num_live_blocks = input.num_ring_elems.div_ceil(num_positions_per_block);
+    let exact_num_live_blocks = input.num_ring_elems.div_ceil(num_positions_per_block);
+    let num_live_blocks =
+        akita_types::pad_live_blocks_for_chunks(exact_num_live_blocks, input.num_chunks).ok()?;
 
     let e_hat = num_live_blocks.checked_mul(input.delta_open)?;
     let t_hat_floor = e_hat;

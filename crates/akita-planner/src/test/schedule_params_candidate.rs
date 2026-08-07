@@ -68,7 +68,7 @@ fn seed_recursive_split_candidates_includes_endpoints_and_unique_window() {
 }
 
 #[test]
-fn recursive_split_lower_bound_prices_score_floor() {
+fn recursive_split_lower_bound_prices_padded_score_floor() {
     assert_eq!(
         recursive_split_lower_bound(RecursiveSplitLowerBoundInput {
             num_ring_elems: 100,
@@ -80,7 +80,7 @@ fn recursive_split_lower_bound_prices_score_floor() {
             num_chunks: 2,
             requested_fold_shape: TensorChallengeShape::Flat,
         }),
-        Some(5646)
+        Some(6160)
     );
 }
 

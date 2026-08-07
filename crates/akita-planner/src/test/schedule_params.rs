@@ -48,12 +48,9 @@ fn tensor_low_length_is_selected_independently() {
 }
 
 #[test]
-fn balanced_chunk_geometry_prices_exact_work_and_residual_imbalance() {
+fn balanced_chunk_geometry_rejects_residual_and_prices_equal_chunks() {
     let flat = TensorChallengeShape::Flat;
-    assert_eq!(
-        layout_candidate_score(100, 13, 3, flat).unwrap(),
-        (127, 100, 13, 1)
-    );
+    assert!(layout_candidate_score(100, 13, 3, flat).is_err());
     assert_eq!(
         layout_candidate_score(100, 12, 3, flat).unwrap(),
         (124, 100, 12, 0)

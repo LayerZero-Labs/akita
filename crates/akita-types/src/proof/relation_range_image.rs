@@ -211,7 +211,10 @@ impl RelationRangeImagePlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PolynomialGroupLayout, WitnessQuotientRowLayout, WitnessUnitLayout};
+    use crate::{
+        pad_live_blocks_for_chunks, PolynomialGroupLayout, WitnessQuotientRowLayout,
+        WitnessUnitLayout,
+    };
 
     fn test_layout(
         opening_batch: &OpeningClaimsLayout,
@@ -224,7 +227,11 @@ mod tests {
         let block_ranges = (0..opening_batch.num_groups())
             .map(|group_index| {
                 WitnessLayout::resolve_chunk_block_ranges(
-                    2 * chunks_per_group + group_index + 1,
+                    pad_live_blocks_for_chunks(
+                        2 * chunks_per_group + group_index + 1,
+                        chunks_per_group,
+                    )
+                    .unwrap(),
                     chunks_per_group,
                 )
                 .unwrap()
