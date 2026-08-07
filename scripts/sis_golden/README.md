@@ -201,11 +201,11 @@ cargo run -p akita-sis-estimator --example infinity_width_table -- \
   --profiles q32,q64,q128 --dims 32 --bounds 15,255 --max-rank 3 --search-cap 8
 ```
 
-Run the planner keyspace as a CSV artifact:
+Run the full comparison domain as a local CSV artifact:
 
 ```bash
 cargo run -p akita-sis-estimator --example infinity_width_table --release -- \
-  --output scripts/sis_golden/infinity_width_table.csv
+  --format csv --output /tmp/akita-infinity-width-table.csv
 ```
 
 Regenerate the production Rust split table:
@@ -254,17 +254,18 @@ cargo run --release -p akita-planner --features catalog-gen \
 
 The production `rust-split` mode requires the complete production keyspace.
 Partial jobs must use CSV output. Rows with `hit_cap=true` are lower bounds, not
-tight cutoffs. Full `rust-split` generation writes only the compact runtime
-modules under `crates/akita-types/src/sis/generated_sis_table/` (`q32.rs`,
-`q64.rs`, `q128.rs`, and `mod.rs`). Those modules store the Module-SIS
-projection `(d, B) -> widths[rank]`; offline CSV provenance stays in
-`scripts/sis_golden/` via `--format csv`.
+tight cutoffs. Full `rust-split` generation writes the compact runtime modules
+and the canonical policy audit under
+`crates/akita-types/src/sis/generated_sis_table/`. The runtime modules store
+the Module-SIS projection `(d, B) -> widths[rank]`. `policy_audit.csv` and
+`policy_review.txt` record the generation evidence and share the table digest.
+Other full CSV jobs are local comparison artifacts and must not be committed.
 
 The checked-in policy table may use `--profile local-minimum` for candidate
 discovery. The accepted width and immediate rejected successor are then
-certified by exhaustive beta search and the proven-pruned ADPS16/LGSA zeta
-search. The latter checks the complete-profile transition and `zeta=0` for
-every beta; those endpoints cover the full zeta domain without iterating up to
+certified by proven-pruned ADPS16/LGSA beta and zeta search. For each visited
+beta, the search checks the complete-profile transition and the zeta boundary.
+Those points cover the full zeta domain without iterating up to
 multi-trillion-column widths.
 Building with `--features parallel` parallelizes independent rows, but does not
 change the certificate domain or output ordering.

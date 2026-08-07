@@ -23,21 +23,23 @@ where `width[r - 1] = cutoff_m(B, n = r * d) / d`.
 
 The shipped policy is `Quantum128BitADPS16`. It accepts a row only when the
 complete ADPS16 quantum certificate reports a finite score or a classified
-above-target lower bound of at least 128 bits. The certificate exhausts beta
-and uses the LGSA profile transition to prove that two zeta endpoints per beta
-cover the full zeta domain. A lookup for an unsupported policy, exact modulus
-profile, role, or scalar cell fails closed.
+above-target lower bound of at least 128 bits. The beta search checks values
+from 40 through the capped Euclidean baseline and stops once the monotone
+ADPS16 lower bound exceeds the best complete candidate. For each visited beta,
+the LGSA profile transition proves that the checked zeta endpoints cover the
+full zeta domain. A lookup for an unsupported policy, exact modulus profile,
+role, or scalar cell fails closed.
 
 The checked-in policy table may use `local-minimum` only to discover a candidate
 boundary. Every emitted boundary and its immediate rejected successor are
-certified by exhaustive beta search and proven-pruned full-domain zeta search.
-Parallel generation parallelizes independent rows and does not change the
-certificate domain or output ordering.
+certified under the proven-pruned beta and zeta domain. Parallel generation
+parallelizes independent rows and does not change the certificate domain or
+output ordering.
 
 CSV table-generation artifacts include the certified accepted and rejected
 successor witnesses, cutoff kind, cap provenance, and role provenance. These
-are audit inputs, not verifier-visible state, and are committed separately from
-the runtime table digest.
+are audit inputs, not verifier-visible state. The shared table digest commits
+to the compact runtime table and its policy audit files together.
 
 The planner derives role bounds as coefficient-`L∞` values because those are the
 values enforced by the protocol. It does not convert production role bounds
@@ -63,8 +65,8 @@ implementation acceptance criteria live in
 - `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `generated_sis_table/`, `norm_bound.rs`.
 - Paper §2.2 `def:msis`, §3.12 `sec:batched-soundness` ("MSIS targets", "Two norm models").
 - `docs/security-posture.md`, `specs/sis-quantum128-scalar-n-table.md`.
-- `scripts/sis_golden/infinity_width_table.csv` (generation provenance for the
-  infinity-width golden grid).
+- `crates/akita-types/src/sis/generated_sis_table/policy_audit.csv` (canonical
+  production table certificate).
 
 ## Norm bounds and weak binding
 

@@ -201,7 +201,7 @@ pub struct EstimateConfig {
 
 impl EstimateConfig {
     /// Akita infinity table certificate profile: ADPS16 quantum + LGSA with
-    /// exhaustive beta search and proven-pruned zeta search.
+    /// proven-pruned beta and zeta search.
     #[must_use]
     pub fn akita_infinity_table() -> Self {
         Self {
