@@ -8,7 +8,6 @@ mod group_batch;
 mod resolve;
 mod runtime;
 
-pub use akita_challenges::TensorChallengeShape;
 pub use akita_types::{
     suffix_opening_layout, ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams,
     SisModulusProfileId, SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
@@ -34,8 +33,8 @@ pub use runtime::{
 pub mod planner_support {
     pub use crate::candidate::{projected_collision_role_price, sis_key_at_dimension};
     pub use crate::runtime::{
-        grouped_segment_rings, materialize_candidate_schedule, optimize_fold_challenge_shape,
-        planned_next_witness_len, stage3_payload_bytes_for_successor, validate_policy,
-        CandidateFoldStep, CandidateTerminalResponse,
+        grouped_segment_rings, materialize_candidate_schedule, planned_next_witness_len,
+        stage3_payload_bytes_for_successor, validate_policy, CandidateFoldStep,
+        CandidateTerminalResponse,
     };
 }

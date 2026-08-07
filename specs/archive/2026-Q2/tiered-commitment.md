@@ -1067,4 +1067,4 @@ small-`B'`→decompose→`F`. Apply `effective_commit_rows` across the
   [`crates/akita-verifier/src/protocol/ring_switch.rs`](crates/akita-verifier/src/protocol/ring_switch.rs),
   [`crates/akita-verifier/src/protocol/batched.rs`](crates/akita-verifier/src/protocol/batched.rs).
 - Prior art: `book/src/how/verifying/matrix_evaluation.md`, `specs/setup-product-sumcheck.md`,
-  `specs/setup-layout-repack.md`, `specs/tensor-structured-folding-challenges.md`.
+  `specs/setup-layout-repack.md`.

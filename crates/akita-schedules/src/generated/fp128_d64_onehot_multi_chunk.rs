@@ -4,19 +4,18 @@ use super::{
     ChunkedWitnessCfg, CommitmentPayloadMode, CommitmentRingDims, CommittedGroupProfile,
     DecompositionParams, GeneratedBlockGeometry, GeneratedCommittedGroup,
     GeneratedFoldScheduleEntry, GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix,
-    GeneratedOuterCommitMatrix, GeneratedRecursiveFold, GeneratedRootFinalChallenge,
-    GeneratedRootFinalGroup, GeneratedRootFold, GeneratedRootPrecommittedGroup,
-    GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput, GeneratedTerminalFold,
-    GeneratedWitnessPartition, InnerCommitMatrixParams, OuterCommitMatrixParams,
-    PlannerCostModelId, PolynomialGroupLayout, SelectionPolicyId, SisModulusProfileId,
-    SisSecurityPolicyId, SisTableDigest, TensorChallengeShape,
+    GeneratedOuterCommitMatrix, GeneratedRecursiveFold, GeneratedRootFinalGroup, GeneratedRootFold,
+    GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput,
+    GeneratedTerminalFold, GeneratedWitnessPartition, InnerCommitMatrixParams,
+    OuterCommitMatrixParams, PlannerCostModelId, PolynomialGroupLayout, SelectionPolicyId,
+    SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
 };
 
 #[rustfmt::skip]
 pub(crate) static FP128_D64_ONEHOT_MULTI_CHUNK_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
-            final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(32, 1), num_digits_inner: 1, num_digits_fold: 3, challenge: GeneratedRootFinalChallenge::Flat,
+            final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(32, 1), num_digits_inner: 1, num_digits_fold: 3,
                 commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 67108864, positions_per_block: 32768, live_blocks: 2048 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 64, log_basis: 3, slice_count: 1 } } },
             precommitted_groups: &[],
             open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 64, log_basis: 3, slice_count: 1 },
@@ -34,7 +33,7 @@ pub(crate) static FP128_D64_ONEHOT_MULTI_CHUNK_SCHEDULES: &[GeneratedFoldSchedul
     },
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
-            final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(32, 2), num_digits_inner: 1, num_digits_fold: 3, challenge: GeneratedRootFinalChallenge::Flat,
+            final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(32, 2), num_digits_inner: 1, num_digits_fold: 3,
                 commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 67108864, positions_per_block: 32768, live_blocks: 2048 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 64, log_basis: 3, slice_count: 1 } } },
             precommitted_groups: &[
                 GeneratedRootPrecommittedGroup { descriptor: CommittedGroupProfile { version: CommittedGroupProfile::VERSION, group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 128, num_live_blocks: 8, log_basis_inner: 3, num_digits_inner: 1, inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([180, 101, 127, 98, 144, 97, 92, 243, 88, 85, 119, 215, 173, 81, 159, 157, 197, 93, 75, 141, 204, 99, 22, 17, 27, 38, 112, 66, 172, 59, 146, 148]), SisModulusProfileId::Q128OffsetA7F7, 2, 128, 2047, 64), log_basis_outer: 3, num_digits_outer: 43, outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([180, 101, 127, 98, 144, 97, 92, 243, 88, 85, 119, 215, 173, 81, 159, 157, 197, 93, 75, 141, 204, 99, 22, 17, 27, 38, 112, 66, 172, 59, 146, 148]), SisModulusProfileId::Q128OffsetA7F7, 1, 688, 7, 64) }, num_digits_fold: 1, commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1024, positions_per_block: 128, live_blocks: 8 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 64, log_basis: 3, slice_count: 1 } } },
@@ -79,7 +78,6 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     basis_range: (3, 6),
     witness_chunk: ChunkedWitnessCfg { num_chunks: 8, num_activated_levels: 2 },
     recursive_setup_planning: false,
-    root_fold_shape: TensorChallengeShape::Flat,
     ring_dimension_candidates: CATALOG_RING_DIMENSION_CANDIDATES,
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 12477507731232336810,

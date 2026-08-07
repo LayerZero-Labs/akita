@@ -57,15 +57,15 @@ power of two chunk counts and adds no padding. Each group and chunk unit contain
 
 Slices 1 through 8 are implemented on the PR branch. Root and recursive paths
 share exact `N`, power-of-two `M`, exact live `B`, digit-innermost source order,
-and canonical group-by-chunk witness ranges. Tensor factors remain sparse and
-factored, partial final rows are live, and group-local challenge geometry is
+and canonical group-by-chunk witness ranges. Sparse challenges remain exact,
+partial final rows are live, and group-local challenge geometry is
 transcript-bound. Setup, relation, trace, recursive, and terminal consumers use
 the same range authority.
 
 The planner independently enumerates `num_positions_per_block` choices and
-tensor low-factor widths. It prices exact physical witness width, exact live-block
-work, and the canonical balanced chunk layout. Generated schedules have been
-regenerated from those rules. Multi-group plus multi-chunk is no longer rejected.
+prices exact physical witness width, exact live-block work, and the canonical
+balanced chunk layout. Generated schedules have been regenerated from those
+rules. Multi-group plus multi-chunk is no longer rejected.
 
 The full historical verification matrix in this record remains a release/CI
 obligation. The implementation-slice checkpoint uses formatting, warnings-denied
@@ -95,7 +95,7 @@ This cutover has the following goals.
 * Give the source block index a direct low position and high block index split.
 * Keep all live witness and digit data tight.
 * Support any positive live block count.
-* Support flat and tensor fold challenges over the exact live block prefix.
+* Support fold challenges over the exact live block prefix.
 * Support one or more groups and one or more chunks with the same layout rule.
 * Give setup, relation, trace, terminal, and recursive code one range authority.
 * Keep verifier evaluation proportional to the compact factors when the weight is structured.
@@ -110,7 +110,7 @@ This cutover does not add a second layout mode.
 
 This cutover does not require unequal chunk sumcheck work to be communication free. A prover may exchange the small edge state needed to complete a pair or a short block span across a machine boundary.
 
-This cutover does not require flat random challenges to have a sublinear evaluator. A flat challenge has one independent value per live block.
+This cutover does not require sparse random challenges to have a sublinear evaluator. Each live block has one independent challenge.
 
 This cutover does not define the coefficient order of mixed ring projection.
 The role native projection spec defines that order and its relation formulas.
@@ -121,7 +121,7 @@ Three namespaces govern naming in this spec.
 
 1. **Source opening.** `N` (`num_live_ring_elements_per_claim`), `M` (`num_positions_per_block`), `B` (`num_live_blocks`), `block_idx`, `position`, `block_index_bits`, `position_index_bits`, `live_block_weights`, `block_index_domain_size`.
 2. **Distributed layout.** `num_chunks`, `chunk_index`, `WitnessUnit = (group, chunk)`.
-3. **Protocol recursion.** Unchanged: `fold_level`, fold challenge, `fold_grind`, `fold_high` / `fold_low`, `depth_fold`, `fold_digit`.
+3. **Protocol recursion.** Unchanged: `fold_level`, fold challenge, `fold_grind`, `depth_fold`, `fold_digit`.
 
 For one commitment group `g`, define the following source-opening values.
 
@@ -229,7 +229,6 @@ num_live_blocks                      B_g (derived)
 block_index_domain_size               B_dom_g (derived)
 position_index_bits                   derive log2(M_g) as position_index_bits
 block_index_bits                      derive log2(block_index_domain_size_g) as block_index_bits
-fold_challenge_shape        group local Flat or Tensor { fold_low_len }
 ```
 
 Do not keep deprecated aliases.
@@ -238,7 +237,7 @@ Do not keep deprecated aliases.
 
 ### `PrecommittedLevelParams`
 
-`PrecommittedLevelParams` remains the group local parameter object for each precommitted root group. It must carry the same group local source-opening fields and challenge shape as `LevelParams`.
+`PrecommittedLevelParams` remains the group local parameter object for each precommitted root group. It must carry the same group local source-opening fields as `LevelParams`.
 
 Extend `LevelParamsLike` with the final group local accessors. Remove accessors for stored values that become derived.
 
@@ -466,66 +465,18 @@ Delete the compact to virtual address conversion. Every equality weight uses the
 
 ## Fold challenges
 
-### Shape
-
-Change the current challenge shape to carry the tensor low length.
-
-```rust
-pub enum ChallengeShape {
-    Flat,
-    Tensor { fold_low_len: usize },
-}
-```
-
-The tensor low length `Q_g` must be a power of two.
-
-```text
-Q_g = fold_low_len
-H_g = ceil(B_g / Q_g)
-block_idx = Q_g * h + q
-```
-
-Only indices with `block_idx < B_g` are live. `H_g` is exact and may be any positive integer. The final high row may use only a prefix of the low factor.
-
-### Names and storage
-
-Rename tensor left and right to fold high and fold low throughout code, transcript comments, tests, and docs.
-
-Repurpose `TensorChallenges` as follows.
-
-```text
-fold_high                  C_g * H_g sparse challenges
-fold_low                   C_g * Q_g sparse challenges
-num_live_blocks                 B_g
-fold_low_len               Q_g
-num_claims                 C_g
-```
-
-Derive `H_g`. Do not store both `H_g` and values from which it is derived.
-
-`Challenges::num_live_blocks_per_claim()` returns `B_g`, not `H_g * Q_g`.
+`Challenges::num_live_blocks_per_claim()` returns `B_g`.
 
 `Challenges::logical_len()` returns `C_g * B_g`.
 
-Do not cache or materialize the `H_g * Q_g` products in the runtime challenge object.
-
 ### Transcript
 
-The transcript binds the group index, `B_g`, challenge shape, and `Q_g` before challenge sampling.
-
-For a tensor challenge, sample fold high first. Absorb its canonical digest. Then sample fold low. The existing sampling order may remain, but all labels and comments must use high and low names.
-
-Flat sampling draws exactly `C_g * B_g` sparse challenges.
-
-Tensor sampling draws exactly `C_g * (H_g + Q_g)` sparse challenges.
-
-Each group chooses its own shape. A root batch may contain flat and tensor groups together.
+The transcript binds the group index and `B_g` before challenge sampling.
+Sampling draws exactly `C_g * B_g` sparse challenges.
 
 ### Sparse evaluation
 
 Keep each sparse challenge in support form. For current production configurations, coefficients are small signed integers. The evaluator should use add, subtract, and double operations for coefficients in `{1, -1, 2, -2}` where that is faster than a general multiplication.
-
-Do not form one dense ring product per live block index for a tensor challenge.
 
 ## Succinct digit innermost evaluation
 
@@ -549,23 +500,12 @@ Keep one production carry kernel for this affine address family. It must support
 * an exact live prefix length;
 * an arbitrary checked base offset;
 * a tight digit count;
-* a factored high and low outer weight;
-* one partial final high row;
+* an exact outer weight;
 * Boolean challenges without inversion;
 * checked work before allocation;
 * no table whose size is the product of all axes.
 
-Use this kernel for tensor block weights, trace weights, and relation intervals. Delete specialized or test only compact equality evaluators after their useful oracle tests move to the shared kernel.
-
-For tensor challenges, write `i = Q_g * h + q`. The carry induced by `delta * i + d` has at most `delta` digit states. The target cost is proportional to:
-
-```text
-delta * (H_g + Q_g)
-```
-
-plus small state and the sparse ring support work. The last partial row adds at most one extra low prefix evaluation.
-
-For a flat challenge, reading the independent live challenge values costs at least `B_g`.
+Use this kernel for block weights, trace weights, and relation intervals. Delete specialized or test only compact equality evaluators after their useful oracle tests move to the shared kernel. Reading the independent live challenge values costs at least `B_g`.
 
 ## Trace evaluation
 
@@ -591,8 +531,7 @@ The evaluator must handle:
 * a tight digit count;
 * a nonzero physical segment offset;
 * a structured block equality weight;
-* an optional tensor block weight;
-* a partial final tensor row.
+* a partial final block range.
 
 It must not enumerate all live blocks when the block weight remains factored. It must not claim a succinct cost while calling an enumerative fallback.
 
@@ -631,8 +570,6 @@ Each group owns:
 
 * `N_g`, `M_g`, `B_g`, and derived `block_index_domain_size_g`;
 * its digit counts;
-* its fold challenge shape;
-* its tensor low length when tensor mode is active;
 * its `z_hat`, `e_hat`, and `t_hat` units.
 
 The root relation is a direct sum of group fold relations plus the existing shared terms.
@@ -657,10 +594,7 @@ The current `reject_multi_group_multi_chunk` check is deleted only when emission
 
 The planner chooses these values independently for every group and active level.
 
-```text
-M_g   power of two num_positions_per_block
-Q_g   power of two tensor low length, when tensor mode is active
-```
+`M_g` is the power-of-two `num_positions_per_block` choice.
 
 The planner derives `B_g` from `N_g` and `M_g`. It does not round `B_g` up for physical width formulas.
 
@@ -669,15 +603,12 @@ The cost model includes:
 * physical `z_hat`, `e_hat`, `t_hat`, and `r_hat` ring elements;
 * replicated `z_hat` for each chunk;
 * exact chunk load counts;
-* flat challenge sample and evaluation work;
-* tensor sample work `C_g * (H_g + Q_g)`;
+* sparse challenge sample and evaluation work;
 * digit carry evaluator work;
 * trace evaluator work;
 * mixed setup projection work;
 * proof bytes and setup widths;
 * the selected number of active distributed levels.
-
-Chunk ownership is independent of `Q_g`. A boundary that cuts a tensor low row is handled as an edge interval.
 
 ## Transcript and serialization
 
@@ -689,15 +620,13 @@ Bind all protocol affecting final fields in the schedule or instance descriptor.
 * `num_positions_per_block`;
 * exact live block count (`num_live_blocks`);
 * `num_chunks` and active levels;
-* group local challenge shape;
-* tensor low length;
 * digit counts;
 * relation row layout;
 * mixed role ring dimensions.
 
-Derived values such as `block_index_domain_size`, high tensor length, and bit counts need not be serialized twice. The verifier derives them and rejects overflow or inconsistency.
+Derived values such as `block_index_domain_size` and bit counts need not be serialized twice. The verifier derives them and rejects overflow or inconsistency.
 
-Proof labels and event order remain unchanged unless the high and low rename requires a label version change. If labels change, update prover, verifier, transcript tests, and the transcript hardening spec in the same slice.
+If proof labels change, update prover, verifier, transcript tests, and the transcript hardening spec in the same slice.
 
 ## Verifier safety
 
@@ -722,8 +651,7 @@ Compare all of the following with the same cases.
 * terminal bytes;
 * recursive handoff;
 * verifier relation evaluation;
-* flat challenge evaluation;
-* tensor challenge evaluation;
+* sparse challenge evaluation;
 * mixed ring projection.
 
 Cases must include:
@@ -733,13 +661,11 @@ Cases must include:
 * a non-power-of-two `B`;
 * a partial last source block;
 * digit counts 1, 3, 5, and a power of two;
-* tensor `B` smaller than, equal to, and larger than `Q`;
-* one partial final tensor row;
 * one chunk;
 * two, four, and eight chunks;
 * a nonzero `global_block_start`;
 * uneven dyadic chunk ranges;
-* multiple groups with different `M`, `B`, digits, and challenge shapes;
+* multiple groups with different `M`, `B`, and digits;
 * mixed A, B, and D ring dimensions;
 * malformed geometry and work limit rejection.
 
@@ -755,10 +681,7 @@ Cases must include:
 * [ ] `WitnessChunkLengths` and `TraceChunkLayout` are deleted.
 * [ ] Every witness unit records a group, a chunk, an exact `global_block_start`, an exact `num_live_blocks`, and checked `z`, `e`, and `t` ranges.
 * [ ] Digits remain tight for `z_hat`, `e_hat`, `t_hat`, and `r_hat`.
-* [ ] Tensor challenges use fold high and fold low names.
-* [ ] Tensor high length may be non power of two and the final row may be partial.
-* [ ] Each group chooses flat or tensor mode independently.
-* [ ] Sparse factors remain sparse through verifier evaluation.
+* [ ] Sparse challenges remain sparse through verifier evaluation.
 * [ ] The production carry kernel matches the dense oracle and does not allocate a Cartesian state table.
 * [ ] Structured trace evaluation does not enumerate all live blocks.
 * [ ] Multi group plus multi chunk uses the product layout and no longer takes the old rejection path.
@@ -788,7 +711,7 @@ crates/akita-types/src/layout/params.rs
 crates/akita-types/src/layout/params/precommitted.rs
 crates/akita-types/src/layout/digit_math.rs
 crates/akita-planner/src/schedule_params.rs
-crates/akita-challenges/src/tensor.rs
+crates/akita-challenges/src/challenges.rs
 ```
 
 Steps:
@@ -797,10 +720,8 @@ Steps:
 2. Add `num_live_ring_elements_per_claim` to both group parameter forms.
 3. Rename geometry fields to `num_positions_per_block` and `num_live_blocks`.
 4. Make `with_decomp` derive `num_live_blocks` from `num_live_ring_elements_per_claim` and power of two `num_positions_per_block`.
-5. Change challenge shape to `Tensor { fold_low_len }`.
-6. Put challenge shape on each precommitted group.
-7. Update descriptor bytes and schedule identity.
-8. Update parameter validation and focused unit tests.
+5. Update descriptor bytes and schedule identity.
+6. Update parameter validation and focused unit tests.
 
 ### Slice 2: Opening and fold cutover
 
@@ -852,7 +773,6 @@ Files centered on this slice:
 
 ```text
 crates/akita-challenges/src/fold_draw.rs
-crates/akita-challenges/src/tensor.rs
 crates/akita-prover/src/protocol/core/fold_kernels.rs
 crates/akita-prover/src/protocol/ring_switch/coeffs.rs
 crates/akita-verifier/src/stages/stage1.rs
@@ -860,13 +780,11 @@ crates/akita-verifier/src/stages/stage1.rs
 
 Steps:
 
-1. Rename left and right fields, labels, and helpers to fold high and fold low.
-2. Store live `num_live_blocks` and low `Q`; derive high `H`.
-3. Sample exact flat and tensor counts.
-4. Support one partial final low row.
-5. Remove tensor product materialization from runtime challenge paths.
-6. Use sparse add, subtract, and double operations for small signed coefficients.
-7. Draw each group with its own shape.
+1. Store the exact live `num_live_blocks` for each group.
+2. Sample one sparse challenge per claim and live block.
+3. Support a partial final block range.
+4. Use sparse add, subtract, and double operations for small signed coefficients.
+5. Bind each group's exact geometry into its draw.
 
 ### Slice 5: Relation and setup cutover
 
@@ -897,7 +815,6 @@ Files centered on this slice:
 ```text
 crates/akita-algebra/src/offset_eq.rs
 crates/akita-types/src/trace_weight
-crates/akita-verifier/src/protocol/ring_switch/tensor_challenges.rs
 crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs
 crates/akita-types/src/setup_contribution/plan/structured.rs
 ```
@@ -905,10 +822,10 @@ crates/akita-types/src/setup_contribution/plan/structured.rs
 Steps:
 
 1. Consolidate compact equality code into one production affine digit interval kernel.
-2. Add exact prefix, base offset, high and low factor, and partial row support.
+2. Add exact prefix, base offset, and partial row support.
 3. Delete `TraceChunkLayout`.
 4. Route trace construction and evaluation through `WitnessLayout` units.
-5. Implement distributed tensor subwindows instead of returning the current unsupported error.
+5. Implement distributed block subwindows instead of returning the current unsupported error.
 6. Delete enumerative fallbacks that claim structured cost.
 7. Add work cap boundary tests and dense oracle parity tests.
 
@@ -966,14 +883,12 @@ Steps:
 * [`specs/SPEC_REVIEW.md`](SPEC_REVIEW.md)
 * [`specs/PRUNING.md`](PRUNING.md)
 * [`specs/multi-group-batching.md`](multi-group-batching.md)
-* [`specs/tensor-structured-folding-challenges.md`](tensor-structured-folding-challenges.md)
 * [`specs/distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)
 * [`book/src/how/recursion.md`](../book/src/how/recursion.md)
 * `crates/akita-types/src/layout/params.rs`
 * `crates/akita-types/src/layout/params/precommitted.rs`
 * `crates/akita-types/src/witness.rs`
 * `crates/akita-types/src/proof/ring_relation.rs`
-* `crates/akita-challenges/src/tensor.rs`
 * `crates/akita-types/src/trace_weight`
 
 Authorship disclosure: Drafted by Codex assistant on behalf of Quang Dao with approval.

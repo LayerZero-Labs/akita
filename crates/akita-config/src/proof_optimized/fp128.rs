@@ -293,7 +293,6 @@ fn candidate<Cfg: CommitmentConfig>(
         &lookup_key,
         &policy,
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
     )?;
     let schedule = Cfg::runtime_schedule(lookup_key)?;
     Ok(Some(Fp128ScheduleSelection {
