@@ -370,7 +370,6 @@ impl<'a, E> LazyOneHotBlocks<'a, E> {
             range.start,
         )
     }
-
 }
 
 impl<E> core::fmt::Debug for LazyOneHotBlocks<'_, E> {

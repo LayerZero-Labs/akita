@@ -34,6 +34,7 @@ mod poly;
 mod requirements;
 mod stack;
 
+pub use crate::backend::onehot::LazyOneHotBlocks;
 pub use backend::{
     CommitmentComputeBackend, CompressionComputeBackend, CompressionRowsProducts,
     ComputeBackendSetup, CyclicRowsComputeBackend, DigitRowsComputeBackend, NttCacheOwnerId,
@@ -51,7 +52,6 @@ pub use operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
     RingSwitchQuotientPlan, RingSwitchRelationPlan,
 };
-pub use crate::backend::onehot::LazyOneHotBlocks;
 pub use plans::{
     DenseCommitInput, DenseCommitRowsPlan, FlatBlockTable, OneHotCommitBlocks,
     OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,

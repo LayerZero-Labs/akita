@@ -48,7 +48,6 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
         setup
             .expanded
             .shared_matrix
-            .full()
             .ring_view::<D>(1, total)
             .unwrap(),
         NttCacheMode::BothTransforms,

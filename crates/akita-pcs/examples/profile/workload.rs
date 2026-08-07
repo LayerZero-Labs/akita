@@ -1134,48 +1134,6 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
     }
 }
 
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-pub(crate) fn run_recursive_multi_group_onehot_mixed<FF, const D: usize, Cfg>(
-    label: &str,
-    pre_num_vars: usize,
-    final_num_vars: usize,
-    final_num_polys: usize,
-) where
-    Cfg: CommitmentConfig<Field = FF>,
-    FF: CanonicalField
-        + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
-        + HasCommitAccum
-        + Valid
-        + AkitaSerialize
-        + 'static,
-    Cfg::ExtField: FrobeniusExtField<FF>
-        + FpExtEncoding<FF>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize
-        + Valid,
-{
-    assert_eq!(
-        profile_setup_contribution_mode(),
-        SetupContributionMode::Recursive,
-        "mixed recursive profile requires AKITA_SETUP_MODE=recursive"
-    );
-    run_recursive_multi_group_onehot_with_proof_cfg::<FF, D, Cfg, Cfg>(
-        label,
-        pre_num_vars,
-        final_num_vars,
-        final_num_polys,
-        SetupContributionMode::Recursive,
-        false,
-    );
-}
-
 fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, ProofCfg>(
     label: &str,
     pre_num_vars: usize,

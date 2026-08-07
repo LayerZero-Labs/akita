@@ -16,11 +16,11 @@ use crate::compute::plans::{
 use crate::kernels::linear::validate_compression_batch_shape;
 use crate::kernels::linear::{
     digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
-    fused_split_eq_quotients_streamed_prover_bounds, StreamedASource,
-    mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
-    mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
-    mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile,
-    CrtI8CapacityProfile,
+    fused_split_eq_quotients_streamed_prover_bounds, mat_vec_mul_ntt_dense_digits_i8,
+    mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense,
+    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8, mat_vec_mul_ntt_single_i8,
+    mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
+    StreamedASource,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
@@ -984,8 +984,7 @@ where
                 .shared_matrix()
                 .ring_view::<D>(1, stream_extent)?;
             let source = StreamedASource::Flat(view.as_slice());
-            let params_key =
-                NttCacheKey::from_matrix_shape(D, 1, 1, NttTransformDomain::Cyclic)?;
+            let params_key = NttCacheKey::from_matrix_shape(D, 1, 1, NttTransformDomain::Cyclic)?;
             let streamed = prepared.with_shared_ntt::<D, _>(params_key, |ntt| {
                 fused_split_eq_quotients_streamed_prover_bounds(
                     ntt,
@@ -1093,8 +1092,7 @@ where
                 .shared_matrix()
                 .ring_view::<D>(1, stream_extent)?;
             let source = StreamedASource::Flat(view.as_slice());
-            let params_key =
-                NttCacheKey::from_matrix_shape(D, 1, 1, NttTransformDomain::Cyclic)?;
+            let params_key = NttCacheKey::from_matrix_shape(D, 1, 1, NttTransformDomain::Cyclic)?;
             let streamed = prepared.with_shared_ntt::<D, _>(params_key, |ntt| {
                 fused_split_eq_quotients_streamed_prover_bounds(
                     ntt,
