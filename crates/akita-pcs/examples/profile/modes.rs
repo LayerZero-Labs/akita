@@ -1,4 +1,4 @@
-#![cfg_attr(feature = "profile-onehot-fp128-d64", allow(dead_code))]
+#![cfg_attr(feature = "profile-onehot-fp128", allow(dead_code))]
 
 use crate::report::print_layout;
 use crate::workload::{
@@ -164,16 +164,16 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F
     run_onehot_mode_for::<F, D, Cfg>(label, title, nv, num_polys);
 }
 
-#[cfg(not(feature = "profile-onehot-fp128-d64"))]
+#[cfg(not(feature = "profile-onehot-fp128"))]
 type ProfileModeRunner = fn(usize, usize);
 
-#[cfg(not(feature = "profile-onehot-fp128-d64"))]
+#[cfg(not(feature = "profile-onehot-fp128"))]
 struct ProfileMode {
     name: &'static str,
     run: ProfileModeRunner,
 }
 
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), feature = "profile-ci"))]
+#[cfg(all(not(feature = "profile-onehot-fp128"), feature = "profile-ci"))]
 const PROFILE_CI_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "dense_fp128",
@@ -217,7 +217,7 @@ const PROFILE_CI_MODES: &[ProfileMode] = &[
     },
 ];
 
-#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
+#[cfg(all(not(feature = "profile-onehot-fp128"), not(feature = "profile-ci")))]
 const PROFILE_ALL_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "dense_fp128",
@@ -281,7 +281,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
     },
 ];
 
-#[cfg(not(feature = "profile-onehot-fp128-d64"))]
+#[cfg(not(feature = "profile-onehot-fp128"))]
 fn profile_modes() -> &'static [ProfileMode] {
     #[cfg(feature = "profile-ci")]
     {
@@ -294,7 +294,7 @@ fn profile_modes() -> &'static [ProfileMode] {
 }
 
 /// Modes registered for explicit `AKITA_MODE=…` runs but omitted from `all`.
-#[cfg(not(feature = "profile-onehot-fp128-d64"))]
+#[cfg(not(feature = "profile-onehot-fp128"))]
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp128_multi_group",
     "onehot_fp128_d64_multi_chunk_w2r2",
@@ -551,7 +551,7 @@ fn run_profile_dense_fp64_d64(nv: usize, num_polys: usize) {
     run_dense_mode_for::<fp64::Field, { Cfg::D }, Cfg>("dense_fp64_d64", &title, nv);
 }
 
-#[cfg(not(feature = "profile-onehot-fp128-d64"))]
+#[cfg(not(feature = "profile-onehot-fp128"))]
 pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
     let modes = profile_modes();
     let profile_mode = modes
@@ -570,7 +570,7 @@ pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
     (profile_mode.run)(nv, num_polys);
 }
 
-#[cfg(not(feature = "profile-onehot-fp128-d64"))]
+#[cfg(not(feature = "profile-onehot-fp128"))]
 pub(crate) fn run_all_profile_modes(nv: usize) {
     for entry in profile_modes() {
         if EXCLUDED_FROM_ALL_SWEEP.contains(&entry.name) {
@@ -586,15 +586,15 @@ fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(nv: usize) -> Committed
     )
     .expect("layout")
 }
-#[cfg(feature = "profile-onehot-fp128-d64")]
+#[cfg(feature = "profile-onehot-fp128")]
 pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
     assert_eq!(
         mode, "onehot_fp128",
-        "profile-onehot-fp128-d64 only supports AKITA_MODE=onehot_fp128",
+        "profile-onehot-fp128 only supports AKITA_MODE=onehot_fp128",
     );
     assert_eq!(
         num_polys, 1,
-        "profile-onehot-fp128-d64 only supports singleton commitments"
+        "profile-onehot-fp128 only supports singleton commitments"
     );
     run_profile_onehot_fp128(nv, num_polys);
 }

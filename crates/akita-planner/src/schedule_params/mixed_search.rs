@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use super::*;
+use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
 type MixedMemo = HashMap<
     (
@@ -301,7 +302,7 @@ pub(crate) fn find_schedule(
     let schedule_key = AkitaScheduleLookupKey::single(key);
 
     let crate::RingDimensionScheduleMode::AdaptiveDimension {
-        num_search_levels,
+        num_search_levels: _,
         uniform_suffix_dimension: _,
         potential_a_dimensions,
         potential_b_dimensions,
@@ -319,7 +320,10 @@ pub(crate) fn find_schedule(
                     inner: root_inner,
                     outer_dimensions: potential_b_dimensions,
                     opening_dimensions: potential_d_dimensions,
-                    ceiling: CommitmentRingDims::uniform(policy.uniform_ring_dimension),
+                    // The root has no preceding schedule level. Its only
+                    // projection ceiling is its own A-native source ring; the
+                    // config's uniform-D field is unrelated to adaptive search.
+                    ceiling: CommitmentRingDims::uniform(root_inner),
                 };
             let alpha = root_dimensions.inner().trailing_zeros() as usize;
             let reduced_vars = key.num_vars().saturating_sub(alpha);
@@ -409,7 +413,7 @@ pub(crate) fn find_schedule(
         }
     }
 
-    let Some(selected) = select_adaptive_candidate(complete, num_search_levels)? else {
+    let Some(selected) = select_complete_candidate(policy, &complete)?.cloned() else {
         return Err(AkitaError::UnsupportedSchedule(format!(
             "no mixed-D schedule with at least two folds for num_vars={}, num_polynomials={}",
             key.num_vars(),

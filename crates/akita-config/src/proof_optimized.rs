@@ -46,8 +46,9 @@ const DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS: usize = 2;
 ///
 /// Fixed-weight sparse families keyed on ring degree `d` via
 /// [`akita_challenges::SparseChallengeConfig::production_for_ring_dim`].
-/// A preset's `D` is fixed across all schedule levels, so both the planner DP
-/// and the generated-table expansion call the per-`Cfg` hook with `d == Cfg::D`.
+/// The planner and generated-table expansion call this hook with each
+/// schedule-selected A dimension. The flat public matrix has no generation
+/// dimension.
 pub(crate) fn proof_optimized_ring_challenge_config(
     d: usize,
 ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {

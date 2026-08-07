@@ -241,7 +241,8 @@ verifier-reachable dynamic programming.
 
 | Policy input | Current meaning |
 |---|---|
-| `ring_dimension` | One scalar `Cfg::D`, used as A, B, D, terminal, setup-generation, and suffix dimension |
+| `uniform_ring_dimension` | Uniform-only A/B/D candidate; ignored by adaptive search |
+| `ring_dimension_schedule_mode` | Uniform candidate or catalog-bound adaptive A/B/D domains plus the uniform suffix |
 | `decomposition`, `basis_range` | Digit policy; root basis is pinned to the configured minimum, later bases are searched and non-decreasing |
 | SIS profile, policy, table digest | Exact role-aware minimum-rank lookup identity |
 | ring challenge closure | Sparse A-role fold challenge selected by dimension |
@@ -259,13 +260,12 @@ The shipped selection policies are:
 | Policy | Current comparison |
 |---|---|
 | `MinEstimatedProofPayload` | Direct schedules: exact proof payload only |
+| `MinSetupMatrixFieldElementsThenProofPayload` | Adaptive direct schedules: physical setup fields, then exact proof payload, then descriptor bytes |
 | `MinFirstDirectSetupThenPayload` | Recursive setup schedules: first later direct setup scan, then exact proof payload, subject to an optional host budget |
 
-The ordinary direct policy computes a setup envelope but does not use it for
-selection. The fp128 `best_onehot_schedule` helper compares the separately
-generated uniform-D64 and default per-level catalogs by proof bytes, then uses
-the smaller setup-generation dimension as a tie-break. It is a family selector
-outside the schedule DP and does not run a new search.
+The ordinary uniform direct policy computes a setup envelope but does not use
+it for selection. The canonical fp128 one-hot and dense presets each resolve
+one adaptive generated family; there is no runtime cross-family selector.
 
 ### Current search algorithm
 
@@ -424,8 +424,9 @@ are removed.
 For every explicit tuple `(d_a, d_b, d_d)`, basis, and block split, derive the
 candidate in this order:
 
-1. Validate the tuple, input-witness alignment, setup-generation divisibility,
-   challenge support at `d_a`, and level/chunk constraints.
+1. Validate role projection within the tuple, input-witness alignment,
+   role-specific dispatch/SIS coverage, challenge support at `d_a`, and
+   level/chunk constraints.
 2. Derive root or recursive block geometry using `d_a`.
 3. Derive A's native decomposed width, A collision bucket, and minimum secure
    rank at `d_a`.
@@ -724,11 +725,11 @@ was required; it is not an active implementation contract.
 
 The planner must be independent of hash-map iteration and thread scheduling:
 
-- require `PlannerPolicy::ring_dimension_candidates` to be strictly sorted,
-  duplicate-free, and non-empty so the catalog-bound slice has one value
-  identity;
-- reject tuples that fail native role-projection validation or whose role dimensions are
-  not divisors of the setup-generation dimension;
+- require each catalog-bound A/B/D candidate domain to be strictly sorted,
+  duplicate-free, and non-empty;
+- reject role dimensions without protocol-dispatch, challenge, or SIS-table
+  coverage; candidate pairing separately enforces A-source-to-role projection
+  divisibility;
 - enumerate bases, dimensions, and splits in a documented order;
 - store frontiers in ordered collections or sort before selection/emission;
 - compare semantic cost components first;
@@ -758,7 +759,8 @@ byte-identical.
 1. Make physical setup field elements the canonical planner/setup accounting
    unit.
 2. Add the new cost/selection identity without changing existing policy IDs.
-3. Separate setup-generation dimension from candidate dimensions.
+3. Remove setup-generation dimension from candidate admission and setup
+   accounting.
 4. Bind candidate domains and challenge coverage into catalog identity. ✅
 5. Merge D512 A coverage into one canonical SIS table digest before admitting
    D512.
@@ -801,13 +803,11 @@ byte-identical.
 The current branch implements the first offline direct scalar cut while
 preserving all generated catalogs:
 
-- `PlannerPolicy::ring_dimension_candidates` is the one catalog-bound source
-  of admitted `(d_a, d_b, d_d)` tuples, validated against the policy's setup
-  generation dimension;
-- the one canonical `find_schedule` entry point dispatches from that policy
-  slice: an exact setup-generation singleton preserves the uniform objective,
-  while any other admitted domain selects by physical setup field elements and
-  then exact modeled proof bytes;
+- `RingDimensionScheduleMode::AdaptiveDimension` is the catalog-bound source
+  of independently audited A/B/D domains and the D64 suffix;
+- the one canonical `find_schedule` entry point dispatches by schedule mode:
+  uniform mode preserves the proof-payload objective, while adaptive mode
+  selects by physical setup field elements and then exact modeled proof bytes;
 - root and recursive candidates derive role-local widths, SIS keys, and
   matrices directly;
 - L0 and L1 exhaustively enumerate splits over admissible, component-wise
@@ -828,7 +828,8 @@ preserving all generated catalogs:
   to use the existing grouped planner.
 
 `crates/akita-planner/examples/mixed_dimension_search.rs` exercises both the
-implemented and preserved paths. With setup generation D256, `nv=18`, and:
+implemented and preserved paths. With `nv=18` and the following candidate
+tuples:
 
 ```text
 64/64/64
@@ -907,7 +908,7 @@ capabilities by this PR.
    bytes, proof-byte estimates, level counts, witness transitions, and setup
    cost.
 8. Catalog validation rejects changes to candidate domains, selection policy,
-   setup generation D, SIS digest, or challenge hooks.
+   SIS digest, or challenge hooks.
 9. Runtime row misses reject without planner fallback or panic.
 10. Existing uniform direct, recursive, multi-chunk, and multi-group benchmark
     paths retain their fast verifier kernels.
@@ -922,7 +923,7 @@ capabilities by this PR.
 
 | Test | Required assertion |
 |---|---|
-| Candidate-domain validation | Sorted unique powers of two; setup D divisible by every role candidate; uniform D64 present; no component below D64 |
+| Candidate-domain validation | Sorted unique role domains; uniform D64 suffix present; each advertised dimension has role-specific dispatch, challenge (A), and SIS-table coverage |
 | Role-width unit tests | B/D widths equal native width times exact A-source/role ratio |
 | SIS admission tests | Unsupported role/dimension/bucket/width is candidate infeasibility; malformed policy is an error |
 | Unpruned reference traversal | Constrained L0/L1 frontier and selected schedule match the same canonical candidate set without production pruning |
@@ -1629,8 +1630,8 @@ row.
 
 Setup-prefix offload still uses the D64 registry contract for catalog
 recursive families. A production mixed batch whose common relation dimension is
-below 64 remains rejected until setup generation, registry lookup, planner
-admission, and verifier dispatch select `d_setup` consistently.
+below 64 remains rejected until setup-prefix materialization, registry lookup,
+planner admission, and verifier dispatch select `d_setup` consistently.
 
 ### P2: expand the sweep
 

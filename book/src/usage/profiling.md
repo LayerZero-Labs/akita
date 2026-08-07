@@ -8,7 +8,7 @@ traces, and the CI benchmark matrix.
 ```bash
 AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
   cargo run --release --no-default-features \
-  --features parallel,profile-onehot-fp128-d64 --example profile
+  --features parallel,profile-onehot-fp128 --example profile
 ```
 
 Run from `crates/akita-pcs/`. The harness refuses debug builds unless
@@ -60,7 +60,7 @@ Disable parallel while retaining the same pruned workload:
 ```bash
 AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
   cargo run --release --no-default-features \
-  --features profile-onehot-fp128-d64 --example profile
+  --features profile-onehot-fp128 --example profile
 ```
 
 ## CI benchmark matrix

@@ -10,8 +10,8 @@ pub type Field = Prime128OffsetA7F7;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64Dense;
 
-/// Default dense preset with D256 setup generation and planner-selected
-/// per-level commitment dimensions.
+/// Default dense preset with a dimension-free flat public matrix and
+/// planner-selected per-level A/B/D commitment dimensions.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Dense;
 
@@ -34,8 +34,8 @@ pub struct D64OneHotK16;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D256OneHot;
 
-/// Default binary onehot preset with D256 setup generation and planner-selected
-/// per-level commitment dimensions.
+/// Default binary onehot preset with a dimension-free flat public matrix and
+/// planner-selected per-level A/B/D commitment dimensions.
 ///
 /// Mixed-dimension planning is an offline generation step. Runtime proving
 /// and verification resolve the exact generated catalog row.
@@ -95,7 +95,7 @@ impl_proof_optimized_preset!(
     fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64),
     schedules = ("schedules-fp128-dense", "fp128_dense", fp128_dense_table),
     ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
-        num_search_levels: 2,
+        num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
         uniform_suffix_dimension: 64,
         potential_a_dimensions: &Dense::A_RING_DIMENSIONS,
         potential_b_dimensions: &Dense::B_RING_DIMENSIONS,
@@ -143,7 +143,7 @@ impl_proof_optimized_preset!(
     fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = ("schedules-fp128-onehot", "fp128_onehot", fp128_onehot_table),
     ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
-        num_search_levels: 2,
+        num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
         uniform_suffix_dimension: 64,
         potential_a_dimensions: &OneHot::A_RING_DIMENSIONS,
         potential_b_dimensions: &OneHot::B_RING_DIMENSIONS,
@@ -188,114 +188,3 @@ impl_multi_chunk_companion!(
     "schedules-fp128-d64-dense-multi-chunk",
     fp128_d64_dense_multi_chunk_table
 );
-
-/// Concrete fp128 preset selected by a schedule-family query.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fp128Preset {
-    /// Dense preset with adaptive per-level ring dimensions.
-    Dense,
-    /// Binary onehot preset with adaptive per-level ring dimensions.
-    OneHot,
-}
-
-impl Fp128Preset {
-    /// Setup-generation ring dimension used by this preset.
-    pub const fn ring_dimension(self) -> usize {
-        match self {
-            Self::Dense | Self::OneHot => 256,
-        }
-    }
-
-    /// Whether this preset is onehot-oriented.
-    pub const fn is_onehot(self) -> bool {
-        matches!(self, Self::OneHot)
-    }
-
-    /// Stable human-readable preset name.
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Dense => "Dense",
-            Self::OneHot => "OneHot",
-        }
-    }
-}
-
-/// Best generated schedule for one fp128 preset family.
-#[derive(Clone, Debug)]
-pub struct Fp128ScheduleSelection {
-    /// Selected concrete preset.
-    pub preset: Fp128Preset,
-    /// Runtime schedule selected for the supplied lookup key.
-    pub schedule: FoldSchedule,
-    /// Non-protocol planner estimate used to compare presets.
-    pub estimate: akita_types::FoldScheduleEstimate,
-}
-
-fn candidate<Cfg: CommitmentConfig>(
-    preset: Fp128Preset,
-    key: PolynomialGroupLayout,
-) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    let lookup_key = AkitaScheduleLookupKey::single(key);
-    let Some(catalog) = Cfg::schedule_catalog() else {
-        return Ok(None);
-    };
-    let Some(entry) = akita_schedules::generated::table_entry(catalog, &lookup_key) else {
-        return Ok(None);
-    };
-    let policy = crate::policy_of::<Cfg>();
-    let estimate = akita_schedules::estimate_proof_bytes(
-        entry,
-        &lookup_key,
-        &policy,
-        Cfg::ring_challenge_config,
-    )?;
-    let schedule = Cfg::runtime_schedule(lookup_key)?;
-    Ok(Some(Fp128ScheduleSelection {
-        preset,
-        schedule,
-        estimate: akita_types::FoldScheduleEstimate {
-            estimated_root_direct_payload_bytes: estimate,
-            estimated_root_stage3_payload_bytes: 0,
-            estimated_recursive_direct_payload_bytes: Vec::new(),
-            estimated_recursive_stage3_payload_bytes: Vec::new(),
-            estimated_terminal_direct_payload_bytes: 0,
-            estimated_terminal_response_payload_bytes: 0,
-            estimated_num_setup_field_elements: 0,
-            first_direct_setup_field_len: None,
-            selected_offload_edges: 0,
-        },
-    }))
-}
-
-fn best_by_exact_bytes<I>(candidates: I) -> Option<Fp128ScheduleSelection>
-where
-    I: IntoIterator<Item = Option<Fp128ScheduleSelection>>,
-{
-    candidates.into_iter().flatten().min_by_key(|selection| {
-        (
-            selection
-                .estimate
-                .estimated_proof_payload_bytes()
-                .unwrap_or(usize::MAX),
-            selection.preset.ring_dimension(),
-        )
-    })
-}
-
-/// Select the best onehot fp128 preset for a schedule lookup key.
-///
-/// A genuine planner failure propagates as an error; for any valid key every
-/// supported preset yields a schedule, so the best available one is returned.
-///
-/// # Errors
-///
-/// Propagates a planner / runtime-schedule failure (invalid key shape,
-/// witness overflow, or an uncovered SIS-floor width).
-pub fn best_onehot_schedule(
-    key: PolynomialGroupLayout,
-) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    Ok(best_by_exact_bytes([candidate::<OneHot>(
-        Fp128Preset::OneHot,
-        key,
-    )?]))
-}

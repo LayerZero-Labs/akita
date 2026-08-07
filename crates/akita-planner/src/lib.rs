@@ -2,8 +2,8 @@
 //!
 //! This crate is a **pure, `Cfg`-free DP library**. The DP entry point
 //! is [`find_schedule`], which runs an exhaustive dynamic program to
-//! minimize proof size for a schedule lookup key. Every per-preset input is
-//! carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
+//! optimize a schedule lookup key under its catalog-bound selection policy.
+//! Every per-preset input is carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
 //! ring-challenge closure, so the planner names no `CommitmentConfig`
 //! types and depends only on `akita-schedules` / `akita-types` /
 //! `akita-challenges` / `akita-field`.

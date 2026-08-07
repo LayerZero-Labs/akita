@@ -50,7 +50,7 @@ impl RingDimensionCandidate<'_> {
         native_width: usize,
         log_basis: u32,
     ) -> Option<(SisTableKey, usize)> {
-        let carrier_dimension = self.inner();
+        let source_dimension = self.inner();
         match self {
             Self::Fixed(dimensions) => {
                 let role_dimension = match role {
@@ -61,7 +61,7 @@ impl RingDimensionCandidate<'_> {
                 projected_collision_role_price(
                     policy,
                     role,
-                    carrier_dimension,
+                    source_dimension,
                     role_dimension,
                     native_width,
                     log_basis,
@@ -80,13 +80,13 @@ impl RingDimensionCandidate<'_> {
                 };
                 let mut best = None;
                 for &role_dimension in dimensions {
-                    if role_dimension > carrier_dimension || role_dimension > role_ceiling {
+                    if role_dimension > source_dimension || role_dimension > role_ceiling {
                         continue;
                     }
                     let Some((key, width)) = projected_collision_role_price(
                         policy,
                         role,
-                        carrier_dimension,
+                        source_dimension,
                         role_dimension,
                         native_width,
                         log_basis,
@@ -131,14 +131,14 @@ pub fn sis_key_at_dimension(
 pub fn projected_collision_role_price(
     policy: &PlannerPolicy,
     role: SisMatrixRole,
-    carrier_dimension: usize,
+    source_dimension: usize,
     role_dimension: usize,
     native_width: usize,
     log_basis: u32,
 ) -> Option<(SisTableKey, usize)> {
     if role == SisMatrixRole::Inner
         || role_dimension == 0
-        || !carrier_dimension.is_multiple_of(role_dimension)
+        || !source_dimension.is_multiple_of(role_dimension)
     {
         return None;
     }
@@ -149,8 +149,7 @@ pub fn projected_collision_role_price(
         role_dimension,
         log_basis,
     )?;
-    let physical_width =
-        projected_role_ring_count(carrier_dimension, role_dimension, native_width)?;
+    let physical_width = projected_role_ring_count(source_dimension, role_dimension, native_width)?;
     Some((
         sis_key_at_dimension(policy, role, role_dimension, coeff_linf_bound),
         physical_width,

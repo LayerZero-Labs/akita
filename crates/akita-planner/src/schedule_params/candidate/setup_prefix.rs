@@ -13,65 +13,6 @@ fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<
 }
 
 #[allow(clippy::too_many_arguments)]
-fn grouped_segment_rings(
-    num_polys: usize,
-    num_live_blocks: usize,
-    num_chunks: usize,
-    num_positions_per_block: usize,
-    n_a: usize,
-    num_digits_inner: usize,
-    num_digits_outer: usize,
-    num_digits_open: usize,
-    num_digits_fold: usize,
-) -> Result<usize, AkitaError> {
-    let e_hat = num_polys
-        .checked_mul(num_live_blocks)
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("group e-hat witness overflow".to_string()))?;
-    let t_hat = num_polys
-        .checked_mul(num_live_blocks)
-        .and_then(|n| n.checked_mul(n_a))
-        .and_then(|n| n.checked_mul(num_digits_outer))
-        .ok_or_else(|| AkitaError::InvalidSetup("group t-hat witness overflow".to_string()))?;
-    let z_hat = num_positions_per_block
-        .checked_mul(num_digits_inner)
-        .and_then(|n| n.checked_mul(num_digits_fold))
-        .and_then(|n| n.checked_mul(num_chunks))
-        .ok_or_else(|| AkitaError::InvalidSetup("group z-hat witness overflow".to_string()))?;
-
-    e_hat
-        .checked_add(t_hat)
-        .and_then(|n| n.checked_add(z_hat))
-        .ok_or_else(|| AkitaError::InvalidSetup("group witness overflow".to_string()))
-}
-
-pub(crate) fn planned_next_witness_len(
-    field_bits: u32,
-    params: &CommittedGroupParams,
-    final_num_polys: usize,
-    num_chunks: usize,
-) -> Result<Option<usize>, AkitaError> {
-    if !params.precommitted_groups.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "multi-group root witness sizing must use CommittedGroupParams::output_witness_len"
-                .to_string(),
-        ));
-    }
-    if !params.compression_sources_supported()? {
-        return Ok(None);
-    }
-    let opening_batch =
-        params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
-    let layout = WitnessLayout::new(
-        params,
-        &opening_batch,
-        num_chunks,
-        akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open),
-    )?;
-    Ok(Some(layout.live_coeff_len()))
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(in crate::schedule_params) fn derive_setup_prefix_group(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,

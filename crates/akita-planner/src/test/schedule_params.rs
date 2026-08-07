@@ -180,7 +180,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
         let current = fold.params.witness.role_dims();
         assert!(componentwise_dimensions_at_most(current, previous));
-        if index + 1 >= MIXED_SEARCH_FOLD_LEVELS {
+        if index + 1 >= akita_schedules::ADAPTIVE_SEARCH_LEVELS {
             assert_eq!(
                 current,
                 CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION)
@@ -316,6 +316,53 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
+fn adaptive_frontier_matches_unpruned_l0_l1_search() {
+    use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
+
+    let domain = RingDimensionSearchDomain::new([
+        CommitmentRingDims::uniform(64),
+        CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 64,
+        },
+    ])
+    .expect("representative adaptive domain");
+    let policy = policy_for_domain(policy_of::<D256OneHot>(), &domain);
+    let key = PolynomialGroupLayout::singleton(16);
+    let selected = find_schedule(
+        key,
+        &policy,
+        D256OneHot::root_honest_fold_policy(),
+        &domain,
+        D256OneHot::ring_challenge_config,
+    )
+    .expect("frontier search");
+    let unpruned = unpruned_search::find_schedule(
+        key,
+        &policy,
+        D256OneHot::root_honest_fold_policy(),
+        &domain,
+        D256OneHot::ring_challenge_config,
+    )
+    .expect("unpruned adaptive search");
+
+    assert_eq!(
+        selected.estimate.estimated_num_setup_field_elements,
+        unpruned.estimate.estimated_num_setup_field_elements
+    );
+    assert_eq!(
+        selected.estimate.estimated_proof_payload_bytes().unwrap(),
+        unpruned.estimate.estimated_proof_payload_bytes().unwrap()
+    );
+    assert_eq!(
+        selected.schedule.canonical_descriptor_bytes(),
+        unpruned.schedule.canonical_descriptor_bytes()
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
 fn mixed_search_parallel_generation_is_descriptor_deterministic() {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
@@ -426,7 +473,7 @@ fn mixed_root_prices_eor_at_candidate_a_dimension() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn mixed_search_skips_an_unsupported_sis_candidate_and_keeps_its_sibling() {
+fn mixed_search_rejects_an_advertised_unsupported_role_dimension() {
     use akita_config::{policy_of, proof_optimized::fp128::D512OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<D512OneHot>();
@@ -435,30 +482,20 @@ fn mixed_search_skips_an_unsupported_sis_candidate_and_keeps_its_sibling() {
     let domain =
         RingDimensionSearchDomain::new([d64, unsupported_uniform_d512]).expect("mixed domain");
     let policy = policy_for_domain(base_policy, &domain);
-    let selected = find_schedule(
+    let error = find_schedule(
         PolynomialGroupLayout::singleton(16),
         &policy,
         D512OneHot::root_honest_fold_policy(),
         &domain,
         D512OneHot::ring_challenge_config,
     )
-    .expect("the supported D64 sibling must survive");
-
-    assert_eq!(
-        selected
-            .schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .role_dims(),
-        d64
-    );
+    .expect_err("an unsupported advertised B/D dimension must reject the policy");
+    assert!(error.to_string().contains("scheduled B dimension D512"));
 }
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn adaptive_nv36_selects_minimum_rank_a_path() {
+fn adaptive_nv36_minimizes_setup_before_proof_bytes() {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<D256OneHot>();
@@ -507,22 +544,7 @@ fn adaptive_nv36_selects_minimum_rank_a_path() {
             .params
             .witness
             .role_dims(),
-        CommitmentRingDims {
-            inner: 256,
-            outer: 64,
-            opening: 64,
-        }
-    );
-    assert_eq!(
-        selected
-            .estimate
-            .estimated_num_setup_field_elements
-            .div_ceil(policy.uniform_ring_dimension),
-        176_128
-    );
-    assert_eq!(
-        selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        91_128
+        d64
     );
     assert_eq!(rank_one_capped_root.inner_commit_matrix.output_rank(), 3);
     assert_eq!(selected_root.inner_commit_matrix.output_rank(), 1);
@@ -536,7 +558,7 @@ fn adaptive_nv36_selects_minimum_rank_a_path() {
     assert!(
         selected.estimate.estimated_num_setup_field_elements
             < rank_one_capped.estimate.estimated_num_setup_field_elements,
-        "the rank-two D256 candidate must beat the rank-one-capped search on setup"
+        "the D256-root candidate must beat the restricted domain on setup fields"
     );
 }
 
@@ -576,7 +598,7 @@ fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
         D256OneHot::ring_challenge_config,
     )
     .unwrap_err();
-    assert!(error.to_string().contains("must be at least suffix D64"));
+    assert!(error.to_string().contains("scheduled B dimension D32"));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -643,17 +665,35 @@ fn mixed_search_validates_key_and_policy_at_entry() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn dimension_domain_is_independent_of_setup_generation_dimension() {
-    use akita_config::{policy_of, proof_optimized::fp128::D64Dense};
+fn adaptive_root_domain_is_independent_of_uniform_config_dimension() {
+    use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
-    let mut policy = policy_of::<D64Dense>();
-    let domain = RingDimensionSearchDomain::uniform(256).unwrap();
-    policy.uniform_ring_dimension = 256;
-    policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
-        ring_dimension: 256,
-    };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
+    let domain = RingDimensionSearchDomain::new([
+        CommitmentRingDims::uniform(64),
+        CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 128,
+        },
+    ])
+    .expect("supported fp128 adaptive domain");
+    let mut base_policy = policy_of::<D256OneHot>();
+    base_policy.uniform_ring_dimension = 64;
+    let policy = policy_for_domain(base_policy, &domain);
     domain.validate_for_policy(&policy).unwrap();
+
+    let selected = find_schedule(
+        PolynomialGroupLayout::singleton(36),
+        &policy,
+        D256OneHot::root_honest_fold_policy(),
+        &domain,
+        D256OneHot::ring_challenge_config,
+    )
+    .expect("D256 A search must not be capped by uniform D64");
+    assert_eq!(
+        selected.schedule.root.params.final_group.commitment.d_a(),
+        256
+    );
 }
 
 #[cfg(feature = "catalog-gen")]

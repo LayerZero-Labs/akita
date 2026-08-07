@@ -15,8 +15,9 @@ use crate::{planner::root_level_candidates_for_basis, PlannerPolicy};
 use super::{
     derive_candidate_level_params, level_setup_field_elements, stage3_payload_bytes_for_successor,
     suffix_opening_layout, terminal_setup_field_elements, CandidateFoldStep,
-    CandidateTerminalResponse, ScheduleCandidate, MAX_RECURSION_DEPTH,
+    CandidateTerminalResponse, ScheduleCandidate,
 };
+use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
 /// Result of the suffix DP at one state. Both shape options are reported
 /// because the parent's proof-size formula depends on the child's first

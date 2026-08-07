@@ -18,8 +18,7 @@ use akita_schedules::planner_support::{sis_key_at_dimension, RingDimensionCandid
 
 use crate::schedule_params::{
     derive_optimal_suffix_schedule, materialize_candidate_schedule, mixed_search,
-    select_complete_candidate, validate_policy, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
-    SuffixState,
+    select_complete_candidate, RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -514,10 +513,10 @@ fn validate_adaptive_dimension_schedule_request(
         ));
     }
     if policy.selection_policy
-        != crate::SelectionPolicyId::MinAdaptiveARankDimensionThenSetupAndProof
+        != crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
     {
         return Err(AkitaError::InvalidSetup(
-            "adaptive search requires MinAdaptiveARankDimensionThenSetupAndProof".into(),
+            "adaptive search requires MinSetupMatrixFieldElementsThenProofPayload".into(),
         ));
     }
     if policy.witness_chunk.uses_multi_chunk() {
@@ -536,7 +535,7 @@ pub fn find_schedule(
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
-    validate_policy(policy)?;
+    akita_schedules::planner_support::validate_policy(policy)?;
     key.validate(policy.decomposition.field_bits())?;
     if matches!(
         policy.ring_dimension_schedule_mode,
@@ -633,7 +632,7 @@ pub fn find_schedule(
         crate::SelectionPolicyId::MinEstimatedProofPayload => {
             select_complete_candidate(active_policy, suffix.best_by_payload_per_lb.values())?
         }
-        crate::SelectionPolicyId::MinAdaptiveARankDimensionThenSetupAndProof => {
+        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
             return Err(AkitaError::UnsupportedSchedule(
                 "mixed ring-dimension selection is not supported for multi-group roots".to_string(),
             ));

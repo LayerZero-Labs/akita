@@ -711,25 +711,21 @@ mod fp128_policy_tests {
 
         let dense = fp128::Dense::runtime_schedule(AkitaScheduleLookupKey::single(key))
             .expect("adaptive dense schedule");
-        let onehot = fp128::best_onehot_schedule(key)
-            .expect("selector should resolve onehot schedules")
-            .expect("selector should find a generated onehot schedule");
+        let onehot = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key))
+            .expect("adaptive onehot schedule");
 
         assert_eq!(dense.initial_witness_len(), 1usize << 32);
-        assert_eq!(onehot.schedule.initial_witness_len(), 1usize << 32);
-        assert!(onehot.preset.is_onehot());
+        assert_eq!(onehot.initial_witness_len(), 1usize << 32);
     }
 
     #[test]
-    fn fp128_family_selector_supports_batched_keys() {
+    fn fp128_adaptive_onehot_supports_batched_keys() {
         let key = PolynomialGroupLayout::new(30, 4);
 
-        let selection = fp128::best_onehot_schedule(key)
-            .expect("selector should resolve batched onehot schedules")
-            .expect("selector should find a generated batched onehot schedule");
+        let schedule = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key))
+            .expect("adaptive batched onehot schedule");
 
-        assert!(selection.preset.is_onehot());
-        assert_eq!(selection.schedule.initial_witness_len(), 1usize << 30);
+        assert_eq!(schedule.initial_witness_len(), 1usize << 30);
     }
 }
 

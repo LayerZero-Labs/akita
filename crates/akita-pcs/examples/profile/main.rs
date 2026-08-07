@@ -4,7 +4,7 @@ mod modes;
 mod ntt_prewarm;
 mod parallel;
 mod report;
-#[cfg_attr(feature = "profile-onehot-fp128-d64", allow(dead_code))]
+#[cfg_attr(feature = "profile-onehot-fp128", allow(dead_code))]
 mod workload;
 
 use std::env;
@@ -99,7 +99,7 @@ fn main() {
     tracing::info!(num_vars = nv, num_polys, mode = %mode, "profile config");
     modes::log_active_fp128_prime_probe();
 
-    #[cfg(not(feature = "profile-onehot-fp128-d64"))]
+    #[cfg(not(feature = "profile-onehot-fp128"))]
     {
         if mode == "all" {
             modes::run_all_profile_modes(nv);
@@ -107,7 +107,7 @@ fn main() {
             modes::run_profile_mode(&mode, nv, num_polys);
         }
     }
-    #[cfg(feature = "profile-onehot-fp128-d64")]
+    #[cfg(feature = "profile-onehot-fp128")]
     modes::run_profile_mode(&mode, nv, num_polys);
 
     if enable_trace {

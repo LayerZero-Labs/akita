@@ -71,17 +71,11 @@ The ring degree differs by field, for two distinct reasons:
   securable under the reprice — they degrade to a cleartext root-direct proof
   and stop exercising a real folding commitment — so the smallest secure ring
   degree is D128. Those cells (and all fp16 cells) use D128 one-hot.
-- **fp128:** D64 is the actual proof-size optimum for both dense and one-hot.
-  Measured against the runtime schedule's `total_bytes`, D64 produces ~18-23%
-  smaller proofs than D128 across the matrix shapes (e.g. one-hot nv=32:
-  133,000 B at D64 vs 163,968 B at D128; dense nv=24: 131,656 B vs 160,080 B),
-  while still folding through 8-9 secure recursive levels. This is confirmed by
-  `current_d64_onehot_schedule_stays_within_audited_sis_widths` (securability)
-  and by the `best_onehot_schedule` selector, which
-  pick D64 (or D32), never D128. The earlier D128 fp128 cells were *not*
-  proof-size optimal; D32/D64 are the planner optima (D32 is marginally
-  smaller for fp128). The benchmark matrix tracks D64; use
-  `best_onehot_schedule` to compare supported one-hot families.
+- **fp128:** the canonical direct dense and one-hot presets use their adaptive
+  generated catalogs. Each scheduled A/B/D dimension is selected offline from
+  the audited domain, and runtime code resolves that single canonical row.
+  Explicit D64 modes remain useful uniform baselines; there is no runtime
+  family selector comparing them with the adaptive presets.
 
 D32/D128 profile modes still exist for direct local comparisons, but neither
 the adaptive `full`/`onehot` selectors nor those comparison modes are part of
