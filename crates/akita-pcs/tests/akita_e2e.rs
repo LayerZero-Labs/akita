@@ -332,13 +332,13 @@ fn assert_invalid_proof<T: core::fmt::Debug>(
 /// `num_chunks = 8` on the two leading fold levels (NV=16 ⇒ 64 blocks each).
 /// The single prover assembles the modified `[zᵢ|eᵢ|t̂ᵢ]…|r̂` relation and the
 /// verifier evaluates the chunked row-MLE; the proof must verify.
-#[cfg(feature = "schedules-fp128-d64-dense-multi-chunk")]
+#[cfg(feature = "schedules-fp128-dense-multi-chunk")]
 #[test]
 fn chunked_multi_chunk_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64DenseMultiChunk;
+        type Cfg = fp128::DenseMultiChunk;
         const D: usize = Cfg::D;
         const NV: usize = 16;
 
@@ -365,7 +365,7 @@ fn chunked_multi_chunk_prove_verify() {
             .collect();
         let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).unwrap();
         let pt = random_point::<F>(NV);
-        let expected_opening = common::opening_from_poly::<D, _>(&poly, &pt, &layout);
+        let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -427,7 +427,7 @@ fn chunked_multi_chunk_prove_verify() {
             verify_result.err()
         );
 
-        tracing::info!(chunked_levels, proof_bytes, "chunked-d64/nv16 e2e");
+        tracing::info!(chunked_levels, proof_bytes, "chunked-adaptive/nv16 e2e");
     });
 }
 

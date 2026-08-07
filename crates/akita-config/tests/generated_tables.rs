@@ -80,14 +80,23 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
             <akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk> as CommitmentConfig>::schedule_catalog()
                 .is_some()
         }
+        "fp128_onehot_recursive" => {
+            <akita_config::RecursiveCommitmentConfig<fp128::OneHot> as CommitmentConfig>::schedule_catalog()
+                .is_some()
+        }
+        "fp128_onehot_recursive_multi_chunk_w8r2" => {
+            <akita_config::RecursiveCommitmentConfig<fp128::OneHotMultiChunk> as CommitmentConfig>::schedule_catalog()
+                .is_some()
+        }
         "fp128_d64_onehot_multi_chunk" => fp128::D64OneHotMultiChunk::schedule_catalog().is_some(),
-        "fp128_d64_onehot_multi_chunk_w2r2" => {
-            fp128::D64OneHotMultiChunkW2R2::schedule_catalog().is_some()
+        "fp128_onehot_multi_chunk" => fp128::OneHotMultiChunk::schedule_catalog().is_some(),
+        "fp128_onehot_multi_chunk_w2r2" => {
+            fp128::OneHotMultiChunkW2R2::schedule_catalog().is_some()
         }
-        "fp128_d64_onehot_multi_chunk_w4r2" => {
-            fp128::D64OneHotMultiChunkW4R2::schedule_catalog().is_some()
+        "fp128_onehot_multi_chunk_w4r2" => {
+            fp128::OneHotMultiChunkW4R2::schedule_catalog().is_some()
         }
-        "fp128_d64_dense_multi_chunk" => fp128::D64DenseMultiChunk::schedule_catalog().is_some(),
+        "fp128_dense_multi_chunk" => fp128::DenseMultiChunk::schedule_catalog().is_some(),
         "fp64_d128_dense" => fp64::D128Dense::schedule_catalog().is_some(),
         "fp64_d128_onehot" => fp64::D128OneHot::schedule_catalog().is_some(),
         "fp64_d256_onehot" => fp64::D256OneHot::schedule_catalog().is_some(),
@@ -322,18 +331,25 @@ fn family_catalog(
         "fp128_d64_onehot_recursive_multi_chunk_w8r2" => prepare_family_catalog::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
         >(family, keys),
+        "fp128_onehot_recursive" => prepare_family_catalog::<
+            akita_config::RecursiveCommitmentConfig<fp128::OneHot>,
+        >(family, keys),
+        "fp128_onehot_recursive_multi_chunk_w8r2" => prepare_family_catalog::<
+            akita_config::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>,
+        >(family, keys),
         "fp128_d64_onehot_multi_chunk" => {
             prepare_family_catalog::<fp128::D64OneHotMultiChunk>(family, keys)
         }
-        "fp128_d64_onehot_multi_chunk_w2r2" => {
-            prepare_family_catalog::<fp128::D64OneHotMultiChunkW2R2>(family, keys)
+        "fp128_onehot_multi_chunk" => {
+            prepare_family_catalog::<fp128::OneHotMultiChunk>(family, keys)
         }
-        "fp128_d64_onehot_multi_chunk_w4r2" => {
-            prepare_family_catalog::<fp128::D64OneHotMultiChunkW4R2>(family, keys)
+        "fp128_onehot_multi_chunk_w2r2" => {
+            prepare_family_catalog::<fp128::OneHotMultiChunkW2R2>(family, keys)
         }
-        "fp128_d64_dense_multi_chunk" => {
-            prepare_family_catalog::<fp128::D64DenseMultiChunk>(family, keys)
+        "fp128_onehot_multi_chunk_w4r2" => {
+            prepare_family_catalog::<fp128::OneHotMultiChunkW4R2>(family, keys)
         }
+        "fp128_dense_multi_chunk" => prepare_family_catalog::<fp128::DenseMultiChunk>(family, keys),
         "fp64_d128_dense" => prepare_family_catalog::<fp64::D128Dense>(family, keys),
         "fp64_d128_onehot" => prepare_family_catalog::<fp64::D128OneHot>(family, keys),
         "fp64_d256_onehot" => prepare_family_catalog::<fp64::D256OneHot>(family, keys),
@@ -379,20 +395,29 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, requests: &[Gro
         "fp128_d64_onehot_recursive_multi_chunk_w8r2" => assert_group_batch_table_hits::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
         >(family.module_name, requests),
+        "fp128_onehot_recursive" => assert_group_batch_table_hits::<
+            akita_config::RecursiveCommitmentConfig<fp128::OneHot>,
+        >(family.module_name, requests),
+        "fp128_onehot_recursive_multi_chunk_w8r2" => assert_group_batch_table_hits::<
+            akita_config::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>,
+        >(family.module_name, requests),
         "fp128_d64_onehot_multi_chunk" => {
             assert_group_batch_table_hits::<fp128::D64OneHotMultiChunk>(
                 family.module_name,
                 requests,
             )
         }
-        "fp128_d64_onehot_multi_chunk_w2r2" => assert_group_batch_table_hits::<
-            fp128::D64OneHotMultiChunkW2R2,
+        "fp128_onehot_multi_chunk" => {
+            assert_group_batch_table_hits::<fp128::OneHotMultiChunk>(family.module_name, requests)
+        }
+        "fp128_onehot_multi_chunk_w2r2" => assert_group_batch_table_hits::<
+            fp128::OneHotMultiChunkW2R2,
         >(family.module_name, requests),
-        "fp128_d64_onehot_multi_chunk_w4r2" => assert_group_batch_table_hits::<
-            fp128::D64OneHotMultiChunkW4R2,
+        "fp128_onehot_multi_chunk_w4r2" => assert_group_batch_table_hits::<
+            fp128::OneHotMultiChunkW4R2,
         >(family.module_name, requests),
-        "fp128_d64_dense_multi_chunk" => {
-            assert_group_batch_table_hits::<fp128::D64DenseMultiChunk>(family.module_name, requests)
+        "fp128_dense_multi_chunk" => {
+            assert_group_batch_table_hits::<fp128::DenseMultiChunk>(family.module_name, requests)
         }
         "fp64_d128_dense" => {
             assert_group_batch_table_hits::<fp64::D128Dense>(family.module_name, requests)
@@ -460,17 +485,26 @@ fn resolve_family_group_batch_schedule(
         "fp128_d64_onehot_recursive_multi_chunk_w8r2" => table_backed_group_batch_schedule::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
         >(request),
+        "fp128_onehot_recursive" => table_backed_group_batch_schedule::<
+            akita_config::RecursiveCommitmentConfig<fp128::OneHot>,
+        >(request),
+        "fp128_onehot_recursive_multi_chunk_w8r2" => table_backed_group_batch_schedule::<
+            akita_config::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>,
+        >(request),
         "fp128_d64_onehot_multi_chunk" => {
             table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunk>(request)
         }
-        "fp128_d64_onehot_multi_chunk_w2r2" => {
-            table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunkW2R2>(request)
+        "fp128_onehot_multi_chunk" => {
+            table_backed_group_batch_schedule::<fp128::OneHotMultiChunk>(request)
         }
-        "fp128_d64_onehot_multi_chunk_w4r2" => {
-            table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunkW4R2>(request)
+        "fp128_onehot_multi_chunk_w2r2" => {
+            table_backed_group_batch_schedule::<fp128::OneHotMultiChunkW2R2>(request)
         }
-        "fp128_d64_dense_multi_chunk" => {
-            table_backed_group_batch_schedule::<fp128::D64DenseMultiChunk>(request)
+        "fp128_onehot_multi_chunk_w4r2" => {
+            table_backed_group_batch_schedule::<fp128::OneHotMultiChunkW4R2>(request)
+        }
+        "fp128_dense_multi_chunk" => {
+            table_backed_group_batch_schedule::<fp128::DenseMultiChunk>(request)
         }
         "fp64_d128_dense" => table_backed_group_batch_schedule::<fp64::D128Dense>(request),
         "fp64_d128_onehot" => table_backed_group_batch_schedule::<fp64::D128OneHot>(request),

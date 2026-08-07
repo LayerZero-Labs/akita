@@ -188,24 +188,24 @@ const PROFILE_CI_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_multi_group,
     },
     ProfileMode {
-        name: "onehot_fp128_d64_multi_group_recursive",
-        run: run_profile_onehot_fp128_d64_multi_group_recursive,
+        name: "onehot_fp128_multi_group_recursive",
+        run: run_profile_onehot_fp128_multi_group_recursive,
     },
     ProfileMode {
-        name: "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
-        run: run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2,
+        name: "onehot_fp128_multi_group_recursive_multi_chunk_w8r2",
+        run: run_profile_onehot_fp128_multi_group_recursive_multi_chunk_w8r2,
     },
     ProfileMode {
-        name: "onehot_fp128_d64_multi_chunk_w2r2",
-        run: run_profile_onehot_fp128_d64_multi_chunk_w2r2,
+        name: "onehot_fp128_multi_chunk_w2r2",
+        run: run_profile_onehot_fp128_multi_chunk_w2r2,
     },
     ProfileMode {
-        name: "onehot_fp128_d64_multi_chunk_w4r2",
-        run: run_profile_onehot_fp128_d64_multi_chunk_w4r2,
+        name: "onehot_fp128_multi_chunk_w4r2",
+        run: run_profile_onehot_fp128_multi_chunk_w4r2,
     },
     ProfileMode {
-        name: "onehot_fp128_d64_multi_chunk_w8r2",
-        run: run_profile_onehot_fp128_d64_multi_chunk_w8r2,
+        name: "onehot_fp128_multi_chunk_w8r2",
+        run: run_profile_onehot_fp128_multi_chunk_w8r2,
     },
     ProfileMode {
         name: "onehot_fp32_d128",
@@ -232,24 +232,24 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_multi_group,
     },
     ProfileMode {
-        name: "onehot_fp128_d64_multi_group_recursive",
-        run: run_profile_onehot_fp128_d64_multi_group_recursive,
+        name: "onehot_fp128_multi_group_recursive",
+        run: run_profile_onehot_fp128_multi_group_recursive,
     },
     ProfileMode {
-        name: "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
-        run: run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2,
+        name: "onehot_fp128_multi_group_recursive_multi_chunk_w8r2",
+        run: run_profile_onehot_fp128_multi_group_recursive_multi_chunk_w8r2,
     },
     ProfileMode {
-        name: "onehot_fp128_d64_multi_chunk_w2r2",
-        run: run_profile_onehot_fp128_d64_multi_chunk_w2r2,
+        name: "onehot_fp128_multi_chunk_w2r2",
+        run: run_profile_onehot_fp128_multi_chunk_w2r2,
     },
     ProfileMode {
-        name: "onehot_fp128_d64_multi_chunk_w4r2",
-        run: run_profile_onehot_fp128_d64_multi_chunk_w4r2,
+        name: "onehot_fp128_multi_chunk_w4r2",
+        run: run_profile_onehot_fp128_multi_chunk_w4r2,
     },
     ProfileMode {
-        name: "onehot_fp128_d64_multi_chunk_w8r2",
-        run: run_profile_onehot_fp128_d64_multi_chunk_w8r2,
+        name: "onehot_fp128_multi_chunk_w8r2",
+        run: run_profile_onehot_fp128_multi_chunk_w8r2,
     },
     ProfileMode {
         name: "dense_fp32_d64",
@@ -297,11 +297,11 @@ fn profile_modes() -> &'static [ProfileMode] {
 #[cfg(not(feature = "profile-onehot-fp128"))]
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp128_multi_group",
-    "onehot_fp128_d64_multi_chunk_w2r2",
-    "onehot_fp128_d64_multi_chunk_w4r2",
-    "onehot_fp128_d64_multi_chunk_w8r2",
-    "onehot_fp128_d64_multi_group_recursive",
-    "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
+    "onehot_fp128_multi_chunk_w2r2",
+    "onehot_fp128_multi_chunk_w4r2",
+    "onehot_fp128_multi_chunk_w8r2",
+    "onehot_fp128_multi_group_recursive",
+    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2",
     // D128+ presets are heavy and/or runtime-DP-backed; keep them out of the
     // default `all` smoke sweep (they are still selectable by explicit
     // `AKITA_MODE=` and drive the profile-bench matrix).
@@ -429,33 +429,27 @@ fn run_profile_onehot_fp128_multi_group(nv: usize, num_polys: usize) {
     );
 }
 
-fn run_profile_onehot_fp128_d64_multi_group_recursive(nv: usize, num_polys: usize) {
-    type Cfg = fp128::D64OneHot;
+fn run_profile_onehot_fp128_multi_group_recursive(nv: usize, num_polys: usize) {
+    type Cfg = fp128::OneHot;
     run_multi_group_mode::<{ Cfg::D }, Cfg>(
-        "onehot_fp128_d64_multi_group_recursive",
-        "recursive setup",
+        "onehot_fp128_multi_group_recursive",
+        "adaptive ring dimensions + recursive setup",
         nv,
         num_polys,
     );
 }
 
-fn run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2(
-    nv: usize,
-    num_polys: usize,
-) {
-    // `D64OneHotMultiChunk` is the production W8R2 preset (8 chunks x 2 leading
-    // levels); the recursive adapter (applied inside
-    // `run_recursive_multi_group_onehot`) adds setup offloading.
-    type Cfg = fp128::D64OneHotMultiChunk;
+fn run_profile_onehot_fp128_multi_group_recursive_multi_chunk_w8r2(nv: usize, num_polys: usize) {
+    type Cfg = fp128::OneHotMultiChunk;
     run_multi_group_mode::<{ Cfg::D }, Cfg>(
-        "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
-        "recursive setup offloading + W8R2 chunked witness: num_chunks=8 x 2 leading levels",
+        "onehot_fp128_multi_group_recursive_multi_chunk_w8r2",
+        "adaptive ring dimensions + recursive setup offloading + W8R2 chunked witness: num_chunks=8 x 2 leading levels",
         nv,
         num_polys,
     );
 }
 
-fn run_profile_onehot_fp128_d64_multi_chunk_named<
+fn run_profile_onehot_fp128_multi_chunk_named<
     const D: usize,
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
 >(
@@ -467,34 +461,34 @@ fn run_profile_onehot_fp128_d64_multi_chunk_named<
     let prime = fp128_prime_label();
     let onehot_k = onehot_k_for_num_vars(nv);
     let title = format!(
-        "=== {label} (fp128, {prime}, D=64, 1-of-{onehot_k}, distributed chunked relation, num_chunks={} x {} leading levels) ===",
+        "=== {label} (fp128, {prime}, adaptive ring dimensions, 1-of-{onehot_k}, distributed chunked relation, num_chunks={} x {} leading levels) ===",
         profile.num_chunks(),
         profile.num_activated_levels(),
     );
     run_onehot_mode::<D, Cfg>(label, &title, nv, num_polys);
 }
 
-fn run_profile_onehot_fp128_d64_multi_chunk_w8r2(nv: usize, num_polys: usize) {
-    run_profile_onehot_fp128_d64_multi_chunk_named::<64, fp128::D64OneHotMultiChunk>(
-        "onehot_fp128_d64_multi_chunk_w8r2",
+fn run_profile_onehot_fp128_multi_chunk_w8r2(nv: usize, num_polys: usize) {
+    run_profile_onehot_fp128_multi_chunk_named::<256, fp128::OneHotMultiChunk>(
+        "onehot_fp128_multi_chunk_w8r2",
         MultiChunkProfileId::W8R2,
         nv,
         num_polys,
     );
 }
 
-fn run_profile_onehot_fp128_d64_multi_chunk_w2r2(nv: usize, num_polys: usize) {
-    run_profile_onehot_fp128_d64_multi_chunk_named::<64, fp128::D64OneHotMultiChunkW2R2>(
-        "onehot_fp128_d64_multi_chunk_w2r2",
+fn run_profile_onehot_fp128_multi_chunk_w2r2(nv: usize, num_polys: usize) {
+    run_profile_onehot_fp128_multi_chunk_named::<256, fp128::OneHotMultiChunkW2R2>(
+        "onehot_fp128_multi_chunk_w2r2",
         MultiChunkProfileId::W2R2,
         nv,
         num_polys,
     );
 }
 
-fn run_profile_onehot_fp128_d64_multi_chunk_w4r2(nv: usize, num_polys: usize) {
-    run_profile_onehot_fp128_d64_multi_chunk_named::<64, fp128::D64OneHotMultiChunkW4R2>(
-        "onehot_fp128_d64_multi_chunk_w4r2",
+fn run_profile_onehot_fp128_multi_chunk_w4r2(nv: usize, num_polys: usize) {
+    run_profile_onehot_fp128_multi_chunk_named::<256, fp128::OneHotMultiChunkW4R2>(
+        "onehot_fp128_multi_chunk_w4r2",
         MultiChunkProfileId::W4R2,
         nv,
         num_polys,

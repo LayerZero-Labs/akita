@@ -525,15 +525,13 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             .map(|polys| {
                 polys
                     .iter()
-                    .map(|poly| {
-                        opening_from_poly::<ONEHOT_D, _>(poly, &point[..PRE_NV], &pre_layout)
-                    })
+                    .map(|poly| opening_from_poly_for_layout(poly, &point[..PRE_NV], &pre_layout))
                     .collect()
             })
             .collect();
         let final_openings: Vec<F> = final_polys
             .iter()
-            .map(|poly| opening_from_poly::<ONEHOT_D, _>(poly, &point, root_params))
+            .map(|poly| opening_from_poly_for_layout(poly, &point, root_params))
             .collect();
 
         let pre_refs_by_group: Vec<Vec<&OneHotPoly<F, u8>>> = pre_polys_by_group
@@ -645,8 +643,11 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
                 BasisMode::Lagrange,
             );
             assert!(
-                matches!(result, Err(AkitaError::InvalidProof)),
-                "{label} must return InvalidProof without panicking, got {result:?}"
+                matches!(
+                    result,
+                    Err(AkitaError::InvalidProof | AkitaError::InvalidInput(_))
+                ),
+                "{label} must return a proof/input rejection without panicking, got {result:?}"
             );
         };
 

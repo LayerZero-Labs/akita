@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Direct scalar mixed-D planner search and catalog/runtime replay implemented; recursive setup, multi-chunk, and mixed multi-group integration deferred |
+| Status | Adaptive direct, multi-chunk, grouped recursive-setup planning, catalog generation, and runtime replay implemented |
 | Review snapshot | 2026-07-28, planner reviewed on `main` at `af770e129` |
 | Benchmark snapshot | 2026-07-28, release build of `25a1e94a6` |
 | Recursive benchmark snapshot | 2026-07-28, working tree based on `af770e1296` |
@@ -48,17 +48,102 @@ dimension needed by this experiment:
 - **Within a level:** the A, B, and D commitment matrices can use distinct
   dimensions `d_a/d_b/d_d`, subject to A-to-role projection divisibility.
 
-The protocol, setup-contribution, quotient, and direct verifier paths consume
-this geometry. For the default direct scalar fp128 one-hot and dense families,
-the offline planner searches the admitted A dimensions and block splits. It
-currently derives B and D by minimum secure rank before complete schedule
-comparison. Full Cartesian B/D optimization is deferred. Runtime code replays
-the generated catalogs and does not invoke the planner. Recursive setup
-offload, direct multi-chunk search, and heterogeneous mixed-D multi-group roots
-also remain deferred. Grouped paths preserve committed profiles and use the
-uniform D64 suffix policy rather than planner-native mixed-D search. The
-benchmark profiles in this document remain synthetic schedules built in
-`akita-pcs` test support unless a section says otherwise.
+The protocol, setup-contribution, quotient, and verifier paths consume this
+geometry. For the default direct scalar fp128 one-hot and dense families,
+including direct multi-chunk variants, the offline planner searches the
+admitted A dimensions and block splits. It currently derives B and D by minimum
+secure rank before complete schedule comparison. Full Cartesian B/D
+optimization for these direct families is deferred.
+
+Grouped recursive-setup requests use a distinct adaptive path. Their suffix DP
+searches explicit per-matrix dimension tuples and jointly chooses role
+dimensions, block geometry, commitment payload mode, and whether each supported
+edge evaluates setup directly or offloads it through a carried setup-prefix
+opening. Direct grouped roots without recursive setup planning preserve their
+committed profiles and use the uniform D64 suffix policy. The fp128 direct and
+recursive families emit and replay generated catalogs; prover and verifier do
+not invoke the planner at runtime.
+
+For recursive schedules, adaptive search is deliberately scoped to grouped
+requests with precommitted inputs: those inputs provide setup contributions
+that can actually be offloaded. A scalar request under
+`RecursiveCommitmentConfig<OneHot>` is rejected by the scalar mixed-search
+entry point. This is a request-shape restriction, not a lack of adaptive
+recursive support.
+
+The production recursive catalogs currently cover the profiling key with a
+32-variable, two-polynomial final group and two 16-variable singleton
+precommitted groups. The selected schedules are:
+
+```text
+single chunk:
+  root  256/128/128
+  L1    256/128/128  (consumes setup prefix committed at 256/128)
+  L2+    64/64/64
+
+W8R2:
+  root  256/128/64   (8 witness chunks)
+  L1    256/128/64   (8 chunks; consumes prefix at 256/128)
+  L2     64/64/64    (single chunk; consumes prefix at 64/64)
+  L3+    64/64/64
+```
+
+The frozen precommit descriptors remain part of the root lookup key. The
+single-chunk precommits use A/B `256/64`; W8R2 precommits use `64/64`. At every
+offloaded edge the setup-prefix commitment inherits the consuming fold's exact
+A/B dimensions; it does not use a global fixed prefix dimension.
+
+### Adaptive recursion implementation
+
+Supporting recursion required closing six planner/runtime gaps; registering an
+adaptive base config on the old recursive planner would still have produced a
+uniform-D64 suffix.
+
+1. **Do not take the grouped adaptive fallback.** Direct grouped requests still
+   preserve the established uniform-suffix fallback because their committed
+   input descriptors are frozen. A grouped request with
+   `recursive_setup_planning = true` now enters the setup-aware suffix DP, where
+   the root and recursive folds can search exact role tuples.
+2. **Enumerate exact tuples under a per-role ceiling.** For each searched level,
+   the DP enumerates the Cartesian product of the configured A/B/D domains,
+   rejects non-divisor projections, and enforces
+   `next.d_role <= current.d_role` independently for A, B, and D. The selected
+   tuple becomes the child state's ceiling. At `num_search_levels`, enumeration
+   stops and the configured uniform suffix dimension is used.
+3. **Price each tuple with its own geometry.** Root group expansion receives a
+   fixed exact A/B/D tuple, including the shared opening D used by frozen
+   precommits. Recursive candidates derive their fold challenge, extension
+   opening reduction bytes, block splits, matrices, ranks, and setup footprint
+   at that tuple. During adaptive levels all feasible block splits are retained
+   for comparison; after the search window the ordinary local split selection
+   is sufficient.
+4. **Make setup-prefix dimensions edge-local.** A prefix is produced for a
+   successor but committed as an input of that successor. Prefix derivation
+   therefore receives the consuming candidate's exact A and B dimensions.
+   Prefix slot metadata, natural/padded length, SIS rows, and challenge config
+   all agree with those dimensions. This removes the old assumption that every
+   recursive prefix uses `Cfg::D`.
+5. **Preserve enough information in the suffix frontier.** Two successor
+   schedules with the same ordinary outer-commitment payload can have different
+   Stage-3 setup-product payloads when their D/prefix geometry differs. The
+   parent-visible frontier key now contains both byte counts. Pruning only on
+   outer payload would discard a candidate that can be better after an
+   offloaded parent edge.
+6. **Ship distinct catalog identities and runtime routes.** The generated
+   families `fp128_onehot_recursive` and
+   `fp128_onehot_recursive_multi_chunk_w8r2` bind the adaptive domains,
+   recursive selection policy, exact lookup keys, and selected schedules.
+   `RecursiveCommitmentConfig<OneHot>` and
+   `RecursiveCommitmentConfig<OneHotMultiChunk>` route to those tables. The
+   profiler and E2Es use these configs, so runtime proving never depends on the
+   offline search implementation.
+
+The recursive objective remains
+`MinFirstDirectSetupThenPayload`: it first minimizes the setup footprint at the
+first direct edge after any offloaded prefix, then exact proof payload and the
+remaining deterministic tie-breaks. Dimension is not optimized in isolation;
+larger A/B/D candidates survive only when their effect on ranks, witness
+contraction, proof bytes, and the setup envelope wins under that objective.
 
 The implemented direct-scalar policy is:
 
@@ -284,44 +369,37 @@ one adaptive generated family; there is no runtime cross-family selector.
 
 ### Current search algorithm
 
-For one fixed scalar D, the scalar planner does the following:
+The shared suffix planner now does the following:
 
-1. At the root, enumerate the configured root `log_basis` and valid
-   `block_index_bits`.
-2. Derive A/B/D widths, coefficient bounds, and minimum secure ranks.
-3. Derive the exact outgoing witness field length.
-4. Enter the memoized suffix search at that exact boundary.
-5. At each recursive `(level, witness_len, current_basis, incoming_prefix)`
-   state:
-   - enumerate non-decreasing bases;
-   - select one block split per basis with `layout_candidate_score`;
-   - compare direct termination with another fold;
-   - optionally compare direct and setup-offloaded child edges.
-6. Materialize the selected typed `FoldSchedule`.
-7. Recompute proof bytes and setup envelope and reject any disagreement with
-   the cached estimates.
+1. At the root, enumerate the configured `log_basis`, valid block splits, and
+   every exact A/B/D tuple admitted at level 0.
+2. Derive tuple-local widths, coefficient bounds, secure ranks, extension
+   opening bytes, and the exact outgoing witness length. Frozen precommit D
+   segments are projected once to the selected shared D and added after the
+   main group's A-to-D projection.
+3. Enter the memoized suffix search with the exact witness boundary and the
+   selected tuple as the componentwise dimension ceiling.
+4. At each recursive state, enumerate non-decreasing bases and every exact
+   tuple below that ceiling. Adaptive searched levels retain every feasible
+   block split; uniform suffix levels use `layout_candidate_score` to select the
+   local split per basis.
+5. Compare direct termination with another fold and, for recursive-setup
+   policies, compare direct and setup-offloaded child edges.
+6. Materialize the selected typed `FoldSchedule`; recompute proof bytes and
+   setup envelope and reject any disagreement with the cached estimates.
 
-`layout_candidate_score` combines next-witness physical width, challenge work,
-chunk work, and chunk imbalance. It is a local recursive-split heuristic.
-The source explicitly notes that selecting the smallest next witness is not the
-same as globally minimizing current proof plus suffix cost. Therefore the
-current planner should not be described as exhaustive over all recursive
-block splits, even though the suffix termination decision is dynamic
-programming.
-
-The suffix memo currently retains two maps per first-fold basis:
-
-- best by first-direct-setup then payload;
-- best by payload.
-
-That is sufficient for the two current scalar-D policies. It is not sufficient
-for a setup-envelope-first mixed-D objective.
+The suffix memo distinguishes the dimension ceiling and retains both
+first-direct-setup and payload objectives. Its parent-visible frontier key
+contains the successor's ordinary outer payload and Stage-3 payload, so an
+adaptive D/prefix choice cannot be incorrectly pruned merely because its B
+payload ties another successor.
 
 ### Historical pre-cutover mixed-D gap
 
 The following list records the implementation gaps that motivated this cut.
-The direct scalar path and its generated catalog now address the scalar items;
-the multi-group and recursive items remain deferred as stated above.
+They are historical: the adaptive scalar, multi-chunk, and grouped recursive
+paths now address them. Direct grouped requests still intentionally use the
+uniform-suffix fallback rather than searching a heterogeneous root.
 
 The production planner assumes uniform D in all candidate derivation:
 
@@ -806,7 +884,7 @@ byte-identical.
    fixed-D selector wrappers.
 4. Regenerate tables and update setup capacity/cache identity.
 
-#### Cut 3: broader topology
+#### Historical Cut 3 plan: broader topology
 
 1. Enable direct multi-chunk search.
 2. Enable multi-group final-root dimension search with frozen precommits.
@@ -815,10 +893,11 @@ byte-identical.
 4. Remove synthetic profile adapters only after planner-selected schedules
    reproduce their coverage and benchmarks.
 
-### Implementation checkpoint and planner example
+### Historical direct-scalar checkpoint and planner example
 
-The current branch implements the first offline direct scalar cut while
-preserving all generated catalogs:
+This checkpoint described the first offline direct scalar cut. It is retained
+as rollout history and is superseded by the adaptive recursion implementation
+above:
 
 - `RingDimensionScheduleMode::AdaptiveDimension` is the catalog-bound source
   of independently audited A/B/D domains and the D64 suffix;
@@ -842,8 +921,8 @@ preserving all generated catalogs:
   L2+ states canonicalize to D64 and reuse the fixed planner's split policy;
 - mixed-boundary states retain the required setup/proof alternatives per exact
   parent-visible first fold;
-- recursive setup policies are rejected by the mixed entry point and continue
-  to use the existing grouped planner.
+- scalar recursive requests without precommitted inputs are rejected; grouped
+  recursive requests use the adaptive setup-aware suffix planner.
 
 `crates/akita-planner/examples/mixed_dimension_search.rs` exercises both the
 implemented and preserved paths. With `nv=18` and the following candidate
@@ -1279,8 +1358,8 @@ continue to cover mixed-D search and validation at the planning boundary.
 - multi-group parameter tests check group-local dimensions, row offsets,
   compact-length independence from stable group identifiers, and descending
   group A dimensions.
-- recursive and distributed setup-offload E2Es cover the deferred verifier
-  path under their production feature guards.
+- recursive and distributed setup-offload E2Es cover adaptive generated-table
+  replay under their production feature guards.
 - setup-prefix selection tests reject insufficient natural and padded capacity,
   while the recursive mixed-D E2E checks the exact dynamic D128 slot identity
   against canonical Stage 3 sizing and prepared setup capacity.
@@ -1550,15 +1629,15 @@ cargo build --release -p akita-pcs --example profile \
 
 python3 scripts/profile_bench_report.py run \
   --binary ./target/release/examples/profile \
-  --output-dir /tmp/akita-recursive-d64 \
+  --output-dir /tmp/akita-recursive-adaptive \
   --runs 2 --warmups 1 \
-  --case onehot_fp128_d64_multi_group_recursive:32:4:recursive
+  --case onehot_fp128_multi_group_recursive:32:4:recursive
 
 python3 scripts/profile_bench_report.py run \
   --binary ./target/release/examples/profile \
-  --output-dir /tmp/akita-recursive-w8r2-d64 \
+  --output-dir /tmp/akita-recursive-w8r2-adaptive \
   --runs 2 --warmups 1 \
-  --case onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2:32:4:recursive
+  --case onehot_fp128_multi_group_recursive_multi_chunk_w8r2:32:4:recursive
 ```
 
 The archived recursive mixed-D runs are no longer reproducible through

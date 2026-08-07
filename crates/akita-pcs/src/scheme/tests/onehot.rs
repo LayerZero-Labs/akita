@@ -657,10 +657,13 @@ fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
 #[test]
 #[cfg(feature = "profile-ci")]
 fn multi_group_multi_chunk_fold_round_trips() {
-    multi_group_root_round_trip_onehot::<
-        fp128::D64OneHotMultiChunkW2R2,
-        fp128::D64OneHotMultiChunkW2R2,
-    >(14, 14, &[1], 1, false);
+    multi_group_root_round_trip_onehot::<fp128::OneHotMultiChunkW2R2, fp128::OneHotMultiChunkW2R2>(
+        14,
+        14,
+        &[1],
+        1,
+        false,
+    );
 }
 
 #[test]

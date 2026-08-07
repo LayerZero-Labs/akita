@@ -453,12 +453,12 @@ class ProfileBenchReportTests(unittest.TestCase):
 
         summary = normalize_case_summary(
             {
-                "mode": "onehot_fp128_d64_multi_chunk_w4r2",
+                "mode": "onehot_fp128_multi_chunk_w4r2",
                 "num_vars": 32,
                 "num_polys": 1,
                 "exit_code": 0,
                 "planned_levels": [
-                    {"level": 0, "d_a": 64, "d_b": 64, "d_d": 64}
+                    {"level": 0, "d_a": 256, "d_b": 64, "d_d": 64}
                 ],
             }
         )

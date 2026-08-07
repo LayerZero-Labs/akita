@@ -603,24 +603,52 @@ fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn mixed_search_rejects_direct_multi_chunk_policy() {
+fn mixed_search_supports_direct_multi_chunk_policy() {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
     let mut policy = policy_of::<D256OneHot>();
     policy.witness_chunk = akita_types::ChunkedWitnessCfg::d64_production();
-    let domain = RingDimensionSearchDomain::new([CommitmentRingDims::uniform(64)]).unwrap();
+    let domain = RingDimensionSearchDomain::new([
+        CommitmentRingDims::uniform(64),
+        CommitmentRingDims::uniform(128),
+        CommitmentRingDims::uniform(256),
+    ])
+    .unwrap();
     policy = policy_for_domain(policy, &domain);
-    let error = find_schedule(
+    let schedule = find_schedule(
         PolynomialGroupLayout::singleton(16),
         &policy,
         D256OneHot::root_honest_fold_policy(),
         &domain,
         D256OneHot::ring_challenge_config,
     )
-    .unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("does not yet support direct multi-chunk planning"));
+    .unwrap();
+    assert!(!schedule.schedule.recursive_folds.is_empty());
+    assert_eq!(
+        schedule
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .witness_chunk
+            .num_chunks,
+        8
+    );
+    assert_eq!(
+        schedule.schedule.recursive_folds[0]
+            .params
+            .witness
+            .witness_chunk
+            .num_chunks,
+        8
+    );
+    assert!(schedule
+        .schedule
+        .recursive_folds
+        .iter()
+        .skip(1)
+        .all(|fold| fold.params.witness.witness_chunk.num_chunks == 1));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -738,18 +766,20 @@ fn mixed_search_applies_setup_budget_in_physical_fields() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
-    use akita_config::{
-        policy_of, proof_optimized::fp128::D64OneHotMultiChunkW4R2, CommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp128::OneHotMultiChunkW4R2, CommitmentConfig};
 
-    let policy = policy_of::<D64OneHotMultiChunkW4R2>();
     let domain = RingDimensionSearchDomain::uniform(64).unwrap();
+    // Production W4R2 is adaptive now. Keep this regression on its original
+    // fixed-D64 domain, where two equal-payload schedules differ in setup size.
+    let mut base_policy = policy_of::<OneHotMultiChunkW4R2>();
+    base_policy.uniform_ring_dimension = 64;
+    let policy = policy_for_domain(base_policy, &domain);
     let selected = find_schedule(
         PolynomialGroupLayout::singleton(32),
         &policy,
-        D64OneHotMultiChunkW4R2::root_honest_fold_policy(),
+        OneHotMultiChunkW4R2::root_honest_fold_policy(),
         &domain,
-        D64OneHotMultiChunkW4R2::ring_challenge_config,
+        OneHotMultiChunkW4R2::ring_challenge_config,
     )
     .expect("W4R2 schedule");
 
@@ -808,4 +838,128 @@ fn recursive_exact_cutover_proof_size_is_documented() {
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
         94_680
     );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn recursive_adaptive_search_selects_schedule_dimensions_and_setup_prefixes() {
+    use akita_config::{
+        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+    };
+    use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile};
+
+    let precommit_layout = PolynomialGroupLayout::singleton(16);
+    let precommit_policy = policy_of::<OneHot>();
+    let precommit_domain = RingDimensionSearchDomain::new([
+        CommitmentRingDims::uniform(64),
+        CommitmentRingDims::uniform(128),
+        CommitmentRingDims::uniform(256),
+    ])
+    .unwrap();
+    let precommit = find_schedule(
+        precommit_layout,
+        &precommit_policy,
+        OneHot::root_honest_fold_policy(),
+        &precommit_domain,
+        OneHot::ring_challenge_config,
+    )
+    .unwrap();
+    let descriptor = CommittedGroupProfile::from_params(
+        precommit_layout,
+        &precommit.schedule.root.params.final_group.commitment,
+    );
+    let key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(32, 2),
+        precommitteds: vec![descriptor, descriptor],
+    };
+    type Recursive = RecursiveCommitmentConfig<OneHot>;
+    let planned = crate::find_schedule(
+        &key,
+        Recursive::root_honest_fold_policy(),
+        &[
+            OneHot::root_honest_fold_policy(),
+            OneHot::root_honest_fold_policy(),
+        ],
+        &policy_of::<Recursive>(),
+        Recursive::ring_challenge_config,
+    )
+    .unwrap();
+
+    assert!(planned.estimate.selected_offload_edges > 0);
+    assert_eq!(
+        planned
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .role_dims(),
+        CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 128,
+        }
+    );
+    assert_eq!(
+        planned
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .open_commit_matrix
+            .input_width(),
+        88_408,
+        "root D width projects the main group once and then adds both frozen precommit segments"
+    );
+    assert_eq!(
+        planned.schedule.recursive_folds[0]
+            .params
+            .witness
+            .role_dims(),
+        CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 128,
+        }
+    );
+    assert_eq!(
+        planned.schedule.recursive_folds[1]
+            .params
+            .witness
+            .role_dims(),
+        CommitmentRingDims::uniform(64)
+    );
+    let mut previous = planned
+        .schedule
+        .root
+        .params
+        .final_group
+        .commitment
+        .role_dims();
+    for fold in &planned.schedule.recursive_folds {
+        let current = fold.params.witness.role_dims();
+        assert!(current.d_a() <= previous.d_a());
+        assert!(current.d_b() <= previous.d_b());
+        assert!(current.d_d() <= previous.d_d());
+        if let Some(prefix) = &fold.params.witness.setup_prefix {
+            assert_eq!(
+                prefix
+                    .commitment_params
+                    .layout
+                    .inner_commit_matrix
+                    .ring_dimension(),
+                current.d_a()
+            );
+            assert_eq!(
+                prefix
+                    .commitment_params
+                    .layout
+                    .outer_commit_matrix
+                    .ring_dimension(),
+                current.d_b()
+            );
+        }
+        previous = current;
+    }
 }

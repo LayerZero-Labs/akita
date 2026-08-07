@@ -1,7 +1,5 @@
 use akita_config::{
-    policy_of,
-    proof_optimized::fp128::{D64OneHot, OneHot},
-    CommitmentConfig, RecursiveCommitmentConfig,
+    policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
 };
 use akita_planner::find_schedule;
 use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
@@ -92,28 +90,28 @@ fn main() -> Result<(), akita_field::AkitaError> {
         &direct,
     );
 
-    type MixedRecursive = RecursiveCommitmentConfig<OneHot>;
-    let mixed_recursive_policy = policy_of::<MixedRecursive>();
-    let mixed_recursive_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(32, 2));
-    let mixed_recursive_error = find_schedule(
-        &mixed_recursive_key,
-        MixedRecursive::root_honest_fold_policy(),
+    type Recursive = RecursiveCommitmentConfig<OneHot>;
+    let recursive_policy = policy_of::<Recursive>();
+    let scalar_recursive_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(32, 2));
+    let scalar_recursive_error = find_schedule(
+        &scalar_recursive_key,
+        Recursive::root_honest_fold_policy(),
         &[],
-        &mixed_recursive_policy,
-        MixedRecursive::ring_challenge_config,
+        &recursive_policy,
+        Recursive::ring_challenge_config,
     )
-    .expect_err("mixed-D recursive planning is intentionally deferred");
-    println!("recursive mixed-D planner deferred as expected: {mixed_recursive_error}");
+    .expect_err("scalar recursive planning has no setup groups to offload");
+    println!("scalar recursive request rejected as expected: {scalar_recursive_error}");
 
     let precommit_layout = PolynomialGroupLayout::singleton(16);
     let precommit_key = AkitaScheduleLookupKey::single(precommit_layout);
-    let precommit_policy = policy_of::<D64OneHot>();
+    let precommit_policy = policy_of::<OneHot>();
     let precommit = find_schedule(
         &precommit_key,
-        D64OneHot::root_honest_fold_policy(),
+        OneHot::root_honest_fold_policy(),
         &[],
         &precommit_policy,
-        D64OneHot::ring_challenge_config,
+        OneHot::ring_challenge_config,
     )?;
     let descriptor = CommittedGroupProfile::from_params(
         precommit_layout,
@@ -124,25 +122,20 @@ fn main() -> Result<(), akita_field::AkitaError> {
         precommitteds: vec![descriptor, descriptor],
     };
     let precommitted_honest_fold_policies = vec![
-        D64OneHot::root_honest_fold_policy(),
-        D64OneHot::root_honest_fold_policy(),
+        OneHot::root_honest_fold_policy(),
+        OneHot::root_honest_fold_policy(),
     ];
-    type Recursive = RecursiveCommitmentConfig<D64OneHot>;
-    let recursive_policy = policy_of::<Recursive>();
-    let preserved = find_schedule(
+    let adaptive_recursive = find_schedule(
         &recursive_key,
         Recursive::root_honest_fold_policy(),
         &precommitted_honest_fold_policies,
         &recursive_policy,
         Recursive::ring_challenge_config,
     )?;
-    println!("preserved recursive grouped planner:");
+    print_schedule("adaptive recursive grouped planner", &adaptive_recursive);
     println!(
-        "  setup={} D64 ring elements, proof={} bytes, levels={}, offload_edges={}",
-        preserved.estimate.estimated_num_setup_field_elements,
-        preserved.estimate.estimated_proof_payload_bytes()?,
-        preserved.schedule.recursive_folds.len() + 2,
-        preserved.estimate.selected_offload_edges,
+        "  offload_edges={}",
+        adaptive_recursive.estimate.selected_offload_edges,
     );
     Ok(())
 }

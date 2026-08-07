@@ -96,20 +96,20 @@ CASE_METADATA: dict[str, CaseMetadata] = {
     "onehot_fp128_multi_group": CaseMetadata(
         "fp128", "onehot", "multi-group one-hot", "multi-group"
     ),
-    "onehot_fp128_d64_multi_group_recursive": CaseMetadata(
-        "fp128", "onehot", "multi-group one-hot", "D64 recursive multi-group"
+    "onehot_fp128_multi_group_recursive": CaseMetadata(
+        "fp128", "onehot", "multi-group one-hot", "adaptive recursive multi-group"
     ),
-    "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2": CaseMetadata(
-        "fp128", "onehot", "multi-group one-hot", "D64 recursive multi-group W8R2"
+    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": CaseMetadata(
+        "fp128", "onehot", "multi-group one-hot", "adaptive recursive multi-group W8R2"
     ),
-    "onehot_fp128_d64_multi_chunk_w8r2": CaseMetadata(
-        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 multi-chunk W8R2"
+    "onehot_fp128_multi_chunk_w8r2": CaseMetadata(
+        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "multi-chunk W8R2"
     ),
-    "onehot_fp128_d64_multi_chunk_w2r2": CaseMetadata(
-        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 multi-chunk W2R2"
+    "onehot_fp128_multi_chunk_w2r2": CaseMetadata(
+        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "multi-chunk W2R2"
     ),
-    "onehot_fp128_d64_multi_chunk_w4r2": CaseMetadata(
-        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 multi-chunk W4R2"
+    "onehot_fp128_multi_chunk_w4r2": CaseMetadata(
+        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "multi-chunk W4R2"
     ),
     # Small fields fold securely only at D128/D256 under honest pricing; fp32
     # ships no dense family.
