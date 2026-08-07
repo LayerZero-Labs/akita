@@ -432,11 +432,11 @@ fn chunked_multi_chunk_prove_verify() {
 }
 
 #[test]
-fn dense_d64_prove_verify() {
+fn adaptive_dense_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64Dense;
+        type Cfg = fp128::Dense;
         const D: usize = Cfg::D;
 
         let layout = singleton_layout::<Cfg>(DENSE_TEST_NV);
@@ -550,13 +550,13 @@ fn dense_d64_prove_verify() {
     });
 }
 
-/// Snap-regenerated `fp128_d64_dense` schedules must verify at production `nv` keys.
+/// Generated adaptive dense schedules must verify at production `nv` keys.
 #[test]
-fn dense_d64_snap_regen_prove_verify_nv24() {
+fn adaptive_dense_generated_prove_verify_nv24() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64Dense;
+        type Cfg = fp128::Dense;
         const D: usize = Cfg::D;
         const NV: usize = 24;
 
@@ -591,7 +591,7 @@ fn trace_internalization_rejects_tampered_root_fold_handle() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64Dense;
+        type Cfg = fp128::Dense;
         const D: usize = Cfg::D;
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
@@ -623,7 +623,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64OneHot;
+        type Cfg = fp128::OneHot;
         const D: usize = Cfg::D;
         const NV: usize = 20;
 
@@ -704,7 +704,7 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64Dense;
+        type Cfg = fp128::Dense;
         const D: usize = Cfg::D;
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
@@ -749,11 +749,11 @@ fn small_field_d64_dense_degenerate_roots_fail_fast() {
 }
 
 #[test]
-fn dense_d64_tiny_roots_and_setup_capacities_are_rejected() {
+fn adaptive_dense_tiny_roots_and_setup_capacities_are_rejected() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64Dense;
+        type Cfg = fp128::Dense;
         let nv = 4;
         let err = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(nv),
@@ -773,11 +773,11 @@ fn dense_d64_tiny_roots_and_setup_capacities_are_rejected() {
 }
 
 #[test]
-fn dense_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
+fn adaptive_dense_mixed_basis_roundtrip_and_serialization() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64Dense;
+        type Cfg = fp128::Dense;
         const D: usize = Cfg::D;
 
         let nv = DENSE_TEST_NV;
@@ -830,7 +830,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64OneHot;
+        type Cfg = fp128::OneHot;
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
@@ -929,10 +929,9 @@ fn batched_onehot_same_point_round_trip() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        // NV=20 is large enough to include a recursive suffix, while the
-        // two-claim opening batch still misses singleton/4-batch generated tables
-        // and routes through the planner DP fallback in `runtime_schedule`.
-        type Cfg = fp128::D64OneHot;
+        // NV=20 is large enough to include a recursive suffix in the generated
+        // adaptive two-claim schedule.
+        type Cfg = fp128::OneHot;
         const D: usize = Cfg::D;
         const NV: usize = 20;
 
@@ -1071,7 +1070,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64OneHot;
+        type Cfg = fp128::OneHot;
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;

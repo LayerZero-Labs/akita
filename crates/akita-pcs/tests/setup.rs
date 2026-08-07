@@ -593,16 +593,16 @@ macro_rules! preset_module {
 }
 
 preset_module!(
-    d64_dense,
-    fp128::D64Dense,
-    64,
+    adaptive_dense,
+    fp128::Dense,
+    256,
     run_dense_e2e,
     run_dense_batched_e2e
 );
 preset_module!(
-    d64_onehot,
-    fp128::D64OneHot,
-    64,
+    adaptive_onehot,
+    fp128::OneHot,
+    256,
     run_onehot_e2e,
     run_onehot_batched_e2e
 );

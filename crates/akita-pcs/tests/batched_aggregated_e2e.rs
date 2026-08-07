@@ -61,7 +61,7 @@ mod non_zk_aggregated_cases {
             let pt = random_point(nv, 0xf00d_0000 + nv as u64);
             let openings: Vec<F> = polys
                 .iter()
-                .map(|poly| opening_from_poly::<ONEHOT_D, _>(poly, &pt, &layout))
+                .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout))
                 .collect();
 
             let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, batch_size).unwrap();
@@ -152,7 +152,7 @@ mod non_zk_aggregated_cases {
             let pt = random_point(nv, 0xaaaa_0000 + nv as u64);
             let openings: Vec<F> = polys
                 .iter()
-                .map(|poly| opening_from_poly::<DENSE_D, _>(poly, &pt, &layout))
+                .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout))
                 .collect();
 
             let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, batch_size).unwrap();
@@ -275,7 +275,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let pt = random_point(NV, 0x4d10_ffff);
         let openings: Vec<F> = polys
             .iter()
-            .map(|poly| opening_from_poly::<DENSE_D, _>(poly, &pt, &layout))
+            .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout))
             .collect();
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, BATCH_SIZE).unwrap();

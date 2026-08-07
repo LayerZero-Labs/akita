@@ -76,6 +76,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 policy,
                 ring_challenge_config,
                 entry.root.open_commit_matrix.log_basis,
+                entry.root.open_commit_matrix.ring_dimension as usize,
             )?;
         validate_expanded_precommitted_groups(key, &precommitted_groups)?;
         entry

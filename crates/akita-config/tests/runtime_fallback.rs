@@ -22,7 +22,8 @@ use akita_schedules::{
     PlannerPolicy, ResolvedScheduleRow,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupProfile, OpeningClaimsLayout,
+    PolynomialGroupLayout,
 };
 
 /// A one-point 3-poly key that no generated table carries (generated tables only
@@ -328,7 +329,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
 
 #[test]
 fn runtime_rejects_malformed_extension_geometry_without_panicking() {
-    type Cfg = fp128::D64OneHot;
+    type Cfg = fp128::OneHot;
     let catalog = Cfg::schedule_catalog();
     let key = PolynomialGroupLayout::singleton(14);
     let reject = |mutate: fn(&mut PlannerPolicy)| {
@@ -367,7 +368,7 @@ fn policy_bridge_matches_cfg_hooks() {
 }
 
 #[test]
-fn adaptive_dense_rejects_multi_group_roots() {
+fn adaptive_dense_plans_multi_group_roots_at_uniform_suffix_dimension() {
     type Cfg = fp128::Dense;
     const PRE_NV: usize = 16;
     const FINAL_NV: usize = 20;
@@ -384,7 +385,7 @@ fn adaptive_dense_rejects_multi_group_roots() {
         precommitteds: vec![CommittedGroupProfile::from_params(pre_group, &pre_params)],
     };
     let precommitted_honest_fold_policies = vec![Cfg::root_honest_fold_policy()];
-    let error = find_schedule(
+    let planned = find_schedule(
         &key,
         Cfg::root_honest_fold_policy(),
         &precommitted_honest_fold_policies,
@@ -392,11 +393,25 @@ fn adaptive_dense_rejects_multi_group_roots() {
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )
-    .expect_err("adaptive dense multi-group planning is deferred");
-    assert!(matches!(
-        error,
-        akita_field::AkitaError::UnsupportedSchedule(_)
-    ));
+    .expect("adaptive dense grouped schedule");
+    planned
+        .schedule
+        .validate_structure()
+        .expect("valid grouped schedule");
+    assert_eq!(
+        planned
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .role_dims(),
+        CommitmentRingDims::uniform(64)
+    );
+    assert_eq!(
+        planned.schedule.root.params.precommitted_groups[0].descriptor,
+        key.precommitteds[0]
+    );
 }
 
 #[test]

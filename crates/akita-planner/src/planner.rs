@@ -555,11 +555,39 @@ pub fn find_schedule(
         policy.ring_dimension_schedule_mode,
         crate::RingDimensionScheduleMode::AdaptiveDimension { .. }
     ) {
-        validate_adaptive_dimension_schedule_request(key, policy)?;
-        return mixed_search::find_schedule(
-            key.final_group,
-            policy,
+        if key.precommitteds.is_empty() {
+            validate_adaptive_dimension_schedule_request(key, policy)?;
+            return mixed_search::find_schedule(
+                key.final_group,
+                policy,
+                final_honest_fold_policy,
+                ring_challenge_config,
+                fold_challenge_shape_at_level,
+            );
+        }
+
+        // Adaptive search currently optimizes scalar roots. Grouped roots keep
+        // every already-committed A/B profile exact and plan the combined
+        // opening at the policy's uniform suffix dimension.
+        let crate::RingDimensionScheduleMode::AdaptiveDimension {
+            uniform_suffix_dimension,
+            ..
+        } = policy.ring_dimension_schedule_mode
+        else {
+            unreachable!("adaptive grouped fallback is entered only for adaptive policies");
+        };
+        let mut grouped_policy = *policy;
+        grouped_policy.uniform_ring_dimension = uniform_suffix_dimension;
+        grouped_policy.ring_dimension_schedule_mode =
+            crate::RingDimensionScheduleMode::UniformDimension {
+                ring_dimension: uniform_suffix_dimension,
+            };
+        grouped_policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
+        return find_schedule(
+            key,
             final_honest_fold_policy,
+            precommitted_honest_fold_policies,
+            &grouped_policy,
             ring_challenge_config,
             fold_challenge_shape_at_level,
         );

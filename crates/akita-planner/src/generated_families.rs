@@ -375,7 +375,8 @@ fn precommitted_profiles<Cfg: CommitmentConfig + 'static>(
         }
     }
 
-    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHot>()
+    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHot>()
+        || std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHot>()
         || std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHotMultiChunk>()
     {
         push_unique_profile(
@@ -387,13 +388,17 @@ fn precommitted_profiles<Cfg: CommitmentConfig + 'static>(
             standalone_precommit_profile::<Cfg>(PolynomialGroupLayout::new(15, 2))?,
         );
     }
-    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHot>() {
+    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHot>()
+        || std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHot>()
+    {
         push_unique_profile(
             &mut profiles,
             standalone_precommit_profile::<Cfg>(PolynomialGroupLayout::new(20, 1))?,
         );
     }
-    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64Dense>() {
+    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::Dense>()
+        || std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64Dense>()
+    {
         push_unique_profile(
             &mut profiles,
             standalone_precommit_profile::<Cfg>(PolynomialGroupLayout::new(15, 2))?,
@@ -416,7 +421,6 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
         direct.sort_by(|left, right| runtime_schedule_key_cmp(&left.0, &right.0));
         return Ok(direct);
     }
-
     let mut keys = supported_group_batch_keys::<Cfg>(direct)?;
     keys.sort_by(|left, right| runtime_schedule_key_cmp(&left.0, &right.0));
     Ok(keys)
@@ -424,9 +428,15 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
 
 fn direct_profile_group_batch_keys_for_cfg<Cfg: CommitmentConfig + 'static>(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHot>() {
+        let mut keys = recursive_d64_onehot_profile_keys::<fp128::OneHot>()?;
+        keys.push(heterogeneous_onehot_catalog_key()?);
+        keys.extend(onehot_group_batch_test_keys::<fp128::OneHot>()?);
+        return Ok(keys);
+    }
     if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHot>() {
         let mut keys = recursive_d64_onehot_profile_keys::<fp128::D64OneHot>()?;
-        keys.push(heterogeneous_d64_onehot_catalog_key()?);
+        keys.push(heterogeneous_onehot_catalog_key()?);
         keys.extend(onehot_group_batch_test_keys::<fp128::D64OneHot>()?);
         return Ok(keys);
     }
@@ -473,14 +483,14 @@ fn recursive_d64_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
     )])
 }
 
-fn heterogeneous_d64_onehot_catalog_key(
+fn heterogeneous_onehot_catalog_key(
 ) -> Result<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>), AkitaError> {
     let onehot_group = PolynomialGroupLayout::new(14, 1);
     let dense_group = PolynomialGroupLayout::new(15, 2);
-    let onehot_policy = honest_fold_policy_of::<fp128::D64OneHot>();
-    let dense_policy = honest_fold_policy_of::<fp128::D64Dense>();
-    let onehot = standalone_precommit_profile::<fp128::D64OneHot>(onehot_group)?;
-    let dense = standalone_precommit_profile::<fp128::D64Dense>(dense_group)?;
+    let onehot_policy = honest_fold_policy_of::<fp128::OneHot>();
+    let dense_policy = honest_fold_policy_of::<fp128::Dense>();
+    let onehot = standalone_precommit_profile::<fp128::OneHot>(onehot_group)?;
+    let dense = standalone_precommit_profile::<fp128::Dense>(dense_group)?;
     Ok((
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(16, 1),
@@ -729,7 +739,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         scalar_keys: FP128_ONEHOT_KEYS,
         regen: regen_fp128_onehot,
         regen_group_batch: regen_group_batch::<fp128::OneHot>,
-        emit_group_batch: false,
+        emit_group_batch: true,
         group_batch_keys: group_batch_keys::<fp128::OneHot>,
         table_backed: table_backed::<fp128::OneHot>,
         policy: family_policy::<fp128::OneHot>,

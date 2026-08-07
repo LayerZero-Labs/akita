@@ -41,8 +41,14 @@ fn accepts_real_fp64_d128_schedule() {
 }
 
 #[test]
-fn accepts_real_fp128_d64_schedule() {
-    let schedule = schedule::<fp128::D64Dense>(16);
-    validate_schedule_ring_dims(&schedule).expect("D64 schedule");
-    assert_schedule_geometry(&schedule, 64);
+fn accepts_real_fp128_adaptive_schedule() {
+    let schedule = schedule::<fp128::Dense>(16);
+    validate_schedule_ring_dims(&schedule).expect("adaptive schedule");
+    assert!(
+        schedule
+            .recursive_folds
+            .iter()
+            .any(|fold| fold.params.witness.d_a()
+                != schedule.root.params.final_group.commitment.d_a())
+    );
 }

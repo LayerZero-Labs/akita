@@ -511,10 +511,11 @@ pub(crate) fn layout_candidate_score(
 
 /// Offline canonical standalone precommit descriptor for one group.
 ///
-/// Runtime config code consumes generated [`CommittedGroupProfile`] rows
-/// instead of running this search. The returned profile freezes only group-local
-/// A/B commitment geometry; grouped-root schedule expansion later derives D/open
-/// metadata when the final group is known.
+/// For adaptive policies, the profile is the A/B geometry of the canonical
+/// scalar schedule's final root group. This keeps `commit_group` and a later
+/// scalar opening on the same generated row when global planning selects
+/// different dimensions from a locally minimized commitment. Uniform policies
+/// retain their direct, group-local minimization for specialized catalogs.
 pub fn derive_standalone_precommit_profile(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
@@ -523,10 +524,28 @@ pub fn derive_standalone_precommit_profile(
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<CommittedGroupProfile, AkitaError> {
     key.validate()?;
+    let schedule_key = AkitaScheduleLookupKey::single(key);
+    if matches!(
+        policy.ring_dimension_schedule_mode,
+        crate::RingDimensionScheduleMode::AdaptiveDimension { .. }
+    ) {
+        let planned = crate::planner::find_schedule(
+            &schedule_key,
+            honest_fold_policy,
+            &[],
+            policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+        )?;
+        return Ok(CommittedGroupProfile::from_params(
+            key,
+            &planned.schedule.root.params.final_group.commitment,
+        ));
+    }
+
     let mut direct_policy = policy.direct_only();
     direct_policy.basis_range = (direct_policy.basis_range.0, direct_policy.basis_range.0);
     validate_policy(&direct_policy)?;
-
     let witness_len = 1usize
         .checked_shl(key.num_vars() as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("precommit witness too large".into()))?;
@@ -537,65 +556,35 @@ pub fn derive_standalone_precommit_profile(
     });
     let (min_log_basis, max_log_basis) = direct_policy.log_basis_search_range_at_level(0);
     let mut best: Option<(usize, CommittedGroupParams)> = None;
-    let schedule_key = AkitaScheduleLookupKey::single(key);
-
-    let dimension_candidates = match direct_policy.ring_dimension_schedule_mode {
-        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => vec![
-            akita_schedules::planner_support::RingDimensionCandidate::Fixed(
-                CommitmentRingDims::uniform(ring_dimension),
-            ),
-        ],
-        crate::RingDimensionScheduleMode::AdaptiveDimension {
-            potential_a_dimensions,
-            potential_b_dimensions,
-            potential_d_dimensions,
-            ..
-        } => potential_a_dimensions
-            .iter()
-            .copied()
-            .map(
-                |inner| akita_schedules::planner_support::RingDimensionCandidate::Adaptive {
-                    inner,
-                    outer_dimensions: potential_b_dimensions,
-                    opening_dimensions: potential_d_dimensions,
-                    ceiling: CommitmentRingDims::uniform(direct_policy.uniform_ring_dimension),
-                },
-            )
-            .collect(),
+    let crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } =
+        direct_policy.ring_dimension_schedule_mode
+    else {
+        unreachable!("adaptive precommit planning returns above");
     };
     for candidate_log_basis in min_log_basis..=max_log_basis {
-        for dimensions in dimension_candidates.iter().copied() {
-            let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.inner()) else {
-                continue;
-            };
-            let alpha = (dimensions.inner() as u32).trailing_zeros() as usize;
-            let reduced_vars = key.num_vars().saturating_sub(alpha);
-            if reduced_vars == 0 {
-                continue;
-            }
-            for (candidate_params, next_witness_len) in
-                crate::planner::root_level_candidates_for_basis(
-                    &schedule_key,
-                    honest_fold_policy,
-                    &[],
-                    &direct_policy,
-                    dimensions,
-                    &ring_challenge_cfg,
-                    &ring_challenge_config,
-                    requested_fold_shape,
-                    witness_len,
-                    candidate_log_basis,
-                    false,
-                )?
-            {
-                match &best {
-                    Some((best_len, _)) if *best_len <= next_witness_len => {}
-                    _ => best = Some((next_witness_len, candidate_params)),
-                }
+        let dimensions = akita_schedules::planner_support::RingDimensionCandidate::Fixed(
+            CommitmentRingDims::uniform(ring_dimension),
+        );
+        let ring_challenge_cfg = ring_challenge_config(ring_dimension)?;
+        for (candidate_params, next_witness_len) in crate::planner::root_level_candidates_for_basis(
+            &schedule_key,
+            honest_fold_policy,
+            &[],
+            &direct_policy,
+            dimensions,
+            &ring_challenge_cfg,
+            &ring_challenge_config,
+            requested_fold_shape,
+            witness_len,
+            candidate_log_basis,
+            false,
+        )? {
+            match &best {
+                Some((best_len, _)) if *best_len <= next_witness_len => {}
+                _ => best = Some((next_witness_len, candidate_params)),
             }
         }
     }
-
     best.map(|(_, params)| CommittedGroupProfile::from_params(key, &params))
         .ok_or_else(|| {
             AkitaError::InvalidSetup(format!(

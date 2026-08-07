@@ -387,8 +387,9 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             .params
             .precommitted_groups
             .iter()
-            .all(|group| group.descriptor.inner_commit_matrix.ring_dimension() == TestCfg::D),
-        "precommitted groups must retain their native A dimension"
+            .zip(&pre_commitments)
+            .all(|(group, commitment)| group.descriptor == commitment.profile),
+        "precommitted groups must retain their exact native profiles"
     );
     if TestCfg::chunked_witness_cfg().uses_multi_chunk() {
         let root = &multi_group_schedule.root;

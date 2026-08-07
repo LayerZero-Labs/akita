@@ -291,6 +291,30 @@ where
     opening_from_poly_with_basis::<D, P>(poly, point, layout, BasisMode::Lagrange)
 }
 
+pub(super) fn opening_from_poly_for_layout<'a, P>(
+    poly: &'a P,
+    point: &[F],
+    layout: &CommittedGroupParams,
+) -> F
+where
+    P: RootOpeningSource<F, 64>
+        + RootPolyShape<F, 64>
+        + RootOpeningSource<F, 128>
+        + RootPolyShape<F, 128>
+        + RootOpeningSource<F, 256>
+        + RootPolyShape<F, 256>,
+    CpuBackend: OpeningFoldKernel<<P as RootOpeningSource<F, 64>>::OpeningView<'a>, F, 64>
+        + OpeningFoldKernel<<P as RootOpeningSource<F, 128>>::OpeningView<'a>, F, 128>
+        + OpeningFoldKernel<<P as RootOpeningSource<F, 256>>::OpeningView<'a>, F, 256>,
+{
+    match layout.d_a() {
+        64 => opening_from_poly::<64, _>(poly, point, layout),
+        128 => opening_from_poly::<128, _>(poly, point, layout),
+        256 => opening_from_poly::<256, _>(poly, point, layout),
+        dimension => panic!("unsupported test opening ring dimension D={dimension}"),
+    }
+}
+
 pub(super) fn opening_from_poly_with_basis<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],

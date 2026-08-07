@@ -160,6 +160,7 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
     policy: &PlannerPolicy,
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     log_basis_open: u32,
+    open_ring_dimension: usize,
 ) -> Result<(Vec<PrecommittedLevelParams>, usize), AkitaError> {
     let seeds = multi_group_root_precommitted_group_seeds(key, generated_groups, policy)?;
     let groups = seeds
@@ -178,7 +179,7 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
     let mut d_width = 0usize;
     for group in &groups {
         d_width = d_width
-            .checked_add(group.d_segment_width(policy.uniform_ring_dimension)?)
+            .checked_add(group.d_segment_width(open_ring_dimension)?)
             .ok_or_else(|| AkitaError::InvalidSetup("multi-group D width overflow".to_string()))?;
     }
     Ok((groups, d_width))

@@ -28,16 +28,16 @@ use akita_types::{
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-type Cfg = fp128::D64Dense;
+type Cfg = fp128::Dense;
 type F = fp128::Field;
 const D: usize = Cfg::D;
 type Scheme = AkitaCommitmentScheme<Cfg>;
 
 type OneHotF = fp128::Field;
-type OneHotCfg = fp128::D64OneHot;
+type OneHotCfg = fp128::OneHot;
 type PrecommittedOneHotCfg = PrecommittedCommitmentConfig<OneHotCfg>;
 const ONEHOT_D: usize = OneHotCfg::D;
-// `fp128::D64OneHot` uses K=256 one-hot chunks, spanning `K/D = 4` ring elements.
+// `fp128::OneHot` uses K=256 one-hot chunks at its root ring dimension.
 const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
 type PrecommittedOneHotScheme = AkitaCommitmentScheme<PrecommittedOneHotCfg>;
