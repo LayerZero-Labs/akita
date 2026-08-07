@@ -26,7 +26,7 @@ use rayon::prelude::*;
 ///
 /// The lazy factor caches one small state per low-bit assignment, avoiding a
 /// full dense factor table while the sparse witness still has large support.
-pub const SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS: usize = 12;
+pub const SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS: usize = 11;
 
 mod prover;
 mod sparse;

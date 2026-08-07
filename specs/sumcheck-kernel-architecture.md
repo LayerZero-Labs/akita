@@ -489,6 +489,14 @@ early collisions. The pair-native zero-and-delta state layout then reduced the
 clean median to 200.49 ms, which is 34.3 percent faster than the 305.00 ms
 baseline.
 
+The lazy tensor boundary is measured rather than inferred from domain size.
+For the same fp32 target shape, 12 lazy rounds measured about 207.2 ms, 10
+rounds measured about 200.7 ms, and 11 rounds measured about 200.1 ms in
+alternating runs. The production cap is therefore 11 rounds. A prototype that
+converted the nearly dense sparse witness and its tensor factor to dense tables
+measured 206 to 209 ms depending on the transition point; factor materialization
+cost more than the later dense SIMD rounds saved, so the cutover was removed.
+
 ### Existing state changes
 
 The cutover evolves current owners rather than adding parallel wrappers:
