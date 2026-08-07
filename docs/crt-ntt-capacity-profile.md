@@ -24,7 +24,6 @@ fallback for centered `z_pre` values; zero means one centered term does not fit.
 | --- | --- | ---: | ---: | ---: | --- | ---: |
 | Q32-reference/4xi16 | comparison only | 4 | i16 | 2^32 - 99 | `15361, 13313, 12289, 11777` | 54.72 |
 | Q32/2xi32 | production | 2 | i32 | 2^32 - 99 | `1073692673, 1073668097` | 60.00 |
-| Q32-exact/5xi16 | AVX-512VNNI exact D64-D256 | 5 | i16 | 2^32 - 99 | `10753, 11777, 12289, 13313, 15361` | 68.11 |
 | Q64/3xi32 | production | 3 | i32 | 2^64 - 59 | `1073692673, 1073668097, 1073707009` | 90.00 |
 | Q128/5xi32 | production | 5 | i32 | 2^128 - 275 | `1073692673, 1073668097, 1073707009, 1073738753, 1073732609` | 150.00 |
 
@@ -40,9 +39,6 @@ fallback for centered `z_pre` values; zero means one centered term does not fit.
 | Q32/2xi32 | 2 | i32 | 64 | 32,764 | 32,764 | 127 |
 | Q32/2xi32 | 2 | i32 | 128 | 16,382 | 16,382 | 63 |
 | Q32/2xi32 | 2 | i32 | 256 | 8,191 | 8,191 | 31 |
-| Q32-exact/5xi16 | 5 | i16 | 64 | 9,045,373 | 9,045,373 | 35,333 |
-| Q32-exact/5xi16 | 5 | i16 | 128 | 4,522,686 | 4,522,686 | 17,666 |
-| Q32-exact/5xi16 | 5 | i16 | 256 | 2,261,343 | 2,261,343 | 8,833 |
 | Q64/3xi32 | 3 | i32 | 32 | 16,381 | 16,381 | 63 |
 | Q64/3xi32 | 3 | i32 | 64 | 8,190 | 8,190 | 31 |
 | Q64/3xi32 | 3 | i32 | 128 | 4,095 | 4,095 | 15 |
@@ -65,11 +61,6 @@ compared it against the `Q32-reference/4xi16` profile used during design:
 Both variants have the same per-coefficient CRT limb footprint (8 bytes),
 but `Q32/2xi32` halves the prime count and has substantially larger capacity.
 The reference `4xi16` row remains here only as experiment evidence.
-
-The five-prime i16 row is a host-specific exact-cache representation, not a
-replacement for the portable two-i32 profile. It uses ten bytes per cached
-coefficient and is selected only on detected AVX-512VNNI hosts without an
-enabled IFMA52 representation. No native VNNI timing is claimed here.
 
 The production profiles all have nonzero `balanced128` and `raw128` widths at
 `D in {32, 64, 128, 256}`. The `zpre32768 = 0` entries are acceptable because

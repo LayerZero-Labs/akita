@@ -146,6 +146,26 @@ fn q64_exact_cache_uses_ifma52_when_enabled() {
 }
 
 #[test]
+#[ignore = "requires AVX-512F/DQ/IFMA hardware or emulation"]
+fn exact_cache_selects_ifma52_on_supported_hardware() {
+    const D: usize = 64;
+    assert!(
+        ifma52_cache_enabled::<D>(),
+        "IFMA52 dispatch is unavailable"
+    );
+    let flat = flat_zeros::<Prime64Offset59, D>(2);
+    let cache = prepare_ntt_cache(
+        flat.ring_view::<D>(1, 2).expect("matrix view"),
+        NttCacheMode::ExactNegacyclic {
+            width: 2,
+            rhs_abs_bound: 1 << 15,
+        },
+    )
+    .expect("exact cache");
+    assert!(cache.uses_ifma52());
+}
+
+#[test]
 fn q32_exact_cache_uses_mixed_ifma52_when_enabled() {
     const D: usize = 64;
     let flat = flat_zeros::<Prime32Offset99, D>(2);
@@ -173,87 +193,6 @@ fn q32_exact_cache_uses_mixed_ifma52_when_enabled() {
             .expect("mixed IFMA52 exact matvec"),
         vec![CyclotomicRing::zero()]
     );
-}
-
-#[test]
-fn q32_i16_vnni_exact_cache_matches_ring_arithmetic() {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    let available = std::is_x86_feature_detected!("avx2")
-        && std::is_x86_feature_detected!("avx512f")
-        && std::is_x86_feature_detected!("avx512dq")
-        && std::is_x86_feature_detected!("avx512bw")
-        && std::is_x86_feature_detected!("avx512vnni")
-        && std::env::var("AKITA_IFMA52").ok().as_deref() == Some("0");
-    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-    let available = false;
-    if !available {
-        assert_ne!(
-            std::env::var("AKITA_REQUIRE_AVX512VNNI").ok().as_deref(),
-            Some("1"),
-            "required Q32 i16 VNNI cache backend is unavailable"
-        );
-        return;
-    }
-
-    const D: usize = 64;
-    const ROWS: usize = 2;
-    const COLS: usize = 6;
-    type F = Prime32Offset99;
-    let matrix = (0..ROWS * COLS)
-        .map(|entry| {
-            CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|coefficient| {
-                let magnitude = (Q32_MODULUS / 2) as i64 - (entry * 257 + coefficient * 17) as i64;
-                F::from_i64(if (entry + coefficient) % 2 == 0 {
-                    magnitude
-                } else {
-                    -magnitude
-                })
-            }))
-        })
-        .collect::<Vec<_>>();
-    let rhs = (0..COLS)
-        .map(|column| {
-            std::array::from_fn(|coefficient| {
-                if (column + coefficient) % 2 == 0 {
-                    i16::MAX
-                } else {
-                    i16::MIN
-                }
-            })
-        })
-        .collect::<Vec<_>>();
-    let flat = crate::FlatMatrix::from_ring_slice(&matrix);
-    let cache = prepare_ntt_cache(
-        flat.ring_view::<D>(ROWS, COLS).expect("matrix view"),
-        NttCacheMode::ExactNegacyclic {
-            width: COLS,
-            rhs_abs_bound: 1 << 15,
-        },
-    )
-    .expect("Q32 i16 cache");
-    assert!(cache.q32_i16_base().is_some());
-    assert_eq!(
-        cache.cache_bytes(),
-        ROWS * COLS * D * Q32_I16_NUM_PRIMES * size_of::<i16>()
-    );
-
-    let actual = cache
-        .mat_vec_i16::<F>(16, ROWS, &rhs)
-        .expect("Q32 i16 matvec");
-    let expected = matrix
-        .chunks_exact(COLS)
-        .map(|row| {
-            row.iter()
-                .zip(&rhs)
-                .fold(CyclotomicRing::zero(), |sum, (lhs, rhs)| {
-                    sum + *lhs
-                        * CyclotomicRing::from_coefficients(
-                            rhs.map(|value| F::from_i64(value.into())),
-                        )
-                })
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(actual, expected);
 }
 
 fn assert_q32_exact_cache_matches_ring_arithmetic<const D: usize>() {

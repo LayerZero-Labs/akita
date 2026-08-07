@@ -4,9 +4,8 @@ use super::prime::PrimeWidth;
 
 /// Host kernels selected once when a CRT+NTT parameter set is prepared.
 ///
-/// The mixed x86 plan reflects measured Ice Lake behavior: AVX2 wins for the
-/// transform stages while AVX-512 wins for single-product pointwise arithmetic.
-/// Short i32 dots select their AVX2 lazy-reduction kernel independently.
+/// AVX2 is the measured x86 production backend for both transforms and
+/// pointwise arithmetic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NttKernelPlan(NttKernelKind);
 
@@ -19,10 +18,6 @@ enum NttKernelKind {
     Neon,
     /// AVX2 transforms and pointwise arithmetic.
     Avx2,
-    /// AVX2 transforms with AVX-512 pointwise arithmetic.
-    Avx2TransformAvx512Pointwise,
-    /// AVX-512 transforms and pointwise arithmetic.
-    Avx512,
 }
 
 impl NttKernelPlan {
@@ -32,26 +27,8 @@ impl NttKernelPlan {
     pub fn detect<W: PrimeWidth>() -> Self {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
-            use super::avx::AvxNttMode;
-
-            if core::mem::size_of::<W>() == core::mem::size_of::<i16>() {
-                return if super::avx::use_avx512_vnni_pointwise() {
-                    Self(NttKernelKind::Avx2TransformAvx512Pointwise)
-                } else if super::avx::use_avx2_transform_ntt() {
-                    Self(NttKernelKind::Avx2)
-                } else {
-                    Self::SCALAR
-                };
-            }
-            if core::mem::size_of::<W>() == core::mem::size_of::<i32>() {
-                return match super::avx::avx_ntt_mode() {
-                    Some(AvxNttMode::Avx512) if super::avx::use_avx512_transform_ntt() => {
-                        Self(NttKernelKind::Avx512)
-                    }
-                    Some(AvxNttMode::Avx512) => Self(NttKernelKind::Avx2TransformAvx512Pointwise),
-                    Some(AvxNttMode::Avx2) => Self(NttKernelKind::Avx2),
-                    None => Self::SCALAR,
-                };
+            if matches!(core::mem::size_of::<W>(), 2 | 4) && super::avx::use_avx2_transform_ntt() {
+                return Self(NttKernelKind::Avx2);
             }
         }
 
@@ -65,44 +42,18 @@ impl NttKernelPlan {
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     pub(crate) const fn uses_x86_transform(self) -> bool {
-        matches!(
-            self.0,
-            NttKernelKind::Avx2
-                | NttKernelKind::Avx2TransformAvx512Pointwise
-                | NttKernelKind::Avx512
-        )
+        matches!(self.0, NttKernelKind::Avx2)
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     pub(crate) const fn uses_avx2_i32_dot(self) -> bool {
-        matches!(
-            self.0,
-            NttKernelKind::Avx2
-                | NttKernelKind::Avx2TransformAvx512Pointwise
-                | NttKernelKind::Avx512
-        )
-    }
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    pub(crate) const fn uses_avx512_transform(self) -> bool {
-        matches!(self.0, NttKernelKind::Avx512)
-    }
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    pub(crate) const fn uses_avx512_pointwise(self) -> bool {
-        matches!(
-            self.0,
-            NttKernelKind::Avx2TransformAvx512Pointwise | NttKernelKind::Avx512
-        )
+        matches!(self.0, NttKernelKind::Avx2)
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     pub(crate) const fn x86_pointwise_mode(self) -> Option<super::avx::AvxNttMode> {
         match self.0 {
             NttKernelKind::Avx2 => Some(super::avx::AvxNttMode::Avx2),
-            NttKernelKind::Avx2TransformAvx512Pointwise | NttKernelKind::Avx512 => {
-                Some(super::avx::AvxNttMode::Avx512)
-            }
             NttKernelKind::Scalar | NttKernelKind::Neon => None,
         }
     }

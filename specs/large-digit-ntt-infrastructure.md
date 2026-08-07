@@ -5,8 +5,8 @@
 | Author(s) | Quang Dao |
 | Created | 2026-07-21 |
 | Status | active |
-| Branch | `quang/large-inner-basis-infra` |
-| PR | pending |
+| Branch | `codex/ntt-architecture` |
+| PR | [#358](https://github.com/LayerZero-Labs/akita/pull/358) |
 | Supersedes | the 2026-07 large-basis extension notes in `crt-ntt-accumulation-safety.md` |
 | Superseded-by | |
 | Book-chapter | book/src/foundations/ntt-crt.md |
@@ -34,9 +34,7 @@ Portable, AVX2, and NEON hosts retain the homogeneous i32 CRT profile and add
 one 14-bit residue modulo 12289 only when required. AVX-512IFMA hosts at D64
 through D512 may instead use the exact homogeneous 50-bit profile selected for
 Q32, Q64, or Q128, again adding the tail only when required. Every form is
-derived, lazy, and non-serialized. AVX-512VNNI hosts without enabled IFMA52 may
-use a five-i16 exact Q32 profile at D64 through D256 when its capacity covers
-the request; D512 remains on the i32 profile.
+derived, lazy, and non-serialized.
 
 The branch implements the arithmetic, terminal cutover, SIMD kernels,
 exactness selection, lazy verifier warming, unified NTT cache, and removal of
@@ -120,12 +118,6 @@ For exact caches on AVX-512IFMA hosts, the corresponding base residues are
 `1 x u64` for Q32, `2 x u64` for Q64, and `3 x u64` for Q128. They store
 canonical 50-bit residues but share the same capacity and centered-Garner
 contracts as the portable profiles.
-
-The host-specific exact Q32 VNNI profile uses
-`10753, 11777, 12289, 13313, 15361`. Its approximately 68-bit CRT product
-supports D64, D128, and D256 and occupies ten bytes per cached coefficient.
-It is not valid at D512 because only three primes below `2^14` in this family
-support the required 1024-th root of unity.
 
 `12289 - 1 = 3 * 2^12`, so the tail admits a primitive root for every
 negacyclic ring degree through `D = 2048`. It is coprime to every base profile
@@ -334,11 +326,10 @@ it must preserve the single public cache contract and the exactness selector.
     negacyclic modes never allocate them.
 11. Prepared caches are derived and non-serialized. Proof, transcript, setup,
     and descriptor bytes remain unchanged.
-12. Scalar, AVX2, NEON, AVX-512IFMA, and AVX-512VNNI implementations are
+12. Scalar, AVX2, NEON, and AVX-512IFMA implementations are
     differential-equivalent. IFMA52 exact caches are selected only at D64
-    through D512, and the Q32 i16 VNNI cache only at D64 through D256, when the
-    required CPU features are detected. Accelerated kernels are optional;
-    scalar behavior is authoritative.
+    through D512 when the required CPU features are detected. Accelerated
+    kernels are optional; scalar behavior is authoritative.
 13. Verifier-reachable malformed inputs fail with `AkitaError` and do not
     panic.
 14. The cache API has one canonical constructor and one canonical exactness
@@ -358,11 +349,9 @@ it must preserve the single public cache contract and the exactness selector.
 2. Supporting balanced bases above 16 or coefficients wider than `i16` in the
    terminal relation.
 3. Adding the tail unconditionally to Q64/Q128 or to every `i16` operation.
-4. Replacing the portable base profiles with multiple 14-bit primes. Portable
-   profiles remain homogeneous i32 prefixes; the five-i16 Q32 form is private
-   host-specific exact cache state. IFMA52 hosts may use homogeneous 50-bit u64
-   prefixes. The i32 and IFMA52 representations may add one 12289 exactness
-   tail.
+4. Replacing a base 30-bit prime with multiple 14-bit primes. Portable profiles
+   remain homogeneous i32 prefixes; IFMA52 hosts may use homogeneous 50-bit u64
+   prefixes. Either representation may add one 12289 exactness tail.
 5. Restoring partial-split NTT multiplication, strided digit kernels, or legacy
    verifier fallbacks.
 6. Changing the proof format, transcript labels/order, Fiat-Shamir sampling,

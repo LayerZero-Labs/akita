@@ -99,14 +99,7 @@ unimplemented = "deny"
 print_stdout = "allow"
 print_stderr = "allow"
 
-[profile.release]
-lto = "thin"
-
-[profile.bench]
-lto = "thin"
-
 [profile.ci-test]
 inherits = "release"
 debug-assertions = true
 overflow-checks = true
-lto = false

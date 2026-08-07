@@ -1,111 +1,25 @@
 use super::*;
 use crate::ntt::butterfly::NttTwiddles;
-use crate::ntt::prime::{MontCoeff, NttPrime, I16_VNNI_DOT_BATCH, I32_LAZY_DOT_BATCH};
+use crate::ntt::prime::{MontCoeff, NttPrime, I32_LAZY_DOT_BATCH};
 use crate::ntt::tables::Q128_RAW_PRIMES;
 
-const AVX2_ONLY: AvxCpuFeatures = AvxCpuFeatures {
-    avx2: true,
-    avx512f: false,
-    avx512dq: false,
-    avx512bw: false,
-    avx512vnni: false,
-};
+const AVX2_ONLY: AvxCpuFeatures = AvxCpuFeatures { avx2: true };
 
-const AVX512_CAPABLE: AvxCpuFeatures = AvxCpuFeatures {
-    avx2: true,
-    avx512f: true,
-    avx512dq: true,
-    avx512bw: true,
-    avx512vnni: true,
-};
-
-const AVX512_WITHOUT_AVX2: AvxCpuFeatures = AvxCpuFeatures {
-    avx2: false,
-    avx512f: true,
-    avx512dq: true,
-    avx512bw: true,
-    avx512vnni: true,
-};
+const NO_AVX2: AvxCpuFeatures = AvxCpuFeatures { avx2: false };
 
 #[test]
 fn avx_mode_defaults_to_avx2_when_supported() {
-    assert_eq!(
-        select_avx_ntt_mode(None, None, None, AVX2_ONLY),
-        Some(AvxNttMode::Avx2)
-    );
+    assert_eq!(select_avx_ntt_mode(None, AVX2_ONLY), Some(AvxNttMode::Avx2));
 }
 
 #[test]
-fn avx512_requires_an_explicit_opt_in() {
-    assert_eq!(
-        select_avx_ntt_mode(None, None, None, AVX512_CAPABLE),
-        Some(AvxNttMode::Avx2)
-    );
-    assert_eq!(
-        select_avx_ntt_mode(None, None, Some("1"), AVX512_CAPABLE),
-        Some(AvxNttMode::Avx512)
-    );
+fn x86_ntt_requires_avx2() {
+    assert_eq!(select_avx_ntt_mode(None, NO_AVX2), None);
 }
 
 #[test]
-fn avx512_mode_rejects_a_feature_mask_without_avx2() {
-    assert_eq!(
-        select_avx_ntt_mode(None, None, None, AVX512_WITHOUT_AVX2),
-        None
-    );
-    assert_eq!(
-        select_avx_ntt_mode(None, None, Some("1"), AVX512_WITHOUT_AVX2),
-        None
-    );
-}
-
-#[test]
-fn avx2_transform_is_default_and_avx512_is_explicit() {
-    assert!(!select_avx512_transform_ntt(None, Some(AvxNttMode::Avx512)));
-    assert!(select_avx512_transform_ntt(
-        Some("1"),
-        Some(AvxNttMode::Avx512)
-    ));
-    assert!(!select_avx512_transform_ntt(
-        Some("1"),
-        Some(AvxNttMode::Avx2)
-    ));
-}
-
-#[test]
-fn avx512_can_be_opted_out_to_avx2() {
-    assert_eq!(
-        select_avx_ntt_mode(None, None, Some("0"), AVX512_CAPABLE),
-        Some(AvxNttMode::Avx2)
-    );
-}
-
-#[test]
-fn scalar_kill_switch_precedes_avx_flags() {
-    assert_eq!(
-        select_avx_ntt_mode(Some("1"), None, Some("1"), AVX512_CAPABLE),
-        None
-    );
-}
-
-#[test]
-fn avx_kill_switch_disables_x86_ntt_simd() {
-    assert_eq!(
-        select_avx_ntt_mode(None, Some("0"), Some("1"), AVX512_CAPABLE),
-        None
-    );
-}
-
-#[test]
-fn avx512_opt_in_falls_back_to_avx2_without_full_features() {
-    let missing_bw = AvxCpuFeatures {
-        avx512bw: false,
-        ..AVX512_CAPABLE
-    };
-    assert_eq!(
-        select_avx_ntt_mode(None, None, Some("1"), missing_bw),
-        Some(AvxNttMode::Avx2)
-    );
+fn scalar_kill_switch_disables_x86_ntt_simd() {
+    assert_eq!(select_avx_ntt_mode(Some("1"), AVX2_ONLY), None);
 }
 
 fn random_mont_array_i32<const D: usize>(prime: NttPrime<i32>, seed: u64) -> [MontCoeff<i32>; D] {
@@ -693,8 +607,7 @@ fn avx2_add_reduce_i32_matches_scalar_with_tail() {
 
 #[test]
 fn avx512_pointwise_mul_acc_i32_matches_scalar_with_tail() {
-    if !(std::is_x86_feature_detected!("avx2")
-        && std::is_x86_feature_detected!("avx512f")
+    if !(std::is_x86_feature_detected!("avx512f")
         && std::is_x86_feature_detected!("avx512dq")
         && std::is_x86_feature_detected!("avx512bw"))
     {
@@ -781,72 +694,6 @@ fn avx2_pointwise_mul_acc_i16_matches_scalar_with_tail() {
     let mut scalar_acc = acc_init;
     scalar_pointwise_i16(&mut scalar_acc, &lhs, &rhs, prime);
     assert_eq!(avx_acc, scalar_acc);
-}
-
-#[test]
-fn avx512vnni_six_way_i16_dot_matches_scalar_with_tail() {
-    let available = std::is_x86_feature_detected!("avx2")
-        && std::is_x86_feature_detected!("avx512f")
-        && std::is_x86_feature_detected!("avx512dq")
-        && std::is_x86_feature_detected!("avx512bw")
-        && std::is_x86_feature_detected!("avx512vnni");
-    if !available {
-        assert_ne!(
-            std::env::var("AKITA_REQUIRE_AVX512VNNI").ok().as_deref(),
-            Some("1"),
-            "required AVX-512VNNI test backend is unavailable"
-        );
-        return;
-    }
-    let prime = NttPrime::compute(15361_i16);
-    const D: usize = 80;
-    let acc_init = random_mont_array_i16::<D>(prime, 0xd0d0);
-    let lhs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
-        if column == 0 {
-            edge_mont_array_i16::<D>(prime)
-        } else {
-            random_mont_array_i16::<D>(prime, 0x1100 + column as u64)
-        }
-    });
-    let mut rhs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
-        random_mont_array_i16::<D>(prime, 0x2200 + column as u64)
-    });
-    let scalar_rhs = rhs;
-    let lhs_ptrs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
-        lhs[column].as_ptr().cast::<i16>()
-    });
-    let rhs_base = rhs.as_mut_ptr();
-    let rhs_ptrs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
-        // SAFETY: `column` is bounded by the six-element rhs array.
-        unsafe { (*rhs_base.add(column)).as_mut_ptr().cast::<i16>() }
-    });
-
-    let mut avx_acc = acc_init;
-    // SAFETY: guarded by runtime AVX2 and AVX-512F/DQ/BW/VNNI detection above.
-    unsafe {
-        pack_i16_dot_rhs_6_avx512(rhs_ptrs.as_ptr(), D);
-        let rhs_ptrs = rhs_ptrs.map(|pointer| pointer.cast_const());
-        pointwise_dot_acc_6_i16_avx512vnni(
-            avx_acc.as_mut_ptr().cast::<i16>(),
-            lhs_ptrs.as_ptr(),
-            rhs_ptrs.as_ptr(),
-            D,
-            prime.p,
-            prime.pinv,
-        );
-    }
-
-    let mut scalar_acc = acc_init;
-    for column in 0..I16_VNNI_DOT_BATCH {
-        scalar_pointwise_i16(&mut scalar_acc, &lhs[column], &scalar_rhs[column], prime);
-    }
-    for (index, (actual, expected)) in avx_acc.into_iter().zip(scalar_acc).enumerate() {
-        assert_eq!(
-            prime.normalize(actual),
-            prime.normalize(expected),
-            "coefficient {index}"
-        );
-    }
 }
 
 #[test]

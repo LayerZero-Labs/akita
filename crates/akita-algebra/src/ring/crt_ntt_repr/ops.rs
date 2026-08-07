@@ -8,8 +8,6 @@ use crate::ntt::avx::{self, AvxNttMode};
 use crate::ntt::butterfly::forward_ntt;
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use crate::ntt::prime::I16_VNNI_DOT_BATCH;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
 use crate::{AkitaError, CanonicalField, CyclotomicRing, FieldCore};
 
@@ -72,8 +70,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .unwrap_or(0) as i32;
         let lut = CenteredMontLut::new(params, rhs_abs_bound);
         let mut accumulators = vec![Self::zero(); num_rows];
-        let pointwise_dot_batch_size = params.pointwise_dot_batch_size();
-        if pointwise_dot_batch_size == 1 {
+        if !params.uses_lazy_i32_dot() {
             for (column, digits) in rhs.iter().enumerate() {
                 if digits.iter().all(|&digit| digit == 0) {
                     continue;
@@ -88,9 +85,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             return Ok(accumulators);
         }
 
-        let mut transformed = Vec::with_capacity(pointwise_dot_batch_size);
-        for batch_start in (0..num_cols).step_by(pointwise_dot_batch_size) {
-            let batch_end = (batch_start + pointwise_dot_batch_size).min(num_cols);
+        const BATCH: usize = I32_LAZY_DOT_BATCH;
+        let mut transformed = Vec::with_capacity(BATCH);
+        for batch_start in (0..num_cols).step_by(BATCH) {
+            let batch_end = (batch_start + BATCH).min(num_cols);
             transformed.clear();
             for digits in &rhs[batch_start..batch_end] {
                 if digits.iter().all(|&digit| digit == 0) {
@@ -101,16 +99,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             }
 
             if transformed.len() == batch_end - batch_start {
-                let batch_len = transformed.len();
-                Self::add_assign_pointwise_dot_rows(
-                    &mut accumulators,
-                    |row| {
-                        let start = row * num_cols + batch_start;
-                        &matrix[start..start + batch_len]
-                    },
-                    &mut transformed,
-                    params,
-                );
+                for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
+                {
+                    accumulator.add_assign_pointwise_dot(
+                        &row[batch_start..batch_end],
+                        &transformed,
+                        params,
+                    );
+                }
                 continue;
             }
 
@@ -131,84 +127,17 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         Ok(accumulators)
     }
 
-    /// Accumulate one short pointwise dot product across multiple matrix rows.
+    /// Accumulate a short pointwise dot product in CRT+NTT domain.
     ///
     /// The prepared backend chooses whether to fuse the products or apply the
-    /// canonical single-product primitive repeatedly. VNNI backends pair-pack
-    /// the transformed rhs in place once and reuse it across every row.
+    /// canonical single-product primitive repeatedly.
     ///
     /// # Panics
     ///
-    /// Panics if a lhs row differs in length from `rhs` or the dot exceeds the
-    /// backend-independent six-product arithmetic ceiling.
-    pub fn add_assign_pointwise_dot_rows<'a>(
-        accumulators: &mut [Self],
-        lhs_row: impl Fn(usize) -> &'a [Self],
-        rhs: &mut [Self],
-        params: &CrtNttParamSet<W, K, D>,
-    ) where
-        W: 'a,
-    {
-        assert!(
-            rhs.len() <= I32_LAZY_DOT_BATCH,
-            "pointwise dot exceeds lazy reduction bound"
-        );
-        if accumulators.is_empty() {
-            return;
-        }
-
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if params.uses_vnni_i16_dot() && rhs.len() == I16_VNNI_DOT_BATCH {
-            let rhs_base = rhs.as_mut_ptr();
-            for k in 0..K {
-                let pointers: [*mut i16; I16_VNNI_DOT_BATCH] = std::array::from_fn(|index| {
-                    // SAFETY: `index` is bounded by the six-element rhs.
-                    unsafe { (*rhs_base.add(index)).limbs[k].as_mut_ptr().cast::<i16>() }
-                });
-                // SAFETY: the opaque stored plan proves AVX-512F/BW support,
-                // the dispatch predicate proves `W == i16`, and the six
-                // pointers address distinct writable D-element limbs.
-                unsafe { avx::pack_i16_dot_rhs_6_avx512(pointers.as_ptr(), D) };
-            }
-            let rhs_pointers: [[*const i16; I16_VNNI_DOT_BATCH]; K] = std::array::from_fn(|k| {
-                std::array::from_fn(|index| {
-                    // SAFETY: rhs remains alive and is no longer mutated.
-                    unsafe { (*rhs_base.add(index)).limbs[k].as_ptr().cast::<i16>() }
-                })
-            });
-
-            for (row, accumulator) in accumulators.iter_mut().enumerate() {
-                let lhs = lhs_row(row);
-                assert_eq!(lhs.len(), rhs.len(), "pointwise dot length mismatch");
-                for (k, rhs_pointers) in rhs_pointers.iter().enumerate() {
-                    let lhs_pointers: [*const i16; I16_VNNI_DOT_BATCH] =
-                        std::array::from_fn(|index| lhs[index].limbs[k].as_ptr().cast::<i16>());
-                    let prime = params.primes[k];
-                    // SAFETY: the opaque stored plan proves AVX2 and
-                    // AVX-512F/DQ/BW/VNNI support. The dispatch predicate
-                    // proves `W == i16`, and all limbs contain D coefficients.
-                    unsafe {
-                        avx::pointwise_dot_acc_6_i16_avx512vnni(
-                            accumulator.limbs[k].as_mut_ptr().cast::<i16>(),
-                            lhs_pointers.as_ptr(),
-                            rhs_pointers.as_ptr(),
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
-                        )
-                    }
-                }
-            }
-            return;
-        }
-
-        for (row, accumulator) in accumulators.iter_mut().enumerate() {
-            accumulator.add_assign_pointwise_dot(lhs_row(row), rhs, params);
-        }
-    }
-
+    /// Panics if the slices differ in length or exceed the backend-independent
+    /// six-product arithmetic ceiling.
     #[inline(always)]
-    fn add_assign_pointwise_dot(
+    pub fn add_assign_pointwise_dot(
         &mut self,
         lhs: &[Self],
         rhs: &[Self],

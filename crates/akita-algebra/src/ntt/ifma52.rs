@@ -203,10 +203,10 @@ pub fn ifma52_available() -> bool {
     }
 }
 
-/// Whether IFMA52 is available and not explicitly disabled for comparison.
+/// Whether IFMA52 is available and SIMD has not been globally disabled.
 #[must_use]
 pub fn ifma52_enabled() -> bool {
-    ifma52_available() && std::env::var_os("AKITA_IFMA52").is_none_or(|value| value != "0")
+    ifma52_available() && std::env::var("AKITA_SCALAR_NTT").ok().as_deref() != Some("1")
 }
 
 #[inline(always)]
@@ -342,13 +342,10 @@ mod tests {
     }
 
     #[test]
-    fn required_ifma52_execution_does_not_fallback() {
-        if std::env::var("AKITA_REQUIRE_IFMA52").ok().as_deref() == Some("1") {
-            assert!(
-                ifma52_available(),
-                "AKITA_REQUIRE_IFMA52 requires AVX-512F/DQ/IFMA at runtime"
-            );
-            round_trip::<64>();
-        }
+    #[ignore = "requires AVX-512F/DQ/IFMA hardware or emulation"]
+    fn ifma52_hardware_round_trip_does_not_fallback() {
+        assert!(ifma52_available(), "AVX-512F/DQ/IFMA is unavailable");
+        assert!(ifma52_enabled(), "IFMA52 dispatch was not selected");
+        round_trip::<64>();
     }
 }

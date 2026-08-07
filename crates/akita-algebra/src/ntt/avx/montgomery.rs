@@ -257,27 +257,6 @@ pub(super) unsafe fn reduce_range_16x_i32_avx512(a: __m512i, p: __m512i) -> __m5
     _mm512_mask_add_epi32(after_sub, lt_mask, after_sub, p)
 }
 
-/// Reduce sixteen signed sums of up to six `i16` Montgomery products.
-///
-/// Each input lane is `sum(a_j * b_j)` in a signed `i32`. For `p < 2^14`
-/// and at most six products, both the dot product and the Montgomery
-/// correction fit in `i32` without saturation.
-#[target_feature(enable = "avx512f,avx512bw")]
-pub(super) unsafe fn mont_reduce_i16_dot_avx512(
-    products: __m512i,
-    p: __m512i,
-    pinv: __m512i,
-) -> __m512i {
-    // Signed Montgomery reduction with R = 2^16:
-    //   t = low16(products) * pinv mod R
-    //   out = (products - t*p) / R.
-    // Sign-extending the low half after the i32 multiply gives the same
-    // centered i16 `t` used by the scalar and AVX2 implementations.
-    let t = _mm512_mullo_epi32(products, pinv);
-    let t = _mm512_srai_epi32::<16>(_mm512_slli_epi32::<16>(t));
-    _mm512_srai_epi32::<16>(_mm512_sub_epi32(products, _mm512_mullo_epi32(t, p)))
-}
-
 #[target_feature(enable = "avx2")]
 pub(super) unsafe fn mont_mul_16x_i16_avx2(
     a: __m256i,

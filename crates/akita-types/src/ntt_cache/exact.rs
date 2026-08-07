@@ -23,9 +23,6 @@ fn ifma52_tail_requirement<F: CanonicalField, const K: usize, const D: usize>(
 }
 
 pub(super) enum ExactCachePlan<const D: usize> {
-    Q32I16 {
-        params: Box<CrtNttParamSet<i16, Q32_I16_NUM_PRIMES, D>>,
-    },
     Q32 {
         params: Box<CrtNttParamSet<i32, Q32_NUM_PRIMES, D>>,
         needs_tail: bool,
@@ -54,7 +51,6 @@ pub(super) enum ExactCachePlan<const D: usize> {
 impl<const D: usize> ExactCachePlan<D> {
     const fn needs_tail(&self) -> bool {
         match self {
-            Self::Q32I16 { .. } => false,
             Self::Q32 { needs_tail, .. }
             | Self::Q32Ifma52 { needs_tail, .. }
             | Self::Q64 { needs_tail, .. }
@@ -82,12 +78,6 @@ pub(super) fn exact_cache_plan<F: CanonicalField, const D: usize>(
                 Ok(ExactCachePlan::Q32Ifma52 {
                     params: Box::new(params),
                     needs_tail,
-                })
-            } else if let Some(params) = q32_i16_vnni_params::<D>()
-                .filter(|params| params.crt_capacity().supports::<F, D>(width, rhs_abs_bound))
-            {
-                Ok(ExactCachePlan::Q32I16 {
-                    params: Box::new(params),
                 })
             } else {
                 let needs_tail = required_profile_for_params::<F, _, Q32_NUM_PRIMES, D>(
@@ -214,13 +204,6 @@ pub(super) fn prepare_exact_ntt_cache<F: FieldCore + CanonicalField, const D: us
     }
 
     let prepared = match plan {
-        ExactCachePlan::Q32I16 { params } => {
-            let params = *params;
-            let neg = cfg_iter!(matrix.as_slice())
-                .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
-                .collect();
-            PreparedNttCacheRepr::Q32I16 { neg, params }
-        }
         ExactCachePlan::Q32 { params, needs_tail } => {
             homogeneous!(params, Q32, needs_tail)
         }
@@ -251,14 +234,6 @@ pub(super) fn prepare_exact_ntt_cache<F: FieldCore + CanonicalField, const D: us
     };
     prepared.validate()?;
     Ok(PreparedNttCache(prepared))
-}
-
-fn q32_i16_vnni_params<const D: usize>() -> Option<CrtNttParamSet<i16, Q32_I16_NUM_PRIMES, D>> {
-    if !(64..=256).contains(&D) {
-        return None;
-    }
-    let params = CrtNttParamSet::new(Q32_I16_PRIMES);
-    (params.pointwise_dot_batch_size() > 1).then_some(params)
 }
 
 fn prepare_ifma52_exact<F: FieldCore + CanonicalField, const K: usize, const D: usize>(

@@ -17,10 +17,6 @@ use std::fmt;
 /// every supported prime below `2^30`.
 pub(crate) const I32_LAZY_DOT_BATCH: usize = 6;
 
-/// Number of `i16` products accumulated by one AVX-512VNNI dot batch.
-/// Six products under `p < 2^14` fit in a signed `i32` lane.
-pub(crate) const I16_VNNI_DOT_BATCH: usize = 6;
-
 mod sealed {
     pub trait Sealed {}
     impl Sealed for i16 {}

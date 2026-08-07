@@ -260,11 +260,9 @@ larger ring degree.
    the Bugbot false positive (tests and optional cosmetic clarity only).
 9. Requiring Metal, AVX, or any accelerator backend for correctness.
    x86 CRT/NTT SIMD is an optimization-only surface: it is enabled by runtime CPU
-   feature detection (AVX2 by default, AVX-512 by explicit opt-in when the host
-   supports `avx512f`/`avx512dq`/`avx512bw`) and falls back to scalar.
-   The `AKITA_SCALAR_NTT`, `AKITA_AVX_NTT`, and `AKITA_AVX512_NTT` env overrides
-   drive scalar-equivalence and A/B tests, and correctness never depends on which
-   mode is selected.
+   feature detection, selects the measured AVX2 production backend, and falls
+   back to scalar. `AKITA_SCALAR_NTT=1` is the single emergency SIMD kill switch;
+   correctness never depends on which mode is selected.
 10. Changing canonical setup layout, proof layout, transcript binding, or
     verifier-visible semantics to accommodate a backend cache layout.
 11. Choosing one new physical cache layout without measurements.
