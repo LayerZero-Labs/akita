@@ -20,13 +20,12 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
     log_basis_open: u32,
     n_prefix: usize,
     num_chunks: usize,
+    inner_ring_dimension: usize,
     outer_ring_dimension: usize,
 ) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
     if outer_ring_dimension == 0
         || !outer_ring_dimension.is_power_of_two()
-        || !policy
-            .setup_prefix_inner_ring_dimension
-            .is_multiple_of(outer_ring_dimension)
+        || !inner_ring_dimension.is_multiple_of(outer_ring_dimension)
     {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix B dimension must be a power-of-two divisor of its A dimension"
@@ -38,7 +37,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
             "setup prefix length must be a nonzero power of two".to_string(),
         ));
     }
-    if !n_prefix.is_multiple_of(policy.setup_prefix_inner_ring_dimension) {
+    if !n_prefix.is_multiple_of(inner_ring_dimension) {
         return Err(AkitaError::InvalidSetup(
             "setup prefix length must be a multiple of the ring dimension".to_string(),
         ));
@@ -48,11 +47,11 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
             "setup-prefix checkpoint requires one consuming inner/outer/open basis".to_string(),
         ));
     }
-    let ring_slots = n_prefix / policy.setup_prefix_inner_ring_dimension;
+    let ring_slots = n_prefix / inner_ring_dimension;
     let reduced_vars = checked_power_of_two_vars(ring_slots, "setup prefix ring slots")?;
     let prefix_num_vars = checked_power_of_two_vars(n_prefix, "setup prefix field length")?;
     let family = policy.sis_modulus_profile;
-    let d = policy.setup_prefix_inner_ring_dimension;
+    let d = inner_ring_dimension;
     let outer_decomp = DecompositionParams {
         log_basis: log_basis_outer,
         ..policy.decomposition
@@ -127,7 +126,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
             sis_key_at_dimension(
                 policy,
                 akita_types::SisMatrixRole::Inner,
-                policy.setup_prefix_inner_ring_dimension,
+                inner_ring_dimension,
                 norm_s,
             ),
             width_s,

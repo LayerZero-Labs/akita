@@ -9,9 +9,9 @@ use akita_types::sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupParams, CommittedGroupProfile, DecompositionParams,
-    OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams,
-    WitnessLayout,
+    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile,
+    DecompositionParams, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
+    PrecommittedLevelParams, WitnessLayout,
 };
 
 use akita_schedules::planner_support::{sis_key_at_dimension, RingDimensionCandidate};
@@ -294,12 +294,25 @@ pub(crate) fn root_level_candidates_for_basis(
     let max_block_index_bits: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
 
     let mut candidates = Vec::new();
+    let shared_opening_ring_dimension = match dimensions {
+        RingDimensionCandidate::Fixed(value) => value.d_d(),
+        RingDimensionCandidate::Adaptive { .. } => dimensions.inner(),
+    };
+    if precommitted_groups.iter().any(|group| {
+        !group
+            .layout
+            .inner_commit_matrix
+            .ring_dimension()
+            .is_multiple_of(shared_opening_ring_dimension)
+    }) {
+        return Ok(Vec::new());
+    }
     let (candidate_precommitted_groups, candidate_precommitted_d_width) =
         precommitted_groups_for_open_basis(
             &precommitted_groups,
             policy,
             ring_challenge_config,
-            dimensions.inner(),
+            shared_opening_ring_dimension,
             candidate_log_basis,
         )?;
     for block_index_bits in (min_block_index_bits..=max_block_index_bits).rev() {
@@ -456,17 +469,20 @@ fn root_final_group_level_params_candidate(
     else {
         return Ok(None);
     };
-    let d_width = main_d_width
-        .checked_add(precommitted_d_width)
-        .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
-    let Some((open_key, d_width)) = dimensions.collision_role_price(
+    let Some((open_key, main_d_width)) = dimensions.collision_role_price(
         policy,
         akita_types::SisMatrixRole::Open,
-        d_width,
+        main_d_width,
         log_basis,
     ) else {
         return Ok(None);
     };
+    // Frozen precommit segments are already projected to the root's shared D
+    // dimension by `precommitted_groups_for_open_basis`; only the main native
+    // width passes through the A-to-D projection above.
+    let d_width = main_d_width
+        .checked_add(precommitted_d_width)
+        .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
     let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(open_key, d_width)
     else {
         return Ok(None);
@@ -509,7 +525,7 @@ fn validate_adaptive_dimension_schedule_request(
     }
     if policy.recursive_setup_planning {
         return Err(AkitaError::InvalidSetup(
-            "mixed-D search does not yet support recursive setup planning".into(),
+            "scalar mixed-D search does not support recursive setup planning; use a grouped request with precommitted inputs".into(),
         ));
     }
     if policy.selection_policy
@@ -546,30 +562,32 @@ pub fn find_schedule(
             );
         }
 
-        // Adaptive search currently optimizes scalar roots. Grouped roots keep
-        // every already-committed A/B profile exact and plan the combined
-        // opening at the policy's uniform suffix dimension.
-        let crate::RingDimensionScheduleMode::AdaptiveDimension {
-            uniform_suffix_dimension,
-            ..
-        } = policy.ring_dimension_schedule_mode
-        else {
-            unreachable!("adaptive grouped fallback is entered only for adaptive policies");
-        };
-        let mut grouped_policy = *policy;
-        grouped_policy.uniform_ring_dimension = uniform_suffix_dimension;
-        grouped_policy.ring_dimension_schedule_mode =
-            crate::RingDimensionScheduleMode::UniformDimension {
-                ring_dimension: uniform_suffix_dimension,
+        if !policy.recursive_setup_planning {
+            // Direct grouped roots preserve every frozen A/B profile and use
+            // the established uniform suffix domain. Recursive grouped roots
+            // continue below into the setup-aware adaptive suffix frontier.
+            let crate::RingDimensionScheduleMode::AdaptiveDimension {
+                uniform_suffix_dimension,
+                ..
+            } = policy.ring_dimension_schedule_mode
+            else {
+                unreachable!("adaptive grouped fallback is entered only for adaptive policies");
             };
-        grouped_policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
-        return find_schedule(
-            key,
-            final_honest_fold_policy,
-            precommitted_honest_fold_policies,
-            &grouped_policy,
-            ring_challenge_config,
-        );
+            let mut grouped_policy = *policy;
+            grouped_policy.uniform_ring_dimension = uniform_suffix_dimension;
+            grouped_policy.ring_dimension_schedule_mode =
+                crate::RingDimensionScheduleMode::UniformDimension {
+                    ring_dimension: uniform_suffix_dimension,
+                };
+            grouped_policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
+            return find_schedule(
+                key,
+                final_honest_fold_policy,
+                precommitted_honest_fold_policies,
+                &grouped_policy,
+                ring_challenge_config,
+            );
+        }
     }
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let scalar_policy;
@@ -619,6 +637,7 @@ pub fn find_schedule(
             current_witness_len: root_input_witness_len,
             current_lb: 0,
             incoming_setup_prefix: None,
+            dimension_ceiling: CommitmentRingDims::uniform(active_policy.uniform_ring_dimension),
             payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
         },
         0,

@@ -46,6 +46,54 @@ pub(crate) use setup_score::{
 };
 pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
 
+fn exact_dimension_candidates(
+    policy: &PlannerPolicy,
+    level: usize,
+    ceiling: CommitmentRingDims,
+) -> Result<Vec<CommitmentRingDims>, AkitaError> {
+    ceiling.validate_role_projection()?;
+    let candidates = match policy.ring_dimension_schedule_mode {
+        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+            vec![CommitmentRingDims::uniform(ring_dimension)]
+        }
+        crate::RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels,
+            uniform_suffix_dimension,
+            potential_a_dimensions,
+            potential_b_dimensions,
+            potential_d_dimensions,
+        } => {
+            if level >= num_search_levels {
+                vec![CommitmentRingDims::uniform(uniform_suffix_dimension)]
+            } else {
+                let mut candidates = Vec::new();
+                for &inner in potential_a_dimensions {
+                    if inner > ceiling.d_a() {
+                        continue;
+                    }
+                    for &outer in potential_b_dimensions {
+                        if outer > ceiling.d_b() || !inner.is_multiple_of(outer) {
+                            continue;
+                        }
+                        for &opening in potential_d_dimensions {
+                            if opening > ceiling.d_d() || !inner.is_multiple_of(opening) {
+                                continue;
+                            }
+                            candidates.push(CommitmentRingDims {
+                                inner,
+                                outer,
+                                opening,
+                            });
+                        }
+                    }
+                }
+                candidates
+            }
+        }
+    };
+    Ok(candidates)
+}
+
 #[cfg(test)]
 pub(crate) const MIXED_SEARCH_SUFFIX_RING_DIMENSION: usize = 64;
 

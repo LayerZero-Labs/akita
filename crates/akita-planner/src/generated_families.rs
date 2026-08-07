@@ -428,22 +428,22 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
 fn direct_profile_group_batch_keys_for_cfg<Cfg: CommitmentConfig + 'static>(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHot>() {
-        let mut keys = recursive_d64_onehot_profile_keys::<fp128::OneHot>()?;
+        let mut keys = recursive_onehot_profile_keys::<fp128::OneHot>()?;
         keys.push(heterogeneous_onehot_catalog_key()?);
         keys.extend(onehot_group_batch_test_keys::<fp128::OneHot>()?);
         return Ok(keys);
     }
     if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHot>() {
-        let mut keys = recursive_d64_onehot_profile_keys::<fp128::D64OneHot>()?;
+        let mut keys = recursive_onehot_profile_keys::<fp128::D64OneHot>()?;
         keys.push(heterogeneous_onehot_catalog_key()?);
         keys.extend(onehot_group_batch_test_keys::<fp128::D64OneHot>()?);
         return Ok(keys);
     }
     if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHotMultiChunk>() {
-        return recursive_d64_onehot_profile_keys::<fp128::D64OneHotMultiChunk>();
+        return recursive_onehot_profile_keys::<fp128::D64OneHotMultiChunk>();
     }
     if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHotMultiChunk>() {
-        return recursive_d64_onehot_profile_keys::<fp128::OneHotMultiChunk>();
+        return recursive_onehot_profile_keys::<fp128::OneHotMultiChunk>();
     }
     if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHotMultiChunkW2R2>() {
         let group = PolynomialGroupLayout::new(14, 1);
@@ -470,17 +470,27 @@ fn recursive_profile_group_batch_keys_for_recursive_cfg<Cfg: CommitmentConfig + 
     if std::any::TypeId::of::<Cfg>()
         == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::D64OneHot>>()
     {
-        return recursive_d64_onehot_profile_keys::<fp128::D64OneHot>();
+        return recursive_onehot_profile_keys::<fp128::D64OneHot>();
     }
     if std::any::TypeId::of::<Cfg>()
         == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>>()
     {
-        return recursive_d64_onehot_profile_keys::<fp128::D64OneHotMultiChunk>();
+        return recursive_onehot_profile_keys::<fp128::D64OneHotMultiChunk>();
+    }
+    if std::any::TypeId::of::<Cfg>()
+        == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::OneHot>>()
+    {
+        return recursive_onehot_profile_keys::<fp128::OneHot>();
+    }
+    if std::any::TypeId::of::<Cfg>()
+        == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>()
+    {
+        return recursive_onehot_profile_keys::<fp128::OneHotMultiChunk>();
     }
     Ok(Vec::new())
 }
 
-fn recursive_d64_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
+fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
     let precommitted = standalone_precommit_profile::<BaseCfg>(precommitted_group)?;
@@ -761,9 +771,8 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         RecursiveCommitmentConfig<fp128::D64OneHot>,
         fp128::D64OneHot
     ),
-    // Recursive setup offloading combined with the 8-chunk (production
-    // distributed-prover) witness layout. `D64OneHotMultiChunk` is the W8R2
-    // preset (8 chunks x 2 leading levels); shares the recursive profiling key.
+    // Fixed-D64 comparison catalog for recursive setup offloading combined with
+    // the 8-chunk witness layout.
     family_row!(
         recursive,
         "fp128_d64_onehot_recursive_multi_chunk_w8r2",
@@ -772,6 +781,24 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         &[],
         RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
         fp128::D64OneHotMultiChunk
+    ),
+    family_row!(
+        recursive,
+        "fp128_onehot_recursive",
+        "FP128_ONEHOT_RECURSIVE_SCHEDULES",
+        "fp128-onehot-recursive",
+        &[],
+        RecursiveCommitmentConfig<fp128::OneHot>,
+        fp128::OneHot
+    ),
+    family_row!(
+        recursive,
+        "fp128_onehot_recursive_multi_chunk_w8r2",
+        "FP128_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES",
+        "fp128-onehot-recursive-multi-chunk-w8r2",
+        &[],
+        RecursiveCommitmentConfig<fp128::OneHotMultiChunk>,
+        fp128::OneHotMultiChunk
     ),
     GeneratedFamily {
         module_name: "fp128_dense",
@@ -788,9 +815,9 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         precommitted_profiles: precommitted_profiles::<fp128::Dense>,
         explicit_precommitted_group: explicit_precommitted_group::<fp128::Dense>,
     },
-    // The D64 W8R2 family remains the standalone-precommit base used by the
-    // recursive distributed configuration. Direct multi-chunk families below
-    // inherit adaptive dimension selection from `OneHot` / `Dense`.
+    // The D64 W8R2 family remains as an explicit fixed-dimension comparison.
+    // Production direct and recursive multi-chunk families inherit adaptive
+    // dimension selection from `OneHot` / `Dense`.
     family_row!(
         group_batch,
         "fp128_d64_onehot_multi_chunk",

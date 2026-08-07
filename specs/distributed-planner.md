@@ -706,9 +706,12 @@ uniform D64) with the selected W/R chunk profile. Candidate geometry, witness
 contraction, setup footprint, and proof bytes are all priced with
 `chunks_at_level(level)`.
 
-`D64OneHotMultiChunk` remains only as the base of
-`RecursiveCommitmentConfig<D64OneHotMultiChunk>`. That recursive family is not
-part of the adaptive-direct change and remains uniform D64.
+The production recursive W8R2 family uses
+`RecursiveCommitmentConfig<OneHotMultiChunk>`. The recursive suffix DP searches
+the same bounded adaptive role-dimension domain while jointly pricing direct
+and setup-offloaded successors. The legacy
+`RecursiveCommitmentConfig<D64OneHotMultiChunk>` family remains available only
+as an explicit fixed-D64 comparison catalog.
 
 The regenerated scalar rows demonstrate that chunking participates in the
 search instead of being stamped on afterward:

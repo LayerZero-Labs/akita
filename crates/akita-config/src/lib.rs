@@ -266,10 +266,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixCapacity, AkitaError>;
 
-    /// Planner-owned A-matrix ring dimension for setup-prefix commitments.
+    /// Default/ceiling A-matrix dimension for setup-prefix commitments.
     ///
-    /// This controls how the explicitly zero-padded setup-prefix witness is
-    /// chunked for commitment. It is not public-matrix identity or a setup
+    /// Uniform schedules use it directly. Adaptive recursive schedules derive
+    /// the actual A dimension from the consuming fold; this value remains part
+    /// of policy/catalog identity. It is not public-matrix identity or a setup
     /// materialization dimension.
     fn setup_prefix_inner_ring_dimension() -> usize {
         Self::D

@@ -21,6 +21,8 @@ all-schedules = [
   "schedules-default",
   "fp128-d64-onehot-recursive",
   "fp128-d64-onehot-recursive-multi-chunk-w8r2",
+  "fp128-onehot-recursive",
+  "fp128-onehot-recursive-multi-chunk-w8r2",
   "fp128-d64-onehot-multi-chunk",
   "fp128-onehot-multi-chunk",
   "fp128-onehot-multi-chunk-w2r2",
@@ -40,6 +42,8 @@ fp128-onehot = []
 fp128-dense = []
 fp128-d64-onehot-recursive = []
 fp128-d64-onehot-recursive-multi-chunk-w8r2 = []
+fp128-onehot-recursive = []
+fp128-onehot-recursive-multi-chunk-w8r2 = []
 fp128-d64-onehot-multi-chunk = []
 fp128-onehot-multi-chunk = []
 fp128-onehot-multi-chunk-w2r2 = []

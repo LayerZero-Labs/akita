@@ -139,7 +139,9 @@ pub struct PlannerPolicy {
     pub min_offloaded_witness_contraction: usize,
     /// Ring dimension used when the planner is restricted to a uniform domain.
     pub uniform_ring_dimension: usize,
-    /// A-matrix ring dimension used to commit offloaded setup prefixes.
+    /// Default/ceiling A-matrix dimension for setup-prefix catalog identity.
+    /// Adaptive schedules derive each actual prefix A dimension from its
+    /// consuming fold.
     pub setup_prefix_inner_ring_dimension: usize,
     /// Uniform or bounded-adaptive ring-dimension schedule policy.
     pub ring_dimension_schedule_mode: RingDimensionScheduleMode,

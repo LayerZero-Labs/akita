@@ -297,6 +297,7 @@ fn prepare_recursive_level_search(
                 log_basis,
                 n_prefix,
                 num_chunks,
+                d_a,
                 match dimensions {
                     RingDimensionCandidate::Fixed(value) => value.d_b(),
                     RingDimensionCandidate::Adaptive { .. } => d_a,
