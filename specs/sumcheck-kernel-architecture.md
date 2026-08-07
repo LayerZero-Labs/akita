@@ -98,8 +98,13 @@ rearranges it within every round.
    It must not build a full `Vec<E>` and then transpose it.
 10. Full dense tables use binding order for their entire live lifetime. A fold
     does not change this invariant.
-11. Sparse witness indices keep their current logical meaning. Row `j` in the
-    sparse value table belongs to sparse index `indices[j]`.
+11. Sparse witness indices keep their current logical meaning except while the
+    tensor factor owns an active suffix precontraction. During that private
+    state, indices and palette tags remain at their documented original rows;
+    the tensor factor owns the logical length and the accumulated low-fold
+    weights. One contraction restores ordinary current indices and values
+    before any noncached operation can read the witness. Row `j` in every
+    ordinary sparse value table belongs to sparse index `indices[j]`.
 12. SIMD and scalar accumulation obey the same exact modular arithmetic bounds.
     No optimization may rely on integer overflow or a reduction bound that the
     field type does not prove.
@@ -297,12 +302,14 @@ byte is its original merge-free path and the high byte is its palette tag. The
 folded palette has at most `8 * 2^8` extension values. It reserves its full
 bounded capacity when detected and performs no allocation in a round.
 
-During this state, the coefficient-first allocation is retained only as the
-destination for the first merging round. It is not a second current value
-representation. The palette is materialized into that allocation exactly once
-before any general pair traversal, dense-factor fallback, or public final value
-can read it. Failed detection is remembered so later rounds do not rescan the
-rows.
+During the palette-only state, the coefficient-first allocation is retained
+only as the destination for the first merging round. It is not a second current
+value representation. When the tensor factor also owns a suffix
+precontraction, original indices, tags, and dormant values remain unchanged
+until one multi-round contraction restores the ordinary sparse table. The
+palette is materialized exactly once before any general pair traversal,
+dense-factor fallback, or public final value can read it. Failed detection is
+remembered so later rounds do not rescan the rows.
 
 The root one hot EOR is the only path with the fixed support plateau seen in the
 profile. Its 2^20 entries remain live for the first six folds of a 2^26 domain.
@@ -355,6 +362,31 @@ round.
 `ExtensionOpeningTables` owns the choice of fused operation for its active
 representation. A term asks the table to fold and compute the next round, then
 caches the scaled result. The term does not duplicate representation matching.
+
+### Sparse tensor suffix precontraction
+
+For a sufficiently large root one hot table, the lazy tensor factor groups its
+fixed high suffix columns once by original low index and palette tag. It then
+contracts the original palette values into one value-weighted suffix vector per
+low index. A challenge scales that low index by `1 - r` or `r`. Linearity makes
+this valid after sparse rows begin to collide; a collision changes the ordinary
+row representation but not the sum over original rows.
+
+The cache owns both the changing suffix vectors used for round messages and one
+fold weight per original low index. While it is active, the factor length is the
+term's logical length and the witness retains its original sorted rows. On the
+penultimate lazy-factor fold, one sorted witness pass applies all accumulated
+weights, merges equal shifted indices, removes zeros, and restores the ordinary
+sparse representation. The final low fold then uses the existing sparse and
+dense-factor transition. No cached state reaches final evaluation or a public
+witness accessor.
+
+The cache is private to `TensorEqualityFactor`, which owns the suffix tables it
+summarizes. Construction is gated by a row-count crossover and a detected
+bounded value palette. Unsupported shapes continue through the canonical
+grouped sparse traversal. The differential oracle must force cache creation,
+cross the first collision, cross cache materialization, and compare every round
+and final evaluation with a fully materialized tensor factor.
 
 ### Compact i8 and i16 states
 
@@ -648,17 +680,17 @@ and complete root EOR from 250 to 253 ms to 191 to 192 ms. The largest recursive
 construction fell from 87.2 to 87.7 ms to 75.8 to 77.5 ms. Complete proofs
 measured 1.496 and 1.522 seconds and verified.
 
-Root sparse EOR now transposes the fixed high-factor contraction during its
-merge-free plateau. The first round groups each suffix factor by the entry's
-original low index and bounded witness-value tag. Later challenges change only
-the low tensor state and the folded value palette, so the next round polynomial
-is evaluated from those suffix sums instead of rescanning one million rows.
-Indices still shift in place each round, and the cache is discarded at the first
-merging fold; the ordinary sparse path remains the transition oracle. The
-one-time suffix grouping costs 3.11 to 3.13 ms. Root round zero fell from about
-40.9 ms to 14.0 ms, the next four plateau rounds from 16.5 to 17.2 ms each to
-0.68 to 1.36 ms, and complete root EOR from 191 ms to 102 and 111 ms. Two full
-proofs measured 1.301 seconds and verified unchanged.
+Root sparse EOR transposes the fixed high-factor contraction once. The first
+round groups each suffix factor by the entry's original low index and bounded
+witness-value tag, then contracts the original palette value. Every lazy low
+round is evaluated from 2,048 value-weighted suffix groups, including rounds
+after ordinary sparse rows would collide. Original rows are folded once just
+before lazy-factor materialization instead of once per round. The first accepted
+merge-free-only cache reduced complete root EOR from 191 ms to 102 and 111 ms.
+Extending the same linear form through collisions reduced it again to 66.9 ms.
+Deferring the ordinary sparse folds to one 13.4 ms contraction produced 50.4
+and 49.8 ms root EOR and 1.244 and 1.245 second complete proofs. All samples
+verified with unchanged proof bytes.
 
 On the same profile, retaining Stage 1 octet classes after the third challenge
 and using the canonical Taylor kernel reduced the root Stage 1 sumcheck from
@@ -845,12 +877,13 @@ small public API boundaries and must not survive in a production round loop.
   events.
 - [x] Dense EOR uses the canonical table and operation set without round loop
   allocations.
-- [x] Root sparse EOR stores coefficients once and keeps its index sidecar in
-  sync through merge free and merging folds.
+- [x] Root sparse EOR stores coefficients once and either keeps its index
+  sidecar current or retains documented original rows behind the private suffix
+  precontraction until one exact restoring fold.
 - [x] Sparse tensor EOR groups arbitrary merging pairs by shared suffix and
   folds, compacts, and computes the next round in one traversal.
-- [x] Repeated sparse EOR values remain compact during the proven merge-free
-  plateau and materialize once before the first possible merge.
+- [x] Repeated sparse EOR values remain compact while the tensor suffix
+  precontraction is active and materialize once before the ordinary transition.
 - [ ] Stage 2 uses the canonical table for its folded witness, factors, and full
   trace values.
 - [ ] Stage 1 keeps i8 and i16 values compact and materializes directly into the

@@ -35,6 +35,10 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningTables<F, E> {
     pub(in crate::protocol::extension_opening_reduction) fn len(&self) -> usize {
         match self {
             Self::Dense { witness, .. } => witness.len(),
+            Self::Sparse {
+                factor: SparseFactor::Tensor(factor),
+                ..
+            } => factor.len(),
             Self::Sparse { witness, .. } => witness.table_len(),
             Self::Cylindrical {
                 inner,

@@ -321,6 +321,64 @@ impl<F: FieldCore, E: ExtField<F>> SparseExtensionOpeningWitness<F, E> {
         self.merge_free_values = MergeFreeValueState::Unavailable;
     }
 
+    /// Apply several cached low-variable folds in one pass over the original
+    /// sparse rows.
+    ///
+    /// `fold_weights` is indexed by the original low block. Rows remain in
+    /// their construction-time representation while the tensor suffix cache
+    /// supplies intermediate sumcheck messages. This operation restores the
+    /// ordinary sparse representation before the final lazy-factor fold.
+    pub(super) fn materialize_low_folds(&mut self, folded_rounds: usize, fold_weights: &[E]) {
+        debug_assert!(folded_rounds > 0);
+        debug_assert!(fold_weights.len().is_power_of_two());
+        debug_assert!(folded_rounds <= fold_weights.len().trailing_zeros() as usize);
+        let MergeFreeValueState::Palette(palette) = core::mem::replace(
+            &mut self.merge_free_values,
+            MergeFreeValueState::Unavailable,
+        ) else {
+            unreachable!("sparse suffix sums require an original value palette");
+        };
+        debug_assert_eq!(palette.rounds_folded, 0);
+        let palette_values = &palette.folded_values[..palette.palette_len];
+        let low_mask = fold_weights.len() - 1;
+        let mut output_row = 0;
+        let mut current_index = None;
+        let mut current_value = E::zero();
+
+        for input_row in 0..self.indices.len() {
+            let original_index = self.indices[input_row];
+            let folded_index = original_index >> folded_rounds;
+            let value = palette_values[palette.original_tag(input_row)]
+                * fold_weights[original_index & low_mask];
+            if current_index == Some(folded_index) {
+                current_value += value;
+                continue;
+            }
+            if let Some(index) = current_index {
+                if current_value != E::zero() {
+                    self.indices[output_row] = index;
+                    self.values.set_evaluation(output_row, current_value);
+                    output_row += 1;
+                }
+            }
+            current_index = Some(folded_index);
+            current_value = value;
+        }
+        if let Some(index) = current_index {
+            if current_value != E::zero() {
+                self.indices[output_row] = index;
+                self.values.set_evaluation(output_row, current_value);
+                output_row += 1;
+            }
+        }
+
+        self.table_len >>= folded_rounds;
+        self.indices.truncate(output_row);
+        self.values.truncate(output_row);
+        self.merge_free_rounds_left =
+            Self::leading_merge_free_rounds(self.table_len, &self.indices);
+    }
+
     /// Number of leading folds guaranteed to be merge-free.
     pub(super) fn leading_merge_free_rounds(table_len: usize, indices: &[usize]) -> usize {
         let total = table_len.trailing_zeros() as usize;
@@ -734,7 +792,15 @@ where
         )
         .entered();
         debug_assert!(factor.supports_grouped_rounds());
-        let use_precomputed_products = self.prepare_merge_free_value_palette()
+        let has_palette = self.prepare_merge_free_value_palette();
+        if has_palette {
+            factor.prepare_sparse_suffix_sums(
+                self,
+                self.merge_free_value_palette()
+                    .expect("merge-free palette was prepared for the first round"),
+            );
+        }
+        let use_precomputed_products = has_palette
             && factor.can_prepare_merge_free_products(
                 self.merge_free_value_palette()
                     .expect("merge-free palette was prepared for the first round"),
@@ -744,24 +810,13 @@ where
                 self.merge_free_value_palette()
                     .expect("merge-free palette was prepared for the first round"),
             );
-            factor.prepare_merge_free_suffix_sums(
-                self,
-                self.merge_free_value_palette()
-                    .expect("merge-free palette was prepared for the first round"),
-            );
         }
 
-        if use_precomputed_products {
-            if let Some((round_constant, round_quadratic)) = factor
-                .compute_merge_free_suffix_summed_round(
-                    self.merge_free_value_palette()
-                        .expect("merge-free palette was prepared for the first round"),
-                )
-            {
-                *constant += coeff * round_constant;
-                *quadratic += coeff * round_quadratic;
-                return;
-            }
+        if let Some((round_constant, round_quadratic)) = factor.compute_sparse_suffix_summed_round()
+        {
+            *constant += coeff * round_constant;
+            *quadratic += coeff * round_quadratic;
+            return;
         }
 
         #[cfg(feature = "parallel")]
