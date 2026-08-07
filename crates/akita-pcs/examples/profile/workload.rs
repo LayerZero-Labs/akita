@@ -21,7 +21,7 @@ use akita_prover::compute::{
 };
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend, ComputeBackendSetup,
-    CpuBackend,
+    CpuBackend, PreparedNttCacheMetric,
 };
 use akita_prover::{
     DensePoly, OneHotIndex, OneHotPoly, ProverOpeningData, SelectedProverOpeningData,
@@ -192,6 +192,16 @@ pub(crate) fn onehot_k_for_num_vars(nv: usize) -> usize {
     } else {
         1usize << nv
     }
+}
+
+fn assert_profile_ntt_cache_did_not_grow(
+    before: &[PreparedNttCacheMetric],
+    after: &[PreparedNttCacheMetric],
+) {
+    assert!(
+        after.len() <= before.len() && after.iter().all(|metric| before.contains(metric)),
+        "commit/prove added to the prewarmed profile NTT cache: before={before:?}, after={after:?}"
+    );
 }
 
 fn assert_observed_proof_size<FF, E>(label: &str, proof: &AkitaBatchedProof<FF, E>)
@@ -768,13 +778,10 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         plan,
         validate_against_planner,
     );
-    assert_eq!(
-        prepared
-            .shared_ntt_cache_metrics()
-            .expect("post-execution setup NTT cache metrics"),
-        prepared_ntt_metrics,
-        "commit/prove grew the prewarmed profile NTT cache"
-    );
+    let post_execution_ntt_metrics = prepared
+        .shared_ntt_cache_metrics()
+        .expect("post-execution setup NTT cache metrics");
+    assert_profile_ntt_cache_did_not_grow(&prepared_ntt_metrics, &post_execution_ntt_metrics);
 }
 
 pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -847,13 +854,10 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         plan,
         validate_against_planner,
     );
-    assert_eq!(
-        prepared
-            .shared_ntt_cache_metrics()
-            .expect("post-execution setup NTT cache metrics"),
-        prepared_ntt_metrics,
-        "commit/prove grew the prewarmed profile NTT cache"
-    );
+    let post_execution_ntt_metrics = prepared
+        .shared_ntt_cache_metrics()
+        .expect("post-execution setup NTT cache metrics");
+    assert_profile_ntt_cache_did_not_grow(&prepared_ntt_metrics, &post_execution_ntt_metrics);
 }
 
 pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -967,13 +971,10 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         )
         .unwrap();
         report_timing(label, "prove", t0.elapsed().as_secs_f64());
-        assert_eq!(
-            prepared
-                .shared_ntt_cache_metrics()
-                .expect("post-execution setup NTT cache metrics"),
-            prepared_ntt_metrics,
-            "commit/prove grew the prewarmed profile NTT cache"
-        );
+        let post_execution_ntt_metrics = prepared
+            .shared_ntt_cache_metrics()
+            .expect("post-execution setup NTT cache metrics");
+        assert_profile_ntt_cache_did_not_grow(&prepared_ntt_metrics, &post_execution_ntt_metrics);
         (commitments, proof, setup)
     };
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
@@ -1354,13 +1355,10 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         )
         .expect("multi-group prove");
         report_timing(label, "prove", t_prove.elapsed().as_secs_f64());
-        assert_eq!(
-            prepared
-                .shared_ntt_cache_metrics()
-                .expect("post-execution setup NTT cache metrics"),
-            prepared_ntt_metrics,
-            "commit/prove grew the prewarmed profile NTT cache"
-        );
+        let post_execution_ntt_metrics = prepared
+            .shared_ntt_cache_metrics()
+            .expect("post-execution setup NTT cache metrics");
+        assert_profile_ntt_cache_did_not_grow(&prepared_ntt_metrics, &post_execution_ntt_metrics);
         (
             proof,
             schedule,

@@ -60,6 +60,10 @@ where
     F: FieldCore,
     I: OneHotIndex,
 {
+    pub(super) fn poly(self) -> &'a MultilinearPolynomial<F, I> {
+        self.poly
+    }
+
     pub(super) fn dispatch<T>(
         self,
         dense: impl FnOnce(&DensePoly<F>) -> Result<T, AkitaError>,
@@ -150,6 +154,13 @@ where
         match self {
             Self::Dense(_) => None,
             Self::OneHot(poly) => RootPolyMeta::onehot_chunk_size(poly),
+        }
+    }
+
+    fn release_root_opening_storage(&self) {
+        match self {
+            Self::Dense(poly) => RootPolyMeta::release_root_opening_storage(poly),
+            Self::OneHot(poly) => RootPolyMeta::release_root_opening_storage(poly),
         }
     }
 }

@@ -1,12 +1,14 @@
 use super::{MultilinearPolynomial, MultilinearPolynomialBatchView, MultilinearPolynomialView};
 use crate::backend::{DenseBatchView, OneHotBatchView};
 use crate::compute::{
-    BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, OpeningBatchKernel,
-    RootOpeningSource, RootPolyShape, RootTensorSource, TensorProjectionBatchKernel,
+    BatchDecomposeFoldOutcome, CommitInnerPlan, ComputeBackendSetup, CpuBackend,
+    DecomposeFoldBatchPlan, OpeningBatchKernel, RootCommitKernel, RootCommitSource,
+    RootOpeningSource, RootPolyMeta, RootPolyShape, RootTensorSource, TensorProjectionBatchKernel,
     TensorProjectionKernel,
 };
-use crate::{DensePoly, OneHotPoly};
+use crate::{AkitaProverSetup, DensePoly, OneHotPoly};
 use akita_field::{CanonicalField, ExtField, FpExt4, Prime24Offset3};
+use akita_types::SetupMatrixCapacity;
 
 fn sample_dense<const D: usize>() -> DensePoly<Prime24Offset3> {
     let num_vars = 5;
@@ -66,6 +68,71 @@ fn multilinear_polynomial_forwards_onehot_chunk_size_from_inner() {
         >::dense(dense)),
         None
     );
+}
+
+#[test]
+fn multilinear_onehot_release_and_group_commit_use_inner_fast_paths() {
+    type F = Prime24Offset3;
+    const D: usize = 16;
+
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        8,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 4096,
+        },
+    )
+    .unwrap();
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let plan = CommitInnerPlan {
+        n_a: 2,
+        num_positions_per_block: 2,
+        num_digits_inner: 1,
+        log_basis_inner: 2,
+    };
+
+    let single = MultilinearPolynomial::onehot(sample_onehot::<D>());
+    let single_view = RootCommitSource::<F, D>::commit_view(&single).unwrap();
+    RootCommitKernel::<MultilinearPolynomialView<'_, F, D>, F, D>::commit_inner(
+        &CpuBackend,
+        &prepared,
+        single_view,
+        plan,
+    )
+    .unwrap();
+    let MultilinearPolynomial::OneHot(single_inner) = &single else {
+        unreachable!()
+    };
+    assert_eq!(single_inner.block_cache_len_for_test(), 1);
+    RootPolyMeta::release_root_opening_storage(&single);
+    assert_eq!(single_inner.block_cache_len_for_test(), 0);
+
+    let group = [
+        MultilinearPolynomial::onehot(sample_onehot::<D>()),
+        MultilinearPolynomial::onehot(sample_onehot::<D>()),
+    ];
+    let views = group
+        .iter()
+        .map(RootCommitSource::<F, D>::commit_view)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    RootCommitKernel::<MultilinearPolynomialView<'_, F, D>, F, D>::commit_inner_group(
+        &CpuBackend,
+        &prepared,
+        views,
+        plan,
+    )
+    .unwrap();
+    for poly in &group {
+        let MultilinearPolynomial::OneHot(inner) = poly else {
+            unreachable!()
+        };
+        assert_eq!(
+            inner.block_cache_len_for_test(),
+            0,
+            "homogeneous one-hot wrappers must use the lazy grouped commit path"
+        );
+    }
 }
 
 #[test]

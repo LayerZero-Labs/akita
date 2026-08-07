@@ -1,4 +1,4 @@
-use crate::backend::onehot::{LazyOneHotBlocks, MultiChunkEntry, SingleChunkEntry};
+use crate::backend::onehot::{FlatBlocks, LazyOneHotBlocks, MultiChunkEntry, SingleChunkEntry};
 use crate::backend::sparse_ring::SparseRingBlockEntry;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, FieldCore};
@@ -92,22 +92,73 @@ pub struct DenseCommitRowsPlan<'a, F: FieldCore, const D: usize> {
     pub input: DenseCommitInput<'a, F, D>,
 }
 
+/// Storage for one typed family of one-hot blocks.
+pub enum OneHotBlockSource<'a, E> {
+    /// Already materialized flat block storage.
+    Eager(FlatBlockTable<'a, E>),
+    /// Blocks built only for the requested tile.
+    Lazy(LazyOneHotBlocks<'a, E>),
+}
+
+pub(crate) enum OneHotBlockRange<'a, E> {
+    Eager {
+        table: FlatBlockTable<'a, E>,
+        range: std::ops::Range<usize>,
+    },
+    Lazy(FlatBlocks<E>),
+}
+
+impl<E> OneHotBlockRange<'_, E> {
+    pub(crate) fn block_slices(&self) -> Result<Vec<&[E]>, AkitaError> {
+        match self {
+            Self::Eager { table, range } => range.clone().map(|idx| table.block(idx)).collect(),
+            Self::Lazy(blocks) => Ok((0..blocks.num_live_blocks())
+                .map(|idx| blocks.block(idx))
+                .collect()),
+        }
+    }
+}
+
+impl<'a, E> OneHotBlockSource<'a, E> {
+    /// Number of blocks available from this source.
+    pub fn num_live_blocks(&self) -> usize {
+        match self {
+            Self::Eager(table) => table.num_live_blocks(),
+            Self::Lazy(source) => source.num_live_blocks(),
+        }
+    }
+
+    pub(crate) fn materialize_range(
+        &'a self,
+        range: std::ops::Range<usize>,
+    ) -> Result<OneHotBlockRange<'a, E>, AkitaError> {
+        if range.start > range.end || range.end > self.num_live_blocks() {
+            return Err(AkitaError::InvalidSetup(format!(
+                "one-hot block range {:?} exceeds {} blocks",
+                range,
+                self.num_live_blocks()
+            )));
+        }
+        match self {
+            Self::Eager(table) => Ok(OneHotBlockRange::Eager {
+                table: FlatBlockTable::new(table.entries(), table.offsets()),
+                range,
+            }),
+            Self::Lazy(source) => source.build_range(range).map(OneHotBlockRange::Lazy),
+        }
+    }
+}
+
 /// One-hot commit input representation.
 ///
-/// The contained entry slices are read-only plan views. They are public so
-/// accelerator crates can implement [`super::backend::CommitmentComputeBackend`] without
-/// depending on CPU-prepared storage, while construction remains owned by the
-/// polynomial representations.
+/// Entry geometry is selected once. Storage policy stays behind the typed
+/// block source so commit and opening kernels do not duplicate the geometry
+/// and storage cross-product.
 pub enum OneHotCommitBlocks<'a> {
     /// One ring has at most one hot coefficient.
-    SingleChunk(FlatBlockTable<'a, SingleChunkEntry>),
+    SingleChunk(OneHotBlockSource<'a, SingleChunkEntry>),
     /// One ring may contain several hot coefficients.
-    MultiChunk(FlatBlockTable<'a, MultiChunkEntry>),
-    /// Single-chunk layout built lazily per block tile from the retained
-    /// index columns — the full entry cache never materializes.
-    SingleChunkLazy(LazyOneHotBlocks<'a, SingleChunkEntry>),
-    /// Multi-chunk layout built lazily per block tile.
-    MultiChunkLazy(LazyOneHotBlocks<'a, MultiChunkEntry>),
+    MultiChunk(OneHotBlockSource<'a, MultiChunkEntry>),
 }
 
 /// One-hot commit operation plan.

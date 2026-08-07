@@ -1,7 +1,4 @@
-use crate::backend::onehot::{
-    column_sweep_ajtai_onehot, column_sweep_ajtai_onehot_multi,
-    column_sweep_ajtai_onehot_multi_lazy, LazyOneHotBlocks, MultiChunkEntry, SingleChunkEntry,
-};
+use crate::backend::onehot::{column_sweep_ajtai_onehot_multi, MultiChunkEntry, SingleChunkEntry};
 use crate::backend::sparse_ring::column_sweep_sparse;
 use crate::compute::backend::{
     CommitmentComputeBackend, CompressionComputeBackend, CompressionRowsProducts,
@@ -37,6 +34,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 mod compression_cache;
+mod ring_switch;
 #[cfg(test)]
 mod streamed_tests;
 
@@ -587,30 +585,10 @@ where
             .shared_matrix
             .ring_view::<D>(plan.n_a, active_a_cols)?;
         Ok(match plan.blocks {
-            OneHotCommitBlocks::SingleChunk(blocks) => {
-                column_sweep_ajtai_onehot::<SingleChunkEntry, F, D>(
+            OneHotCommitBlocks::SingleChunk(source) => {
+                column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
                     &a_view,
-                    &blocks.block_slices()?,
-                    plan.n_a,
-                    active_a_cols,
-                    plan.num_digits_inner,
-                )
-            }
-            OneHotCommitBlocks::MultiChunk(blocks) => {
-                column_sweep_ajtai_onehot::<MultiChunkEntry, F, D>(
-                    &a_view,
-                    &blocks.block_slices()?,
-                    plan.n_a,
-                    active_a_cols,
-                    plan.num_digits_inner,
-                )
-            }
-            // Single-plan lazy callers route through the fused lazy sweep so
-            // the entry cache stays tile-sized here too.
-            OneHotCommitBlocks::SingleChunkLazy(ref source) => {
-                column_sweep_ajtai_onehot_multi_lazy::<SingleChunkEntry, F, D>(
-                    &a_view,
-                    &[source],
+                    &[&source],
                     plan.n_a,
                     active_a_cols,
                     plan.num_digits_inner,
@@ -618,10 +596,10 @@ where
                 .pop()
                 .unwrap_or_default()
             }
-            OneHotCommitBlocks::MultiChunkLazy(ref source) => {
-                column_sweep_ajtai_onehot_multi_lazy::<MultiChunkEntry, F, D>(
+            OneHotCommitBlocks::MultiChunk(source) => {
+                column_sweep_ajtai_onehot_multi::<MultiChunkEntry, F, D>(
                     &a_view,
-                    &[source],
+                    &[&source],
                     plan.n_a,
                     active_a_cols,
                     plan.num_digits_inner,
@@ -655,13 +633,7 @@ where
         let all_multi = plans
             .iter()
             .all(|plan| matches!(plan.blocks, OneHotCommitBlocks::MultiChunk(_)));
-        let all_single_lazy = plans
-            .iter()
-            .all(|plan| matches!(plan.blocks, OneHotCommitBlocks::SingleChunkLazy(_)));
-        let all_multi_lazy = plans
-            .iter()
-            .all(|plan| matches!(plan.blocks, OneHotCommitBlocks::MultiChunkLazy(_)));
-        if !uniform_shape || !(all_single || all_multi || all_single_lazy || all_multi_lazy) {
+        if !uniform_shape || !(all_single || all_multi) {
             return plans
                 .into_iter()
                 .map(|plan| self.onehot_commit_rows::<D>(prepared, plan))
@@ -679,70 +651,38 @@ where
         let n_a = first.n_a;
         let num_digits_inner = first.num_digits_inner;
 
-        if all_single_lazy || all_multi_lazy {
-            return if all_single_lazy {
-                let sources: Vec<&LazyOneHotBlocks<'_, SingleChunkEntry>> = plans
-                    .iter()
-                    .map(|plan| match &plan.blocks {
-                        OneHotCommitBlocks::SingleChunkLazy(source) => source,
-                        _ => unreachable!("checked all_single_lazy"),
-                    })
-                    .collect();
-                column_sweep_ajtai_onehot_multi_lazy::<SingleChunkEntry, F, D>(
-                    &a_view,
-                    &sources,
-                    n_a,
-                    active_a_cols,
-                    num_digits_inner,
-                )
-            } else {
-                let sources: Vec<&LazyOneHotBlocks<'_, MultiChunkEntry>> = plans
-                    .iter()
-                    .map(|plan| match &plan.blocks {
-                        OneHotCommitBlocks::MultiChunkLazy(source) => source,
-                        _ => unreachable!("checked all_multi_lazy"),
-                    })
-                    .collect();
-                column_sweep_ajtai_onehot_multi_lazy::<MultiChunkEntry, F, D>(
-                    &a_view,
-                    &sources,
-                    n_a,
-                    active_a_cols,
-                    num_digits_inner,
-                )
-            };
-        }
-
         if all_single {
-            let polys_blocks: Vec<Vec<&[SingleChunkEntry]>> = plans
+            let sources = plans
                 .iter()
                 .map(|plan| match &plan.blocks {
-                    OneHotCommitBlocks::SingleChunk(blocks) => blocks.block_slices(),
-                    _ => unreachable!("checked all_single"),
+                    OneHotCommitBlocks::SingleChunk(source) => Some(source),
+                    OneHotCommitBlocks::MultiChunk(_) => None,
                 })
-                .collect::<Result<_, _>>()?;
-            Ok(column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| AkitaError::InvalidSetup("mixed one-hot geometry".to_string()))?;
+            column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
                 &a_view,
-                &polys_blocks,
+                &sources,
                 n_a,
                 active_a_cols,
                 num_digits_inner,
-            ))
+            )
         } else {
-            let polys_blocks: Vec<Vec<&[MultiChunkEntry]>> = plans
+            let sources = plans
                 .iter()
                 .map(|plan| match &plan.blocks {
-                    OneHotCommitBlocks::MultiChunk(blocks) => blocks.block_slices(),
-                    _ => unreachable!("checked all_multi"),
+                    OneHotCommitBlocks::MultiChunk(source) => Some(source),
+                    OneHotCommitBlocks::SingleChunk(_) => None,
                 })
-                .collect::<Result<_, _>>()?;
-            Ok(column_sweep_ajtai_onehot_multi::<MultiChunkEntry, F, D>(
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| AkitaError::InvalidSetup("mixed one-hot geometry".to_string()))?;
+            column_sweep_ajtai_onehot_multi::<MultiChunkEntry, F, D>(
                 &a_view,
-                &polys_blocks,
+                &sources,
                 n_a,
                 active_a_cols,
                 num_digits_inner,
-            ))
+            )
         }
     }
 
@@ -953,195 +893,6 @@ where
             NttCacheKey::from_matrix_shape(D, row_len, digits.len(), NttTransformDomain::Cyclic)?,
             |ntt| mat_vec_mul_ntt_single_i8_cyclic(ntt, row_len, digits.len(), digits, log_basis),
         )
-    }
-}
-
-impl<F> RingSwitchComputeBackend<F> for CpuBackend
-where
-    F: FieldCore + CanonicalField,
-{
-    fn ring_switch_relation_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RingSwitchRelationRowsPlan<'_, D>,
-    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
-    where
-        F: HalvingField,
-    {
-        // The root-level relation spans nearly the whole matrix but reads
-        // each element exactly once per prove — stream its transforms from
-        // the field form instead of materializing a matrix-scale NTT cache
-        // for one pass. Small (deeper-level) extents keep the cached path,
-        // which is shared with the per-level digit-row products.
-        let stream_extent = plan
-            .n_d
-            .saturating_mul(plan.e_hat.len())
-            .max(plan.n_b.saturating_mul(plan.t_hat.len()))
-            .max(plan.n_a.saturating_mul(plan.z_segment.len()));
-        if stream_extent > NTT_STREAM_THRESHOLD_RING_ELEMENTS {
-            let view = prepared
-                .expanded
-                .shared_matrix()
-                .ring_view::<D>(1, stream_extent)?;
-            let source = StreamedASource::Flat(view.as_slice());
-            let params_key = NttCacheKey::from_matrix_shape(D, 1, 1, NttTransformDomain::Cyclic)?;
-            let streamed = prepared.with_shared_ntt::<D, _>(params_key, |ntt| {
-                fused_split_eq_quotients_streamed_prover_bounds(
-                    ntt,
-                    &source,
-                    plan.n_d,
-                    plan.n_b,
-                    plan.n_a,
-                    plan.e_hat,
-                    plan.t_hat,
-                    plan.z_segment,
-                    plan.z_folded_centered_inf_norm,
-                    plan.log_basis_open,
-                    plan.log_basis_outer,
-                )
-            })?;
-            if let Some((d_cyclic, b_cyclic, a_quotients)) = streamed {
-                return Ok(RingSwitchRelationRows {
-                    d_cyclic,
-                    b_cyclic,
-                    a_quotients,
-                });
-            }
-        }
-        let mut cyclic_requirement: Option<NttCacheKey> = None;
-        for (rows, width) in [
-            (plan.n_d, plan.e_hat.len()),
-            (plan.n_b, plan.t_hat.len()),
-            (plan.n_a, plan.z_segment.len()),
-        ] {
-            if rows == 0 && width == 0 {
-                continue;
-            }
-            let role_requirement =
-                NttCacheKey::from_matrix_shape(D, rows, width, NttTransformDomain::Cyclic)?;
-            cyclic_requirement = Some(match cyclic_requirement {
-                Some(current) => current.join(role_requirement)?,
-                None => role_requirement,
-            });
-        }
-        let cyclic_requirement = cyclic_requirement.ok_or_else(|| {
-            AkitaError::InvalidSetup("ring-switch relation has no active rows".into())
-        })?;
-        prepared.with_shared_ntt::<D, _>(cyclic_requirement, |cyclic_ntt| {
-            if plan.n_a == 0 {
-                let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
-                    cyclic_ntt,
-                    cyclic_ntt,
-                    plan.n_d,
-                    plan.n_b,
-                    0,
-                    plan.e_hat,
-                    plan.t_hat,
-                    &[],
-                    0,
-                    plan.log_basis_open,
-                    plan.log_basis_outer,
-                )?;
-                return Ok(RingSwitchRelationRows {
-                    d_cyclic,
-                    b_cyclic,
-                    a_quotients,
-                });
-            }
-            let negacyclic_requirement = NttCacheKey::from_matrix_shape(
-                D,
-                plan.n_a,
-                plan.z_segment.len(),
-                NttTransformDomain::Negacyclic,
-            )?;
-            prepared.with_shared_ntt::<D, _>(negacyclic_requirement, |negacyclic_ntt| {
-                let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
-                    negacyclic_ntt,
-                    cyclic_ntt,
-                    plan.n_d,
-                    plan.n_b,
-                    plan.n_a,
-                    plan.e_hat,
-                    plan.t_hat,
-                    plan.z_segment,
-                    plan.z_folded_centered_inf_norm,
-                    plan.log_basis_open,
-                    plan.log_basis_outer,
-                )?;
-                Ok(RingSwitchRelationRows {
-                    d_cyclic,
-                    b_cyclic,
-                    a_quotients,
-                })
-            })
-        })
-    }
-
-    fn ring_switch_quotient_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RingSwitchQuotientRowsPlan<'_, D>,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-    where
-        F: HalvingField,
-    {
-        let stream_extent = plan.n_a.saturating_mul(plan.z_segment.len());
-        if stream_extent > NTT_STREAM_THRESHOLD_RING_ELEMENTS {
-            let view = prepared
-                .expanded
-                .shared_matrix()
-                .ring_view::<D>(1, stream_extent)?;
-            let source = StreamedASource::Flat(view.as_slice());
-            let params_key = NttCacheKey::from_matrix_shape(D, 1, 1, NttTransformDomain::Cyclic)?;
-            let streamed = prepared.with_shared_ntt::<D, _>(params_key, |ntt| {
-                fused_split_eq_quotients_streamed_prover_bounds(
-                    ntt,
-                    &source,
-                    0,
-                    0,
-                    plan.n_a,
-                    &[][..],
-                    &[][..],
-                    plan.z_segment,
-                    plan.z_folded_centered_inf_norm,
-                    1,
-                    1,
-                )
-            })?;
-            if let Some((_d_cyclic, _b_cyclic, a_quotients)) = streamed {
-                return Ok(a_quotients);
-            }
-        }
-        let cyclic = NttCacheKey::from_matrix_shape(
-            D,
-            plan.n_a,
-            plan.z_segment.len(),
-            NttTransformDomain::Cyclic,
-        )?;
-        let negacyclic = NttCacheKey::from_matrix_shape(
-            D,
-            plan.n_a,
-            plan.z_segment.len(),
-            NttTransformDomain::Negacyclic,
-        )?;
-        prepared.with_shared_ntt::<D, _>(cyclic, |cyclic_ntt| {
-            prepared.with_shared_ntt::<D, _>(negacyclic, |negacyclic_ntt| {
-                let (_d_cyclic, _b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
-                    negacyclic_ntt,
-                    cyclic_ntt,
-                    0,
-                    0,
-                    plan.n_a,
-                    &[][..],
-                    &[][..],
-                    plan.z_segment,
-                    plan.z_folded_centered_inf_norm,
-                    1,
-                    1,
-                )?;
-                Ok(a_quotients)
-            })
-        })
     }
 }
 

@@ -168,6 +168,11 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn block_cache_len_for_test(&self) -> usize {
+        self.block_cache.lock().map_or(0, |cache| cache.len())
+    }
+
     /// Return cached per-block storage, building it on first call for the
     /// requested `(ring_d, num_positions_per_block)` view.
     pub(super) fn blocks_for(
@@ -271,34 +276,38 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         let onehot_k = self.onehot_k;
         let indices = &self.indices;
         if onehot_k >= ring_d && onehot_k.is_multiple_of(ring_d) {
-            Ok(OneHotCommitBlocks::SingleChunkLazy(LazyOneHotBlocks::new(
-                num_live_blocks,
-                num_positions_per_block,
-                move |ring_range, first_block| {
-                    FlatBlocks::<SingleChunkEntry>::from_indices_ring_range(
-                        onehot_k,
-                        indices,
-                        num_positions_per_block,
-                        ring_d,
-                        ring_range,
-                        first_block,
-                    )
-                },
+            Ok(OneHotCommitBlocks::SingleChunk(OneHotBlockSource::Lazy(
+                LazyOneHotBlocks::new(
+                    num_live_blocks,
+                    num_positions_per_block,
+                    move |ring_range, first_block| {
+                        FlatBlocks::<SingleChunkEntry>::from_indices_ring_range(
+                            onehot_k,
+                            indices,
+                            num_positions_per_block,
+                            ring_d,
+                            ring_range,
+                            first_block,
+                        )
+                    },
+                ),
             )))
         } else {
-            Ok(OneHotCommitBlocks::MultiChunkLazy(LazyOneHotBlocks::new(
-                num_live_blocks,
-                num_positions_per_block,
-                move |ring_range, first_block| {
-                    FlatBlocks::<MultiChunkEntry>::from_indices_ring_range(
-                        onehot_k,
-                        indices,
-                        num_positions_per_block,
-                        ring_d,
-                        ring_range,
-                        first_block,
-                    )
-                },
+            Ok(OneHotCommitBlocks::MultiChunk(OneHotBlockSource::Lazy(
+                LazyOneHotBlocks::new(
+                    num_live_blocks,
+                    num_positions_per_block,
+                    move |ring_range, first_block| {
+                        FlatBlocks::<MultiChunkEntry>::from_indices_ring_range(
+                            onehot_k,
+                            indices,
+                            num_positions_per_block,
+                            ring_d,
+                            ring_range,
+                            first_block,
+                        )
+                    },
+                ),
             )))
         }
     }

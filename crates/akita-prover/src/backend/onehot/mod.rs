@@ -47,7 +47,8 @@ use std::sync::{Arc, Mutex};
 use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::compute::{
-    CommitmentComputeBackend, FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan,
+    CommitmentComputeBackend, FlatBlockTable, OneHotBlockSource, OneHotCommitBlocks,
+    OneHotCommitRowsPlan,
 };
 use crate::{CommitInnerWitness, DecomposeFoldWitness, SparseRingPoly};
 
@@ -72,10 +73,9 @@ mod tests;
 
 pub use blocks::LazyOneHotBlocks;
 pub(crate) use blocks::{FlatBlocks, OneHotBlocks};
-pub(crate) use column_sweep::{
-    column_sweep_ajtai_onehot, column_sweep_ajtai_onehot_multi,
-    column_sweep_ajtai_onehot_multi_lazy,
-};
+#[cfg(test)]
+pub(crate) use column_sweep::column_sweep_ajtai_onehot;
+pub(crate) use column_sweep::column_sweep_ajtai_onehot_multi;
 pub(super) use entries::{shift_accumulation_count, OneHotEntry};
 pub use entries::{MultiChunkEntry, OneHotIndex, SingleChunkEntry};
 #[cfg(test)]

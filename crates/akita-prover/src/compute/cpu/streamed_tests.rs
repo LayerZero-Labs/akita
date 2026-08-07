@@ -4,7 +4,7 @@
 use super::*;
 use crate::compute::backend::ComputeBackendSetup;
 use crate::AkitaProverSetup;
-use akita_field::{Prime128Offset275, Prime64Offset59};
+use akita_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
 use akita_types::SetupMatrixCapacity;
 
 type F = Prime64Offset59;
@@ -48,7 +48,55 @@ fn streamed_relation_rows_match_cached_kernel() {
         .shared_matrix()
         .ring_view::<D>(1, extent)
         .expect("field view");
-    let source = StreamedASource::Flat(view.as_slice());
+    let source = StreamedASource::new(view.as_slice());
+    let streamed = prepared
+        .with_shared_ntt::<D, _>(params_key(), |ntt| {
+            fused_split_eq_quotients_streamed_prover_bounds(
+                ntt, &source, 2, 2, 1, &e_hat, &t_hat, &z_segment, 5, 2, 3,
+            )
+        })
+        .expect("streamed rows")
+        .expect("shape is one-shot safe");
+    let cached = prepared
+        .with_shared_ntt::<D, _>(cyclic_key(extent), |cyclic_ntt| {
+            prepared.with_shared_ntt::<D, _>(negacyclic_key(extent), |negacyclic_ntt| {
+                fused_split_eq_quotients_prover_bounds(
+                    negacyclic_ntt,
+                    cyclic_ntt,
+                    2,
+                    2,
+                    1,
+                    &e_hat,
+                    &t_hat,
+                    &z_segment,
+                    5,
+                    2,
+                    3,
+                )
+            })
+        })
+        .expect("cached rows");
+    assert_eq!(streamed, cached);
+}
+
+#[test]
+fn streamed_relation_rows_match_cached_q32_kernel() {
+    type F32 = Prime32Offset99;
+    let setup = AkitaProverSetup::<F32>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let e_hat = vec![[1i8; D], [-1i8; D], [1i8; D]];
+    let t_hat = vec![[-1i8; D], [3i8; D]];
+    let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D], [5i32; D]];
+    let extent = 2usize
+        .saturating_mul(e_hat.len())
+        .max(2usize.saturating_mul(t_hat.len()))
+        .max(z_segment.len());
+    let view = prepared
+        .expanded
+        .shared_matrix()
+        .ring_view::<D>(1, extent)
+        .expect("field view");
+    let source = StreamedASource::new(view.as_slice());
     let streamed = prepared
         .with_shared_ntt::<D, _>(params_key(), |ntt| {
             fused_split_eq_quotients_streamed_prover_bounds(
@@ -93,7 +141,7 @@ fn streamed_chunked_z_quotient_matches_cached_kernel() {
         .shared_matrix()
         .ring_view::<D>(1, extent)
         .expect("field view");
-    let source = StreamedASource::Flat(view.as_slice());
+    let source = StreamedASource::new(view.as_slice());
     let streamed = prepared
         .with_shared_ntt::<D, _>(params_key(), |ntt| {
             fused_split_eq_quotients_streamed_prover_bounds(
@@ -155,7 +203,7 @@ fn streamed_chunked_t_rows_match_cached_kernel() {
         .shared_matrix()
         .ring_view::<D128>(1, T_LEN)
         .expect("field view");
-    let flat_source = StreamedASource::Flat(view.as_slice());
+    let flat_source = StreamedASource::new(view.as_slice());
     let streamed = prepared
         .with_shared_ntt::<D128, _>(
             NttCacheKey::from_matrix_shape(D128, 1, 1, NttTransformDomain::Cyclic).unwrap(),
@@ -221,4 +269,43 @@ fn drop_built_ntt_slots_frees_and_rebuilds() {
         .with_shared_ntt::<D, _>(key, |_| Ok(()))
         .expect("slot rebuilds after release");
     assert!(prepared.shared_ntt_cache_bytes() > 0);
+}
+
+#[test]
+fn dropping_built_slots_does_not_invalidate_active_reader() {
+    let prepared = prepared();
+    let key = cyclic_key(D);
+    prepared
+        .with_shared_ntt::<D, _>(key, |_| Ok(()))
+        .expect("build slot");
+    let bytes = prepared.shared_ntt_cache_bytes();
+    let builds_before = prepared.ntt_slot_build_count.load(Ordering::Relaxed);
+    let entered = std::sync::Barrier::new(2);
+    let released = std::sync::Barrier::new(2);
+
+    std::thread::scope(|scope| {
+        let reader = scope.spawn(|| {
+            prepared
+                .with_shared_ntt::<D, _>(key, |ntt| {
+                    entered.wait();
+                    released.wait();
+                    assert_eq!(ntt.cache_bytes(), bytes);
+                    Ok(())
+                })
+                .expect("active reader keeps its cache alive");
+        });
+        entered.wait();
+        assert_eq!(prepared.drop_built_ntt_slots(), bytes);
+        assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
+        released.wait();
+        reader.join().expect("reader thread");
+    });
+
+    prepared
+        .with_shared_ntt::<D, _>(key, |_| Ok(()))
+        .expect("released slot rebuilds");
+    assert_eq!(
+        prepared.ntt_slot_build_count.load(Ordering::Relaxed),
+        builds_before + 1
+    );
 }

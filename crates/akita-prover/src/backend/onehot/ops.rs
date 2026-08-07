@@ -10,35 +10,35 @@ use crate::compute::{
 };
 use akita_field::MulBaseUnreduced;
 
-/// Build each lazy block once (parallel, in block order) and map its entry
-/// slice through the body — shared driver for the per-block opening folds,
-/// monomorphized per entry type by the match.
-macro_rules! for_each_lazy_block {
-    ($lazy:expr, |$entries:ident| $body:expr) => {
-        match &$lazy {
-            OneHotCommitBlocks::SingleChunkLazy(source) => {
-                cfg_into_iter!(0..source.num_live_blocks())
-                    .map(|i| {
-                        let built = source
-                            .build_range(i..i + 1)
-                            .expect("in-range single block build");
-                        let $entries = built.block(0);
-                        $body
-                    })
-                    .collect()
-            }
-            OneHotCommitBlocks::MultiChunkLazy(source) => {
-                cfg_into_iter!(0..source.num_live_blocks())
-                    .map(|i| {
-                        let built = source
-                            .build_range(i..i + 1)
-                            .expect("in-range single block build");
-                        let $entries = built.block(0);
-                        $body
-                    })
-                    .collect()
-            }
-            _ => unreachable!("commit_plan_blocks_lazy returns lazy variants"),
+/// Build or borrow each block once and map its entry slice through the body.
+/// The geometry match monomorphizes the opening fold per entry type.
+macro_rules! for_each_block_source {
+    ($blocks:expr, |$entries:ident| $body:expr) => {
+        match &$blocks {
+            OneHotCommitBlocks::SingleChunk(source) => cfg_into_iter!(0..source.num_live_blocks())
+                .map(|i| {
+                    let materialized = source
+                        .materialize_range(i..i + 1)
+                        .expect("in-range single block build");
+                    let slices = materialized
+                        .block_slices()
+                        .expect("materialized single block");
+                    let $entries = slices[0];
+                    $body
+                })
+                .collect(),
+            OneHotCommitBlocks::MultiChunk(source) => cfg_into_iter!(0..source.num_live_blocks())
+                .map(|i| {
+                    let materialized = source
+                        .materialize_range(i..i + 1)
+                        .expect("in-range single block build");
+                    let slices = materialized
+                        .block_slices()
+                        .expect("materialized single block");
+                    let $entries = slices[0];
+                    $body
+                })
+                .collect(),
         }
     };
 }
@@ -84,6 +84,10 @@ where
 
     fn onehot_chunk_size(&self) -> Option<usize> {
         Some(self.onehot_k)
+    }
+
+    fn release_root_opening_storage(&self) {
+        self.clear_block_cache();
     }
 }
 
@@ -364,7 +368,7 @@ where
         let lazy = self
             .commit_plan_blocks_lazy(D, num_positions_per_block)
             .expect("OneHotPoly::fold_blocks: invalid num_positions_per_block for this polynomial");
-        for_each_lazy_block!(lazy, |entries| fold_onehot_block(
+        for_each_block_source!(lazy, |entries| fold_onehot_block(
             entries,
             scalars,
             num_positions_per_block
@@ -381,7 +385,7 @@ where
             .expect(
                 "OneHotPoly::fold_blocks_ring: invalid num_positions_per_block for this polynomial",
             );
-        for_each_lazy_block!(lazy, |entries| fold_onehot_block_ring(
+        for_each_block_source!(lazy, |entries| fold_onehot_block_ring(
             entries,
             scalars,
             num_positions_per_block

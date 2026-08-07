@@ -4,19 +4,17 @@ use std::ops::Range;
 
 /// One family of setup-matrix rows read as per-column ring slices borrowed
 /// from the materialized store.
-enum SetupRowFamily<'a, F: akita_field::FieldCore> {
-    Flat { rows: Vec<&'a [F]>, ring_d: usize },
+struct SetupRows<'a, F: akita_field::FieldCore> {
+    rows: Vec<&'a [F]>,
+    ring_d: usize,
 }
 
-impl<F: akita_field::FieldCore> SetupRowFamily<'_, F> {
-    fn ring_slice(&self, row: usize, col: usize) -> Result<std::borrow::Cow<'_, [F]>, AkitaError> {
-        match self {
-            Self::Flat { rows, ring_d } => rows
-                .get(row)
-                .and_then(|row| row.get(col * ring_d..(col + 1) * ring_d))
-                .map(std::borrow::Cow::Borrowed)
-                .ok_or(AkitaError::InvalidProof),
-        }
+impl<F: akita_field::FieldCore> SetupRows<'_, F> {
+    fn ring_slice(&self, row: usize, col: usize) -> Result<&[F], AkitaError> {
+        self.rows
+            .get(row)
+            .and_then(|row| row.get(col * self.ring_d..(col + 1) * self.ring_d))
+            .ok_or(AkitaError::InvalidProof)
     }
 }
 
@@ -35,7 +33,7 @@ use akita_types::{
 };
 
 fn evaluate_setup_columns<F, E>(
-    family: &SetupRowFamily<'_, F>,
+    family: &SetupRows<'_, F>,
     columns: Range<usize>,
     row_weights: &[(usize, E)],
     alpha_powers: &[E],
@@ -52,7 +50,7 @@ where
                     Ok(acc
                         + weight
                             * eval_flat_ring_at_pows_fast(
-                                family.ring_slice(row, col)?.as_ref(),
+                                family.ring_slice(row, col)?,
                                 alpha_powers,
                             ))
                 })
@@ -67,8 +65,6 @@ pub enum RelationWeightContribution {
     Constraint,
     /// D/B/A setup-matrix arithmetic replaceable by one offloaded setup claim.
     SetupMatrix,
-    /// Constraint and setup-matrix terms sharing one physical alpha interval.
-    ConstraintAndSetupMatrix,
 }
 
 /// One aligned consecutive-alpha contribution to the flat relation weight table.
@@ -570,7 +566,7 @@ where
     let d_family = match &d_view {
         Some((matrix, rows, cols)) => {
             let view = matrix.ring_view_dyn(*rows, *cols, d_d)?;
-            Some(SetupRowFamily::Flat {
+            Some(SetupRows {
                 rows: (0..*rows)
                     .map(|row| view.row_flat(row))
                     .collect::<Result<Vec<_>, _>>()?,
@@ -660,14 +656,14 @@ where
             let a_view = setup
                 .shared_matrix
                 .ring_view_dyn(n_a, inner_width, group_d_a)?;
-            let a_family = SetupRowFamily::Flat {
+            let a_family = SetupRows {
                 rows: (0..n_a)
                     .map(|row| a_view.row_flat(row))
                     .collect::<Result<Vec<_>, _>>()?,
                 ring_d: group_d_a,
             };
             let b_view = setup.shared_matrix.ring_view_dyn(n_b, b_width, group_d_b)?;
-            let b_family = SetupRowFamily::Flat {
+            let b_family = SetupRows {
                 rows: (0..n_b)
                     .map(|row| b_view.row_flat(row))
                     .collect::<Result<Vec<_>, _>>()?,
@@ -882,7 +878,7 @@ where
                         if !eq_i.is_zero() {
                             setup += eq_i
                                 * eval_flat_ring_at_pows_fast(
-                                    setup_a_family.ring_slice(a_idx, k)?.as_ref(),
+                                    setup_a_family.ring_slice(a_idx, k)?,
                                     &group_alpha_pows_a,
                                 );
                         }

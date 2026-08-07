@@ -74,13 +74,19 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
     assert_eq!(merge, bucketed, "merge sweep must match the bucketed core");
 
     // Wrapper equality: fused multi output must equal per-poly sweeps.
+    let sources: Vec<_> = polys_blocks
+        .iter()
+        .map(|blocks| OneHotBlockSource::Eager(blocks.table()))
+        .collect();
+    let source_refs: Vec<_> = sources.iter().collect();
     let multi = column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
         &a_view,
-        &polys_views,
+        &source_refs,
         n_a,
         active_a_cols,
         num_digits_inner,
-    );
+    )
+    .unwrap();
     let per_poly: Vec<Vec<Vec<CyclotomicRing<F, D>>>> = polys_views
         .iter()
         .map(|views| {
@@ -113,10 +119,8 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
 
 #[test]
 fn lazy_multi_sweep_matches_eager_multi_sweep() {
-    use super::super::column_sweep::{
-        column_sweep_ajtai_onehot_multi, column_sweep_ajtai_onehot_multi_lazy,
-    };
-    use crate::compute::OneHotCommitBlocks;
+    use super::super::column_sweep::column_sweep_ajtai_onehot_multi;
+    use crate::compute::{OneHotBlockSource, OneHotCommitBlocks};
     use rand::Rng;
 
     type F = Prime128Offset275;
@@ -149,22 +153,22 @@ fn lazy_multi_sweep_matches_eager_multi_sweep() {
         .iter()
         .map(|poly| poly.blocks_for(D, num_positions_per_block).unwrap())
         .collect();
-    let eager_slices: Vec<Vec<&[SingleChunkEntry]>> = eager_blocks
+    let eager_sources: Vec<_> = eager_blocks
         .iter()
         .map(|blocks| match blocks.as_ref() {
-            OneHotBlocks::SingleChunk(blocks) => (0..blocks.num_live_blocks())
-                .map(|i| blocks.block(i))
-                .collect(),
+            OneHotBlocks::SingleChunk(blocks) => OneHotBlockSource::Eager(blocks.table()),
             OneHotBlocks::MultiChunk(_) => panic!("K=256 D=64 is single-chunk"),
         })
         .collect();
+    let eager_refs: Vec<_> = eager_sources.iter().collect();
     let eager = column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
         &a_view,
-        &eager_slices,
+        &eager_refs,
         n_a,
         active_a_cols,
         1,
-    );
+    )
+    .unwrap();
 
     let lazy_plans: Vec<_> = polys
         .iter()
@@ -173,14 +177,14 @@ fn lazy_multi_sweep_matches_eager_multi_sweep() {
                 .unwrap()
         })
         .collect();
-    let sources: Vec<&LazyOneHotBlocks<'_, SingleChunkEntry>> = lazy_plans
+    let sources: Vec<_> = lazy_plans
         .iter()
         .map(|blocks| match blocks {
-            OneHotCommitBlocks::SingleChunkLazy(source) => source,
+            OneHotCommitBlocks::SingleChunk(source @ OneHotBlockSource::Lazy(_)) => source,
             _ => panic!("K=256 D=64 is single-chunk lazy"),
         })
         .collect();
-    let lazy = column_sweep_ajtai_onehot_multi_lazy::<SingleChunkEntry, F, D>(
+    let lazy = column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
         &a_view,
         &sources,
         n_a,

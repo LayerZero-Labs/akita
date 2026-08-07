@@ -213,6 +213,35 @@ fn onehot_poly_caches_multiple_runtime_layouts() {
 }
 
 #[test]
+fn root_storage_release_drops_cached_onehot_blocks() {
+    type F = Prime24Offset3;
+    let poly = OneHotPoly::<F>::new(
+        32,
+        32,
+        vec![
+            Some(0usize),
+            Some(7),
+            None,
+            Some(31),
+            Some(3),
+            None,
+            Some(12),
+            Some(1),
+        ],
+    )
+    .unwrap();
+
+    let cached = poly.blocks_for(32, 4).unwrap();
+    assert_eq!(poly.block_cache_len_for_test(), 1);
+
+    RootPolyMeta::release_root_opening_storage(&poly);
+    assert_eq!(poly.block_cache_len_for_test(), 0);
+
+    let rebuilt = poly.blocks_for(32, 4).unwrap();
+    assert!(!std::sync::Arc::ptr_eq(&cached, &rebuilt));
+}
+
+#[test]
 fn tensor_column_partials_match_dense_reference() {
     type F = Prime24Offset3;
     type E = FpExt4<F>;

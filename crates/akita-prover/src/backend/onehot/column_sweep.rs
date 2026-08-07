@@ -252,6 +252,7 @@ fn split_oversized_blocks<'a, E: OneHotEntry>(
 /// packed-entry buffer scales with tile size) with cursor walks, and — called
 /// over a multi-polynomial batch — re-streams A once per (thread, tile, row)
 /// instead of once per polynomial.
+#[cfg(test)]
 pub(super) fn column_sweep_core_merge<E, F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
     blocks: &[&[E]],
@@ -417,85 +418,12 @@ where
     result
 }
 
-/// Fused multi-polynomial column-sweep commit: all polynomials of a batch
-/// share one A pass.
-///
-/// Every polynomial in a committed group uses the same A matrix, so sweeping
-/// their blocks together divides the dominant A-streaming traffic by the
-/// batch width. Returns per-polynomial block rows in input order, byte-equal
-/// to per-polynomial [`column_sweep_ajtai_onehot`] calls.
+/// Fused multi-polynomial column sweep over eager or lazy block sources.
+/// Entry geometry is already fixed by `E`; each source decides whether a tile
+/// is borrowed from existing storage or built for the duration of the sweep.
 pub(crate) fn column_sweep_ajtai_onehot_multi<E, F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
-    polys_blocks: &[Vec<&[E]>],
-    n_a: usize,
-    active_a_cols: usize,
-    num_digits_inner: usize,
-) -> Vec<Vec<Vec<CyclotomicRing<F, D>>>>
-where
-    E: OneHotEntry,
-    F: FieldCore + CanonicalField + HasCommitAccum,
-    F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
-{
-    let flat: Vec<&[E]> = polys_blocks.iter().flatten().copied().collect();
-    let num_flat = flat.len();
-
-    #[cfg(feature = "parallel")]
-    let num_threads = rayon::current_num_threads().min(num_flat.max(1));
-    #[cfg(not(feature = "parallel"))]
-    let num_threads = 1;
-
-    // Small batches don't amortize anything; keep them on the single-poly
-    // path (which has its own small-input fast path).
-    let flat_rows: Vec<Vec<CyclotomicRing<F, D>>> =
-        if num_flat.div_ceil(num_threads.max(1)) <= SWEEP_THRESHOLD {
-            polys_blocks
-                .iter()
-                .flat_map(|blocks| {
-                    column_sweep_ajtai_onehot::<E, F, D>(
-                        a_view,
-                        blocks,
-                        n_a,
-                        active_a_cols,
-                        num_digits_inner,
-                    )
-                })
-                .collect()
-        } else {
-            // Keep the accumulator tile plus the widened-column chunk inside
-            // L1: the accumulators are read-modify-written for every column
-            // chunk, so pushing them to L2 costs ~1.5x per accumulate. Extra
-            // tiles re-stream A, but the fused batch makes that negligible.
-            // The kernel self-reduces at the accumulation cap, so oversized
-            // blocks need no splitting.
-            let accum_bytes = D * std::mem::size_of::<F::CommitAccum>();
-            let merge_tile_budget = (accum_bytes * 64).min(L2_TILE_BUDGET);
-            column_sweep_core_merge::<E, F, D>(
-                a_view,
-                &flat,
-                n_a,
-                active_a_cols,
-                num_digits_inner,
-                merge_tile_budget,
-                MERGE_COL_CHUNK,
-            )
-        };
-
-    let mut flat_rows = flat_rows.into_iter();
-    polys_blocks
-        .iter()
-        .map(|blocks| flat_rows.by_ref().take(blocks.len()).collect())
-        .collect()
-}
-
-/// Fused multi-polynomial column-sweep commit over LAZY block sources:
-/// each thread materializes one block tile's entries from the polynomials'
-/// retained index columns, sweeps it, and drops it — the full per-block
-/// entry cache (~200 B/cycle across a 29-poly batch at 2^26) never exists.
-/// Accumulation order matches the eager kernel tile-for-tile, so results
-/// are byte-equal.
-pub(crate) fn column_sweep_ajtai_onehot_multi_lazy<E, F, const D: usize>(
-    a_view: &RingMatrixView<'_, F, D>,
-    sources: &[&LazyOneHotBlocks<'_, E>],
+    sources: &[&OneHotBlockSource<'_, E>],
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
@@ -517,16 +445,34 @@ where
         return Ok(vec![Vec::new(); sources.len()]);
     }
 
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads().min(total).max(1);
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    if total.div_ceil(num_threads) <= SWEEP_THRESHOLD {
+        return sources
+            .iter()
+            .map(|source| {
+                let materialized = source.materialize_range(0..source.num_live_blocks())?;
+                let blocks = materialized.block_slices()?;
+                Ok(column_sweep_ajtai_onehot::<E, F, D>(
+                    a_view,
+                    &blocks,
+                    n_a,
+                    active_a_cols,
+                    num_digits_inner,
+                ))
+            })
+            .collect();
+    }
+
     let accum_bytes = D * std::mem::size_of::<F::CommitAccum>();
     let tile_budget = (accum_bytes * 64).min(L2_TILE_BUDGET);
     let block_tile = tile_budget
         .checked_div(accum_bytes)
         .map_or(total, |tile| tile.max(1));
 
-    #[cfg(feature = "parallel")]
-    let num_threads = rayon::current_num_threads().min(total).max(1);
-    #[cfg(not(feature = "parallel"))]
-    let num_threads = 1;
     let blocks_per_thread = total.div_ceil(num_threads);
 
     let thread_results: Vec<Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>> =
@@ -545,9 +491,9 @@ where
 
                 for tile_start in (block_start..block_end).step_by(block_tile) {
                     let tile_end = (tile_start + block_tile).min(block_end);
-                    // Materialize this tile's blocks from each overlapping
-                    // source's index columns; dropped at tile end.
-                    let mut owners: Vec<FlatBlocks<E>> = Vec::new();
+                    // Borrow or build the overlapping range from each source.
+                    // Lazy owners and their entries are dropped at tile end.
+                    let mut owners = Vec::new();
                     for (src_idx, source) in sources.iter().enumerate() {
                         let src_start = starts[src_idx];
                         let src_end = starts[src_idx + 1];
@@ -556,14 +502,13 @@ where
                         if lo >= hi {
                             continue;
                         }
-                        owners.push(source.build_range(lo - src_start..hi - src_start)?);
+                        owners.push(source.materialize_range(lo - src_start..hi - src_start)?);
                     }
-                    let tile_blocks: Vec<&[E]> = owners
+                    let block_groups = owners
                         .iter()
-                        .flat_map(|blocks| {
-                            (0..blocks.num_live_blocks()).map(move |i| blocks.block(i))
-                        })
-                        .collect();
+                        .map(|blocks| blocks.block_slices())
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let tile_blocks: Vec<&[E]> = block_groups.iter().flatten().copied().collect();
                     let tile_rows = merge_sweep_tile::<E, F, D>(
                         a_view,
                         &tile_blocks,

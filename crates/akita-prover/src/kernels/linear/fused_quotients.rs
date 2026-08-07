@@ -14,6 +14,97 @@ struct CenteredRhsBounds {
     lut: u64,
 }
 
+#[derive(Clone, Copy)]
+struct FusedQuotientPlan {
+    witness_len: usize,
+    t_len: usize,
+    z_len: usize,
+    max_col: usize,
+    w_digit_abs_bound: u64,
+    t_digit_abs_bound: u64,
+    z_bounds: CenteredRhsBounds,
+    w_chunk_width: Option<usize>,
+    t_chunk_width: Option<usize>,
+    z_chunk_width: Option<usize>,
+}
+
+impl FusedQuotientPlan {
+    fn is_one_shot(self) -> bool {
+        self.w_chunk_width
+            .is_some_and(|width| width >= self.witness_len)
+            && self.t_chunk_width.is_some_and(|width| width >= self.t_len)
+            && self.z_chunk_width.is_some_and(|width| width >= self.z_len)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_fused_quotients<
+    F: FieldCore + CanonicalField + HalvingField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    e_hat: &[[i8; D]],
+    t_hat: &[[i8; D]],
+    z_folded_rings: &[[i32; D]],
+    witness_len: usize,
+    t_len: usize,
+    z_len: usize,
+    z_folded_max_abs: u32,
+    w_digit_abs_bound: u64,
+    t_digit_abs_bound: u64,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Result<FusedQuotientPlan, AkitaError> {
+    if witness_len > e_hat.len() || t_len > t_hat.len() || z_len > z_folded_rings.len() {
+        return Err(AkitaError::InvalidSetup(
+            "fused quotient plan lengths exceed their input rows".to_string(),
+        ));
+    }
+    if !digit_rows_within_digit_bound::<D>(e_hat, witness_len, w_digit_abs_bound) {
+        return Err(AkitaError::InvalidInput(
+            "fused quotient e_hat contains digits outside its log_basis range".to_string(),
+        ));
+    }
+    if !digit_rows_within_digit_bound::<D>(t_hat, t_len, t_digit_abs_bound) {
+        return Err(AkitaError::InvalidInput(
+            "fused quotient t_hat contains digits outside its log_basis range".to_string(),
+        ));
+    }
+
+    let actual_z_abs_bound = centered_rows_abs_bound(z_folded_rings, z_len);
+    let z_bounds = CenteredRhsBounds {
+        capacity: u64::from(z_folded_max_abs).max(actual_z_abs_bound),
+        lut: actual_z_abs_bound,
+    };
+    debug_assert!(
+        centered_rows_within_bound(z_folded_rings, z_len, z_bounds.capacity),
+        "fused quotient centered RHS bound is smaller than the actual max"
+    );
+
+    let w_chunk_width = (witness_len == 0)
+        .then_some(1)
+        .or_else(|| safe_crt_chunk_width::<F, W, K, D>(params, witness_len, w_digit_abs_bound));
+    let t_chunk_width = (t_len == 0)
+        .then_some(1)
+        .or_else(|| safe_crt_chunk_width::<F, W, K, D>(params, t_len, t_digit_abs_bound));
+    let z_chunk_width = (z_len == 0 || z_bounds.capacity == 0)
+        .then_some(z_len.max(1))
+        .or_else(|| safe_crt_chunk_width::<F, W, K, D>(params, z_len, z_bounds.capacity));
+
+    Ok(FusedQuotientPlan {
+        witness_len,
+        t_len,
+        z_len,
+        max_col: witness_len.max(t_len).max(z_len),
+        w_digit_abs_bound,
+        t_digit_abs_bound,
+        z_bounds,
+        w_chunk_width,
+        t_chunk_width,
+        z_chunk_width,
+    })
+}
+
 /// Fused column-tiled kernel for the three split-eq mat-vec products.
 ///
 /// Replaces three separate NTT-cached mat-vec calls (D-cyclic, B-cyclic,
@@ -55,9 +146,20 @@ pub(super) fn fused_split_eq_quotients_with_params<
     let witness_len = e_hat.len().min(d_width);
     let t_len = t_hat.len().min(b_width);
     let z_len = z_folded_rings.len().min(a_width);
-    let max_col = witness_len.max(t_len).max(z_len);
+    let plan = plan_fused_quotients::<F, W, K, D>(
+        e_hat,
+        t_hat,
+        z_folded_rings,
+        witness_len,
+        t_len,
+        z_len,
+        z_folded_max_abs,
+        w_digit_abs_bound,
+        t_digit_abs_bound,
+        params,
+    )?;
 
-    if max_col == 0 {
+    if plan.max_col == 0 {
         return Ok((
             vec![CyclotomicRing::<F, D>::zero(); n_d],
             vec![CyclotomicRing::<F, D>::zero(); n_b],
@@ -65,36 +167,7 @@ pub(super) fn fused_split_eq_quotients_with_params<
         ));
     }
 
-    // CRT chunking keeps the caller's full-witness bound, while LUT sizing can
-    // use the exact segment bound to avoid oversized centered tables.
-    let actual_z_abs_bound = centered_rows_abs_bound(z_folded_rings, z_len);
-    let z_bounds = CenteredRhsBounds {
-        capacity: u64::from(z_folded_max_abs).max(actual_z_abs_bound),
-        lut: actual_z_abs_bound,
-    };
-    if !digit_rows_within_digit_bound::<D>(e_hat, witness_len, w_digit_abs_bound) {
-        return Err(AkitaError::InvalidInput(
-            "fused quotient e_hat contains digits outside its log_basis range".to_string(),
-        ));
-    }
-    if !digit_rows_within_digit_bound::<D>(t_hat, t_len, t_digit_abs_bound) {
-        return Err(AkitaError::InvalidInput(
-            "fused quotient t_hat contains digits outside its log_basis range".to_string(),
-        ));
-    }
-    debug_assert!(
-        centered_rows_within_bound(z_folded_rings, z_len, z_bounds.capacity),
-        "fused quotient centered RHS bound is smaller than the actual max"
-    );
-    let w_safe = witness_len == 0
-        || safe_crt_chunk_width::<F, W, K, D>(params, witness_len, w_digit_abs_bound)
-            == Some(witness_len);
-    let t_safe = t_len == 0
-        || safe_crt_chunk_width::<F, W, K, D>(params, t_len, t_digit_abs_bound) == Some(t_len);
-    let z_safe = z_len == 0
-        || z_bounds.capacity == 0
-        || safe_crt_chunk_width::<F, W, K, D>(params, z_len, z_bounds.capacity) == Some(z_len);
-    if w_safe && t_safe && z_safe {
+    if plan.is_one_shot() {
         return Ok(fused_split_eq_quotients_one_shot(
             d_cyc_rows,
             b_cyc_rows,
@@ -106,36 +179,37 @@ pub(super) fn fused_split_eq_quotients_with_params<
             e_hat,
             t_hat,
             z_folded_rings,
-            z_bounds.lut,
-            w_digit_abs_bound,
-            t_digit_abs_bound,
-            max_col,
-            witness_len,
-            t_len,
-            z_len,
+            plan,
             params,
         ));
     }
 
+    let w_chunk_width = plan.w_chunk_width.ok_or_else(|| {
+        AkitaError::InvalidSetup("CRT parameters cannot represent one e_hat term".to_string())
+    })?;
+    let t_chunk_width = plan.t_chunk_width.ok_or_else(|| {
+        AkitaError::InvalidSetup("CRT parameters cannot represent one t_hat term".to_string())
+    })?;
     let d_result = accumulate_cyclic_i8_rows(
         d_cyc_rows,
         n_d,
         e_hat,
-        witness_len,
-        w_digit_abs_bound,
+        plan.witness_len,
+        w_chunk_width,
+        plan.w_digit_abs_bound,
         params,
     );
-    let b_result =
-        accumulate_cyclic_i8_rows(b_cyc_rows, n_b, t_hat, t_len, t_digit_abs_bound, params);
-    let a_result = accumulate_centered_quotient_rows(
-        neg_rows,
-        a_cyc_rows,
-        n_a,
-        z_folded_rings,
-        z_len,
-        z_bounds,
+    let b_result = accumulate_cyclic_i8_rows(
+        b_cyc_rows,
+        n_b,
+        t_hat,
+        plan.t_len,
+        t_chunk_width,
+        plan.t_digit_abs_bound,
         params,
     );
+    let a_result =
+        accumulate_centered_quotient_rows(neg_rows, a_cyc_rows, n_a, z_folded_rings, plan, params);
 
     Ok((d_result, b_result, a_result))
 }
@@ -157,27 +231,21 @@ fn fused_split_eq_quotients_one_shot<
     e_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
-    z_lut_abs_bound: u64,
-    w_digit_abs_bound: u64,
-    t_digit_abs_bound: u64,
-    max_col: usize,
-    witness_len: usize,
-    t_len: usize,
-    z_len: usize,
+    plan: FusedQuotientPlan,
     params: &CrtNttParamSet<W, K, D>,
 ) -> (
     Vec<CyclotomicRing<F, D>>,
     Vec<CyclotomicRing<F, D>>,
     Vec<CyclotomicRing<F, D>>,
 ) {
-    let digit_bound = w_digit_abs_bound.max(t_digit_abs_bound);
-    let digit_lut = (witness_len != 0 || t_len != 0)
+    let digit_bound = plan.w_digit_abs_bound.max(plan.t_digit_abs_bound);
+    let digit_lut = (plan.witness_len != 0 || plan.t_len != 0)
         .then(|| DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound));
-    let centered_lut = (z_len != 0 && z_lut_abs_bound <= u64::from(CENTERED_LUT_MAX_ABS))
-        .then(|| CenteredMontLut::<W, K>::new(params, z_lut_abs_bound as i32));
+    let centered_lut = (plan.z_len != 0 && plan.z_bounds.lut <= u64::from(CENTERED_LUT_MAX_ABS))
+        .then(|| CenteredMontLut::<W, K>::new(params, plan.z_bounds.lut as i32));
     let base_tw = (FUSED_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
-    let tw = base_tw.min(max_col.div_ceil(MIN_FUSED_TILES).max(1));
-    let num_tiles = max_col.div_ceil(tw);
+    let tw = base_tw.min(plan.max_col.div_ceil(MIN_FUSED_TILES).max(1));
+    let num_tiles = plan.max_col.div_ceil(tw);
     let zero = CyclotomicCrtNtt::<W, K, D>::zero();
 
     let (d_accs, b_accs, a_neg_accs, a_cyc_accs) = cfg_fold_reduce!(
@@ -196,10 +264,10 @@ fn fused_split_eq_quotients_one_shot<
         ),
          tile_idx| {
             let tile_start = tile_idx * tw;
-            let tile_end = (tile_start + tw).min(max_col);
+            let tile_end = (tile_start + tw).min(plan.max_col);
 
             for j in tile_start..tile_end {
-                if j < witness_len && !is_zero_plane(&e_hat[j]) {
+                if j < plan.witness_len && !is_zero_plane(&e_hat[j]) {
                     let lut = digit_lut.as_ref().expect("digit LUT exists");
                     let ntt_w = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&e_hat[j], params, lut);
                     for (acc_d, cyc_row) in accs.0.iter_mut().zip(d_cyc_rows.iter()) {
@@ -207,7 +275,7 @@ fn fused_split_eq_quotients_one_shot<
                     }
                 }
 
-                if j < t_len && !is_zero_plane(&t_hat[j]) {
+                if j < plan.t_len && !is_zero_plane(&t_hat[j]) {
                     let lut = digit_lut.as_ref().expect("digit LUT exists");
                     let ntt_t = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, lut);
                     for (acc_b, cyc_row) in accs.1.iter_mut().zip(b_cyc_rows.iter()) {
@@ -215,7 +283,7 @@ fn fused_split_eq_quotients_one_shot<
                     }
                 }
 
-                if j < z_len && !is_zero_centered_row(&z_folded_rings[j]) {
+                if j < plan.z_len && !is_zero_centered_row(&z_folded_rings[j]) {
                     let (ntt_z_neg, ntt_z_cyc) = if let Some(ref lut) = centered_lut {
                         unsafe {
                             CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
@@ -286,22 +354,22 @@ fn fused_split_eq_quotients_one_shot<
 }
 
 /// Element source for the streamed kernels: A's materialized field form.
-pub(crate) enum StreamedASource<'a, F: FieldCore, const D: usize> {
-    Flat(&'a [CyclotomicRing<F, D>]),
+pub(crate) struct StreamedASource<'a, F: FieldCore, const D: usize> {
+    flat: &'a [CyclotomicRing<F, D>],
 }
 
 impl<F: FieldCore, const D: usize> StreamedASource<'_, F, D> {
+    pub(crate) fn new(flat: &[CyclotomicRing<F, D>]) -> StreamedASource<'_, F, D> {
+        StreamedASource { flat }
+    }
+
     fn len(&self) -> usize {
-        match self {
-            Self::Flat(flat) => flat.len(),
-        }
+        self.flat.len()
     }
 
     #[inline]
     fn ring_at(&self, flat_index: usize) -> CyclotomicRing<F, D> {
-        match self {
-            Self::Flat(flat) => flat[flat_index],
-        }
+        self.flat[flat_index]
     }
 }
 
@@ -330,9 +398,7 @@ fn fused_split_eq_quotients_one_shot_streamed<
     e_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
-    z_lut_abs_bound: u64,
-    w_digit_abs_bound: u64,
-    t_digit_abs_bound: u64,
+    plan: FusedQuotientPlan,
     params: &CrtNttParamSet<W, K, D>,
 ) -> (
     Vec<CyclotomicRing<F, D>>,
@@ -342,18 +408,14 @@ fn fused_split_eq_quotients_one_shot_streamed<
     let d_width = e_hat.len();
     let b_width = t_hat.len();
     let a_width = z_folded_rings.len();
-    let witness_len = if n_d == 0 { 0 } else { d_width };
-    let t_len = if n_b == 0 { 0 } else { b_width };
-    let z_len = if n_a == 0 { 0 } else { a_width };
-    let max_col = witness_len.max(t_len).max(z_len);
-    let digit_bound = w_digit_abs_bound.max(t_digit_abs_bound);
-    let digit_lut = (witness_len != 0 || t_len != 0)
+    let digit_bound = plan.w_digit_abs_bound.max(plan.t_digit_abs_bound);
+    let digit_lut = (plan.witness_len != 0 || plan.t_len != 0)
         .then(|| DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound));
-    let centered_lut = (z_len != 0 && z_lut_abs_bound <= u64::from(CENTERED_LUT_MAX_ABS))
-        .then(|| CenteredMontLut::<W, K>::new(params, z_lut_abs_bound as i32));
+    let centered_lut = (plan.z_len != 0 && plan.z_bounds.lut <= u64::from(CENTERED_LUT_MAX_ABS))
+        .then(|| CenteredMontLut::<W, K>::new(params, plan.z_bounds.lut as i32));
     let base_tw = (FUSED_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
-    let tw = base_tw.min(max_col.div_ceil(MIN_FUSED_TILES).max(1));
-    let num_tiles = max_col.div_ceil(tw);
+    let tw = base_tw.min(plan.max_col.div_ceil(MIN_FUSED_TILES).max(1));
+    let num_tiles = plan.max_col.div_ceil(tw);
     let zero = CyclotomicCrtNtt::<W, K, D>::zero();
 
     let (d_accs, b_accs, a_neg_accs, a_cyc_accs) = cfg_fold_reduce!(
@@ -372,10 +434,10 @@ fn fused_split_eq_quotients_one_shot_streamed<
         ),
          tile_idx| {
             let tile_start = tile_idx * tw;
-            let tile_end = (tile_start + tw).min(max_col);
+            let tile_end = (tile_start + tw).min(plan.max_col);
 
             for j in tile_start..tile_end {
-                if j < witness_len && !is_zero_plane(&e_hat[j]) {
+                if j < plan.witness_len && !is_zero_plane(&e_hat[j]) {
                     let lut = digit_lut.as_ref().expect("digit LUT exists");
                     let ntt_w = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&e_hat[j], params, lut);
                     for (i, acc_d) in accs.0.iter_mut().enumerate() {
@@ -385,7 +447,7 @@ fn fused_split_eq_quotients_one_shot_streamed<
                     }
                 }
 
-                if j < t_len && !is_zero_plane(&t_hat[j]) {
+                if j < plan.t_len && !is_zero_plane(&t_hat[j]) {
                     let lut = digit_lut.as_ref().expect("digit LUT exists");
                     let ntt_t = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, lut);
                     for (i, acc_b) in accs.1.iter_mut().enumerate() {
@@ -395,7 +457,7 @@ fn fused_split_eq_quotients_one_shot_streamed<
                     }
                 }
 
-                if j < z_len && !is_zero_centered_row(&z_folded_rings[j]) {
+                if j < plan.z_len && !is_zero_centered_row(&z_folded_rings[j]) {
                     let (ntt_z_neg, ntt_z_cyc) = if let Some(ref lut) = centered_lut {
                         unsafe {
                             CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
@@ -657,28 +719,19 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
             let witness_len = if n_d == 0 { 0 } else { e_hat.len() };
             let t_len = if n_b == 0 { 0 } else { t_hat.len() };
             let z_len = if n_a == 0 { 0 } else { z_folded_rings.len() };
-            if !digit_rows_within_digit_bound::<D>(e_hat, witness_len, w_digit_abs_bound) {
-                return Err(AkitaError::InvalidInput(
-                    "fused quotient e_hat contains digits outside its log_basis range".to_string(),
-                ));
-            }
-            if !digit_rows_within_digit_bound::<D>(t_hat, t_len, t_digit_abs_bound) {
-                return Err(AkitaError::InvalidInput(
-                    "fused quotient t_hat contains digits outside its log_basis range".to_string(),
-                ));
-            }
-            let actual_z_abs_bound = centered_rows_abs_bound(z_folded_rings, z_len);
-            let z_capacity = u64::from(z_folded_max_abs).max(actual_z_abs_bound);
-            let w_safe = witness_len == 0
-                || safe_crt_chunk_width::<F, _, _, D>(&params, witness_len, w_digit_abs_bound)
-                    == Some(witness_len);
-            let t_safe = t_len == 0
-                || safe_crt_chunk_width::<F, _, _, D>(&params, t_len, t_digit_abs_bound)
-                    == Some(t_len);
-            let z_safe = z_len == 0
-                || z_capacity == 0
-                || safe_crt_chunk_width::<F, _, _, D>(&params, z_len, z_capacity) == Some(z_len);
-            if w_safe && t_safe && z_safe {
+            let plan = plan_fused_quotients::<F, _, _, D>(
+                e_hat,
+                t_hat,
+                z_folded_rings,
+                witness_len,
+                t_len,
+                z_len,
+                z_folded_max_abs,
+                w_digit_abs_bound,
+                t_digit_abs_bound,
+                &params,
+            )?;
+            if plan.is_one_shot() {
                 return Ok(Some(fused_split_eq_quotients_one_shot_streamed(
                     source,
                     n_d,
@@ -687,28 +740,18 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
                     e_hat,
                     t_hat,
                     z_folded_rings,
-                    actual_z_abs_bound,
-                    w_digit_abs_bound,
-                    t_digit_abs_bound,
+                    plan,
                     &params,
                 )));
             }
 
-            let Some(w_chunk_width) = (witness_len == 0).then_some(1).or_else(|| {
-                safe_crt_chunk_width::<F, _, _, D>(&params, witness_len, w_digit_abs_bound)
-            }) else {
+            let Some(w_chunk_width) = plan.w_chunk_width else {
                 return Ok(None);
             };
-            let Some(t_chunk_width) = (t_len == 0)
-                .then_some(1)
-                .or_else(|| safe_crt_chunk_width::<F, _, _, D>(&params, t_len, t_digit_abs_bound))
-            else {
+            let Some(t_chunk_width) = plan.t_chunk_width else {
                 return Ok(None);
             };
-            let Some(z_chunk_width) = (z_len == 0 || z_capacity == 0)
-                .then_some(1)
-                .or_else(|| safe_crt_chunk_width::<F, _, _, D>(&params, z_len, z_capacity))
-            else {
+            let Some(z_chunk_width) = plan.z_chunk_width else {
                 return Ok(None);
             };
             tracing::info!(
@@ -724,27 +767,27 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
                 source,
                 n_d,
                 e_hat,
-                witness_len,
+                plan.witness_len,
                 w_chunk_width,
-                w_digit_abs_bound,
+                plan.w_digit_abs_bound,
                 &params,
             );
             let b_rows = streamed_cyclic_i8_rows_chunked(
                 source,
                 n_b,
                 t_hat,
-                t_len,
+                plan.t_len,
                 t_chunk_width,
-                t_digit_abs_bound,
+                plan.t_digit_abs_bound,
                 &params,
             );
             let a_rows = streamed_centered_quotient_rows_chunked(
                 source,
                 n_a,
                 z_folded_rings,
-                z_len,
+                plan.z_len,
                 z_chunk_width,
-                actual_z_abs_bound,
+                plan.z_bounds.lut,
                 &params,
             );
             Ok(Some((d_rows, b_rows, a_rows)))
@@ -767,6 +810,7 @@ fn accumulate_cyclic_i8_rows<
     num_rows: usize,
     rhs: &[[i8; D]],
     rhs_len: usize,
+    chunk_width: usize,
     rhs_abs_bound: u64,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
@@ -775,32 +819,6 @@ fn accumulate_cyclic_i8_rows<
     }
     if rhs_len == 0 {
         return vec![CyclotomicRing::<F, D>::zero(); num_rows];
-    }
-
-    let chunk_width = safe_crt_chunk_width::<F, W, K, D>(params, rhs_len, rhs_abs_bound)
-        .expect("single i8 CRT term must fit supported parameters");
-    if rhs_len <= chunk_width {
-        let (rows, _, _) = fused_split_eq_quotients_one_shot(
-            cyc_rows,
-            &[],
-            &[],
-            &[],
-            num_rows,
-            0,
-            0,
-            rhs,
-            &[],
-            &[],
-            0,
-            rhs_abs_bound,
-            0,
-            rhs_len,
-            rhs_len,
-            0,
-            0,
-            params,
-        );
-        return rows;
     }
 
     let num_chunks = rhs_len.div_ceil(chunk_width);
@@ -868,66 +886,40 @@ fn accumulate_centered_quotient_rows<
     cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
     num_rows: usize,
     z_folded_rings: &[[i32; D]],
-    z_len: usize,
-    z_bounds: CenteredRhsBounds,
+    plan: FusedQuotientPlan,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
     if num_rows == 0 {
         return vec![];
     }
-    if z_len == 0 {
+    if plan.z_len == 0 {
         return vec![CyclotomicRing::<F, D>::zero(); num_rows];
     }
 
-    if z_bounds.lut == 0 {
+    if plan.z_bounds.lut == 0 {
         return vec![CyclotomicRing::<F, D>::zero(); num_rows];
     }
 
-    let Some(chunk_width) = safe_crt_chunk_width::<F, W, K, D>(params, z_len, z_bounds.capacity)
-    else {
+    let Some(chunk_width) = plan.z_chunk_width else {
         return accumulate_centered_quotient_rows_field(
             neg_rows,
             cyc_rows,
             num_rows,
             z_folded_rings,
-            z_len,
+            plan.z_len,
             params,
         );
     };
-    if z_len <= chunk_width {
-        let (_, _, rows) = fused_split_eq_quotients_one_shot(
-            &[],
-            &[],
-            cyc_rows,
-            neg_rows,
-            0,
-            0,
-            num_rows,
-            &[],
-            &[],
-            z_folded_rings,
-            z_bounds.lut,
-            0,
-            0,
-            z_len,
-            0,
-            0,
-            z_len,
-            params,
-        );
-        return rows;
-    }
-
-    let centered_lut = (z_bounds.lut <= u64::from(CENTERED_LUT_MAX_ABS))
-        .then(|| CenteredMontLut::<W, K>::new(params, z_bounds.lut as i32));
-    let num_chunks = z_len.div_ceil(chunk_width);
+    let centered_lut = (plan.z_bounds.lut <= u64::from(CENTERED_LUT_MAX_ABS))
+        .then(|| CenteredMontLut::<W, K>::new(params, plan.z_bounds.lut as i32));
+    let num_chunks = plan.z_len.div_ceil(chunk_width);
 
     cfg_fold_reduce!(
         0..num_chunks,
         || vec![CyclotomicRing::<F, D>::zero(); num_rows],
         |mut out: Vec<CyclotomicRing<F, D>>, chunk_idx| {
             let chunk_start = chunk_idx * chunk_width;
-            let chunk_end = (chunk_start + chunk_width).min(z_len);
+            let chunk_end = (chunk_start + chunk_width).min(plan.z_len);
             let mut neg_accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
             let mut cyc_accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
 

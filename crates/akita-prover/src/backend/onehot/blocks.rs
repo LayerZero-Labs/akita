@@ -95,7 +95,7 @@ impl<E> FlatBlocks<E> {
     }
 
     #[inline]
-    fn table(&self) -> FlatBlockTable<'_, E> {
+    pub(crate) fn table(&self) -> FlatBlockTable<'_, E> {
         FlatBlockTable::new(&self.entries, &self.offsets)
     }
 }
@@ -390,8 +390,12 @@ pub(crate) enum OneHotBlocks {
 impl OneHotBlocks {
     pub(super) fn commit_plan_blocks(&self) -> OneHotCommitBlocks<'_> {
         match self {
-            OneHotBlocks::SingleChunk(blocks) => OneHotCommitBlocks::SingleChunk(blocks.table()),
-            OneHotBlocks::MultiChunk(blocks) => OneHotCommitBlocks::MultiChunk(blocks.table()),
+            OneHotBlocks::SingleChunk(blocks) => {
+                OneHotCommitBlocks::SingleChunk(OneHotBlockSource::Eager(blocks.table()))
+            }
+            OneHotBlocks::MultiChunk(blocks) => {
+                OneHotCommitBlocks::MultiChunk(OneHotBlockSource::Eager(blocks.table()))
+            }
         }
     }
 }
