@@ -1,13 +1,15 @@
 //! Runtime-selected kernels over canonical sumcheck evaluation tables.
 
+use akita_algebra::SplitEqEvals;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{ExtField, FieldCore};
+use akita_field::{AkitaError, ExtField, FieldCore, MulBaseUnreduced};
 use akita_sumcheck::{
     batched_affine_product_coefficients, compose_polynomial_with_affine,
     compute_product_round_scalar, fold_and_compute_product_round_scalar,
     fold_first_variable_scalar, DelayedProductSum, DirectProductSum, EvaluationTable,
     ProductSumAccumulator, MAX_AFFINE_POLYNOMIAL_DEGREE, MAX_AFFINE_PRODUCT_DEGREE,
 };
+use akita_types::TensorFactorProjection;
 
 mod fp32;
 mod fp32_affine;
@@ -24,6 +26,7 @@ pub struct SumcheckKernelPlan {
     pub(super) fp32_product_round: Fp32Kernel,
     pub(super) fp32_fold_and_product_round: Fp32Kernel,
     pub(super) fp32_stage2_coefficient_round: Fp32Kernel,
+    pub(super) fp32_tensor_factor_round: Fp32Kernel,
     pub(super) fp64_fold: Fp64Kernel,
     pub(super) fp64_product_round: Fp64Kernel,
     pub(super) fp64_fold_and_product_round: Fp64Kernel,
@@ -52,6 +55,9 @@ pub(super) enum Fp64Kernel {
     Avx512,
 }
 
+/// Canonical tensor-factor table plus an optional cached first product round.
+pub type TensorFactorRoundOutput<F, E> = (EvaluationTable<F, E>, Option<(E, E)>);
+
 /// Field-specific operations over canonical sumcheck evaluation tables.
 ///
 /// The default methods are the portable scalar implementations. Field families
@@ -62,6 +68,20 @@ pub trait SumcheckTableOperations<F>: ExtField<F> + HasOptimizedFold + HasUnredu
 where
     F: FieldCore,
 {
+    /// Materialize the transparent tensor factor directly in canonical table
+    /// form while computing its first product round with `witness`.
+    fn materialize_tensor_factor_and_compute_product_round(
+        _plan: SumcheckKernelPlan,
+        witness: &EvaluationTable<F, Self>,
+        tail_point: &[Self],
+        projection: &TensorFactorProjection<F, Self>,
+    ) -> Result<TensorFactorRoundOutput<F, Self>, AkitaError>
+    where
+        Self: Sized + MulBaseUnreduced<F>,
+    {
+        materialize_tensor_factor_and_compute_product_round_scalar(witness, tail_point, projection)
+    }
+
     /// Fold one table by its first variable.
     fn fold_first_variable(
         _plan: SumcheckKernelPlan,
@@ -224,6 +244,54 @@ where
             include_norm_linear,
         )
     }
+}
+
+fn materialize_tensor_factor_and_compute_product_round_scalar<F, E>(
+    witness: &EvaluationTable<F, E>,
+    tail_point: &[E],
+    projection: &TensorFactorProjection<F, E>,
+) -> Result<TensorFactorRoundOutput<F, E>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F> + HasUnreducedOps + MulBaseUnreduced<F>,
+{
+    let shift = u32::try_from(tail_point.len()).map_err(|_| AkitaError::InvalidSize {
+        expected: usize::BITS as usize,
+        actual: tail_point.len(),
+    })?;
+    let expected = 1usize.checked_shl(shift).ok_or_else(|| {
+        AkitaError::InvalidInput("tensor factor table length overflow".to_string())
+    })?;
+    if witness.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: witness.len(),
+        });
+    }
+
+    let reversed_suffix = tail_point[usize::from(!tail_point.is_empty())..]
+        .iter()
+        .rev()
+        .copied()
+        .collect::<Vec<_>>();
+    let equality = SplitEqEvals::new(&reversed_suffix)?;
+    let suffix_len = equality.len();
+    let factor = EvaluationTable::from_evaluation_fn(expected, |stored_row| {
+        if tail_point.is_empty() {
+            return projection.project(E::one());
+        }
+        let suffix_row = stored_row % suffix_len;
+        let suffix = equality.e_out[suffix_row / equality.in_len()]
+            * equality.e_in[suffix_row % equality.in_len()];
+        let branch = if stored_row < suffix_len {
+            E::one() - tail_point[0]
+        } else {
+            tail_point[0]
+        };
+        projection.project(branch * suffix)
+    });
+    let round = (expected >= 2).then(|| compute_product_round_scalar(witness, &factor));
+    Ok((factor, round))
 }
 
 /// Return one contiguous block that shares a value from the outer split
@@ -460,6 +528,7 @@ impl SumcheckKernelPlan {
             fp32_product_round: fp32,
             fp32_fold_and_product_round: fp32,
             fp32_stage2_coefficient_round: fp32,
+            fp32_tensor_factor_round: fp32,
             fp64_fold: fp64,
             fp64_product_round: Fp64Kernel::Scalar,
             fp64_fold_and_product_round: fp64,
@@ -472,6 +541,7 @@ impl SumcheckKernelPlan {
         fp32_product_round: Fp32Kernel::Scalar,
         fp32_fold_and_product_round: Fp32Kernel::Scalar,
         fp32_stage2_coefficient_round: Fp32Kernel::Scalar,
+        fp32_tensor_factor_round: Fp32Kernel::Scalar,
         fp64_fold: Fp64Kernel::Scalar,
         fp64_product_round: Fp64Kernel::Scalar,
         fp64_fold_and_product_round: Fp64Kernel::Scalar,
@@ -483,6 +553,7 @@ impl SumcheckKernelPlan {
         fp32_product_round: Fp32Kernel::Neon,
         fp32_fold_and_product_round: Fp32Kernel::Neon,
         fp32_stage2_coefficient_round: Fp32Kernel::Neon,
+        fp32_tensor_factor_round: Fp32Kernel::Neon,
         fp64_fold: Fp64Kernel::Neon,
         fp64_product_round: Fp64Kernel::Neon,
         fp64_fold_and_product_round: Fp64Kernel::Neon,
@@ -494,6 +565,7 @@ impl SumcheckKernelPlan {
         fp32_product_round: Fp32Kernel::Avx2,
         fp32_fold_and_product_round: Fp32Kernel::Avx2,
         fp32_stage2_coefficient_round: Fp32Kernel::Avx2,
+        fp32_tensor_factor_round: Fp32Kernel::Avx2,
         fp64_fold: Fp64Kernel::Avx2,
         fp64_product_round: Fp64Kernel::Avx2,
         fp64_fold_and_product_round: Fp64Kernel::Avx2,
@@ -505,6 +577,7 @@ impl SumcheckKernelPlan {
         fp32_product_round: Fp32Kernel::Avx512Ifma,
         fp32_fold_and_product_round: Fp32Kernel::Avx512Ifma,
         fp32_stage2_coefficient_round: Fp32Kernel::Avx512Ifma,
+        fp32_tensor_factor_round: Fp32Kernel::Avx512Ifma,
         fp64_fold: Fp64Kernel::Avx512,
         fp64_product_round: Fp64Kernel::Avx512,
         fp64_fold_and_product_round: Fp64Kernel::Avx512,

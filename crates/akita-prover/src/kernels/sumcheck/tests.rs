@@ -3,6 +3,7 @@ use akita_field::{Ext2, ExtField, FpExt4, Prime32Offset99, Prime64Offset59};
 use akita_sumcheck::{
     batched_affine_product_coefficients, compose_polynomial_with_affine, EvaluationTable,
 };
+use akita_types::TensorFactorProjection;
 
 type F = Prime32Offset99;
 type E = FpExt4<F>;
@@ -76,6 +77,35 @@ fn compare_fused_product_round_plan(plan: SumcheckKernelPlan) {
             actual_factor, expected_factor,
             "fused factor mismatch at len={len}"
         );
+    }
+}
+
+fn compare_tensor_factor_round_plan(plan: SumcheckKernelPlan) {
+    let projection = TensorFactorProjection::<F, E>::new(&[value(701), value(702)])
+        .expect("valid quartic projection");
+    for num_vars in [1usize, 4, 7, 10, 12] {
+        let len = 1usize << num_vars;
+        let witness =
+            EvaluationTable::<F, E>::from_multilinear_evaluation_fn(len, |row| value(row + 811))
+                .expect("valid witness table");
+        let tail_point = (0..num_vars)
+            .map(|coordinate| value(coordinate + 907))
+            .collect::<Vec<_>>();
+        let expected = SumcheckKernelPlan::SCALAR
+            .materialize_tensor_factor_and_compute_product_round_fp32(
+                &witness,
+                &tail_point,
+                &projection,
+            )
+            .expect("valid scalar tensor factor");
+        let actual = plan
+            .materialize_tensor_factor_and_compute_product_round_fp32(
+                &witness,
+                &tail_point,
+                &projection,
+            )
+            .expect("valid packed tensor factor");
+        assert_eq!(actual, expected, "tensor factor mismatch at len={len}");
     }
 }
 
@@ -428,6 +458,7 @@ fn detected_fp32_fold_matches_scalar() {
     compare_plan(SumcheckKernelPlan::detect());
     compare_product_round_plan(SumcheckKernelPlan::detect());
     compare_fused_product_round_plan(SumcheckKernelPlan::detect());
+    compare_tensor_factor_round_plan(SumcheckKernelPlan::detect());
     compare_weighted_affine_product_plan::<2>(SumcheckKernelPlan::detect(), 2);
     compare_weighted_affine_product_plan::<4>(SumcheckKernelPlan::detect(), 4);
     compare_weighted_affine_product_plan::<8>(SumcheckKernelPlan::detect(), 4);
@@ -448,6 +479,7 @@ fn supported_x86_fp32_folds_match_scalar() {
         compare_plan(SumcheckKernelPlan::AVX2);
         compare_product_round_plan(SumcheckKernelPlan::AVX2);
         compare_fused_product_round_plan(SumcheckKernelPlan::AVX2);
+        compare_tensor_factor_round_plan(SumcheckKernelPlan::AVX2);
         compare_weighted_affine_product_plan::<2>(SumcheckKernelPlan::AVX2, 2);
         compare_weighted_affine_product_plan::<4>(SumcheckKernelPlan::AVX2, 4);
         compare_weighted_affine_product_plan::<8>(SumcheckKernelPlan::AVX2, 4);
@@ -464,6 +496,7 @@ fn supported_x86_fp32_folds_match_scalar() {
         compare_plan(SumcheckKernelPlan::AVX512_IFMA);
         compare_product_round_plan(SumcheckKernelPlan::AVX512_IFMA);
         compare_fused_product_round_plan(SumcheckKernelPlan::AVX512_IFMA);
+        compare_tensor_factor_round_plan(SumcheckKernelPlan::AVX512_IFMA);
         compare_weighted_affine_product_plan::<2>(SumcheckKernelPlan::AVX512_IFMA, 2);
         compare_weighted_affine_product_plan::<4>(SumcheckKernelPlan::AVX512_IFMA, 4);
         compare_weighted_affine_product_plan::<8>(SumcheckKernelPlan::AVX512_IFMA, 4);
@@ -485,6 +518,7 @@ fn supported_neon_fp32_folds_match_scalar() {
         compare_plan(SumcheckKernelPlan::NEON);
         compare_product_round_plan(SumcheckKernelPlan::NEON);
         compare_fused_product_round_plan(SumcheckKernelPlan::NEON);
+        compare_tensor_factor_round_plan(SumcheckKernelPlan::NEON);
         compare_weighted_affine_product_plan::<2>(SumcheckKernelPlan::NEON, 2);
         compare_weighted_affine_product_plan::<4>(SumcheckKernelPlan::NEON, 4);
         compare_weighted_affine_product_plan::<8>(SumcheckKernelPlan::NEON, 4);

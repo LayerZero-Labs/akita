@@ -145,7 +145,7 @@ where
         source: DenseView<'_, F, D>,
     ) -> Result<TensorPackedWitness<F, E>, AkitaError> {
         Ok(TensorPackedWitness::Dense(
-            source.poly.tensor_packed_extension_evals::<E, D>()?,
+            source.poly.tensor_packed_extension_table::<E, D>()?,
         ))
     }
 

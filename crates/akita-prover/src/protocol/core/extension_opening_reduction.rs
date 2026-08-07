@@ -322,7 +322,7 @@ pub(in crate::protocol::core) fn build_extension_opening_reduction_terms<
 ) -> Result<Vec<ExtensionOpeningReductionTerm<F, E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F> + MulBaseUnreduced<F>,
+    E: ExtField<F> + MulBaseUnreduced<F> + SumcheckTableOperations<F>,
     P: RootTensorSource<F, D>,
     B: ComputeBackendSetup<F>
         + for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>
@@ -421,11 +421,11 @@ fn extension_opening_term_from_packed_witness<F, E>(
 ) -> Result<ExtensionOpeningReductionTerm<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: MulBaseUnreduced<F>,
+    E: MulBaseUnreduced<F> + SumcheckTableOperations<F>,
 {
     match witness {
-        TensorPackedWitness::Dense(witness_evals) => {
-            ExtensionOpeningReductionTerm::new_tensor(witness_evals, tail_point, eta, coeff)
+        TensorPackedWitness::Dense(witness) => {
+            ExtensionOpeningReductionTerm::new_tensor(witness, tail_point, eta, coeff)
         }
         TensorPackedWitness::Sparse(witness) => ExtensionOpeningReductionTerm::new_sparse(
             witness,
@@ -445,7 +445,7 @@ fn build_dense_extension_opening_reduction_terms<F, E, P, B, const D: usize>(
 ) -> Result<Vec<ExtensionOpeningReductionTerm<F, E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F> + MulBaseUnreduced<F>,
+    E: ExtField<F> + MulBaseUnreduced<F> + SumcheckTableOperations<F>,
     P: RootTensorSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
 {

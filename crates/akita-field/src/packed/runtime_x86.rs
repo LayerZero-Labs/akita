@@ -11,8 +11,9 @@ use super::runtime_common::{
     fold_and_compute_sparse_affine_polynomial_round_packed,
     fold_and_compute_stage2_coefficient_round_packed,
     fold_class_coded_and_compute_sparse_affine_polynomial_round_packed, fold_fp_ext2_fp64_packed,
+    materialize_tensor_factor_and_compute_product_round_packed,
 };
-use super::{PackedField, PackedFpExt4};
+use super::{Fp32TensorFactorRoundOutput, PackedField, PackedFpExt4};
 use crate::{Fp32, Fp64, FpExt2, FpExt2Config, FpExt4};
 
 type CoefficientSlices<'a, const P: u32> = [&'a [Fp32<P>]; 4];
@@ -252,6 +253,61 @@ pub unsafe fn compute_product_round_fp_ext4_fp32_avx512_ifma<const P: u32>(
     unsafe {
         compute_product_round_packed::<P, PackedFp32Avx512<P>>(
             witness_0, witness_1, factor_0, factor_1,
+        )
+    }
+}
+
+/// Materialize a quartic fp32 tensor factor and compute its first product
+/// round eight rows at a time.
+///
+/// # Safety
+///
+/// The caller must establish that AVX2 is available on the current CPU.
+#[target_feature(enable = "avx2")]
+pub unsafe fn materialize_tensor_factor_and_compute_product_round_fp_ext4_fp32_avx2<
+    const P: u32,
+>(
+    witness: CoefficientSlices<'_, P>,
+    equality_inner: CoefficientSlices<'_, P>,
+    equality_outer: &[FpExt4<Fp32<P>>],
+    zero_weights: [FpExt4<Fp32<P>>; 4],
+    one_weights: [FpExt4<Fp32<P>>; 4],
+) -> Fp32TensorFactorRoundOutput<P> {
+    unsafe {
+        materialize_tensor_factor_and_compute_product_round_packed::<P, PackedFp32Avx2<P>>(
+            witness,
+            equality_inner,
+            equality_outer,
+            zero_weights,
+            one_weights,
+        )
+    }
+}
+
+/// Materialize a quartic fp32 tensor factor and compute its first product
+/// round sixteen rows at a time.
+///
+/// # Safety
+///
+/// The caller must establish that AVX-512F, AVX-512DQ, and AVX-512IFMA are
+/// available on the current CPU.
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+pub unsafe fn materialize_tensor_factor_and_compute_product_round_fp_ext4_fp32_avx512_ifma<
+    const P: u32,
+>(
+    witness: CoefficientSlices<'_, P>,
+    equality_inner: CoefficientSlices<'_, P>,
+    equality_outer: &[FpExt4<Fp32<P>>],
+    zero_weights: [FpExt4<Fp32<P>>; 4],
+    one_weights: [FpExt4<Fp32<P>>; 4],
+) -> Fp32TensorFactorRoundOutput<P> {
+    unsafe {
+        materialize_tensor_factor_and_compute_product_round_packed::<P, PackedFp32Avx512<P>>(
+            witness,
+            equality_inner,
+            equality_outer,
+            zero_weights,
+            one_weights,
         )
     }
 }

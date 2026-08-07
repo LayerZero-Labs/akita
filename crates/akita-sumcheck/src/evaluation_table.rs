@@ -268,6 +268,38 @@ where
         Self::from_initialized(coefficients, len)
     }
 
+    /// Build a table from complete coefficient-first storage.
+    ///
+    /// The storage contains one contiguous `len`-element slab per base-field
+    /// coefficient. Rows are preserved exactly as supplied. This constructor
+    /// lets bulk producers write the canonical representation directly rather
+    /// than materializing and transposing extension-field values first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `len` is not a nonzero power of two or if the
+    /// storage length is not exactly `E::EXT_DEGREE * len`.
+    pub fn from_coefficient_storage(
+        coefficients: Box<[F]>,
+        len: usize,
+    ) -> Result<Self, AkitaError> {
+        Self::validate_multilinear_len(len)?;
+        let expected = <E as ExtField<F>>::EXT_DEGREE
+            .checked_mul(len)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "evaluation table coefficient storage length overflow".to_string(),
+                )
+            })?;
+        if coefficients.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: coefficients.len(),
+            });
+        }
+        Ok(Self::from_initialized(coefficients, len))
+    }
+
     /// Build a dense multilinear table from logical LSB-first evaluations.
     ///
     /// # Errors
@@ -275,7 +307,21 @@ where
     /// Returns an error if the number of evaluations is zero or is not a power
     /// of two.
     pub fn from_multilinear_evaluations(evaluations: &[E]) -> Result<Self, AkitaError> {
-        Self::from_multilinear_evaluation_fn(evaluations.len(), |row| evaluations[row])
+        let len = evaluations.len();
+        Self::validate_multilinear_len(len)?;
+        let mut coefficients = Self::uninitialized_coefficients(len);
+        for stored_row in 0..len {
+            let value = evaluations[Self::logical_row(stored_row, len)];
+            for coefficient in 0..<E as ExtField<F>>::EXT_DEGREE {
+                coefficients[coefficient * len + stored_row]
+                    .write(value.base_coefficient(coefficient));
+            }
+        }
+
+        // SAFETY: bit reversal permutes the source rows, and every destination
+        // coefficient slot is written exactly once in stored-row order.
+        let coefficients = unsafe { coefficients.assume_init() };
+        Ok(Self::from_initialized(coefficients, len))
     }
 
     /// Build a dense multilinear table from logical LSB-first generated rows.

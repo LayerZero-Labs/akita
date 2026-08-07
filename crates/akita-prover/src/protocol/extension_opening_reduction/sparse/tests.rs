@@ -198,8 +198,9 @@ fn direct_dense_tensor_term_matches_materialized_factor() {
         .collect::<Vec<_>>();
     let factor = tensor_equality_factor_evals::<B, G>(&tail_point, &eta).unwrap();
     let coeff = G::random(&mut rng);
+    let direct_witness = EvaluationTable::from_multilinear_evaluations(&witness).unwrap();
     let mut direct =
-        ExtensionOpeningReductionTerm::new_tensor(witness.clone(), &tail_point, &eta, coeff)
+        ExtensionOpeningReductionTerm::new_tensor(direct_witness, &tail_point, &eta, coeff)
             .unwrap();
     let mut materialized = ExtensionOpeningReductionTerm::new(witness, factor, coeff).unwrap();
     let plan = SumcheckKernelPlan::detect();

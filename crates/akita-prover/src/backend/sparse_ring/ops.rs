@@ -246,7 +246,12 @@ where
     ) -> Result<TensorPackedWitness<F, E>, AkitaError> {
         Ok(match source.poly.tensor_packed_extension_sparse_evals()? {
             Some(witness) => TensorPackedWitness::Sparse(witness),
-            None => TensorPackedWitness::Dense(source.poly.tensor_packed_extension_evals()?),
+            None => {
+                let evaluations = source.poly.tensor_packed_extension_evals()?;
+                TensorPackedWitness::Dense(
+                    akita_sumcheck::EvaluationTable::from_multilinear_evaluations(&evaluations)?,
+                )
+            }
         })
     }
 

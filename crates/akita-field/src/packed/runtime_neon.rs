@@ -10,8 +10,9 @@ use super::runtime_common::{
     fold_and_compute_sparse_affine_polynomial_round_packed,
     fold_and_compute_stage2_coefficient_round_packed,
     fold_class_coded_and_compute_sparse_affine_polynomial_round_packed, fold_fp_ext2_fp64_packed,
-    fold_fp_ext4_fp32_packed,
+    fold_fp_ext4_fp32_packed, materialize_tensor_factor_and_compute_product_round_packed,
 };
+use super::Fp32TensorFactorRoundOutput;
 use crate::{Fp32, Fp64, FpExt2, FpExt2Config, FpExt4};
 
 /// Fold one binding-order Stage 2 coefficient coordinate with NEON.
@@ -82,6 +83,33 @@ pub unsafe fn compute_product_round_fp_ext4_fp32_neon<const P: u32>(
     unsafe {
         compute_product_round_packed::<P, PackedFp32Neon<P>>(
             witness_0, witness_1, factor_0, factor_1,
+        )
+    }
+}
+
+/// Materialize a quartic fp32 tensor factor and compute its first product
+/// round four rows at a time.
+///
+/// # Safety
+///
+/// The caller must establish that NEON is available on the current CPU.
+#[target_feature(enable = "neon")]
+pub unsafe fn materialize_tensor_factor_and_compute_product_round_fp_ext4_fp32_neon<
+    const P: u32,
+>(
+    witness: [&[Fp32<P>]; 4],
+    equality_inner: [&[Fp32<P>]; 4],
+    equality_outer: &[FpExt4<Fp32<P>>],
+    zero_weights: [FpExt4<Fp32<P>>; 4],
+    one_weights: [FpExt4<Fp32<P>>; 4],
+) -> Fp32TensorFactorRoundOutput<P> {
+    unsafe {
+        materialize_tensor_factor_and_compute_product_round_packed::<P, PackedFp32Neon<P>>(
+            witness,
+            equality_inner,
+            equality_outer,
+            zero_weights,
+            one_weights,
         )
     }
 }

@@ -19,6 +19,13 @@ pub mod runtime_x86;
 
 pub use ext::{PackedFpExt2, PackedFpExt4, PackedFpExt8};
 
+/// Coefficient storage and first-round coefficients produced while
+/// materializing an fp32 quartic tensor factor.
+pub type Fp32TensorFactorRoundOutput<const P: u32> = (
+    Box<[Fp32<P>]>,
+    (crate::FpExt4<Fp32<P>>, crate::FpExt4<Fp32<P>>),
+);
+
 use crate::ext::{fp_ext8_mul_schedule, fp_ext8_square_schedule, FpExt2Config};
 use crate::{FieldCore, Fp128, Fp32, Fp64, Invertible};
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};

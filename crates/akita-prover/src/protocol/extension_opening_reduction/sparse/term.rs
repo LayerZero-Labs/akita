@@ -42,41 +42,36 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
     /// Returns an error if the witness length, tail point, or packed head point
     /// does not describe one valid tensor factor table.
     pub(crate) fn new_tensor(
-        witness_evals: Vec<E>,
+        witness: EvaluationTable<F, E>,
         tail_point: &[E],
         eta: &[E],
         coeff: E,
     ) -> Result<Self, AkitaError>
     where
-        E: MulBaseUnreduced<F>,
+        E: MulBaseUnreduced<F> + SumcheckTableOperations<F>,
     {
         let expected = checked_table_len(tail_point.len())?;
-        if witness_evals.len() != expected {
+        if witness.len() != expected {
             return Err(AkitaError::InvalidSize {
                 expected,
-                actual: witness_evals.len(),
+                actual: witness.len(),
             });
         }
         let projection = TensorFactorProjection::<F, E>::new(eta)?;
-        let [factor] = {
+        let (factor, first_round) = {
             let _span = tracing::debug_span!("extension_opening_factor_table", expected).entered();
-            let reversed_tail = tail_point.iter().rev().copied().collect::<Vec<_>>();
-            let equality = EqPolynomial::evals(&reversed_tail)?;
-            [EvaluationTable::from_evaluation_fn(
-                expected,
-                |stored_row| projection.project(equality[stored_row]),
-            )]
-        };
-        let [witness] = {
-            let _span = tracing::debug_span!("extension_opening_witness_table", expected).entered();
-            EvaluationTable::from_multilinear_evaluation_array_fn(expected, |logical_row| {
-                [witness_evals[logical_row]]
-            })?
+            E::materialize_tensor_factor_and_compute_product_round(
+                SumcheckKernelPlan::detect(),
+                &witness,
+                tail_point,
+                &projection,
+            )?
         };
         Ok(Self {
             tables: ExtensionOpeningTables::Dense { witness, factor },
             coeff,
-            cached_accumulate: None,
+            cached_accumulate: first_round
+                .map(|(constant, quadratic)| (coeff * constant, coeff * quadratic)),
         })
     }
 

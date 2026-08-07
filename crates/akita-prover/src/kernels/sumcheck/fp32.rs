@@ -2,16 +2,30 @@
 
 use super::{
     compute_weighted_affine_polynomial_round_scalar, compute_weighted_affine_product_round_scalar,
-    fold_and_compute_stage2_coefficient_round_scalar, Fp32Kernel, SumcheckKernelPlan,
-    SumcheckTableOperations,
+    fold_and_compute_stage2_coefficient_round_scalar,
+    materialize_tensor_factor_and_compute_product_round_scalar, Fp32Kernel, SumcheckKernelPlan,
+    SumcheckTableOperations, TensorFactorRoundOutput,
 };
-use akita_field::{Fp32, FpExt4};
+use akita_algebra::SplitEqEvals;
+use akita_field::{AkitaError, Fp32, FpExt4};
 use akita_sumcheck::{
     compute_product_round_scalar, fold_and_compute_product_round_scalar,
     fold_first_variable_scalar, EvaluationTable,
 };
+use akita_types::TensorFactorProjection;
 
 impl<const P: u32> SumcheckTableOperations<Fp32<P>> for FpExt4<Fp32<P>> {
+    fn materialize_tensor_factor_and_compute_product_round(
+        plan: SumcheckKernelPlan,
+        witness: &EvaluationTable<Fp32<P>, Self>,
+        tail_point: &[Self],
+        projection: &TensorFactorProjection<Fp32<P>, Self>,
+    ) -> Result<TensorFactorRoundOutput<Fp32<P>, Self>, AkitaError> {
+        plan.materialize_tensor_factor_and_compute_product_round_fp32(
+            witness, tail_point, projection,
+        )
+    }
+
     fn fold_first_variable(
         plan: SumcheckKernelPlan,
         table: &mut EvaluationTable<Fp32<P>, Self>,
@@ -163,6 +177,78 @@ impl<const P: u32> SumcheckTableOperations<Fp32<P>> for FpExt4<Fp32<P>> {
 }
 
 impl SumcheckKernelPlan {
+    /// Materialize an fp32 tensor factor and compute its first product round in
+    /// the same traversal.
+    pub fn materialize_tensor_factor_and_compute_product_round_fp32<const P: u32>(
+        self,
+        witness: &EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+        tail_point: &[FpExt4<Fp32<P>>],
+        projection: &TensorFactorProjection<Fp32<P>, FpExt4<Fp32<P>>>,
+    ) -> Result<TensorFactorRoundOutput<Fp32<P>, FpExt4<Fp32<P>>>, AkitaError> {
+        if tail_point.is_empty() || self.fp32_tensor_factor_round == Fp32Kernel::Scalar {
+            return materialize_tensor_factor_and_compute_product_round_scalar(
+                witness, tail_point, projection,
+            );
+        }
+
+        let reversed_suffix = tail_point[1..].iter().rev().copied().collect::<Vec<_>>();
+        let equality = SplitEqEvals::new(&reversed_suffix)?;
+        let minimum_width = match self.fp32_tensor_factor_round {
+            Fp32Kernel::Scalar => 1,
+            #[cfg(target_arch = "aarch64")]
+            Fp32Kernel::Neon => 4,
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx2 => 8,
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx512Ifma => 16,
+        };
+        if equality.in_len() < minimum_width {
+            return materialize_tensor_factor_and_compute_product_round_scalar(
+                witness, tail_point, projection,
+            );
+        }
+
+        let equality_inner = EvaluationTable::from_evaluations(&equality.e_in);
+        let equality_inner = equality_inner.coefficient_slices::<4>();
+        let witness_coefficients = witness.coefficient_slices::<4>();
+        let [zero_weights, one_weights] = tensor_factor_branch_weights(projection, tail_point[0]);
+        let (storage, round) = match self.fp32_tensor_factor_round {
+            Fp32Kernel::Scalar => unreachable!("scalar tensor factor returned above"),
+            #[cfg(target_arch = "aarch64")]
+            Fp32Kernel::Neon => unsafe {
+                akita_field::packed::runtime_neon::materialize_tensor_factor_and_compute_product_round_fp_ext4_fp32_neon(
+                    witness_coefficients,
+                    equality_inner,
+                    &equality.e_out,
+                    zero_weights,
+                    one_weights,
+                )
+            },
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx2 => unsafe {
+                akita_field::packed::runtime_x86::materialize_tensor_factor_and_compute_product_round_fp_ext4_fp32_avx2(
+                    witness_coefficients,
+                    equality_inner,
+                    &equality.e_out,
+                    zero_weights,
+                    one_weights,
+                )
+            },
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx512Ifma => unsafe {
+                akita_field::packed::runtime_x86::materialize_tensor_factor_and_compute_product_round_fp_ext4_fp32_avx512_ifma(
+                    witness_coefficients,
+                    equality_inner,
+                    &equality.e_out,
+                    zero_weights,
+                    one_weights,
+                )
+            },
+        };
+        let factor = EvaluationTable::from_coefficient_storage(storage, witness.len())?;
+        Ok((factor, Some(round)))
+    }
+
     /// Fold a binding-order fp32 Stage 2 coefficient coordinate and compute
     /// its next norm and ordinary-relation round.
     #[allow(clippy::too_many_arguments)]
@@ -620,6 +706,26 @@ fn validate_weighted_affine_polynomial_tables<const P: u32>(
     );
     assert_eq!(equality.len(), values.len() / 2);
     assert!(coefficient_count <= 5);
+}
+
+fn tensor_factor_branch_weights<const P: u32>(
+    projection: &TensorFactorProjection<Fp32<P>, FpExt4<Fp32<P>>>,
+    tail: FpExt4<Fp32<P>>,
+) -> [[FpExt4<Fp32<P>>; 4]; 2] {
+    let zero_branch = FpExt4::one() - tail;
+    std::array::from_fn(|branch| {
+        let branch = if branch == 0 { zero_branch } else { tail };
+        std::array::from_fn(|coordinate| {
+            let basis = FpExt4::new(std::array::from_fn(|index| {
+                if index == coordinate {
+                    Fp32::one()
+                } else {
+                    Fp32::zero()
+                }
+            }));
+            projection.project(basis * branch)
+        })
+    })
 }
 
 fn validate_weighted_affine_product_tables<const P: u32, const LANES: usize>(

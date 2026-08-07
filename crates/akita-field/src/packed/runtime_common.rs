@@ -1,6 +1,6 @@
 //! Shared table traversal for runtime-selected packed field kernels.
 
-use super::{PackedField, PackedFpExt2, PackedFpExt4, PackedValue};
+use super::{Fp32TensorFactorRoundOutput, PackedField, PackedFpExt2, PackedFpExt4, PackedValue};
 use crate::{ExtField, Fp32, Fp64, FpExt2, FpExt2Config, FpExt4};
 
 pub(super) type CoefficientSlices<'a, const P: u32> = [&'a [Fp32<P>]; 4];
@@ -64,6 +64,94 @@ where
     }
 
     sum_product_round_lanes(constant, quadratic)
+}
+
+/// Materialize one transparent tensor factor and compute its first product
+/// round in the same coefficient-first traversal.
+#[inline(always)]
+pub(super) unsafe fn materialize_tensor_factor_and_compute_product_round_packed<const P: u32, PF>(
+    witness: CoefficientSlices<'_, P>,
+    equality_inner: CoefficientSlices<'_, P>,
+    equality_outer: &[FpExt4<Fp32<P>>],
+    zero_weights: [FpExt4<Fp32<P>>; 4],
+    one_weights: [FpExt4<Fp32<P>>; 4],
+) -> Fp32TensorFactorRoundOutput<P>
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let inner_len = equality_inner[0].len();
+    assert!(inner_len > 0 && inner_len.is_multiple_of(PF::WIDTH));
+    assert!(equality_inner
+        .iter()
+        .all(|coefficient| coefficient.len() == inner_len));
+    assert!(!equality_outer.is_empty());
+    let suffix_len = inner_len
+        .checked_mul(equality_outer.len())
+        .expect("tensor factor suffix length overflow");
+    let table_len = suffix_len
+        .checked_mul(2)
+        .expect("tensor factor table length overflow");
+    assert!(witness
+        .iter()
+        .all(|coefficient| coefficient.len() == table_len));
+
+    let stored_len = table_len
+        .checked_mul(4)
+        .expect("tensor factor coefficient storage length overflow");
+    let mut output = Box::<[Fp32<P>]>::new_uninit_slice(stored_len);
+    let output_base = output.as_mut_ptr().cast::<Fp32<P>>();
+    let output_coefficients =
+        std::array::from_fn(|coefficient| unsafe { output_base.add(coefficient * table_len) });
+    let witness = witness.map(|slice| slice.as_ptr());
+    let equality_inner = equality_inner.map(|slice| slice.as_ptr());
+    let zero_weights = zero_weights.map(PackedFpExt4::<Fp32<P>, PF>::broadcast);
+    let one_weights = one_weights.map(PackedFpExt4::<Fp32<P>, PF>::broadcast);
+    let mut constant = PackedFpExt4::<Fp32<P>, PF>::broadcast(FpExt4::zero());
+    let mut quadratic = PackedFpExt4::<Fp32<P>, PF>::broadcast(FpExt4::zero());
+
+    for (outer_row, &outer) in equality_outer.iter().enumerate() {
+        let outer = PackedFpExt4::<Fp32<P>, PF>::broadcast(outer);
+        let block_start = outer_row * inner_len;
+        for inner_row in (0..inner_len).step_by(PF::WIDTH) {
+            let row = block_start + inner_row;
+            let inner = unsafe { read_packed_fp_ext4::<P, PF>(equality_inner, inner_row) };
+            let suffix = outer * inner;
+            let factor_zero = packed_linear_map(suffix, zero_weights);
+            let factor_one = packed_linear_map(suffix, one_weights);
+            let witness_zero = unsafe { read_packed_fp_ext4::<P, PF>(witness, row) };
+            let witness_one = unsafe { read_packed_fp_ext4::<P, PF>(witness, row + suffix_len) };
+
+            constant = constant + witness_zero * factor_zero;
+            quadratic = quadratic + (witness_one - witness_zero) * (factor_one - factor_zero);
+            unsafe {
+                write_packed_fp_ext4(output_coefficients, row, factor_zero);
+                write_packed_fp_ext4(output_coefficients, row + suffix_len, factor_one);
+            }
+        }
+    }
+
+    let round = sum_product_round_lanes(constant, quadratic);
+    // SAFETY: the nested outer/inner traversal covers each row once, and both
+    // factor branches write all four coefficient slabs for that row.
+    let output = unsafe { output.assume_init() };
+    (output, round)
+}
+
+#[inline(always)]
+fn packed_linear_map<const P: u32, PF>(
+    value: PackedFpExt4<Fp32<P>, PF>,
+    weights: [PackedFpExt4<Fp32<P>, PF>; 4],
+) -> PackedFpExt4<Fp32<P>, PF>
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let zero = PF::broadcast(Fp32::zero());
+    PackedFpExt4::new(std::array::from_fn(|output_coefficient| {
+        (0..4).fold(zero, |sum, input_coefficient| {
+            sum + value.coeffs[input_coefficient]
+                * weights[input_coefficient].coeffs[output_coefficient]
+        })
+    }))
 }
 
 /// Compute an equality-weighted batch of quadratic or quartic affine products.

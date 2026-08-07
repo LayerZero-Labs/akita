@@ -12,6 +12,7 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced,
 };
+use akita_sumcheck::EvaluationTable;
 use akita_types::FpExtEncoding;
 
 /// Tensor-packed root witness alternatives produced by a tensor kernel.
@@ -21,8 +22,8 @@ use akita_types::FpExtEncoding;
 /// closed *input-source* enum, which is the pattern the open boundary forbids.
 #[derive(Debug, Clone)]
 pub enum TensorPackedWitness<F: FieldCore, E: ExtField<F>> {
-    /// Dense tensor-packed evaluations (universal fallback).
-    Dense(Vec<E>),
+    /// Dense tensor-packed evaluations in canonical sumcheck storage.
+    Dense(EvaluationTable<F, E>),
     /// Sparse tensor-packed witness preserved when the source/backend can.
     Sparse(SparseExtensionOpeningWitness<F, E>),
 }

@@ -223,6 +223,7 @@ The initial row preserving API is:
 from_evaluations
 from_evaluation_fn
 from_coefficient_fn
+from_coefficient_storage
 evaluation
 coefficient_slice
 coefficient_slice_mut
@@ -816,6 +817,19 @@ type. On the largest recursive fp32 D128 EOR, factor construction fell to
 32.6 ms, complete dense-term construction to 42.1 ms from 75.5 ms, and complete
 EOR to 98.2 ms from 130 ms. The 1.391-second proof verified unchanged.
 
+Dense tensor sources now return the canonical table itself. In particular, a
+recursive i8 witness widens directly into binding-order coefficient slabs;
+`TensorPackedWitness` does not retain a logical extension-value alternative.
+The largest recursive producer costs 6.56 to 6.64 ms, versus 2.56 ms for the
+old logical vector plus 6.06 to 7.25 ms for its table conversion. Dense EOR also
+factorizes the equality suffix into two small tables and precomputes the two
+branch projection maps. One SIMD traversal writes the permanent factor table
+and computes the first product round from the same packed values. That fused
+operation costs 32.2 to 34.2 ms, versus 31.4 ms for factor construction plus
+11.8 ms for the old first-round reread. The largest recursive EOR measures 84.0
+to 85.1 ms, down from 96.0 ms, and the next measures 18.9 to 19.5 ms, down from
+21.0 ms. Warm complete proofs measure 1.196 to 1.220 seconds and verify.
+
 Stage 3 now stores its coefficient and setup-index phases in `EvaluationTable`
 and uses the same detected fold, product-round, and fused fold-plus-next-round
 operations as dense EOR. The linear coefficient is derived from the carried
@@ -842,11 +856,12 @@ The cutover evolves current owners rather than adding parallel wrappers:
 | Stage 3 product tables | `EvaluationTable<F, E>` where they are folded multilinear tables |
 
 `ExtensionOpeningReductionTerm<F, E>` and
-`ExtensionOpeningReductionProver<F, E>` name both fields directly. A term
-computes and stores its unscaled input claim while its logical order vectors are
-validated, then converts dense vectors once into binding order tables. Batched
-input claim calculation reads those immutable term claims. It does not convert
-tables back to row values or repeat the product sum.
+`ExtensionOpeningReductionProver<F, E>` name both fields directly. Production
+tensor sources construct the binding-order witness table directly, and dense
+term construction fuses factor materialization with the first product round.
+The prover receives its independently derived input claim from the protocol
+boundary. It does not convert tables back to row values or repeat the product
+sum.
 
 Small coefficient lists, round polynomials, challenge vectors, lookup tables,
 and proof values remain `Vec<E>` or fixed arrays. `EvaluationTable` is only for a
