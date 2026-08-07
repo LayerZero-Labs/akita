@@ -21,7 +21,7 @@ pub(in crate::protocol::extension_opening_reduction) struct TensorEqualityFactor
     prefix_state: Vec<E>,
     transitions: Vec<TensorFactorTransition<E>>,
     suffix_tables: Vec<Vec<E>>,
-    low_states: Vec<Vec<E>>,
+    low_states: Vec<E>,
 }
 
 impl<E: FieldCore> TensorEqualityFactor<E> {
@@ -192,7 +192,8 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
             return;
         }
         let count = 1usize << low_bits;
-        let mut low_states = Vec::with_capacity(count);
+        let width = self.prefix_state.len();
+        let mut low_states = Vec::with_capacity(count * width);
         for low in 0..count {
             let mut state = self.prefix_state.clone();
             for bit_idx in 0..low_bits {
@@ -203,9 +204,15 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
                     bit,
                 );
             }
-            low_states.push(state);
+            low_states.extend(state);
         }
         self.low_states = low_states;
+    }
+
+    fn low_state(&self, index: usize) -> &[E] {
+        let width = self.prefix_state.len();
+        let start = index * width;
+        &self.low_states[start..start + width]
     }
 
     fn eval_state_at_suffix(&self, state: &[E], suffix_index: usize) -> E {
@@ -225,7 +232,7 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
         let low_mask = (1usize << low_bits) - 1;
         let low = index & low_mask;
         let suffix_index = index >> low_bits;
-        self.eval_state_at_suffix(&self.low_states[low], suffix_index)
+        self.eval_state_at_suffix(self.low_state(low), suffix_index)
     }
 
     pub(super) fn fold_in_place(&mut self, r_round: E) {
@@ -300,8 +307,8 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
         let suffix_index = pair >> rest_low_bits;
         let low_zero = low_rest << 1;
         let low_one = low_zero | 1;
-        let state_zero = &self.low_states[low_zero];
-        let state_one = &self.low_states[low_one];
+        let state_zero = self.low_state(low_zero);
+        let state_one = self.low_state(low_one);
 
         if !E::DELAYED_PRODUCT_SUM_IS_EXACT {
             return (
@@ -310,6 +317,44 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
             );
         }
 
+        let (accum_zero, accum_one) = match state_zero.len() {
+            1 => self.factor_pair_product_accumulators::<1>(state_zero, state_one, suffix_index),
+            2 => self.factor_pair_product_accumulators::<2>(state_zero, state_one, suffix_index),
+            4 => self.factor_pair_product_accumulators::<4>(state_zero, state_one, suffix_index),
+            8 => self.factor_pair_product_accumulators::<8>(state_zero, state_one, suffix_index),
+            _ => self.factor_pair_product_accumulators_dynamic(state_zero, state_one, suffix_index),
+        };
+        (
+            E::reduce_product_accum(accum_zero),
+            E::reduce_product_accum(accum_one),
+        )
+    }
+
+    fn factor_pair_product_accumulators<const N: usize>(
+        &self,
+        state_zero: &[E],
+        state_one: &[E],
+        suffix_index: usize,
+    ) -> (E::ProductAccum, E::ProductAccum) {
+        debug_assert_eq!(state_zero.len(), N);
+        debug_assert_eq!(state_one.len(), N);
+        debug_assert_eq!(self.suffix_tables.len(), N);
+        let mut accum_zero = E::ProductAccum::zero();
+        let mut accum_one = E::ProductAccum::zero();
+        for index in 0..N {
+            let column = self.suffix_tables[index][suffix_index];
+            accum_zero += state_zero[index].mul_to_product_accum(column);
+            accum_one += state_one[index].mul_to_product_accum(column);
+        }
+        (accum_zero, accum_one)
+    }
+
+    fn factor_pair_product_accumulators_dynamic(
+        &self,
+        state_zero: &[E],
+        state_one: &[E],
+        suffix_index: usize,
+    ) -> (E::ProductAccum, E::ProductAccum) {
         let mut accum_zero = E::ProductAccum::zero();
         let mut accum_one = E::ProductAccum::zero();
         for ((table, &coeff_zero), &coeff_one) in self
@@ -322,10 +367,7 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
             accum_zero += coeff_zero.mul_to_product_accum(column);
             accum_one += coeff_one.mul_to_product_accum(column);
         }
-        (
-            E::reduce_product_accum(accum_zero),
-            E::reduce_product_accum(accum_one),
-        )
+        (accum_zero, accum_one)
     }
 }
 
