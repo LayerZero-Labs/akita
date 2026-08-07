@@ -48,6 +48,14 @@ removed_api_patterns=(
   'direct_witness_bytes'
   'segment_typed_witness_shape_from_groups'
   'dispatch_ring_dim_result'
+  'ChallengeShape'
+  'ChallengeLabels'
+  'TensorChallenges'
+  'PreparedAffineFactors'
+  'PreparedChallengeEvals'
+  'FoldWitnessLinfCapPolicy'
+  'BoundedL1Norm'
+  'akita-challenges/src/tensor\.rs'
 )
 
 api_pattern="$(IFS='|'; echo "${removed_api_patterns[*]}")"

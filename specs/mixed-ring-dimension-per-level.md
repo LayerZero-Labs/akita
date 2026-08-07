@@ -286,8 +286,8 @@ For one fixed scalar D, the scalar planner does the following:
 7. Recompute proof bytes and setup envelope and reject any disagreement with
    the cached estimates.
 
-`layout_candidate_score` combines next-witness physical width, tensor challenge
-work, chunk work, and chunk imbalance. It is a local recursive-split heuristic.
+`layout_candidate_score` combines next-witness physical width, challenge work,
+chunk work, and chunk imbalance. It is a local recursive-split heuristic.
 The source explicitly notes that selecting the smallest next witness is not the
 same as globally minimizing current proof plus suffix cost. Therefore the
 current planner should not be described as exhaustive over all recursive

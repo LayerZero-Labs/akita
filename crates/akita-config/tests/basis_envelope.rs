@@ -48,7 +48,6 @@ fn d64_onehot_schedule_stays_within_basis_envelope() {
                     .witness_norms_for_inner_basis(root.log_basis_inner, root.d_a()),
                 log_basis_response: root.log_basis_open,
                 challenge_config: &root.fold_challenge_config,
-                challenge_shape: root.fold_challenge_shape,
             })
             .expect("one-hot fold policy");
         assert_eq!(

@@ -96,7 +96,6 @@ fn fixed_width_selection_resolves_the_same_exact_generated_row() {
         &key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("prover selects exact generated row");
@@ -104,7 +103,6 @@ fn fixed_width_selection_resolves_the_same_exact_generated_row() {
         selected.selection(),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("verifier resolves public row selection");
@@ -123,7 +121,6 @@ fn fixed_width_selection_resolves_the_same_exact_generated_row() {
             unknown,
             &policy_of::<Cfg>(),
             Cfg::ring_challenge_config,
-            Cfg::fold_challenge_shape_at_level,
             Some(catalog),
         ),
         Err(akita_field::AkitaError::UnsupportedSchedule(_))
@@ -140,7 +137,6 @@ fn cached_catalog_rows_do_not_bypass_runtime_hook_validation() {
         &entry.to_runtime_lookup_key(),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("prime the materialized-catalog cache");
@@ -153,7 +149,6 @@ fn cached_catalog_rows_do_not_bypass_runtime_hook_validation() {
                 "test runtime-hook drift".to_string(),
             ))
         },
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect_err("a cache hit must still execute the supplied runtime hook");
@@ -192,7 +187,6 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_terminal_a() {
         &entry.to_runtime_lookup_key(),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("valid generated row");
@@ -253,7 +247,6 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
         &entry.to_runtime_lookup_key(),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("valid generated row");
@@ -345,15 +338,9 @@ fn runtime_rejects_malformed_extension_geometry_without_panicking() {
     let reject = |mutate: fn(&mut PlannerPolicy)| {
         let mut policy = policy_of::<Cfg>();
         mutate(&mut policy);
-        resolve_schedule(
-            key,
-            &policy,
-            Cfg::ring_challenge_config,
-            Cfg::fold_challenge_shape_at_level,
-            catalog,
-        )
-        .expect_err("malformed extension geometry must reject")
-        .to_string()
+        resolve_schedule(key, &policy, Cfg::ring_challenge_config, catalog)
+            .expect_err("malformed extension geometry must reject")
+            .to_string()
     };
 
     assert!(reject(|policy| policy.claim_ext_degree = 0).contains("nonzero power of two"));
@@ -399,7 +386,6 @@ fn offline_planner_admits_dense_multi_group_roots() {
         &precommitted_honest_fold_policies,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
     )
     .expect("dense multi-group schedule");
 
@@ -540,7 +526,6 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
         &precommitted_honest_fold_policies,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
     )
     .expect("heterogeneous group batch must plan offline");
 

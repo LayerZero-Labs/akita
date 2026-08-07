@@ -1,7 +1,4 @@
 use super::poly::DensePoly;
-use crate::backend::test_support::{
-    aggregate_witnesses, negacyclic_tensor_product_challenges_i8, tensor_oracle_challenges,
-};
 use akita_algebra::CyclotomicRing;
 use akita_field::Prime128OffsetA7F7 as F;
 use akita_field::{ExtField, FpExt4};
@@ -36,42 +33,6 @@ fn ring_fold_matches_dense_multiplication_reference() {
                 })
         })
         .collect::<Vec<_>>();
-
-    assert_eq!(got, expected);
-}
-
-#[test]
-fn dense_tensor_decompose_fold_matches_negacyclic_product_reference() {
-    const D: usize = 16;
-    let num_positions_per_block = 2;
-    let num_digits = 2;
-    let log_basis = 3;
-    let tensor = tensor_oracle_challenges::<D>();
-    let polys = [
-        DensePoly::<F>::from_ring_coeffs((0..8).map(|idx| ring::<D>(10 * idx)).collect()),
-        DensePoly::<F>::from_ring_coeffs((0..8).map(|idx| ring::<D>(100 + 7 * idx)).collect()),
-    ];
-    let product_challenges = negacyclic_tensor_product_challenges_i8::<D>(&tensor).unwrap();
-
-    let expected = aggregate_witnesses::<F, D>(
-        &polys
-            .iter()
-            .zip(product_challenges.chunks(4))
-            .map(|(poly, challenges)| {
-                poly.decompose_fold::<D>(challenges, num_positions_per_block, num_digits, log_basis)
-            })
-            .collect::<Vec<_>>(),
-    );
-    let poly_refs = polys.iter().collect::<Vec<_>>();
-    let got = DensePoly::<F>::decompose_fold_tensor_batched::<D>(
-        &poly_refs,
-        &tensor,
-        num_positions_per_block,
-        num_digits,
-        log_basis,
-    )
-    .unwrap()
-    .unwrap();
 
     assert_eq!(got, expected);
 }

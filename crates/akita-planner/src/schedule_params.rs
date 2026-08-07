@@ -4,13 +4,13 @@
 //!
 //! Public entry: [`crate::find_schedule`]. The search is `Cfg`-free: every
 //! per-preset input is carried by the plain-value [`PlannerPolicy`] plus
-//! the `ring_challenge_config` / `fold_challenge_shape_at_level` closures,
+//! the `ring_challenge_config` closure,
 //! exactly the shape generated catalog emission consumes. This keeps the DP a
 //! pure function of `(policy, key, dimension domain)` for offline table generation.
 
 use std::sync::Arc;
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -21,14 +21,13 @@ use akita_types::sis::{
 };
 use akita_types::{
     level_proof_bytes, padded_setup_prefix_len, try_extension_opening_reduction_level_bytes,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams,
-    CommittedGroupProfile, DecompositionParams, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedLevelParams, TerminalResponseShape, WitnessLayout,
+    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile,
+    DecompositionParams, PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams,
+    TerminalResponseShape, WitnessLayout,
 };
 
 use akita_schedules::planner_support::{
-    materialize_candidate_schedule, optimize_fold_challenge_shape,
-    stage3_payload_bytes_for_successor, MAX_RECURSION_DEPTH,
+    materialize_candidate_schedule, stage3_payload_bytes_for_successor, MAX_RECURSION_DEPTH,
 };
 
 use crate::{InnerBasisSource, PlannerPolicy};
@@ -333,14 +332,8 @@ pub(crate) fn layout_candidate_score(
     physical_width: usize,
     num_live_blocks: usize,
     num_chunks: usize,
-    fold_shape: TensorChallengeShape,
 ) -> Result<LayoutCandidateScore, AkitaError> {
-    let challenge_work = match fold_shape {
-        TensorChallengeShape::Flat => num_live_blocks,
-        TensorChallengeShape::Tensor { fold_low_len } => fold_low_len
-            .checked_add(num_live_blocks.div_ceil(fold_low_len))
-            .ok_or_else(|| AkitaError::InvalidSetup("challenge-work overflow".to_string()))?,
-    };
+    let challenge_work = num_live_blocks;
     let chunk_ranges = WitnessLayout::resolve_chunk_block_ranges(num_live_blocks, num_chunks)?;
     let min_load = chunk_ranges
         .iter()
@@ -421,7 +414,6 @@ pub fn plan_standalone_precommit(
     policy: &PlannerPolicy,
     honest_fold_policy: HonestFoldPolicySpec,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<StandalonePrecommitPlan, AkitaError> {
     key.validate()?;
     let mut direct_policy = *policy;
@@ -436,11 +428,6 @@ pub fn plan_standalone_precommit(
     let witness_len = 1usize
         .checked_shl(key.num_vars() as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("precommit witness too large".into()))?;
-    let requested_fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
-        num_vars: key.num_vars(),
-        level: 0,
-        input_witness_len: witness_len,
-    });
     let (min_log_basis, max_log_basis) = direct_policy.log_basis_search_range_at_level(0);
     let inner_source = root_inner_basis_source(
         honest_fold_policy,
@@ -471,7 +458,6 @@ pub fn plan_standalone_precommit(
                         dimensions,
                         &ring_challenge_cfg,
                         &ring_challenge_config,
-                        requested_fold_shape,
                         witness_len,
                         candidate_inner_basis,
                         candidate_log_basis,

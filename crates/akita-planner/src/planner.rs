@@ -1,6 +1,6 @@
 //! Root schedule planning.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -9,14 +9,11 @@ use akita_types::sis::{
     OuterCommitMatrixParams,
 };
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams,
-    CommittedGroupProfile, DecompositionParams, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedLevelParams,
+    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile,
+    DecompositionParams, PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams,
 };
 
-use akita_schedules::planner_support::{
-    optimize_fold_challenge_shape, projected_collision_role_price, sis_key_at_dimension,
-};
+use akita_schedules::planner_support::{projected_collision_role_price, sis_key_at_dimension};
 
 use crate::schedule_params::{
     derive_optimal_suffix_schedule, mixed_search, select_complete_candidate, RingChallengeConfigFn,
@@ -114,7 +111,6 @@ fn materialize_precommitted_group_for_open_basis(
         ..policy.decomposition
     };
     let num_digits_open = num_digits_open(open_decomp);
-    let challenge_shape = TensorChallengeShape::Flat;
     let ring_dimension = group.layout.inner_commit_matrix.ring_dimension();
     let num_chunks = policy.chunks_at_level(0);
     let num_fold_coeffs = group
@@ -138,7 +134,6 @@ fn materialize_precommitted_group_for_open_basis(
                 .witness_norms_for_inner_basis(group.layout.log_basis_inner, ring_dimension),
             log_basis_response: log_basis_open,
             challenge_config: ring_challenge_cfg,
-            challenge_shape,
         })?;
     let required_a_bound = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
@@ -147,7 +142,6 @@ fn materialize_precommitted_group_for_open_basis(
         group.layout.inner_commit_matrix.ring_dimension(),
         log_basis_open,
         ring_challenge_cfg,
-        challenge_shape,
         num_digits_fold,
         policy.ring_subfield_norm_bound,
     )
@@ -183,7 +177,6 @@ struct MultiGroupRootCandidateCtx<'a> {
     policy: &'a PlannerPolicy,
     dimensions: CommitmentRingDims,
     ring_challenge_cfg: &'a SparseChallengeConfig,
-    requested_fold_shape: TensorChallengeShape,
     final_honest_fold_policy: HonestFoldPolicySpec,
     main_num_polys: usize,
     source: crate::InnerBasisSource,
@@ -248,7 +241,6 @@ pub(crate) fn root_level_candidates_for_basis(
     dimensions: CommitmentRingDims,
     ring_challenge_cfg: &SparseChallengeConfig,
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    requested_fold_shape: TensorChallengeShape,
     root_input_witness_len: usize,
     candidate_log_basis_inner: u32,
     candidate_log_basis_open: u32,
@@ -271,7 +263,6 @@ pub(crate) fn root_level_candidates_for_basis(
         policy,
         dimensions,
         ring_challenge_cfg,
-        requested_fold_shape,
         final_honest_fold_policy,
         main_num_polys: key.final_group.num_polynomials(),
         source: crate::schedule_params::root_inner_basis_source(
@@ -377,9 +368,6 @@ fn root_final_group_level_params_candidate(
     else {
         return Ok(None);
     };
-    let fold_challenge_shape =
-        optimize_fold_challenge_shape(ctx.requested_fold_shape, num_live_blocks)?;
-
     let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
     else {
         return Ok(None);
@@ -404,7 +392,6 @@ fn root_final_group_level_params_candidate(
                 .witness_norms_for_inner_basis(log_basis_inner, d_a),
             log_basis_response: log_basis_open,
             challenge_config: ctx.ring_challenge_cfg,
-            challenge_shape: fold_challenge_shape,
         })
     else {
         return Ok(None);
@@ -416,7 +403,6 @@ fn root_final_group_level_params_candidate(
         d_a,
         log_basis_open,
         ctx.ring_challenge_cfg,
-        fold_challenge_shape,
         num_digits_fold,
         policy.ring_subfield_norm_bound,
     ) else {
@@ -486,7 +472,6 @@ fn root_final_group_level_params_candidate(
         num_positions_per_block,
         num_live_blocks,
         fold_challenge_config: *ctx.ring_challenge_cfg,
-        fold_challenge_shape,
         num_digits_inner,
         num_digits_outer,
         num_digits_open,
@@ -556,7 +541,6 @@ pub fn find_schedule(
     precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     akita_schedules::planner_support::validate_policy(policy)?;
     key.validate(policy.decomposition.field_bits())?;
@@ -571,7 +555,6 @@ pub fn find_schedule(
             final_honest_fold_policy,
             &dimensions,
             ring_challenge_config,
-            fold_challenge_shape_at_level,
         );
     }
     if policy.selection_policy
@@ -582,7 +565,6 @@ pub fn find_schedule(
         ));
     }
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
-    let fold_challenge_shape_at_level = &fold_challenge_shape_at_level;
     let scalar_policy;
     let active_policy = if key.precommitteds.is_empty() {
         // Empty-precommit keys still enter through the root-key planner, but
@@ -617,7 +599,6 @@ pub fn find_schedule(
         policy: active_policy,
         default_ring_challenge_cfg: &ring_challenge_cfg,
         ring_challenge_config,
-        fold_challenge_shape_at_level,
         num_vars: key.final_group.num_vars(),
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
         setup_field_budget,
@@ -677,7 +658,6 @@ mod tests {
             &policy,
             D64Dense::root_honest_fold_policy(),
             D64Dense::ring_challenge_config,
-            D64Dense::fold_challenge_shape_at_level,
         )
         .expect("dense profile");
         assert!(plan.pareto_frontier.len() > 1);

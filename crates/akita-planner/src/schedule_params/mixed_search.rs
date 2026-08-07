@@ -62,7 +62,6 @@ fn suffix_frontier(
     policy: &PlannerPolicy,
     dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_shape: &dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     key: PolynomialGroupLayout,
     level: usize,
     input_witness_len: usize,
@@ -89,11 +88,6 @@ fn suffix_frontier(
 
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = policy.challenge_field_bits()?;
-    let requested_fold_shape = fold_shape(AkitaScheduleInputs {
-        num_vars: key.num_vars(),
-        level,
-        input_witness_len,
-    });
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(level);
     let (min_inner_basis, max_inner_basis) =
         policy.inner_basis_search_range(crate::InnerBasisSource::BalancedDigits {
@@ -146,7 +140,6 @@ fn suffix_frontier(
                             log_basis,
                             level,
                             None,
-                            requested_fold_shape,
                         )?
                     } else {
                         derive_candidate_level_params(
@@ -163,7 +156,6 @@ fn suffix_frontier(
                             log_basis,
                             level,
                             None,
-                            requested_fold_shape,
                         )?
                         .into_iter()
                         .collect()
@@ -226,7 +218,6 @@ fn suffix_frontier(
                             policy,
                             dimensions,
                             ring_challenge_config,
-                            fold_shape,
                             key,
                             level + 1,
                             output_witness_len,
@@ -298,17 +289,11 @@ pub(crate) fn find_schedule(
     honest_fold_policy: HonestFoldPolicySpec,
     dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     let field_bits = policy.decomposition.field_bits();
     let input_witness_len = 1usize
         .checked_shl(key.num_vars() as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("mixed root witness too large".into()))?;
-    let root_shape = fold_shape(AkitaScheduleInputs {
-        num_vars: key.num_vars(),
-        level: 0,
-        input_witness_len,
-    });
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(0);
     let inner_source =
         super::root_inner_basis_source(honest_fold_policy, policy.decomposition.log_commit_bound);
@@ -337,7 +322,6 @@ pub(crate) fn find_schedule(
                         *root_dimensions,
                         &ring_challenge,
                         &ring_challenge_config,
-                        root_shape,
                         input_witness_len,
                         inner_basis,
                         log_basis,
@@ -360,7 +344,6 @@ pub(crate) fn find_schedule(
                         policy,
                         dimensions,
                         &ring_challenge_config,
-                        &fold_shape,
                         key,
                         1,
                         output_witness_len,

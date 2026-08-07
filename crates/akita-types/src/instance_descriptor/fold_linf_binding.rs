@@ -1,6 +1,7 @@
 //! Shared fold-nonce wire contract bound into every transcript preamble.
 
 use crate::sis::MAX_FOLD_GRIND_ATTEMPTS;
+use akita_field::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -23,6 +24,14 @@ impl FoldLinfProtocolBinding {
         grind_nonce_wire_bytes: 4,
         grind_entropy_bits_per_level: 12,
     };
+
+    /// Validate a Fiat–Shamir grind nonce against this protocol binding.
+    pub fn validate_grind_nonce(self, grind_nonce: u32) -> Result<(), AkitaError> {
+        if grind_nonce >= self.max_grind_attempts {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(())
+    }
 }
 
 impl Valid for FoldLinfProtocolBinding {
@@ -98,5 +107,17 @@ mod tests {
         assert_eq!(binding.grind_nonce_wire_bytes, 4);
         assert_eq!(binding.max_grind_attempts, 4096);
         binding.check().unwrap();
+    }
+
+    #[test]
+    fn current_binding_rejects_nonce_at_attempt_limit() {
+        let binding = FoldLinfProtocolBinding::CURRENT;
+        binding
+            .validate_grind_nonce(binding.max_grind_attempts - 1)
+            .expect("last in-range nonce");
+        assert_eq!(
+            binding.validate_grind_nonce(binding.max_grind_attempts),
+            Err(AkitaError::InvalidProof)
+        );
     }
 }

@@ -271,9 +271,7 @@ pub fn projected_role_ring_count(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sis::{
-        fold_witness_digit_plan, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
-    };
+    use crate::sis::{fold_witness_beta_inf, FoldChallengeNorms, FoldWitnessNorms};
 
     #[test]
     fn balanced_digit_max_cases() {
@@ -373,39 +371,24 @@ mod tests {
         let dense = FoldWitnessNorms::bounded(3, 64);
         // one-hot single-chunk: ||s||_inf = 1, ||s||_1 = 1.
         let onehot = FoldWitnessNorms::sparse_binary(64, 64).unwrap();
-        let (dense_digits, _) = fold_witness_digit_plan(
-            8,
-            1,
+        let dense_beta = fold_witness_beta_inf(8, 1, challenge, dense).unwrap();
+        let onehot_beta = fold_witness_beta_inf(8, 1, challenge, onehot).unwrap();
+        let dense_digits =
+            num_digits_for_bound((128 - dense_beta.leading_zeros()).saturating_add(1), 128, 3);
+        let onehot_digits = num_digits_for_bound(
+            (128 - onehot_beta.leading_zeros()).saturating_add(1),
             128,
             3,
-            challenge,
-            dense,
-            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        )
-        .unwrap();
-        let (onehot_digits, _) = fold_witness_digit_plan(
-            8,
-            1,
-            128,
-            3,
-            challenge,
-            onehot,
-            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        )
-        .unwrap();
+        );
         assert!(dense_digits > 0 && onehot_digits > 0);
         assert!(onehot_digits < dense_digits);
         // More claims never reduce the digit count.
-        let (batched_digits, _) = fold_witness_digit_plan(
-            8,
-            4,
+        let batched_beta = fold_witness_beta_inf(8, 4, challenge, dense).unwrap();
+        let batched_digits = num_digits_for_bound(
+            (128 - batched_beta.leading_zeros()).saturating_add(1),
             128,
             3,
-            challenge,
-            dense,
-            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        )
-        .unwrap();
+        );
         assert!(batched_digits >= dense_digits);
     }
 
@@ -417,15 +400,6 @@ mod tests {
         };
         let witness = FoldWitnessNorms::bounded(3, 64);
         // A fold must contain at least one live block.
-        assert!(fold_witness_digit_plan(
-            0,
-            1,
-            128,
-            3,
-            challenge,
-            witness,
-            &FoldWitnessLinfCapConfig::worst_case_beta_only()
-        )
-        .is_err());
+        assert!(fold_witness_beta_inf(0, 1, challenge, witness).is_err());
     }
 }

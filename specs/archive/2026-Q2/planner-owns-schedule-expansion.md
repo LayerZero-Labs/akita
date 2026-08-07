@@ -46,7 +46,7 @@ in `akita-types`; only the schedule-table representation + expansion moves to
 Move the schedule-table representation, the shipped `generated/*.rs` tables, the
 compact→`LevelParams` expansion, and the entry-walking proof-size accounting out
 of `akita-types` into `akita-planner`, and expose a single planner entry point
-`resolve_schedule(key, &PlannerPolicy, stage1, fold_shape, table)` that checks
+`resolve_schedule(key, &PlannerPolicy, stage1, table)` that checks
 the table cache first and falls back to the DP, so that `akita-config` and the
 protocol never name `GeneratedScheduleTableEntry`.
 
@@ -93,22 +93,15 @@ just the table data):
 ```rust
 // akita-planner
 
-/// The shipped table for a policy, if one exists. Keyed on the SIS family +
-/// ring degree, plus `onehot` (`decomposition.log_commit_bound == 1`) and
-/// `root_fold_is_tensor`. `(family, D)` with no shipped table → `None`.
-pub fn shipped_table(
-    policy: &PlannerPolicy,
-    root_fold_is_tensor: bool,
-) -> Option<GeneratedScheduleTable>;
+/// The shipped table for a policy, if one exists.
+pub fn shipped_table(policy: &PlannerPolicy) -> Option<GeneratedScheduleTable>;
 
-/// Cache-then-generate. Selects the shipped table via `shipped_table`
-/// (deriving `root_fold_is_tensor` by evaluating `fold_shape` at level 0),
+/// Cache-then-generate. Selects the shipped table via `shipped_table`,
 /// expands a matching compact entry, or regenerates with `find_schedule`.
 pub fn get_schedule(
     key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     stage1: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError>;
 ```
 
@@ -129,10 +122,6 @@ discriminators, both derivable without naming any `Cfg`:
 
 - `onehot = (decomposition.log_commit_bound == 1)` — dense presets carry
   `log_commit_bound == field_bits` (16/32/64/128), onehot presets `== 1`.
-- `root_fold_is_tensor` — evaluated from the `fold_shape` closure at level 0.
-  This is the *only* discriminator between the otherwise byte-identical
-  `fp128_d64_onehot` and `fp128_d64_onehot_tensor` policies.
-
 `(family, D)` pairs with no shipped table (the `D ∈ {128,256,512}`
 experimental presets, and any recursive-w `WCommitmentConfig` policy whose
 `log_commit_bound` is its `log_basis`) fall through to `None` → regenerate. This
@@ -203,14 +192,12 @@ no behavior changes there.
       / `estimate_proof_bytes`.
 - [ ] `CommitmentConfig::runtime_schedule` is a single delegation to
       `akita_planner::get_schedule(key, &policy_of::<Self>(),
-      Self::ring_challenge_config, Self::fold_challenge_shape_at_level)`.
+      Self::ring_challenge_config)`.
 - [ ] `CommitmentConfig::schedule_table()` and the trait `resolve_schedule`
       entry-lookup helper are **removed**; no preset, `WCommitmentConfig`, or
       test config implements them. The `$table` macro argument is gone.
-- [ ] `akita_planner::shipped_table(policy, root_fold_is_tensor)` is the single
-      `policy → table` registry; `get_schedule` consults it. The tensor preset
-      resolves to `fp128_d64_onehot_tensor` and the flat onehot preset to
-      `fp128_d64_onehot` (validated by `single_poly_tensor_e2e`).
+- [ ] `akita_planner::shipped_table(policy)` is the single
+      `policy → table` registry; `get_schedule` consults it.
 - [ ] `gen_schedule_tables` writes into `akita-planner/src/generated/` and emits
       `use super::{...}` against the planner's representation; the drift guard
       compares against `akita_planner::generated::*`.
@@ -307,9 +294,9 @@ fn runtime_schedule(key) -> Result<Option<Schedule>, AkitaError> {
     if let Some(entry) = Self::resolve_schedule(key)? {        // table_entry + validate (Cfg hook)
         return Ok(Some(akita_types::schedule_from_entry_bits(  // akita-types walker
             entry, key, sis_modulus_profile, decomposition, challenge_field_bits,
-            claim_ext_degree, ring_subfield_norm_bound, stage1, fold_shape)?));
+            claim_ext_degree, ring_subfield_norm_bound, stage1)?));
     }
-    Ok(Some(akita_planner::find_schedule(key, &policy_of::<Self>(), stage1, fold_shape)?))
+    Ok(Some(akita_planner::find_schedule(key, &policy_of::<Self>(), stage1)?))
 }
 ```
 
@@ -323,7 +310,6 @@ fn runtime_schedule(key) -> Result<Option<Schedule>, AkitaError> {
         key,
         &policy_of::<Self>(),
         Self::ring_challenge_config,
-        Self::fold_challenge_shape_at_level,
     )?))
 }
 ```
@@ -334,14 +320,13 @@ arguments from `policy`:
 
 ```rust
 // akita-planner
-pub fn get_schedule(key, policy, stage1, fold_shape) -> Result<Schedule, AkitaError> {
-    let root_fold_is_tensor = /* fold_shape(level 0) == Tensor */;
-    if let Some(table) = shipped_table(policy, root_fold_is_tensor) {
+pub fn get_schedule(key, policy, stage1) -> Result<Schedule, AkitaError> {
+    if let Some(table) = shipped_table(policy) {
         if let Some(entry) = table_entry(table, generated_schedule_lookup_key(key)) {
-            return schedule_from_entry(entry, key, policy, stage1, fold_shape);
+            return schedule_from_entry(entry, key, policy, stage1);
         }
     }
-    find_schedule(key, policy, stage1, fold_shape)
+    find_schedule(key, policy, stage1)
 }
 ```
 

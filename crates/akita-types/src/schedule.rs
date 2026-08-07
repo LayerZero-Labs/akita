@@ -489,12 +489,6 @@ pub fn intermediate_w_ring_element_count_for_chunks(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RootFinalChallenge {
-    Flat,
-    Tensor { fold_low_len: usize },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WitnessPartition {
     Single,
     Distributed { num_chunks: usize },
@@ -511,7 +505,6 @@ impl WitnessPartition {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootFinalGroupParams {
-    pub challenge: RootFinalChallenge,
     pub commitment: CommittedGroupParams,
 }
 
@@ -602,16 +595,9 @@ impl TerminalCommittedGroupParams {
         let num_fold_coeffs = usize::try_from(params.num_fold_coeffs()).map_err(|_| {
             AkitaError::InvalidSetup("terminal fold coefficient count exceeds usize".into())
         })?;
-        let cap_config = crate::sis::FoldWitnessLinfCapConfig::for_fold_coeffs(
-            &sparse,
-            akita_challenges::TensorChallengeShape::Flat,
-            params.d_a(),
-            num_fold_coeffs,
-        )?;
-        let challenge = crate::sis::FoldChallengeNorms::new(
-            &sparse,
-            akita_challenges::TensorChallengeShape::Flat,
-        );
+        let cap_config =
+            crate::sis::FoldWitnessLinfCapConfig::for_fold_coeffs(&sparse, num_fold_coeffs)?;
+        let challenge = crate::sis::FoldChallengeNorms::new(&sparse);
         let witness = crate::sis::FoldWitnessNorms::bounded(params.log_basis_inner, params.d_a());
         let (unconstrained_target, _) = crate::sis::fold_witness_unsnapped_linf_cap(
             params.num_live_blocks,
@@ -661,10 +647,7 @@ impl TerminalCommittedGroupParams {
         &self,
         sparse: &akita_challenges::SparseChallengeConfig,
     ) -> Result<u128, AkitaError> {
-        let challenge = crate::sis::FoldChallengeNorms::new(
-            sparse,
-            akita_challenges::TensorChallengeShape::Flat,
-        );
+        let challenge = crate::sis::FoldChallengeNorms::new(sparse);
         let collision_capacity = self
             .inner_commit_matrix
             .max_secure_collision_linf()
@@ -683,19 +666,6 @@ impl TerminalCommittedGroupParams {
         // Terminal NTT kernels currently consume signed i16 coefficients.
         // This representation limit is independent of the SIS capacity.
         Ok(certified_capacity.min(i16::MAX as u128))
-    }
-
-    /// Validate the terminal Fiat–Shamir grind nonce under the same bound
-    /// policy used to derive the response wire.
-    pub fn validate_fold_grind_nonce(
-        &self,
-        _sparse: &akita_challenges::SparseChallengeConfig,
-        nonce: u32,
-    ) -> Result<(), AkitaError> {
-        if nonce >= crate::FoldLinfProtocolBinding::CURRENT.max_grind_attempts {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(())
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
@@ -908,13 +878,6 @@ impl FoldSchedule {
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.push(1);
-        match self.root.params.final_group.challenge {
-            RootFinalChallenge::Flat => bytes.push(0),
-            RootFinalChallenge::Tensor { fold_low_len } => {
-                bytes.push(1);
-                push_usize(bytes, fold_low_len);
-            }
-        }
         self.root
             .params
             .final_group

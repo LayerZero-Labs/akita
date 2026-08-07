@@ -13,7 +13,6 @@ pub fn committed_group_profile<Cfg: CommitmentConfig>(
         key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Cfg::schedule_catalog(),
     )
 }

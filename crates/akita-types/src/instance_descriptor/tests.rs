@@ -1,9 +1,9 @@
 use super::*;
 use crate::{
     CommittedGroupParams, FoldSchedule, InnerCommitMatrixParams, OpeningClaimsLayout,
-    OpeningScheduleSelection, RootFinalChallenge, RootFinalGroupParams, RootFoldParams,
-    RootFoldStep, ScheduleRowDigest, TerminalCommittedGroupParams, TerminalFoldParams,
-    TerminalFoldStep, TerminalResponseShape, WitnessPartition,
+    OpeningScheduleSelection, RootFinalGroupParams, RootFoldParams, RootFoldStep,
+    ScheduleRowDigest, TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep,
+    TerminalResponseShape, WitnessPartition,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime32Offset99;
@@ -23,7 +23,6 @@ fn sample_schedule() -> FoldSchedule {
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    challenge: RootFinalChallenge::Flat,
                     commitment: committed.clone(),
                 },
                 precommitted_groups: Vec::new(),

@@ -73,11 +73,10 @@ where
     {
         let _span = tracing::info_span!("relation_structured_groups").entered();
         for group in &evaluator.groups {
-            let block_challenges = group.structured_block_challenges::<F>()?;
             structured_evaluation += plan
                 .evaluate_structured_group::<F>(
                     group.group_id,
-                    &block_challenges,
+                    &group.c_alphas,
                     &group.opening_a_evals,
                     alpha,
                 )

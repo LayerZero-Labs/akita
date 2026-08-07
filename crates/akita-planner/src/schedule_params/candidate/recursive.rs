@@ -16,7 +16,6 @@ pub(crate) fn recursive_fold_level_params_candidate(
     log_basis_open: u32,
     fold_level: usize,
     block_index_bits: usize,
-    requested_fold_shape: TensorChallengeShape,
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
     if reduced_vars <= 2
         || reduced_vars >= 53
@@ -35,8 +34,6 @@ pub(crate) fn recursive_fold_level_params_candidate(
     if num_live_blocks < num_chunks {
         return Ok(None);
     }
-    let fold_challenge_shape =
-        optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
     let open_decomp = DecompositionParams {
         log_basis: log_basis_open,
         ..policy.decomposition
@@ -65,7 +62,6 @@ pub(crate) fn recursive_fold_level_params_candidate(
         witness_norms: FoldWitnessNorms::bounded(log_basis_inner, dimensions.d_a()),
         log_basis_response: log_basis_open,
         challenge_config: ring_challenge_cfg,
-        challenge_shape: fold_challenge_shape,
     }) else {
         return Ok(None);
     };
@@ -76,7 +72,6 @@ pub(crate) fn recursive_fold_level_params_candidate(
         dimensions.d_a(),
         log_basis_open,
         ring_challenge_cfg,
-        fold_challenge_shape,
         num_digits_fold,
         policy.ring_subfield_norm_bound,
     ) else {
@@ -145,7 +140,6 @@ pub(crate) fn recursive_fold_level_params_candidate(
         num_positions_per_block,
         num_live_blocks,
         fold_challenge_config: *ring_challenge_cfg,
-        fold_challenge_shape,
         num_digits_inner: delta_commit,
         num_digits_outer: delta_open,
         num_digits_open: delta_open,
@@ -181,7 +175,6 @@ fn prepare_recursive_level_search(
     log_basis_open: u32,
     fold_level: usize,
     incoming_setup_prefix: Option<usize>,
-    requested_fold_shape: TensorChallengeShape,
 ) -> Result<Option<RecursiveLevelSearch>, AkitaError> {
     let num_chunks = policy.chunks_at_level(fold_level);
     dimensions.validate_role_projection()?;
@@ -216,7 +209,6 @@ fn prepare_recursive_level_search(
                 cache,
                 policy,
                 ring_challenge_cfg,
-                requested_fold_shape,
                 log_basis_open,
                 n_prefix,
                 num_chunks,
@@ -253,7 +245,6 @@ fn recursive_level_candidate_for_split(
     log_basis_open: u32,
     fold_level: usize,
     block_index_bits: usize,
-    requested_fold_shape: TensorChallengeShape,
 ) -> Result<Option<(LayoutCandidateScore, CommittedGroupParams, usize)>, AkitaError> {
     let Some(mut candidate_params) = recursive_fold_level_params_candidate(
         policy,
@@ -266,7 +257,6 @@ fn recursive_level_candidate_for_split(
         log_basis_open,
         fold_level,
         block_index_bits,
-        requested_fold_shape,
     )?
     else {
         return Ok(None);
@@ -301,7 +291,6 @@ fn recursive_level_candidate_for_split(
         next_witness_len,
         candidate_params.num_live_blocks,
         search.num_chunks,
-        candidate_params.fold_challenge_shape,
     )?;
     Ok(Some((score, candidate_params, next_witness_len)))
 }
@@ -319,7 +308,6 @@ pub(crate) fn derive_candidate_level_params(
     log_basis_open: u32,
     fold_level: usize,
     incoming_setup_prefix: Option<usize>,
-    requested_fold_shape: TensorChallengeShape,
 ) -> Result<Option<(CommittedGroupParams, usize)>, AkitaError> {
     let candidates = derive_candidate_level_params_all_splits(
         setup_prefix_cache,
@@ -333,7 +321,6 @@ pub(crate) fn derive_candidate_level_params(
         log_basis_open,
         fold_level,
         incoming_setup_prefix,
-        requested_fold_shape,
     )?;
     candidates
         .into_iter()
@@ -342,7 +329,6 @@ pub(crate) fn derive_candidate_level_params(
                 next_witness_len,
                 params.num_live_blocks,
                 params.witness_chunk.num_chunks,
-                params.fold_challenge_shape,
             )?;
             let block_index_bits = params.num_live_blocks.trailing_zeros() as usize;
             Ok((
@@ -373,7 +359,6 @@ pub(crate) fn derive_candidate_level_params_all_splits(
     log_basis_open: u32,
     fold_level: usize,
     incoming_setup_prefix: Option<usize>,
-    requested_fold_shape: TensorChallengeShape,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     let Some(search) = prepare_recursive_level_search(
         setup_prefix_cache,
@@ -384,7 +369,6 @@ pub(crate) fn derive_candidate_level_params_all_splits(
         log_basis_open,
         fold_level,
         incoming_setup_prefix,
-        requested_fold_shape,
     )?
     else {
         return Ok(Vec::new());
@@ -404,7 +388,6 @@ pub(crate) fn derive_candidate_level_params_all_splits(
                 log_basis_open,
                 fold_level,
                 block_index_bits,
-                requested_fold_shape,
             )?
             else {
                 continue;

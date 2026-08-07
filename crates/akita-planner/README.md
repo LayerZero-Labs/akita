@@ -4,7 +4,7 @@ The `akita-planner` crate is responsible for computing the parameters of each fo
 
 This module is independent of the `Cfg` trait because `Cfg` uses the planner; if the planner named concrete configs directly, the workspace would face a circular dependency. All inputs that the planner needs from `Cfg` are therefore passed through the plain-value `PlannerPolicy`.
 
-The planner covers the parameter-selection features supported by Akita, including batching, tensor challenges, and extension fields. For each case it resolves the fold parameters that minimize the modeled proof size.
+The planner covers the parameter-selection features supported by Akita, including batching and extension fields. For each case it resolves the fold parameters that minimize the modeled proof size.
 
 The planner can also generate schedule values when a preset wants a table-backed runtime path. Later runtime calls can fetch and expand those compact entries quickly instead of repeating the heavy dynamic-programming search.
 
@@ -20,7 +20,7 @@ Estimates are neither serialized nor Fiat–Shamir bound.
 ## Inputs And Outputs
 
 The public search entry point is
-`find_schedule(&key, &precommitted_fold_witness_norms, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
+`find_schedule(&key, final_honest_fold_policy, &precommitted_honest_fold_policies, &policy, ring_challenge_config)`.
 
 `key: AkitaScheduleLookupKey` describes the supported root opening shape.
 Single-group openings store one `PolynomialGroupLayout` in `final_group` and
@@ -46,7 +46,7 @@ multiplicity is always `1`; multi-group roots derive those counts from
 - Ring-subfield norm bound.
 - One-hot chunk size.
 
-The `ring_challenge_config` closure supplies the sparse challenge configuration for a ring dimension, and the `fold_challenge_shape_at_level` closure supplies the fold challenge shape for a level. They are closures instead of config methods so the planner stays independent of `CommitmentConfig`.
+The `ring_challenge_config` closure supplies the sparse challenge configuration for a ring dimension. It is a closure instead of a config method so the planner stays independent of `CommitmentConfig`.
 
 ## Resolution Flow
 
@@ -58,7 +58,7 @@ Most runtime callers use `resolve_schedule` / `resolve_group_batch_schedule`, no
    `GeneratedFoldScheduleEntry` with `schedule_from_entry`.
 4. If there is no catalog or no matching entry, the request is unsupported.
 
-Table generation and table expansion are deterministic functions of the lookup key, `PlannerPolicy`, and the two closures. This is important because prover and verifier must resolve the same schedule before the Fiat-Shamir transcript is bound.
+Table generation and table expansion are deterministic functions of the lookup key, `PlannerPolicy`, and ring-challenge closure. This is important because prover and verifier must resolve the same schedule before the Fiat-Shamir transcript is bound.
 
 ## Search Model
 
@@ -268,12 +268,6 @@ regeneration flow may write the checked-in generated catalog.
 The lookup key carries the root vector counts needed for batched openings. Root B and D widths are sized with the batch factor directly, and the root proof-size formula uses the root `z` vector count.
 
 Recursive levels are always single-claim levels: after the root fold, the next witness is one packed object that is folded or shipped.
-
-### Tensor Challenges
-
-Some presets use a tensor-shaped level-0 fold challenge. Catalog identity records the root fold shape, so tensor and flat tables cannot be accidentally interchanged when both policies otherwise have the same field and ring dimension.
-
-Recursive levels use the flat fold shape in the current planner search.
 
 ### Extension Fields
 

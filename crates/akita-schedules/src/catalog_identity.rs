@@ -9,12 +9,10 @@ use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::instance_descriptor::AKITA_INSTANCE_DESCRIPTOR_VERSION;
-use akita_types::{
-    AkitaScheduleInputs, CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout,
-};
+use akita_types::{CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout};
 
 use crate::generated::{
     generated_schedule_key_cmp, GeneratedBlockGeometry, GeneratedCommittedGroup,
@@ -98,13 +96,6 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     write_optional_usize(&mut h, identity.setup_field_budget);
     h.write_u64(identity.min_offloaded_witness_contraction as u64);
 
-    match identity.root_fold_shape {
-        TensorChallengeShape::Flat => h.write_u64(0),
-        TensorChallengeShape::Tensor { fold_low_len } => {
-            h.write_u64(1);
-            h.write_u64(fold_low_len as u64);
-        }
-    }
     h.write_u64(identity.ring_dimensions.len() as u64);
     for &d in identity.ring_dimensions {
         h.write_u64(d as u64);
@@ -154,7 +145,6 @@ struct CatalogIdentityExpectation {
     witness_chunk: akita_types::ChunkedWitnessCfg,
     recursive_setup_planning: bool,
 
-    root_fold_shape: TensorChallengeShape,
     ring_dimension_candidates: Vec<CommitmentRingDims>,
     ring_dimensions: Vec<usize>,
     ring_challenge_config_digest: u64,
@@ -186,7 +176,6 @@ impl CatalogIdentityExpectation {
             witness_chunk: identity.witness_chunk,
             recursive_setup_planning: identity.recursive_setup_planning,
 
-            root_fold_shape: identity.root_fold_shape,
             ring_dimension_candidates: identity.ring_dimension_candidates.to_vec(),
             ring_dimensions: identity.ring_dimensions.to_vec(),
             ring_challenge_config_digest: identity.ring_challenge_config_digest,
@@ -211,9 +200,7 @@ fn catalog_identity_expectation(
     policy: &PlannerPolicy,
     entries: &[GeneratedFoldScheduleEntry],
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<CatalogIdentityExpectation, AkitaError> {
-    let root_fold_shape = root_fold_shape_for_entries(entries, &fold_challenge_shape_at_level)?;
     validate_entry_candidate_dimensions(entries, policy.ring_dimension_candidates)?;
     let ring_dimension_candidates = policy.ring_dimension_candidates.to_vec();
     let ring_dimensions = collect_ring_dimensions(entries);
@@ -241,7 +228,6 @@ fn catalog_identity_expectation(
         witness_chunk: policy.witness_chunk,
         recursive_setup_planning: policy.recursive_setup_planning,
 
-        root_fold_shape,
         ring_dimension_candidates,
         ring_dimensions,
         ring_challenge_config_digest,
@@ -257,15 +243,9 @@ pub fn expected_catalog_identity(
     policy: &PlannerPolicy,
     entries: &[GeneratedFoldScheduleEntry],
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<GeneratedScheduleCatalogIdentity, AkitaError> {
-    let expected = catalog_identity_expectation(
-        family_name,
-        policy,
-        entries,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
-    )?;
+    let expected =
+        catalog_identity_expectation(family_name, policy, entries, ring_challenge_config)?;
     Ok(GeneratedScheduleCatalogIdentity {
         family_name: expected.family_name,
         protocol_epoch: expected.protocol_epoch,
@@ -287,7 +267,6 @@ pub fn expected_catalog_identity(
         witness_chunk: expected.witness_chunk,
         recursive_setup_planning: expected.recursive_setup_planning,
 
-        root_fold_shape: expected.root_fold_shape,
         ring_dimension_candidates: intern_ring_dimension_candidates(
             expected.ring_dimension_candidates,
         ),
@@ -303,7 +282,6 @@ pub fn validate_catalog_identity(
     catalog: &GeneratedScheduleTable,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<(), AkitaError> {
     let cache_key = CatalogValidationCacheKey {
         entries_ptr: catalog.entries.as_ptr() as usize,
@@ -312,19 +290,10 @@ pub fn validate_catalog_identity(
         policy_digest: policy_digest(policy),
     };
     if lock_validated_catalogs()?.contains(&cache_key) {
-        return verify_runtime_hooks_on_cache_hit(
-            catalog,
-            ring_challenge_config,
-            fold_challenge_shape_at_level,
-        );
+        return verify_runtime_hooks_on_cache_hit(catalog, ring_challenge_config);
     }
 
-    validate_catalog_identity_impl(
-        catalog,
-        policy,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
-    )?;
+    validate_catalog_identity_impl(catalog, policy, ring_challenge_config)?;
 
     lock_validated_catalogs()?.insert(cache_key);
     Ok(())
@@ -334,7 +303,6 @@ fn validate_catalog_identity_impl(
     catalog: &GeneratedScheduleTable,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<(), AkitaError> {
     validate_catalog_keys(catalog.entries)?;
     let embedded = catalog.identity;
@@ -343,7 +311,6 @@ fn validate_catalog_identity_impl(
         policy,
         catalog.entries,
         ring_challenge_config,
-        fold_challenge_shape_at_level,
     )?;
     if CatalogIdentityExpectation::from_embedded(&embedded) != expected {
         return Err(catalog_identity_mismatch_error(
@@ -357,17 +324,8 @@ fn validate_catalog_identity_impl(
 fn verify_runtime_hooks_on_cache_hit(
     catalog: &GeneratedScheduleTable,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<(), AkitaError> {
     verify_ring_challenge_config_digest_on_cache_hit(&catalog.identity, ring_challenge_config)?;
-    let root_fold_shape =
-        root_fold_shape_for_entries(catalog.entries, &fold_challenge_shape_at_level)?;
-    if root_fold_shape != catalog.identity.root_fold_shape {
-        return Err(catalog_identity_mismatch_error(
-            catalog.identity.family_name,
-            "root_fold_shape",
-        ));
-    }
     Ok(())
 }
 
@@ -408,42 +366,6 @@ fn catalog_identity_mismatch_error(family_name: &str, field: &str) -> AkitaError
     AkitaError::InvalidSetup(format!(
         "schedule catalog identity mismatch for family {family_name}: {field}"
     ))
-}
-
-fn root_fold_shape_for_key(
-    key: PolynomialGroupLayout,
-    fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<TensorChallengeShape, AkitaError> {
-    let input_witness_len = 1usize
-        .checked_shl(key.num_vars() as u32)
-        .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
-    Ok(fold_challenge_shape_at_level(AkitaScheduleInputs {
-        num_vars: key.num_vars(),
-        level: 0,
-        input_witness_len,
-    }))
-}
-
-fn root_fold_shape_for_entries(
-    entries: &[GeneratedFoldScheduleEntry],
-    fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<TensorChallengeShape, AkitaError> {
-    let first = entries
-        .first()
-        .map(|e| e.root.final_group.layout)
-        .ok_or_else(|| AkitaError::InvalidSetup("empty schedule catalog".to_string()))?;
-    let expected = root_fold_shape_for_key(first, fold_challenge_shape_at_level)?;
-    for entry in entries.iter().skip(1) {
-        let actual =
-            root_fold_shape_for_key(entry.root.final_group.layout, fold_challenge_shape_at_level)?;
-        if actual != expected {
-            return Err(AkitaError::InvalidSetup(format!(
-                "schedule catalog family has mixed root fold shapes: first key {:?} uses {:?}, key {:?} uses {:?}",
-                first, expected, entry.root.final_group.layout, actual
-            )));
-        }
-    }
-    Ok(expected)
 }
 
 fn collect_ring_dimensions(entries: &[GeneratedFoldScheduleEntry]) -> Vec<usize> {

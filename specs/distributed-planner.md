@@ -695,11 +695,6 @@ Add **D = 64 multi-chunk companions** for the existing non-zk D64 families:
 | `fp128_d64_onehot` | `fp128_d64_onehot_multi_chunk` | `fp128::D64OneHotMultiChunk` |
 | `fp128_d64_dense` | `fp128_d64_dense_multi_chunk` | `fp128::D64DenseMultiChunk` |
 
-**Exclude** tensor multi-chunk companions for now. The **tensor** verifier family
-(`fp128_d64_onehot_tensor`) does not get a multi-chunk companion: the
-tensor-shaped root challenge is an orthogonal verifier-cost optimization, kept
-separate from the distributed-prover witness layout for now.
-
 The companions delegate every layout parameter to their base `Cfg` via the
 `impl_multi_chunk_companion!` helper and override only `chunked_witness_cfg()`
 (→ `ChunkedWitnessCfg::d64_production()`) and `schedule_catalog()`.

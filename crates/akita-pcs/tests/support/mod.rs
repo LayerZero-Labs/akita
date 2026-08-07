@@ -3,13 +3,13 @@
 //! Crate unit tests include this module under `cfg(test)`. Production builds
 //! never compile it.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_config::{committed_group_profile, policy_of, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::{
-    schedule_row_digest, AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupBatchProfile,
-    DecompositionParams, FoldSchedule, OpeningClaimsLayout, OpeningScheduleSelection,
-    PolynomialGroupLayout, SetupMatrixCapacity, SisModulusProfileId,
+    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, DecompositionParams,
+    FoldSchedule, OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout,
+    SetupMatrixCapacity, SisModulusProfileId,
 };
 use std::{
     any::TypeId,
@@ -135,10 +135,6 @@ where
         Envelope::ring_challenge_config(d).or_else(|_| Final::ring_challenge_config(d))
     }
 
-    fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
-        Envelope::fold_challenge_shape_at_level(inputs)
-    }
-
     fn sis_modulus_profile() -> SisModulusProfileId {
         Envelope::sis_modulus_profile()
     }
@@ -194,24 +190,19 @@ where
     }
 
     fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
-        let (policy, ring_challenge_config, fold_challenge_shape_at_level) =
-            if key.precommitteds.is_empty() {
-                (
-                    policy_of::<Envelope>(),
-                    Envelope::ring_challenge_config
-                        as fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-                    Envelope::fold_challenge_shape_at_level
-                        as fn(AkitaScheduleInputs) -> TensorChallengeShape,
-                )
-            } else {
-                (
-                    policy_of::<Final>(),
-                    Final::ring_challenge_config
-                        as fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-                    Final::fold_challenge_shape_at_level
-                        as fn(AkitaScheduleInputs) -> TensorChallengeShape,
-                )
-            };
+        let (policy, ring_challenge_config) = if key.precommitteds.is_empty() {
+            (
+                policy_of::<Envelope>(),
+                Envelope::ring_challenge_config
+                    as fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+            )
+        } else {
+            (
+                policy_of::<Final>(),
+                Final::ring_challenge_config
+                    as fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+            )
+        };
         let precommitted_honest_fold_policies =
             vec![Envelope::root_honest_fold_policy(); key.precommitteds.len()];
         akita_planner::find_schedule(
@@ -220,7 +211,6 @@ where
             &precommitted_honest_fold_policies,
             &policy,
             ring_challenge_config,
-            fold_challenge_shape_at_level,
         )
         .map(|planned| planned.schedule)
     }

@@ -74,23 +74,15 @@ chunk and then authenticated relation group. Each unit records its exact
 native quotient tail follows all units. Any successor alignment and Boolean
 padding is one zero suffix after the complete live prefix.
 
-## Chunks and tensor challenges
+## Chunks and fold challenges
 
 Chunks own contiguous ranges of the exact `F` live blocks. Internal allocation
 balances blocks directly: each chunk receives `floor(F / num_chunks)` blocks,
 and the first `F mod num_chunks` chunks receive one additional block. The ranges
 stay exact and contain no padding.
 
-A flat fold challenge has `F` independent coefficients. A tensor challenge
-chooses a power-of-two low-factor width `Q` and derives
-
-```text
-H = ceil(F / Q)
-coefficient(b) = fold_high[b / Q] * fold_low[b % Q]
-```
-
-Only the first `F` products are live, so the last high-factor row may be
-partial. Each commitment group owns its own flat-or-tensor shape.
+Each commitment group owns a fold challenge with `F` independent sparse
+coefficients, one for every live block.
 
 ## Validation boundary
 

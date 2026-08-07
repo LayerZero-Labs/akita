@@ -4,7 +4,7 @@
 //! is [`find_schedule`], which runs an exhaustive dynamic program to
 //! minimize proof size for a schedule lookup key. Every per-preset input is
 //! carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
-//! `fold_challenge_shape_at_level` closure pair, so the planner names no `CommitmentConfig`
+//! ring-challenge closure, so the planner names no `CommitmentConfig`
 //! types and depends only on `akita-schedules` / `akita-types` /
 //! `akita-challenges` / `akita-field`.
 //! Scalar and mixed-D planning are selected internally by the grouped gate from
@@ -26,7 +26,6 @@ pub mod generated_families;
 mod planner;
 pub mod schedule_params;
 
-pub use akita_challenges::TensorChallengeShape;
 pub use akita_schedules::{
     catalog_entries_sorted_for_lookup, estimate_proof_bytes, expected_catalog_identity,
     identity_digest, key_digest, policy_digest, resolve_group_batch_schedule, resolve_schedule,

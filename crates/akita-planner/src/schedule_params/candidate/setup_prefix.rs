@@ -6,7 +6,6 @@ use std::sync::Arc;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct SetupPrefixSearchKey {
     ring_challenge: SparseChallengeConfig,
-    fold_shape: TensorChallengeShape,
     log_basis_open: u32,
     n_prefix: usize,
     num_chunks: usize,
@@ -57,7 +56,6 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     cache: &mut SetupPrefixSearchCache,
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,
-    requested_fold_shape: TensorChallengeShape,
     log_basis_open: u32,
     n_prefix: usize,
     num_chunks: usize,
@@ -65,7 +63,6 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
 ) -> Result<Vec<PrecommittedLevelParams>, AkitaError> {
     let cache_key = SetupPrefixSearchKey {
         ring_challenge: *ring_challenge_cfg,
-        fold_shape: requested_fold_shape,
         log_basis_open,
         n_prefix,
         num_chunks,
@@ -129,7 +126,6 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
             else {
                 continue;
             };
-            let fold_shape = optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
             if num_live_blocks < num_chunks {
                 continue;
             }
@@ -157,7 +153,6 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                 witness_norms: FoldWitnessNorms::bounded(log_basis_inner, d),
                 log_basis_response: log_basis_open,
                 challenge_config: ring_challenge_cfg,
-                challenge_shape: fold_shape,
             }) else {
                 continue;
             };
@@ -168,7 +163,6 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                 d,
                 log_basis_open,
                 ring_challenge_cfg,
-                fold_shape,
                 num_digits_fold,
                 policy.ring_subfield_norm_bound,
             ) else {
@@ -245,8 +239,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                 num_digits_open_val,
                 num_digits_fold,
             )?;
-            let score =
-                layout_candidate_score(physical_width, num_live_blocks, num_chunks, fold_shape)?;
+            let score = layout_candidate_score(physical_width, num_live_blocks, num_chunks)?;
             let compression_source_coefficients = params
                 .layout
                 .outer_commit_matrix

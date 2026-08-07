@@ -74,7 +74,6 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
             &mut cache,
             &policy,
             &challenge,
-            TensorChallengeShape::Flat,
             3,
             1usize << log_prefix,
             1,

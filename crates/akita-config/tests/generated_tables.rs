@@ -36,7 +36,6 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_planner::generated_families::{
@@ -86,9 +85,6 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
                 .is_some()
         }
         "fp128_d64_dense" => fp128::D64Dense::schedule_catalog().is_some(),
-        "fp128_d64_onehot_tensor" => {
-            tensor_verifier::fp128::D64OneHotTensor::schedule_catalog().is_some()
-        }
         "fp128_d64_onehot_multi_chunk" => fp128::D64OneHotMultiChunk::schedule_catalog().is_some(),
         "fp128_d64_onehot_multi_chunk_w2r2" => {
             fp128::D64OneHotMultiChunkW2R2::schedule_catalog().is_some()
@@ -133,13 +129,8 @@ fn prepare_family_catalog<Cfg: CommitmentConfig>(
     let catalog = Cfg::schedule_catalog().unwrap_or_else(|| {
         panic!("family {module_name} must expose schedule_catalog() under all-schedules")
     });
-    validate_generated_schedule_table(
-        &catalog,
-        &policy_of::<Cfg>(),
-        &Cfg::ring_challenge_config,
-        &Cfg::fold_challenge_shape_at_level,
-    )
-    .unwrap_or_else(|e| panic!("catalog validation failed for {module_name}: {e}"));
+    validate_generated_schedule_table(&catalog, &policy_of::<Cfg>(), &Cfg::ring_challenge_config)
+        .unwrap_or_else(|e| panic!("catalog validation failed for {module_name}: {e}"));
     assert!(
         catalog_entries_sorted_for_lookup(catalog.entries),
         "family {module_name} catalog entries must be sorted for binary lookup"
@@ -220,7 +211,6 @@ fn catalog_identity_rejects_non_v1_protocol_epoch() {
         &catalog,
         &policy_of::<fp128::D64Dense>(),
         fp128::D64Dense::ring_challenge_config,
-        fp128::D64Dense::fold_challenge_shape_at_level,
     )
     .expect_err("non-v1 protocol epoch must not validate");
     assert!(error.to_string().contains("catalog identity mismatch"));
@@ -232,13 +222,9 @@ fn catalog_identity_rejects_planner_policy_changes() {
     let policy = policy_of::<fp128::D64Dense>();
     let catalog = fp128::D64Dense::schedule_catalog().expect("generated catalog");
     let assert_rejected = |label: &str, mutated: akita_schedules::GeneratedScheduleTable| {
-        let error = validate_catalog_identity(
-            &mutated,
-            &policy,
-            fp128::D64Dense::ring_challenge_config,
-            fp128::D64Dense::fold_challenge_shape_at_level,
-        )
-        .expect_err("planner-policy mismatch must not validate");
+        let error =
+            validate_catalog_identity(&mutated, &policy, fp128::D64Dense::ring_challenge_config)
+                .expect_err("planner-policy mismatch must not validate");
         assert!(
             error.to_string().contains("catalog identity mismatch"),
             "{label} mutation returned the wrong error: {error}"
@@ -310,7 +296,6 @@ fn mixed_catalog_identity_binds_nonwinning_candidate_tuples() {
         &mutated,
         &policy,
         fp128::MixedDimFp128OneHot::ring_challenge_config,
-        fp128::MixedDimFp128OneHot::fold_challenge_shape_at_level,
     )
     .expect_err("removing an admitted nonwinner must invalidate the catalog");
     assert!(error.to_string().contains("catalog identity mismatch"));
@@ -355,9 +340,6 @@ fn family_catalog(
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
         >(family, keys),
         "fp128_d64_dense" => prepare_family_catalog::<fp128::D64Dense>(family, keys),
-        "fp128_d64_onehot_tensor" => {
-            prepare_family_catalog::<tensor_verifier::fp128::D64OneHotTensor>(family, keys)
-        }
         "fp128_d64_onehot_multi_chunk" => {
             prepare_family_catalog::<fp128::D64OneHotMultiChunk>(family, keys)
         }
@@ -448,9 +430,6 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, requests: &[Gro
         "fp128_d64_dense" => {
             assert_group_batch_table_hits::<fp128::D64Dense>(family.module_name, requests)
         }
-        "fp128_d64_onehot_tensor" => assert_group_batch_table_hits::<
-            tensor_verifier::fp128::D64OneHotTensor,
-        >(family.module_name, requests),
         "fp128_d64_onehot_multi_chunk" => {
             assert_group_batch_table_hits::<fp128::D64OneHotMultiChunk>(
                 family.module_name,
@@ -500,7 +479,6 @@ fn table_backed_group_batch_schedule(
             &request.0,
             &(family.policy)(),
             family.ring_challenge_config,
-            family.fold_challenge_shape_at_level,
         );
     }
     (family.regen_group_batch)(request.0.clone(), request.1.clone())
@@ -542,9 +520,6 @@ fn resolve_family_group_batch_schedule(
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
         >(request),
         "fp128_d64_dense" => table_backed_group_batch_schedule::<fp128::D64Dense>(request),
-        "fp128_d64_onehot_tensor" => {
-            table_backed_group_batch_schedule::<tensor_verifier::fp128::D64OneHotTensor>(request)
-        }
         "fp128_d64_onehot_multi_chunk" => {
             table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunk>(request)
         }
@@ -585,7 +560,6 @@ fn table_backed_expanded(
         &lookup_key,
         &(family.policy)(),
         family.ring_challenge_config,
-        family.fold_challenge_shape_at_level,
     )
 }
 

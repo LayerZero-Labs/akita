@@ -3,13 +3,12 @@
 //! These policies select an exact gadget depth for schedule generation. They
 //! are not runtime protocol metadata and are never evaluated by the verifier.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
 use super::{
-    decomposition_digits::balanced_digit_max, fold_witness_linf_cap_policy,
-    fold_witness_unsnapped_linf_cap, num_digits_for_bound, FoldChallengeNorms,
-    FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessNorms,
+    decomposition_digits::balanced_digit_max, fold_witness_unsnapped_linf_cap,
+    num_digits_for_bound, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
     FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM,
     FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
 };
@@ -29,7 +28,6 @@ pub struct HonestFoldSizingQuery<'a> {
     /// Basis used to decompose the emitted folded response.
     pub log_basis_response: u32,
     pub challenge_config: &'a SparseChallengeConfig,
-    pub challenge_shape: TensorChallengeShape,
 }
 
 /// One group-owned offline rule for selecting its folded-witness digit depth.
@@ -101,10 +99,7 @@ impl BalancedSignedDigitFoldPolicy {
         }
     }
 
-    fn unsnapped_cap(
-        &self,
-        query: HonestFoldSizingQuery<'_>,
-    ) -> Result<(u128, Option<u128>, FoldWitnessLinfCapPolicy), AkitaError> {
+    fn unsnapped_cap(&self, query: HonestFoldSizingQuery<'_>) -> Result<(u128, u128), AkitaError> {
         self.witness.validate()?;
         self.snap.validate()?;
         validate_query(query)?;
@@ -112,25 +107,16 @@ impl BalancedSignedDigitFoldPolicy {
         // logical single-fold geometry even though the query reports every
         // physical response coefficient.
         let logical_fold_coeffs = query.num_fold_coeffs / query.num_chunks;
-        let policy = fold_witness_linf_cap_policy(
-            query.challenge_config,
-            query.challenge_shape,
-            query.ring_dimension,
-        );
-        let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
-            query.challenge_config,
-            query.challenge_shape,
-            query.ring_dimension,
-            logical_fold_coeffs,
-        )?;
+        let cap_config =
+            FoldWitnessLinfCapConfig::for_fold_coeffs(query.challenge_config, logical_fold_coeffs)?;
         let (cap, tail_cap) = fold_witness_unsnapped_linf_cap(
             query.num_live_blocks,
             query.num_claims,
-            FoldChallengeNorms::new(query.challenge_config, query.challenge_shape),
+            FoldChallengeNorms::new(query.challenge_config),
             query.witness_norms,
             &cap_config,
         )?;
-        Ok((cap, tail_cap, policy))
+        Ok((cap, tail_cap))
     }
 
     fn digit_depth_for_cap(&self, cap: u128, log_basis: u32) -> usize {
@@ -141,23 +127,13 @@ impl BalancedSignedDigitFoldPolicy {
 
 impl HonestFoldPolicy for BalancedSignedDigitFoldPolicy {
     fn num_digits_fold(&self, query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
-        let (cap, tail_cap, policy) = self.unsnapped_cap(query)?;
+        let (cap, tail_cap) = self.unsnapped_cap(query)?;
         let mut digits = self.digit_depth_for_cap(cap, query.log_basis_response);
-        if matches!(
-            policy,
-            FoldWitnessLinfCapPolicy::TailBoundWithGrind
-                | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind
-        ) {
-            if let Some(tail_cap) = tail_cap {
-                let floor = tail_cap.saturating_mul(u128::from(self.snap.retain_num))
-                    / u128::from(self.snap.retain_den);
-                let floor = floor.max(1);
-                while digits > 1
-                    && balanced_digit_max(query.log_basis_response, digits - 1) >= floor
-                {
-                    digits -= 1;
-                }
-            }
+        let floor = tail_cap.saturating_mul(u128::from(self.snap.retain_num))
+            / u128::from(self.snap.retain_den);
+        let floor = floor.max(1);
+        while digits > 1 && balanced_digit_max(query.log_basis_response, digits - 1) >= floor {
+            digits -= 1;
         }
         Ok(digits)
     }
@@ -210,9 +186,6 @@ impl UnitOneHotFoldPolicy {
     }
 
     fn exact_threshold(&self, query: HonestFoldSizingQuery<'_>) -> Option<u128> {
-        if !matches!(query.challenge_shape, TensorChallengeShape::Flat) {
-            return None;
-        }
         let cfg = query.challenge_config;
         if cfg.weight() > query.ring_dimension || query.ring_dimension == 0 {
             return None;
@@ -266,7 +239,7 @@ impl HonestFoldPolicy for UnitOneHotFoldPolicy {
             return Ok(legacy);
         };
         let live_blocks_per_chunk = query.num_live_blocks.div_ceil(query.num_chunks);
-        let challenge = FoldChallengeNorms::new(query.challenge_config, query.challenge_shape);
+        let challenge = FoldChallengeNorms::new(query.challenge_config);
         let worst_case = challenge
             .l1_norm
             .checked_mul(query.num_claims as u128)
@@ -407,7 +380,6 @@ mod tests {
             witness_norms: FoldWitnessNorms::bounded(3, 64),
             log_basis_response: 3,
             challenge_config: challenge,
-            challenge_shape: TensorChallengeShape::Flat,
         }
     }
 
@@ -469,19 +441,15 @@ mod tests {
         let witness = FoldWitnessNorms::bounded(3, 64);
         let policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(128, witness);
         let actual = policy.num_digits_fold(query).expect("balanced policy");
-        let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
-            &challenge,
-            query.challenge_shape,
-            query.ring_dimension,
-            query.num_fold_coeffs,
-        )
-        .expect("cap config");
+        let cap_config =
+            FoldWitnessLinfCapConfig::for_fold_coeffs(&challenge, query.num_fold_coeffs)
+                .expect("cap config");
         let expected = super::super::fold_witness_digit_plan(
             query.num_live_blocks,
             query.num_claims,
             128,
             query.log_basis_response,
-            FoldChallengeNorms::new(&challenge, query.challenge_shape),
+            FoldChallengeNorms::new(&challenge),
             witness,
             &cap_config,
         )
@@ -491,7 +459,7 @@ mod tests {
     }
 
     #[test]
-    fn unit_one_hot_never_exceeds_legacy_and_tensor_falls_back() {
+    fn unit_one_hot_never_exceeds_legacy() {
         let challenge = d64_challenge();
         let legacy_witness = FoldWitnessNorms::new(1, 4);
         let one_hot = UnitOneHotFoldPolicy::preserving_existing_behavior(128, legacy_witness);
@@ -507,15 +475,6 @@ mod tests {
             .and_then(|count| count.checked_mul(challenge.infinity_norm() as usize))
             .unwrap() as u128;
         assert!(one_hot.exact_threshold(flat).unwrap() <= deterministic_cap);
-
-        let tensor = HonestFoldSizingQuery {
-            challenge_shape: TensorChallengeShape::Tensor { fold_low_len: 4 },
-            ..flat
-        };
-        assert_eq!(
-            one_hot.num_digits_fold(tensor).expect("tensor fallback"),
-            legacy.num_digits_fold(tensor).expect("legacy tensor")
-        );
     }
 
     #[test]
@@ -541,7 +500,6 @@ mod tests {
                             witness_norms: legacy_witness,
                             log_basis_response: log_basis,
                             challenge_config: &challenge,
-                            challenge_shape: TensorChallengeShape::Flat,
                         };
                         let exact_digits = one_hot.num_digits_fold(query).unwrap();
                         let legacy_digits = legacy.num_digits_fold(query).unwrap();
@@ -586,7 +544,6 @@ mod tests {
                 witness_norms: FoldWitnessNorms::new(1, 4),
                 log_basis_response: 3,
                 challenge_config: &challenge,
-                challenge_shape: TensorChallengeShape::Flat,
             };
             assert_eq!(
                 physical.num_fold_coeffs,
@@ -608,7 +565,6 @@ mod tests {
             witness_norms: FoldWitnessNorms::new(1, 4),
             log_basis_response: 3,
             challenge_config: &challenge,
-            challenge_shape: TensorChallengeShape::Flat,
         };
         assert_eq!(
             one_hot
@@ -638,7 +594,6 @@ mod tests {
             witness_norms: FoldWitnessNorms::new(1, 4),
             log_basis_response: 3,
             challenge_config: &challenge,
-            challenge_shape: TensorChallengeShape::Flat,
         };
         let largest_window = HonestFoldSizingQuery {
             num_live_blocks: 3,

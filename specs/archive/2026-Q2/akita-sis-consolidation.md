@@ -46,7 +46,7 @@ explicitly.
 > Note: this lives as a **module inside the existing `akita-types` crate**, not a
 > new crate. `akita-types` already depends on `akita-challenges` and
 > `akita-field`, so every input type the SIS APIs need (`SparseChallengeConfig`,
-> `TensorChallengeShape`, `DecompositionParams`, `AjtaiKeyParams`, `AkitaError`)
+> `DecompositionParams`, `AjtaiKeyParams`, `AkitaError`)
 > is already in scope — no new crate, no dependency-layering or cycle concerns.
 
 ## Intent
@@ -198,7 +198,6 @@ pub fn rounded_up_norm_s(
     d: usize,
     decomposition: DecompositionParams,
     fold_challenge_config: &SparseChallengeConfig,
-    fold_shape: TensorChallengeShape,
     is_root: bool,
     onehot_chunk_size: usize,
     ring_subfield_norm_bound: u32,
@@ -216,7 +215,6 @@ pub fn rounded_up_norm_w(sis_modulus_profile: SisModulusProfileId, d: usize, log
 pub fn rounded_up_norm_z(
     decomposition: DecompositionParams,
     fold_challenge_config: &SparseChallengeConfig,
-    fold_shape: TensorChallengeShape,
     block_index_bits: usize,
     num_claims: usize,
     d: usize,
@@ -231,8 +229,7 @@ next level rather than committed, so `rounded_up_norm_z` returns the fold bound
 β. If preferred, `rounded_up_norm_z` can instead return the *digit count*
 directly and live in `decomposition_digits.rs` — see Open Questions.
 
-`b/d` currently call `WitnessType::T/W::binding_norm` with `fold_shape = Flat`
-because the collision is challenge-independent; `rounded_up_norm_t/w` drop the
+`b/d` collision sizing is challenge-independent; `rounded_up_norm_t/w` drop the
 challenge args entirely, which is strictly clearer.
 
 ### Submodule: `sis/decomposition_digits.rs`
@@ -278,7 +275,7 @@ specified (no `compute_ajtai_key_params_*` wrapper):
 use akita_types::sis::*;
 
 // A key
-let norm_s   = rounded_up_norm_s(family, d, decomp, &stage1, fold_shape, is_root, onehot_k, nu)
+let norm_s   = rounded_up_norm_s(family, d, decomp, &stage1, is_root, onehot_k, nu)
     .ok_or(/* InvalidSetup */)?;
 let d_commit = num_digits_inner(decomp, log_basis, is_root);
 let width_s  = decomposed_s_block_ring_count(num_positions_per_block, d_commit).ok_or(..)?;
