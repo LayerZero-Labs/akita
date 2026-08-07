@@ -1101,6 +1101,7 @@ mod delayed_product_sum_contract {
     impl HasUnreducedOps for LossyField {
         type MulU64Accum = WrappingU64Accum;
         type ProductAccum = WrappingU64Accum;
+        type SmallProductAccum = WrappingU64Accum;
 
         // Deliberately inexact: the accumulator wraps mod 2^64, so a delayed
         // batch sum diverges from per-term `Mul` once the sum crosses 2^64.
@@ -1111,6 +1112,12 @@ mod delayed_product_sum_contract {
         }
         fn mul_to_product_accum(self, other: Self) -> WrappingU64Accum {
             WrappingU64Accum((self.0 * other.0).to_limbs())
+        }
+        fn mul_u16_to_small_product_accum(self, small: u16) -> WrappingU64Accum {
+            self.mul_u64_unreduced(u64::from(small))
+        }
+        fn promote_small_product_accum(accum: WrappingU64Accum) -> WrappingU64Accum {
+            accum
         }
         fn reduce_mul_u64_accum(accum: WrappingU64Accum) -> Self {
             Self(Inner::from_u64(accum.0))

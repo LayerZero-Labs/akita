@@ -21,6 +21,7 @@ use rand_core::RngCore;
 use crate::unreduced::{
     AccumPair, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp32ProductAccum, Fp32x2i32,
     Fp64ProductAccum, Fp64x4i32, FpExt2Fp64ProductAccum, FpExt4Fp32ProductAccum,
+    FpExt4Fp32SmallProductAccum,
 };
 use crate::{Fp128, Fp32, Fp64, FpExt2, FpExt2Config, FpExt4, FpExt8};
 
@@ -196,6 +197,7 @@ impl jf::AdditiveGroup for Fp64ProductAccum {}
 impl jf::AdditiveGroup for Fp128MulU64Accum {}
 impl jf::AdditiveGroup for Fp128ProductAccum {}
 impl jf::AdditiveGroup for FpExt4Fp32ProductAccum {}
+impl jf::AdditiveGroup for FpExt4Fp32SmallProductAccum {}
 impl jf::AdditiveGroup for FpExt2Fp64ProductAccum {}
 
 impl<A: crate::AdditiveGroup> jf::AdditiveGroup for AccumPair<A> {}
@@ -282,6 +284,7 @@ mod tests {
         assert_jolt_allocative_additive_group::<Fp128MulU64Accum>();
         assert_jolt_allocative_additive_group::<Fp128ProductAccum>();
         assert_jolt_allocative_additive_group::<FpExt4Fp32ProductAccum>();
+        assert_jolt_allocative_additive_group::<FpExt4Fp32SmallProductAccum>();
         assert_jolt_allocative_additive_group::<FpExt2Fp64ProductAccum>();
         assert_jolt_allocative_additive_group::<AccumPair<Fp64ProductAccum>>();
     }

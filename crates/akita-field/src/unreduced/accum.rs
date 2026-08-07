@@ -164,6 +164,83 @@ impl Neg for FpExt4Fp32ProductAccum {
     }
 }
 
+/// Short-batch accumulator for `FpExt4<Fp32> × u16` products.
+///
+/// Compact sumcheck kernels use this type while scanning one bounded group,
+/// then promote it to [`FpExt4Fp32ProductAccum`] before merging groups. Each
+/// lane holds a sum of canonical 32-bit coefficients times unsigned 16-bit
+/// factors. Callers must keep that group sum below `u64::MAX`.
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FpExt4Fp32SmallProductAccum(pub [u64; 4]);
+
+impl FpExt4Fp32SmallProductAccum {
+    /// Additive identity accumulator.
+    pub const ZERO: Self = Self([0; 4]);
+}
+
+impl Add for FpExt4Fp32SmallProductAccum {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self([
+            self.0[0].wrapping_add(rhs.0[0]),
+            self.0[1].wrapping_add(rhs.0[1]),
+            self.0[2].wrapping_add(rhs.0[2]),
+            self.0[3].wrapping_add(rhs.0[3]),
+        ])
+    }
+}
+
+impl AddAssign for FpExt4Fp32SmallProductAccum {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.0[0] = self.0[0].wrapping_add(rhs.0[0]);
+        self.0[1] = self.0[1].wrapping_add(rhs.0[1]);
+        self.0[2] = self.0[2].wrapping_add(rhs.0[2]);
+        self.0[3] = self.0[3].wrapping_add(rhs.0[3]);
+    }
+}
+
+impl Sub for FpExt4Fp32SmallProductAccum {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self([
+            self.0[0].wrapping_sub(rhs.0[0]),
+            self.0[1].wrapping_sub(rhs.0[1]),
+            self.0[2].wrapping_sub(rhs.0[2]),
+            self.0[3].wrapping_sub(rhs.0[3]),
+        ])
+    }
+}
+
+impl SubAssign for FpExt4Fp32SmallProductAccum {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0[0] = self.0[0].wrapping_sub(rhs.0[0]);
+        self.0[1] = self.0[1].wrapping_sub(rhs.0[1]);
+        self.0[2] = self.0[2].wrapping_sub(rhs.0[2]);
+        self.0[3] = self.0[3].wrapping_sub(rhs.0[3]);
+    }
+}
+
+impl Neg for FpExt4Fp32SmallProductAccum {
+    type Output = Self;
+
+    #[inline]
+    fn neg(self) -> Self {
+        Self([
+            self.0[0].wrapping_neg(),
+            self.0[1].wrapping_neg(),
+            self.0[2].wrapping_neg(),
+            self.0[3].wrapping_neg(),
+        ])
+    }
+}
+
 /// Accumulator for `Fp64 × u64` products (also used for `Fp64 × Fp64`).
 ///
 /// Each product is ≤ 128 bits, split into two u64 halves stored as u128 slots.

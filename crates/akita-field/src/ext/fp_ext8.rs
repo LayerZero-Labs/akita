@@ -488,6 +488,7 @@ macro_rules! impl_fp_ext8_unreduced_identity {
         impl<const $p: $pty> HasUnreducedOps for FpExt8<$base<$p>> {
             type MulU64Accum = Self;
             type ProductAccum = Self;
+            type SmallProductAccum = Self;
 
             #[inline]
             fn mul_u64_unreduced(self, small: u64) -> Self {
@@ -497,6 +498,14 @@ macro_rules! impl_fp_ext8_unreduced_identity {
             #[inline]
             fn mul_to_product_accum(self, other: Self) -> Self {
                 self * other
+            }
+            #[inline]
+            fn mul_u16_to_small_product_accum(self, small: u16) -> Self {
+                self * Self::from_u64(u64::from(small))
+            }
+            #[inline]
+            fn promote_small_product_accum(accum: Self) -> Self {
+                accum
             }
             #[inline]
             fn reduce_mul_u64_accum(accum: Self) -> Self {

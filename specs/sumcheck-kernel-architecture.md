@@ -427,6 +427,15 @@ Full field products may need a different accumulator. The operation plan may
 select different accumulation code for compact first rounds and later full field
 rounds.
 
+`HasUnreducedOps::SmallProductAccum` is the exact short-batch primitive for a
+field value times an unsigned 16-bit value. Its implementation states the
+maximum safe number of terms. Compact operations accumulate positive and
+negative terms separately, promote each bounded batch into `ProductAccum`, and
+perform the ordinary field reduction only at the protocol boundary. For
+`FpExt4<Fp32>`, the short accumulator is four `u64` coefficient sums and the
+long accumulator is four `u128` coefficient sums. Other fields may use their
+ordinary product accumulator for both roles.
+
 The specification does not require a universal packed accumulator trait. Such a
 trait would force unrelated fields and protocols into one shape. The canonical
 sumcheck operation owns its accumulator and uses the field's existing reduction
@@ -504,6 +513,14 @@ canonical pair shape once and sharing it across grouped accumulation, fused
 folding, and the ordinary sparse fallback reduced the same fp32 benchmark to a
 182.94 ms clean median. This is 40.0 percent below the 305.00 ms sparse-table
 baseline.
+
+The fp32 Stage 2 compact prefix originally widened every digit-derived product
+into four `u128` coefficient sums. Accumulating each x-column first in the exact
+`u64` short-batch representation and promoting once per output reduced the root
+prefix from about 103 to 107 ms to 92 to 93 ms on Apple Silicon. Complete root
+Stage 2 fell from about 258 ms to 229 to 230 ms. An explicit NEON multiply was
+rejected because it measured 98 to 99 ms; LLVM's scalar source shape generated
+the better loop.
 
 ### Existing state changes
 

@@ -479,42 +479,41 @@ pub(crate) fn accum_lookup_vector_signed<E: FieldCore + HasUnreducedOps, const N
 }
 
 #[inline]
-pub(crate) fn accum_lookup_vector_signed_selected<
-    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
+pub(crate) fn accum_lookup_vector_small_signed_selected<
+    E: FieldCore + HasUnreducedOps,
     const N: usize,
     const M: usize,
 >(
-    pos: &mut [E::ProductAccum; N],
-    neg: &mut [E::ProductAccum; N],
+    pos: &mut [E::SmallProductAccum; N],
+    neg: &mut [E::SmallProductAccum; N],
     coeff: E,
     values: &[i64; M],
     selected_indices: &[usize; N],
 ) {
     for (dst_idx, &src_idx) in selected_indices.iter().enumerate() {
         let value = values[src_idx];
+        debug_assert!(value.unsigned_abs() <= u64::from(u16::MAX));
         if value > 0 {
-            pos[dst_idx] += coeff.mul_u64_to_product_accum(value as u64);
+            pos[dst_idx] += coeff.mul_u16_to_small_product_accum(value as u16);
         } else if value < 0 {
-            neg[dst_idx] += coeff.mul_u64_to_product_accum(value.unsigned_abs());
+            neg[dst_idx] += coeff.mul_u16_to_small_product_accum(value.unsigned_abs() as u16);
         }
     }
 }
 
 #[inline]
-pub(crate) fn accum_pointwise_signed<
-    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
-    const N: usize,
->(
-    pos: &mut [E::ProductAccum; N],
-    neg: &mut [E::ProductAccum; N],
+pub(crate) fn accum_pointwise_small_signed<E: FieldCore + HasUnreducedOps, const N: usize>(
+    pos: &mut [E::SmallProductAccum; N],
+    neg: &mut [E::SmallProductAccum; N],
     coeffs: &[E; N],
     weights: &[i64; N],
 ) {
     for (idx, (&coeff, &weight)) in coeffs.iter().zip(weights.iter()).enumerate() {
+        debug_assert!(weight.unsigned_abs() <= u64::from(u16::MAX));
         if weight > 0 {
-            pos[idx] += coeff.mul_u64_to_product_accum(weight as u64);
+            pos[idx] += coeff.mul_u16_to_small_product_accum(weight as u16);
         } else if weight < 0 {
-            neg[idx] += coeff.mul_u64_to_product_accum(weight.unsigned_abs());
+            neg[idx] += coeff.mul_u16_to_small_product_accum(weight.unsigned_abs() as u16);
         }
     }
 }

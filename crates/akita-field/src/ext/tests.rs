@@ -439,6 +439,29 @@ fn fp_ext4_fp32_accum_summation() {
 }
 
 #[test]
+fn fp_ext4_fp32_small_product_accum_promotes_exactly() {
+    use crate::Prime32Offset99;
+    use num_traits::Zero;
+
+    type R4Fp32 = FpExt4<Prime32Offset99>;
+
+    let mut rng = StdRng::seed_from_u64(0x5A11);
+    let terms: Vec<(R4Fp32, u16)> = (0..512)
+        .map(|_| (R4Fp32::random(&mut rng), rng.next_u32() as u16 % 197))
+        .collect();
+    let direct = terms.iter().fold(R4Fp32::zero(), |sum, &(value, small)| {
+        sum + value * R4Fp32::from_u64(u64::from(small))
+    });
+    let small_accum = terms.iter().fold(
+        <R4Fp32 as HasUnreducedOps>::SmallProductAccum::zero(),
+        |sum, &(value, small)| sum + value.mul_u16_to_small_product_accum(small),
+    );
+    let promoted = R4Fp32::promote_small_product_accum(small_accum);
+
+    assert_eq!(direct, R4Fp32::reduce_product_accum(promoted));
+}
+
+#[test]
 fn mul_base_to_product_accum_matches_mul_base_sum() {
     use crate::{Fp32, MulBaseUnreduced};
     use num_traits::Zero;

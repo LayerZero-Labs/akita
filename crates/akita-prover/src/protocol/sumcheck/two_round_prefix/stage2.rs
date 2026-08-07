@@ -241,6 +241,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
     let eq_x = EqPolynomial::evals(&stage1_point[ring_bits..])
         .expect("stage-2 x-prefix dimensions are prevalidated");
     let y_quads = y_len >> 2;
+    assert!(y_quads <= E::SMALL_PRODUCT_ACCUM_MAX_TERMS);
     debug_assert_eq!(eq_y_suffix.len(), y_quads);
     let norm_omitted_corner = default_stage2_norm_omitted_corner(
         stage2_norm_corner_weights_from_taus(stage1_point[0], stage1_point[1]),
@@ -291,8 +292,12 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
             let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
             let eq_x_weight = eq_x[x_idx];
             let row_val = relation_matrix_col_evals[x_idx];
-            let mut x_rel_pos = [E::ProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
-            let mut x_rel_neg = [E::ProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_norm_pos = [E::SmallProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_norm_neg = [E::SmallProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_rel_pos = [E::SmallProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_rel_neg = [E::SmallProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_trace_pos = [E::SmallProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_trace_neg = [E::SmallProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate() {
                 let base = 4 * y_quad;
                 let lookup_idx = lookup_index_fn([
@@ -302,14 +307,14 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
                     w_digit_fn(column[base + 3]),
                 ]);
                 let norm_weight = eq_y_weight * eq_x_weight;
-                accum_lookup_vector_signed_selected(
-                    &mut norm_pos,
-                    &mut norm_neg,
+                accum_lookup_vector_small_signed_selected(
+                    &mut x_norm_pos,
+                    &mut x_norm_neg,
                     norm_weight,
                     &norm_table[lookup_idx],
                     norm_point_indices,
                 );
-                accum_pointwise_signed(
+                accum_pointwise_small_signed(
                     &mut x_rel_pos,
                     &mut x_rel_neg,
                     &alpha_point_values_by_quad[y_quad],
@@ -317,17 +322,21 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
                 );
                 let trace_quad = evaluation_trace.quad_at(x_idx, base, y_len);
                 let trace_point_values = stage2_relation_m_point_values_compressed(trace_quad);
-                accum_pointwise_signed(
-                    &mut trace_pos,
-                    &mut trace_neg,
+                accum_pointwise_small_signed(
+                    &mut x_trace_pos,
+                    &mut x_trace_neg,
                     &trace_point_values,
                     &rel_table[lookup_idx],
                 );
             }
             for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
-                let x_rel = E::reduce_product_accum(x_rel_pos[idx])
-                    - E::reduce_product_accum(x_rel_neg[idx]);
+                norm_pos[idx] += E::promote_small_product_accum(x_norm_pos[idx]);
+                norm_neg[idx] += E::promote_small_product_accum(x_norm_neg[idx]);
+                let x_rel = E::reduce_product_accum(E::promote_small_product_accum(x_rel_pos[idx]))
+                    - E::reduce_product_accum(E::promote_small_product_accum(x_rel_neg[idx]));
                 rel_accum[idx] += row_val.mul_to_product_accum(x_rel);
+                trace_pos[idx] += E::promote_small_product_accum(x_trace_pos[idx]);
+                trace_neg[idx] += E::promote_small_product_accum(x_trace_neg[idx]);
             }
             (norm_pos, norm_neg, rel_accum, trace_pos, trace_neg)
         },
