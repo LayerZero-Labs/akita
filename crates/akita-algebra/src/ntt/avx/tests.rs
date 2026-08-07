@@ -811,7 +811,7 @@ fn avx512vnni_six_way_i16_dot_matches_scalar_with_tail() {
     let mut rhs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
         random_mont_array_i16::<D>(prime, 0x2200 + column as u64)
     });
-    let scalar_rhs = rhs.clone();
+    let scalar_rhs = rhs;
     let lhs_ptrs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
         lhs[column].as_ptr().cast::<i16>()
     });

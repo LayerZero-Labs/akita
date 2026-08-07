@@ -704,7 +704,7 @@ pub(crate) unsafe fn pointwise_dot_acc_6_i16_avx512vnni(
         while i < d {
             let mut products = 0_i32;
             for pair in 0..(I16_VNNI_DOT_BATCH / 2) {
-                let packed = if i % 2 == 0 {
+                let packed = if i.is_multiple_of(2) {
                     // Even coefficients occupy the first array in each pair.
                     unsafe { (*rhs.add(pair * 2)).add(i) }
                 } else {

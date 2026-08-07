@@ -180,7 +180,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             for (row, accumulator) in accumulators.iter_mut().enumerate() {
                 let lhs = lhs_row(row);
                 assert_eq!(lhs.len(), rhs.len(), "pointwise dot length mismatch");
-                for k in 0..K {
+                for (k, rhs_pointers) in rhs_pointers.iter().enumerate() {
                     let lhs_pointers: [*const i16; I16_VNNI_DOT_BATCH] =
                         std::array::from_fn(|index| lhs[index].limbs[k].as_ptr().cast::<i16>());
                     let prime = params.primes[k];
@@ -191,7 +191,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                         avx::pointwise_dot_acc_6_i16_avx512vnni(
                             accumulator.limbs[k].as_mut_ptr().cast::<i16>(),
                             lhs_pointers.as_ptr(),
-                            rhs_pointers[k].as_ptr(),
+                            rhs_pointers.as_ptr(),
                             D,
                             prime.p.to_i64() as i16,
                             prime.pinv.to_i64() as i16,
