@@ -515,7 +515,7 @@ infinity correction to the new norm proof.
       field family.
 * [x] Generated schedules pass audit and the report contains all required
       before and after values.
-* [ ] All repository CI gates and verifier no panic checks pass.
+* [x] All repository CI gates and verifier no panic checks pass.
 
 ### Testing strategy
 
