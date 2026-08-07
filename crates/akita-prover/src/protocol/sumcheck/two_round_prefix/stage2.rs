@@ -290,8 +290,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
             let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
             let eq_x_weight = eq_x[x_idx];
             let row_val = relation_matrix_col_evals[x_idx];
-            let mut x_norm_pos = [E::SmallProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
-            let mut x_norm_neg = [E::SmallProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_norm = [E::SmallProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             let mut x_rel_pos = [E::SmallProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             let mut x_rel_neg = [E::SmallProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate() {
@@ -302,9 +301,8 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
                     w_digit_fn(column[base + 2]),
                     w_digit_fn(column[base + 3]),
                 ]);
-                accum_lookup_vector_small_signed_selected(
-                    &mut x_norm_pos,
-                    &mut x_norm_neg,
+                accum_lookup_vector_small_unsigned_selected(
+                    &mut x_norm,
                     eq_y_weight,
                     &norm_table[lookup_idx],
                     norm_point_indices,
@@ -317,10 +315,9 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
                 );
             }
             for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
-                let x_norm =
-                    E::reduce_product_accum(E::promote_small_product_accum(x_norm_pos[idx]))
-                        - E::reduce_product_accum(E::promote_small_product_accum(x_norm_neg[idx]));
-                norm_accum[idx] += eq_x_weight.mul_to_product_accum(x_norm);
+                let x_norm_value =
+                    E::reduce_product_accum(E::promote_small_product_accum(x_norm[idx]));
+                norm_accum[idx] += eq_x_weight.mul_to_product_accum(x_norm_value);
                 let x_rel = E::reduce_product_accum(E::promote_small_product_accum(x_rel_pos[idx]))
                     - E::reduce_product_accum(E::promote_small_product_accum(x_rel_neg[idx]));
                 rel_accum[idx] += row_val.mul_to_product_accum(x_rel);

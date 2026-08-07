@@ -753,6 +753,15 @@ Complete root Stage 2 measured 183 to 184 ms in two verified samples. The
 coefficient loops read the witness once per retained source instead of
 materializing full factor rows that would be immediately consumed.
 
+The compact prefix also distinguishes unsigned norm lookups from signed
+relation lookups. Every norm table entry is `w(w + 1)` at a finite point or
+`w^2` at infinity, so it accumulates into one exact short-product accumulator
+instead of identical positive and permanently zero negative accumulators. The
+signed alpha and trace relations retain their positive and negative halves.
+Two complete one-worker fp32 D128 profiles reduced the root prefix from 71.9 ms
+to 70.1 and 70.8 ms; complete root Stage 2 measured 182 and 184 ms. Both proofs
+verified with the unchanged 77,834-byte proof.
+
 Stage 3 now stores its coefficient and setup-index phases in `EvaluationTable`
 and uses the same detected fold, product-round, and fused fold-plus-next-round
 operations as dense EOR. The linear coefficient is derived from the carried
