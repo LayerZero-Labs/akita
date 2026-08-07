@@ -668,6 +668,14 @@ impl<const P: u32> PackedField for PackedFp32Neon<P> {
     }
 
     #[inline(always)]
+    fn sum_four_products(left: [Self; 4], right: [Self; 4]) -> Self {
+        Self::from_vec(Self::dot_product_4_vec(
+            left.map(Self::to_vec),
+            right.map(Self::to_vec),
+        ))
+    }
+
+    #[inline(always)]
     fn fp_ext2_mul<C>(a0: Self, a1: Self, b0: Self, b1: Self) -> (Self, Self)
     where
         C: FpExt2Config<Self::Scalar>,

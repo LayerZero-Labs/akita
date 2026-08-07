@@ -850,6 +850,16 @@ operation costs 32.2 to 34.2 ms, versus 31.4 ms for factor construction plus
 to 85.1 ms, down from 96.0 ms, and the next measures 18.9 to 19.5 ms, down from
 21.0 ms. Warm complete proofs measure 1.196 to 1.220 seconds and verify.
 
+On Ice Lake, each tensor projection coefficient now uses the fp32 backend's
+exact four-product accumulator and performs one final Solinas reduction instead
+of reducing four products separately. In the exact pinned 28-variable fp32 D128
+profile, total dense factor construction fell from 728.399 ms to 440.307 ms and
+the largest factor fell from 530.945 ms to 320.242 ms. Total EOR time fell from
+1.092102 seconds to 804.218 ms. The traced complete proof fell from 3.732681
+seconds to 3.493352 seconds, verified successfully, and remained 77,819 bytes.
+The matched reduction in factor and EOR time isolates the gain to the intended
+kernel rather than unrelated stage movement.
+
 Stage 3 now stores its coefficient and setup-index phases in `EvaluationTable`
 and uses the same detected fold, product-round, and fused fold-plus-next-round
 operations as dense EOR. The linear coefficient is derived from the carried

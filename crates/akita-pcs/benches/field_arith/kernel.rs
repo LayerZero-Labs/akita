@@ -19,7 +19,68 @@ pub(crate) fn bench_kernel_patterns(c: &mut Criterion) {
     bench_packed_sumcheck_mix(c);
     bench_fp32_ext4_sumcheck_fold(c);
     bench_fp32_ext4_tensor_factor_pair(c);
+    #[cfg(target_arch = "x86_64")]
+    bench_fp32_ext4_tensor_factor_materialization(c);
     bench_fp128_accumulator_pattern(c);
+}
+
+#[cfg(target_arch = "x86_64")]
+fn bench_fp32_ext4_tensor_factor_materialization(c: &mut Criterion) {
+    type F = Prime32Offset99;
+    type E = FpExt4<F>;
+
+    let inner_len = 1usize << 8;
+    let outer_len = 1usize << 6;
+    let table_len = 2 * inner_len * outer_len;
+    let mut rng = StdRng::seed_from_u64(0xf032_fac7_5120);
+    let witness = EvaluationTable::from_evaluation_fn(table_len, |_| E::random(&mut rng));
+    let equality_inner = EvaluationTable::from_evaluation_fn(inner_len, |_| E::random(&mut rng));
+    let equality_outer = (0..outer_len)
+        .map(|_| E::random(&mut rng))
+        .collect::<Vec<_>>();
+    let zero_weights = std::array::from_fn(|_| E::random(&mut rng));
+    let one_weights = std::array::from_fn(|_| E::random(&mut rng));
+    let witness = witness.coefficient_slices::<4>();
+    let equality_inner = equality_inner.coefficient_slices::<4>();
+
+    let mut group = c.benchmark_group("field_arith/kernel/fp32_ext4_tensor_factor_materialization");
+    group.throughput(Throughput::Elements(table_len as u64));
+
+    if std::is_x86_feature_detected!("avx2") {
+        group.bench_function("runtime_avx2", |b| {
+            b.iter(|| unsafe {
+                black_box(
+                    akita_field::packed::runtime_x86::materialize_tensor_factor_and_compute_product_round_fp_ext4_fp32_avx2(
+                        witness,
+                        equality_inner,
+                        black_box(&equality_outer),
+                        zero_weights,
+                        one_weights,
+                    ),
+                )
+            })
+        });
+    }
+
+    if std::is_x86_feature_detected!("avx512f")
+        && std::is_x86_feature_detected!("avx512dq")
+        && std::is_x86_feature_detected!("avx512ifma")
+    {
+        group.bench_function("runtime_avx512_ifma", |b| {
+            b.iter(|| unsafe {
+                black_box(
+                    akita_field::packed::runtime_x86::materialize_tensor_factor_and_compute_product_round_fp_ext4_fp32_avx512_ifma(
+                        witness,
+                        equality_inner,
+                        black_box(&equality_outer),
+                        zero_weights,
+                        one_weights,
+                    ),
+                )
+            })
+        });
+    }
+    group.finish();
 }
 
 fn bench_fp32_ext4_tensor_factor_pair(c: &mut Criterion) {

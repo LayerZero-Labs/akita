@@ -96,6 +96,13 @@ pub trait PackedField:
     /// Broadcast one scalar across all lanes.
     fn broadcast(value: Self::Scalar) -> Self;
 
+    /// Sum four lane-wise products with one final field reduction when the
+    /// backend supports delayed reduction.
+    #[inline(always)]
+    fn sum_four_products(left: [Self; 4], right: [Self; 4]) -> Self {
+        left[0] * right[0] + left[1] * right[1] + left[2] * right[2] + left[3] * right[3]
+    }
+
     /// Square one packed value.
     #[inline(always)]
     fn square(self) -> Self {

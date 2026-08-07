@@ -145,12 +145,13 @@ fn packed_linear_map<const P: u32, PF>(
 where
     PF: PackedField<Scalar = Fp32<P>>,
 {
-    let zero = PF::broadcast(Fp32::zero());
     PackedFpExt4::new(std::array::from_fn(|output_coefficient| {
-        (0..4).fold(zero, |sum, input_coefficient| {
-            sum + value.coeffs[input_coefficient]
-                * weights[input_coefficient].coeffs[output_coefficient]
-        })
+        PF::sum_four_products(
+            value.coeffs,
+            std::array::from_fn(|input_coefficient| {
+                weights[input_coefficient].coeffs[output_coefficient]
+            }),
+        )
     }))
 }
 
