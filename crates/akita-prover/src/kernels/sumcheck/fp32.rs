@@ -1,18 +1,52 @@
 //! Runtime-selected operations for quartic extensions of 32-bit fields.
 
+#[cfg(feature = "parallel")]
+use super::multiple_workers_available;
 use super::{
     compute_weighted_affine_polynomial_round_scalar, compute_weighted_affine_product_round_scalar,
     fold_and_compute_stage2_coefficient_round_portable,
-    materialize_tensor_factor_and_compute_product_round_scalar, multiple_workers_available,
-    Fp32Kernel, SumcheckKernelPlan, SumcheckTableOperations, TensorFactorRoundOutput,
+    materialize_tensor_factor_and_compute_product_round_scalar, Fp32Kernel, SumcheckKernelPlan,
+    SumcheckTableOperations, TensorFactorRoundOutput,
 };
 use akita_algebra::SplitEqEvals;
+#[cfg(feature = "parallel")]
+use akita_field::parallel::*;
 use akita_field::{AkitaError, Fp32, FpExt4};
 use akita_sumcheck::{
     compute_product_round_scalar, fold_and_compute_product_round_scalar,
     fold_first_variable_scalar, EvaluationTable,
 };
 use akita_types::TensorFactorProjection;
+
+macro_rules! return_parallel_affine_product_round {
+    ($left:expr, $right:expr, $equality:expr, $width:expr, $arity:expr, $weights:expr, $kernel:path) => {
+        #[cfg(feature = "parallel")]
+        if multiple_workers_available() {
+            return compute_affine_product_round_in_parallel(
+                $left,
+                $right,
+                $equality,
+                $width,
+                |left, right, equality| unsafe { $kernel(left, right, equality, $arity, $weights) },
+            );
+        }
+    };
+}
+
+macro_rules! return_parallel_affine_polynomial_round {
+    ($left:expr, $right:expr, $equality:expr, $width:expr, $coefficients:expr, $kernel:path) => {
+        #[cfg(feature = "parallel")]
+        if multiple_workers_available() {
+            return compute_affine_polynomial_round_in_parallel(
+                $left,
+                $right,
+                $equality,
+                $width,
+                |left, right, equality| unsafe { $kernel(left, right, equality, $coefficients) },
+            );
+        }
+    };
+}
 
 impl<const P: u32> SumcheckTableOperations<Fp32<P>> for FpExt4<Fp32<P>> {
     fn materialize_tensor_factor_and_compute_product_round(
@@ -540,14 +574,6 @@ impl SumcheckKernelPlan {
         parent_weights: &[FpExt4<Fp32<P>>],
     ) -> [FpExt4<Fp32<P>>; 5] {
         validate_weighted_affine_product_tables(lanes, equality, arity, parent_weights.len());
-        if multiple_workers_available() {
-            return compute_weighted_affine_product_round_scalar(
-                lanes,
-                equality,
-                arity,
-                parent_weights,
-            );
-        }
         match self.fp32_product_round {
             Fp32Kernel::Scalar => {
                 compute_weighted_affine_product_round_scalar(lanes, equality, arity, parent_weights)
@@ -564,6 +590,17 @@ impl SumcheckKernelPlan {
                 } else {
                     let (left, right) = affine_product_halves(lanes);
                     let equality = equality.coefficient_slices::<4>();
+                    // SAFETY: the detected plan established NEON, and the
+                    // parallel helper aligns every range to four rows.
+                    return_parallel_affine_product_round!(
+                        left,
+                        right,
+                        equality,
+                        4,
+                        arity,
+                        parent_weights,
+                        akita_field::packed::runtime_neon::compute_weighted_affine_product_round_fp_ext4_fp32_neon
+                    );
                     // SAFETY: production plans select NEON only after runtime
                     // detection, and validation establishes complete chunks.
                     unsafe {
@@ -589,6 +626,17 @@ impl SumcheckKernelPlan {
                 } else {
                     let (left, right) = affine_product_halves(lanes);
                     let equality = equality.coefficient_slices::<4>();
+                    // SAFETY: the detected plan established AVX2, and the
+                    // parallel helper aligns every range to eight rows.
+                    return_parallel_affine_product_round!(
+                        left,
+                        right,
+                        equality,
+                        8,
+                        arity,
+                        parent_weights,
+                        akita_field::packed::runtime_x86::compute_weighted_affine_product_round_fp_ext4_fp32_avx2
+                    );
                     // SAFETY: production plans select AVX2 only after runtime
                     // detection, and validation establishes complete chunks.
                     unsafe {
@@ -614,6 +662,17 @@ impl SumcheckKernelPlan {
                 } else {
                     let (left, right) = affine_product_halves(lanes);
                     let equality = equality.coefficient_slices::<4>();
+                    // SAFETY: the detected plan established AVX-512, and the
+                    // parallel helper aligns every range to 16 rows.
+                    return_parallel_affine_product_round!(
+                        left,
+                        right,
+                        equality,
+                        16,
+                        arity,
+                        parent_weights,
+                        akita_field::packed::runtime_x86::compute_weighted_affine_product_round_fp_ext4_fp32_avx512_ifma
+                    );
                     // SAFETY: production plans select AVX-512 only after
                     // runtime detection, and validation establishes chunks.
                     unsafe {
@@ -638,13 +697,6 @@ impl SumcheckKernelPlan {
         polynomial_coefficients: &[FpExt4<Fp32<P>>],
     ) -> [FpExt4<Fp32<P>>; 5] {
         validate_weighted_affine_polynomial_tables(values, equality, polynomial_coefficients.len());
-        if multiple_workers_available() {
-            return compute_weighted_affine_polynomial_round_scalar(
-                values,
-                equality,
-                polynomial_coefficients,
-            );
-        }
         match self.fp32_product_round {
             Fp32Kernel::Scalar => compute_weighted_affine_polynomial_round_scalar(
                 values,
@@ -662,6 +714,16 @@ impl SumcheckKernelPlan {
                 } else {
                     let (left, right) = coefficient_halves(values);
                     let equality = equality.coefficient_slices::<4>();
+                    // SAFETY: the detected plan established NEON, and the
+                    // parallel helper aligns every range to four rows.
+                    return_parallel_affine_polynomial_round!(
+                        left,
+                        right,
+                        equality,
+                        4,
+                        polynomial_coefficients,
+                        akita_field::packed::runtime_neon::compute_weighted_affine_polynomial_round_fp_ext4_fp32_neon
+                    );
                     // SAFETY: production plans select NEON only after runtime
                     // detection, and validation establishes complete chunks.
                     unsafe {
@@ -685,6 +747,16 @@ impl SumcheckKernelPlan {
                 } else {
                     let (left, right) = coefficient_halves(values);
                     let equality = equality.coefficient_slices::<4>();
+                    // SAFETY: the detected plan established AVX2, and the
+                    // parallel helper aligns every range to eight rows.
+                    return_parallel_affine_polynomial_round!(
+                        left,
+                        right,
+                        equality,
+                        8,
+                        polynomial_coefficients,
+                        akita_field::packed::runtime_x86::compute_weighted_affine_polynomial_round_fp_ext4_fp32_avx2
+                    );
                     // SAFETY: production plans select AVX2 only after runtime
                     // detection, and validation establishes complete chunks.
                     unsafe {
@@ -708,6 +780,16 @@ impl SumcheckKernelPlan {
                 } else {
                     let (left, right) = coefficient_halves(values);
                     let equality = equality.coefficient_slices::<4>();
+                    // SAFETY: the detected plan established AVX-512, and the
+                    // parallel helper aligns every range to 16 rows.
+                    return_parallel_affine_polynomial_round!(
+                        left,
+                        right,
+                        equality,
+                        16,
+                        polynomial_coefficients,
+                        akita_field::packed::runtime_x86::compute_weighted_affine_polynomial_round_fp_ext4_fp32_avx512_ifma
+                    );
                     // SAFETY: production plans select AVX-512 only after
                     // runtime detection, and validation establishes chunks.
                     unsafe {
@@ -808,6 +890,88 @@ fn coefficient_halves<const P: u32>(
         std::array::from_fn(|coefficient| &table.coefficient_slice(coefficient)[..half]),
         std::array::from_fn(|coefficient| &table.coefficient_slice(coefficient)[half..]),
     )
+}
+
+#[cfg(feature = "parallel")]
+fn sum_affine_round_ranges<const P: u32>(
+    len: usize,
+    simd_width: usize,
+    compute_range: impl Fn(usize, usize) -> [FpExt4<Fp32<P>>; 5] + Sync,
+) -> [FpExt4<Fp32<P>>; 5] {
+    debug_assert!(len.is_multiple_of(simd_width));
+    let target_tasks = rayon::current_num_threads().saturating_mul(4).max(1);
+    let rows_per_task = len
+        .div_ceil(target_tasks)
+        .max(1_024)
+        .next_multiple_of(simd_width);
+    let task_count = len.div_ceil(rows_per_task);
+    (0..task_count)
+        .into_par_iter()
+        .map(|task| {
+            let start = task * rows_per_task;
+            let end = (start + rows_per_task).min(len);
+            compute_range(start, end)
+        })
+        .reduce(
+            || [FpExt4::zero(); 5],
+            |mut left, right| {
+                for (left, right) in left.iter_mut().zip(right) {
+                    *left += right;
+                }
+                left
+            },
+        )
+}
+
+#[cfg(feature = "parallel")]
+fn coefficient_range<'a, const P: u32>(
+    coefficients: Fp32CoefficientSlices<'a, P>,
+    start: usize,
+    end: usize,
+) -> Fp32CoefficientSlices<'a, P> {
+    coefficients.map(|coefficient| &coefficient[start..end])
+}
+
+#[cfg(feature = "parallel")]
+fn compute_affine_product_round_in_parallel<const P: u32, const LANES: usize>(
+    left: [Fp32CoefficientSlices<'_, P>; LANES],
+    right: [Fp32CoefficientSlices<'_, P>; LANES],
+    equality: Fp32CoefficientSlices<'_, P>,
+    simd_width: usize,
+    compute_range: impl Fn(
+            [Fp32CoefficientSlices<'_, P>; LANES],
+            [Fp32CoefficientSlices<'_, P>; LANES],
+            Fp32CoefficientSlices<'_, P>,
+        ) -> [FpExt4<Fp32<P>>; 5]
+        + Sync,
+) -> [FpExt4<Fp32<P>>; 5] {
+    sum_affine_round_ranges(equality[0].len(), simd_width, |start, end| {
+        let left = std::array::from_fn(|lane| coefficient_range(left[lane], start, end));
+        let right = std::array::from_fn(|lane| coefficient_range(right[lane], start, end));
+        compute_range(left, right, coefficient_range(equality, start, end))
+    })
+}
+
+#[cfg(feature = "parallel")]
+fn compute_affine_polynomial_round_in_parallel<const P: u32>(
+    left: Fp32CoefficientSlices<'_, P>,
+    right: Fp32CoefficientSlices<'_, P>,
+    equality: Fp32CoefficientSlices<'_, P>,
+    simd_width: usize,
+    compute_range: impl Fn(
+            Fp32CoefficientSlices<'_, P>,
+            Fp32CoefficientSlices<'_, P>,
+            Fp32CoefficientSlices<'_, P>,
+        ) -> [FpExt4<Fp32<P>>; 5]
+        + Sync,
+) -> [FpExt4<Fp32<P>>; 5] {
+    sum_affine_round_ranges(equality[0].len(), simd_width, |start, end| {
+        compute_range(
+            coefficient_range(left, start, end),
+            coefficient_range(right, start, end),
+            coefficient_range(equality, start, end),
+        )
+    })
 }
 
 #[cfg(target_arch = "aarch64")]

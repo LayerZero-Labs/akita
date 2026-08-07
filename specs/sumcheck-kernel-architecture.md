@@ -930,6 +930,18 @@ proof remained 77,819 bytes and verified in both runs. This confirms that the
 worker-aware policy restores normal-worker throughput without replacing the
 selected one-worker AVX-512 operations.
 
+The next fp32 Stage 1 slice removes the temporary choice between serial SIMD
+and parallel scalar arithmetic for materialized affine rounds. The canonical
+NEON, AVX2, and AVX-512 product and polynomial kernels already accept
+coefficient slices. The prover now partitions SIMD-width-aligned row ranges,
+calls that same selected kernel once per Rayon task, and merges only the five
+reduced round coefficients. No target-specific arithmetic was copied into the
+prover and no table payload is moved. On a busy 16-worker Apple Silicon run,
+the targeted materialized product rounds fell from 19.4 ms to 13.2 ms and the
+materialized polynomial rounds fell from 13.5 ms to 10.8 ms. Unrelated spans in
+that run were system-load contaminated, so complete-proof acceptance is left to
+the isolated PR benchmark rather than inferred from that sample.
+
 ### Existing state changes
 
 The cutover evolves current owners rather than adding parallel wrappers:
