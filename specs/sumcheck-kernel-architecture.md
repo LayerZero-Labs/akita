@@ -597,6 +597,22 @@ Stage 2 fell from about 258 ms to 229 to 230 ms. An explicit NEON multiply was
 rejected because it measured 98 to 99 ms; LLVM's scalar source shape generated
 the better loop.
 
+The prefix also keeps equality and evaluation-trace factors outside the compact
+y scan. For each live x column, the eight norm outputs are accumulated against
+the y equality weights first and multiplied by the column's x equality weight
+once. Likewise, `PreparedProverEvaluationTrace` visits each source row with its
+lane-constant factor still separate. The compact lookup contraction reduces
+that source row to eight outputs before applying the factor. It never expands a
+full trace row merely to consume it in the same prefix.
+
+On the one-worker fp32 D128 profile, factoring only the x equality weight
+reduced the root prefix from about 95 ms to 91.4 ms. Retaining the prepared
+trace factor through the same contraction reduced it further to 72.7 to
+72.9 ms. Complete root Stage 2 fell from 235 to 236 ms to 209 to 210 ms. The
+compact handoff stayed at 53.7 to 53.8 ms and the later coefficient rounds were
+unchanged, isolating the gain to the prefix. The second complete proof measured
+1.786 seconds and verified.
+
 Stage 3 now stores its coefficient and setup-index phases in `EvaluationTable`
 and uses the same detected fold, product-round, and fused fold-plus-next-round
 operations as dense EOR. The linear coefficient is derived from the carried
