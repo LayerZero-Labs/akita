@@ -98,13 +98,13 @@ fn recursive_candidate_order_preserves_exhaustive_tie_break() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn recursive_frontier_retains_every_split_and_smaller_l2_rank() {
+fn recursive_candidates_add_only_the_exact_smaller_l2_alternative() {
     use akita_config::{policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig};
     use akita_types::InnerCommitSecurityRoute;
 
     let policy = policy_of::<D64OneHot>();
     let challenge = D64OneHot::ring_challenge_config(64).expect("D64 challenge");
-    let candidates = derive_candidate_level_params_frontier(
+    let candidates = derive_candidate_level_params(
         &policy,
         akita_types::CommitmentPayloadMode::Compressed,
         &challenge,
@@ -114,7 +114,7 @@ fn recursive_frontier_retains_every_split_and_smaller_l2_rank() {
         3,
         None,
     )
-    .expect("late-fold rank frontier");
+    .expect("late-fold candidates");
     let linf_rank = candidates
         .iter()
         .filter(|(params, _)| {
@@ -138,13 +138,5 @@ fn recursive_frontier_retains_every_split_and_smaller_l2_rank() {
         .min()
         .expect("measured L2 candidate");
     assert!(l2_rank < linf_rank);
-    assert!(
-        candidates
-            .iter()
-            .map(|(params, _)| params.inner_commit_matrix.output_rank())
-            .collect::<std::collections::BTreeSet<_>>()
-            .len()
-            < candidates.len(),
-        "same-rank layouts must survive until complete suffix pricing"
-    );
+    assert_eq!(candidates.len(), 2);
 }

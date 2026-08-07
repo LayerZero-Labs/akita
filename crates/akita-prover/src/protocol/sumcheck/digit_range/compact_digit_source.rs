@@ -38,7 +38,7 @@ impl RangeImageClass {
 /// Ring-switch decomposition owns the balanced-digit invariant. This type checks only
 /// layout and derives range-image classes without rescanning honest-prover digits.
 #[derive(Clone)]
-pub(super) struct CompactDigitSource {
+pub(in crate::protocol::sumcheck) struct CompactDigitSource {
     digits: Arc<[i8]>,
     ordered_range_class_pairs: Arc<[u16]>,
     domain: FlatBooleanDomain,

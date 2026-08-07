@@ -256,11 +256,8 @@ impl PlannerPolicy {
 pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 /// First fold level eligible for a measured L2 candidate.
 const SELECTIVE_L2_CAP_FIRST_LEVEL: usize = 3;
-/// Maximum number of consecutive fold levels in the measured L2 rollout.
-const MAX_SELECTIVE_L2_CAP_LEVELS: usize = 4;
 
 fn validate_selective_l2_caps(caps: &[SelectiveL2FoldCap]) -> Result<(), AkitaError> {
-    let mut previous_distinct_level = None;
     for (index, cap) in caps.iter().enumerate() {
         let invalid_geometry = cap.fold_level < SELECTIVE_L2_CAP_FIRST_LEVEL
             || cap.fold_level >= MAX_RECURSION_DEPTH
@@ -277,26 +274,6 @@ fn validate_selective_l2_caps(caps: &[SelectiveL2FoldCap]) -> Result<(), AkitaEr
                     .into(),
             ));
         }
-        if index == 0 && cap.fold_level != SELECTIVE_L2_CAP_FIRST_LEVEL {
-            return Err(AkitaError::InvalidSetup(format!(
-                "first selective L2 cap level {} must equal bounded rollout start {SELECTIVE_L2_CAP_FIRST_LEVEL}",
-                cap.fold_level
-            )));
-        }
-        let last_rollout_level = SELECTIVE_L2_CAP_FIRST_LEVEL + MAX_SELECTIVE_L2_CAP_LEVELS - 1;
-        if cap.fold_level > last_rollout_level {
-            return Err(AkitaError::InvalidSetup(format!(
-                "selective L2 cap level {} exceeds bounded rollout end {last_rollout_level}",
-                cap.fold_level
-            )));
-        }
-        if previous_distinct_level.is_some_and(|previous| cap.fold_level > previous + 1) {
-            return Err(AkitaError::InvalidSetup(
-                "selective L2 cap levels must be contiguous to bound planner frontier growth"
-                    .into(),
-            ));
-        }
-        previous_distinct_level = Some(cap.fold_level);
     }
     Ok(())
 }
@@ -604,19 +581,9 @@ mod tests {
     }
 
     #[test]
-    fn selective_l2_cap_window_is_bounded_and_contiguous() {
-        assert!(
-            validate_selective_l2_caps(&[cap(3, 12), cap(4, 10), cap(5, 8), cap(6, 6)]).is_ok()
-        );
-        assert!(validate_selective_l2_caps(&[cap(4, 10)]).is_err());
-        assert!(validate_selective_l2_caps(&[cap(3, 10), cap(5, 6)]).is_err());
-        assert!(validate_selective_l2_caps(&[
-            cap(3, 14),
-            cap(4, 12),
-            cap(5, 10),
-            cap(6, 8),
-            cap(7, 6)
-        ])
-        .is_err());
+    fn selective_l2_caps_allow_sparse_later_exact_candidates() {
+        assert!(validate_selective_l2_caps(&[cap(4, 10), cap(7, 6)]).is_ok());
+        assert!(validate_selective_l2_caps(&[cap(2, 10)]).is_err());
+        assert!(validate_selective_l2_caps(&[cap(4, 10), cap(4, 10)]).is_err());
     }
 }

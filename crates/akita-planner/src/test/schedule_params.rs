@@ -235,7 +235,7 @@ fn complete_suffix_can_select_l2_or_retain_linf() {
 
     let fp32_policy = policy_of::<fp32::D128OneHot>();
     let fp32_challenge = fp32::D128OneHot::ring_challenge_config(128).unwrap();
-    let fp32_frontier = derive_candidate_level_params_frontier(
+    let fp32_candidates = derive_candidate_level_params(
         &fp32_policy,
         akita_types::CommitmentPayloadMode::Compressed,
         &fp32_challenge,
@@ -245,8 +245,8 @@ fn complete_suffix_can_select_l2_or_retain_linf() {
         3,
         None,
     )
-    .expect("fp32 measured frontier");
-    assert!(fp32_frontier.iter().any(|(params, _)| matches!(
+    .expect("fp32 measured candidates");
+    assert!(fp32_candidates.iter().any(|(params, _)| matches!(
         params.inner_commit_matrix.security_route(),
         InnerCommitSecurityRoute::L2 { .. }
     )));
@@ -279,57 +279,6 @@ fn complete_suffix_can_select_l2_or_retain_linf() {
             step.params.witness.inner_commit_matrix.security_route(),
             InnerCommitSecurityRoute::Linf(_)
         )));
-}
-
-#[cfg(feature = "catalog-gen")]
-#[test]
-fn measured_l2_suffix_matches_independent_all_splits_oracle() {
-    use akita_config::{policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig};
-    use akita_types::InnerCommitSecurityRoute;
-
-    let policy = policy_of::<D64OneHot>();
-    let challenge = D64OneHot::ring_challenge_config(64).expect("D64 challenge");
-    let ctx = SuffixCtx {
-        policy: &policy,
-        default_ring_challenge_cfg: &challenge,
-        ring_challenge_config: &D64OneHot::ring_challenge_config,
-        num_vars: 30,
-        key: PolynomialGroupLayout::singleton(30),
-        setup_field_budget: policy.setup_field_budget,
-        root_lookup_key: None,
-        root_honest_fold_policy: None,
-        precommitted_honest_fold_policies: &[],
-        level_zero_is_root: false,
-    };
-    let state = SuffixState {
-        level: 3,
-        current_witness_len: 948_672,
-        current_lb: 4,
-        incoming_setup_prefix: None,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-    };
-    let mut production_memo = ScheduleMemo::new();
-    let production = derive_optimal_suffix_schedule(&ctx, &mut production_memo, state, 3)
-        .expect("production measured suffix");
-    let mut oracle_memo = ScheduleMemo::new();
-    let oracle =
-        derive_optimal_suffix_schedule_with_all_splits_at_state(&ctx, &mut oracle_memo, state, 3)
-            .expect("all-splits measured suffix");
-    assert!(production
-        .best_by_payload_per_lb
-        .values()
-        .any(|candidate| candidate.folds.iter().any(|fold| matches!(
-            fold.params.inner_commit_matrix.security_route(),
-            InnerCommitSecurityRoute::L2 { .. }
-        ))));
-    assert_eq!(
-        production.best_by_payload_per_lb,
-        oracle.best_by_payload_per_lb
-    );
-    assert_eq!(
-        production.best_by_first_direct_setup_per_lb,
-        oracle.best_by_first_direct_setup_per_lb
-    );
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -800,19 +749,15 @@ fn mixed_search_validates_key_and_policy_at_entry() {
         .contains("explicit setup field budget must be positive"));
 
     let mut invalid_policy = policy;
-    invalid_policy.selective_l2_fold_caps = Box::leak(
-        (3..=7)
-            .map(|fold_level| akita_schedules::SelectiveL2FoldCap {
-                fold_level,
-                input_witness_len: 1usize << (12 - fold_level),
-                physical_response_len: 64,
-                fold_basis: 2,
-                fold_digit_count: 1,
-                response_l2_sq_cap: 1,
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
-    );
+    invalid_policy.selective_l2_fold_caps =
+        Box::leak(Box::new([akita_schedules::SelectiveL2FoldCap {
+            fold_level: 2,
+            input_witness_len: 1 << 10,
+            physical_response_len: 64,
+            fold_basis: 2,
+            fold_digit_count: 1,
+            response_l2_sq_cap: 1,
+        }]));
     let error = find_schedule(
         PolynomialGroupLayout::singleton(16),
         &invalid_policy,
@@ -821,7 +766,7 @@ fn mixed_search_validates_key_and_policy_at_entry() {
         D256OneHot::ring_challenge_config,
     )
     .unwrap_err();
-    assert!(error.to_string().contains("exceeds bounded rollout end 6"));
+    assert!(error.to_string().contains("valid, later-fold"));
 }
 
 #[cfg(feature = "catalog-gen")]

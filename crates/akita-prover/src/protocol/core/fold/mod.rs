@@ -8,6 +8,7 @@ use crate::compute::{
 };
 use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
 use crate::protocol::sumcheck::DigitRangeProver;
+use akita_algebra::offset_eq::{materialize_eq_tensor_left, OffsetEqWindow};
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
@@ -650,10 +651,8 @@ where
         equality_point,
     )?;
     let physical_plan = PhysicalResponsePlan::new(lp, plan)?;
-    let (stage1_proof, stage1_point) = match physical_plan.as_ref() {
-        Some(physical_plan) => stage1_prover.prove_l2::<F, T>(physical_plan, transcript)?,
-        None => stage1_prover.prove::<F, T>(transcript)?,
-    };
+    let (stage1_proof, stage1_point) =
+        stage1_prover.prove::<F, T>(transcript, physical_plan.as_ref())?;
     let range_image_evaluation = stage1_proof.range_image_evaluation;
     let physical_l2 = match physical_plan {
         Some(physical_plan) => {
@@ -759,9 +758,13 @@ where
     }
     let physical_l2_claim = physical_l2.as_ref().map_or_else(E::zero, |norm| norm.claim);
     if let Some(norm) = &physical_l2 {
+        let families = norm.plan.virtualization_families(&norm.batching)?;
+        let equality = OffsetEqWindow::new(&norm.point)?;
         linear_weights.extend(
-            norm.plan
-                .virtualization_weights(&norm.point, &norm.batching)?,
+            materialize_eq_tensor_left(&equality, &families, domain.live_len())?
+                .into_iter()
+                .enumerate()
+                .filter(|(_, weight)| !weight.is_zero()),
         );
         linear_weights.sort_unstable_by_key(|(index, _)| *index);
     }

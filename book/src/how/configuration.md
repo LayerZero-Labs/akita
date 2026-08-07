@@ -64,19 +64,15 @@ candidate. The cap key includes the fold level, incoming witness length,
 physical response length, fold basis, and fold digit count. A cap does not
 apply to another row or to a successor whose witness length changed.
 
-The planner keeps every bounded split on a path that can still reach a measured
-L2 state. At the predecessor level it keeps every candidate whose output
-witness is an exact measured input, alongside the ordinary best L-infinity
-candidate per secure A rank. At the measured state it keeps every L-infinity
-and L2 route through complete suffix pricing. Unrelated L-infinity-only states
-retain the established rank frontier, so selective search does not multiply
-the whole dynamic program.
+The planner uses its ordinary L infinity search until the current state exactly
+matches a cap. The cap's physical response length determines one block split.
+At that state, the planner adds that one L2 candidate when it lowers the A rank.
+The existing suffix search then compares the L infinity and L2 candidates. The
+planner does not keep extra splits at earlier levels.
 
-The measured rollout window starts at fold level 3, stays contiguous, and ends
-no later than fold level 6. Runtime policy validation rejects a later first
-level, a gap, or a fifth measured level. This bounds complete split retention
-to four fold levels while still comparing every route that can enter or leave
-one of its exact measured states.
+A cap may appear at any eligible fold from level 3 onward, and cap levels may
+have gaps. Each cap must name a valid exact candidate below the recursion depth
+limit. The cap list must be strictly sorted.
 
 The suffix comparison includes the norm proof, A payload, next witness, later
 folds, and terminal response. A smaller A rank can reduce the next witness

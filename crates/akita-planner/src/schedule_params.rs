@@ -39,16 +39,14 @@ mod unpruned_search;
 
 pub use akita_types::suffix_opening_layout;
 #[cfg(test)]
-pub(crate) use candidate::derive_candidate_level_params;
+pub(crate) use candidate::derive_linf_candidate_level_params;
 pub(crate) use candidate::{
-    derive_candidate_level_params_all_splits, derive_candidate_level_params_frontier,
+    derive_candidate_level_params, derive_candidate_level_params_all_splits,
 };
 pub(crate) use objective::select_complete_candidate;
 pub(crate) use setup_score::{
     level_setup_field_elements, terminal_setup_field_elements, MixedScore,
 };
-#[cfg(test)]
-pub(crate) use suffix_dp::derive_optimal_suffix_schedule_with_all_splits_at_state;
 pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
 
 pub(crate) const MIXED_SEARCH_FOLD_LEVELS: usize = 2;

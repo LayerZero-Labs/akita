@@ -181,7 +181,7 @@ impl<E: FieldCore> AkitaStage1Verifier<E> {
 }
 
 impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
-    fn verify_product_prefix<F, T>(
+    pub(crate) fn verify_product_prefix<F, T>(
         &self,
         product_stage_proofs: &[akita_types::AkitaStage1StageProof<E>],
         transcript: &mut T,
@@ -255,24 +255,6 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
                 .plan
                 .batch_leaf_polynomials(&current_weights, &leaf_coeffs)?,
         })
-    }
-
-    /// Verify only the product prefix. The L2 route consumes the returned
-    /// leaf state in its fused standard range/norm sumcheck.
-    pub(crate) fn verify_l2_prefix<F, T>(
-        &self,
-        proof: &AkitaStage1Proof<E>,
-        transcript: &mut T,
-    ) -> Result<RangeLeafVerifierInput<E>, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        E: ExtField<F>,
-        T: Transcript<F>,
-    {
-        if proof.norm_proof.is_none() {
-            return Err(AkitaError::InvalidProof);
-        }
-        self.verify_product_prefix::<F, T>(&proof.stages, transcript)
     }
 
     /// Verify the full stage-1 tree proof and return the final `stage1_point`.

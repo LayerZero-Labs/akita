@@ -78,7 +78,7 @@ fn enumerate_suffixes(
                         None,
                     )?
                 } else {
-                    derive_candidate_level_params(
+                    derive_linf_candidate_level_params(
                         policy,
                         payload_mode,
                         &ring_challenge,

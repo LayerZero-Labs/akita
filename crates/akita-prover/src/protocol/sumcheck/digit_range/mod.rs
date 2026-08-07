@@ -15,11 +15,11 @@
 //! bound.
 
 mod class_indexed_product;
-mod class_indexed_range_leaf;
+pub(in crate::protocol::sumcheck) mod class_indexed_range_leaf;
 mod class_indexed_state;
 mod compact_digit_source;
 pub(crate) mod direct_range_leaf;
-mod exact_prefix;
+pub(in crate::protocol::sumcheck) mod exact_prefix;
 mod range_class_tables;
 mod round_accumulation;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
@@ -252,64 +252,19 @@ impl<E: FieldCore + FromPrimitiveInt> DigitRangeProver<E> {
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + AkitaSerialize>
     DigitRangeProver<E>
 {
-    /// Produce the Stage-1 product prefix followed by one fused standard leaf
-    /// containing both the range and physical L2 identities.
-    pub fn prove_l2<F, T>(
-        self,
-        physical_plan: &PhysicalResponsePlan,
-        transcript: &mut T,
-    ) -> Result<DigitRangeProveOutput<E>, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        E: ExtField<F>,
-        T: Transcript<F>,
-    {
-        let Self {
-            digit_source,
-            equality_point,
-            plan,
-            ..
-        } = self;
-        if physical_plan.domain().num_vars() != equality_point.len()
-            || physical_plan.domain().live_len() != digit_source.live_len()
-        {
-            return Err(AkitaError::InvalidSetup(
-                "physical response and digit-range domains disagree".into(),
-            ));
-        }
-
-        let prefix =
-            prove_product_prefix::<F, E, T>(digit_source, plan, equality_point, transcript)?;
-        let batched_leaf_coeffs = prefix
-            .plan
-            .batch_leaf_polynomials(&prefix.weights, &prefix.leaf_coeffs)?;
-        let compact_witness = prefix.digit_source.digits();
-        let (norm_proof, stage1_point, range_image_evaluation) =
-            super::prove_physical_l2_norm::<F, E, T>(
-                physical_plan,
-                compact_witness.as_ref(),
-                &prefix.equality_point,
-                prefix.claim,
-                batched_leaf_coeffs,
-                transcript,
-            )?;
-        Ok((
-            AkitaStage1Proof {
-                stages: prefix.stage_proofs,
-                range_image_evaluation,
-                norm_proof: Some(norm_proof),
-            },
-            stage1_point,
-        ))
-    }
-
     /// Produce the full stage-1 tree proof and return the final `stage1_point`.
+    /// An optional physical-response plan adds the scheduled norm identity to
+    /// the existing final range leaf.
     ///
     /// # Errors
     ///
     /// Propagates any transcript or sumcheck failure from the internal root
     /// and leaf-stage proofs.
-    pub fn prove<F, T>(self, transcript: &mut T) -> Result<DigitRangeProveOutput<E>, AkitaError>
+    pub fn prove<F, T>(
+        self,
+        transcript: &mut T,
+        physical_plan: Option<&PhysicalResponsePlan>,
+    ) -> Result<DigitRangeProveOutput<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F>,
@@ -329,7 +284,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
             rounds = equality_point.len(),
         )
         .entered();
-        if plan.basis() <= 8 {
+        if let Some(physical_plan) = physical_plan {
+            if physical_plan.domain().num_vars() != equality_point.len()
+                || physical_plan.domain().live_len() != digit_source.live_len()
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "physical response and digit-range domains disagree".into(),
+                ));
+            }
+        }
+        if physical_plan.is_none() && plan.basis() <= 8 {
             let _leaf_span = tracing::info_span!("digit_range_direct_leaf").entered();
             let mut leaf_stage = direct_range_leaf::LowBasisRangeCheckProver::new(
                 digit_source.digits(),
@@ -360,6 +324,30 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
         let batched_leaf_coeffs = prefix
             .plan
             .batch_leaf_polynomials(&prefix.weights, &prefix.leaf_coeffs)?;
+        if let Some(physical_plan) = physical_plan {
+            let compact_witness = prefix.digit_source.digits();
+            let range_leaf = ClassIndexedRangeLeafProver::new(
+                prefix.digit_source,
+                &prefix.equality_point,
+                prefix.claim,
+                batched_leaf_coeffs,
+            )?;
+            let (norm_proof, stage1_point, range_image_evaluation) =
+                super::physical_l2_norm::prove_physical_l2_norm::<F, E, T>(
+                    physical_plan,
+                    compact_witness.as_ref(),
+                    range_leaf,
+                    transcript,
+                )?;
+            return Ok((
+                AkitaStage1Proof {
+                    stages: prefix.stage_proofs,
+                    range_image_evaluation,
+                    norm_proof: Some(norm_proof),
+                },
+                stage1_point,
+            ));
+        }
         let _leaf_span = tracing::info_span!("digit_range_polynomial_leaf").entered();
         let mut leaf_stage = ClassIndexedRangeLeafProver::new(
             prefix.digit_source,

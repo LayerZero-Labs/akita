@@ -12,10 +12,6 @@ pub mod two_round_prefix;
 
 pub use akita_stage3::AkitaStage3Prover;
 pub use digit_range::DigitRangeProver;
-pub(crate) use physical_l2_norm::prove_physical_l2_norm;
-#[cfg(feature = "test-support")]
-#[doc(hidden)]
-pub use physical_l2_norm::prove_physical_l2_norm as prove_physical_l2_norm_for_test;
 pub(crate) use relation_range_image::AdditionalRelationTerms;
 pub use relation_range_image::RelationRangeImageProver;
 

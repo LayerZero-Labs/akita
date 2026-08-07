@@ -128,7 +128,7 @@ fn suffix_frontier(
                         None,
                     )?
                 } else {
-                    derive_candidate_level_params_frontier(
+                    derive_candidate_level_params(
                         policy,
                         payload_mode,
                         &ring_challenge,

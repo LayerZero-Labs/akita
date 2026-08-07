@@ -2,7 +2,10 @@
 
 use crate::protocol::evaluation_trace::PreparedEvaluationTrace;
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
-use akita_algebra::{eq_poly::EqPolynomial, offset_eq::OffsetEqWindow};
+use akita_algebra::{
+    eq_poly::EqPolynomial,
+    offset_eq::{eval_eq_pair_tensor_families, EqPairTensorFamily},
+};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced,
@@ -31,7 +34,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore> {
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
     physical_l2_claim: E,
-    physical_l2_weights: Vec<(usize, E)>,
+    physical_l2_families: Vec<EqPairTensorFamily<E>>,
     _marker: std::marker::PhantomData<F>,
 }
 
@@ -63,7 +66,7 @@ where
         evaluation_trace_row_weight: E,
         evaluation_trace_opening_claim: E,
         physical_l2_claim: E,
-        physical_l2_weights: Vec<(usize, E)>,
+        physical_l2_families: Vec<EqPairTensorFamily<E>>,
     ) -> Result<Self, AkitaError> {
         let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidSetup("stage-2 variable count overflow".to_string())
@@ -74,17 +77,7 @@ where
                 actual: stage1_point.len(),
             });
         }
-        let domain_len = 1usize.checked_shl(num_rounds as u32).ok_or_else(|| {
-            AkitaError::InvalidSetup("stage-2 witness domain exceeds usize".to_string())
-        })?;
-        let mut previous = None;
-        for &(index, _) in &physical_l2_weights {
-            if index >= domain_len || previous.is_some_and(|previous| index < previous) {
-                return Err(AkitaError::InvalidProof);
-            }
-            previous = Some(index);
-        }
-        if physical_l2_weights.is_empty() && !physical_l2_claim.is_zero() {
+        if physical_l2_families.is_empty() && !physical_l2_claim.is_zero() {
             return Err(AkitaError::InvalidProof);
         }
         Ok(Self {
@@ -105,7 +98,7 @@ where
             evaluation_trace_row_weight,
             evaluation_trace_opening_claim,
             physical_l2_claim,
-            physical_l2_weights,
+            physical_l2_families,
             _marker: std::marker::PhantomData,
         })
     }
@@ -168,16 +161,14 @@ where
             let trace_weight = self.evaluation_trace.evaluate_at_point(challenges)?;
             self.evaluation_trace_row_weight * w_eval * trace_weight
         };
-        let physical_l2_oracle = if self.physical_l2_weights.is_empty() {
+        let physical_l2_oracle = if self.physical_l2_families.is_empty() {
             E::zero()
         } else {
-            let equality = OffsetEqWindow::new(challenges)?;
-            let weight_eval = self
-                .physical_l2_weights
-                .iter()
-                .fold(E::zero(), |sum, &(index, weight)| {
-                    sum + weight * equality.eval(index)
-                });
+            let weight_eval = eval_eq_pair_tensor_families(
+                challenges,
+                &self.stage1_point,
+                &self.physical_l2_families,
+            )?;
             w_eval * weight_eval
         };
 

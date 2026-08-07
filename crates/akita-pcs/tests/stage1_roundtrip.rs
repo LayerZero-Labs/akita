@@ -48,7 +48,7 @@ fn prove_stage1_case(
     .expect("stage1 prover should build");
     let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let (proof, stage1_point) = prover
-        .prove(&mut prover_transcript)
+        .prove(&mut prover_transcript, None)
         .expect("stage1 proof should succeed");
     (proof, stage1_point, equality_point)
 }
@@ -106,7 +106,7 @@ fn streaming_high_basis_handles_odd_live_prefix_without_materializing_padding() 
         )
         .unwrap();
         let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        let (proof, expected_point) = prover.prove(&mut prover_transcript).unwrap();
+        let (proof, expected_point) = prover.prove(&mut prover_transcript, None).unwrap();
 
         let verifier = AkitaStage1Verifier::new(equality_point, plan);
         let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
@@ -150,7 +150,7 @@ where
         )
         .unwrap();
         let mut prover_transcript = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        let (proof, expected_point) = prover.prove(&mut prover_transcript).unwrap();
+        let (proof, expected_point) = prover.prove(&mut prover_transcript, None).unwrap();
 
         let verifier = AkitaStage1Verifier::new(equality_point, plan);
         let mut verifier_transcript = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
@@ -197,7 +197,7 @@ fn high_basis_final_range_image_matches_dense_padding_oracle_at_every_prefix() {
             )
             .unwrap();
             let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-            let (proof, stage1_point) = prover.prove(&mut prover_transcript).unwrap();
+            let (proof, stage1_point) = prover.prove(&mut prover_transcript, None).unwrap();
 
             let verifier = AkitaStage1Verifier::new(equality_point, plan);
             let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);

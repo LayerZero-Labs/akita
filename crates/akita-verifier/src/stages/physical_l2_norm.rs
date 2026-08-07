@@ -279,6 +279,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stages::stage1::AkitaStage1Verifier;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::{FpExt4, Prime32Offset99};
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -289,9 +290,9 @@ mod tests {
         DEFAULT_SIS_SECURITY_POLICY,
     };
     use akita_types::{
-        CommitmentRingDims, CommittedGroupParams, DigitRangePlan, InnerCommitMatrixParams,
-        OpeningClaimsLayout, RelationAddressGeometry, RelationRangeImagePlan, SisL2TableDigest,
-        WitnessLayout,
+        AkitaStage1Proof, CommitmentRingDims, CommittedGroupParams, DigitRangeEqualityPoint,
+        DigitRangePlan, InnerCommitMatrixParams, OpeningClaimsLayout, RelationAddressGeometry,
+        RelationRangeImagePlan, SisL2TableDigest, WitnessLayout,
     };
 
     type SmallExt = FpExt4<Prime32Offset99>;
@@ -376,23 +377,57 @@ mod tests {
         (physical, witness, RESPONSE_L2_SQ_CAP)
     }
 
+    fn prove_limb_gram(
+        plan: &PhysicalResponsePlan,
+        witness: Vec<i8>,
+    ) -> (
+        AkitaStage1Proof<SmallExt>,
+        Vec<SmallExt>,
+        DigitRangeEqualityPoint<SmallExt>,
+    ) {
+        let range_plan = DigitRangePlan::new(16).expect("range plan");
+        let equality_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
+            &vec![SmallExt::zero(); plan.domain().num_vars()],
+            plan.domain().num_vars(),
+            0,
+        )
+        .expect("range equality point");
+        let prover = akita_prover::DigitRangeProver::new(
+            std::sync::Arc::from(witness),
+            range_plan,
+            plan.domain(),
+            equality_point.clone(),
+        )
+        .expect("L2 digit-range prover");
+        let mut transcript =
+            AkitaTranscript::<Prime32Offset99>::new(b"akita/physical-l2-small-field-integration");
+        let (proof, point) = prover
+            .prove::<Prime32Offset99, _>(&mut transcript, Some(plan))
+            .expect("prove multi-block limb Gram norm");
+        (proof, point, equality_point)
+    }
+
     fn verify_limb_gram(
         plan: &PhysicalResponsePlan,
-        proof: &PhysicalL2NormProof<SmallExt>,
-        range_point: &[SmallExt],
-        range_image_evaluation: SmallExt,
+        proof: &AkitaStage1Proof<SmallExt>,
+        equality_point: DigitRangeEqualityPoint<SmallExt>,
         cap: u128,
     ) -> Result<PhysicalL2VerifierReplay<SmallExt>, AkitaError> {
         let mut transcript =
             AkitaTranscript::<Prime32Offset99>::new(b"akita/physical-l2-small-field-integration");
+        let stage1 =
+            AkitaStage1Verifier::new(equality_point, DigitRangePlan::new(16).expect("range plan"));
+        let leaf =
+            stage1.verify_product_prefix::<Prime32Offset99, _>(&proof.stages, &mut transcript)?;
+        let norm_proof = proof.norm_proof.as_ref().ok_or(AkitaError::InvalidProof)?;
         verify_physical_l2_norm::<Prime32Offset99, SmallExt, _>(
             plan,
-            proof,
+            norm_proof,
             PhysicalL2RangeClaim {
-                equality_point: range_point,
-                input_claim: SmallExt::zero(),
-                leaf_coefficients: &[SmallExt::zero(); 3],
-                image_evaluation: range_image_evaluation,
+                equality_point: &leaf.equality_point,
+                input_claim: leaf.input_claim,
+                leaf_coefficients: &leaf.polynomial_coefficients,
+                image_evaluation: proof.range_image_evaluation,
             },
             SisModulusProfileId::Q32Offset99,
             cap,
@@ -422,20 +457,11 @@ mod tests {
     #[test]
     fn small_field_multiblock_limb_gram_round_trip_and_mutations() {
         let (plan, witness, cap) = limb_gram_fixture();
-        let range_point = vec![SmallExt::zero(); plan.domain().num_vars()];
-        let leaf_coefficients = vec![SmallExt::zero(); 3];
-        let mut prover_transcript =
-            AkitaTranscript::<Prime32Offset99>::new(b"akita/physical-l2-small-field-integration");
-        let (proof, prover_point, range_image_evaluation) =
-            akita_prover::prove_physical_l2_norm_for_test::<Prime32Offset99, SmallExt, _>(
-                &plan,
-                &witness,
-                &range_point,
-                SmallExt::zero(),
-                leaf_coefficients,
-                &mut prover_transcript,
-            )
-            .expect("prove multi-block limb Gram norm");
+        let (stage1_proof, prover_point, equality_point) = prove_limb_gram(&plan, witness);
+        let proof = stage1_proof
+            .norm_proof
+            .as_ref()
+            .expect("physical norm proof");
         assert!(!proof.subclaims.is_empty());
         assert!(proof.response_l2_sq <= cap);
 
@@ -456,39 +482,37 @@ mod tests {
         let decoded =
             PhysicalL2NormProof::<SmallExt>::deserialize_compressed(bytes.as_slice(), &wire_shape)
                 .expect("deserialize physical norm proof");
-        assert_eq!(decoded, proof);
-        let replay = verify_limb_gram(&plan, &decoded, &range_point, range_image_evaluation, cap)
+        assert_eq!(&decoded, proof);
+        let mut decoded_stage1 = stage1_proof.clone();
+        decoded_stage1.norm_proof = Some(decoded.clone());
+        let replay = verify_limb_gram(&plan, &decoded_stage1, equality_point.clone(), cap)
             .expect("verify multi-block limb Gram norm");
         assert_eq!(replay.point, prover_point);
         assert_eq!(replay.virtual_evaluations, decoded.virtual_evaluations);
 
-        let mut over_cap = decoded.clone();
-        over_cap.response_l2_sq = cap + 1;
-        assert!(
-            verify_limb_gram(&plan, &over_cap, &range_point, range_image_evaluation, cap,).is_err()
-        );
+        let mut over_cap = decoded_stage1.clone();
+        over_cap
+            .norm_proof
+            .as_mut()
+            .expect("physical norm proof")
+            .response_l2_sq = cap + 1;
+        assert!(verify_limb_gram(&plan, &over_cap, equality_point.clone(), cap).is_err());
 
-        let mut bad_subclaim = decoded.clone();
-        bad_subclaim.subclaims[0] += SmallExt::one();
-        assert!(verify_limb_gram(
-            &plan,
-            &bad_subclaim,
-            &range_point,
-            range_image_evaluation,
-            cap,
-        )
-        .is_err());
+        let mut bad_subclaim = decoded_stage1.clone();
+        bad_subclaim
+            .norm_proof
+            .as_mut()
+            .expect("physical norm proof")
+            .subclaims[0] += SmallExt::one();
+        assert!(verify_limb_gram(&plan, &bad_subclaim, equality_point.clone(), cap).is_err());
 
-        let mut bad_evaluation = decoded;
-        bad_evaluation.virtual_evaluations[0] += SmallExt::one();
-        assert!(verify_limb_gram(
-            &plan,
-            &bad_evaluation,
-            &range_point,
-            range_image_evaluation,
-            cap,
-        )
-        .is_err());
+        let mut bad_evaluation = decoded_stage1;
+        bad_evaluation
+            .norm_proof
+            .as_mut()
+            .expect("physical norm proof")
+            .virtual_evaluations[0] += SmallExt::one();
+        assert!(verify_limb_gram(&plan, &bad_evaluation, equality_point, cap).is_err());
 
         assert!(PhysicalL2NormProof::<SmallExt>::deserialize_compressed(
             &bytes[..bytes.len() - 1],

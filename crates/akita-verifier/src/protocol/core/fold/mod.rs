@@ -4,6 +4,7 @@ mod extension_claim;
 mod single_field;
 
 use super::*;
+use akita_algebra::offset_eq::EqPairTensorFamily;
 use akita_types::{dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan};
 
 pub(in crate::protocol::core) use extension_claim::{
@@ -66,7 +67,7 @@ struct Stage1Replay<E: FieldCore> {
     range_image_evaluation: E,
     stage1_point: Vec<E>,
     physical_l2_claim: E,
-    physical_l2_weights: Vec<(usize, E)>,
+    physical_l2_families: Vec<EqPairTensorFamily<E>>,
 }
 
 fn verify_stage1<F, E, T>(
@@ -119,7 +120,8 @@ where
                         "physical response plan exists for a non-L2 route".into(),
                     ));
                 };
-                let leaf = stage1_verifier.verify_l2_prefix::<F, T>(proof, transcript)?;
+                let leaf =
+                    stage1_verifier.verify_product_prefix::<F, T>(&proof.stages, transcript)?;
                 let replay = verify_physical_l2_norm::<F, E, T>(
                     plan,
                     norm_proof,
@@ -138,7 +140,7 @@ where
             _ => return Err(AkitaError::InvalidProof),
         };
     transcript.append_serde(ABSORB_RANGE_IMAGE_EVALUATION, &proof.range_image_evaluation);
-    let (physical_l2_claim, physical_l2_weights) =
+    let (physical_l2_claim, physical_l2_families) =
         match (physical_l2_virtual_evaluations, physical_plan) {
             (Some(evaluations), Some(plan)) => {
                 let eta = sample_ext_challenge::<F, E, T>(
@@ -153,10 +155,7 @@ where
                     claim += evaluation * power;
                     power *= eta;
                 }
-                (
-                    claim,
-                    plan.virtualization_weights(&stage1_point, &batching)?,
-                )
+                (claim, plan.virtualization_families(&batching)?)
             }
             (None, None) => (E::zero(), Vec::new()),
             _ => return Err(AkitaError::InvalidProof),
@@ -172,7 +171,7 @@ where
         range_image_evaluation: proof.range_image_evaluation,
         stage1_point,
         physical_l2_claim,
-        physical_l2_weights,
+        physical_l2_families,
     })
 }
 
@@ -249,7 +248,7 @@ where
         evaluation_trace_row_weight,
         evaluation_trace_opening_claim,
         stage1.physical_l2_claim,
-        stage1.physical_l2_weights,
+        stage1.physical_l2_families,
     )?;
 
     let sumcheck_challenges = {

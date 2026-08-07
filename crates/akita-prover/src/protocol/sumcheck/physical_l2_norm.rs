@@ -1,9 +1,15 @@
-//! Fused final Stage-1 leaf for range checking and a physical response norm.
+//! Physical-norm addend for the existing final Stage-1 range leaf.
 
-use akita_algebra::{eq_poly::EqPolynomial, UniPoly};
+use super::digit_range::class_indexed_range_leaf::ClassIndexedRangeLeafProver;
+use super::digit_range::exact_prefix::ExactPrefixTable;
+use akita_algebra::UniPoly;
+use akita_field::parallel::*;
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt};
+use akita_sumcheck::{
+    EqFactoredSumcheckInstanceProver, SumcheckInstanceProver, SumcheckInstanceProverExt,
+};
 use akita_transcript::labels::{
     ABSORB_L2_NORM_INTEGER, ABSORB_L2_NORM_SUBCLAIM, ABSORB_L2_VIRTUAL_EVALUATION,
     CHALLENGE_L2_NORM_BATCH, CHALLENGE_L2_NORM_MERGE, CHALLENGE_SUMCHECK_ROUND,
@@ -14,146 +20,161 @@ use akita_types::{
     PhysicalResponsePlan,
 };
 
-enum NormTerms<E: FieldCore> {
-    Direct,
+const RANGE_Q_MAX_DEGREE: usize = 4;
+const FUSED_MAX_DEGREE: usize = RANGE_Q_MAX_DEGREE + 1;
+const NORM_MAX_DEGREE: usize = 3;
+
+enum PhysicalNormTerm<E: FieldCore> {
+    Direct {
+        response: ExactPrefixTable<E>,
+    },
     LimbGram {
-        selectors: Vec<Vec<E>>,
+        limbs: Vec<ExactPrefixTable<E>>,
+        selectors: Vec<ExactPrefixTable<E>>,
         pairs: Vec<(usize, usize)>,
     },
 }
 
-struct FusedRangeNormProver<E: FieldCore> {
-    equality_table: Vec<E>,
-    range_image_table: Vec<E>,
-    leaf_coefficients: Vec<E>,
-    virtual_tables: Vec<Vec<E>>,
-    norm_terms: NormTerms<E>,
-    norm_merge: E,
-    input_claim: E,
-    num_rounds: usize,
-    rounds_completed: usize,
-}
-
-impl<E: FieldCore + FromPrimitiveInt> FusedRangeNormProver<E> {
-    fn affine(left: E, right: E, point: E) -> E {
-        left + point * (right - left)
+impl<E: FieldCore + HasOptimizedFold> PhysicalNormTerm<E> {
+    #[inline(always)]
+    fn affine_pair(table: &ExactPrefixTable<E>, pair_index: usize) -> (E, E) {
+        let left = table.value_or_default(2 * pair_index);
+        (left, table.value_or_default(2 * pair_index + 1) - left)
     }
 
-    fn fold_table(table: &mut Vec<E>, challenge: E) {
-        let next_len = table.len() / 2;
-        for index in 0..next_len {
-            table[index] = Self::affine(table[2 * index], table[2 * index + 1], challenge);
-        }
-        table.truncate(next_len);
-    }
-
-    fn evaluate_leaf(&self, value: E) -> E {
-        self.leaf_coefficients
-            .iter()
-            .rev()
-            .fold(E::zero(), |acc, &coefficient| acc * value + coefficient)
-    }
-
-    fn norm_at_pair(&self, pair_index: usize, point: E) -> E {
-        match &self.norm_terms {
-            NormTerms::Direct => {
-                let table = &self.virtual_tables[0];
-                let value = Self::affine(table[2 * pair_index], table[2 * pair_index + 1], point);
-                value * value
-            }
-            NormTerms::LimbGram { selectors, pairs } => {
-                selectors
-                    .iter()
-                    .zip(pairs)
-                    .fold(E::zero(), |sum, (selector, &(left, right))| {
-                        let left_table = &self.virtual_tables[left];
-                        let right_table = &self.virtual_tables[right];
-                        let selector = Self::affine(
-                            selector[2 * pair_index],
-                            selector[2 * pair_index + 1],
-                            point,
-                        );
-                        let left = Self::affine(
-                            left_table[2 * pair_index],
-                            left_table[2 * pair_index + 1],
-                            point,
-                        );
-                        let right = Self::affine(
-                            right_table[2 * pair_index],
-                            right_table[2 * pair_index + 1],
-                            point,
-                        );
-                        sum + selector * left * right
-                    })
-            }
-        }
-    }
-
-    fn final_values(&self) -> Result<(E, Vec<E>), AkitaError> {
-        let range_image = self
-            .range_image_table
-            .first()
-            .copied()
-            .ok_or(AkitaError::InvalidProof)?;
-        let virtual_evaluations = self
-            .virtual_tables
-            .iter()
-            .map(|table| table.first().copied().ok_or(AkitaError::InvalidProof))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok((range_image, virtual_evaluations))
-    }
-
-    fn final_norm(&self) -> Result<E, AkitaError> {
-        match &self.norm_terms {
-            NormTerms::Direct => {
-                let value = self
-                    .virtual_tables
+    fn round_coefficients(&self) -> [E; NORM_MAX_DEGREE + 1] {
+        match self {
+            Self::Direct { response } => cfg_fold_reduce!(
+                0..response.explicit_len().div_ceil(2),
+                || [E::zero(); NORM_MAX_DEGREE + 1],
+                |mut sum, pair_index| {
+                    let (value, delta) = Self::affine_pair(response, pair_index);
+                    sum[0] += value * value;
+                    sum[1] += (value + value) * delta;
+                    sum[2] += delta * delta;
+                    sum
+                },
+                |mut left, right| {
+                    for (left, right) in left.iter_mut().zip(right) {
+                        *left += right;
+                    }
+                    left
+                }
+            ),
+            Self::LimbGram {
+                limbs,
+                selectors,
+                pairs,
+            } => {
+                let pair_count = limbs
                     .first()
-                    .and_then(|table| table.first())
-                    .copied()
-                    .ok_or(AkitaError::InvalidProof)?;
+                    .map_or(0, |table| table.explicit_len().div_ceil(2));
+                cfg_fold_reduce!(
+                    0..pair_count,
+                    || [E::zero(); NORM_MAX_DEGREE + 1],
+                    |mut sum, pair_index| {
+                        for (selector, &(left, right)) in selectors.iter().zip(pairs) {
+                            let (selector, selector_delta) =
+                                Self::affine_pair(selector, pair_index);
+                            let (left, left_delta) = Self::affine_pair(&limbs[left], pair_index);
+                            let (right, right_delta) = Self::affine_pair(&limbs[right], pair_index);
+                            let product_constant = left * right;
+                            let product_linear = left * right_delta + left_delta * right;
+                            let product_quadratic = left_delta * right_delta;
+                            sum[0] += selector * product_constant;
+                            sum[1] += selector * product_linear + selector_delta * product_constant;
+                            sum[2] +=
+                                selector * product_quadratic + selector_delta * product_linear;
+                            sum[3] += selector_delta * product_quadratic;
+                        }
+                        sum
+                    },
+                    |mut left, right| {
+                        for (left, right) in left.iter_mut().zip(right) {
+                            *left += right;
+                        }
+                        left
+                    }
+                )
+            }
+        }
+    }
+
+    fn bind(&mut self, challenge: E) -> Result<(), AkitaError> {
+        let context = E::precompute_fold(challenge);
+        let fold = |left, right| E::fold_one(&context, left, right);
+        match self {
+            Self::Direct { response } => response.fold_in_place(fold),
+            Self::LimbGram {
+                limbs, selectors, ..
+            } => {
+                for table in limbs.iter_mut().chain(selectors) {
+                    table.fold_in_place(fold)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn virtual_evaluations(&self) -> Result<Vec<E>, AkitaError> {
+        match self {
+            Self::Direct { response } => response
+                .final_value()
+                .map(|value| vec![value])
+                .ok_or(AkitaError::InvalidProof),
+            Self::LimbGram { limbs, .. } => limbs
+                .iter()
+                .map(|table| table.final_value().ok_or(AkitaError::InvalidProof))
+                .collect(),
+        }
+    }
+
+    fn final_claim(&self) -> Result<E, AkitaError> {
+        match self {
+            Self::Direct { response } => {
+                let value = response.final_value().ok_or(AkitaError::InvalidProof)?;
                 Ok(value * value)
             }
-            NormTerms::LimbGram { selectors, pairs } => selectors.iter().zip(pairs).try_fold(
+            Self::LimbGram {
+                limbs,
+                selectors,
+                pairs,
+            } => selectors.iter().zip(pairs).try_fold(
                 E::zero(),
                 |sum, (selector, &(left, right))| {
-                    let selector = selector.first().copied().ok_or(AkitaError::InvalidProof)?;
-                    let left = self
-                        .virtual_tables
+                    let selector = selector.final_value().ok_or(AkitaError::InvalidProof)?;
+                    let left = limbs
                         .get(left)
-                        .and_then(|table| table.first())
-                        .copied()
+                        .and_then(ExactPrefixTable::final_value)
                         .ok_or(AkitaError::InvalidProof)?;
-                    let right = self
-                        .virtual_tables
+                    let right = limbs
                         .get(right)
-                        .and_then(|table| table.first())
-                        .copied()
+                        .and_then(ExactPrefixTable::final_value)
                         .ok_or(AkitaError::InvalidProof)?;
                     Ok(sum + selector * left * right)
                 },
             ),
         }
     }
-
-    fn expected_final_claim(&self) -> Result<E, AkitaError> {
-        let equality = self
-            .equality_table
-            .first()
-            .copied()
-            .ok_or(AkitaError::InvalidProof)?;
-        let (range_image, _) = self.final_values()?;
-        Ok(equality * self.evaluate_leaf(range_image) + self.norm_merge * self.final_norm()?)
-    }
 }
 
-impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for FusedRangeNormProver<E> {
+struct FusedRangeNormProver<E: FieldCore> {
+    range: ClassIndexedRangeLeafProver<E>,
+    norm: PhysicalNormTerm<E>,
+    norm_merge: E,
+    input_claim: E,
+    rounds_completed: usize,
+}
+
+impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps> SumcheckInstanceProver<E>
+    for FusedRangeNormProver<E>
+{
     fn num_rounds(&self) -> usize {
-        self.num_rounds
+        EqFactoredSumcheckInstanceProver::num_rounds(&self.range)
     }
 
     fn degree_bound(&self) -> usize {
-        self.leaf_coefficients.len()
+        EqFactoredSumcheckInstanceProver::degree_bound(&self.range) + 1
     }
 
     fn input_claim(&self) -> E {
@@ -162,50 +183,40 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for FusedRangeNo
 
     fn compute_round_univariate(&mut self, round: usize, _previous_claim: E) -> UniPoly<E> {
         debug_assert_eq!(round, self.rounds_completed);
-        let pair_count = self.range_image_table.len() / 2;
-        let evaluations = (0..=self.degree_bound())
-            .map(|point| {
-                let point = E::from_u64(point as u64);
-                (0..pair_count).fold(E::zero(), |sum, pair_index| {
-                    let equality = Self::affine(
-                        self.equality_table[2 * pair_index],
-                        self.equality_table[2 * pair_index + 1],
-                        point,
-                    );
-                    let range_image = Self::affine(
-                        self.range_image_table[2 * pair_index],
-                        self.range_image_table[2 * pair_index + 1],
-                        point,
-                    );
-                    sum + equality * self.evaluate_leaf(range_image)
-                        + self.norm_merge * self.norm_at_pair(pair_index, point)
-                })
-            })
-            .collect::<Vec<_>>();
-        UniPoly::from_evals(&evaluations)
+        let q_coefficients = self.range.round_q_coefficients(round);
+        let (factor_at_zero, factor_at_one) = self.range.current_linear_factor_evals();
+        let factor_delta = factor_at_one - factor_at_zero;
+        let mut coefficients = [E::zero(); FUSED_MAX_DEGREE + 1];
+        for (degree, coefficient) in q_coefficients
+            .into_iter()
+            .take(EqFactoredSumcheckInstanceProver::degree_bound(&self.range) + 1)
+            .enumerate()
+        {
+            coefficients[degree] += factor_at_zero * coefficient;
+            coefficients[degree + 1] += factor_delta * coefficient;
+        }
+        for (destination, coefficient) in
+            coefficients.iter_mut().zip(self.norm.round_coefficients())
+        {
+            *destination += self.norm_merge * coefficient;
+        }
+        UniPoly::from_coeffs(coefficients[..=self.degree_bound()].to_vec())
     }
 
     fn ingest_challenge(&mut self, round: usize, challenge: E) {
         debug_assert_eq!(round, self.rounds_completed);
-        Self::fold_table(&mut self.equality_table, challenge);
-        Self::fold_table(&mut self.range_image_table, challenge);
-        for table in &mut self.virtual_tables {
-            Self::fold_table(table, challenge);
-        }
-        if let NormTerms::LimbGram { selectors, .. } = &mut self.norm_terms {
-            for selector in selectors {
-                Self::fold_table(selector, challenge);
-            }
-        }
+        self.range.ingest_challenge(round, challenge);
+        self.norm
+            .bind(challenge)
+            .expect("validated physical norm prefix can fold");
         self.rounds_completed += 1;
     }
 }
 
 fn exact_claims<E: FieldCore + FromPrimitiveInt>(
     plan: &PhysicalResponsePlan,
-    compact_witness: &[i8],
+    integers: &[Vec<i128>],
 ) -> Result<(u128, Vec<E>), AkitaError> {
-    let integers = plan.materialize_virtual_integers(compact_witness)?;
     match plan.shape() {
         PhysicalL2NormProofShape::Direct { .. } => {
             let response = integers.first().ok_or(AkitaError::InvalidProof)?;
@@ -256,118 +267,124 @@ fn exact_claims<E: FieldCore + FromPrimitiveInt>(
     }
 }
 
-fn range_image_table<E: FieldCore + FromPrimitiveInt>(
-    compact_witness: &[i8],
-    domain_len: usize,
-) -> Result<Vec<E>, AkitaError> {
-    if compact_witness.len() > domain_len {
-        return Err(AkitaError::InvalidSize {
-            expected: domain_len,
-            actual: compact_witness.len(),
-        });
+fn prepare_norm_term<E: FieldCore + FromPrimitiveInt>(
+    plan: &PhysicalResponsePlan,
+    integers: Vec<Vec<i128>>,
+    subclaim_weights: &[E],
+) -> Result<PhysicalNormTerm<E>, AkitaError> {
+    let domain_len = plan.domain().domain_len();
+    let tables = integers
+        .into_iter()
+        .map(|values| {
+            ExactPrefixTable::new(
+                domain_len,
+                values.into_iter().map(E::from_i128).collect(),
+                E::zero(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    match plan.shape() {
+        PhysicalL2NormProofShape::Direct { .. } => {
+            let mut tables = tables.into_iter();
+            let response = tables.next().ok_or(AkitaError::InvalidProof)?;
+            if tables.next().is_some() || !subclaim_weights.is_empty() {
+                return Err(AkitaError::InvalidProof);
+            }
+            Ok(PhysicalNormTerm::Direct { response })
+        }
+        shape @ PhysicalL2NormProofShape::LimbGram { .. } => {
+            let layout = shape.limb_gram_layout()?.ok_or(AkitaError::InvalidProof)?;
+            if subclaim_weights.len() != layout.subclaim_count() {
+                return Err(AkitaError::InvalidSize {
+                    expected: layout.subclaim_count(),
+                    actual: subclaim_weights.len(),
+                });
+            }
+            let mut selectors = Vec::with_capacity(layout.pair_count());
+            for (left, right) in layout.limb_pairs() {
+                let mut values = Vec::with_capacity(layout.physical_response_len());
+                for (block_index, block) in layout.block_ranges().enumerate() {
+                    let weight_index = layout
+                        .subclaim_index(block_index, left, right)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let weight = *subclaim_weights
+                        .get(weight_index)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    values.resize(block.end, weight);
+                }
+                selectors.push(ExactPrefixTable::new(domain_len, values, E::zero())?);
+            }
+            Ok(PhysicalNormTerm::LimbGram {
+                limbs: tables,
+                selectors,
+                pairs: layout.limb_pairs().collect(),
+            })
+        }
     }
-    let mut table = vec![E::zero(); domain_len];
-    for (&digit, value) in compact_witness.iter().zip(&mut table) {
-        let digit = i64::from(digit);
-        *value = E::from_i64(digit * (digit + 1));
-    }
-    Ok(table)
 }
 
-/// Prove the final Stage-1 leaf obtained by batching the range identity and
-/// the schedule-selected exact physical norm identity.
-// This item is re-exported only by the `test-support` feature. It remains
-// public here so the feature-gated re-export can cross the crate boundary.
-#[cfg_attr(not(feature = "test-support"), allow(unreachable_pub))]
-#[allow(clippy::too_many_arguments)]
-pub fn prove_physical_l2_norm<F, E, T>(
+/// Add the scheduled physical norm identity to the existing optimized final
+/// range leaf and prove the resulting standard sumcheck.
+pub(in crate::protocol::sumcheck) fn prove_physical_l2_norm<F, E, T>(
     plan: &PhysicalResponsePlan,
     compact_witness: &[i8],
-    range_equality_point: &[E],
-    range_input_claim: E,
-    leaf_coefficients: Vec<E>,
+    range: ClassIndexedRangeLeafProver<E>,
     transcript: &mut T,
 ) -> Result<(PhysicalL2NormProof<E>, Vec<E>, E), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: ExtField<F> + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps + AkitaSerialize,
     T: Transcript<F>,
 {
-    if range_equality_point.len() != plan.domain().num_vars() || leaf_coefficients.len() < 3 {
+    if EqFactoredSumcheckInstanceProver::num_rounds(&range) != plan.domain().num_vars() {
         return Err(AkitaError::InvalidSetup(
             "fused Stage-1 leaf has inconsistent range geometry".into(),
         ));
     }
-    let virtual_tables = plan.materialize_virtual_tables::<E>(compact_witness)?;
-    let (response_l2_sq, subclaims) = exact_claims::<E>(plan, compact_witness)?;
+    let integers = plan.materialize_virtual_integers(compact_witness)?;
+    let (response_l2_sq, subclaims) = exact_claims::<E>(plan, &integers)?;
     transcript.append_serde(ABSORB_L2_NORM_INTEGER, &response_l2_sq);
     for claim in &subclaims {
         transcript.append_serde(ABSORB_L2_NORM_SUBCLAIM, claim);
     }
 
-    let (norm_terms, norm_input_claim) = match plan.shape() {
-        PhysicalL2NormProofShape::Direct { .. } => {
-            (NormTerms::Direct, E::from_u128(response_l2_sq))
-        }
-        shape @ PhysicalL2NormProofShape::LimbGram { .. } => {
-            let layout = shape.limb_gram_layout()?.ok_or(AkitaError::InvalidProof)?;
+    let (norm_input_claim, subclaim_weights) = match plan.shape() {
+        PhysicalL2NormProofShape::Direct { .. } => (E::from_u128(response_l2_sq), Vec::new()),
+        PhysicalL2NormProofShape::LimbGram { .. } => {
             let gamma = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_BATCH);
-            let mut powers = Vec::with_capacity(subclaims.len());
             let mut power = E::one();
-            for _ in 0..subclaims.len() {
-                powers.push(power);
+            let mut weights = Vec::with_capacity(subclaims.len());
+            let mut claim = E::zero();
+            for &subclaim in &subclaims {
+                weights.push(power);
+                claim += power * subclaim;
                 power *= gamma;
             }
-            let input_claim = subclaims
-                .iter()
-                .zip(&powers)
-                .fold(E::zero(), |sum, (&claim, &weight)| sum + weight * claim);
-            let mut selectors =
-                vec![vec![E::zero(); plan.domain().domain_len()]; layout.pair_count()];
-            for (block_index, block) in layout.block_ranges().enumerate() {
-                for physical_index in block {
-                    for (pair_index, (left, right)) in layout.limb_pairs().enumerate() {
-                        let power_index = layout
-                            .subclaim_index(block_index, left, right)
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup("L2 selector index overflow".into())
-                            })?;
-                        let value = powers
-                            .get(power_index)
-                            .copied()
-                            .ok_or(AkitaError::InvalidProof)?;
-                        *selectors
-                            .get_mut(pair_index)
-                            .and_then(|selector| selector.get_mut(physical_index))
-                            .ok_or(AkitaError::InvalidProof)? = value;
-                    }
-                }
-            }
-            let pairs = layout.limb_pairs().collect();
-            (NormTerms::LimbGram { selectors, pairs }, input_claim)
+            (claim, weights)
         }
     };
+    let norm = prepare_norm_term(plan, integers, &subclaim_weights)?;
     let norm_merge = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_MERGE);
+    let range_input_claim = EqFactoredSumcheckInstanceProver::input_claim(&range);
     let mut prover = FusedRangeNormProver {
-        equality_table: EqPolynomial::evals(range_equality_point)?,
-        range_image_table: range_image_table(compact_witness, plan.domain().domain_len())?,
-        leaf_coefficients,
-        virtual_tables,
-        norm_terms,
+        range,
+        norm,
         norm_merge,
         input_claim: range_input_claim + norm_merge * norm_input_claim,
-        num_rounds: plan.domain().num_vars(),
         rounds_completed: 0,
     };
     let (sumcheck, point, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
         sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
     })?;
-    if final_claim != prover.expected_final_claim()? {
+    let expected_final_claim =
+        prover.range.final_range_claim() + norm_merge * prover.norm.final_claim()?;
+    if final_claim != expected_final_claim {
         return Err(AkitaError::InvalidInput(
             "fused range/norm prover final claim mismatch".into(),
         ));
     }
-    let (range_image_evaluation, virtual_evaluations) = prover.final_values()?;
+    let range_image_evaluation = prover.range.final_range_image_eval();
+    let virtual_evaluations = prover.norm.virtual_evaluations()?;
     for evaluation in &virtual_evaluations {
         transcript.append_serde(ABSORB_L2_VIRTUAL_EVALUATION, evaluation);
     }

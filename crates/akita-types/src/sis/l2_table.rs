@@ -22,7 +22,7 @@ impl SisL2TableDigest {
     /// Stable wire tag for the L2 digest field.
     pub const TAG: u8 = 1;
 
-    /// SHA-256 digest of the current generated L2 table's `audit.csv`.
+    /// SHA-256 digest of the audit CSV emitted while generating the current L2 table.
     pub const CURRENT: Self = Self(TABLE_DIGEST);
 }
 

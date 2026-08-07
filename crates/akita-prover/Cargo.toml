@@ -41,7 +41,6 @@ akita-config = { version = "0.1.0", path = "../akita-config", features = [
 default = ["schedules-default"]
 schedules-default = ["akita-config/schedules-default"]
 logging-transcript = ["akita-transcript/logging-transcript"]
-test-support = []
 parallel = [
   "dep:rayon",
   "akita-challenges/parallel",

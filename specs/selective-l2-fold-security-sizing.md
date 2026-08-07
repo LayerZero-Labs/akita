@@ -438,25 +438,30 @@ The estimator work includes the following changes.
 The verifier never runs the estimator. It uses checked schedule parameters and
 the generated table only.
 
-### Candidate frontier
+The table generator emits a full audit CSV and hashes it into the generated
+Rust table. The CSV is reproducible and is not checked in. Run the following
+command to rebuild the Rust rows and the local audit file.
 
-An A rank change changes the T width and the next recursive witness. The
-planner must retain the best candidate for each distinct secure A rank at a
-state. Keeping only the cheapest current level can remove a rank that produces
-a cheaper suffix or one fewer fold.
+```sh
+cargo run -p akita-sis-estimator --release --example euclidean_width_table -- --format rust-split
+```
 
-The suffix state must distinguish every value that changes future proof cost,
-including the selected A rank, next witness length, basis, and any L2 proof
-shape that survives into the successor. Candidates with the same future state
-may be deduplicated. Candidates with different A ranks may not be collapsed
-before the suffix has been priced.
+### Exact candidate admission
 
-The first rollout bounds this complete frontier by requiring the measured cap
-window to start at fold level 3, remain contiguous, and end no later than fold
-level 6. A policy with a later first cap, a gap, or a fifth measured level is
-invalid. The planner may therefore retain all splits before and at an exact
-measured state without creating unbounded multi-level fanout for a valid
-policy.
+The planner keeps its ordinary L infinity search at every state. A measured cap
+does not change any earlier state. When the current fold level and input witness
+length match a cap, the cap's physical response length determines one block
+split. The planner builds that one L2 candidate and keeps it only when it lowers
+the A rank for the same split.
+
+The existing suffix search prices the ordinary L infinity candidate and the
+exact L2 candidate. This comparison includes the different A rank, T width,
+next witness length, later folds, and terminal response. The planner does not
+keep extra predecessor splits to reach a future cap.
+
+Caps may start at any eligible later fold and may have gaps. Each cap must name
+a valid exact candidate at fold level 3 or later and below the recursion depth
+limit. The cap list must be strictly sorted.
 
 The final planner comparison includes the norm proof bytes, changed A payload,
 changed T decomposition, changed next witness, all later folds, and the
@@ -503,8 +508,8 @@ infinity correction to the new norm proof.
 * [x] The Euclidean scalar mapping uses `sqrt(C_2_sq)` and never
       `sqrt(width * C_2_sq)` for a complete collision norm.
 * [x] Production L2 table rows use quantum ADPS16 at 128 bits.
-* [x] The planner retains distinct A rank candidates until their suffixes have
-      been priced.
+* [x] At an exact measured state, the planner prices the ordinary L infinity
+      candidate and the one L2 candidate determined by the cap geometry.
 * [x] Root, early, and terminal levels carry no L2 proof.
 * [x] Tampering with the norm, cap, route, subclaim, virtual evaluation, nonce,
       or proof shape causes verification to fail.
@@ -661,7 +666,7 @@ has been folded into the book.
 7. Add small field limb inner products only where the no wrap test requires
    them.
 8. Add verifier replay and malformed proof tests.
-9. Preserve the planner A rank frontier and compare complete suffixes.
+9. Add the exact L2 candidate to the existing suffix comparison.
 10. Regenerate schedules and produce the required three way report.
 11. Run the full repository gates and update the owning book pages.
 

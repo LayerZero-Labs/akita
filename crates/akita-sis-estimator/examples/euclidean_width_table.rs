@@ -157,12 +157,19 @@ fn write_rust_split(
 
 fn rust_mod_source(table_digest: [u8; 32]) -> String {
     let digest = table_digest
-        .iter()
-        .map(|byte| format!("0x{byte:02x}"))
+        .chunks(16)
+        .map(|chunk| {
+            let bytes = chunk
+                .iter()
+                .map(|byte| format!("0x{byte:02x}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("    {bytes},")
+        })
         .collect::<Vec<_>>()
-        .join(", ");
+        .join("\n");
     format!(
-        "{TABLE_HEADER}mod q128;\nmod q32;\nmod q64;\n\nuse super::SisModulusProfileId;\n\n/// SHA-256 digest of `audit.csv`, including every accepted boundary and rejected successor.\npub(crate) const TABLE_DIGEST: [u8; 32] = [{digest}];\n\n/// Generated SIS max-width table: for each `(family, d, collision_l2_sq)` the\n/// maximum secure ring-element width per module rank (`widths[rank - 1]`).\n#[rustfmt::skip]\npub(crate) fn sis_max_widths(\n    family: SisModulusProfileId,\n    d: u32,\n    collision_l2_sq: u128,\n) -> Option<&'static [u64]> {{\n    match family {{\n        SisModulusProfileId::Q32Offset99 => q32::sis_max_widths(d, collision_l2_sq),\n        SisModulusProfileId::Q64Offset59 => q64::sis_max_widths(d, collision_l2_sq),\n        SisModulusProfileId::Q128OffsetA7F7 => q128::sis_max_widths(d, collision_l2_sq),\n    }}\n}}\n"
+        "{TABLE_HEADER}mod q128;\nmod q32;\nmod q64;\n\nuse super::SisModulusProfileId;\n\n/// SHA-256 digest of the generated audit CSV, including every accepted boundary and rejected successor.\npub(crate) const TABLE_DIGEST: [u8; 32] = [\n{digest}\n];\n\n/// Generated SIS max-width table: for each `(family, d, collision_l2_sq)` the\n/// maximum secure ring-element width per module rank (`widths[rank - 1]`).\n#[rustfmt::skip]\npub(crate) fn sis_max_widths(\n    family: SisModulusProfileId,\n    d: u32,\n    collision_l2_sq: u128,\n) -> Option<&'static [u64]> {{\n    match family {{\n        SisModulusProfileId::Q32Offset99 => q32::sis_max_widths(d, collision_l2_sq),\n        SisModulusProfileId::Q64Offset59 => q64::sis_max_widths(d, collision_l2_sq),\n        SisModulusProfileId::Q128OffsetA7F7 => q128::sis_max_widths(d, collision_l2_sq),\n    }}\n}}\n"
     )
 }
 

@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::offset_eq::{EqPairTensorAxis, EqPairTensorFamily};
 use akita_field::AkitaError;
 use akita_field::{FieldCore, FromPrimitiveInt};
 
@@ -145,84 +145,6 @@ impl PhysicalResponsePlan {
         self.fold_digit_count
     }
 
-    fn witness_index(&self, physical_index: usize, limb: usize) -> Result<usize, AkitaError> {
-        if limb >= self.fold_digit_count {
-            return Err(AkitaError::InvalidInput(
-                "L2 response limb index is invalid".into(),
-            ));
-        }
-        let segment = self
-            .segments
-            .iter()
-            .find(|segment| {
-                physical_index >= segment.physical_start
-                    && physical_index < segment.physical_start + segment.physical_len
-            })
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("L2 physical response index is invalid".into())
-            })?;
-        let local = physical_index - segment.physical_start;
-        let row = local / self.ring_dimension;
-        let coefficient = local % self.ring_dimension;
-        segment
-            .witness_start
-            .checked_add(
-                row.checked_mul(self.fold_digit_count)
-                    .and_then(|value| value.checked_add(limb))
-                    .and_then(|value| value.checked_mul(self.ring_dimension))
-                    .and_then(|value| value.checked_add(coefficient))
-                    .ok_or_else(|| AkitaError::InvalidSetup("L2 witness index overflow".into()))?,
-            )
-            .ok_or_else(|| AkitaError::InvalidSetup("L2 witness index overflow".into()))
-    }
-
-    /// Materialize the scheduled virtual response/limb tables, padded with
-    /// zeros to the shared Stage-1 domain.
-    pub fn materialize_virtual_tables<E: FieldCore + FromPrimitiveInt>(
-        &self,
-        compact_witness: &[i8],
-    ) -> Result<Vec<Vec<E>>, AkitaError> {
-        if compact_witness.len() != self.domain.live_len() {
-            return Err(AkitaError::InvalidSize {
-                expected: self.domain.live_len(),
-                actual: compact_witness.len(),
-            });
-        }
-        let mut tables =
-            vec![vec![E::zero(); self.domain.domain_len()]; self.virtual_table_count()];
-        for physical_index in 0..self.shape.physical_response_len() {
-            match self.shape {
-                PhysicalL2NormProofShape::Direct { .. } => {
-                    let mut value = E::zero();
-                    let mut basis_power = 1i128;
-                    for limb in 0..self.fold_digit_count {
-                        let index = self.witness_index(physical_index, limb)?;
-                        value += E::from_i128(
-                            i128::from(compact_witness[index])
-                                .checked_mul(basis_power)
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidSetup("L2 basis power overflow".into())
-                                })?,
-                        );
-                        basis_power = basis_power
-                            .checked_mul(self.fold_basis as i128)
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup("L2 basis power overflow".into())
-                            })?;
-                    }
-                    tables[0][physical_index] = value;
-                }
-                PhysicalL2NormProofShape::LimbGram { limb_count, .. } => {
-                    for (limb, table) in tables.iter_mut().enumerate().take(limb_count) {
-                        let index = self.witness_index(physical_index, limb)?;
-                        table[physical_index] = E::from_i64(i64::from(compact_witness[index]));
-                    }
-                }
-            }
-        }
-        Ok(tables)
-    }
-
     /// Materialize the unpadded centered integer virtual tables used for exact
     /// norm and limb-Gram claim construction.
     pub fn materialize_virtual_integers(
@@ -237,38 +159,75 @@ impl PhysicalResponsePlan {
         }
         let mut tables =
             vec![vec![0i128; self.shape.physical_response_len()]; self.virtual_table_count()];
-        for physical_index in 0..self.shape.physical_response_len() {
-            match self.shape {
-                PhysicalL2NormProofShape::Direct { .. } => {
-                    let mut value = 0i128;
-                    let mut basis_power = 1i128;
-                    for limb in 0..self.fold_digit_count {
-                        let index = self.witness_index(physical_index, limb)?;
-                        value = value
-                            .checked_add(
-                                i128::from(compact_witness[index])
-                                    .checked_mul(basis_power)
+        let digit_stride = self
+            .fold_digit_count
+            .checked_mul(self.ring_dimension)
+            .ok_or_else(|| AkitaError::InvalidSetup("L2 response stride overflow".into()))?;
+        for segment in &self.segments {
+            for row in 0..segment.physical_len / self.ring_dimension {
+                let witness_row = segment
+                    .witness_start
+                    .checked_add(row.checked_mul(digit_stride).ok_or_else(|| {
+                        AkitaError::InvalidSetup("L2 witness row overflow".into())
+                    })?)
+                    .ok_or_else(|| AkitaError::InvalidSetup("L2 witness row overflow".into()))?;
+                let physical_row = segment
+                    .physical_start
+                    .checked_add(row.checked_mul(self.ring_dimension).ok_or_else(|| {
+                        AkitaError::InvalidSetup("L2 physical row overflow".into())
+                    })?)
+                    .ok_or_else(|| AkitaError::InvalidSetup("L2 physical row overflow".into()))?;
+                for coefficient in 0..self.ring_dimension {
+                    let physical_index = physical_row + coefficient;
+                    match self.shape {
+                        PhysicalL2NormProofShape::Direct { .. } => {
+                            let mut value = 0i128;
+                            let mut basis_power = 1i128;
+                            for limb in 0..self.fold_digit_count {
+                                let index = witness_row + limb * self.ring_dimension + coefficient;
+                                let digit = compact_witness
+                                    .get(index)
+                                    .copied()
+                                    .ok_or(AkitaError::InvalidProof)?;
+                                value = value
+                                    .checked_add(
+                                        i128::from(digit).checked_mul(basis_power).ok_or_else(
+                                            || {
+                                                AkitaError::InvalidSetup(
+                                                    "L2 basis power overflow".into(),
+                                                )
+                                            },
+                                        )?,
+                                    )
+                                    .ok_or_else(|| {
+                                        AkitaError::InvalidSetup(
+                                            "L2 response recomposition overflow".into(),
+                                        )
+                                    })?;
+                                basis_power = basis_power
+                                    .checked_mul(self.fold_basis as i128)
                                     .ok_or_else(|| {
                                         AkitaError::InvalidSetup("L2 basis power overflow".into())
-                                    })?,
-                            )
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "L2 response recomposition overflow".into(),
-                                )
-                            })?;
-                        basis_power = basis_power
-                            .checked_mul(self.fold_basis as i128)
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup("L2 basis power overflow".into())
-                            })?;
-                    }
-                    tables[0][physical_index] = value;
-                }
-                PhysicalL2NormProofShape::LimbGram { limb_count, .. } => {
-                    for (limb, table) in tables.iter_mut().enumerate().take(limb_count) {
-                        table[physical_index] =
-                            i128::from(compact_witness[self.witness_index(physical_index, limb)?]);
+                                    })?;
+                            }
+                            *tables
+                                .first_mut()
+                                .and_then(|table| table.get_mut(physical_index))
+                                .ok_or(AkitaError::InvalidProof)? = value;
+                        }
+                        PhysicalL2NormProofShape::LimbGram { limb_count, .. } => {
+                            for (limb, table) in tables.iter_mut().enumerate().take(limb_count) {
+                                let index = witness_row + limb * self.ring_dimension + coefficient;
+                                *table
+                                    .get_mut(physical_index)
+                                    .ok_or(AkitaError::InvalidProof)? = i128::from(
+                                    compact_witness
+                                        .get(index)
+                                        .copied()
+                                        .ok_or(AkitaError::InvalidProof)?,
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -276,46 +235,52 @@ impl PhysicalResponsePlan {
         Ok(tables)
     }
 
-    /// Sparse Stage-2 weights that batch all virtual evaluations at one
-    /// Stage-1 point into a single linear witness relation.
-    pub fn virtualization_weights<E: FieldCore + FromPrimitiveInt>(
+    /// Canonical paired-equality geometry that batches all virtual response
+    /// evaluations into the existing Stage-2 witness relation.
+    pub fn virtualization_families<E: FieldCore + FromPrimitiveInt>(
         &self,
-        point: &[E],
         batching: &[E],
-    ) -> Result<Vec<(usize, E)>, AkitaError> {
-        if point.len() != self.domain.num_vars() || batching.len() != self.virtual_table_count() {
+    ) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
+        if batching.len() != self.virtual_table_count() {
             return Err(AkitaError::InvalidSize {
                 expected: self.virtual_table_count(),
                 actual: batching.len(),
             });
         }
-        let equality = EqPolynomial::evals_prefix(point, self.shape.physical_response_len())?;
-        let mut weights = Vec::new();
-        for (physical_index, equality_weight) in equality.into_iter().enumerate() {
-            match self.shape {
-                PhysicalL2NormProofShape::Direct { .. } => {
-                    let mut basis_power = E::one();
-                    let basis = E::from_u64(self.fold_basis as u64);
-                    for limb in 0..self.fold_digit_count {
-                        weights.push((
-                            self.witness_index(physical_index, limb)?,
-                            batching[0] * equality_weight * basis_power,
-                        ));
-                        basis_power *= basis;
-                    }
+        let limb_weights = match self.shape {
+            PhysicalL2NormProofShape::Direct { .. } => {
+                let mut weights = Vec::with_capacity(self.fold_digit_count);
+                let mut power = E::one();
+                let basis = E::from_u64(self.fold_basis as u64);
+                for _ in 0..self.fold_digit_count {
+                    weights.push(batching[0] * power);
+                    power *= basis;
                 }
-                PhysicalL2NormProofShape::LimbGram { limb_count, .. } => {
-                    for (limb, &batch) in batching.iter().enumerate().take(limb_count) {
-                        weights.push((
-                            self.witness_index(physical_index, limb)?,
-                            batch * equality_weight,
-                        ));
-                    }
-                }
+                weights
             }
+            PhysicalL2NormProofShape::LimbGram { limb_count, .. } => {
+                batching.iter().copied().take(limb_count).collect()
+            }
+        };
+        let digit_stride = self
+            .fold_digit_count
+            .checked_mul(self.ring_dimension)
+            .ok_or_else(|| AkitaError::InvalidSetup("L2 response stride overflow".into()))?;
+        let mut families = Vec::with_capacity(self.segments.len());
+        for segment in &self.segments {
+            let row_count = segment.physical_len / self.ring_dimension;
+            families.push(EqPairTensorFamily::new(
+                segment.witness_start,
+                segment.physical_start,
+                E::one(),
+                vec![
+                    EqPairTensorAxis::unit(self.ring_dimension, 1, 1),
+                    EqPairTensorAxis::dense(self.ring_dimension, 0, limb_weights.clone()),
+                    EqPairTensorAxis::unit(row_count, digit_stride, self.ring_dimension),
+                ],
+            )?);
         }
-        weights.sort_unstable_by_key(|(index, _)| *index);
-        Ok(weights)
+        Ok(families)
     }
 }
 
