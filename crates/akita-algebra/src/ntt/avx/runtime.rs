@@ -37,9 +37,8 @@ impl AvxCpuFeatures {
 
 /// Return the enabled x86 CRT NTT SIMD mode, if any.
 ///
-/// Pointwise kernels use the widest available mode by default. Transform
-/// kernels have a separate policy because AVX2 is faster on the measured Ice
-/// Lake host; set `AKITA_AVX512_NTT=1` to opt them into AVX-512 explicitly.
+/// AVX2 is the default after winning the measured end-to-end i32 workloads on
+/// Ice Lake. Set `AKITA_AVX512_NTT=1` to opt into AVX-512 explicitly.
 /// The result is cached because this function sits on hot dispatch boundaries.
 pub fn avx_ntt_mode() -> Option<AvxNttMode> {
     static MODE: OnceLock<Option<AvxNttMode>> = OnceLock::new();
@@ -96,10 +95,7 @@ pub(super) fn select_avx_ntt_mode(
     if scalar_ntt == Some("1") || avx_ntt == Some("0") {
         return None;
     }
-    // Pointwise kernels use AVX-512 by default when the complete current plan
-    // is available. That plan also uses AVX2 transform stages.
-    // `AKITA_AVX512_NTT=0` opts all kernels back out to AVX2.
-    if avx512_ntt != Some("0") && cpu.has_avx512_ntt() {
+    if avx512_ntt == Some("1") && cpu.has_avx512_ntt() {
         return Some(AvxNttMode::Avx512);
     }
     if cpu.avx2 {

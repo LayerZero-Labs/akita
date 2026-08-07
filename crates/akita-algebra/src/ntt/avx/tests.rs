@@ -36,10 +36,10 @@ fn avx_mode_defaults_to_avx2_when_supported() {
 }
 
 #[test]
-fn avx512_is_default_pointwise_mode_when_available() {
+fn avx512_requires_an_explicit_opt_in() {
     assert_eq!(
         select_avx_ntt_mode(None, None, None, AVX512_CAPABLE),
-        Some(AvxNttMode::Avx512)
+        Some(AvxNttMode::Avx2)
     );
     assert_eq!(
         select_avx_ntt_mode(None, None, Some("1"), AVX512_CAPABLE),

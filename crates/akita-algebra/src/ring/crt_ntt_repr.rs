@@ -115,10 +115,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             core::mem::size_of::<W>() == core::mem::size_of::<i32>()
-                && matches!(
-                    self.kernel_plan.x86_pointwise_mode(),
-                    Some(crate::ntt::avx::AvxNttMode::Avx2)
-                )
+                && self.kernel_plan.uses_avx2_i32_dot()
         }
         #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
         {

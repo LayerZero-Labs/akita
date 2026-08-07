@@ -2,9 +2,9 @@
 //!
 //! `AKITA_SCALAR_NTT=1` forces the scalar fallback for all CRT NTT SIMD.
 //! `AKITA_AVX_NTT=0` disables only x86 CRT NTT SIMD. Pointwise kernels use
-//! AVX-512 by default when supported, while transforms default to AVX2 after
-//! winning on Ice Lake. `AKITA_AVX512_NTT=1` opts transforms into AVX-512 and
-//! `AKITA_AVX512_NTT=0` forces every x86 kernel to AVX2.
+//! AVX2 by default after winning the measured Ice Lake workloads.
+//! `AKITA_AVX512_NTT=1` opts into AVX-512, while short i32 dots retain their
+//! faster lazy-reduction AVX2 kernel.
 
 mod d32;
 mod montgomery;

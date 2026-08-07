@@ -5,7 +5,8 @@ use super::prime::PrimeWidth;
 /// Host kernels selected once when a CRT+NTT parameter set is prepared.
 ///
 /// The mixed x86 plan reflects measured Ice Lake behavior: AVX2 wins for the
-/// transform stages while AVX-512 wins for pointwise arithmetic.
+/// transform stages while AVX-512 wins for single-product pointwise arithmetic.
+/// Short i32 dots select their AVX2 lazy-reduction kernel independently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NttKernelPlan(NttKernelKind);
 
@@ -64,6 +65,16 @@ impl NttKernelPlan {
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     pub(crate) const fn uses_x86_transform(self) -> bool {
+        matches!(
+            self.0,
+            NttKernelKind::Avx2
+                | NttKernelKind::Avx2TransformAvx512Pointwise
+                | NttKernelKind::Avx512
+        )
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    pub(crate) const fn uses_avx2_i32_dot(self) -> bool {
         matches!(
             self.0,
             NttKernelKind::Avx2
