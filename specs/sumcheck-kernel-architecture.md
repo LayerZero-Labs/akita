@@ -613,6 +613,15 @@ compact handoff stayed at 53.7 to 53.8 ms and the later coefficient rounds were
 unchanged, isolating the gain to the prefix. The second complete proof measured
 1.786 seconds and verified.
 
+The compact-to-field handoff preserves the same factors. It contracts the
+folded witness separately against the common alpha row and each prepared trace
+source, using the exact product-sum accumulator. Only the resulting three
+relation coefficients are multiplied by the lane weight or source factor. It
+does not build a materialized relation-factor table. This changed the root
+handoff from 53.7 to 53.8 ms to 38.7 to 38.8 ms and complete root Stage 2 from
+209 to 210 ms to 194 ms. The second complete proof measured 1.768 seconds and
+verified.
+
 Stage 3 now stores its coefficient and setup-index phases in `EvaluationTable`
 and uses the same detected fold, product-round, and fused fold-plus-next-round
 operations as dense EOR. The linear coefficient is derived from the carried

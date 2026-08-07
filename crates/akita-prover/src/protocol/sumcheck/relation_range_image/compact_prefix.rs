@@ -23,7 +23,7 @@ fn materialize_compact_lane_and_compute_next<
     let current_coefficient_half = next_coeff_count / 2;
     let equality_address_base = lane * current_coefficient_half;
     let mut virt: [A; 3] = std::array::from_fn(|_| A::zero());
-    let mut rel: [A; 3] = std::array::from_fn(|_| A::zero());
+    let mut alpha_rel: [A; 3] = std::array::from_fn(|_| A::zero());
     let mut blk = 0usize;
 
     while blk < current_coefficient_half {
@@ -54,15 +54,12 @@ fn materialize_compact_lane_and_compute_next<
             }
             inner_virt[2].add_product(e_in, dw * dw);
 
-            let p0 =
-                alpha_round2[left] * lane_weight + trace_round2.get(lane, left, next_coeff_count);
-            let p1 = alpha_round2[left + 1] * lane_weight
-                + trace_round2.get(lane, left + 1, next_coeff_count);
-            let dp = p1 - p0;
-            rel[0].add_product(w0, p0);
-            rel[1].add_product(w0, dp);
-            rel[1].add_product(dw, p0);
-            rel[2].add_product(dw, dp);
+            let alpha0 = alpha_round2[left];
+            let alpha_delta = alpha_round2[left + 1] - alpha0;
+            alpha_rel[0].add_product(w0, alpha0);
+            alpha_rel[1].add_product(w0, alpha_delta);
+            alpha_rel[1].add_product(dw, alpha0);
+            alpha_rel[2].add_product(dw, alpha_delta);
         }
 
         let e_out = e_second[j_high];
@@ -75,7 +72,26 @@ fn materialize_compact_lane_and_compute_next<
         blk = blk_end;
     }
 
-    (virt.map(A::finish), rel.map(A::finish))
+    let mut rel = alpha_rel.map(|accum| lane_weight * accum.finish());
+    trace_round2.for_each_source_in_lane(lane, |factor, source_values| {
+        let mut source_rel: [A; 3] = std::array::from_fn(|_| A::zero());
+        for coefficient_pair in 0..current_coefficient_half {
+            let left = 2 * coefficient_pair;
+            let w0 = lane_out[left];
+            let dw = lane_out[left + 1] - w0;
+            let source0 = source_values[left];
+            let source_delta = source_values[left + 1] - source0;
+            source_rel[0].add_product(w0, source0);
+            source_rel[1].add_product(w0, source_delta);
+            source_rel[1].add_product(dw, source0);
+            source_rel[2].add_product(dw, source_delta);
+        }
+        for (coefficient, source) in rel.iter_mut().zip(source_rel) {
+            *coefficient += factor * source.finish();
+        }
+    });
+
+    (virt.map(A::finish), rel)
 }
 
 fn add_compact_round_terms<E: FieldCore>(left: &mut ([E; 3], [E; 3]), right: ([E; 3], [E; 3])) {
