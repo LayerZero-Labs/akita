@@ -68,10 +68,13 @@ On AVX-512IFMA hosts at D64 through D512, exact caches may instead use canonical
 50-bit u64 residues: one limb plus the tail for Q32, two limbs for Q64, and
 three limbs plus the tail when needed for Q128. The prepared IFMA matrix owns
 the CRT parameters used to create it, so prime order, twiddles, reconstruction
-constants, and execution cannot diverge. All representations use the same
-strict capacity inequality and centered Garner reconstruction. Cache layout
-and byte count are therefore host-dependent derived state; proof and setup
-bytes are unchanged.
+constants, and execution cannot diverge. On AVX-512VNNI hosts where IFMA52 is
+not enabled, exact Q32 caches at D64 through D256 may use five i16 primes with
+an approximately 68-bit product. The five-prime representation is selected
+only when that product satisfies the same request bound; D512 retains the i32
+profile. All representations use the same strict capacity inequality and
+centered Garner reconstruction. Cache layout and byte count are therefore
+host-dependent derived state; proof and setup bytes are unchanged.
 
 Prover caches store cyclic and negacyclic transforms in separate exact-prefix
 slots. Commitment kernels request only negacyclic entries. Ring-switch kernels
