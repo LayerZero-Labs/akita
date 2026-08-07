@@ -276,6 +276,9 @@ fn range_image_table<E: FieldCore + FromPrimitiveInt>(
 
 /// Prove the final Stage-1 leaf obtained by batching the range identity and
 /// the schedule-selected exact physical norm identity.
+// This item is re-exported only by the `test-support` feature. It remains
+// public here so the feature-gated re-export can cross the crate boundary.
+#[cfg_attr(not(feature = "test-support"), allow(unreachable_pub))]
 #[allow(clippy::too_many_arguments)]
 pub fn prove_physical_l2_norm<F, E, T>(
     plan: &PhysicalResponsePlan,

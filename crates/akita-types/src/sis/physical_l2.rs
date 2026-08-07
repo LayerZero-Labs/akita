@@ -2,6 +2,14 @@
 
 use std::ops::Range;
 
+/// Canonical work cap for one small-field limb inner-product subclaim.
+///
+/// The integer no-wrap limit can be much larger than a practical sumcheck
+/// block. Keeping blocks at 4 Ki coefficients makes the proof geometry and
+/// verifier work bounded while remaining comfortably below every derived
+/// field-specific no-wrap ceiling.
+const MAX_LIMB_GRAM_BLOCK_LEN: usize = 1 << 12;
+
 use akita_field::AkitaError;
 
 use super::ajtai_key::{SisModulusProfileId, SisSecurityPolicyId, SisTableKey};
@@ -231,6 +239,7 @@ impl PhysicalL2NormProofShape {
             physical_response_len,
             block_len: usize::try_from(max_block)
                 .unwrap_or(usize::MAX)
+                .min(MAX_LIMB_GRAM_BLOCK_LEN)
                 .min(physical_response_len),
             limb_count: fold_digit_count,
         };

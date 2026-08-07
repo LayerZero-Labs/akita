@@ -255,6 +255,47 @@ impl PlannerPolicy {
 
 /// Suffix-DP depth cap carried into runtime validation for chunk policy bounds.
 pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
+/// Maximum number of folds before the first measured L2 candidate.
+///
+/// Later measured levels must be contiguous. Together these constraints bound
+/// the planner's complete split retention to the short rollout window instead
+/// of multiplying every level of the suffix dynamic program.
+const MAX_SELECTIVE_L2_CAP_LOOKAHEAD: usize = 3;
+
+fn validate_selective_l2_caps(caps: &[SelectiveL2FoldCap]) -> Result<(), AkitaError> {
+    let mut previous_distinct_level = None;
+    for (index, cap) in caps.iter().enumerate() {
+        let invalid_geometry = cap.fold_level < 3
+            || cap.fold_level >= MAX_RECURSION_DEPTH
+            || cap.input_witness_len == 0
+            || cap.physical_response_len == 0
+            || cap.fold_basis < 2
+            || !cap.fold_basis.is_power_of_two()
+            || cap.fold_digit_count == 0
+            || cap.response_l2_sq_cap == 0;
+        let invalid_order = index > 0 && caps[index - 1] >= *cap;
+        if invalid_geometry || invalid_order {
+            return Err(AkitaError::InvalidSetup(
+                "selective L2 caps must be valid, later-fold, strictly sorted exact candidates"
+                    .into(),
+            ));
+        }
+        if index == 0 && cap.fold_level > MAX_SELECTIVE_L2_CAP_LOOKAHEAD {
+            return Err(AkitaError::InvalidSetup(format!(
+                "first selective L2 cap level {} exceeds bounded planner lookahead {MAX_SELECTIVE_L2_CAP_LOOKAHEAD}",
+                cap.fold_level
+            )));
+        }
+        if previous_distinct_level.is_some_and(|previous| cap.fold_level > previous + 1) {
+            return Err(AkitaError::InvalidSetup(
+                "selective L2 cap levels must be contiguous to bound planner frontier growth"
+                    .into(),
+            ));
+        }
+        previous_distinct_level = Some(cap.fold_level);
+    }
+    Ok(())
+}
 
 /// Validate runtime policy values used by schedule expansion and validation.
 pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
@@ -300,23 +341,7 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
             "selective L2 caps require the current audited Euclidean table".into(),
         ));
     }
-    for (index, cap) in policy.selective_l2_fold_caps.iter().enumerate() {
-        if cap.fold_level < 3
-            || cap.fold_level >= MAX_RECURSION_DEPTH
-            || cap.input_witness_len == 0
-            || cap.physical_response_len == 0
-            || cap.fold_basis < 2
-            || !cap.fold_basis.is_power_of_two()
-            || cap.fold_digit_count == 0
-            || cap.response_l2_sq_cap == 0
-            || index > 0 && policy.selective_l2_fold_caps[index - 1] >= *cap
-        {
-            return Err(AkitaError::InvalidSetup(
-                "selective L2 caps must be valid, later-fold, strictly sorted exact candidates"
-                    .into(),
-            ));
-        }
-    }
+    validate_selective_l2_caps(policy.selective_l2_fold_caps)?;
     policy.witness_chunk.validate()?;
     if policy.witness_chunk.num_activated_levels > MAX_RECURSION_DEPTH {
         return Err(AkitaError::InvalidSetup(format!(
@@ -603,4 +628,27 @@ pub fn planned_next_witness_len(
 /// Convenience policy used by config adapters.
 pub fn default_sis_security_policy() -> SisSecurityPolicyId {
     DEFAULT_SIS_SECURITY_POLICY
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cap(fold_level: usize, input_witness_len: usize) -> SelectiveL2FoldCap {
+        SelectiveL2FoldCap {
+            fold_level,
+            input_witness_len,
+            physical_response_len: 64,
+            fold_basis: 2,
+            fold_digit_count: 1,
+            response_l2_sq_cap: 1,
+        }
+    }
+
+    #[test]
+    fn selective_l2_cap_window_is_bounded_and_contiguous() {
+        assert!(validate_selective_l2_caps(&[cap(3, 10), cap(4, 8), cap(5, 6)]).is_ok());
+        assert!(validate_selective_l2_caps(&[cap(4, 10)]).is_err());
+        assert!(validate_selective_l2_caps(&[cap(3, 10), cap(5, 6)]).is_err());
+    }
 }

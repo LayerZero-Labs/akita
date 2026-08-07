@@ -451,6 +451,12 @@ shape that survives into the successor. Candidates with the same future state
 may be deduplicated. Candidates with different A ranks may not be collapsed
 before the suffix has been priced.
 
+The first rollout bounds this complete frontier by requiring the measured cap
+window to start at fold level 3 and to remain contiguous across later measured
+levels. A policy with a later first cap or a gap is invalid. The planner may
+therefore retain all splits before and at an exact measured state without
+creating unbounded multi-level fanout for a valid policy.
+
 The final planner comparison includes the norm proof bytes, changed A payload,
 changed T decomposition, changed next witness, all later folds, and the
 terminal response.

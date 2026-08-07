@@ -29,9 +29,13 @@ fn small_verifier_statement<'a>(
 }
 
 fn onehot_poly(seed: usize) -> OneHotPoly<SmallF, u8> {
+    onehot_poly_for_num_vars(SMALL_NV, seed)
+}
+
+fn onehot_poly_for_num_vars(num_vars: usize, seed: usize) -> OneHotPoly<SmallF, u8> {
     let onehot_k = 256;
     assert!(onehot_k <= 1usize << u8::BITS);
-    let num_chunks = (1usize << SMALL_NV) / onehot_k;
+    let num_chunks = (1usize << num_vars) / onehot_k;
     let indices = (0..num_chunks)
         .map(|chunk| Some(((chunk * 29 + seed * 41 + 7) % onehot_k) as u8))
         .collect();
@@ -214,6 +218,138 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         BasisMode::Lagrange,
     )
     .expect_err("omitting the required root extension-opening reduction must reject");
+}
+
+#[test]
+fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
+    const NUM_VARS: usize = 20;
+    const LABEL: &[u8] = b"test/fp32-ext4-multiblock-l2-pcs";
+    type L2Cfg = crate::test_support::ForcedSmallFieldL2Config<SmallCfg>;
+    type L2Scheme = AkitaCommitmentScheme<L2Cfg>;
+
+    let opening_layout = OpeningClaimsLayout::new(NUM_VARS, 1).expect("L2 opening layout");
+    let schedule = L2Cfg::get_params_for_prove(&opening_layout).expect("forced L2 schedule");
+    let l2_step = schedule
+        .recursive_folds
+        .iter()
+        .find(|step| {
+            matches!(
+                step.params.witness.inner_commit_matrix.security_route(),
+                akita_types::InnerCommitSecurityRoute::L2 { .. }
+            )
+        })
+        .expect("schedule-selected small-field L2 fold");
+    let akita_types::InnerCommitSecurityRoute::L2 {
+        norm_proof_shape, ..
+    } = l2_step.params.witness.inner_commit_matrix.security_route()
+    else {
+        unreachable!("selected route checked above")
+    };
+    assert!(
+        norm_proof_shape
+            .limb_gram_layout()
+            .expect("checked LimbGram shape")
+            .expect("small-field fixture must use LimbGram")
+            .block_count()
+            > 1
+    );
+
+    let poly = onehot_poly_for_num_vars(NUM_VARS, 3);
+    let point = extension_point(NUM_VARS);
+    let opening = onehot_opening_at_point(&poly, &point);
+    let setup = L2Scheme::setup_prover(NUM_VARS, 1).expect("L2 prover setup");
+    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared L2 setup");
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("L2 prover stack");
+    let verifier_setup = L2Scheme::setup_verifier(&setup).expect("L2 verifier setup");
+    let (commitment, hint) =
+        L2Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("L2 commitment");
+    let poly_refs = [&poly];
+    let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+        point.clone(),
+        vec![SmallE::zero()],
+        commitment.clone(),
+    )
+    .expect("L2 prover group")])
+    .expect("L2 prover claims");
+    let mut prover_transcript = AkitaTranscript::<SmallF>::new(LABEL);
+    let proof = L2Scheme::batched_prove(
+        &setup,
+        selected_prover_data::<L2Cfg, _>(prover_claims, vec![hint], vec![&poly_refs])
+            .expect("L2 prover data"),
+        &stack,
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .expect("small-field L2 proof");
+    let shape = proof.shape();
+    let mut bytes = Vec::new();
+    proof
+        .serialize_uncompressed(&mut bytes)
+        .expect("serialize small-field L2 PCS proof");
+    let proof = AkitaBatchedProof::<SmallF, SmallE>::deserialize_uncompressed(&bytes[..], &shape)
+        .expect("deserialize small-field L2 PCS proof");
+    let l2_index = proof
+        .recursive_folds
+        .iter()
+        .position(|fold| fold.stage1.norm_proof.is_some())
+        .expect("proof must carry the selected L2 norm");
+    assert!(
+        proof.recursive_folds[l2_index]
+            .stage1
+            .norm_proof
+            .as_ref()
+            .expect("L2 norm proof")
+            .subclaims
+            .len()
+            > 1
+    );
+
+    let verify = |candidate: &AkitaBatchedProof<SmallF, SmallE>| {
+        let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+            point.clone(),
+            vec![opening],
+            &commitment,
+        )
+        .expect("L2 verifier group")])
+        .expect("L2 verifier claims");
+        let mut transcript = AkitaTranscript::<SmallF>::new(LABEL);
+        L2Scheme::batched_verify(
+            candidate,
+            &verifier_setup,
+            &mut transcript,
+            selected_statement::<L2Cfg>(claims).expect("L2 verifier statement"),
+            BasisMode::Lagrange,
+        )
+    };
+    verify(&proof).expect("verify serialized small-field L2 PCS proof");
+
+    let mut bad_subclaim = proof.clone();
+    bad_subclaim.recursive_folds[l2_index]
+        .stage1
+        .norm_proof
+        .as_mut()
+        .expect("L2 norm proof")
+        .subclaims[0] += SmallE::one();
+    assert!(verify(&bad_subclaim).is_err());
+
+    let mut bad_virtual = proof.clone();
+    bad_virtual.recursive_folds[l2_index]
+        .stage1
+        .norm_proof
+        .as_mut()
+        .expect("L2 norm proof")
+        .virtual_evaluations[0] += SmallE::one();
+    assert!(verify(&bad_virtual).is_err());
+
+    let mut bad_stage2 = proof;
+    bad_stage2.recursive_folds[l2_index]
+        .stage2
+        .sumcheck_proof
+        .round_polys[0]
+        .coeffs_except_linear_term[0] += SmallE::one();
+    assert!(verify(&bad_stage2).is_err());
 }
 
 #[test]

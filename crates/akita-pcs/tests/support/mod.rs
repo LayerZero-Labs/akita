@@ -109,6 +109,150 @@ impl<Envelope, Final> Clone for EnvelopeFinalGroupConfig<Envelope, Final> {
     }
 }
 
+/// Test-only config that replaces the exact L3 scalar fold with a Q32
+/// multi-block physical-L2 route of the same A rank.
+///
+/// Keeping the rank unchanged preserves the base catalog's successor geometry;
+/// the synthetic row still passes the ordinary schedule audit against this
+/// config's exact measured cap.
+#[derive(Debug)]
+pub(crate) struct ForcedSmallFieldL2Config<Base>(PhantomData<Base>);
+
+impl<Base> Clone for ForcedSmallFieldL2Config<Base> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Base> Copy for ForcedSmallFieldL2Config<Base> {}
+
+impl<Base> Default for ForcedSmallFieldL2Config<Base> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<Base: CommitmentConfig> CommitmentConfig for ForcedSmallFieldL2Config<Base> {
+    type Field = Base::Field;
+    type ExtField = Base::ExtField;
+
+    const D: usize = Base::D;
+    const RING_DIMENSION_CANDIDATES: &'static [akita_types::CommitmentRingDims] =
+        Base::RING_DIMENSION_CANDIDATES;
+    const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
+        &[akita_schedules::SelectiveL2FoldCap {
+            fold_level: 3,
+            input_witness_len: 130_816,
+            physical_response_len: 16_384,
+            fold_basis: 64,
+            fold_digit_count: 2,
+            response_l2_sq_cap: 1u128 << 35,
+        }];
+
+    fn decomposition() -> DecompositionParams {
+        Base::decomposition()
+    }
+
+    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        Base::ring_challenge_config(d)
+    }
+
+    fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
+        Base::fold_challenge_shape_at_level(inputs)
+    }
+
+    fn sis_modulus_profile() -> SisModulusProfileId {
+        Base::sis_modulus_profile()
+    }
+
+    fn setup_matrix_capacity(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
+        Base::setup_matrix_capacity(max_num_vars, max_num_batched_polys)
+    }
+
+    fn setup_prefix_inner_ring_dimension() -> usize {
+        Base::setup_prefix_inner_ring_dimension()
+    }
+
+    fn basis_range() -> (u32, u32) {
+        Base::basis_range()
+    }
+
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Base::root_honest_fold_policy()
+    }
+
+    fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
+        Base::chunked_witness_cfg()
+    }
+
+    fn recursive_setup_planning() -> bool {
+        Base::recursive_setup_planning()
+    }
+
+    fn selection_policy() -> akita_schedules::SelectionPolicyId {
+        Base::selection_policy()
+    }
+
+    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
+        let mut schedule = Base::runtime_schedule(key)?;
+        let step = schedule.recursive_folds.get_mut(2).ok_or_else(|| {
+            AkitaError::UnsupportedSchedule("small-field L2 fixture requires an L3 fold".into())
+        })?;
+        let params = &mut step.params.witness;
+        let fold_basis = 1usize
+            .checked_shl(params.log_basis_open)
+            .ok_or_else(|| AkitaError::InvalidSetup("small-field L2 basis overflow".into()))?;
+        let matrix = akita_schedules::planner_support::selective_l2_inner_matrix(
+            &policy_of::<Self>(),
+            akita_schedules::planner_support::SelectiveL2CandidateGeometry {
+                fold_level: 3,
+                input_witness_len: step.input_witness_len,
+                num_claims: 1,
+                num_chunks: params.witness_chunk.num_chunks,
+                inner_width: params.inner_commit_matrix.input_width(),
+                ring_dimension: params.d_a(),
+                fold_basis,
+                fold_digit_count: params.num_digits_fold,
+                fold_challenge_config: &params.fold_challenge_config,
+                fold_challenge_shape: params.fold_challenge_shape,
+            },
+        )?
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("small-field L2 fixture geometry lost its exact cap".into())
+        })?;
+        if matrix.output_rank() != params.inner_commit_matrix.output_rank() {
+            return Err(AkitaError::InvalidSetup(
+                "small-field L2 fixture must preserve the catalog A rank".into(),
+            ));
+        }
+        params.inner_commit_matrix = matrix;
+        schedule.validate_structure()?;
+        Ok(schedule)
+    }
+
+    fn select_schedule_for_profiles(
+        profiles: &CommittedGroupBatchProfile,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
+    }
+
+    fn resolve_schedule_selection(
+        selection: OpeningScheduleSelection,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        resolve_synthetic_schedule_row::<Self>(selection)
+    }
+
+    fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError> {
+        layout.check()?;
+        Self::runtime_schedule(AkitaScheduleLookupKey::single(
+            layout.root_final_group_layout()?,
+        ))
+    }
+}
+
 impl<Envelope, Final> Copy for EnvelopeFinalGroupConfig<Envelope, Final> {}
 
 impl<Envelope, Final> Default for EnvelopeFinalGroupConfig<Envelope, Final> {
