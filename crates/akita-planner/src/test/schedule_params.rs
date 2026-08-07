@@ -835,6 +835,31 @@ fn mixed_search_validates_key_and_policy_at_entry() {
     assert!(error
         .to_string()
         .contains("explicit setup field budget must be positive"));
+
+    let mut invalid_policy = policy;
+    invalid_policy.selective_l2_fold_caps = Box::leak(
+        (3..=7)
+            .map(|fold_level| akita_schedules::SelectiveL2FoldCap {
+                fold_level,
+                input_witness_len: 1usize << (12 - fold_level),
+                physical_response_len: 64,
+                fold_basis: 2,
+                fold_digit_count: 1,
+                response_l2_sq_cap: 1,
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
+    let error = find_schedule(
+        PolynomialGroupLayout::singleton(16),
+        &invalid_policy,
+        D256OneHot::root_honest_fold_policy(),
+        &domain,
+        D256OneHot::ring_challenge_config,
+        D256OneHot::fold_challenge_shape_at_level,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("exceeds bounded rollout end 6"));
 }
 
 #[cfg(feature = "catalog-gen")]

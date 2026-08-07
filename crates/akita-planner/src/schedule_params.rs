@@ -317,72 +317,6 @@ fn witness_partition(num_chunks: usize) -> WitnessPartition {
     }
 }
 
-/// Validate the complete planner policy at a verifier-reachable entry point.
-///
-/// Layout-only rules live on [`akita_types::ChunkedWitnessCfg::validate`]; the recursion-depth
-/// bound (which needs the planner-private [`MAX_RECURSION_DEPTH`]) is enforced
-/// here so `akita-types` stays free of planner internals.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidSetup`] for an invalid [`akita_types::ChunkedWitnessCfg`], or
-/// `num_activated_levels` beyond the planner recursion cap. Verifier-reachable: never panics.
-pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    policy.challenge_field_bits()?;
-    let expected_selection_policy = if policy.recursive_setup_planning {
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
-    } else if policy.ring_dimension_candidates.len() > 1 {
-        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-    } else {
-        match policy.selection_policy {
-            crate::SelectionPolicyId::MinEstimatedProofPayload
-            | crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
-                policy.selection_policy
-            }
-            crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
-                crate::SelectionPolicyId::MinEstimatedProofPayload
-            }
-        }
-    };
-    if policy.selection_policy != expected_selection_policy {
-        return Err(AkitaError::InvalidSetup(
-            "planner selection policy disagrees with recursive setup capability".to_string(),
-        ));
-    }
-    if policy.setup_field_budget == Some(0) {
-        return Err(AkitaError::InvalidSetup(
-            "explicit setup field budget must be positive".to_string(),
-        ));
-    }
-    for (label, dimension) in [
-        ("uniform", policy.uniform_ring_dimension),
-        (
-            "setup-prefix inner",
-            policy.setup_prefix_inner_ring_dimension,
-        ),
-    ] {
-        if !dimension.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "planner {label} ring dimension must be a nonzero power of two"
-            )));
-        }
-    }
-    if policy.min_offloaded_witness_contraction == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "minimum offloaded witness contraction must be positive".to_string(),
-        ));
-    }
-    let mc = policy.witness_chunk;
-    mc.validate()?;
-    if mc.num_activated_levels > MAX_RECURSION_DEPTH {
-        return Err(AkitaError::InvalidSetup(format!(
-            "num_activated_levels={} exceeds the planner recursion cap {MAX_RECURSION_DEPTH}",
-            mc.num_activated_levels
-        )));
-    }
-    Ok(())
-}
-
 /// Stage-1 sparse-challenge closure shared by the planner entry points.
 pub(crate) type RingChallengeConfigFn<'a> =
     &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>;
@@ -484,7 +418,7 @@ pub fn derive_standalone_precommit_profile(
     key.validate()?;
     let mut direct_policy = policy.direct_only();
     direct_policy.basis_range = (direct_policy.basis_range.0, direct_policy.basis_range.0);
-    validate_policy(&direct_policy)?;
+    akita_schedules::validate_policy(&direct_policy)?;
 
     let witness_len = 1usize
         .checked_shl(key.num_vars() as u32)

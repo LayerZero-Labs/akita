@@ -964,9 +964,15 @@ def extract_summary(
                 },
             }
             if "grind_nonce" in kvs:
-                proof_levels[level]["grind_nonce_val"] = int(kvs["grind_nonce"])
-            if "grind_attempts" in kvs:
-                proof_levels[level]["grind_attempts"] = int(kvs["grind_attempts"])
+                grind_nonce = int(kvs["grind_nonce"])
+                grind_attempts = int(kvs.get("grind_attempts", grind_nonce + 1))
+                if grind_attempts != grind_nonce + 1:
+                    raise ValueError(
+                        "fold grinding attempts must equal accepted nonce plus one: "
+                        f"level={level}, nonce={grind_nonce}, attempts={grind_attempts}"
+                    )
+                proof_levels[level]["grind_nonce_val"] = grind_nonce
+                proof_levels[level]["grind_attempts"] = grind_attempts
             response_l2_sq = parse_tracing_optional_int(kvs.get("response_l2_sq"))
             if response_l2_sq is not None:
                 proof_levels[level]["response_l2_sq"] = response_l2_sq
@@ -1010,6 +1016,22 @@ def extract_summary(
         summary["planned_levels"] = [planned_levels[level] for level in sorted(planned_levels)]
     if proof_levels:
         summary["proof_levels"] = [proof_levels[level] for level in sorted(proof_levels)]
+        grind_rows = [
+            proof_levels[level]
+            for level in sorted(proof_levels)
+            if proof_levels[level].get("grind_nonce_val") is not None
+        ]
+        if grind_rows:
+            summary["grind_levels"] = len(grind_rows)
+            summary["grind_nonce_max"] = max(
+                int(level["grind_nonce_val"]) for level in grind_rows
+            )
+            summary["grind_attempts_sum"] = sum(
+                int(level["grind_attempts"]) for level in grind_rows
+            )
+            summary["grind_nonces"] = ",".join(
+                str(level["grind_nonce_val"]) for level in grind_rows
+            )
 
     return summary
 
@@ -1118,7 +1140,85 @@ def compact_sample_summary(summary: dict[str, object]) -> dict[str, object]:
     for key in SAMPLE_METRICS:
         if key in summary:
             sample[key] = summary[key]
+    l2_observations = l2_grind_observations_for_run(summary)
+    if l2_observations:
+        sample["l2_grind_observations"] = l2_observations
     return sample
+
+
+def l2_grind_observations_for_run(summary: dict[str, object]) -> list[dict[str, object]]:
+    planned_levels = summary.get("planned_levels")
+    proof_levels = summary.get("proof_levels")
+    if not isinstance(planned_levels, list) or not isinstance(proof_levels, list):
+        return []
+    proofs_by_level = {
+        int(level["level"]): level
+        for level in proof_levels
+        if isinstance(level, dict) and level.get("level") is not None
+    }
+    observations = []
+    for planned in planned_levels:
+        if not isinstance(planned, dict) or planned.get("security_route") != "L2":
+            continue
+        level = int(planned["level"])
+        proof = proofs_by_level.get(level)
+        if proof is None or proof.get("grind_attempts") is None:
+            raise ValueError(f"L2 fold level {level} is missing grinding diagnostics")
+        nonce = int(proof["grind_nonce_val"])
+        attempts = int(proof["grind_attempts"])
+        if attempts != nonce + 1:
+            raise ValueError(
+                f"L2 fold level {level} has inconsistent grinding attempts"
+            )
+        observations.append(
+            {
+                "level": level,
+                "response_l2_sq_cap": int(planned["response_l2_sq_cap"]),
+                "accepted_nonce": nonce,
+                "attempts": attempts,
+                "rejected_attempts": nonce,
+            }
+        )
+    return observations
+
+
+def combine_l2_grind_observations(
+    summaries: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    combined: dict[tuple[int, int], dict[str, object]] = {}
+    for summary in summaries:
+        for observation in l2_grind_observations_for_run(summary):
+            key = (int(observation["level"]), int(observation["response_l2_sq_cap"]))
+            aggregate = combined.setdefault(
+                key,
+                {
+                    "level": key[0],
+                    "response_l2_sq_cap": key[1],
+                    "samples": 0,
+                    "attempts": 0,
+                    "rejected_attempts": 0,
+                    "accepted_nonces": [],
+                },
+            )
+            aggregate["samples"] = int(aggregate["samples"]) + 1
+            aggregate["attempts"] = int(aggregate["attempts"]) + int(
+                observation["attempts"]
+            )
+            aggregate["rejected_attempts"] = int(aggregate["rejected_attempts"]) + int(
+                observation["rejected_attempts"]
+            )
+            accepted_nonces = aggregate["accepted_nonces"]
+            if not isinstance(accepted_nonces, list):
+                raise TypeError("internal L2 grind nonce aggregate must be a list")
+            accepted_nonces.append(int(observation["accepted_nonce"]))
+    result = []
+    for key in sorted(combined):
+        aggregate = combined[key]
+        aggregate["observed_failure_rate"] = int(aggregate["rejected_attempts"]) / int(
+            aggregate["attempts"]
+        )
+        result.append(aggregate)
+    return result
 
 
 SUMMARY_CSV_COLUMNS = (
@@ -1183,6 +1283,9 @@ def combine_case_run_summaries(summaries: list[dict[str, object]]) -> dict[str, 
     combined = dict(summaries[0])
     combined["runs"] = len(summaries)
     combined["samples"] = [compact_sample_summary(summary) for summary in summaries]
+    l2_grind_observations = combine_l2_grind_observations(summaries)
+    if l2_grind_observations:
+        combined["l2_grind_observations"] = l2_grind_observations
 
     for key in TIMING_SAMPLE_METRICS:
         values = [float(summary[key]) for summary in summaries if summary.get(key) is not None]
@@ -2029,7 +2132,9 @@ def proof_step_label(level: dict[str, object]) -> str:
 
 
 def render_proof_levels(
-    levels: list[dict[str, object]], baseline_levels: list[dict[str, object]] | None
+    levels: list[dict[str, object]],
+    baseline_levels: list[dict[str, object]] | None,
+    l2_grind_observations: list[dict[str, object]] | None = None,
 ) -> None:
     print("<details>")
     print("<summary>Proof size by fold level</summary>")
@@ -2101,13 +2206,29 @@ def render_proof_levels(
                 compare_to_main=baseline is not None,
             )
             attempts = value_with_main_delta(
-                level.get("grind_attempts", 0),
+                level["grind_attempts"],
                 baseline.get("grind_attempts") if baseline else None,
                 fmt_count,
                 compare_to_main=baseline is not None,
             )
             print(
                 f"| L{level['level']} | {nonce} | {attempts} |"
+            )
+        print()
+    if l2_grind_observations:
+        print("#### L2 cap grinding observations")
+        print()
+        print(
+            "| Fold level | Public L2 squared-norm cap | Measured samples | "
+            "Total attempts | Rejected attempts | Observed failure rate |"
+        )
+        print("| --- | ---: | ---: | ---: | ---: | ---: |")
+        for observation in l2_grind_observations:
+            print(
+                f"| L{observation['level']} | {fmt_count(float(observation['response_l2_sq_cap']))} | "
+                f"{observation['samples']} | {observation['attempts']} | "
+                f"{observation['rejected_attempts']} | "
+                f"{float(observation['observed_failure_rate']):.2%} |"
             )
         print()
     print("</details>")
@@ -2403,7 +2524,12 @@ def render_report(args: argparse.Namespace) -> int:
         if isinstance(proof_levels, list) and proof_levels:
             print()
             baseline_proof_levels = main_case.get("proof_levels") if main_case is not None else None
-            render_proof_levels(proof_levels, baseline_proof_levels)
+            l2_grind_observations = current.get("l2_grind_observations")
+            render_proof_levels(
+                proof_levels,
+                baseline_proof_levels,
+                l2_grind_observations if isinstance(l2_grind_observations, list) else None,
+            )
         if len(current_cases) > 1:
             print()
             print("</details>")

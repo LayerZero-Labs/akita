@@ -255,17 +255,15 @@ impl PlannerPolicy {
 
 /// Suffix-DP depth cap carried into runtime validation for chunk policy bounds.
 pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
-/// Maximum number of folds before the first measured L2 candidate.
-///
-/// Later measured levels must be contiguous. Together these constraints bound
-/// the planner's complete split retention to the short rollout window instead
-/// of multiplying every level of the suffix dynamic program.
-const MAX_SELECTIVE_L2_CAP_LOOKAHEAD: usize = 3;
+/// First fold level eligible for a measured L2 candidate.
+const SELECTIVE_L2_CAP_FIRST_LEVEL: usize = 3;
+/// Maximum number of consecutive fold levels in the measured L2 rollout.
+const MAX_SELECTIVE_L2_CAP_LEVELS: usize = 4;
 
 fn validate_selective_l2_caps(caps: &[SelectiveL2FoldCap]) -> Result<(), AkitaError> {
     let mut previous_distinct_level = None;
     for (index, cap) in caps.iter().enumerate() {
-        let invalid_geometry = cap.fold_level < 3
+        let invalid_geometry = cap.fold_level < SELECTIVE_L2_CAP_FIRST_LEVEL
             || cap.fold_level >= MAX_RECURSION_DEPTH
             || cap.input_witness_len == 0
             || cap.physical_response_len == 0
@@ -280,9 +278,16 @@ fn validate_selective_l2_caps(caps: &[SelectiveL2FoldCap]) -> Result<(), AkitaEr
                     .into(),
             ));
         }
-        if index == 0 && cap.fold_level > MAX_SELECTIVE_L2_CAP_LOOKAHEAD {
+        if index == 0 && cap.fold_level != SELECTIVE_L2_CAP_FIRST_LEVEL {
             return Err(AkitaError::InvalidSetup(format!(
-                "first selective L2 cap level {} exceeds bounded planner lookahead {MAX_SELECTIVE_L2_CAP_LOOKAHEAD}",
+                "first selective L2 cap level {} must equal bounded rollout start {SELECTIVE_L2_CAP_FIRST_LEVEL}",
+                cap.fold_level
+            )));
+        }
+        let last_rollout_level = SELECTIVE_L2_CAP_FIRST_LEVEL + MAX_SELECTIVE_L2_CAP_LEVELS - 1;
+        if cap.fold_level > last_rollout_level {
+            return Err(AkitaError::InvalidSetup(format!(
+                "selective L2 cap level {} exceeds bounded rollout end {last_rollout_level}",
                 cap.fold_level
             )));
         }
@@ -647,8 +652,18 @@ mod tests {
 
     #[test]
     fn selective_l2_cap_window_is_bounded_and_contiguous() {
-        assert!(validate_selective_l2_caps(&[cap(3, 10), cap(4, 8), cap(5, 6)]).is_ok());
+        assert!(
+            validate_selective_l2_caps(&[cap(3, 12), cap(4, 10), cap(5, 8), cap(6, 6)]).is_ok()
+        );
         assert!(validate_selective_l2_caps(&[cap(4, 10)]).is_err());
         assert!(validate_selective_l2_caps(&[cap(3, 10), cap(5, 6)]).is_err());
+        assert!(validate_selective_l2_caps(&[
+            cap(3, 14),
+            cap(4, 12),
+            cap(5, 10),
+            cap(6, 8),
+            cap(7, 6)
+        ])
+        .is_err());
     }
 }

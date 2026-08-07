@@ -18,9 +18,9 @@ use akita_schedules::planner_support::{projected_collision_role_price, sis_key_a
 
 use crate::schedule_params::{
     derive_optimal_suffix_schedule, materialize_candidate_schedule, mixed_search,
-    optimize_fold_challenge_shape, select_complete_candidate, validate_policy,
-    RingChallengeConfigFn, RingDimensionSearchDomain, ScheduleMemo, SuffixCtx, SuffixState,
-    MIXED_SEARCH_FOLD_LEVELS, MIXED_SEARCH_SUFFIX_RING_DIMENSION,
+    optimize_fold_challenge_shape, select_complete_candidate, RingChallengeConfigFn,
+    RingDimensionSearchDomain, ScheduleMemo, SuffixCtx, SuffixState, MIXED_SEARCH_FOLD_LEVELS,
+    MIXED_SEARCH_SUFFIX_RING_DIMENSION,
 };
 use crate::PlannerPolicy;
 
@@ -577,7 +577,7 @@ pub fn find_schedule(
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
-    validate_policy(policy)?;
+    akita_schedules::validate_policy(policy)?;
     key.validate(policy.decomposition.field_bits())?;
     let dimensions =
         RingDimensionSearchDomain::new(policy.ring_dimension_candidates.iter().copied())?;

@@ -72,10 +72,11 @@ and L2 route through complete suffix pricing. Unrelated L-infinity-only states
 retain the established rank frontier, so selective search does not multiply
 the whole dynamic program.
 
-The measured rollout window starts at fold level 3 and later measured levels
-are contiguous. Runtime policy validation rejects a later first level or a gap.
-This bounds complete split retention to the short measured window while still
-comparing every route that can enter or leave one of its exact measured states.
+The measured rollout window starts at fold level 3, stays contiguous, and ends
+no later than fold level 6. Runtime policy validation rejects a later first
+level, a gap, or a fifth measured level. This bounds complete split retention
+to four fold levels while still comparing every route that can enter or leave
+one of its exact measured states.
 
 The suffix comparison includes the norm proof, A payload, next witness, later
 folds, and terminal response. A smaller A rank can reduce the next witness

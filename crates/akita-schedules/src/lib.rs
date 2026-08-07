@@ -25,8 +25,8 @@ pub use resolve::{
     ResolvedScheduleRow,
 };
 pub use runtime::{
-    default_sis_security_policy, PlannerCostModelId, PlannerPolicy, RuntimeSchedulePolicy,
-    SelectionPolicyId, SelectiveL2FoldCap,
+    default_sis_security_policy, validate_policy, PlannerCostModelId, PlannerPolicy,
+    RuntimeSchedulePolicy, SelectionPolicyId, SelectiveL2FoldCap,
 };
 
 /// Shared schedule-construction primitives used by offline search and generated-row replay.

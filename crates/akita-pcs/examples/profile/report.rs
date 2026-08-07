@@ -543,6 +543,10 @@ fn fold_grind_nonce_wire_bytes() -> usize {
     0u32.serialized_size(Compress::No)
 }
 
+fn fold_grind_attempts(accepted_nonce: u32) -> u64 {
+    u64::from(accepted_nonce) + 1
+}
+
 fn print_akita_level_breakdown<FF, E>(
     label: &str,
     level_idx: usize,
@@ -584,18 +588,7 @@ where
     let (stage1_norm_proof_size, response_l2_sq) =
         stage1.norm_proof.as_ref().map_or((0, None), |norm| {
             (
-                norm.response_l2_sq.serialized_size(Compress::No)
-                    + norm
-                        .subclaims
-                        .iter()
-                        .map(|claim| claim.serialized_size(Compress::No))
-                        .sum::<usize>()
-                    + norm
-                        .virtual_evaluations
-                        .iter()
-                        .map(|evaluation| evaluation.serialized_size(Compress::No))
-                        .sum::<usize>()
-                    + norm.sumcheck.serialized_size(Compress::No),
+                norm.serialized_size(Compress::No),
                 Some(norm.response_l2_sq),
             )
         });
@@ -613,6 +606,7 @@ where
         .serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = level.fold_grind_nonce;
+    let grind_attempts = fold_grind_attempts(grind_nonce);
 
     tracing::info!(
         label,
@@ -624,6 +618,7 @@ where
         opening_payload_bytes = opening_payload_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
         grind_nonce,
+        grind_attempts,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_range_image_evaluation_bytes = stage1_range_image_evaluation_size,
@@ -685,6 +680,7 @@ where
     let terminal_response_size = level.terminal_response().serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = level.fold_grind_nonce;
+    let grind_attempts = fold_grind_attempts(grind_nonce);
     let full = level.serialized_size(Compress::No);
     // `total_bytes` excludes the terminal response to mirror the planner's
     // `terminal_level_proof_bytes`. The response is reported separately as
@@ -706,6 +702,7 @@ where
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
         grind_nonce,
+        grind_attempts,
         terminal_response_bytes = terminal_response_size,
         root_variant = root_variant,
         "proof fold level"

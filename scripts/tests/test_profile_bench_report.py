@@ -369,6 +369,66 @@ class ProfileBenchReportTests(unittest.TestCase):
         proof_table_lines = [line for line in report.splitlines() if line.startswith("| ")][:3]
         self.assertEqual(len({line.count("|") for line in proof_table_lines}), 1)
 
+    def test_grind_attempts_are_truthful_and_nonzero(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        derived_log = (
+            "INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=4 "
+            "fold_grind_nonce_bytes=4 grind_nonce=0\n"
+        )
+        level = extract_summary(derived_log, "onehot_fp128_d64", 24, 1)["proof_levels"][0]
+        self.assertEqual(level["grind_attempts"], 1)
+
+        impossible_log = derived_log.replace("grind_nonce=0", "grind_nonce=0 grind_attempts=0")
+        with self.assertRaisesRegex(ValueError, "accepted nonce plus one"):
+            extract_summary(impossible_log, "onehot_fp128_d64", 24, 1)
+
+    def test_l2_grinding_observations_survive_sample_aggregation(self) -> None:
+        from scripts.profile_bench_report import (
+            combine_case_run_summaries,
+            extract_summary,
+            render_proof_levels,
+        )
+
+        planned = (
+            "INFO planned fold level label=onehot_fp128_d64 level=5 d=64 d_a=64 d_b=64 "
+            "d_d=64 n_a=4 n_b=4 n_d=4 response_l2_sq_cap=Some(4294967296) "
+            "challenge_l1_mass=8 log_basis=5 position_index_bits=7 block_index_bits=3 "
+            "num_live_ring_elements_per_claim=768 num_live_blocks=6 "
+            "block_index_domain_size=8 num_positions_per_block=128 delta_commit=4 "
+            "delta_open=5 delta_fold=6 current_w_len=1024 next_w_len=2048\n"
+        )
+        summaries = []
+        for run_index, nonce in enumerate((0, 2), start=1):
+            proof = (
+                "INFO proof fold level label=onehot_fp128_d64 level=5 d=64 total_bytes=4 "
+                f"fold_grind_nonce_bytes=4 grind_nonce={nonce} grind_attempts={nonce + 1}\n"
+            )
+            summary = extract_summary(planned + proof, "onehot_fp128_d64", 24, 1)
+            summary["run_index"] = run_index
+            summary["exit_code"] = 0
+            summaries.append(summary)
+
+        combined = combine_case_run_summaries(summaries)
+        observation = combined["l2_grind_observations"][0]
+        self.assertEqual(observation["samples"], 2)
+        self.assertEqual(observation["attempts"], 4)
+        self.assertEqual(observation["rejected_attempts"], 2)
+        self.assertEqual(observation["accepted_nonces"], [0, 2])
+        self.assertEqual(observation["observed_failure_rate"], 0.5)
+        self.assertEqual(
+            combined["samples"][1]["l2_grind_observations"][0]["accepted_nonce"], 2
+        )
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_proof_levels(
+                combined["proof_levels"], None, combined["l2_grind_observations"]
+            )
+        report = output.getvalue()
+        self.assertIn("L2 cap grinding observations", report)
+        self.assertIn("50.00%", report)
+
     def test_matrix_embeds_main_delta_in_every_numeric_metric(self) -> None:
         from scripts.profile_bench_report import normalize_case_summary, render_matrix_summary
 

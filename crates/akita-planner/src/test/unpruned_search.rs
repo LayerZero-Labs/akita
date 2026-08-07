@@ -224,7 +224,7 @@ pub(super) fn find_schedule(
     fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
-    validate_policy(policy)?;
+    akita_schedules::validate_policy(policy)?;
 
     let field_bits = policy.decomposition.field_bits();
     let input_witness_len = 1usize.checked_shl(key.num_vars() as u32).ok_or_else(|| {
