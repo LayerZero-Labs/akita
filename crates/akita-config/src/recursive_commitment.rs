@@ -59,6 +59,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::opening_basis_range()
     }
 
+    fn inner_basis_range() -> (u32, u32) {
+        Cfg::inner_basis_range()
+    }
+
     fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
         Cfg::root_honest_fold_policy()
     }
@@ -119,7 +123,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
-    use crate::PrecommittedCommitmentConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         r_decomp_levels, shared_setup_fold_gadget, AkitaScheduleLookupKey, CommittedGroupProfile,
@@ -148,11 +151,8 @@ mod tests {
         type Cfg = RecursiveCommitmentConfig<fp128::D64OneHot>;
 
         let precommitted = PolynomialGroupLayout::new(16, 1);
-        let singleton = OpeningClaimsLayout::new(16, 1).expect("singleton precommit layout");
-        let params =
-            PrecommittedCommitmentConfig::<Cfg>::get_params_for_batched_commitment(&singleton)
-                .expect("recursive-catalog precommit params");
-        let descriptor = CommittedGroupProfile::from_params(precommitted, &params);
+        let descriptor = crate::committed_group_profile::<Cfg>(&precommitted)
+            .expect("recursive-catalog precommit profile");
         let key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![descriptor, descriptor],
@@ -168,11 +168,8 @@ mod tests {
 
         let precommitted = PolynomialGroupLayout::new(16, 1);
         let final_group = PolynomialGroupLayout::new(32, 2);
-        let singleton = OpeningClaimsLayout::new(16, 1).expect("singleton precommit layout");
-        let params =
-            PrecommittedCommitmentConfig::<Cfg>::get_params_for_batched_commitment(&singleton)
-                .expect("recursive-catalog precommit params");
-        let expected = CommittedGroupProfile::from_params(precommitted, &params);
+        let expected = crate::committed_group_profile::<Cfg>(&precommitted)
+            .expect("recursive-catalog precommit profile");
         let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey {
             final_group,
             precommitteds: vec![expected, expected],
@@ -186,6 +183,14 @@ mod tests {
             .precommitted_groups
             .iter()
             .all(|group| group.descriptor == expected));
+    }
+
+    #[test]
+    fn adapter_preserves_independent_basis_domains() {
+        type Base = fp128::D64OneHot;
+        type Adapter = RecursiveCommitmentConfig<Base>;
+        assert_eq!(Adapter::opening_basis_range(), Base::opening_basis_range());
+        assert_eq!(Adapter::inner_basis_range(), Base::inner_basis_range());
     }
 
     #[test]

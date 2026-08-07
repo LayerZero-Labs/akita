@@ -26,6 +26,8 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
         with:
           components: rustfmt
+      - name: Generate schedule tables
+        run: scripts/generate-schedule-tables.sh
       - name: Check formatting
         run: cargo fmt --all --check
 
@@ -59,6 +61,8 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
         with:
           components: clippy,rustfmt
+      - name: Generate schedule tables
+        run: scripts/generate-schedule-tables.sh
       - name: Clippy (transparent default features)
         run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence -- -D warnings
       - name: Clippy (no default features)
@@ -79,6 +83,8 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
         with:
           components: rustfmt
+      - name: Generate schedule tables
+        run: scripts/generate-schedule-tables.sh
       - name: Install cargo-machete
         uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # cargo-machete
         with:
@@ -129,6 +135,8 @@ jobs:
           shared-key: ci-test-release
           add-job-id-key: false
           cache-on-failure: true
+      - name: Generate schedule tables
+        run: scripts/generate-schedule-tables.sh
       - name: Install cargo-nextest
         uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # carg-nextest
         with:
@@ -179,6 +187,11 @@ jobs:
           shared-key: ci-test-all-schedules-drift
           add-job-id-key: false
           cache-on-failure: true
+      - name: Committed catalog coverage guard
+        run: |
+          cargo test --release -p akita-config --features all-schedules generated_catalogs_cover_emitted_keys
+      - name: Generate schedule tables
+        run: scripts/generate-schedule-tables.sh
       - name: Drift guard (all-schedules)
         run: |
           cargo test --release -p akita-config --features all-schedules generated_schedule_tables_match_key_planner

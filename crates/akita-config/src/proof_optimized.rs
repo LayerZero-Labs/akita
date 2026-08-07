@@ -26,8 +26,20 @@ use std::sync::{LazyLock, Mutex};
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 3;
 /// Maximum proof-optimized log-basis.
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
-/// Maximum A/source log basis supported by the signed-i16 commitment path.
-pub(crate) const PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX: u32 = 16;
+/// Maximum A/source log basis searched by proof-optimized presets.
+///
+/// The signed-i16 commitment path supports larger values, but exhaustive
+/// sweeps select 10 or 11 throughout the current dense/full-field domain.
+pub(crate) const PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX: u32 = 11;
+
+const fn proof_optimized_inner_basis_range(field_bits: u32) -> (u32, u32) {
+    let max = if field_bits == 32 {
+        10
+    } else {
+        PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX
+    };
+    (PROOF_OPTIMIZED_LOG_BASIS_MIN, max)
+}
 /// Explicit sparse-binary chunk size used by standard one-hot presets.
 ///
 /// Smaller/nonstandard chunking is represented by a separately named preset
@@ -410,7 +422,7 @@ macro_rules! impl_proof_optimized_preset {
             if Self::recursive_setup_planning() {
                 akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayload
             } else {
-                akita_schedules::SelectionPolicyId::MinNextWitnessThenPayload
+                akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
             }
         }
     };
@@ -513,9 +525,8 @@ macro_rules! impl_proof_optimized_preset {
             }
 
             fn inner_basis_range() -> (u32, u32) {
-                (
-                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
-                    $crate::proof_optimized::PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX,
+                $crate::proof_optimized::proof_optimized_inner_basis_range(
+                    Self::decomposition().field_bits(),
                 )
             }
 
@@ -598,9 +609,8 @@ macro_rules! impl_proof_optimized_preset {
 
 
             fn inner_basis_range() -> (u32, u32) {
-                (
-                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
-                    $crate::proof_optimized::PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX,
+                $crate::proof_optimized::proof_optimized_inner_basis_range(
+                    Self::decomposition().field_bits(),
                 )
             }
 

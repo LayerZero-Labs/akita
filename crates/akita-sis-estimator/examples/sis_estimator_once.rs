@@ -1,3 +1,4 @@
+use akita_sis_estimator::width_table::InfinityWidthProfile;
 use akita_sis_estimator::{
     cost_infinity, cost_zeta, estimate, scalar_sis_from_ring, AkitaModulusProfileId, Bound,
     CostValue, EstimateConfig, OptimizerConfig, SearchMode, SisNorm, SisParameters,
@@ -19,6 +20,7 @@ enum Mode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Profile {
     LocalMinimum,
+    ProvenPruned,
     ExhaustiveSerial,
     ExhaustiveParallel,
 }
@@ -212,7 +214,8 @@ impl Profile {
     fn config(self) -> EstimateConfig {
         match self {
             Self::LocalMinimum => EstimateConfig::lattice_estimator_parity(),
-            Self::ExhaustiveSerial => EstimateConfig::akita_infinity_table(),
+            Self::ProvenPruned => EstimateConfig::akita_infinity_table(),
+            Self::ExhaustiveSerial => InfinityWidthProfile::ExhaustiveSerial.config(),
             Self::ExhaustiveParallel => EstimateConfig {
                 optimizer: OptimizerConfig::OptimizeZeta {
                     beta: SearchMode::ExhaustiveParallel,
@@ -226,6 +229,7 @@ impl Profile {
     const fn beta_search_mode(self) -> SearchMode {
         match self {
             Self::LocalMinimum => SearchMode::PythonLocalMinimum,
+            Self::ProvenPruned => SearchMode::Exhaustive,
             Self::ExhaustiveSerial => SearchMode::Exhaustive,
             Self::ExhaustiveParallel => SearchMode::ExhaustiveParallel,
         }
@@ -244,10 +248,13 @@ fn parse_mode(value: &str) -> Mode {
 fn parse_profile(value: &str) -> Profile {
     match value {
         "local-minimum" | "local_minimum" => Profile::LocalMinimum,
+        "proven-pruned" | "proven_pruned" => Profile::ProvenPruned,
         "exhaustive-serial" | "exhaustive_serial" => Profile::ExhaustiveSerial,
         "exhaustive-parallel" | "exhaustive_parallel" => Profile::ExhaustiveParallel,
         _ => {
-            fatal("--profile must be one of: local-minimum, exhaustive-serial, exhaustive-parallel")
+            fatal(
+                "--profile must be one of: local-minimum, proven-pruned, exhaustive-serial, exhaustive-parallel",
+            )
         }
     }
 }
@@ -282,7 +289,7 @@ fn optional_u64_text(value: Option<u64>) -> String {
 
 fn usage(code: i32) -> ! {
     eprintln!(
-        "usage: sis_estimator_once --family q32|q64|q128 (--n N --m N | --d N --rank N --width N) --coeff-linf-bound N [--mode estimate|fixed|zeta] [--profile local-minimum|exhaustive-serial|exhaustive-parallel] [--beta N] [--zeta N] [--iterations N]"
+        "usage: sis_estimator_once --family q32|q64|q128 (--n N --m N | --d N --rank N --width N) --coeff-linf-bound N [--mode estimate|fixed|zeta] [--profile local-minimum|proven-pruned|exhaustive-serial|exhaustive-parallel] [--beta N] [--zeta N] [--iterations N]"
     );
     process::exit(code);
 }
@@ -290,4 +297,20 @@ fn usage(code: i32) -> ! {
 fn fatal(message: &str) -> ! {
     eprintln!("error: {message}");
     process::exit(2);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exhaustive_serial_profile_exhausts_beta_and_zeta() {
+        assert_eq!(
+            Profile::ExhaustiveSerial.config().optimizer,
+            OptimizerConfig::OptimizeZeta {
+                beta: SearchMode::Exhaustive,
+                zeta: SearchMode::Exhaustive,
+            }
+        );
+    }
 }

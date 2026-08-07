@@ -116,13 +116,12 @@ fn assert_table_hit(
     if keys.is_empty() {
         return;
     }
-    let hit = keys
-        .iter()
-        .any(|&key| table_entry(*catalog, &AkitaScheduleLookupKey::single(key)).is_some());
-    assert!(
-        hit,
-        "family {module_name} must have at least one generated-table key hit (non-vacuous catalog guard)"
-    );
+    for &key in keys {
+        assert!(
+            table_entry(*catalog, &AkitaScheduleLookupKey::single(key)).is_some(),
+            "family {module_name} is missing emitted scalar key {key:?}"
+        );
+    }
 }
 
 #[cfg(feature = "all-schedules")]
@@ -381,6 +380,25 @@ fn family_catalog(
     }
 }
 
+#[cfg(feature = "all-schedules")]
+#[test]
+fn generated_catalogs_cover_emitted_keys() {
+    for family in ALL_GENERATED_FAMILIES {
+        assert!(
+            family_catalog_is_linked(family),
+            "family {} is not linked under all-schedules",
+            family.module_name
+        );
+        let keys = emitted_scalar_keys(family).unwrap_or_else(|error| {
+            panic!(
+                "family {} key enumeration failed: {error}",
+                family.module_name
+            )
+        });
+        let _ = family_catalog(family, &keys);
+    }
+}
+
 fn assert_group_batch_table_hits<Cfg: CommitmentConfig>(
     module_name: &str,
     requests: &[GroupBatchCandidate],
@@ -556,16 +574,19 @@ fn table_backed_expanded(
     key: PolynomialGroupLayout,
 ) -> Result<FoldSchedule, akita_field::AkitaError> {
     let lookup_key = AkitaScheduleLookupKey::single(key);
-    if let Some(entry) = table_entry(catalog, &lookup_key) {
-        return schedule_from_entry(
-            entry,
-            &lookup_key,
-            &(family.policy)(),
-            family.ring_challenge_config,
-            family.fold_challenge_shape_at_level,
-        );
-    }
-    (family.regen)(key)
+    let entry = table_entry(catalog, &lookup_key).ok_or_else(|| {
+        AkitaError::UnsupportedSchedule(format!(
+            "generated family {} is missing scalar key {key:?}",
+            family.module_name
+        ))
+    })?;
+    schedule_from_entry(
+        entry,
+        &lookup_key,
+        &(family.policy)(),
+        family.ring_challenge_config,
+        family.fold_challenge_shape_at_level,
+    )
 }
 
 /// One `(family, key)` whose table-hit expansion disagrees with the DP.
@@ -960,114 +981,5 @@ fn generated_schedule_tables_match_key_planner() {
          Regenerate the generated tables with:\n  {hint}",
         count = mismatches.len(),
         hint = regen_hint(),
-    );
-}
-
-#[test]
-fn dense_nv26_independent_inner_basis_snapshots() {
-    #[derive(Debug, PartialEq, Eq)]
-    struct Snapshot {
-        inner_basis: u32,
-        opening_basis: u32,
-        positions: usize,
-        blocks: usize,
-        inner_digits: usize,
-        n_a: usize,
-        n_b: usize,
-        n_d: usize,
-        a_input_raw: usize,
-        a_output_raw: usize,
-        b_input_raw: usize,
-        b_output_raw: usize,
-        d_input_raw: usize,
-        d_output_raw: usize,
-        next_witness: usize,
-    }
-
-    fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
-        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(26),
-        ))
-        .expect("generated dense nv=26 schedule");
-        let root = &schedule.root.params.final_group.commitment;
-        let dims = root.role_dims();
-        Snapshot {
-            inner_basis: root.log_basis_inner,
-            opening_basis: root.log_basis_open,
-            positions: root.num_positions_per_block,
-            blocks: root.num_live_blocks,
-            inner_digits: root.num_digits_inner,
-            n_a: root.inner_commit_matrix.output_rank(),
-            n_b: root.outer_commit_matrix.output_rank(),
-            n_d: root.open_commit_matrix.output_rank(),
-            a_input_raw: root.inner_commit_matrix.input_width() * dims.d_a(),
-            a_output_raw: root.inner_commit_matrix.output_rank() * dims.d_a(),
-            b_input_raw: root.outer_commit_matrix.input_width() * dims.d_b(),
-            b_output_raw: root.outer_commit_matrix.output_rank() * dims.d_b(),
-            d_input_raw: root.open_commit_matrix.input_width() * dims.d_d(),
-            d_output_raw: root.open_commit_matrix.output_rank() * dims.d_d(),
-            next_witness: schedule.root.output_witness_len,
-        }
-    }
-
-    assert_eq!(
-        snapshot::<fp32::D128Dense>(),
-        Snapshot {
-            inner_basis: 11,
-            opening_basis: 3,
-            positions: 2048,
-            blocks: 256,
-            inner_digits: 3,
-            n_a: 15,
-            n_b: 2,
-            n_d: 2,
-            a_input_raw: 786_432,
-            a_output_raw: 1_920,
-            b_input_raw: 5_406_720,
-            b_output_raw: 256,
-            d_input_raw: 360_448,
-            d_output_raw: 256,
-            next_witness: 11_323_008,
-        }
-    );
-    assert_eq!(
-        snapshot::<fp64::D128Dense>(),
-        Snapshot {
-            inner_basis: 11,
-            opening_basis: 3,
-            positions: 2048,
-            blocks: 256,
-            inner_digits: 6,
-            n_a: 9,
-            n_b: 1,
-            n_d: 1,
-            a_input_raw: 1_572_864,
-            a_output_raw: 1_152,
-            b_input_raw: 6_488_064,
-            b_output_raw: 128,
-            d_input_raw: 720_896,
-            d_output_raw: 128,
-            next_witness: 18_275_456,
-        }
-    );
-    assert_eq!(
-        snapshot::<fp128::D64Dense>(),
-        Snapshot {
-            inner_basis: 11,
-            opening_basis: 3,
-            positions: 2048,
-            blocks: 512,
-            inner_digits: 12,
-            n_a: 9,
-            n_b: 1,
-            n_d: 1,
-            a_input_raw: 1_572_864,
-            a_output_raw: 576,
-            b_input_raw: 12_681_216,
-            b_output_raw: 64,
-            d_input_raw: 1_409_024,
-            d_output_raw: 64,
-            next_witness: 25_155_904,
-        }
     );
 }

@@ -388,36 +388,12 @@ pub(crate) fn emit_runtime_schedule_summary(
             setup_prefix.map_or(0, |prefix| prefix.natural_len);
         let setup_prefix_padded_field_elements =
             setup_prefix.map_or(0, |prefix| prefix.n_prefix().unwrap_or(0));
-        let a_input_raw_dimension = lp
-            .inner_commit_matrix
-            .input_width()
-            .checked_mul(role_dims.d_a())
-            .unwrap_or(0);
-        let a_output_raw_dimension = lp
-            .inner_commit_matrix
-            .output_rank()
-            .checked_mul(role_dims.d_a())
-            .unwrap_or(0);
-        let b_input_raw_dimension = lp
-            .outer_commit_matrix
-            .input_width()
-            .checked_mul(role_dims.d_b())
-            .unwrap_or(0);
-        let b_output_raw_dimension = lp
-            .outer_commit_matrix
-            .output_rank()
-            .checked_mul(role_dims.d_b())
-            .unwrap_or(0);
-        let d_input_raw_dimension = lp
-            .open_commit_matrix
-            .input_width()
-            .checked_mul(role_dims.d_d())
-            .unwrap_or(0);
-        let d_output_raw_dimension = lp
-            .open_commit_matrix
-            .output_rank()
-            .checked_mul(role_dims.d_d())
-            .unwrap_or(0);
+        let a_input_raw_dimension = lp.inner_commit_matrix.raw_input_dimension();
+        let a_output_raw_dimension = lp.inner_commit_matrix.raw_output_dimension();
+        let b_input_raw_dimension = lp.outer_commit_matrix.raw_input_dimension();
+        let b_output_raw_dimension = lp.outer_commit_matrix.raw_output_dimension();
+        let d_input_raw_dimension = lp.open_commit_matrix.raw_input_dimension();
+        let d_output_raw_dimension = lp.open_commit_matrix.raw_output_dimension();
         tracing::info!(
             label,
             level = level_idx,
@@ -428,12 +404,12 @@ pub(crate) fn emit_runtime_schedule_summary(
             n_a = lp.inner_commit_matrix.output_rank(),
             n_b = lp.outer_commit_matrix.output_rank(),
             n_d = lp.open_commit_matrix.output_rank(),
-            a_input_raw_dimension,
-            a_output_raw_dimension,
-            b_input_raw_dimension,
-            b_output_raw_dimension,
-            d_input_raw_dimension,
-            d_output_raw_dimension,
+            ?a_input_raw_dimension,
+            ?a_output_raw_dimension,
+            ?b_input_raw_dimension,
+            ?b_output_raw_dimension,
+            ?d_input_raw_dimension,
+            ?d_output_raw_dimension,
             challenge_l1_mass = lp.challenge_l1_mass(),
             log_basis_inner = lp.log_basis_inner,
             log_basis_outer = lp.log_basis_outer,
@@ -472,26 +448,10 @@ pub(crate) fn emit_runtime_schedule_summary(
                 num_positions_per_block = layout.num_positions_per_block,
                 n_a = layout.inner_commit_matrix.output_rank(),
                 n_b = layout.outer_commit_matrix.output_rank(),
-                a_input_raw_dimension = layout
-                    .inner_commit_matrix
-                    .input_width()
-                    .checked_mul(layout.inner_commit_matrix.ring_dimension())
-                    .unwrap_or(0),
-                a_output_raw_dimension = layout
-                    .inner_commit_matrix
-                    .output_rank()
-                    .checked_mul(layout.inner_commit_matrix.ring_dimension())
-                    .unwrap_or(0),
-                b_input_raw_dimension = layout
-                    .outer_commit_matrix
-                    .input_width()
-                    .checked_mul(layout.outer_commit_matrix.ring_dimension())
-                    .unwrap_or(0),
-                b_output_raw_dimension = layout
-                    .outer_commit_matrix
-                    .output_rank()
-                    .checked_mul(layout.outer_commit_matrix.ring_dimension())
-                    .unwrap_or(0),
+                a_input_raw_dimension = ?layout.inner_commit_matrix.raw_input_dimension(),
+                a_output_raw_dimension = ?layout.inner_commit_matrix.raw_output_dimension(),
+                b_input_raw_dimension = ?layout.outer_commit_matrix.raw_input_dimension(),
+                b_output_raw_dimension = ?layout.outer_commit_matrix.raw_output_dimension(),
                 "planned recursive setup edge"
             );
         }
@@ -508,22 +468,18 @@ pub(crate) fn emit_runtime_schedule_summary(
             .witness
             .inner_commit_matrix
             .output_rank(),
-        final_inner_input_raw_dimension = schedule
+        final_inner_input_raw_dimension = ?schedule
             .terminal
             .params
             .witness
             .inner_commit_matrix
-            .input_width()
-            .checked_mul(schedule.terminal.params.witness.d_a())
-            .unwrap_or(0),
-        final_inner_output_raw_dimension = schedule
+            .raw_input_dimension(),
+        final_inner_output_raw_dimension = ?schedule
             .terminal
             .params
             .witness
             .inner_commit_matrix
-            .output_rank()
-            .checked_mul(schedule.terminal.params.witness.d_a())
-            .unwrap_or(0),
+            .raw_output_dimension(),
         "planned terminal state"
     );
 }

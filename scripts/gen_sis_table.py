@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -83,45 +84,22 @@ MIN_LOG_BUCKET = 1
 MAX_LOG_BUCKET = 84
 SQUARED_BUCKETS = [1 << k for k in range(MIN_LOG_BUCKET, MAX_LOG_BUCKET + 1)]
 
-# Coefficient-L∞ buckets for derived L2 keys K = d · B². Keep in lockstep with
-# `COEFF_LINF_BUCKETS` in `crates/akita-types/src/sis/ajtai_key.rs`.
-COEFF_LINF_BUCKETS = [
-    2,
-    3,
-    7,
-    15,
-    31,
-    63,
-    127,
-    255,
-    511,
-    1023,
-    2047,
-    4095,
-    8191,
-    16383,
-    32767,
-    65535,
-    131071,
-    262143,
-    524287,
-    1048575,
-    2097151,
-    4194303,
-    8388607,
-    16777215,
-    33554431,
-    67108863,
-    134217727,
-    268435455,
-    536870911,
-    1073741823,
-    2147483647,
-    4294967295,
-    8589934591,
-    17179869183,
-    34359738367,
-]
+def canonical_coeff_linf_buckets() -> list[int]:
+    source = (
+        repo_root()
+        / "crates/akita-types/src/sis/ajtai_key.rs"
+    ).read_text(encoding="utf-8")
+    match = re.search(
+        r"pub const COEFF_LINF_BUCKETS: &\[u128\] = &\[(.*?)\];",
+        source,
+        flags=re.DOTALL,
+    )
+    if match is None:
+        raise RuntimeError("could not read canonical COEFF_LINF_BUCKETS")
+    return [int(value.replace("_", "")) for value in re.findall(r"[\d_]+", match.group(1))]
+
+
+COEFF_LINF_BUCKETS = canonical_coeff_linf_buckets()
 
 RING_DIMS = [32, 64, 128, 256]
 

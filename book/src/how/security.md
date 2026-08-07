@@ -22,13 +22,15 @@ Module-SIS projection:
 where `width[r - 1] = cutoff_m(B, n = r * d) / d`.
 
 The shipped policy is `Quantum128BitADPS16`. It accepts a row only when the
-exhaustive ADPS16 quantum certificate reports a finite score or a classified
-above-target lower bound of at least 128 bits. A lookup for an unsupported
-policy, exact modulus profile, role, or scalar cell fails closed.
+complete ADPS16 quantum certificate reports a finite score or a classified
+above-target lower bound of at least 128 bits. The certificate exhausts beta
+and uses the LGSA profile transition to prove that two zeta endpoints per beta
+cover the full zeta domain. A lookup for an unsupported policy, exact modulus
+profile, role, or scalar cell fails closed.
 
 The checked-in policy table may use `local-minimum` only to discover a candidate
 boundary. Every emitted boundary and its immediate rejected successor are
-certified by exhaustive search over the configured beta and zeta domain.
+certified by exhaustive beta search and proven-pruned full-domain zeta search.
 Parallel generation parallelizes independent rows and does not change the
 certificate domain or output ordering.
 

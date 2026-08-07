@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use super::*;
 
@@ -96,7 +96,9 @@ fn suffix_frontier(
     });
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(level);
     let (min_inner_basis, max_inner_basis) =
-        policy.inner_basis_search_range_for_source(current_log_basis);
+        policy.inner_basis_search_range(crate::InnerBasisSource::BalancedDigits {
+            log_basis: current_log_basis,
+        })?;
     let mut frontier = Vec::new();
 
     for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
@@ -131,12 +133,15 @@ fn suffix_frontier(
                 for &payload_mode in payload_phase.candidate_modes(level, false) {
                     let candidates = if level < MIXED_SEARCH_FOLD_LEVELS {
                         derive_candidate_level_params_all_splits(
+                            None,
                             policy,
                             payload_mode,
                             &ring_challenge,
                             *candidate_dimensions,
                             input_witness_len,
-                            current_log_basis,
+                            crate::InnerBasisSource::BalancedDigits {
+                                log_basis: current_log_basis,
+                            },
                             inner_basis,
                             log_basis,
                             level,
@@ -145,12 +150,15 @@ fn suffix_frontier(
                         )?
                     } else {
                         derive_candidate_level_params(
+                            None,
                             policy,
                             payload_mode,
                             &ring_challenge,
                             *candidate_dimensions,
                             input_witness_len,
-                            current_log_basis,
+                            crate::InnerBasisSource::BalancedDigits {
+                                log_basis: current_log_basis,
+                            },
                             inner_basis,
                             log_basis,
                             level,
@@ -162,6 +170,7 @@ fn suffix_frontier(
                     };
 
                     for (params, output_witness_len) in candidates {
+                        let params = Arc::new(params);
                         if level >= MIXED_SEARCH_FOLD_LEVELS {
                             if let Some((mut terminal, terminal_bytes)) =
                                 suffix_dp::try_terminal_direct_suffix_cost(
@@ -201,8 +210,8 @@ fn suffix_frontier(
                                         setup_field_elements: terminal_setup_field_elements(
                                             &terminal.params,
                                         )?,
-                                        folds: Vec::new(),
-                                        terminal,
+                                        folds: CandidateFoldChain::default(),
+                                        terminal: Arc::new(terminal),
                                     },
                                 );
                             }
@@ -243,15 +252,13 @@ fn suffix_frontier(
                             .ok_or_else(|| {
                                 AkitaError::InvalidSetup("mixed fold proof size overflow".into())
                             })?;
-                            let mut folds = Vec::with_capacity(child.folds.len() + 1);
-                            folds.push(CandidateFoldStep {
-                                params: params.clone(),
+                            let folds = child.folds.prepend(CandidateFoldStep {
+                                params: Arc::clone(&params),
                                 input_witness_len,
                                 output_witness_len,
                                 estimated_direct_payload_bytes: direct_bytes,
                                 estimated_stage3_payload_bytes: 0,
                             });
-                            folds.extend(child.folds.iter().cloned());
                             insert_supported(
                                 policy,
                                 &mut frontier,
@@ -272,7 +279,7 @@ fn suffix_frontier(
                                     setup_field_elements: level_setup_field_elements(&params)?
                                         .max(child.setup_field_elements),
                                     folds,
-                                    terminal: child.terminal,
+                                    terminal: Arc::clone(&child.terminal),
                                 },
                             );
                         }
@@ -303,8 +310,9 @@ pub(crate) fn find_schedule(
         input_witness_len,
     });
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(0);
-    let (min_inner_basis, max_inner_basis) =
-        policy.inner_basis_search_range_for_source(policy.decomposition.log_commit_bound);
+    let inner_source =
+        super::root_inner_basis_source(honest_fold_policy, policy.decomposition.log_commit_bound);
+    let (min_inner_basis, max_inner_basis) = policy.inner_basis_search_range(inner_source)?;
     let mut memo = MixedMemo::new();
     let mut complete = Vec::new();
     let schedule_key = AkitaScheduleLookupKey::single(key);
@@ -336,6 +344,7 @@ pub(crate) fn find_schedule(
                         true,
                     )?
                 {
+                    let root_params = Arc::new(root_params);
                     let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
                         policy.challenge_field_bits()?,
                         policy.claim_ext_degree,
@@ -377,15 +386,13 @@ pub(crate) fn find_schedule(
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("mixed root proof size overflow".into())
                         })?;
-                        let mut folds = Vec::with_capacity(suffix.folds.len() + 1);
-                        folds.push(CandidateFoldStep {
-                            params: root_params.clone(),
+                        let folds = suffix.folds.prepend(CandidateFoldStep {
+                            params: Arc::clone(&root_params),
                             input_witness_len,
                             output_witness_len,
                             estimated_direct_payload_bytes: root_bytes,
                             estimated_stage3_payload_bytes: 0,
                         });
-                        folds.extend(suffix.folds.iter().cloned());
                         let candidate = ScheduleCandidate {
                             first_direct_setup_field_len: None,
                             total_bytes: root_bytes.checked_add(suffix.total_bytes).ok_or_else(
@@ -394,7 +401,7 @@ pub(crate) fn find_schedule(
                             setup_field_elements: level_setup_field_elements(&root_params)?
                                 .max(suffix.setup_field_elements),
                             folds,
-                            terminal: suffix.terminal,
+                            terminal: Arc::clone(&suffix.terminal),
                         };
                         if policy.admits_setup_field_elements(candidate.setup_field_elements) {
                             complete.push(candidate);
@@ -412,13 +419,7 @@ pub(crate) fn find_schedule(
             key.num_polynomials()
         )));
     };
-    materialize_candidate_schedule(
-        selected.total_bytes,
-        selected.setup_field_elements,
-        None,
-        selected.folds,
-        selected.terminal,
-    )
+    selected.materialize()
 }
 
 #[cfg(test)]

@@ -4,12 +4,14 @@ use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::{
     ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldSchedule,
-    FoldScheduleEstimate, PlannedFoldSchedule, PolynomialGroupLayout, RecursiveFoldParams,
-    RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
+    FoldScheduleEstimate, PlannedFoldSchedule, RecursiveFoldParams, RecursiveFoldStep,
+    RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
     RootPrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
-    TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
-    DEFAULT_SIS_SECURITY_POLICY,
+    TerminalFoldStep, TerminalResponseShape, WitnessPartition, DEFAULT_SIS_SECURITY_POLICY,
 };
+
+const MAX_OPENING_LOG_BASIS: u32 = 8;
+const MAX_INNER_LOG_BASIS: u32 = 16;
 
 /// Quantities materialized and checked by the current bounded planner cost model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,38 +41,19 @@ impl PlannerCostModelId {
 pub enum SelectionPolicyId {
     /// Pick proof bytes, then physical setup fields, then canonical descriptor.
     MinEstimatedProofPayload,
-    /// Pick the first emitted recursive witness, then proof bytes, setup, and descriptor.
-    MinNextWitnessThenPayload,
     /// Pick physical setup fields, then proof bytes, then canonical descriptor.
     MinSetupMatrixFieldElementsThenProofPayload,
-    /// Pick first direct setup, proof bytes, total setup, then descriptor.
+    /// Pick first direct padded setup capacity, proof bytes, total setup, then descriptor.
     MinFirstDirectSetupThenPayload,
 }
 
 impl SelectionPolicyId {
-    /// Canonical selection objective for one schedule policy shape.
-    pub fn for_policy(
-        recursive_setup_planning: bool,
-        uniform_ring_dimension: usize,
-        ring_dimension_candidates: &[CommitmentRingDims],
-    ) -> Self {
-        if recursive_setup_planning {
-            Self::MinFirstDirectSetupThenPayload
-        } else if ring_dimension_candidates != [CommitmentRingDims::uniform(uniform_ring_dimension)]
-        {
-            Self::MinSetupMatrixFieldElementsThenProofPayload
-        } else {
-            Self::MinNextWitnessThenPayload
-        }
-    }
-
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
             Self::MinEstimatedProofPayload => 1,
             Self::MinFirstDirectSetupThenPayload => 2,
             Self::MinSetupMatrixFieldElementsThenProofPayload => 3,
-            Self::MinNextWitnessThenPayload => 4,
         }
     }
 
@@ -78,13 +61,23 @@ impl SelectionPolicyId {
     pub const fn name(self) -> &'static str {
         match self {
             Self::MinEstimatedProofPayload => "MinEstimatedProofPayload",
-            Self::MinNextWitnessThenPayload => "MinNextWitnessThenPayload",
             Self::MinSetupMatrixFieldElementsThenProofPayload => {
                 "MinSetupMatrixFieldElementsThenProofPayload"
             }
             Self::MinFirstDirectSetupThenPayload => "MinFirstDirectSetupThenPayload",
         }
     }
+}
+
+/// Coefficient source whose A-matrix decomposition basis is being selected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InnerBasisSource {
+    /// Raw coefficients that may benefit from a full basis sweep.
+    RawCoefficients { log_bound: u32 },
+    /// Unit one-hot coefficients already represented by one exact digit.
+    UnitOneHot,
+    /// A recursive witness already represented as balanced digits.
+    BalancedDigits { log_basis: u32 },
 }
 
 /// Runtime schedule validation policy.
@@ -95,6 +88,10 @@ impl SelectionPolicyId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlannerPolicy {
     pub cost_model: PlannerCostModelId,
+    /// Explicit catalog-bound selection objective.
+    ///
+    /// Search capabilities such as recursive setup planning and mixed ring
+    /// dimensions do not infer or rewrite this value.
     pub selection_policy: SelectionPolicyId,
     /// Optional host admission budget for materialized setup field elements.
     /// `None` leaves the deterministic public stream uncapped by protocol policy.
@@ -163,23 +160,6 @@ impl PlannerPolicy {
             })
     }
 
-    /// Direct-only counterpart used when scalar schedules are cataloged under
-    /// the non-recursive family identity. It deliberately restores the
-    /// proof-payload objective: callers crossing from a grouped/recursive
-    /// adapter into the uniform scalar planner must not reuse a mixed-domain
-    /// setup-first policy.
-    pub fn direct_only(self) -> Self {
-        Self {
-            recursive_setup_planning: false,
-            selection_policy: SelectionPolicyId::for_policy(
-                false,
-                self.uniform_ring_dimension,
-                self.ring_dimension_candidates,
-            ),
-            ..self
-        }
-    }
-
     /// Number of chunks emitted by fold level `fold_level`.
     pub fn chunks_at_level(&self, fold_level: usize) -> usize {
         let mc = self.witness_chunk;
@@ -217,38 +197,67 @@ impl PlannerPolicy {
         (configured_min, max)
     }
 
-    /// Inclusive A/source decomposition basis domain.
-    pub const fn inner_basis_search_range(&self) -> (u32, u32) {
-        self.inner_basis_range
-    }
-
-    /// Inclusive A/source basis domain after removing one-digit choices that
-    /// are strictly weaker than the smallest one-digit basis. Once the basis
-    /// reaches the source coefficient bound, increasing it cannot reduce the
-    /// digit count and can only weaken the commitment norm bound.
-    pub fn inner_basis_search_range_for_source(&self, source_log_bound: u32) -> (u32, u32) {
+    /// Inclusive A/source basis domain for the source coefficient shape.
+    ///
+    /// Raw coefficients search every useful configured basis. Recursive
+    /// balanced digits retain their existing basis instead of being decomposed
+    /// again; their basis is constrained by signed-digit implementation support,
+    /// not by the independent raw-source search range.
+    pub fn inner_basis_search_range(
+        &self,
+        source: InnerBasisSource,
+    ) -> Result<(u32, u32), AkitaError> {
         let (min, max) = self.inner_basis_range;
-        (min, max.min(source_log_bound.max(min)))
+        match source {
+            InnerBasisSource::RawCoefficients { log_bound } => {
+                Ok((min, max.min(log_bound.max(min))))
+            }
+            InnerBasisSource::UnitOneHot => Ok((min, min)),
+            InnerBasisSource::BalancedDigits { log_basis }
+                if (1..=MAX_INNER_LOG_BASIS).contains(&log_basis) =>
+            {
+                Ok((log_basis, log_basis))
+            }
+            InnerBasisSource::BalancedDigits { log_basis } => Err(AkitaError::InvalidSetup(
+                format!(
+                    "recursive digit basis {log_basis} is outside the supported range [1, {MAX_INNER_LOG_BASIS}]"
+                ),
+            )),
+        }
+    }
+}
+
+impl InnerBasisSource {
+    /// Exact source digit depth for a selected A basis.
+    pub fn num_digits_inner(
+        self,
+        decomposition: DecompositionParams,
+        selected_log_basis: u32,
+    ) -> Result<usize, AkitaError> {
+        match self {
+            Self::RawCoefficients { log_bound } => Ok(akita_types::sis::num_digits_inner_for_bound(
+                DecompositionParams {
+                    log_basis: selected_log_basis,
+                    ..decomposition
+                },
+                log_bound,
+            )),
+            Self::UnitOneHot => Ok(1),
+            Self::BalancedDigits { log_basis } if log_basis == selected_log_basis => Ok(1),
+            Self::BalancedDigits { log_basis } => Err(AkitaError::InvalidSetup(format!(
+                "balanced source basis {log_basis} cannot be re-decomposed at basis {selected_log_basis}"
+            ))),
+        }
     }
 }
 
 /// Suffix-DP depth cap carried into runtime validation for chunk policy bounds.
-pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
+pub const MAX_RECURSION_DEPTH: usize = 12;
 
 /// Validate runtime policy values used by schedule expansion and validation.
 pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     policy.challenge_field_bits()?;
     validate_ring_dimension_candidates(policy)?;
-    let expected_selection_policy = SelectionPolicyId::for_policy(
-        policy.recursive_setup_planning,
-        policy.uniform_ring_dimension,
-        policy.ring_dimension_candidates,
-    );
-    if policy.selection_policy != expected_selection_policy {
-        return Err(AkitaError::InvalidSetup(
-            "schedule selection policy disagrees with recursive setup capability".to_string(),
-        ));
-    }
     if policy.setup_field_budget == Some(0) {
         return Err(AkitaError::InvalidSetup(
             "explicit setup field budget must be positive".to_string(),
@@ -273,8 +282,8 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
         ));
     }
     for (label, (min, max), supported_max) in [
-        ("opening", policy.opening_basis_range, 8),
-        ("inner", policy.inner_basis_range, 16),
+        ("opening", policy.opening_basis_range, MAX_OPENING_LOG_BASIS),
+        ("inner", policy.inner_basis_range, MAX_INNER_LOG_BASIS),
     ] {
         if min == 0 || min > max || max > supported_max {
             return Err(AkitaError::InvalidSetup(format!(
@@ -545,24 +554,6 @@ pub fn grouped_segment_rings(
         .checked_add(t_hat)
         .and_then(|n| n.checked_add(z_hat))
         .ok_or_else(|| AkitaError::InvalidSetup("group witness overflow".to_string()))
-}
-
-/// Derive the canonical next-witness field length for a scalar planner level.
-pub fn planned_next_witness_len(
-    field_bits: u32,
-    params: &CommittedGroupParams,
-    final_num_polys: usize,
-    num_chunks: usize,
-) -> Result<usize, AkitaError> {
-    let opening_batch =
-        params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
-    let layout = WitnessLayout::new(
-        params,
-        &opening_batch,
-        num_chunks,
-        akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open),
-    )?;
-    Ok(layout.live_coeff_len())
 }
 
 /// Convenience policy used by config adapters.

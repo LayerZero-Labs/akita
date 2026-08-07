@@ -20,7 +20,8 @@ use std::sync::{Arc, Mutex};
 use crate::dispatch::compression_ring_dim_supported_for_tier;
 use crate::{
     field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
-    protocol_dispatch_tier, AkitaExpandedSetup, RingMatrixView,
+    protocol_dispatch_tier, AkitaExpandedSetup, RingMatrixView, SignedDigitKernel,
+    MAX_I16_LOG_BASIS,
 };
 
 /// Transform representation stored by one exact-prefix NTT cache entry.
@@ -649,7 +650,7 @@ where
             "signed-i16 matvec requested from a cyclic cache".into(),
         ));
     }
-    if !(1..=16).contains(&log_basis) {
+    if SignedDigitKernel::for_log_basis(log_basis).is_none() {
         return Err(AkitaError::InvalidProof);
     }
     let width = rhs.len();
@@ -690,10 +691,10 @@ fn validate_cache_mode(mode: NttCacheMode) -> Result<(), AkitaError> {
                 "exact negacyclic NTT width must be nonzero".into(),
             ));
         }
-        if !(1..=16).contains(&log_basis) {
-            return Err(AkitaError::InvalidSetup(
-                "exact negacyclic log_basis must be in 1..=16".into(),
-            ));
+        if SignedDigitKernel::for_log_basis(log_basis).is_none() {
+            return Err(AkitaError::InvalidSetup(format!(
+                "exact negacyclic log_basis must be in 1..={MAX_I16_LOG_BASIS}"
+            )));
         }
     }
     Ok(())

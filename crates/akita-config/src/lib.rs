@@ -104,7 +104,7 @@ macro_rules! impl_multi_chunk_companion {
     };
 }
 
-pub mod precommitted_commitment;
+mod precommitted_commitment;
 pub mod proof_optimized;
 pub mod recursive_commitment;
 pub mod schedule_selection;
@@ -114,9 +114,7 @@ pub mod tensor_verifier;
 pub mod test_support;
 mod transcript_binding;
 pub use akita_schedules::ResolvedScheduleRow;
-pub use precommitted_commitment::{
-    committed_group_params, committed_group_profile, PrecommittedCommitmentConfig,
-};
+pub use precommitted_commitment::committed_group_profile;
 pub use proof_optimized::{
     ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
     setup_level_params_from_schedule,
@@ -331,9 +329,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Catalog-bound schedule selection objective.
     ///
-    /// Uniform/direct presets minimize the next recursive witness before proof
-    /// payload. Recursive setup presets minimize the first remaining direct
-    /// setup footprint, then the next witness, before payload.
+    /// Uniform/direct presets minimize proof payload. Recursive setup presets
+    /// minimize the first remaining direct padded setup capacity before payload.
     /// Mixed-dimension catalogs may opt into the physical setup-field objective
     /// explicitly; the policy is part of catalog identity and never inferred
     /// from a ring dimension.
@@ -341,7 +338,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         if Self::recursive_setup_planning() {
             akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayload
         } else {
-            akita_schedules::SelectionPolicyId::MinNextWitnessThenPayload
+            akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
         }
     }
 
@@ -748,14 +745,8 @@ mod precommit_tests {
     fn exact_precommit_params_freeze_standalone_metadata() {
         let group = PolynomialGroupLayout::new(16, 1);
         group.validate().expect("group layout");
-        let singleton =
-            OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials()).expect("singleton");
-        let params =
-            <PrecommittedCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::get_params_for_batched_commitment(
-                &singleton,
-            )
-            .expect("precommitted group params");
-        let precommitted = akita_types::CommittedGroupProfile::from_params(group, &params);
+        let precommitted = committed_group_profile::<fp128::D64OneHot>(&group)
+            .expect("precommitted group profile");
         let root_basis = fp128::D64OneHot::opening_basis_range().0;
         assert_eq!(precommitted.log_basis_inner, root_basis);
         assert_eq!(precommitted.log_basis_outer, root_basis);
@@ -763,16 +754,5 @@ mod precommit_tests {
         assert_eq!(precommitted.num_live_blocks, 4);
         assert_ne!(precommitted.inner_commit_matrix.output_rank(), 0);
         assert_ne!(precommitted.outer_commit_matrix.output_rank(), 0);
-    }
-
-    #[test]
-    fn precommit_config_rejects_prove_schedule() {
-        let layout = OpeningClaimsLayout::new(2, 1).expect("opening layout");
-        let err =
-            <PrecommittedCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::get_params_for_prove(
-                &layout,
-            )
-            .expect_err("precommit config must not prove");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }

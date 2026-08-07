@@ -2,7 +2,7 @@
 
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
-use akita_config::{PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::RecursiveCommitmentConfig;
 use akita_field::Zero;
 pub(super) use akita_field::{
     AkitaError, CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge,
@@ -19,8 +19,8 @@ pub(super) use akita_types::{
     BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims,
 };
 use akita_types::{
-    AkitaBatchedProof, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    GroupBatchStatement, OpeningClaimsLayout, PolynomialGroupLayout, SetupSumcheckProof,
+    AkitaBatchedProof, AkitaScheduleLookupKey, CommittedGroupBatchProfile, GroupBatchStatement,
+    LevelParamsLike, PolynomialGroupLayout, SetupSumcheckProof,
 };
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
 pub(super) use rand::rngs::StdRng;
@@ -282,7 +282,7 @@ where
 pub(super) fn opening_from_poly<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],
-    layout: &CommittedGroupParams,
+    layout: &(impl LevelParamsLike + ?Sized),
 ) -> F
 where
     P: RootOpeningSource<F, D> + RootPolyShape<F, D>,
@@ -294,7 +294,7 @@ where
 pub(super) fn opening_from_poly_with_basis<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],
-    layout: &CommittedGroupParams,
+    layout: &(impl LevelParamsLike + ?Sized),
     basis_mode: BasisMode,
 ) -> F
 where
@@ -316,8 +316,8 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.num_positions_per_block,
-        layout.num_live_blocks,
+        layout.num_positions_per_block(),
+        layout.num_live_blocks(),
         basis_mode,
     )
     .expect("opening point shape should match layout");
@@ -329,7 +329,7 @@ where
         OpeningFoldPlan::Base {
             live_block_weights: &ring_opening_point.live_block_weights,
             position_weights: &ring_opening_point.position_weights,
-            num_positions_per_block: layout.num_positions_per_block,
+            num_positions_per_block: layout.num_positions_per_block(),
         },
     )
     .expect("evaluate_and_fold");
@@ -339,10 +339,10 @@ where
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
-pub(super) fn make_onehot_poly(layout: &CommittedGroupParams, seed: u64) -> OneHotPoly<F, u8> {
+pub(super) fn make_onehot_poly(num_vars: usize, seed: u64) -> OneHotPoly<F, u8> {
     // `2^nv = (num_live_blocks · num_positions_per_block) · D` field elements, grouped into
     // `2^nv / K` one-hot chunks of size `K`.
-    let total_field = layout.num_live_blocks * layout.num_positions_per_block * ONEHOT_D;
+    let total_field = 1usize << num_vars;
     let total_chunks = total_field / ONEHOT_K;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_chunks)
@@ -412,7 +412,7 @@ fn first_stage3_proof_mut(
 /// a serialization round-trip, an honest verify, and a tampered-opening rejection.
 ///
 /// `BaseCfg` selects the physical witness layout (single-chunk vs chunked); the
-/// recursion adapter and exact-precommit adapter are derived from it.
+/// recursion adapter and standalone profiles are derived from it.
 /// `on_schedule` runs profile-specific assertions against the resolved schedule.
 pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     transcript_domain: &'static [u8],
@@ -421,7 +421,6 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
-    type Precommitted<BaseCfg> = AkitaCommitmentScheme<PrecommittedCommitmentConfig<BaseCfg>>;
 
     const PRE_NV: usize = 16;
     const FINAL_NV: usize = 32;
@@ -433,12 +432,8 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     init_rayon_pool();
     run_on_large_stack(move || {
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
-        let pre_layout =
-            PrecommittedCommitmentConfig::<BaseCfg>::get_params_for_batched_commitment(
-                &OpeningClaimsLayout::new(PRE_NV, PRE_GROUP_SIZE).expect("precommit batch"),
-            )
-            .expect("precommit params");
-        let pre_frozen = CommittedGroupProfile::from_params(pre_key, &pre_layout);
+        let pre_frozen =
+            akita_config::committed_group_profile::<BaseCfg>(&pre_key).expect("precommit profile");
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             precommitteds: vec![pre_frozen, pre_frozen],
@@ -471,8 +466,8 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         let mut pre_commitments = Vec::new();
         let mut pre_hints = Vec::new();
         for group_idx in 0..PRE_GROUPS {
-            let poly = make_onehot_poly(&pre_layout, 0x0bee_fcaf_2026_0000 + group_idx as u64);
-            let (commitment, hint) = Precommitted::<BaseCfg>::batched_commit(
+            let poly = make_onehot_poly(PRE_NV, 0x0bee_fcaf_2026_0000 + group_idx as u64);
+            let (commitment, hint) = AkitaCommitmentScheme::<BaseCfg>::commit_group(
                 &setup,
                 std::slice::from_ref(&poly),
                 &stack,
@@ -484,7 +479,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         }
 
         let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
-            .map(|poly_idx| make_onehot_poly(root_params, 0x0bee_fcaf_2026_1000 + poly_idx as u64))
+            .map(|poly_idx| make_onehot_poly(FINAL_NV, 0x0bee_fcaf_2026_1000 + poly_idx as u64))
             .collect();
         let (final_commitment, final_hint, _selection) = Recursive::<BaseCfg>::commit_final_group(
             &setup,
@@ -501,7 +496,8 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
                 polys
                     .iter()
                     .map(|poly| {
-                        opening_from_poly::<ONEHOT_D, _>(poly, &point[..PRE_NV], &pre_layout)
+                        let pre_params = &root_params.precommitted_groups[0];
+                        opening_from_poly::<ONEHOT_D, _>(poly, &point[..PRE_NV], pre_params)
                     })
                     .collect()
             })

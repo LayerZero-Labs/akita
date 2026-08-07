@@ -5,7 +5,7 @@ use crate::report::{
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
     report_verifier_ntt_cache_size,
 };
-use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField,
@@ -29,9 +29,9 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{
     dispatch_for_field, lagrange_weights, reduce_inner_opening_to_ring_element,
     ring_opening_point_from_field, AkitaBatchedProof, AkitaCommitmentHint, BasisMode,
-    CommittedGroup, CommittedGroupBatchProfile, CommittedGroupParams, CommittedGroupProfile,
-    FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
-    OpeningScheduleSelection, PolynomialGroupClaims, PolynomialGroupLayout, SetupContributionMode,
+    CommittedGroup, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
+    GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, OpeningScheduleSelection,
+    PolynomialGroupClaims, PolynomialGroupLayout, SetupContributionMode,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -158,22 +158,15 @@ fn verifier_claims<'a, E: FieldCore, F: FieldCore>(
     GroupBatchStatement::new(selection, claims).expect("valid verifier statement")
 }
 
-fn make_profile_onehot_poly<FF>(layout: &CommittedGroupParams, seed: u64) -> OneHotPoly<FF, u8>
+fn make_profile_onehot_poly<FF>(
+    num_vars: usize,
+    ring_dimension: usize,
+    seed: u64,
+) -> OneHotPoly<FF, u8>
 where
     FF: CanonicalField + FromPrimitiveInt,
 {
-    let d = layout.d_a();
-    let total_field = layout
-        .num_live_blocks
-        .checked_mul(layout.num_positions_per_block)
-        .and_then(|n| n.checked_mul(d))
-        .expect("onehot total field size overflow");
-    let num_vars = layout
-        .position_index_bits()
-        .checked_add(layout.block_index_bits())
-        .and_then(|n| n.checked_add(d.trailing_zeros() as usize))
-        .expect("onehot variable count overflow");
-    assert_eq!(total_field, 1usize << num_vars);
+    let total_field = 1usize << num_vars;
     let onehot_k = onehot_k_for_num_vars(num_vars);
     let total_chunks = total_field / onehot_k;
     assert_eq!(total_chunks * onehot_k, total_field);
@@ -182,7 +175,7 @@ where
     let indices = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
-    OneHotPoly::<FF, u8>::new(onehot_k, d, indices).expect("profile onehot poly")
+    OneHotPoly::<FF, u8>::new(onehot_k, ring_dimension, indices).expect("profile onehot poly")
 }
 
 pub(crate) fn onehot_k_for_num_vars(nv: usize) -> usize {
@@ -800,7 +793,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + AkitaSerialize
         + Valid,
 {
-    let onehot_poly = make_profile_onehot_poly::<FF>(layout, 0xbeef_cafe);
+    let onehot_poly = make_profile_onehot_poly::<FF>(nv, layout.d_a(), 0xbeef_cafe);
     let mut rng = StdRng::seed_from_u64(0xfeed_face);
     let pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
     let opening = onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(&onehot_poly, &pt);
@@ -880,7 +873,11 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 {
     let polys: Vec<OneHotPoly<FF, u8>> = (0..num_polys)
         .map(|poly_idx| {
-            make_profile_onehot_poly::<FF>(layout, 0xbeef_cafe ^ ((poly_idx as u64 + 1) << 32))
+            make_profile_onehot_poly::<FF>(
+                nv,
+                layout.d_a(),
+                0xbeef_cafe ^ ((poly_idx as u64 + 1) << 32),
+            )
         })
         .collect();
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
@@ -1165,13 +1162,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
 
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
     let pre_key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
-    let pre_opening_batch =
-        OpeningClaimsLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP).expect("precommit batch");
-    let pre_params = PrecommittedCommitmentConfig::<ProofCfg>::get_params_for_batched_commitment(
-        &pre_opening_batch,
-    )
-    .expect("precommit layout");
-    let pre_descriptor = CommittedGroupProfile::from_params(pre_key, &pre_params);
+    let pre_descriptor =
+        akita_config::committed_group_profile::<ProofCfg>(&pre_key).expect("precommit profile");
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(final_num_vars, final_num_polys),
         precommitteds: vec![pre_descriptor; PRE_GROUPS],
@@ -1239,7 +1231,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         let t_commit = Instant::now();
         for (group_idx, pre_point) in pre_points.iter().enumerate() {
             let polys = vec![make_profile_onehot_poly::<FF>(
-                &pre_params,
+                pre_num_vars,
+                pre_descriptor.inner_commit_matrix.ring_dimension(),
                 0x0bee_fcaf_2100_0000 + group_idx as u64,
             )];
             let openings = polys
@@ -1247,10 +1240,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, pre_point))
                 .collect::<Vec<_>>();
             let (commitment, hint) =
-                AkitaCommitmentScheme::<PrecommittedCommitmentConfig<ProofCfg>>::batched_commit(
-                    &setup, &polys, &stack,
-                )
-                .expect("precommit");
+                AkitaCommitmentScheme::<ProofCfg>::commit_group(&setup, &polys, &stack)
+                    .expect("precommit");
             pre_keys.push(pre_key);
             pre_commitments.push(commitment);
             pre_hints.push(hint);
@@ -1262,7 +1253,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         let final_polys = (0..final_num_polys)
             .map(|poly_idx| {
                 make_profile_onehot_poly::<FF>(
-                    &main_params,
+                    final_num_vars,
+                    main_params.d_a(),
                     0x0bee_fcaf_2800_0000 + poly_idx as u64,
                 )
             })

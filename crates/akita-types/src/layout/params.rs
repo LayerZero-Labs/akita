@@ -139,6 +139,16 @@ pub struct CommittedGroupParams {
 }
 
 impl CommittedGroupParams {
+    /// Canonical byte encoding used to order semantically distinct level candidates.
+    ///
+    /// This is an ordering descriptor, not a wire encoding or transcript commitment.
+    #[must_use]
+    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.append_descriptor_bytes(&mut bytes);
+        bytes
+    }
+
     /// Checked wire geometry for this level's final-group B image.
     pub fn outer_payload_geometry(&self) -> Result<crate::CommitmentPayloadGeometry, AkitaError> {
         crate::CommitmentPayloadGeometry::for_mode(
@@ -951,6 +961,16 @@ impl CommittedGroupParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
+        self.output_witness_len_for_field_bits(F::modulus_bits(), opening_batch)
+    }
+
+    /// Exact live next-witness length for offline planning, where the field is
+    /// represented by its bit width rather than a concrete Rust type.
+    pub fn output_witness_len_for_field_bits(
+        &self,
+        field_bits: u32,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
         self.witness_chunk.validate()?;
         self.validate_opening_batch(opening_batch)?;
@@ -958,7 +978,7 @@ impl CommittedGroupParams {
             self,
             opening_batch,
             self.witness_chunk.num_chunks,
-            crate::r_decomp_levels::<F>(self.log_basis_open),
+            crate::sis::compute_num_digits_field_width(field_bits, self.log_basis_open),
         )?;
         Ok(witness_layout.live_coeff_len())
     }

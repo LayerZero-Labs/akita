@@ -12,18 +12,14 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32};
-use akita_config::{
-    policy_of, CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig,
-};
+use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_planner::find_schedule;
 use akita_schedules::resolve_schedule;
 use akita_schedules::{
-    resolve_generated_schedule_selection, select_generated_schedule_row, PlannerCostModelId,
-    PlannerPolicy, ResolvedScheduleRow,
+    resolve_generated_schedule_selection, select_generated_schedule_row, InnerBasisSource,
+    PlannerCostModelId, PlannerPolicy, ResolvedScheduleRow, SelectionPolicyId,
 };
-use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
-};
+use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
 
 /// A one-point 3-poly key that no generated table carries (generated tables only
 /// hold singleton / 2-batched / 4-batched keys), so strict runtime resolution
@@ -305,24 +301,12 @@ fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
 }
 
 #[test]
-fn adapters_forward_mixed_dimension_policy() {
+fn recursive_adapter_forwards_mixed_dimension_policy() {
     type Base = fp128::MixedDimFp128OneHot;
     assert_eq!(
         <RecursiveCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
         Base::RING_DIMENSION_CANDIDATES,
     );
-    assert_eq!(
-        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
-        Base::RING_DIMENSION_CANDIDATES,
-    );
-    assert_eq!(
-        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::selection_policy(),
-        Base::selection_policy(),
-    );
-    akita_schedules::planner_support::validate_policy(&policy_of::<
-        PrecommittedCommitmentConfig<Base>,
-    >())
-    .expect("precommitted mixed-dimension policy must remain valid");
 }
 
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
@@ -402,15 +386,11 @@ fn offline_planner_admits_dense_multi_group_roots() {
     const FINAL_NV: usize = 20;
 
     let pre_group = PolynomialGroupLayout::singleton(PRE_NV);
-    let pre_layout = OpeningClaimsLayout::new(PRE_NV, 1).expect("precommit opening layout");
-    let pre_params =
-        <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-            &pre_layout,
-        )
-        .expect("dense precommit params");
+    let precommitted =
+        akita_config::committed_group_profile::<Cfg>(&pre_group).expect("dense precommit profile");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(FINAL_NV),
-        precommitteds: vec![CommittedGroupProfile::from_params(pre_group, &pre_params)],
+        precommitteds: vec![precommitted],
     };
     let precommitted_honest_fold_policies = vec![Cfg::root_honest_fold_policy()];
     let planned = find_schedule(
@@ -449,11 +429,63 @@ fn root_basis_is_derived_from_existing_policy_inputs() {
 }
 
 #[test]
-fn inner_basis_domain_drops_only_dominated_one_digit_choices() {
-    let policy = policy_of::<fp128::D64Dense>();
-    assert_eq!(policy.inner_basis_search_range_for_source(3), (3, 3));
-    assert_eq!(policy.inner_basis_search_range_for_source(11), (3, 11));
-    assert_eq!(policy.inner_basis_search_range_for_source(128), (3, 16));
+fn inner_basis_domain_depends_on_the_coefficient_source() {
+    let mut policy = policy_of::<fp128::D64Dense>();
+    assert_eq!(
+        policy
+            .inner_basis_search_range(InnerBasisSource::RawCoefficients { log_bound: 3 })
+            .unwrap(),
+        (3, 3)
+    );
+    assert_eq!(
+        policy
+            .inner_basis_search_range(InnerBasisSource::RawCoefficients { log_bound: 11 })
+            .unwrap(),
+        (3, 11)
+    );
+    assert_eq!(
+        policy
+            .inner_basis_search_range(InnerBasisSource::RawCoefficients { log_bound: 128 })
+            .unwrap(),
+        policy.inner_basis_range
+    );
+    assert_eq!(
+        policy
+            .inner_basis_search_range(InnerBasisSource::UnitOneHot)
+            .unwrap(),
+        (3, 3)
+    );
+    assert_eq!(
+        policy
+            .inner_basis_search_range(InnerBasisSource::BalancedDigits { log_basis: 6 })
+            .unwrap(),
+        (6, 6)
+    );
+    policy.inner_basis_range = (10, 11);
+    assert_eq!(
+        policy
+            .inner_basis_search_range(InnerBasisSource::BalancedDigits { log_basis: 6 })
+            .unwrap(),
+        (6, 6),
+        "recursive balanced digits retain their source basis independently of the raw-source search domain"
+    );
+    policy.opening_basis_range = (3, 6);
+    akita_schedules::planner_support::validate_policy(&policy)
+        .expect("opening and raw inner search domains are independent");
+    assert!(policy
+        .inner_basis_search_range(InnerBasisSource::BalancedDigits { log_basis: 17 })
+        .is_err());
+}
+
+#[test]
+fn runtime_policy_validation_preserves_an_explicit_selection_objective() {
+    type Recursive = RecursiveCommitmentConfig<fp128::D64OneHot>;
+    let mut policy = policy_of::<Recursive>();
+    assert!(policy.recursive_setup_planning);
+    policy.selection_policy = SelectionPolicyId::MinEstimatedProofPayload;
+
+    akita_schedules::planner_support::validate_policy(&policy)
+        .expect("recursive search capability must not infer a setup-first objective");
 }
 
 #[test]
@@ -475,9 +507,7 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
 fn committed_descriptor<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> CommittedGroupProfile {
-    let params = akita_config::committed_group_params::<Cfg>(&group)
-        .expect("heterogeneous group must resolve");
-    CommittedGroupProfile::from_params(group, &params)
+    akita_config::committed_group_profile::<Cfg>(&group).expect("heterogeneous group must resolve")
 }
 
 #[test]

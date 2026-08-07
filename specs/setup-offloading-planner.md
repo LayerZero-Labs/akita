@@ -59,11 +59,11 @@ Offloaded: successor receives [S_prefix, W]
 An offloaded transition is feasible only when the successor can commit the
 exact prefix, the complete successor witness contracts the entering balanced
 witness by at least threefold, and the resulting suffix strictly reduces the
-first remaining direct setup scan. The planner may select zero, one, or several
+power-of-two capacity of the first remaining direct setup scan. The planner may select zero, one, or several
 offloaded levels. No fold index, contiguity rule, or prefix-size threshold
 decides the count.
 
-The selected schedule minimizes the first remaining direct setup footprint and
+The selected schedule minimizes the padded capacity of the first remaining direct setup footprint and
 then exact estimated proof bytes, including Stage 3. Equal candidates then use
 the smaller total physical setup envelope and the canonical schedule descriptor.
 Recursive successors use the existing multi-group representation with the setup
@@ -268,6 +268,13 @@ recursive policy = MinFirstDirectSetupThenPayload
 optional setup field budget = policy.setup_field_budget
 minimum offload contraction = policy.min_offloaded_witness_contraction
 ```
+
+The selection objective is an explicit catalog-identity input. Recursive setup
+capability and the admitted ring-dimension domain do not infer or rewrite it.
+The recursion adapter selects `MinFirstDirectSetupThenPayload` for genuine
+multi-group planning. Its scalar boundary and standalone precommit planning
+explicitly select `MinEstimatedProofPayload` while disabling recursive setup
+search.
 
 The planner does not use artifact registry contents to decide mode. Registry
 contents are setup-instance state and could differ between prover and verifier.
@@ -1039,10 +1046,10 @@ the candidate score that decides whether and how long to offload.
       does not impose contiguity as a structural rule.
 - [x] Every selected offloaded edge contracts the entering balanced witness by
       at least threefold after counting both the recursive witness and padded
-      full-field prefix inputs, and strictly reduces the first remaining direct
-      setup scan.
-- [x] The selected schedule lexicographically minimizes first direct setup
-      footprint and exact estimated proof bytes within the supported setup
+      full-field prefix inputs, and strictly reduces the padded capacity of the
+      first remaining direct setup scan.
+- [x] The selected schedule lexicographically minimizes first direct padded setup
+      capacity and exact estimated proof bytes within the supported setup
       envelope.
 - [x] The materialized estimate reports the exact setup envelope and selected
       offload-edge count, and recomputation agrees with the cached DP value.
@@ -1147,7 +1154,7 @@ Track:
 - proof bytes per fold by mode;
 - Stage 3 bytes per offloaded edge;
 - balanced-witness contraction for every selected offloaded edge;
-- first remaining direct setup footprint;
+- first remaining direct padded setup capacity and natural length;
 - number of selected offloaded edges;
 - verifier cycles saved by eliminating the setup scan;
 - exact selected proof bytes against the direct-only schedule.

@@ -15,45 +15,15 @@ use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(feature = "parallel")]
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::LazyLock;
 
-/// Role-independent A coefficient cells used by the current planner domain.
-pub const COEFF_LINF_BUCKETS: &[u64] = &[
-    2,
-    3,
-    7,
-    15,
-    31,
-    63,
-    127,
-    255,
-    511,
-    1023,
-    2047,
-    4095,
-    8191,
-    16383,
-    32767,
-    65535,
-    131_071,
-    262_143,
-    524_287,
-    1_048_575,
-    2_097_151,
-    4_194_303,
-    8_388_607,
-    16_777_215,
-    33_554_431,
-    67_108_863,
-    134_217_727,
-    268_435_455,
-    536_870_911,
-    1_073_741_823,
-    2_147_483_647,
-    4_294_967_295,
-    8_589_934_591,
-    17_179_869_183,
-    34_359_738_367,
-];
+/// Estimator projection of the runtime's canonical coefficient buckets.
+pub static COEFF_LINF_BUCKETS: LazyLock<Vec<u64>> = LazyLock::new(|| {
+    akita_types::sis::COEFF_LINF_BUCKETS
+        .iter()
+        .map(|&bound| u64::try_from(bound).expect("runtime SIS bucket exceeds u64"))
+        .collect()
+});
 
 /// Ring dimensions included in the current reachable generation domain.
 pub const RING_DIMS: &[u32] = &[32, 64, 128, 256, 512];
@@ -78,7 +48,7 @@ pub const D128_SEARCH_CAP: u64 = DEFAULT_SEARCH_CAP;
 /// Optimizer profile used to discover and certify scalar boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InfinityWidthProfile {
-    /// Local minimum discovery followed by exhaustive boundary certification.
+    /// Local minimum discovery followed by proven-pruned boundary certification.
     LocalMinimum,
     /// Pinned lattice-estimator-compatible local-minimum beta and zeta search.
     LatticeEstimatorParity,
@@ -92,7 +62,7 @@ impl InfinityWidthProfile {
     /// Stable provenance label.
     pub const fn label(self) -> &'static str {
         match self {
-            Self::LocalMinimum => "local-minimum+exhaustive-certification",
+            Self::LocalMinimum => "local-minimum+proven-pruned-certification",
             Self::LatticeEstimatorParity => "lattice-estimator-local-minimum",
             Self::ExhaustiveSerial => "exhaustive-serial",
             Self::ExhaustiveParallel => "exhaustive-parallel",
@@ -108,7 +78,16 @@ impl InfinityWidthProfile {
                 },
                 ..EstimateConfig::lattice_estimator_parity()
             },
-            Self::ExhaustiveSerial => EstimateConfig::akita_infinity_table(),
+            Self::ExhaustiveSerial => EstimateConfig {
+                red_cost_model: ReductionCostModel::Adps16 {
+                    mode: crate::config::Adps16Mode::Quantum,
+                },
+                optimizer: OptimizerConfig::OptimizeZeta {
+                    beta: SearchMode::Exhaustive,
+                    zeta: SearchMode::Exhaustive,
+                },
+                ..EstimateConfig::default()
+            },
             Self::ExhaustiveParallel => EstimateConfig {
                 red_cost_model: ReductionCostModel::Adps16 {
                     mode: crate::config::Adps16Mode::Quantum,
@@ -149,7 +128,7 @@ impl Default for InfinityWidthTableConfig {
         Self {
             profiles: FAMILIES.to_vec(),
             ring_dims: RING_DIMS.to_vec(),
-            coeff_linf_bounds: COEFF_LINF_BUCKETS.to_vec(),
+            coeff_linf_bounds: COEFF_LINF_BUCKETS.clone(),
             max_rank: DEFAULT_MAX_RANK,
             policy: SisSecurityPolicy::Quantum128BitADPS16,
             search_cap: None,
@@ -163,7 +142,7 @@ impl Default for InfinityWidthTableConfig {
 pub fn is_full_infinity_width_table_config(config: &InfinityWidthTableConfig) -> bool {
     same_set(&config.profiles, FAMILIES)
         && same_set(&config.ring_dims, RING_DIMS)
-        && same_set(&config.coeff_linf_bounds, COEFF_LINF_BUCKETS)
+        && same_set(&config.coeff_linf_bounds, &COEFF_LINF_BUCKETS)
         && config.max_rank == DEFAULT_MAX_RANK
         && config.policy == SisSecurityPolicy::Quantum128BitADPS16
         && config.search_cap.is_none()
@@ -340,7 +319,17 @@ fn generate_rows_from_work(
                 request.3,
                 config,
                 estimator_config,
-            );
+            )
+            .map_err(|error| EstimatorError::InvalidConfig {
+                field: "width_table_row",
+                reason: format!(
+                    "profile={} d={} rank={} bound={}: {error}",
+                    request.0.label(),
+                    request.1,
+                    request.2,
+                    request.3
+                ),
+            });
             report_progress(config.progress_every, &completed, total);
             row
         })
@@ -359,14 +348,19 @@ fn generate_rows_from_work(
     let total = work.len();
     let mut rows = Vec::with_capacity(work.len());
     for (completed, (modulus_profile, d, rank, bound)) in work.into_iter().enumerate() {
-        rows.push(max_secure_width_row(
-            modulus_profile,
-            d,
-            rank,
-            bound,
-            config,
-            estimator_config,
-        )?);
+        rows.push(
+            max_secure_width_row(modulus_profile, d, rank, bound, config, estimator_config)
+                .map_err(|error| EstimatorError::InvalidConfig {
+                    field: "width_table_row",
+                    reason: format!(
+                        "profile={} d={} rank={} bound={}: {error}",
+                        modulus_profile.label(),
+                        d,
+                        rank,
+                        bound
+                    ),
+                })?,
+        );
         report_progress(config.progress_every, completed + 1, total);
     }
     rows.sort_by_key(|row| (row.modulus_profile, row.coeff_linf_bound, row.d, row.rank));
@@ -426,21 +420,47 @@ pub fn validate_infinity_width_rows(rows: &[InfinityWidthRow]) -> Result<()> {
     validate_bound_monotonicity(rows)
 }
 
-/// Convert ring-origin rows to runtime `(d, B) -> widths[rank]` match arms.
+/// One runtime `(profile, d, B) -> widths[rank]` table row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeWidthRow {
+    /// Exact modulus profile.
+    pub modulus_profile: AkitaModulusProfileId,
+    /// Ring dimension.
+    pub d: u32,
+    /// Coefficient infinity bound.
+    pub coeff_linf_bound: u64,
+    /// Maximum secure input width at each one-based module rank.
+    pub widths: Vec<u64>,
+}
+
+/// Project certified ring-origin rows to runtime `(d, B) -> widths[rank]` rows.
 ///
 /// Scalar certification still groups by `(B, n)` and takes the min `m`. The
 /// emitted runtime table projects those cutoffs onto each reachable ring
 /// dimension as `width[r - 1] = cutoff_m(B, n = r * d) / d`.
-///
-pub fn rust_table_arms(
+pub fn runtime_width_rows(
     rows: &[InfinityWidthRow],
     max_rank: u32,
-) -> BTreeMap<AkitaModulusProfileId, Vec<String>> {
+) -> Result<Vec<RuntimeWidthRow>> {
+    if max_rank == 0 {
+        return invalid_config("max_rank", "max_rank must be positive");
+    }
     let mut scalar = BTreeMap::<(AkitaModulusProfileId, u64, u64), u64>::new();
     let mut pairs = BTreeSet::<(AkitaModulusProfileId, u32, u64)>::new();
     for row in rows {
         let n = u64::from(row.d) * u64::from(row.rank);
-        let scalar_m = row.max_width.checked_mul(u64::from(row.d)).unwrap_or(0);
+        let scalar_m = row.max_width.checked_mul(u64::from(row.d)).ok_or_else(|| {
+            EstimatorError::InvalidConfig {
+                field: "rows",
+                reason: format!(
+                    "max_width * d overflowed for profile={} d={} rank={} bound={}",
+                    row.modulus_profile.label(),
+                    row.d,
+                    row.rank,
+                    row.coeff_linf_bound
+                ),
+            }
+        })?;
         scalar
             .entry((row.modulus_profile, row.coeff_linf_bound, n))
             .and_modify(|current| {
@@ -451,36 +471,32 @@ pub fn rust_table_arms(
             .or_insert(scalar_m);
         pairs.insert((row.modulus_profile, row.d, row.coeff_linf_bound));
     }
-    let mut arms = BTreeMap::<AkitaModulusProfileId, Vec<String>>::new();
+    let mut runtime_rows = Vec::new();
     for (profile, d, bound) in pairs {
-        if max_rank == 0 {
-            continue;
-        }
         let mut widths = Vec::with_capacity(max_rank as usize);
-        let mut complete = true;
         for rank in 1..=max_rank {
             let n = u64::from(d) * u64::from(rank);
             match scalar.get(&(profile, bound, n)) {
                 Some(&scalar_m) => widths.push(scalar_m / u64::from(d)),
                 None => {
-                    complete = false;
-                    break;
+                    return invalid_config(
+                        "rows",
+                        &format!(
+                            "missing scalar row for profile={} d={d} rank={rank} bound={bound}",
+                            profile.label()
+                        ),
+                    );
                 }
             }
         }
-        if !complete {
-            continue;
-        }
-        let body = widths
-            .iter()
-            .map(|width| width.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        arms.entry(profile)
-            .or_default()
-            .push(format!("({d}, {bound}) => Some(&[{body}]),"));
+        runtime_rows.push(RuntimeWidthRow {
+            modulus_profile: profile,
+            d,
+            coeff_linf_bound: bound,
+            widths,
+        });
     }
-    arms
+    Ok(runtime_rows)
 }
 
 fn max_secure_width_row(
@@ -518,7 +534,7 @@ fn max_secure_width_row(
                 coeff_linf_bound,
                 search_cap,
                 discovered.max_value,
-                &InfinityWidthProfile::ExhaustiveSerial.config(),
+                &EstimateConfig::akita_infinity_table(),
                 target,
             )?
         } else {
@@ -528,9 +544,9 @@ fn max_secure_width_row(
                 discovered.hit_cap,
             )
         };
-    let exhaustive_boundary_config = InfinityWidthProfile::ExhaustiveSerial.config();
+    let boundary_certificate_config = EstimateConfig::akita_infinity_table();
     let boundary_config = if table_config.profile == InfinityWidthProfile::LocalMinimum {
-        &exhaustive_boundary_config
+        &boundary_certificate_config
     } else {
         estimator_config
     };
@@ -586,31 +602,116 @@ fn certify_boundary(
     config: &EstimateConfig,
     target: f64,
 ) -> Result<(u64, Option<u64>, bool)> {
-    let mut accepted = discovered.min(cap);
-    while accepted > 0 {
-        let cost = estimate_width(modulus_profile, d, rank, accepted, bound, config)?;
-        if secure_or_error(cost.rop, target)? {
-            break;
-        }
-        accepted -= 1;
+    let result = certified_boundary_from_hint(cap, discovered, |width| {
+        let cost = estimate_width(modulus_profile, d, rank, width, bound, config)?;
+        secure_or_error(cost.rop, target)
+    })?;
+    Ok((result.max_value, result.next_value, result.hit_cap))
+}
+
+fn certified_boundary_from_hint<F>(
+    cap: u64,
+    hint: u64,
+    mut predicate: F,
+) -> Result<PrefixSearchResult>
+where
+    F: FnMut(u64) -> Result<bool>,
+{
+    if cap == 0 {
+        return invalid_config("search_cap", "search cap must be positive");
     }
-    let Some(mut successor) = accepted.checked_add(1) else {
-        return Ok((accepted, None, false));
-    };
-    while successor <= cap {
-        let cost = estimate_width(modulus_profile, d, rank, successor, bound, config)?;
-        if !secure_or_error(cost.rop, target)? {
-            return Ok((accepted, Some(successor), false));
+    let hint = hint.clamp(1, cap);
+    if predicate(hint)? {
+        if hint == cap {
+            return Ok(PrefixSearchResult {
+                max_value: cap,
+                next_value: None,
+                hit_cap: true,
+            });
         }
-        accepted = successor;
-        successor = successor
-            .checked_add(1)
-            .ok_or_else(|| EstimatorError::InvalidConfig {
-                field: "search_cap",
-                reason: "width successor overflow".to_string(),
-            })?;
+        let next = hint + 1;
+        if !predicate(next)? {
+            return Ok(PrefixSearchResult {
+                max_value: hint,
+                next_value: Some(next),
+                hit_cap: false,
+            });
+        }
+        let mut low = next;
+        let mut step = 2u64;
+        loop {
+            let high = low.saturating_add(step).min(cap);
+            if predicate(high)? {
+                low = high;
+                if low == cap {
+                    return Ok(PrefixSearchResult {
+                        max_value: cap,
+                        next_value: None,
+                        hit_cap: true,
+                    });
+                }
+                step = step.saturating_mul(2);
+            } else {
+                return binary_certified_boundary(low, high, predicate);
+            }
+        }
     }
-    Ok((cap, None, true))
+
+    if hint == 1 {
+        return Ok(PrefixSearchResult {
+            max_value: 0,
+            next_value: Some(1),
+            hit_cap: false,
+        });
+    }
+    let previous = hint - 1;
+    if predicate(previous)? {
+        return Ok(PrefixSearchResult {
+            max_value: previous,
+            next_value: Some(hint),
+            hit_cap: false,
+        });
+    }
+    let mut high = previous;
+    let mut step = 1u64;
+    loop {
+        let low = high.saturating_sub(step).max(1);
+        if predicate(low)? {
+            return binary_certified_boundary(low, high, predicate);
+        }
+        if low == 1 {
+            return Ok(PrefixSearchResult {
+                max_value: 0,
+                next_value: Some(1),
+                hit_cap: false,
+            });
+        }
+        high = low;
+        step = step.saturating_mul(2);
+    }
+}
+
+fn binary_certified_boundary<F>(
+    mut low: u64,
+    mut high: u64,
+    mut predicate: F,
+) -> Result<PrefixSearchResult>
+where
+    F: FnMut(u64) -> Result<bool>,
+{
+    while low + 1 < high {
+        let mid = low + (high - low) / 2;
+        if predicate(mid)? {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    Ok(PrefixSearchResult {
+        max_value: low,
+        next_value: Some(high),
+        hit_cap: false,
+    })
 }
 
 fn row_search_cap(d: u32, requested: Option<u64>) -> Result<u64> {
@@ -682,24 +783,19 @@ where
     if start == 0 || cap < start {
         return invalid_config("search range", "must satisfy 0 < start <= cap");
     }
-    let mut first = start;
-    while first <= cap && !predicate(first)? {
-        first = first
-            .checked_add(1)
-            .ok_or_else(|| EstimatorError::InvalidConfig {
-                field: "search_cap",
-                reason: "search probe overflow".to_string(),
-            })?;
-    }
-    if first > cap {
+    // Security is a prefix in the column count. If the first admitted width
+    // already fails, no later width can recover; scanning for a later `true`
+    // would both violate that contract and become linear in a multi-trillion
+    // search cap.
+    if !predicate(start)? {
         return Ok(PrefixSearchResult {
             max_value: 0,
             next_value: Some(start),
             hit_cap: false,
         });
     }
-    let mut low = first;
-    let mut high = first.checked_mul(2).unwrap_or(cap).min(cap);
+    let mut low = start;
+    let mut high = start.checked_mul(2).unwrap_or(cap).min(cap);
     if high == low && high < cap {
         high = high
             .checked_add(1)
@@ -835,6 +931,43 @@ mod tests {
     }
 
     #[test]
+    fn prefix_search_stops_when_the_first_width_is_insecure() {
+        let mut probes = 0;
+        let result = max_true_in_prefix(1, DEFAULT_SEARCH_CAP, |_| {
+            probes += 1;
+            Ok(false)
+        })
+        .unwrap();
+        assert_eq!(result.max_value, 0);
+        assert_eq!(result.next_value, Some(1));
+        assert_eq!(probes, 1);
+    }
+
+    #[test]
+    fn certificate_search_brackets_distant_boundaries() {
+        for (cap, hint, boundary) in [
+            (1_000_000, 3, 800_000),
+            (1_000_000, 900_000, 17),
+            (1_000_000, 900_000, 0),
+            (1_000_000, 3, 1_000_000),
+        ] {
+            let mut probes = 0;
+            let result = certified_boundary_from_hint(cap, hint, |value| {
+                probes += 1;
+                Ok(value <= boundary)
+            })
+            .unwrap();
+            assert_eq!(result.max_value, boundary);
+            assert_eq!(result.hit_cap, boundary == cap);
+            assert_eq!(result.next_value, (boundary < cap).then_some(boundary + 1));
+            assert!(
+                probes < 64,
+                "hint={hint} boundary={boundary} probes={probes}"
+            );
+        }
+    }
+
+    #[test]
     fn infinity_never_counts_as_secure() {
         assert!(!security_met(CostValue::Infinity, 128.0));
         assert!(secure_or_error(CostValue::Infinity, 128.0).is_err());
@@ -846,7 +979,7 @@ mod tests {
     }
 
     #[test]
-    fn rust_table_emits_direct_q128_d512_rows() {
+    fn runtime_table_emits_direct_q128_d512_rows() {
         let rows = [10, 20, 30, 40]
             .into_iter()
             .enumerate()
@@ -864,9 +997,16 @@ mod tests {
                 next_costs: None,
             })
             .collect::<Vec<_>>();
-        let arms = rust_table_arms(&rows, 4);
-        assert!(arms[&AkitaModulusProfileId::Q128OffsetA7F7]
-            .contains(&"(512, 2) => Some(&[10, 20, 30, 40]),".to_string()));
+        let runtime_rows = runtime_width_rows(&rows, 4).unwrap();
+        assert_eq!(
+            runtime_rows,
+            [RuntimeWidthRow {
+                modulus_profile: AkitaModulusProfileId::Q128OffsetA7F7,
+                d: 512,
+                coeff_linf_bound: 2,
+                widths: vec![10, 20, 30, 40],
+            }]
+        );
     }
 
     #[test]

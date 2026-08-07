@@ -100,5 +100,10 @@ name = "generated_tables"
 path = "tests/generated_tables.rs"
 required-features = ["all-schedules"]
 
+[[test]]
+name = "dense_inner_basis"
+path = "tests/dense_inner_basis.rs"
+required-features = ["all-schedules"]
+
 [lints]
 workspace = true

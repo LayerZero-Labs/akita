@@ -262,7 +262,10 @@ projection `(d, B) -> widths[rank]`; offline CSV provenance stays in
 
 The checked-in policy table may use `--profile local-minimum` for candidate
 discovery. The accepted width and immediate rejected successor are then
-certified by exhaustive search over the configured beta and zeta domain.
+certified by exhaustive beta search and the proven-pruned ADPS16/LGSA zeta
+search. The latter checks the complete-profile transition and `zeta=0` for
+every beta; those endpoints cover the full zeta domain without iterating up to
+multi-trillion-column widths.
 Building with `--features parallel` parallelizes independent rows, but does not
 change the certificate domain or output ordering.
 

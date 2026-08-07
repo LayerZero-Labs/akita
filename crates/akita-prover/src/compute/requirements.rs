@@ -123,7 +123,7 @@ impl NttExecutionRequirements {
             signed_commit_domain(
                 params.inner_commit_matrix.input_width(),
                 params.log_basis_inner,
-            ),
+            )?,
         )?;
         self.add_matrix(
             fold_level,
@@ -189,7 +189,7 @@ impl NttExecutionRequirements {
             signed_commit_domain(
                 params.inner_commit_matrix.input_width(),
                 params.log_basis_inner,
-            ),
+            )?,
         )?;
         self.add_matrix(
             level,
@@ -282,16 +282,17 @@ impl NttExecutionRequirements {
             signed_commit_domain(
                 params.inner_commit_matrix.input_width(),
                 params.log_basis_inner,
-            ),
+            )?,
         )
     }
 }
 
-const fn signed_commit_domain(width: usize, log_basis: u32) -> NttTransformDomain {
-    if log_basis <= 8 {
-        NttTransformDomain::Negacyclic
-    } else {
-        NttTransformDomain::ExactNegacyclicI16 { width, log_basis }
+fn signed_commit_domain(width: usize, log_basis: u32) -> Result<NttTransformDomain, AkitaError> {
+    match crate::validation::signed_digit_kernel_for_setup(log_basis, "for NTT cache planning")? {
+        akita_types::SignedDigitKernel::I8 => Ok(NttTransformDomain::Negacyclic),
+        akita_types::SignedDigitKernel::I16 => {
+            Ok(NttTransformDomain::ExactNegacyclicI16 { width, log_basis })
+        }
     }
 }
 

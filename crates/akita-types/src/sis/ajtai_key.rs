@@ -8,7 +8,9 @@
 
 use akita_field::AkitaError;
 
-use super::generated_sis_table::sis_max_widths as generated_sis_max_widths;
+use super::generated_sis_table::{
+    sis_max_widths as generated_sis_max_widths, Q128_INNER_D512_DIGEST, SIS_TABLE_DIGEST,
+};
 use crate::descriptor_bytes::{push_u128, push_usize, sis_modulus_profile_tag};
 
 /// Digest of the generated scalar table and its coverage certificate.
@@ -29,20 +31,12 @@ impl SisTableDigest {
     pub const TAG: u8 = 1;
 
     /// Digest committed by the current generated artifact.
-    pub const CURRENT: Self = Self([
-        0x70, 0xef, 0x82, 0x20, 0x2e, 0x24, 0x47, 0x23, 0x34, 0x55, 0xfb, 0x59, 0x41, 0x19, 0x66,
-        0xf7, 0xa6, 0x8a, 0xed, 0x8e, 0xb4, 0xa9, 0xc1, 0x76, 0x7a, 0x92, 0x7a, 0xd9, 0xef, 0x8d,
-        0xbf, 0x3b,
-    ]);
+    pub const CURRENT: Self = Self(SIS_TABLE_DIGEST);
 
     /// Additive q128 Inner/512 coverage generated directly for `D = 512`.
     ///
     /// Existing schedules intentionally remain on [`Self::CURRENT`].
-    pub const Q128_INNER_D512: Self = Self([
-        0x91, 0xd6, 0x8c, 0x6d, 0x5a, 0x55, 0xb4, 0x0e, 0x58, 0xb8, 0x97, 0x11, 0xb2, 0x42, 0xdb,
-        0x3e, 0x66, 0xd8, 0x4d, 0x85, 0xa8, 0x0d, 0x4b, 0x30, 0xb0, 0x94, 0xc7, 0x58, 0x88, 0x4d,
-        0x78, 0x87,
-    ]);
+    pub const Q128_INNER_D512: Self = Self(Q128_INNER_D512_DIGEST);
 }
 
 /// Matrix role whose coefficient and ring geometry is being priced.
@@ -200,8 +194,7 @@ pub const SUPPORTED_SIS_SECURITY_POLICIES: &[SisSecurityPolicyId] = &[DEFAULT_SI
 
 /// Coefficient-`L∞` collision buckets for norm-bound sizing.
 ///
-/// Keep in lockstep with `COEFF_LINF_BUCKETS` in
-/// `crates/akita-sis-estimator/src/width_table.rs`.
+/// Offline generators consume this same list directly.
 pub const COEFF_LINF_BUCKETS: &[u128] = &[
     2,
     3,
@@ -329,17 +322,7 @@ pub fn sis_role_cell(
         ring_dimension,
         coeff_linf_bound,
         max_module_rank: 20,
-        required_max_width: if modulus_profile == SisModulusProfileId::Q32Offset99
-            && coeff_linf_bound >= 536_870_911
-        {
-            // These near-half-modulus q32 cells are deliberately certified only
-            // over the planner's dense/setup-prefix width regime.  The emitted
-            // rows use the same estimator and policy with an explicit 2M cap;
-            // callers needing a wider A matrix must choose another cell.
-            2_000_000
-        } else {
-            6_400_000_000_000
-        },
+        required_max_width: 6_400_000_000_000,
     })
 }
 
@@ -675,6 +658,20 @@ macro_rules! define_commit_matrix_params {
                 self.input_width
             }
 
+            /// Input dimension after expanding module coordinates into raw
+            /// ring coefficients.
+            #[inline]
+            pub fn raw_input_dimension(&self) -> Option<usize> {
+                self.input_width.checked_mul(self.ring_dimension())
+            }
+
+            /// Output dimension after expanding module coordinates into raw
+            /// ring coefficients.
+            #[inline]
+            pub fn raw_output_dimension(&self) -> Option<usize> {
+                self.output_rank.checked_mul(self.ring_dimension())
+            }
+
             #[inline]
             pub fn security_policy(&self) -> SisSecurityPolicyId {
                 self.sis_table_key.policy
@@ -749,6 +746,37 @@ define_commit_matrix_params!(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha3::{Digest, Sha3_256};
+
+    fn generated_artifact_digest() -> [u8; 32] {
+        const DOMAIN: &[u8] = b"akita-sis-table-digest-adps16-quantum-128bit\0";
+        const FILES: &[(&str, &[u8])] = &[
+            ("q32.rs", include_bytes!("generated_sis_table/q32.rs")),
+            ("q64.rs", include_bytes!("generated_sis_table/q64.rs")),
+            ("q128.rs", include_bytes!("generated_sis_table/q128.rs")),
+            (
+                "policy_audit.csv",
+                include_bytes!("generated_sis_table/policy_audit.csv"),
+            ),
+            (
+                "policy_review.txt",
+                include_bytes!("generated_sis_table/policy_review.txt"),
+            ),
+        ];
+        let mut hasher = Sha3_256::new();
+        hasher.update(DOMAIN);
+        for &(filename, contents) in FILES {
+            hasher.update(
+                u64::try_from(contents.len())
+                    .expect("artifact length fits u64")
+                    .to_le_bytes(),
+            );
+            hasher.update(filename.as_bytes());
+            hasher.update([0]);
+            hasher.update(contents);
+        }
+        hasher.finalize().into()
+    }
 
     fn key(
         table_digest: SisTableDigest,
@@ -861,15 +889,15 @@ mod tests {
     }
 
     #[test]
-    fn q32_high_norm_cells_are_explicitly_width_limited() {
-        let capped = sis_role_cell(
+    fn q32_high_norm_cells_use_the_full_policy_width() {
+        let cell = sis_role_cell(
             SisMatrixRole::Inner,
             SisModulusProfileId::Q32Offset99,
             128,
             536_870_911,
         )
         .expect("q32 high-norm A cell");
-        assert_eq!(capped.required_max_width, 2_000_000);
+        assert_eq!(cell.required_max_width, 6_400_000_000_000);
         assert!(sis_role_cell(
             SisMatrixRole::Inner,
             SisModulusProfileId::Q32Offset99,
@@ -915,6 +943,43 @@ mod tests {
             assert_eq!(d512.len(), 20);
             assert!(d512.windows(2).all(|pair| pair[0] <= pair[1]));
         }
+    }
+
+    #[test]
+    fn generated_artifacts_match_both_runtime_digests() {
+        let base_digest = generated_artifact_digest();
+        assert_eq!(base_digest, SIS_TABLE_DIGEST);
+
+        let mut hasher = Sha3_256::new();
+        hasher.update(b"akita-sis-table-q128-inner-d512-direct-v1\0");
+        hasher.update(base_digest);
+        hasher.update(SisModulusProfileId::Q128OffsetA7F7.modulus().to_le_bytes());
+        hasher.update(512u32.to_le_bytes());
+        hasher.update(6_400_000_000_000u64.to_le_bytes());
+        hasher.update(20u32.to_le_bytes());
+        hasher.update(
+            u64::try_from(COEFF_LINF_BUCKETS.len())
+                .expect("bucket count fits u64")
+                .to_le_bytes(),
+        );
+        for &bound in COEFF_LINF_BUCKETS {
+            hasher.update(bound.to_le_bytes());
+        }
+        for &bound in COEFF_LINF_BUCKETS {
+            let widths = generated_sis_max_widths(
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisModulusProfileId::Q128OffsetA7F7,
+                512,
+                bound,
+            )
+            .expect("generated q128 Inner/512 row");
+            assert_eq!(widths.len(), 20);
+            for &width in widths {
+                hasher.update(width.to_le_bytes());
+            }
+        }
+        let extension_digest: [u8; 32] = hasher.finalize().into();
+        assert_eq!(extension_digest, Q128_INNER_D512_DIGEST);
     }
 
     #[test]

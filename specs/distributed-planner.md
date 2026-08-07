@@ -91,7 +91,7 @@ fields on `AkitaScheduleLookupKey`.
   `resolve_schedule(key, policy, …)` price chunked layout iff
   `policy.witness_chunk.uses_multi_chunk()`. Callers must pass the policy derived
   from the preset they intend to prove under; mismatched preset vs policy is out
-  of scope (same as today for `basis_range`, etc.).
+  of scope (same as today for `inner_basis_range`, `opening_basis_range`, etc.).
 - **Exact balanced ownership.** Multi-chunk candidates require
   `num_live_blocks >= num_chunks`. The canonical layout assigns
   `floor(num_live_blocks / num_chunks)` blocks to every chunk and one additional

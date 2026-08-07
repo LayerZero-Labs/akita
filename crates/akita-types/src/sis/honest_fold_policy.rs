@@ -297,8 +297,8 @@ impl HonestFoldPolicySpec {
     /// Source-plane norms for one selected A decomposition basis.
     ///
     /// Balanced sources follow the candidate basis. Unit one-hot sources keep
-    /// their profile-owned sparse norm while still sharing the same basis
-    /// search and candidate construction.
+    /// their profile-owned sparse norm; the planner canonicalizes their
+    /// already-single-digit representation without a basis sweep.
     #[must_use]
     pub fn witness_norms_for_inner_basis(
         self,

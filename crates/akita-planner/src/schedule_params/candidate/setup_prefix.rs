@@ -1,11 +1,10 @@
 use super::*;
 use akita_types::CompressionChainPlan;
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct SetupPrefixSearchKey {
-    policy_digest: [u8; 32],
     ring_challenge: SparseChallengeConfig,
     fold_shape: TensorChallengeShape,
     log_basis_open: u32,
@@ -14,9 +13,10 @@ struct SetupPrefixSearchKey {
     outer_ring_dimension: usize,
 }
 
-static SETUP_PREFIX_SEARCH_CACHE: LazyLock<
-    Mutex<HashMap<SetupPrefixSearchKey, Vec<PrecommittedLevelParams>>>,
-> = LazyLock::new(|| Mutex::new(HashMap::new()));
+#[derive(Default)]
+pub(in crate::schedule_params) struct SetupPrefixSearchCache {
+    entries: HashMap<SetupPrefixSearchKey, Arc<[PrecommittedLevelParams]>>,
+}
 
 fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<usize, AkitaError> {
     if field_len == 0 {
@@ -30,44 +30,10 @@ fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<
     Ok(padded.trailing_zeros() as usize)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn grouped_segment_rings(
-    num_polys: usize,
-    num_live_blocks: usize,
-    num_chunks: usize,
-    num_positions_per_block: usize,
-    n_a: usize,
-    num_digits_inner: usize,
-    num_digits_outer: usize,
-    num_digits_open: usize,
-    num_digits_fold: usize,
-) -> Result<usize, AkitaError> {
-    let e_hat = num_polys
-        .checked_mul(num_live_blocks)
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("group e-hat witness overflow".to_string()))?;
-    let t_hat = num_polys
-        .checked_mul(num_live_blocks)
-        .and_then(|n| n.checked_mul(n_a))
-        .and_then(|n| n.checked_mul(num_digits_outer))
-        .ok_or_else(|| AkitaError::InvalidSetup("group t-hat witness overflow".to_string()))?;
-    let z_hat = num_positions_per_block
-        .checked_mul(num_digits_inner)
-        .and_then(|n| n.checked_mul(num_digits_fold))
-        .and_then(|n| n.checked_mul(num_chunks))
-        .ok_or_else(|| AkitaError::InvalidSetup("group z-hat witness overflow".to_string()))?;
-
-    e_hat
-        .checked_add(t_hat)
-        .and_then(|n| n.checked_add(z_hat))
-        .ok_or_else(|| AkitaError::InvalidSetup("group witness overflow".to_string()))
-}
-
-pub(crate) fn planned_next_witness_len(
+pub(crate) fn scalar_next_witness_len_if_supported(
     field_bits: u32,
     params: &CommittedGroupParams,
     final_num_polys: usize,
-    num_chunks: usize,
 ) -> Result<Option<usize>, AkitaError> {
     if !params.precommitted_groups.is_empty() {
         return Err(AkitaError::InvalidSetup(
@@ -80,17 +46,15 @@ pub(crate) fn planned_next_witness_len(
     }
     let opening_batch =
         params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
-    let layout = WitnessLayout::new(
-        params,
+    Ok(Some(params.output_witness_len_for_field_bits(
+        field_bits,
         &opening_batch,
-        num_chunks,
-        akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open),
-    )?;
-    Ok(Some(layout.live_coeff_len()))
+    )?))
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::schedule_params) fn derive_setup_prefix_groups(
+    cache: &mut SetupPrefixSearchCache,
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,
     requested_fold_shape: TensorChallengeShape,
@@ -100,7 +64,6 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     outer_ring_dimension: usize,
 ) -> Result<Vec<PrecommittedLevelParams>, AkitaError> {
     let cache_key = SetupPrefixSearchKey {
-        policy_digest: akita_schedules::policy_digest(policy),
         ring_challenge: *ring_challenge_cfg,
         fold_shape: requested_fold_shape,
         log_basis_open,
@@ -108,13 +71,8 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         num_chunks,
         outer_ring_dimension,
     };
-    if let Some(cached) = SETUP_PREFIX_SEARCH_CACHE
-        .lock()
-        .map_err(|_| AkitaError::InvalidSetup("setup-prefix search cache poisoned".into()))?
-        .get(&cache_key)
-        .cloned()
-    {
-        return Ok(cached);
+    if let Some(cached) = cache.entries.get(&cache_key) {
+        return Ok(cached.to_vec());
     }
     if outer_ring_dimension == 0
         || !outer_ring_dimension.is_power_of_two()
@@ -152,7 +110,9 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         Vec::new();
 
     let (inner_basis_min, inner_basis_max) =
-        policy.inner_basis_search_range_for_source(policy.decomposition.field_bits());
+        policy.inner_basis_search_range(crate::InnerBasisSource::RawCoefficients {
+            log_bound: policy.decomposition.field_bits(),
+        })?;
     for log_basis_inner in inner_basis_min..=inner_basis_max {
         let inner_decomp = DecompositionParams {
             log_basis: log_basis_inner,
@@ -274,7 +234,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                 num_digits_open: num_digits_open_val,
                 num_digits_fold,
             };
-            let physical_width = grouped_segment_rings(
+            let physical_width = akita_schedules::planner_support::grouped_segment_rings(
                 1,
                 num_live_blocks,
                 num_chunks,
@@ -330,13 +290,10 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
             params.layout.num_live_blocks,
         )
     });
-    let result = frontier
+    let result: Arc<[PrecommittedLevelParams]> = frontier
         .into_iter()
         .map(|(_, _, _, params)| params)
-        .collect::<Vec<_>>();
-    SETUP_PREFIX_SEARCH_CACHE
-        .lock()
-        .map_err(|_| AkitaError::InvalidSetup("setup-prefix search cache poisoned".into()))?
-        .insert(cache_key, result.clone());
-    Ok(result)
+        .collect();
+    cache.entries.insert(cache_key, Arc::clone(&result));
+    Ok(result.to_vec())
 }

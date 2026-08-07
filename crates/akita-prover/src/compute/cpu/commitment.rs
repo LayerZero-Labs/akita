@@ -15,10 +15,11 @@ use crate::kernels::linear::{
     mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
     mat_vec_mul_ntt_raw_digits_i8,
 };
+use crate::validation::signed_digit_kernel_for_setup;
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore};
-use akita_types::{NttCacheKey, NttTransformDomain};
+use akita_types::{NttCacheKey, NttTransformDomain, SignedDigitKernel};
 use std::array::from_fn;
 
 impl<F> CommitmentComputeBackend<F> for CpuBackend
@@ -64,7 +65,9 @@ where
                         AkitaError::InvalidSetup("dense coefficient row width overflow".to_string())
                     })
                 })?;
-                if log_basis_inner > 8 {
+                if signed_digit_kernel_for_setup(log_basis_inner, "for dense commitment")?
+                    == SignedDigitKernel::I16
+                {
                     dense_commit_rows_i16(
                         prepared,
                         plan.n_a,
@@ -205,7 +208,9 @@ where
                 "recursive witness does not cover its live blocks".to_string(),
             ));
         }
-        if plan.log_basis_inner > 8 {
+        if signed_digit_kernel_for_setup(plan.log_basis_inner, "for recursive witness commitment")?
+            == SignedDigitKernel::I16
+        {
             return recursive_witness_commit_rows_i16(prepared, &plan, row_width);
         }
         if plan.num_digits_inner == 1 {

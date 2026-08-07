@@ -3,9 +3,9 @@ use crate::compute::backend::{
     ComputeBackendSetup, DigitRowsComputeBackend, RingSwitchComputeBackend,
 };
 use crate::compute::plans::RingSwitchRelationRowsPlan;
-use crate::validation::MAX_I8_LOG_BASIS;
 use crate::AkitaProverSetup;
 use akita_field::Prime64Offset59;
+use akita_types::MAX_I8_LOG_BASIS;
 use akita_types::{NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;

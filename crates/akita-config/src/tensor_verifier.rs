@@ -73,6 +73,13 @@ pub mod fp128 {
             )
         }
 
+        fn inner_basis_range() -> (u32, u32) {
+            (
+                crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
+                crate::proof_optimized::PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX,
+            )
+        }
+
         fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
             akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
                 akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
@@ -100,5 +107,16 @@ pub mod fp128 {
                 layout,
             )?)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tensor_preset_keeps_independent_inner_domain() {
+        assert_eq!(fp128::D64OneHotTensor::opening_basis_range(), (3, 6));
+        assert_eq!(fp128::D64OneHotTensor::inner_basis_range(), (3, 11));
     }
 }

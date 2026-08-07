@@ -181,8 +181,8 @@ where
         Ok(SetupMatrixCapacity { num_field_elements })
     }
 
-    fn basis_range() -> (u32, u32) {
-        Envelope::basis_range()
+    fn opening_basis_range() -> (u32, u32) {
+        Envelope::opening_basis_range()
     }
 
     fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {

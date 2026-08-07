@@ -1,7 +1,4 @@
-use super::recursive::{
-    recursive_candidate_order_key, recursive_split_lower_bound, seed_recursive_split_candidates,
-    RecursiveSplitLowerBoundInput,
-};
+use super::recursive::recursive_candidate_order_key;
 use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
@@ -41,47 +38,11 @@ fn grouped_level_params() -> CommittedGroupParams {
 }
 
 #[test]
-fn planned_next_witness_len_rejects_multi_group_root_level_params() {
+fn scalar_next_witness_len_rejects_multi_group_root_level_params() {
     let grouped = grouped_level_params();
-    let err = planned_next_witness_len(128, &grouped, 1, 1)
+    let err = scalar_next_witness_len_if_supported(128, &grouped, 1)
         .expect_err("multi-group root suffix sizing must use output_witness_len");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
-}
-
-#[test]
-fn seed_recursive_split_candidates_falls_back_to_exhaustive_for_small_domains() {
-    assert_eq!(
-        seed_recursive_split_candidates(64, 5, 1, 22, 1),
-        vec![4, 3, 2, 1]
-    );
-}
-
-#[test]
-fn seed_recursive_split_candidates_includes_endpoints_and_unique_window() {
-    let candidates = seed_recursive_split_candidates(8192, 13, 1, 22, 1);
-    assert!(candidates.contains(&1));
-    assert!(candidates.contains(&12));
-    assert!(
-        candidates.windows(2).all(|pair| pair[0] > pair[1]),
-        "candidates must be unique and descending: {candidates:?}"
-    );
-}
-
-#[test]
-fn recursive_split_lower_bound_prices_score_floor() {
-    assert_eq!(
-        recursive_split_lower_bound(RecursiveSplitLowerBoundInput {
-            num_ring_elems: 100,
-            ring_dimension: 64,
-            reduced_vars: 7,
-            r: 3,
-            delta_commit: 1,
-            delta_open: 4,
-            num_chunks: 2,
-            requested_fold_shape: TensorChallengeShape::Flat,
-        }),
-        Some(5646)
-    );
 }
 
 #[test]
@@ -107,8 +68,10 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
     type Recursive = RecursiveCommitmentConfig<D64OneHot>;
     let policy = policy_of::<Recursive>();
     let challenge = Recursive::ring_challenge_config(64).expect("challenge config");
+    let mut cache = SetupPrefixSearchCache::default();
     for log_prefix in 12..=20 {
         let groups = derive_setup_prefix_groups(
+            &mut cache,
             &policy,
             &challenge,
             TensorChallengeShape::Flat,

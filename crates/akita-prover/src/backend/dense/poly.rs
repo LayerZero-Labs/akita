@@ -2,6 +2,7 @@
 
 use crate::backend::poly_helpers::try_small_i8_cache_from_ring_coeffs;
 use crate::kernels::linear::try_centered_i8;
+use crate::validation::is_i8_log_basis;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
@@ -293,7 +294,7 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
         num_digits: usize,
         log_basis: u32,
     ) -> Option<&[[i8; D]]> {
-        if log_basis > 8 {
+        if !is_i8_log_basis(log_basis) {
             return None;
         }
         if let Some(cache) = self.digit_cache.get() {
