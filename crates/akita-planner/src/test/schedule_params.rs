@@ -768,8 +768,12 @@ fn mixed_search_applies_setup_budget_in_physical_fields() {
 fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHotMultiChunkW4R2, CommitmentConfig};
 
-    let policy = policy_of::<OneHotMultiChunkW4R2>();
     let domain = RingDimensionSearchDomain::uniform(64).unwrap();
+    // Production W4R2 is adaptive now. Keep this regression on its original
+    // fixed-D64 domain, where two equal-payload schedules differ in setup size.
+    let mut base_policy = policy_of::<OneHotMultiChunkW4R2>();
+    base_policy.uniform_ring_dimension = 64;
+    let policy = policy_for_domain(base_policy, &domain);
     let selected = find_schedule(
         PolynomialGroupLayout::singleton(32),
         &policy,
