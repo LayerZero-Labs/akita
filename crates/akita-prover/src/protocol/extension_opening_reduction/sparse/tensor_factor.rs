@@ -22,7 +22,7 @@ pub(in crate::protocol::extension_opening_reduction) struct TensorEqualityFactor
     prefix_state: Vec<E>,
     transitions: Vec<TensorFactorTransition<E>>,
     suffix_tables: Vec<Vec<E>>,
-    low_states: Vec<E>,
+    low_pair_states: Vec<E>,
 }
 
 impl<E: FieldCore> TensorEqualityFactor<E> {
@@ -98,9 +98,9 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
             prefix_state,
             transitions,
             suffix_tables,
-            low_states: Vec::new(),
+            low_pair_states: Vec::new(),
         };
-        factor.rebuild_low_states();
+        factor.rebuild_low_pairs();
         Ok(factor)
     }
 
@@ -186,34 +186,43 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
         next
     }
 
-    fn rebuild_low_states(&mut self) {
+    fn rebuild_low_pairs(&mut self) {
         let low_bits = self.materialize_at.saturating_sub(self.round);
         if low_bits == 0 {
-            self.low_states.clear();
+            self.low_pair_states.clear();
             return;
         }
         let count = 1usize << low_bits;
         let width = self.prefix_state.len();
-        let mut low_states = Vec::with_capacity(count * width);
-        for low in 0..count {
-            let mut state = self.prefix_state.clone();
-            for bit_idx in 0..low_bits {
-                let bit = (low >> bit_idx) & 1;
-                state = Self::apply_boolean_transition(
-                    &state,
-                    &self.transitions[self.round + bit_idx],
-                    bit,
-                );
-            }
-            low_states.extend(state);
+        let mut low_pair_states = Vec::with_capacity(count * width);
+        for pair in 0..count / 2 {
+            let zero = self.boolean_state(pair << 1, low_bits);
+            let one = self.boolean_state((pair << 1) | 1, low_bits);
+            low_pair_states.extend_from_slice(&zero);
+            low_pair_states.extend(one.iter().zip(zero.iter()).map(|(&one, &zero)| one - zero));
         }
-        self.low_states = low_states;
+        self.low_pair_states = low_pair_states;
     }
 
-    fn low_state(&self, index: usize) -> &[E] {
+    fn boolean_state(&self, low: usize, low_bits: usize) -> Vec<E> {
+        let mut state = self.prefix_state.clone();
+        for bit_idx in 0..low_bits {
+            let bit = (low >> bit_idx) & 1;
+            state = Self::apply_boolean_transition(
+                &state,
+                &self.transitions[self.round + bit_idx],
+                bit,
+            );
+        }
+        state
+    }
+
+    fn low_pair(&self, pair: usize) -> (&[E], &[E]) {
         let width = self.prefix_state.len();
-        let start = index * width;
-        &self.low_states[start..start + width]
+        let start = pair * 2 * width;
+        let zero = &self.low_pair_states[start..start + width];
+        let delta = &self.low_pair_states[start + width..start + 2 * width];
+        (zero, delta)
     }
 
     fn eval_state_at_suffix(&self, state: &[E], suffix_index: usize) -> E {
@@ -233,7 +242,17 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
         let low_mask = (1usize << low_bits) - 1;
         let low = index & low_mask;
         let suffix_index = index >> low_bits;
-        self.eval_state_at_suffix(self.low_state(low), suffix_index)
+        let (state_zero, state_delta) = self.low_pair(low >> 1);
+        if low & 1 == 0 {
+            self.eval_state_at_suffix(state_zero, suffix_index)
+        } else {
+            self.suffix_tables
+                .iter()
+                .zip(state_zero.iter().zip(state_delta.iter()))
+                .fold(E::zero(), |acc, (table, (&zero, &delta))| {
+                    acc + (zero + delta) * table[suffix_index]
+                })
+        }
     }
 
     pub(super) fn fold_in_place(&mut self, r_round: E) {
@@ -244,7 +263,7 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
         self.prefix_state =
             Self::apply_transition(&self.prefix_state, &self.transitions[self.round], r_round);
         self.round += 1;
-        self.rebuild_low_states();
+        self.rebuild_low_pairs();
     }
 
     pub(super) fn materialize_dense(&self) -> Vec<E> {
@@ -306,19 +325,15 @@ impl<E: FieldCore + HasUnreducedOps, const N: usize> GroupedRoundAccumulator<E, 
         }
 
         let low_mask = (1usize << rest_low_bits).saturating_sub(1);
-        let low_zero = (pair & low_mask) << 1;
-        let low_one = low_zero | 1;
-        let state_zero = factor.low_state(low_zero);
-        let state_one = factor.low_state(low_one);
+        let (state_zero, state_delta) = factor.low_pair(pair & low_mask);
         let witness_delta = witness_one - witness_zero;
-        for column in 0..N {
-            if witness_zero != E::zero() {
-                self.constant[column] += witness_zero.mul_to_product_accum(state_zero[column]);
+        if witness_zero != E::zero() {
+            for (column, &state_zero) in state_zero.iter().enumerate() {
+                self.constant[column] += witness_zero.mul_to_product_accum(state_zero);
             }
-            if witness_delta != E::zero() {
-                self.quadratic[column] +=
-                    witness_delta.mul_to_product_accum(state_one[column] - state_zero[column]);
-            }
+        }
+        for (column, &state_delta) in state_delta.iter().enumerate() {
+            self.quadratic[column] += witness_delta.mul_to_product_accum(state_delta);
         }
     }
 
@@ -518,13 +533,10 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
     /// the exact path only because its accumulator keeps the carry above bit
     /// 128 explicitly.
     ///
-    /// The two factor values `a0` (state `low_zero`) and `a1` (state `low_one`)
-    /// always share the same `suffix_index`, so both inner products read the
-    /// same `suffix_tables[j][suffix_index]` column. They are fused into one
-    /// pass over `j` that loads each column entry once and feeds it into both
-    /// delayed accumulators, halving the column loads and tightening the loop
-    /// without changing the accumulation order, so the result is byte-identical
-    /// to two independent evaluations.
+    /// The stored low pair is `(state_zero, state_one - state_zero)`. Both
+    /// inner products read the same `suffix_tables[j][suffix_index]` column.
+    /// One pass computes `a0` and `a1 - a0`, then reconstructs `a1`. This is the
+    /// same pair shape consumed by the grouped round polynomial.
     pub(super) fn factor_pair(&self, pair: usize) -> (E, E) {
         let low_bits = self.materialize_at - self.round;
         debug_assert!(low_bits > 0);
@@ -532,69 +544,66 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
         let low_mask = (1usize << rest_low_bits).saturating_sub(1);
         let low_rest = pair & low_mask;
         let suffix_index = pair >> rest_low_bits;
-        let low_zero = low_rest << 1;
-        let low_one = low_zero | 1;
-        let state_zero = self.low_state(low_zero);
-        let state_one = self.low_state(low_one);
+        let (state_zero, state_delta) = self.low_pair(low_rest);
 
         if !E::DELAYED_PRODUCT_SUM_IS_EXACT {
-            return (
-                self.eval_state_at_suffix(state_zero, suffix_index),
-                self.eval_state_at_suffix(state_one, suffix_index),
-            );
+            let zero = self.eval_state_at_suffix(state_zero, suffix_index);
+            let delta = self.eval_state_at_suffix(state_delta, suffix_index);
+            return (zero, zero + delta);
         }
 
-        let (accum_zero, accum_one) = match state_zero.len() {
-            1 => self.factor_pair_product_accumulators::<1>(state_zero, state_one, suffix_index),
-            2 => self.factor_pair_product_accumulators::<2>(state_zero, state_one, suffix_index),
-            4 => self.factor_pair_product_accumulators::<4>(state_zero, state_one, suffix_index),
-            8 => self.factor_pair_product_accumulators::<8>(state_zero, state_one, suffix_index),
-            _ => self.factor_pair_product_accumulators_dynamic(state_zero, state_one, suffix_index),
+        let (accum_zero, accum_delta) = match state_zero.len() {
+            1 => self.factor_pair_product_accumulators::<1>(state_zero, state_delta, suffix_index),
+            2 => self.factor_pair_product_accumulators::<2>(state_zero, state_delta, suffix_index),
+            4 => self.factor_pair_product_accumulators::<4>(state_zero, state_delta, suffix_index),
+            8 => self.factor_pair_product_accumulators::<8>(state_zero, state_delta, suffix_index),
+            _ => {
+                self.factor_pair_product_accumulators_dynamic(state_zero, state_delta, suffix_index)
+            }
         };
-        (
-            E::reduce_product_accum(accum_zero),
-            E::reduce_product_accum(accum_one),
-        )
+        let zero = E::reduce_product_accum(accum_zero);
+        let delta = E::reduce_product_accum(accum_delta);
+        (zero, zero + delta)
     }
 
     fn factor_pair_product_accumulators<const N: usize>(
         &self,
         state_zero: &[E],
-        state_one: &[E],
+        state_delta: &[E],
         suffix_index: usize,
     ) -> (E::ProductAccum, E::ProductAccum) {
         debug_assert_eq!(state_zero.len(), N);
-        debug_assert_eq!(state_one.len(), N);
+        debug_assert_eq!(state_delta.len(), N);
         debug_assert_eq!(self.suffix_tables.len(), N);
         let mut accum_zero = E::ProductAccum::zero();
-        let mut accum_one = E::ProductAccum::zero();
+        let mut accum_delta = E::ProductAccum::zero();
         for index in 0..N {
             let column = self.suffix_tables[index][suffix_index];
             accum_zero += state_zero[index].mul_to_product_accum(column);
-            accum_one += state_one[index].mul_to_product_accum(column);
+            accum_delta += state_delta[index].mul_to_product_accum(column);
         }
-        (accum_zero, accum_one)
+        (accum_zero, accum_delta)
     }
 
     fn factor_pair_product_accumulators_dynamic(
         &self,
         state_zero: &[E],
-        state_one: &[E],
+        state_delta: &[E],
         suffix_index: usize,
     ) -> (E::ProductAccum, E::ProductAccum) {
         let mut accum_zero = E::ProductAccum::zero();
-        let mut accum_one = E::ProductAccum::zero();
-        for ((table, &coeff_zero), &coeff_one) in self
+        let mut accum_delta = E::ProductAccum::zero();
+        for ((table, &coeff_zero), &coeff_delta) in self
             .suffix_tables
             .iter()
             .zip(state_zero.iter())
-            .zip(state_one.iter())
+            .zip(state_delta.iter())
         {
             let column = table[suffix_index];
             accum_zero += coeff_zero.mul_to_product_accum(column);
-            accum_one += coeff_one.mul_to_product_accum(column);
+            accum_delta += coeff_delta.mul_to_product_accum(column);
         }
-        (accum_zero, accum_one)
+        (accum_zero, accum_delta)
     }
 }
 

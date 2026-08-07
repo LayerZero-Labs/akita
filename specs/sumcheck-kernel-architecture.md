@@ -308,6 +308,11 @@ has been accumulated. This computes the same degree two round polynomial as
 constructing both factor children for every pair, but it reduces intermediate
 factor values once per suffix group rather than once per sparse row.
 
+The lazy factor stores each low pair as `(state_zero, state_delta)`, where
+`state_delta = state_one - state_zero`. This has the same payload as storing two
+child states, removes the state subtraction from every live sparse pair, and is
+the direct input shape of the constant and quadratic formulas above.
+
 After a challenge, the same operation folds and compacts the current witness
 pairs while feeding each nonzero output into the next grouped round. This is one
 streaming pass. It supports arbitrary pair merges and does not depend on the
@@ -478,8 +483,11 @@ The first grouped sparse tensor measurement used the fp32 D64 one hot EOR at 26
 variables, four polynomials, and one Apple Silicon worker. The last pushed
 coefficient-first sparse path measured 305.00 ms. Grouping arbitrary sparse
 pairs and fusing compaction with the next round measured 223.21 ms on the clean
-final run, which is 26.8 percent faster. A merge-free-only grouped prototype measured 302.52 ms and
-was rejected because the real four-polynomial witness has early collisions.
+final run, which is 26.8 percent faster. A merge-free-only grouped prototype
+measured 302.52 ms and was rejected because the real four-polynomial witness has
+early collisions. The pair-native zero-and-delta state layout then reduced the
+clean median to 200.49 ms, which is 34.3 percent faster than the 305.00 ms
+baseline.
 
 ### Existing state changes
 
