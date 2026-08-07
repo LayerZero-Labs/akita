@@ -661,7 +661,11 @@ macro_rules! family_row {
             table_backed: table_backed::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
-            precommitted_profiles: precommitted_profiles::<$cfg>,
+            // Standalone precommits are made under the base commitment
+            // configuration. Adaptive base configs are catalog-only at
+            // runtime, so asking the recursive adapter to rediscover them
+            // during offline generation would leave this registry empty.
+            precommitted_profiles: precommitted_profiles::<$base_cfg>,
             explicit_precommitted_group: explicit_precommitted_group::<$base_cfg>,
         }
     };

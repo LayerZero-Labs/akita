@@ -123,6 +123,39 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     }
 }
 
+#[cfg(all(
+    test,
+    any(
+        feature = "schedules-fp128-onehot-recursive",
+        feature = "schedules-fp128-onehot-recursive-multi-chunk-w8r2"
+    )
+))]
+mod adaptive_precommit_tests {
+    use super::*;
+    use crate::proof_optimized::fp128;
+    use crate::PrecommittedCommitmentConfig;
+    use akita_types::OpeningClaimsLayout;
+
+    fn assert_nv16_precommit<Cfg: CommitmentConfig>() {
+        let layout = OpeningClaimsLayout::new(16, 1).expect("precommit layout");
+        PrecommittedCommitmentConfig::<RecursiveCommitmentConfig<Cfg>>::
+            get_params_for_batched_commitment(&layout)
+            .expect("adaptive recursive catalog must expose its base precommit profile");
+    }
+
+    #[cfg(feature = "schedules-fp128-onehot-recursive")]
+    #[test]
+    fn onehot_recursive_catalog_exposes_base_precommit_profiles() {
+        assert_nv16_precommit::<fp128::OneHot>();
+    }
+
+    #[cfg(feature = "schedules-fp128-onehot-recursive-multi-chunk-w8r2")]
+    #[test]
+    fn onehot_recursive_w8r2_catalog_exposes_base_precommit_profiles() {
+        assert_nv16_precommit::<fp128::OneHotMultiChunk>();
+    }
+}
+
 #[cfg(all(test, feature = "schedules-fp128-d64-onehot-recursive"))]
 mod tests {
     use super::*;
