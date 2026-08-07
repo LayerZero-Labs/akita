@@ -210,6 +210,8 @@ class ProfileBenchReportTests(unittest.TestCase):
                 "n_a": 2,
                 "n_b": 3,
                 "n_d": 4,
+                "security_route": "L-infinity",
+                "response_l2_sq_cap": None,
                 "challenge_l1_mass": 8,
                 "log_basis_inner": 5,
                 "log_basis_outer": 5,
@@ -341,13 +343,15 @@ class ProfileBenchReportTests(unittest.TestCase):
         )
 
         log = (
-            'INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=20 '
+            'INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=28 '
             'fold_grind_nonce_bytes=4 grind_nonce=3 grind_attempts=4 '
             'stage1_range_image_evaluation_bytes=16 '
+            'stage1_norm_proof_bytes=8 response_l2_sq=Some(14) '
             'root_variant=terminal\n'
         )
         levels = extract_summary(log, "onehot_fp128_d64", 24, 1)["proof_levels"]
-        self.assertEqual(proof_level_component_bytes(levels[0]), 20)
+        self.assertEqual(proof_level_component_bytes(levels[0]), 28)
+        self.assertEqual(levels[0]["response_l2_sq"], 14)
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -356,6 +360,9 @@ class ProfileBenchReportTests(unittest.TestCase):
 
         self.assertIn("Fold-level bytes", report)
         self.assertIn("Range-image evaluation", report)
+        self.assertIn("Physical L2 norm proof", report)
+        self.assertIn("Observed physical L2 squared norm", report)
+        self.assertIn("14", report)
         self.assertIn("—", report)
         self.assertIn("+0.00% vs main", report)
         self.assertIn("final witness", report)
@@ -449,6 +456,7 @@ class ProfileBenchReportTests(unittest.TestCase):
             "stage1_sumcheck_bytes": 0,
             "stage1_interstage_claims_bytes": 0,
             "stage1_range_image_evaluation_bytes": 0,
+            "stage1_norm_proof_bytes": 0,
             "stage2_sumcheck_bytes": 0,
             "stage3_sumcheck_bytes": 0,
             "next_w_payload_bytes": 0,

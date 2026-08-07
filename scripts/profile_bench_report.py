@@ -56,6 +56,7 @@ PROOF_LEVEL_BYTE_FIELDS = (
     "stage1_sumcheck_bytes",
     "stage1_interstage_claims_bytes",
     "stage1_range_image_evaluation_bytes",
+    "stage1_norm_proof_bytes",
     "stage2_sumcheck_bytes",
     "stage3_sumcheck_bytes",
     "next_w_payload_bytes",
@@ -296,6 +297,15 @@ def parse_kvs(line: str) -> dict[str, str]:
             value = value[1:-1]
         out[key] = value
     return out
+
+
+def parse_tracing_optional_int(value: str | None) -> int | None:
+    if value is None or value == "None":
+        return None
+    match = re.fullmatch(r"Some\((\d+)\)", value)
+    if match is None:
+        raise ValueError(f"invalid tracing optional integer: {value}")
+    return int(match.group(1))
 
 
 def parse_witness_groups(value: str | None) -> list[dict[str, object]]:
@@ -896,6 +906,14 @@ def extract_summary(
                 "n_a": int(kvs["n_a"]),
                 "n_b": int(kvs["n_b"]),
                 "n_d": int(kvs["n_d"]),
+                "security_route": (
+                    "L2"
+                    if parse_tracing_optional_int(kvs.get("response_l2_sq_cap")) is not None
+                    else "L-infinity"
+                ),
+                "response_l2_sq_cap": parse_tracing_optional_int(
+                    kvs.get("response_l2_sq_cap")
+                ),
                 "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
                 "log_basis_inner": int(kvs.get("log_basis_inner") or kvs["log_basis"]),
                 "log_basis_outer": int(kvs.get("log_basis_outer") or kvs["log_basis"]),
@@ -949,6 +967,9 @@ def extract_summary(
                 proof_levels[level]["grind_nonce_val"] = int(kvs["grind_nonce"])
             if "grind_attempts" in kvs:
                 proof_levels[level]["grind_attempts"] = int(kvs["grind_attempts"])
+            response_l2_sq = parse_tracing_optional_int(kvs.get("response_l2_sq"))
+            if response_l2_sq is not None:
+                proof_levels[level]["response_l2_sq"] = response_l2_sq
             if "root_variant" in kvs:
                 proof_levels[level]["root_variant"] = kvs["root_variant"]
         elif "fold grind summary" in line and kvs.get("label") == mode:
@@ -1923,20 +1944,29 @@ def render_planned_levels(
     print("#### Security and proof sizing")
     print()
     print(
-        "| Fold level | A rows | B rows | D rows | Inner/A basis bits | Outer/B basis bits | Open/D basis bits | "
+        "| Fold level | A route | L2 squared norm cap | A rows | B rows | D rows | Inner/A basis bits | Outer/B basis bits | Open/D basis bits | "
         "Fold-challenge L1 bound | Inner/A digits | Outer/B digits | Open/D digits | Folded-witness digits | "
         "Current witness field elements | Next witness field elements | "
         "Setup prefix field elements | Setup prefix padded field elements | "
         "Planned fold-level proof bytes |"
     )
-    print(
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-        "--- | ---: | ---: | ---: | ---: |"
-    )
+    print("| " + " | ".join(["---", "---"] + ["---:"] * 17) + " |")
     for level in levels:
         baseline = level_by_index(baseline_levels, level["level"])
+        response_l2_sq_cap = level.get("response_l2_sq_cap")
+        cap_cell = (
+            "—"
+            if response_l2_sq_cap is None
+            else value_with_main_delta(
+                response_l2_sq_cap,
+                baseline.get("response_l2_sq_cap") if baseline else None,
+                fmt_count,
+                compare_to_main=baseline is not None,
+            )
+        )
         print(
-            f"| L{level['level']} | {level_value(level, baseline, 'n_a')} | "
+            f"| L{level['level']} | {level.get('security_route', 'L-infinity')} | {cap_cell} | "
+            f"{level_value(level, baseline, 'n_a')} | "
             f"{level_value(level, baseline, 'n_b')} | {level_value(level, baseline, 'n_d')} | "
             f"{level_value(level, baseline, 'log_basis_inner')} | "
             f"{level_value(level, baseline, 'log_basis_outer')} | "
@@ -2008,13 +2038,11 @@ def render_proof_levels(
         "| Fold level | Proof step | Fold-level bytes | Extension-opening partials | "
         "Extension-opening sumcheck | Grinding nonce | Opening payload (`p_H`) | "
         "Stage 1 sumcheck | Stage 1 transition claims | Range-image evaluation | "
+        "Physical L2 norm proof | Observed physical L2 squared norm | "
         "Stage 2 sumcheck | Stage 3 sumcheck | Next-witness payload | "
         "Next-witness evaluation |"
     )
-    print(
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-        "---: | ---: | ---: |"
-    )
+    print("| " + " | ".join(["---", "---"] + ["---:"] * 14) + " |")
     for level in levels:
         baseline = level_by_index(baseline_levels, level["level"])
         total_bytes = value_with_main_delta(
@@ -2023,6 +2051,17 @@ def render_proof_levels(
             fmt_bytes,
             " bytes",
             baseline is not None,
+        )
+        response_l2_sq = level.get("response_l2_sq")
+        observed_norm = (
+            "—"
+            if response_l2_sq is None
+            else value_with_main_delta(
+                response_l2_sq,
+                baseline.get("response_l2_sq") if baseline else None,
+                fmt_count,
+                compare_to_main=baseline is not None,
+            )
         )
         print(
             f"| L{level['level']} | {proof_step_label(level)} | {total_bytes} | "
@@ -2033,6 +2072,8 @@ def render_proof_levels(
             f"{proof_component_value(level, baseline, 'stage1_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage1_interstage_claims_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage1_range_image_evaluation_bytes')} | "
+            f"{proof_component_value(level, baseline, 'stage1_norm_proof_bytes')} | "
+            f"{observed_norm} | "
             f"{proof_component_value(level, baseline, 'stage2_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage3_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'next_w_payload_bytes')} | "
