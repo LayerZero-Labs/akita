@@ -232,29 +232,54 @@ fn compare_class_coded_affine_polynomial_plan(plan: SumcheckKernelPlan) {
     }
 }
 
+fn expected_sparse_affine_polynomial_fold(
+    values: &[E],
+    first_equality: &[E],
+    second_equality: &[E],
+    challenge: E,
+    degree: usize,
+) -> (Vec<E>, [E; 5]) {
+    let polynomial = direct_range_polynomial(degree);
+    let mut folded_values = vec![E::zero(); values.len() / 2];
+    let mut coefficients_sum = [E::zero(); 5];
+    for pair in 0..values.len() / 4 {
+        let left = values[4 * pair] + challenge * (values[4 * pair + 1] - values[4 * pair]);
+        let right =
+            values[4 * pair + 2] + challenge * (values[4 * pair + 3] - values[4 * pair + 2]);
+        folded_values[2 * pair] = left;
+        folded_values[2 * pair + 1] = right;
+        let coefficients = compose_polynomial_with_affine(&polynomial, left, right - left);
+        let equality = first_equality[pair % first_equality.len()]
+            * second_equality[pair / first_equality.len()];
+        for coefficient in 0..=degree {
+            coefficients_sum[coefficient] += equality * coefficients[coefficient];
+        }
+    }
+    (folded_values, coefficients_sum)
+}
+
 fn compare_sparse_affine_polynomial_fold_plan(plan: SumcheckKernelPlan) {
     let values = (0..544).map(|row| value(row + 8_001)).collect::<Vec<_>>();
+    let class_values = (0..64).map(|row| value(row + 12_001)).collect::<Vec<_>>();
+    let class_codes = (0..544)
+        .map(|index| u16::try_from((index * 31 + 9) % class_values.len()).unwrap())
+        .collect::<Vec<_>>();
+    let class_coded_values = class_codes
+        .iter()
+        .map(|&class| class_values[usize::from(class)])
+        .collect::<Vec<_>>();
     let first_equality = (0..32).map(|row| value(row + 9_001)).collect::<Vec<_>>();
     let second_equality = (0..8).map(|row| value(row + 10_001)).collect::<Vec<_>>();
     let challenge = value(11_001);
 
     for degree in [2, 4] {
-        let polynomial = direct_range_polynomial(degree);
-        let mut expected_values = vec![E::zero(); values.len() / 2];
-        let mut expected = [E::zero(); 5];
-        for pair in 0..values.len() / 4 {
-            let left = values[4 * pair] + challenge * (values[4 * pair + 1] - values[4 * pair]);
-            let right =
-                values[4 * pair + 2] + challenge * (values[4 * pair + 3] - values[4 * pair + 2]);
-            expected_values[2 * pair] = left;
-            expected_values[2 * pair + 1] = right;
-            let coefficients = compose_polynomial_with_affine(&polynomial, left, right - left);
-            let equality = first_equality[pair % first_equality.len()]
-                * second_equality[pair / first_equality.len()];
-            for coefficient in 0..=degree {
-                expected[coefficient] += equality * coefficients[coefficient];
-            }
-        }
+        let (expected_values, expected) = expected_sparse_affine_polynomial_fold(
+            &values,
+            &first_equality,
+            &second_equality,
+            challenge,
+            degree,
+        );
         let mut actual_values = vec![E::zero(); values.len() / 2];
         if let Some(actual) = plan.try_fold_and_compute_sparse_affine_polynomial_round_fp32(
             &values,
@@ -266,6 +291,28 @@ fn compare_sparse_affine_polynomial_fold_plan(plan: SumcheckKernelPlan) {
         ) {
             assert_eq!(actual_values, expected_values, "folded degree {degree}");
             assert_eq!(actual, expected, "fused sparse degree {degree}");
+        }
+
+        let (expected_values, expected) = expected_sparse_affine_polynomial_fold(
+            &class_coded_values,
+            &first_equality,
+            &second_equality,
+            challenge,
+            degree,
+        );
+        let mut actual_values = vec![E::zero(); class_codes.len() / 2];
+        if let Some(actual) = plan
+            .try_fold_class_coded_and_compute_sparse_affine_polynomial_round_fp32(
+                &class_codes,
+                &class_values,
+                &mut actual_values,
+                (&first_equality, &second_equality),
+                challenge,
+                degree,
+            )
+        {
+            assert_eq!(actual_values, expected_values, "class fold degree {degree}");
+            assert_eq!(actual, expected, "class fused sparse degree {degree}");
         }
     }
 }

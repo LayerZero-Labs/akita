@@ -386,11 +386,12 @@ each possible class once. The next round reads class codes and computes its
 quartic coefficients from the cached Taylor row. Fp32 uses the detected packed
 operation for this class lookup and polynomial arithmetic without changing the
 compact representation. The following challenge folds the coded rows and
-materializes only the already halved field table. Later sparse low-variable
-challenges use one fused operation that reads four materialized values, writes
-the two folded values, and computes the following quadratic or quartic round in
-the same pass. The state cannot survive into the x-variable phase or the final
-evaluation.
+materializes only the already halved field table. Fp32 performs that transition
+with the same packed traversal, replacing only its source read with a class-code
+lookup. Later sparse low-variable challenges read materialized values directly.
+Both forms write the two folded values and compute the following quadratic or
+quartic round in the same pass. The compact state cannot survive into the
+x-variable phase or the final evaluation.
 
 The canonical quartic entry formula is the Taylor expansion at the left child:
 
@@ -666,6 +667,14 @@ D128 Apple profile, the two largest materialized sparse folds fell from about
 17 and 10 ms to 11.0 and 5.51 ms. Complete root Stage 1 fell from about 125 ms
 after the class-coded round alone to 115 ms. The complete 1.454-second proof
 verified and retained the 77,834-byte proof size.
+
+The class-coded-to-materialized transition now uses that same packed fused
+operation. Only the source function differs: it maps each `u16` code through
+the bounded class-value table before the shared fold, polynomial composition,
+and equality accumulation. Two clean samples reduced the largest transition
+from 30.4 ms to 21.9 to 22.1 ms and complete root Stage 1 from 115 ms to 104 to
+106 ms. Complete proofs measured 1.438 and 1.447 seconds, both verified, with
+the same 77,834-byte proof.
 
 High-basis Stage 1 product substages now keep compact class-pair indices through
 their second round and use a runtime-selected packed affine-product operation.

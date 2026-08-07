@@ -7,7 +7,8 @@ use super::runtime_common::{
     compute_product_round_packed, compute_weighted_affine_polynomial_round_packed,
     compute_weighted_affine_product_round_packed,
     fold_and_compute_product_round_fp_ext2_fp64_packed, fold_and_compute_product_round_packed,
-    fold_and_compute_sparse_affine_polynomial_round_packed, fold_fp_ext2_fp64_packed,
+    fold_and_compute_sparse_affine_polynomial_round_packed,
+    fold_class_coded_and_compute_sparse_affine_polynomial_round_packed, fold_fp_ext2_fp64_packed,
     fold_fp_ext4_fp32_packed,
 };
 use crate::{Fp32, Fp64, FpExt2, FpExt2Config, FpExt4};
@@ -172,6 +173,36 @@ pub unsafe fn fold_and_compute_sparse_affine_polynomial_round_fp_ext4_fp32_neon<
     unsafe {
         fold_and_compute_sparse_affine_polynomial_round_packed::<P, PackedFp32Neon<P>>(
             values,
+            folded_values,
+            first_equality,
+            second_equality,
+            challenge,
+            degree,
+        )
+    }
+}
+
+/// Fold class-coded values and compute their next sparse-prefix round with NEON.
+///
+/// # Safety
+///
+/// The caller must establish that NEON is available on the current CPU.
+#[target_feature(enable = "neon")]
+pub unsafe fn fold_class_coded_and_compute_sparse_affine_polynomial_round_fp_ext4_fp32_neon<
+    const P: u32,
+>(
+    class_codes: &[u16],
+    class_values: &[FpExt4<Fp32<P>>],
+    folded_values: &mut [FpExt4<Fp32<P>>],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    challenge: FpExt4<Fp32<P>>,
+    degree: usize,
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        fold_class_coded_and_compute_sparse_affine_polynomial_round_packed::<P, PackedFp32Neon<P>>(
+            class_codes,
+            class_values,
             folded_values,
             first_equality,
             second_equality,

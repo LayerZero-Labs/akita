@@ -94,20 +94,33 @@ where
         let num_coeffs_q = full_num_coeffs_q;
         let mut out = vec![E::zero(); live_x_cols * next_y_len];
 
-        if let SparseRangeImageValues::Materialized(values) = range_image {
-            if let Some(coefficients) = E::try_fold_and_compute_sparse_affine_polynomial_round(
-                self.kernel_plan,
-                values,
-                &mut out,
-                e_first,
-                e_second,
-                r,
-                polynomial_precomputation.degree_q,
-            ) {
-                let poly =
-                    EqFactoredUniPoly::from_q_coeffs(coefficients[..full_num_coeffs_q].to_vec());
-                return (out, poly);
+        let packed_coefficients = match range_image {
+            SparseRangeImageValues::ClassCoded(values) => {
+                E::try_fold_class_coded_and_compute_sparse_affine_polynomial_round(
+                    self.kernel_plan,
+                    &values.class_codes,
+                    &values.class_values,
+                    &mut out,
+                    (e_first, e_second),
+                    r,
+                    polynomial_precomputation.degree_q,
+                )
             }
+            SparseRangeImageValues::Materialized(values) => {
+                E::try_fold_and_compute_sparse_affine_polynomial_round(
+                    self.kernel_plan,
+                    values,
+                    &mut out,
+                    e_first,
+                    e_second,
+                    r,
+                    polynomial_precomputation.degree_q,
+                )
+            }
+        };
+        if let Some(coefficients) = packed_coefficients {
+            let poly = EqFactoredUniPoly::from_q_coeffs(coefficients[..full_num_coeffs_q].to_vec());
+            return (out, poly);
         }
 
         let process_column = |(x, col_out): (usize, &mut [E])| {

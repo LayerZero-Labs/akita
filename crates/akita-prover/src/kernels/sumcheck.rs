@@ -161,6 +161,22 @@ where
         None
     }
 
+    /// Try folding class-coded values and computing their next sparse-prefix round.
+    fn try_fold_class_coded_and_compute_sparse_affine_polynomial_round(
+        _plan: SumcheckKernelPlan,
+        _class_codes: &[u16],
+        _class_values: &[Self],
+        _folded_values: &mut [Self],
+        _split_equality: (&[Self], &[Self]),
+        _challenge: Self,
+        _degree: usize,
+    ) -> Option<[Self; MAX_AFFINE_POLYNOMIAL_DEGREE + 1]>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
     /// Try folding a sparse-prefix value table and computing its next round.
     fn try_fold_and_compute_sparse_affine_polynomial_round(
         _plan: SumcheckKernelPlan,

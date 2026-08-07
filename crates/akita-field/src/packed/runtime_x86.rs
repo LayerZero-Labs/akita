@@ -8,7 +8,8 @@ use super::runtime_common::{
     compute_product_round_packed, compute_weighted_affine_polynomial_round_packed,
     compute_weighted_affine_product_round_packed,
     fold_and_compute_product_round_fp_ext2_fp64_packed, fold_and_compute_product_round_packed,
-    fold_and_compute_sparse_affine_polynomial_round_packed, fold_fp_ext2_fp64_packed,
+    fold_and_compute_sparse_affine_polynomial_round_packed,
+    fold_class_coded_and_compute_sparse_affine_polynomial_round_packed, fold_fp_ext2_fp64_packed,
 };
 use super::{PackedField, PackedFpExt4};
 use crate::{Fp32, Fp64, FpExt2, FpExt2Config, FpExt4};
@@ -440,6 +441,66 @@ pub unsafe fn fold_and_compute_sparse_affine_polynomial_round_fp_ext4_fp32_avx51
     unsafe {
         fold_and_compute_sparse_affine_polynomial_round_packed::<P, PackedFp32Avx512<P>>(
             values,
+            folded_values,
+            first_equality,
+            second_equality,
+            challenge,
+            degree,
+        )
+    }
+}
+
+/// Fold class-coded values and compute their next sparse-prefix round with AVX2.
+///
+/// # Safety
+///
+/// The caller must establish that AVX2 is available on the current CPU.
+#[target_feature(enable = "avx2")]
+pub unsafe fn fold_class_coded_and_compute_sparse_affine_polynomial_round_fp_ext4_fp32_avx2<
+    const P: u32,
+>(
+    class_codes: &[u16],
+    class_values: &[FpExt4<Fp32<P>>],
+    folded_values: &mut [FpExt4<Fp32<P>>],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    challenge: FpExt4<Fp32<P>>,
+    degree: usize,
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        fold_class_coded_and_compute_sparse_affine_polynomial_round_packed::<P, PackedFp32Avx2<P>>(
+            class_codes,
+            class_values,
+            folded_values,
+            first_equality,
+            second_equality,
+            challenge,
+            degree,
+        )
+    }
+}
+
+/// Fold class-coded values and compute their next sparse-prefix round with AVX-512 IFMA.
+///
+/// # Safety
+///
+/// The caller must establish that AVX-512F, DQ, and IFMA are available.
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+pub unsafe fn fold_class_coded_and_compute_sparse_affine_polynomial_round_fp_ext4_fp32_avx512_ifma<
+    const P: u32,
+>(
+    class_codes: &[u16],
+    class_values: &[FpExt4<Fp32<P>>],
+    folded_values: &mut [FpExt4<Fp32<P>>],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    challenge: FpExt4<Fp32<P>>,
+    degree: usize,
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        fold_class_coded_and_compute_sparse_affine_polynomial_round_packed::<P, PackedFp32Avx512<P>>(
+            class_codes,
+            class_values,
             folded_values,
             first_equality,
             second_equality,

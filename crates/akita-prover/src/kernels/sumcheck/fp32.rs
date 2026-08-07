@@ -115,6 +115,25 @@ impl<const P: u32> SumcheckTableOperations<Fp32<P>> for FpExt4<Fp32<P>> {
             degree,
         )
     }
+
+    fn try_fold_class_coded_and_compute_sparse_affine_polynomial_round(
+        plan: SumcheckKernelPlan,
+        class_codes: &[u16],
+        class_values: &[Self],
+        folded_values: &mut [Self],
+        split_equality: (&[Self], &[Self]),
+        challenge: Self,
+        degree: usize,
+    ) -> Option<[Self; 5]> {
+        plan.try_fold_class_coded_and_compute_sparse_affine_polynomial_round_fp32(
+            class_codes,
+            class_values,
+            folded_values,
+            split_equality,
+            challenge,
+            degree,
+        )
+    }
 }
 
 impl SumcheckKernelPlan {

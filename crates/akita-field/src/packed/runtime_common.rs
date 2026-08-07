@@ -396,14 +396,84 @@ pub(super) unsafe fn fold_and_compute_sparse_affine_polynomial_round_packed<cons
 where
     PF: PackedField<Scalar = Fp32<P>>,
 {
-    let pair_count = validate_sparse_affine_polynomial_inputs(
-        values,
+    let pair_count = validate_sparse_affine_polynomial_shape(
+        values.len(),
         folded_values,
         first_equality,
         second_equality,
         degree,
         PF::WIDTH,
     );
+    unsafe {
+        fold_and_compute_sparse_affine_polynomial_round_from_source_packed::<P, PF>(
+            pair_count,
+            folded_values,
+            first_equality,
+            second_equality,
+            challenge,
+            degree,
+            |index| values[index],
+        )
+    }
+}
+
+/// Fold class-coded value pairs and compute the next direct-range polynomial round.
+#[inline(always)]
+pub(super) unsafe fn fold_class_coded_and_compute_sparse_affine_polynomial_round_packed<
+    const P: u32,
+    PF,
+>(
+    class_codes: &[u16],
+    class_values: &[FpExt4<Fp32<P>>],
+    folded_values: &mut [FpExt4<Fp32<P>>],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    challenge: FpExt4<Fp32<P>>,
+    degree: usize,
+) -> [FpExt4<Fp32<P>>; 5]
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    assert!(
+        class_codes
+            .iter()
+            .all(|&class| usize::from(class) < class_values.len()),
+        "class code exceeds the prepared value table"
+    );
+    let pair_count = validate_sparse_affine_polynomial_shape(
+        class_codes.len(),
+        folded_values,
+        first_equality,
+        second_equality,
+        degree,
+        PF::WIDTH,
+    );
+    unsafe {
+        fold_and_compute_sparse_affine_polynomial_round_from_source_packed::<P, PF>(
+            pair_count,
+            folded_values,
+            first_equality,
+            second_equality,
+            challenge,
+            degree,
+            |index| class_values[usize::from(class_codes[index])],
+        )
+    }
+}
+
+#[inline(always)]
+unsafe fn fold_and_compute_sparse_affine_polynomial_round_from_source_packed<const P: u32, PF>(
+    pair_count: usize,
+    folded_values: &mut [FpExt4<Fp32<P>>],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    challenge: FpExt4<Fp32<P>>,
+    degree: usize,
+    mut value_at: impl FnMut(usize) -> FpExt4<Fp32<P>>,
+) -> [FpExt4<Fp32<P>>; 5]
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
     let zero = PackedFpExt4::<Fp32<P>, PF>::broadcast(FpExt4::zero());
     let two = PackedFpExt4::broadcast(FpExt4::from_u64(2));
     let eighteen = PackedFpExt4::broadcast(FpExt4::from_u64(18));
@@ -415,10 +485,10 @@ where
 
     for pair in (0..pair_count).step_by(PF::WIDTH) {
         let active_lanes = (pair_count - pair).min(PF::WIDTH);
-        let packed_source = |offset| {
+        let mut packed_source = |offset| {
             packed_extension_values::<P, PF>(|lane| {
                 if lane < active_lanes {
-                    values[4 * (pair + lane) + offset]
+                    value_at(4 * (pair + lane) + offset)
                 } else {
                     FpExt4::zero()
                 }
@@ -996,8 +1066,8 @@ fn validate_class_coded_affine_polynomial_inputs<T>(
     );
 }
 
-fn validate_sparse_affine_polynomial_inputs<T>(
-    values: &[T],
+fn validate_sparse_affine_polynomial_shape<T>(
+    value_count: usize,
     folded_values: &[T],
     first_equality: &[T],
     second_equality: &[T],
@@ -1005,15 +1075,15 @@ fn validate_sparse_affine_polynomial_inputs<T>(
     width: usize,
 ) -> usize {
     assert!(matches!(degree, 2 | 4));
-    assert!(values.len().is_multiple_of(4));
-    assert_eq!(folded_values.len(), values.len() / 2);
+    assert!(value_count.is_multiple_of(4));
+    assert_eq!(folded_values.len(), value_count / 2);
     assert!(
         first_equality.len().is_power_of_two()
             && second_equality.len().is_power_of_two()
             && first_equality.len().is_multiple_of(width),
         "split equality tables must align to the SIMD width"
     );
-    let pair_count = values.len() / 4;
+    let pair_count = value_count / 4;
     assert!(
         pair_count <= first_equality.len() * second_equality.len(),
         "sparse value prefix exceeds its equality domain"
