@@ -120,9 +120,9 @@ mod tests {
     use crate::proof_optimized::fp128;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        r_decomp_levels, shared_setup_fold_gadget, AkitaScheduleLookupKey, CommittedGroupProfile,
-        PolynomialGroupLayout, PreparedRelationAddress, RelationAddressGeometry,
-        SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+        r_decomp_levels, shared_setup_fold_gadget, AkitaScheduleLookupKey, PolynomialGroupLayout,
+        PreparedRelationAddress, RelationAddressGeometry, SetupContributionGroupInputs,
+        SetupContributionPlan, WitnessLayout,
     };
 
     fn scalar(value: u128) -> Prime128OffsetA7F7 {
