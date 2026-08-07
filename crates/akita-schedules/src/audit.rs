@@ -2,11 +2,10 @@
 
 use akita_field::AkitaError;
 use akita_types::sis::{
-    ceil_supported_l2_collision_sq, decomposed_t_ring_count, decomposed_w_ring_count,
-    num_digits_inner, num_digits_open, role_a_collision_l2_sq_for_response_bound,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, FoldChallengeNorms,
-    InnerCommitMatrixParams, InnerCommitSecurityRoute, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
+    decomposed_t_ring_count, decomposed_w_ring_count, num_digits_inner, num_digits_open,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, InnerCommitMatrixParams,
+    InnerCommitSecurityRoute, OpenCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole,
+    SisTableKey,
 };
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommittedGroupBatchProfile, CommittedGroupParams,
@@ -14,6 +13,7 @@ use akita_types::{
     TerminalResponseShape,
 };
 
+use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
 use crate::runtime::validate_policy;
 use crate::PlannerPolicy;
 
@@ -267,54 +267,37 @@ fn audit_committed_params(
             ),
         )?,
         InnerCommitSecurityRoute::L2 {
-            table_key,
-            response_l2_sq_cap,
-            norm_proof_shape,
+            response_l2_sq_cap: _,
+            ..
         } => {
-            let physical_response_len = expected_a_width
-                .checked_mul(dims.d_a())
-                .ok_or_else(|| invalid(label, "L2 physical response length overflow"))?;
             let fold_basis = 1usize
                 .checked_shl(params.log_basis_open)
                 .ok_or_else(|| invalid(label, "L2 balanced digit basis overflow"))?;
-            if fold_level < 3
-                || num_claims != 1
-                || params.witness_chunk.num_chunks != 1
-                || policy.selective_l2_cap_for_candidate(
+            let expected = selective_l2_inner_matrix(
+                policy,
+                SelectiveL2CandidateGeometry {
                     fold_level,
                     input_witness_len,
-                    physical_response_len,
+                    num_claims,
+                    num_chunks: params.witness_chunk.num_chunks,
+                    inner_width: expected_a_width,
+                    ring_dimension: dims.d_a(),
                     fold_basis,
-                    params.num_digits_fold,
-                ) != Some(response_l2_sq_cap)
-            {
-                return Err(invalid(
+                    fold_digit_count: params.num_digits_fold,
+                    fold_challenge_config: &params.fold_challenge_config,
+                    fold_challenge_shape: params.fold_challenge_shape,
+                },
+            )?
+            .ok_or_else(|| {
+                invalid(
                     label,
                     "L2 route is not an admitted exact measured later scalar fold",
-                ));
-            }
-            let expected_shape = akita_types::PhysicalL2NormProofShape::derive(
-                policy.sis_modulus_profile,
-                physical_response_len,
-                fold_basis,
-                params.num_digits_fold,
-            )?;
-            if norm_proof_shape != expected_shape {
+                )
+            })?;
+            if params.inner_commit_matrix != expected {
                 return Err(invalid(
                     label,
-                    "L2 norm proof shape disagrees with physical witness geometry",
-                ));
-            }
-            let challenge =
-                FoldChallengeNorms::new(&params.fold_challenge_config, params.fold_challenge_shape);
-            let collision_sq =
-                role_a_collision_l2_sq_for_response_bound(challenge.l1_norm, response_l2_sq_cap)
-                    .and_then(ceil_supported_l2_collision_sq)
-                    .ok_or_else(|| invalid(label, "L2 collision bound is unsupported"))?;
-            if collision_sq != table_key.collision_l2_sq {
-                return Err(invalid(
-                    label,
-                    "A matrix L2 table bucket does not match its response cap",
+                    "L2 A matrix disagrees with canonical cap, proof shape, table, or rank",
                 ));
             }
         }

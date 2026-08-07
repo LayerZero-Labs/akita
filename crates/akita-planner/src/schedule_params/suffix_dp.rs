@@ -13,9 +13,10 @@ use akita_types::{
 use crate::{planner::root_level_candidates_for_basis, PlannerPolicy};
 
 use super::{
-    derive_candidate_level_params_frontier, level_setup_field_elements,
-    stage3_payload_bytes_for_successor, suffix_opening_layout, terminal_setup_field_elements,
-    CandidateFoldStep, CandidateTerminalResponse, ScheduleCandidate, MAX_RECURSION_DEPTH,
+    derive_candidate_level_params_all_splits, derive_candidate_level_params_frontier,
+    level_setup_field_elements, stage3_payload_bytes_for_successor, suffix_opening_layout,
+    terminal_setup_field_elements, CandidateFoldStep, CandidateTerminalResponse, ScheduleCandidate,
+    MAX_RECURSION_DEPTH,
 };
 
 /// Result of the suffix DP at one state. Both shape options are reported
@@ -501,6 +502,36 @@ pub(crate) fn derive_optimal_suffix_schedule(
     state: SuffixState,
     depth: usize,
 ) -> Result<Arc<SuffixResult>, AkitaError> {
+    derive_optimal_suffix_schedule_inner(ctx, memo, state, depth, None)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct AllSplitsOracleState {
+    level: usize,
+    current_witness_len: usize,
+}
+
+#[cfg(test)]
+pub(crate) fn derive_optimal_suffix_schedule_with_all_splits_at_state(
+    ctx: &SuffixCtx<'_>,
+    memo: &mut ScheduleMemo,
+    state: SuffixState,
+    depth: usize,
+) -> Result<Arc<SuffixResult>, AkitaError> {
+    let oracle = AllSplitsOracleState {
+        level: state.level,
+        current_witness_len: state.current_witness_len,
+    };
+    derive_optimal_suffix_schedule_inner(ctx, memo, state, depth, Some(oracle))
+}
+
+fn derive_optimal_suffix_schedule_inner(
+    ctx: &SuffixCtx<'_>,
+    memo: &mut ScheduleMemo,
+    state: SuffixState,
+    depth: usize,
+    all_splits_oracle: Option<AllSplitsOracleState>,
+) -> Result<Arc<SuffixResult>, AkitaError> {
     let SuffixCtx {
         policy,
         default_ring_challenge_cfg,
@@ -642,17 +673,34 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 continue;
             };
             for &mode in payload_phase.candidate_modes(level, incoming_setup_prefix.is_some()) {
-                candidates.extend(derive_candidate_level_params_frontier(
-                    policy,
-                    mode,
-                    &ring_challenge_cfg,
-                    dimensions,
-                    current_witness_len,
-                    lb,
-                    level,
-                    incoming_setup_prefix,
-                    requested_fold_shape,
-                )?);
+                let oracle_matches = all_splits_oracle.is_some_and(|oracle| {
+                    oracle.level == level && oracle.current_witness_len == current_witness_len
+                });
+                candidates.extend(if oracle_matches {
+                    derive_candidate_level_params_all_splits(
+                        policy,
+                        mode,
+                        &ring_challenge_cfg,
+                        dimensions,
+                        current_witness_len,
+                        lb,
+                        level,
+                        incoming_setup_prefix,
+                        requested_fold_shape,
+                    )?
+                } else {
+                    derive_candidate_level_params_frontier(
+                        policy,
+                        mode,
+                        &ring_challenge_cfg,
+                        dimensions,
+                        current_witness_len,
+                        lb,
+                        level,
+                        incoming_setup_prefix,
+                        requested_fold_shape,
+                    )?
+                });
             }
             if candidates.is_empty() {
                 continue;
@@ -682,7 +730,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 }
             }
             let natural_len = active_setup_field_len(&candidate_params, current_opening_layout)?;
-            let direct_child = derive_optimal_suffix_schedule(
+            let direct_child = derive_optimal_suffix_schedule_inner(
                 ctx,
                 memo,
                 SuffixState {
@@ -693,11 +741,12 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     payload_phase: payload_phase.after(candidate_params.payload_mode),
                 },
                 depth + 1,
+                all_splits_oracle,
             )?;
             let offloaded_child = if policy.recursive_setup_planning
                 && candidate_params.payload_mode.is_compressed()
             {
-                Some(derive_optimal_suffix_schedule(
+                Some(derive_optimal_suffix_schedule_inner(
                     ctx,
                     memo,
                     SuffixState {
@@ -708,6 +757,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                         payload_phase,
                     },
                     depth + 1,
+                    all_splits_oracle,
                 )?)
             } else {
                 None

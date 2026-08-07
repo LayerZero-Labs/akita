@@ -91,50 +91,26 @@ pub(crate) fn recursive_fold_level_params_candidates(
         return Ok(Vec::new());
     };
     let mut inner_commit_matrices = vec![linf_inner_commit_matrix];
-    if fold_level >= 3 && num_chunks == 1 {
-        let challenge_l1 =
-            FoldChallengeNorms::new(ring_challenge_cfg, fold_challenge_shape).l1_norm;
-        let fold_basis = 1usize
-            .checked_shl(log_basis)
-            .ok_or_else(|| AkitaError::InvalidSetup("L2 fold basis overflow".into()))?;
-        if let Ok(norm_proof_shape) = PhysicalL2NormProofShape::derive(
-            policy.sis_modulus_profile,
-            num_fold_coeffs,
+    let fold_basis = 1usize
+        .checked_shl(log_basis)
+        .ok_or_else(|| AkitaError::InvalidSetup("L2 fold basis overflow".into()))?;
+    if let Some(matrix) = selective_l2_inner_matrix(
+        policy,
+        SelectiveL2CandidateGeometry {
+            fold_level,
+            input_witness_len,
+            num_claims: 1,
+            num_chunks,
+            inner_width: width_s,
+            ring_dimension: dimensions.d_a(),
             fold_basis,
-            num_digits_fold,
-        ) {
-            let mut l2_by_rank = std::collections::BTreeMap::new();
-            if let Some(response_l2_sq_cap) = policy.selective_l2_cap_for_candidate(
-                fold_level,
-                input_witness_len,
-                num_fold_coeffs,
-                fold_basis,
-                num_digits_fold,
-            ) {
-                if let Some(collision_l2_sq) =
-                    role_a_collision_l2_sq_for_response_bound(challenge_l1, response_l2_sq_cap)
-                {
-                    if let Some(table_key) = sis_l2_table_key_for_collision_sq(
-                        policy.sis_security_policy,
-                        policy.sis_l2_table_digest,
-                        policy.sis_modulus_profile,
-                        dimensions.d_a() as u32,
-                        collision_l2_sq,
-                    ) {
-                        if let Ok(matrix) = InnerCommitMatrixParams::try_new_l2_with_min_rank(
-                            table_key,
-                            width_s,
-                            response_l2_sq_cap,
-                            norm_proof_shape,
-                        ) {
-                            if matrix.output_rank() < linf_inner_commit_matrix.output_rank() {
-                                l2_by_rank.insert(matrix.output_rank(), matrix);
-                            }
-                        }
-                    }
-                }
-            }
-            inner_commit_matrices.extend(l2_by_rank.into_values());
+            fold_digit_count: num_digits_fold,
+            fold_challenge_config: ring_challenge_cfg,
+            fold_challenge_shape,
+        },
+    )? {
+        if matrix.output_rank() < linf_inner_commit_matrix.output_rank() {
+            inner_commit_matrices.push(matrix);
         }
     }
     let Some(native_width_w) = decomposed_w_ring_count(delta_open, num_live_blocks, 1) else {
@@ -320,12 +296,16 @@ pub(super) fn recursive_candidate_order_key(
     (score, std::cmp::Reverse(block_index_bits))
 }
 
-/// Return the locally best layout for every distinct secure A rank.
+/// Return the bounded recursive layouts needed for complete selective-L2
+/// suffix pricing.
 ///
-/// The established split search remains a bounded layout heuristic, but an L2
-/// route is never collapsed into the L-infinity route merely because its
-/// current-level payload is larger. Distinct A ranks produce distinct T widths
-/// and successor witnesses, so the suffix planner must price each one.
+/// The established L-infinity search retains its locally best layout per
+/// secure A rank. A local score is not sufficient on a path that can reach a
+/// measured L2 candidate, however: equal-rank layouts can lead to different
+/// successor witness lengths and only one may reach the measured state. Keep
+/// every split until the next measured state is identified, and keep every
+/// route at an exact measured state. This preserves the full L2 suffix
+/// comparison without multiplying unrelated L-infinity-only DP states.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn derive_candidate_level_params_frontier(
     policy: &PlannerPolicy,
@@ -365,9 +345,9 @@ pub(crate) fn derive_candidate_level_params_frontier(
         delta_open,
         search.num_chunks,
     );
-    let mut best_by_rank = std::collections::BTreeMap::new();
+    let mut candidates = Vec::new();
     for block_index_bits in splits {
-        for (score, params, next_witness_len) in recursive_level_candidates_for_split(
+        for (_, params, next_witness_len) in recursive_level_candidates_for_split(
             policy,
             payload_mode,
             ring_challenge_cfg,
@@ -381,20 +361,61 @@ pub(crate) fn derive_candidate_level_params_frontier(
             if next_witness_len >= current_witness_len {
                 continue;
             }
-            let rank = params.inner_commit_matrix.output_rank();
-            let order = recursive_candidate_order_key(score, block_index_bits);
-            if best_by_rank
-                .get(&rank)
-                .is_none_or(|(best_order, _, _)| order < *best_order)
-            {
-                best_by_rank.insert(rank, (order, params, next_witness_len));
-            }
+            candidates.push((params, next_witness_len));
         }
     }
-    Ok(best_by_rank
-        .into_values()
-        .map(|(_, params, next_witness_len)| (params, next_witness_len))
-        .collect())
+    let at_measured_state = policy
+        .selective_l2_fold_caps
+        .iter()
+        .any(|cap| cap.fold_level == fold_level && cap.input_witness_len == current_witness_len);
+    let first_later_measured_level = policy
+        .selective_l2_fold_caps
+        .iter()
+        .filter(|cap| cap.fold_level > fold_level)
+        .map(|cap| cap.fold_level)
+        .min();
+    if at_measured_state
+        || first_later_measured_level.is_some_and(|measured| measured > fold_level + 1)
+    {
+        return Ok(candidates);
+    }
+
+    let next_measured_inputs = policy
+        .selective_l2_fold_caps
+        .iter()
+        .filter(|cap| cap.fold_level == fold_level + 1)
+        .map(|cap| cap.input_witness_len)
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut retained = std::collections::BTreeMap::new();
+    let mut directed = Vec::new();
+    for (params, next_witness_len) in candidates {
+        if next_measured_inputs.contains(&next_witness_len) {
+            directed.push((params.clone(), next_witness_len));
+        }
+        let rank = params.inner_commit_matrix.output_rank();
+        let score = layout_candidate_score(
+            next_witness_len,
+            params.num_live_blocks,
+            search.num_chunks,
+            params.fold_challenge_shape,
+        )?;
+        let position_bits = params.num_positions_per_block.trailing_zeros() as usize;
+        let block_index_bits = search.reduced_vars.saturating_sub(position_bits);
+        let order = recursive_candidate_order_key(score, block_index_bits);
+        if retained
+            .get(&rank)
+            .is_none_or(|(best_order, _, _)| order < *best_order)
+        {
+            retained.insert(rank, (order, params, next_witness_len));
+        }
+    }
+    for (_, params, next_witness_len) in retained.into_values() {
+        let candidate = (params, next_witness_len);
+        if !directed.contains(&candidate) {
+            directed.push(candidate);
+        }
+    }
+    Ok(directed)
 }
 
 struct RecursiveLevelSearch {

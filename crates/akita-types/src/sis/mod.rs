@@ -29,14 +29,14 @@ pub mod fold_linf_cap;
 mod generated_l2_sis_table;
 mod generated_sis_table;
 pub mod honest_fold_policy;
+mod l2_table;
 pub mod norm_bound;
+mod physical_l2;
 
 pub use ajtai_key::{
-    ceil_coeff_linf_bucket, ceil_supported_l2_collision_sq, ceil_supported_linf_bound,
-    min_secure_l2_rank, min_secure_rank, sis_l2_table_key_for_collision_sq,
-    sis_table_key_for_linf_bound, InnerCommitMatrixParams, InnerCommitSecurityRoute,
-    OpenCommitMatrixParams, OuterCommitMatrixParams, PhysicalL2NormProofShape, ScalarCutoff,
-    SisL2TableDigest, SisL2TableKey, SisMatrixRole, SisModulusProfileId, SisRoleCell,
+    ceil_coeff_linf_bucket, ceil_supported_linf_bound, min_secure_rank,
+    sis_table_key_for_linf_bound, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, ScalarCutoff, SisMatrixRole, SisModulusProfileId, SisRoleCell,
     SisSecurityPolicyId, SisTableDigest, SisTableKey, A_ROLE_RING_DIMS, BD_ROLE_RING_DIMS,
     COEFF_LINF_BUCKETS, DEFAULT_SIS_SECURITY_POLICY, GADGET_COEFF_LINF_ANCHORS, SIS_MATRIX_ROLES,
     SUPPORTED_SIS_SECURITY_POLICIES,
@@ -50,6 +50,10 @@ pub use decomposition_digits::{
 pub use honest_fold_policy::{
     BalancedSignedDigitFoldPolicy, DigitSnapCalibration, HonestFoldPolicy, HonestFoldPolicySpec,
     HonestFoldSizingQuery, UnitOneHotFoldPolicy,
+};
+pub use l2_table::{
+    ceil_supported_l2_collision_sq, min_secure_l2_rank, sis_l2_table_key_for_collision_sq,
+    SisL2TableDigest, SisL2TableKey,
 };
 #[cfg(test)]
 pub(crate) use norm_bound::fold_witness_digit_plan;
@@ -65,3 +69,4 @@ pub use norm_bound::{
     FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
     MAX_FOLD_GRIND_ATTEMPTS,
 };
+pub use physical_l2::{InnerCommitSecurityRoute, LimbGramLayout, PhysicalL2NormProofShape};

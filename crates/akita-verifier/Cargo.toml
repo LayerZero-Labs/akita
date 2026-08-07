@@ -40,6 +40,9 @@ parallel = [
 workspace = true
 
 [dev-dependencies]
+akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false, features = [
+  "test-support",
+] }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
   "schedules-fp128-d128-dense",

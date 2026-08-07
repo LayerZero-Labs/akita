@@ -124,7 +124,6 @@ pub struct PlannerPolicy {
     pub sis_l2_table_digest: akita_types::SisL2TableDigest,
     /// Measured candidate caps. Empty keeps every level on the Linf route.
     pub selective_l2_fold_caps: &'static [SelectiveL2FoldCap],
-    pub ring_subfield_norm_bound: u32,
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),

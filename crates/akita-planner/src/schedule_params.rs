@@ -13,11 +13,9 @@ use akita_field::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
-    role_a_collision_l2_sq_for_response_bound, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, sis_l2_table_key_for_collision_sq, BalancedSignedDigitFoldPolicy,
-    FoldChallengeNorms, FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec,
-    HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, PhysicalL2NormProofShape,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, BalancedSignedDigitFoldPolicy,
+    FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
 };
 use akita_types::{
     level_proof_bytes, padded_setup_prefix_len, try_extension_opening_reduction_level_bytes,
@@ -50,12 +48,14 @@ pub(crate) use objective::select_complete_candidate;
 pub(crate) use setup_score::{
     level_setup_field_elements, terminal_setup_field_elements, MixedScore,
 };
+#[cfg(test)]
+pub(crate) use suffix_dp::derive_optimal_suffix_schedule_with_all_splits_at_state;
 pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
 
 pub(crate) const MIXED_SEARCH_FOLD_LEVELS: usize = 2;
 pub(crate) const MIXED_SEARCH_SUFFIX_RING_DIMENSION: usize = 64;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CandidateFoldStep {
     pub(crate) params: CommittedGroupParams,
     pub(crate) input_witness_len: usize,
@@ -64,7 +64,7 @@ pub(crate) struct CandidateFoldStep {
     pub(crate) estimated_stage3_payload_bytes: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CandidateTerminalResponse {
     pub(crate) params: akita_types::TerminalCommittedGroupParams,
     pub(crate) sparse_challenge_config: akita_challenges::SparseChallengeConfig,
@@ -133,7 +133,7 @@ impl RingDimensionSearchDomain {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ScheduleCandidate {
     pub(crate) first_direct_setup_field_len: Option<usize>,
     pub(crate) total_bytes: usize,

@@ -57,7 +57,6 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     uniform_ring_dimension: 64,
     setup_prefix_inner_ring_dimension: 64,
     decomposition: DecompositionParams { log_basis: 3, log_commit_bound: 128, log_open_bound: None },
-    ring_subfield_norm_bound: 1,
     claim_ext_degree: 1,
     chal_ext_degree: 1,
     basis_range: (3, 6),

@@ -1,8 +1,86 @@
 //! Shared candidate-construction helpers.
 
 use crate::runtime::PlannerPolicy;
-use akita_types::sis::{projected_role_ring_count, rounded_up_collision_inf_norm, SisTableKey};
-use akita_types::SisMatrixRole;
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_field::AkitaError;
+use akita_types::sis::{
+    projected_role_ring_count, role_a_collision_l2_sq_for_response_bound,
+    rounded_up_collision_inf_norm, sis_l2_table_key_for_collision_sq, FoldChallengeNorms,
+    SisTableKey,
+};
+use akita_types::{InnerCommitMatrixParams, PhysicalL2NormProofShape, SisMatrixRole};
+
+/// Exact public geometry that may admit one selective physical-L2 A matrix.
+#[derive(Clone, Copy, Debug)]
+pub struct SelectiveL2CandidateGeometry<'a> {
+    pub fold_level: usize,
+    pub input_witness_len: usize,
+    pub num_claims: usize,
+    pub num_chunks: usize,
+    pub inner_width: usize,
+    pub ring_dimension: usize,
+    pub fold_basis: usize,
+    pub fold_digit_count: usize,
+    pub fold_challenge_config: &'a SparseChallengeConfig,
+    pub fold_challenge_shape: TensorChallengeShape,
+}
+
+/// Derive the one canonical L2 A-matrix candidate for an exact fold geometry.
+///
+/// `Ok(None)` means the route is ineligible, has no measured cap, or has no
+/// generated secure table row. Once a cap is present, malformed arithmetic or
+/// proof geometry is a policy error rather than a silently different route.
+pub fn selective_l2_inner_matrix(
+    policy: &PlannerPolicy,
+    geometry: SelectiveL2CandidateGeometry<'_>,
+) -> Result<Option<InnerCommitMatrixParams>, AkitaError> {
+    if geometry.fold_level < 3 || geometry.num_claims != 1 || geometry.num_chunks != 1 {
+        return Ok(None);
+    }
+    let physical_response_len = geometry
+        .inner_width
+        .checked_mul(geometry.ring_dimension)
+        .ok_or_else(|| AkitaError::InvalidSetup("L2 physical response length overflow".into()))?;
+    let Some(response_l2_sq_cap) = policy.selective_l2_cap_for_candidate(
+        geometry.fold_level,
+        geometry.input_witness_len,
+        physical_response_len,
+        geometry.fold_basis,
+        geometry.fold_digit_count,
+    ) else {
+        return Ok(None);
+    };
+    let norm_proof_shape = PhysicalL2NormProofShape::derive(
+        policy.sis_modulus_profile,
+        physical_response_len,
+        geometry.fold_basis,
+        geometry.fold_digit_count,
+    )?;
+    let challenge_l1 = FoldChallengeNorms::new(
+        geometry.fold_challenge_config,
+        geometry.fold_challenge_shape,
+    )
+    .l1_norm;
+    let collision_l2_sq =
+        role_a_collision_l2_sq_for_response_bound(challenge_l1, response_l2_sq_cap)
+            .ok_or_else(|| AkitaError::InvalidSetup("L2 collision bound overflow".into()))?;
+    let Some(table_key) = sis_l2_table_key_for_collision_sq(
+        policy.sis_security_policy,
+        policy.sis_l2_table_digest,
+        policy.sis_modulus_profile,
+        geometry.ring_dimension as u32,
+        collision_l2_sq,
+    ) else {
+        return Ok(None);
+    };
+    InnerCommitMatrixParams::try_new_l2_with_min_rank(
+        table_key,
+        geometry.inner_width,
+        response_l2_sq_cap,
+        norm_proof_shape,
+    )
+    .map(Some)
+}
 
 /// Construct the canonical SIS-table key for one role and ring dimension.
 pub fn sis_key_at_dimension(

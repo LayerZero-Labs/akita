@@ -1,6 +1,9 @@
 use super::*;
 
-use akita_schedules::planner_support::{projected_collision_role_price, sis_key_at_dimension};
+use akita_schedules::planner_support::{
+    projected_collision_role_price, selective_l2_inner_matrix, sis_key_at_dimension,
+    SelectiveL2CandidateGeometry,
+};
 
 mod recursive;
 mod setup_prefix;

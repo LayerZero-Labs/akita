@@ -99,7 +99,7 @@ fn recursive_candidate_order_preserves_exhaustive_tie_break() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn recursive_frontier_retains_linf_and_smaller_l2_rank() {
+fn recursive_frontier_retains_every_split_and_smaller_l2_rank() {
     use akita_config::{policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig};
     use akita_types::InnerCommitSecurityRoute;
 
@@ -119,32 +119,34 @@ fn recursive_frontier_retains_linf_and_smaller_l2_rank() {
     .expect("late-fold rank frontier");
     let linf_rank = candidates
         .iter()
-        .find_map(|(params, _)| {
+        .filter_map(|(params, _)| {
             matches!(
                 params.inner_commit_matrix.security_route(),
                 InnerCommitSecurityRoute::Linf(_)
             )
             .then(|| params.inner_commit_matrix.output_rank())
         })
+        .max()
         .expect("L-infinity fallback");
     let l2_rank = candidates
         .iter()
-        .find_map(|(params, _)| {
+        .filter_map(|(params, _)| {
             matches!(
                 params.inner_commit_matrix.security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
             .then(|| params.inner_commit_matrix.output_rank())
         })
+        .min()
         .expect("measured L2 candidate");
     assert!(l2_rank < linf_rank);
-    assert_eq!(
+    assert!(
         candidates
             .iter()
             .map(|(params, _)| params.inner_commit_matrix.output_rank())
             .collect::<std::collections::BTreeSet<_>>()
-            .len(),
-        candidates.len(),
-        "frontier keeps at most one local layout per secure A rank"
+            .len()
+            < candidates.len(),
+        "same-rank layouts must survive until complete suffix pricing"
     );
 }

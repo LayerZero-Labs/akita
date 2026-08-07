@@ -1,5 +1,97 @@
 use super::*;
 
+impl<E: FieldCore + AkitaSerialize> AkitaSerialize for PhysicalL2NormProof<E> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.response_l2_sq
+            .serialize_with_mode(&mut writer, compress)?;
+        for subclaim in &self.subclaims {
+            subclaim.serialize_with_mode(&mut writer, compress)?;
+        }
+        for evaluation in &self.virtual_evaluations {
+            evaluation.serialize_with_mode(&mut writer, compress)?;
+        }
+        self.sumcheck.serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.response_l2_sq.serialized_size(compress)
+            + self
+                .subclaims
+                .iter()
+                .map(|claim| claim.serialized_size(compress))
+                .sum::<usize>()
+            + self
+                .virtual_evaluations
+                .iter()
+                .map(|evaluation| evaluation.serialized_size(compress))
+                .sum::<usize>()
+            + self.sumcheck.serialized_size(compress)
+    }
+}
+
+impl<E> AkitaDeserialize for PhysicalL2NormProof<E>
+where
+    E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+{
+    type Context = PhysicalL2NormProofWireShape;
+
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        shape: &Self::Context,
+    ) -> Result<Self, SerializationError> {
+        let response_l2_sq = u128::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let mut subclaims = Vec::new();
+        reserve_shape_len(&mut subclaims, shape.subclaims)?;
+        for _ in 0..shape.subclaims {
+            subclaims.push(E::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?);
+        }
+        let mut virtual_evaluations = Vec::new();
+        reserve_shape_len(&mut virtual_evaluations, shape.virtual_evaluations)?;
+        for _ in 0..shape.virtual_evaluations {
+            virtual_evaluations.push(E::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?);
+        }
+        let out = Self {
+            response_l2_sq,
+            subclaims,
+            virtual_evaluations,
+            sumcheck: SumcheckProof::deserialize_with_mode(
+                reader,
+                compress,
+                validate,
+                &shape.sumcheck,
+            )?,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
+impl<E: FieldCore + Valid> Valid for PhysicalL2NormProof<E> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.subclaims.check()?;
+        self.virtual_evaluations.check()?;
+        self.sumcheck.check()
+    }
+}
+
 fn serialize_extension_opening_reduction<E, W>(
     reduction: Option<&ExtensionOpeningReductionProof<E>>,
     mut writer: W,
@@ -415,15 +507,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
             .range_image_evaluation
             .serialize_with_mode(&mut writer, compress)?;
         if let Some(norm) = &self.stage1.norm_proof {
-            norm.response_l2_sq
-                .serialize_with_mode(&mut writer, compress)?;
-            for subclaim in &norm.subclaims {
-                subclaim.serialize_with_mode(&mut writer, compress)?;
-            }
-            for evaluation in &norm.virtual_evaluations {
-                evaluation.serialize_with_mode(&mut writer, compress)?;
-            }
-            norm.sumcheck.serialize_with_mode(&mut writer, compress)?;
+            norm.serialize_with_mode(&mut writer, compress)?;
         }
         stage2
             .sumcheck_proof
@@ -455,20 +539,11 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
             })
             .sum::<usize>()
             + self.stage1.range_image_evaluation.serialized_size(compress)
-            + self.stage1.norm_proof.as_ref().map_or(0, |norm| {
-                norm.response_l2_sq.serialized_size(compress)
-                    + norm
-                        .subclaims
-                        .iter()
-                        .map(|claim| claim.serialized_size(compress))
-                        .sum::<usize>()
-                    + norm
-                        .virtual_evaluations
-                        .iter()
-                        .map(|evaluation| evaluation.serialized_size(compress))
-                        .sum::<usize>()
-                    + norm.sumcheck.serialized_size(compress)
-            })
+            + self
+                .stage1
+                .norm_proof
+                .as_ref()
+                .map_or(0, |norm| norm.serialized_size(compress))
             + ({ stage2.sumcheck_proof.serialized_size(compress) })
             + stage3_sumcheck_serialized_size(self.stage3_sumcheck_proof.as_ref(), compress)
             + next_witness_binding_serialized_size(&stage2.next_witness_binding, compress)
@@ -489,9 +564,7 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for FoldLevelProof<F, E> 
         }
         self.stage1.range_image_evaluation.check()?;
         if let Some(norm) = &self.stage1.norm_proof {
-            norm.subclaims.check()?;
-            norm.virtual_evaluations.check()?;
-            norm.sumcheck.check()?;
+            norm.check()?;
         }
         let stage2 = &self.stage2;
         stage2.sumcheck_proof.check()?;
@@ -554,39 +627,12 @@ impl<
         let range_image_evaluation =
             E::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let norm_proof = if let Some(shape) = &ctx.stage1_norm {
-            let response_l2_sq = u128::deserialize_with_mode(&mut reader, compress, validate, &())?;
-            let mut subclaims = Vec::new();
-            reserve_shape_len(&mut subclaims, shape.subclaims)?;
-            for _ in 0..shape.subclaims {
-                subclaims.push(E::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                    &(),
-                )?);
-            }
-            let mut virtual_evaluations = Vec::new();
-            reserve_shape_len(&mut virtual_evaluations, shape.virtual_evaluations)?;
-            for _ in 0..shape.virtual_evaluations {
-                virtual_evaluations.push(E::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                    &(),
-                )?);
-            }
-            let sumcheck = SumcheckProof::deserialize_with_mode(
+            Some(PhysicalL2NormProof::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
-                &shape.sumcheck,
-            )?;
-            Some(PhysicalL2NormProof {
-                response_l2_sq,
-                subclaims,
-                virtual_evaluations,
-                sumcheck,
-            })
+                shape,
+            )?)
         } else {
             None
         };

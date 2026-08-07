@@ -152,7 +152,6 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub uniform_ring_dimension: usize,
     pub setup_prefix_inner_ring_dimension: usize,
     pub decomposition: akita_types::DecompositionParams,
-    pub ring_subfield_norm_bound: u32,
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),

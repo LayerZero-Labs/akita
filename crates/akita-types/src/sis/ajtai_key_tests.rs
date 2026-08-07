@@ -1,4 +1,7 @@
 use super::*;
+use crate::sis::{
+    ceil_supported_l2_collision_sq, sis_l2_table_key_for_collision_sq, SisL2TableDigest,
+};
 
 fn key(
     table_digest: SisTableDigest,

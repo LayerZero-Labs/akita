@@ -28,6 +28,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
 
     const D: usize = Cfg::D;
     const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] = Cfg::RING_DIMENSION_CANDIDATES;
+    const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
+        Cfg::SELECTIVE_L2_FOLD_CAPS;
 
     fn decomposition() -> DecompositionParams {
         Cfg::decomposition()
@@ -43,10 +45,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
 
     fn sis_modulus_profile() -> SisModulusProfileId {
         Cfg::sis_modulus_profile()
-    }
-
-    fn ring_subfield_embedding_norm_bound() -> u32 {
-        Cfg::ring_subfield_embedding_norm_bound()
     }
 
     fn selection_policy() -> akita_schedules::SelectionPolicyId {

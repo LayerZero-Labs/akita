@@ -326,29 +326,10 @@ pub fn reconstruct_l2_sq_from_gram(
     fold_basis: usize,
     claims: &[i128],
 ) -> Result<u128, AkitaError> {
-    let PhysicalL2NormProofShape::LimbGram {
-        physical_response_len,
-        block_len,
-        limb_count,
-    } = shape
-    else {
-        return Err(AkitaError::InvalidInput(
-            "direct L2 shape has no limb-Gram reconstruction".into(),
-        ));
-    };
-    shape.validate()?;
-    let blocks = physical_response_len.div_ceil(block_len);
-    let pairs = limb_count
-        .checked_mul(
-            limb_count
-                .checked_add(1)
-                .ok_or_else(|| AkitaError::InvalidSetup("L2 limb-pair count overflow".into()))?,
-        )
-        .and_then(|value| value.checked_div(2))
-        .ok_or_else(|| AkitaError::InvalidSetup("L2 limb-pair count overflow".into()))?;
-    let expected = blocks
-        .checked_mul(pairs)
-        .ok_or_else(|| AkitaError::InvalidSetup("L2 subclaim count overflow".into()))?;
+    let layout = shape.limb_gram_layout()?.ok_or_else(|| {
+        AkitaError::InvalidInput("direct L2 shape has no limb-Gram reconstruction".into())
+    })?;
+    let expected = layout.subclaim_count();
     if claims.len() != expected {
         return Err(AkitaError::InvalidSize {
             expected,
@@ -357,7 +338,8 @@ pub fn reconstruct_l2_sq_from_gram(
     }
     let basis = i128::try_from(fold_basis)
         .map_err(|_| AkitaError::InvalidSetup("L2 fold basis exceeds i128".into()))?;
-    let power_count = limb_count
+    let power_count = layout
+        .limb_count()
         .checked_mul(2)
         .ok_or_else(|| AkitaError::InvalidSetup("L2 power count overflow".into()))?;
     let mut powers = Vec::with_capacity(power_count);
@@ -369,32 +351,30 @@ pub fn reconstruct_l2_sq_from_gram(
             .ok_or_else(|| AkitaError::InvalidSetup("L2 basis power overflow".into()))?;
     }
     let mut total = 0i128;
-    let mut cursor = 0usize;
-    for _ in 0..blocks {
-        for left in 0..limb_count {
-            for right in left..limb_count {
-                let claim = claims
-                    .get(cursor)
-                    .copied()
-                    .ok_or(AkitaError::InvalidProof)?;
-                cursor = cursor
-                    .checked_add(1)
-                    .ok_or_else(|| AkitaError::InvalidSetup("L2 claim cursor overflow".into()))?;
-                let exponent = left
-                    .checked_add(right)
-                    .ok_or_else(|| AkitaError::InvalidSetup("L2 exponent overflow".into()))?;
-                let scale = powers
-                    .get(exponent)
-                    .copied()
-                    .ok_or(AkitaError::InvalidProof)?
-                    .checked_mul(if left == right { 1 } else { 2 })
-                    .ok_or_else(|| AkitaError::InvalidSetup("L2 Gram scale overflow".into()))?;
-                total = total
+    for block_index in 0..layout.block_count() {
+        for (left, right) in layout.limb_pairs() {
+            let claim_index = layout
+                .subclaim_index(block_index, left, right)
+                .ok_or(AkitaError::InvalidProof)?;
+            let claim = claims
+                .get(claim_index)
+                .copied()
+                .ok_or(AkitaError::InvalidProof)?;
+            let exponent = left
+                .checked_add(right)
+                .ok_or_else(|| AkitaError::InvalidSetup("L2 exponent overflow".into()))?;
+            let scale = powers
+                .get(exponent)
+                .copied()
+                .ok_or(AkitaError::InvalidProof)?
+                .checked_mul(if left == right { 1 } else { 2 })
+                .ok_or_else(|| AkitaError::InvalidSetup("L2 Gram scale overflow".into()))?;
+            total =
+                total
                     .checked_add(claim.checked_mul(scale).ok_or_else(|| {
                         AkitaError::InvalidSetup("L2 Gram product overflow".into())
                     })?)
                     .ok_or_else(|| AkitaError::InvalidSetup("L2 Gram sum overflow".into()))?;
-            }
         }
     }
     u128::try_from(total).map_err(|_| AkitaError::InvalidProof)

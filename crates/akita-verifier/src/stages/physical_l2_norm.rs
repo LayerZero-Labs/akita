@@ -71,30 +71,21 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceVerifier<E>
                     .ok_or(AkitaError::InvalidProof)?;
                 value * value
             }
-            PhysicalL2NormProofShape::LimbGram {
-                physical_response_len,
-                block_len,
-                limb_count,
-            } => {
-                let equality = EqPolynomial::evals_prefix(point, physical_response_len)?;
-                let pair_count = limb_count
-                    .checked_mul(limb_count.checked_add(1).ok_or_else(|| {
-                        AkitaError::InvalidSetup("L2 limb-pair count overflow".into())
-                    })?)
-                    .and_then(|value| value.checked_div(2))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("L2 limb-pair count overflow".into())
-                    })?;
-                let mut pair_selectors = vec![E::zero(); pair_count];
+            shape @ PhysicalL2NormProofShape::LimbGram { .. } => {
+                let layout = shape.limb_gram_layout()?.ok_or(AkitaError::InvalidProof)?;
+                let equality = EqPolynomial::evals_prefix(point, layout.physical_response_len())?;
+                let mut pair_selectors = vec![E::zero(); layout.pair_count()];
                 for (physical_index, equality_weight) in equality.into_iter().enumerate() {
-                    let block = physical_index / block_len;
-                    for (pair, selector) in pair_selectors.iter_mut().enumerate() {
-                        let index = block
-                            .checked_mul(pair_count)
-                            .and_then(|base| base.checked_add(pair))
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup("L2 selector index overflow".into())
-                            })?;
+                    let block_index = physical_index / layout.block_len();
+                    for ((left, right), selector) in
+                        layout.limb_pairs().zip(pair_selectors.iter_mut())
+                    {
+                        let index =
+                            layout
+                                .subclaim_index(block_index, left, right)
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidSetup("L2 selector index overflow".into())
+                                })?;
                         let weight = self
                             .subclaim_weights
                             .get(index)
@@ -104,26 +95,19 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceVerifier<E>
                     }
                 }
                 let mut sum = E::zero();
-                let mut pair = 0usize;
-                for left in 0..limb_count {
-                    for right in left..limb_count {
-                        let left = *self
-                            .proof
-                            .virtual_evaluations
-                            .get(left)
-                            .ok_or(AkitaError::InvalidProof)?;
-                        let right = *self
-                            .proof
-                            .virtual_evaluations
-                            .get(right)
-                            .ok_or(AkitaError::InvalidProof)?;
-                        let selector = pair_selectors
-                            .get(pair)
-                            .copied()
-                            .ok_or(AkitaError::InvalidProof)?;
-                        sum += selector * left * right;
-                        pair += 1;
-                    }
+                for ((left, right), selector) in layout.limb_pairs().zip(pair_selectors.into_iter())
+                {
+                    let left = *self
+                        .proof
+                        .virtual_evaluations
+                        .get(left)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let right = *self
+                        .proof
+                        .virtual_evaluations
+                        .get(right)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    sum += selector * left * right;
                 }
                 sum
             }
@@ -196,17 +180,10 @@ where
                 return Err(AkitaError::InvalidProof);
             }
         }
-        PhysicalL2NormProofShape::LimbGram {
-            block_len,
-            limb_count,
-            ..
-        } => {
-            if proof.subclaims.len()
-                != plan
-                    .shape()
-                    .subclaim_count()
-                    .ok_or_else(|| AkitaError::InvalidSetup("L2 subclaim count overflow".into()))?
-                || proof.virtual_evaluations.len() != limb_count
+        shape @ PhysicalL2NormProofShape::LimbGram { block_len, .. } => {
+            let layout = shape.limb_gram_layout()?.ok_or(AkitaError::InvalidProof)?;
+            if proof.subclaims.len() != layout.subclaim_count()
+                || proof.virtual_evaluations.len() != layout.limb_count()
             {
                 return Err(AkitaError::InvalidProof);
             }
@@ -303,7 +280,126 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime32Offset99;
+    use akita_challenges::SparseChallengeConfig;
+    use akita_field::{FpExt4, Prime32Offset99};
+    use akita_serialization::{AkitaDeserialize, AkitaSerialize};
+    use akita_transcript::AkitaTranscript;
+    use akita_types::proof::PhysicalL2NormProofWireShape;
+    use akita_types::sis::{
+        role_a_collision_l2_sq_for_response_bound, sis_l2_table_key_for_collision_sq,
+        DEFAULT_SIS_SECURITY_POLICY,
+    };
+    use akita_types::{
+        CommitmentRingDims, CommittedGroupParams, DigitRangePlan, InnerCommitMatrixParams,
+        OpeningClaimsLayout, RelationAddressGeometry, RelationRangeImagePlan, SisL2TableDigest,
+        WitnessLayout,
+    };
+
+    type SmallExt = FpExt4<Prime32Offset99>;
+
+    fn limb_gram_fixture() -> (PhysicalResponsePlan, Vec<i8>, u128) {
+        const RING_DIMENSION: usize = 64;
+        const POSITIONS_PER_BLOCK: usize = 4;
+        const LIVE_RING_ELEMENTS: usize = 8;
+        const FOLD_DIGITS: usize = 2;
+        const RESPONSE_L2_SQ_CAP: u128 = 1 << 20;
+
+        let profile = SisModulusProfileId::Q32Offset99;
+        let shape = PhysicalL2NormProofShape::LimbGram {
+            physical_response_len: 512,
+            block_len: 128,
+            limb_count: FOLD_DIGITS,
+        };
+        let collision_l2_sq = role_a_collision_l2_sq_for_response_bound(1, RESPONSE_L2_SQ_CAP)
+            .expect("collision square");
+        let table_key = sis_l2_table_key_for_collision_sq(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisL2TableDigest::CURRENT,
+            profile,
+            RING_DIMENSION as u32,
+            collision_l2_sq,
+        )
+        .expect("small-field L2 table row");
+        let inner = InnerCommitMatrixParams::try_new_l2_with_min_rank(
+            table_key,
+            POSITIONS_PER_BLOCK * FOLD_DIGITS,
+            RESPONSE_L2_SQ_CAP,
+            shape,
+        )
+        .expect("L2 A matrix");
+        let mut params = CommittedGroupParams::params_only(
+            profile,
+            RING_DIMENSION,
+            2,
+            inner.output_rank(),
+            1,
+            1,
+            SparseChallengeConfig::pm1_only(1),
+        );
+        params.inner_commit_matrix = inner;
+        params = params
+            .with_decomp(POSITIONS_PER_BLOCK, LIVE_RING_ELEMENTS, FOLD_DIGITS, 1, 1)
+            .expect("complete scalar params");
+        params.num_digits_fold = FOLD_DIGITS;
+
+        let opening = OpeningClaimsLayout::new(9, 1).expect("opening layout");
+        let witness_layout = WitnessLayout::new(&params, &opening, 1, 1).expect("witness layout");
+        let relation_geometry = RelationAddressGeometry::new(
+            CommitmentRingDims::uniform(RING_DIMENSION),
+            RING_DIMENSION,
+            witness_layout.live_coeff_len(),
+        )
+        .expect("relation geometry");
+        let relation_plan = RelationRangeImagePlan::new(
+            relation_geometry,
+            DigitRangePlan::new(4).expect("digit range"),
+            witness_layout,
+            &opening,
+        )
+        .expect("relation plan");
+        let physical = PhysicalResponsePlan::new(&params, &relation_plan)
+            .expect("physical response plan")
+            .expect("L2 route");
+        assert_eq!(physical.shape(), shape);
+        assert!(
+            physical
+                .shape()
+                .limb_gram_layout()
+                .expect("checked limb layout")
+                .expect("limb layout")
+                .block_count()
+                > 1
+        );
+
+        let witness = (0..physical.domain().live_len())
+            .map(|index| [-1, 0, 1, 0][index % 4])
+            .collect();
+        (physical, witness, RESPONSE_L2_SQ_CAP)
+    }
+
+    fn verify_limb_gram(
+        plan: &PhysicalResponsePlan,
+        proof: &PhysicalL2NormProof<SmallExt>,
+        range_point: &[SmallExt],
+        range_image_evaluation: SmallExt,
+        cap: u128,
+    ) -> Result<PhysicalL2VerifierReplay<SmallExt>, AkitaError> {
+        let mut transcript =
+            AkitaTranscript::<Prime32Offset99>::new(b"akita/physical-l2-small-field-integration");
+        verify_physical_l2_norm::<Prime32Offset99, SmallExt, _>(
+            plan,
+            proof,
+            PhysicalL2RangeClaim {
+                equality_point: range_point,
+                input_claim: SmallExt::zero(),
+                leaf_coefficients: &[SmallExt::zero(); 3],
+                image_evaluation: range_image_evaluation,
+            },
+            SisModulusProfileId::Q32Offset99,
+            cap,
+            &mut transcript,
+        )
+    }
 
     #[test]
     fn centered_lift_accepts_both_boundary_representatives() {
@@ -322,5 +418,83 @@ mod tests {
             centered_lift::<F, F>(negative, profile).unwrap(),
             -(half as i128)
         );
+    }
+
+    #[test]
+    fn small_field_multiblock_limb_gram_round_trip_and_mutations() {
+        let (plan, witness, cap) = limb_gram_fixture();
+        let range_point = vec![SmallExt::zero(); plan.domain().num_vars()];
+        let leaf_coefficients = vec![SmallExt::zero(); 3];
+        let mut prover_transcript =
+            AkitaTranscript::<Prime32Offset99>::new(b"akita/physical-l2-small-field-integration");
+        let (proof, prover_point, range_image_evaluation) =
+            akita_prover::prove_physical_l2_norm_for_test::<Prime32Offset99, SmallExt, _>(
+                &plan,
+                &witness,
+                &range_point,
+                SmallExt::zero(),
+                leaf_coefficients,
+                &mut prover_transcript,
+            )
+            .expect("prove multi-block limb Gram norm");
+        assert!(!proof.subclaims.is_empty());
+        assert!(proof.response_l2_sq <= cap);
+
+        let wire_shape = PhysicalL2NormProofWireShape {
+            subclaims: proof.subclaims.len(),
+            virtual_evaluations: proof.virtual_evaluations.len(),
+            sumcheck: proof
+                .sumcheck
+                .round_polys
+                .iter()
+                .map(|poly| poly.coeffs_except_linear_term.len())
+                .collect(),
+        };
+        let mut bytes = Vec::new();
+        proof
+            .serialize_compressed(&mut bytes)
+            .expect("serialize physical norm proof");
+        let decoded =
+            PhysicalL2NormProof::<SmallExt>::deserialize_compressed(bytes.as_slice(), &wire_shape)
+                .expect("deserialize physical norm proof");
+        assert_eq!(decoded, proof);
+        let replay = verify_limb_gram(&plan, &decoded, &range_point, range_image_evaluation, cap)
+            .expect("verify multi-block limb Gram norm");
+        assert_eq!(replay.point, prover_point);
+        assert_eq!(replay.virtual_evaluations, decoded.virtual_evaluations);
+
+        let mut over_cap = decoded.clone();
+        over_cap.response_l2_sq = cap + 1;
+        assert!(
+            verify_limb_gram(&plan, &over_cap, &range_point, range_image_evaluation, cap,).is_err()
+        );
+
+        let mut bad_subclaim = decoded.clone();
+        bad_subclaim.subclaims[0] += SmallExt::one();
+        assert!(verify_limb_gram(
+            &plan,
+            &bad_subclaim,
+            &range_point,
+            range_image_evaluation,
+            cap,
+        )
+        .is_err());
+
+        let mut bad_evaluation = decoded;
+        bad_evaluation.virtual_evaluations[0] += SmallExt::one();
+        assert!(verify_limb_gram(
+            &plan,
+            &bad_evaluation,
+            &range_point,
+            range_image_evaluation,
+            cap,
+        )
+        .is_err());
+
+        assert!(PhysicalL2NormProof::<SmallExt>::deserialize_compressed(
+            &bytes[..bytes.len() - 1],
+            &wire_shape,
+        )
+        .is_err());
     }
 }

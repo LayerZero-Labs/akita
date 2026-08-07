@@ -13,6 +13,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
+use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
 use crate::generated::{
     GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix,
     GeneratedPrecommittedProfile, GeneratedSetupPrefixInput, GeneratedTerminalFold,
@@ -22,9 +23,8 @@ use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     min_secure_rank, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
-    projected_role_ring_count, role_a_collision_l2_sq_for_response_bound,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, sis_l2_table_key_for_collision_sq,
-    FoldChallengeNorms, SisTableKey,
+    projected_role_ring_count, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
+    SisTableKey,
 };
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommitmentRingDims, CommittedGroupParams,
@@ -504,54 +504,41 @@ impl GeneratedCommittedGroup {
             inner_width,
         )?;
         let inner_commit_matrix = if let Some(response_l2_sq_cap) = response_l2_sq_cap {
-            let physical_response_len = inner_width.checked_mul(ring_d).ok_or_else(|| {
-                AkitaError::InvalidSetup("generated L2 physical response length overflow".into())
-            })?;
             let fold_basis = 1usize
                 .checked_shl(log_basis_open)
                 .ok_or_else(|| AkitaError::InvalidSetup("generated L2 basis overflow".into()))?;
-            if fold_level < 3
-                || num_claims != 1
-                || policy.chunks_at_level(fold_level) != 1
-                || policy.selective_l2_cap_for_candidate(
+            let matrix = selective_l2_inner_matrix(
+                policy,
+                SelectiveL2CandidateGeometry {
                     fold_level,
                     input_witness_len,
-                    physical_response_len,
+                    num_claims,
+                    num_chunks: policy.chunks_at_level(fold_level),
+                    inner_width,
+                    ring_dimension: ring_d,
                     fold_basis,
-                    num_digits_fold,
-                ) != Some(response_l2_sq_cap)
-            {
-                return Err(AkitaError::InvalidSetup(
+                    fold_digit_count: num_digits_fold,
+                    fold_challenge_config: &ring_challenge_cfg,
+                    fold_challenge_shape: fold_shape,
+                },
+            )?
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
                     "generated L2 route is not admitted for this exact measured candidate".into(),
+                )
+            })?;
+            if !matches!(
+                matrix.security_route(),
+                akita_types::InnerCommitSecurityRoute::L2 {
+                    response_l2_sq_cap: canonical_cap,
+                    ..
+                } if canonical_cap == response_l2_sq_cap
+            ) {
+                return Err(AkitaError::InvalidSetup(
+                    "generated L2 cap disagrees with canonical candidate policy".into(),
                 ));
             }
-            let norm_proof_shape = akita_types::PhysicalL2NormProofShape::derive(
-                sis_modulus_profile,
-                physical_response_len,
-                fold_basis,
-                num_digits_fold,
-            )?;
-            let collision_l2_sq = role_a_collision_l2_sq_for_response_bound(
-                FoldChallengeNorms::new(&ring_challenge_cfg, fold_shape).l1_norm,
-                response_l2_sq_cap,
-            )
-            .ok_or_else(|| AkitaError::InvalidSetup("generated L2 collision overflow".into()))?;
-            let table_key = sis_l2_table_key_for_collision_sq(
-                sis_policy,
-                policy.sis_l2_table_digest,
-                sis_modulus_profile,
-                ring_d as u32,
-                collision_l2_sq,
-            )
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("generated L2 table key is unsupported".into())
-            })?;
-            InnerCommitMatrixParams::try_new_l2_with_min_rank(
-                table_key,
-                inner_width,
-                response_l2_sq_cap,
-                norm_proof_shape,
-            )?
+            matrix
         } else {
             InnerCommitMatrixParams::try_new(
                 sis_policy,
@@ -1054,7 +1041,6 @@ mod tests {
             sis_table_digest: SisTableDigest::CURRENT,
             sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
             selective_l2_fold_caps: &[],
-            ring_subfield_norm_bound: 1,
             claim_ext_degree: 1,
             chal_ext_degree: 1,
             basis_range: (3, 6),

@@ -302,6 +302,58 @@ fn complete_suffix_can_select_l2_or_retain_linf() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
+fn measured_l2_suffix_matches_independent_all_splits_oracle() {
+    use akita_config::{policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig};
+    use akita_types::InnerCommitSecurityRoute;
+
+    let policy = policy_of::<D64OneHot>();
+    let challenge = D64OneHot::ring_challenge_config(64).expect("D64 challenge");
+    let ctx = SuffixCtx {
+        policy: &policy,
+        default_ring_challenge_cfg: &challenge,
+        ring_challenge_config: &D64OneHot::ring_challenge_config,
+        fold_challenge_shape_at_level: &D64OneHot::fold_challenge_shape_at_level,
+        num_vars: 30,
+        key: PolynomialGroupLayout::singleton(30),
+        setup_field_budget: policy.setup_field_budget,
+        root_lookup_key: None,
+        root_honest_fold_policy: None,
+        precommitted_honest_fold_policies: &[],
+        level_zero_is_root: false,
+    };
+    let state = SuffixState {
+        level: 3,
+        current_witness_len: 948_672,
+        current_lb: 4,
+        incoming_setup_prefix: None,
+        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+    };
+    let mut production_memo = ScheduleMemo::new();
+    let production = derive_optimal_suffix_schedule(&ctx, &mut production_memo, state, 3)
+        .expect("production measured suffix");
+    let mut oracle_memo = ScheduleMemo::new();
+    let oracle =
+        derive_optimal_suffix_schedule_with_all_splits_at_state(&ctx, &mut oracle_memo, state, 3)
+            .expect("all-splits measured suffix");
+    assert!(production
+        .best_by_payload_per_lb
+        .values()
+        .any(|candidate| candidate.folds.iter().any(|fold| matches!(
+            fold.params.inner_commit_matrix.security_route(),
+            InnerCommitSecurityRoute::L2 { .. }
+        ))));
+    assert_eq!(
+        production.best_by_payload_per_lb,
+        oracle.best_by_payload_per_lb
+    );
+    assert_eq!(
+        production.best_by_first_direct_setup_per_lb,
+        oracle.best_by_first_direct_setup_per_lb
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
 fn grouped_scalar_fallback_preserves_mixed_domain() {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
     use akita_types::AkitaScheduleLookupKey;
@@ -864,7 +916,7 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        90_728
+        89_320
     );
 }
 

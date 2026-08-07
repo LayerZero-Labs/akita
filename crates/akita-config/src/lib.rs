@@ -38,6 +38,8 @@ macro_rules! impl_multi_chunk_companion {
             const RING_DIMENSION_CANDIDATES: &'static [akita_types::CommitmentRingDims] =
                 <$base as $crate::CommitmentConfig>::RING_DIMENSION_CANDIDATES;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
+            const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
+                <$base as $crate::CommitmentConfig>::SELECTIVE_L2_FOLD_CAPS;
 
             fn decomposition() -> akita_types::DecompositionParams {
                 <$base as $crate::CommitmentConfig>::decomposition()
@@ -57,9 +59,6 @@ macro_rules! impl_multi_chunk_companion {
             }
             fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
                 <$base as $crate::CommitmentConfig>::sis_modulus_profile()
-            }
-            fn ring_subfield_embedding_norm_bound() -> u32 {
-                <$base as $crate::CommitmentConfig>::ring_subfield_embedding_norm_bound()
             }
             fn setup_matrix_capacity(
                 max_num_vars: usize,
@@ -143,8 +142,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
         sis_table_digest: akita_types::sis::SisTableDigest::CURRENT,
         sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
-        selective_l2_fold_caps: Cfg::selective_l2_fold_caps(),
-        ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
+        selective_l2_fold_caps: Cfg::SELECTIVE_L2_FOLD_CAPS,
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
@@ -244,9 +242,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn sis_modulus_profile() -> SisModulusProfileId;
 
     /// Measured later-fold L2 caps admitted as additional planner candidates.
-    fn selective_l2_fold_caps() -> &'static [akita_schedules::SelectiveL2FoldCap] {
-        &[]
-    }
+    const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] = &[];
 
     /// Prove that the concrete base field has exactly the modulus named by
     /// the SIS profile. Runtime callers use this before table lookup so a
@@ -263,21 +259,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
                 "SIS modulus profile {:?} does not match field modulus {modulus}",
                 Self::sis_modulus_profile()
             )))
-        }
-    }
-
-    /// Infinity-norm expansion introduced when claim-field coordinates are
-    /// embedded into the ring subfield via `psi`.
-    ///
-    /// For the base-field path (`K=1`), `psi` is ordinary coefficient packing.
-    /// For the current small-field ring-subfield embeddings (`K>1`), one input
-    /// coefficient can contribute through paired ring lanes, so SIS A-role
-    /// collision pricing uses a conservative factor of two.
-    fn ring_subfield_embedding_norm_bound() -> u32 {
-        if Self::EXT_DEGREE == 1 {
-            1
-        } else {
-            2
         }
     }
 
@@ -680,30 +661,6 @@ mod fp128_policy_tests {
         assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(
             CI_SIS_WIDTH_NUM_VARS,
         );
-    }
-
-    #[test]
-    fn small_field_sis_pricing_includes_psi_norm_bound() {
-        use super::proof_optimized::{fp128, fp32};
-
-        type SmallCfg = fp32::D128OneHot;
-        assert_eq!(
-            <fp128::D64Dense as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
-            1
-        );
-        assert_eq!(
-            <SmallCfg as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
-            2
-        );
-
-        let opening_batch = OpeningClaimsLayout::new(28, 1).expect("singleton opening batch");
-        let schedule =
-            SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
-        let root_params = &schedule.root.params.final_group.commitment;
-        assert!(root_params
-            .inner_commit_matrix
-            .coeff_linf_bound()
-            .is_some_and(|bound| bound > 0));
     }
 
     #[test]

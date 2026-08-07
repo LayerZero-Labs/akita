@@ -218,41 +218,32 @@ fn exact_claims<E: FieldCore + FromPrimitiveInt>(
             })?;
             Ok((response_l2_sq, Vec::new()))
         }
-        PhysicalL2NormProofShape::LimbGram {
-            physical_response_len,
-            block_len,
-            limb_count,
-        } => {
-            let mut integer_claims = Vec::new();
-            for block_start in (0..physical_response_len).step_by(block_len) {
-                let block_end = block_start
-                    .checked_add(block_len)
-                    .ok_or_else(|| AkitaError::InvalidSetup("L2 block end overflow".into()))?
-                    .min(physical_response_len);
-                for left in 0..limb_count {
-                    for right in left..limb_count {
-                        let left_values = integers.get(left).ok_or(AkitaError::InvalidProof)?;
-                        let right_values = integers.get(right).ok_or(AkitaError::InvalidProof)?;
-                        let claim = (block_start..block_end).try_fold(0i128, |sum, index| {
-                            let product = left_values
-                                .get(index)
-                                .copied()
-                                .ok_or(AkitaError::InvalidProof)?
-                                .checked_mul(
-                                    right_values
-                                        .get(index)
-                                        .copied()
-                                        .ok_or(AkitaError::InvalidProof)?,
-                                )
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidInput("limb product overflow".into())
-                                })?;
-                            sum.checked_add(product).ok_or_else(|| {
-                                AkitaError::InvalidInput("limb inner product overflow".into())
-                            })
-                        })?;
-                        integer_claims.push(claim);
-                    }
+        shape @ PhysicalL2NormProofShape::LimbGram { .. } => {
+            let layout = shape.limb_gram_layout()?.ok_or(AkitaError::InvalidProof)?;
+            let mut integer_claims = Vec::with_capacity(layout.subclaim_count());
+            for block in layout.block_ranges() {
+                for (left, right) in layout.limb_pairs() {
+                    let left_values = integers.get(left).ok_or(AkitaError::InvalidProof)?;
+                    let right_values = integers.get(right).ok_or(AkitaError::InvalidProof)?;
+                    let claim = block.clone().try_fold(0i128, |sum, index| {
+                        let product = left_values
+                            .get(index)
+                            .copied()
+                            .ok_or(AkitaError::InvalidProof)?
+                            .checked_mul(
+                                right_values
+                                    .get(index)
+                                    .copied()
+                                    .ok_or(AkitaError::InvalidProof)?,
+                            )
+                            .ok_or_else(|| {
+                                AkitaError::InvalidInput("limb product overflow".into())
+                            })?;
+                        sum.checked_add(product).ok_or_else(|| {
+                            AkitaError::InvalidInput("limb inner product overflow".into())
+                        })
+                    })?;
+                    integer_claims.push(claim);
                 }
             }
             let response_l2_sq =
@@ -286,7 +277,7 @@ fn range_image_table<E: FieldCore + FromPrimitiveInt>(
 /// Prove the final Stage-1 leaf obtained by batching the range identity and
 /// the schedule-selected exact physical norm identity.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn prove_physical_l2_norm<F, E, T>(
+pub fn prove_physical_l2_norm<F, E, T>(
     plan: &PhysicalResponsePlan,
     compact_witness: &[i8],
     range_equality_point: &[E],
@@ -315,18 +306,9 @@ where
         PhysicalL2NormProofShape::Direct { .. } => {
             (NormTerms::Direct, E::from_u128(response_l2_sq))
         }
-        PhysicalL2NormProofShape::LimbGram {
-            physical_response_len,
-            block_len,
-            limb_count,
-        } => {
+        shape @ PhysicalL2NormProofShape::LimbGram { .. } => {
+            let layout = shape.limb_gram_layout()?.ok_or(AkitaError::InvalidProof)?;
             let gamma = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_BATCH);
-            let pair_count = limb_count
-                .checked_mul(limb_count.checked_add(1).ok_or_else(|| {
-                    AkitaError::InvalidSetup("L2 limb-pair count overflow".into())
-                })?)
-                .and_then(|value| value.checked_div(2))
-                .ok_or_else(|| AkitaError::InvalidSetup("L2 limb-pair count overflow".into()))?;
             let mut powers = Vec::with_capacity(subclaims.len());
             let mut power = E::one();
             for _ in 0..subclaims.len() {
@@ -337,29 +319,28 @@ where
                 .iter()
                 .zip(&powers)
                 .fold(E::zero(), |sum, (&claim, &weight)| sum + weight * claim);
-            let mut selectors = vec![vec![E::zero(); plan.domain().domain_len()]; pair_count];
-            for physical_index in 0..physical_response_len {
-                let block = physical_index / block_len;
-                for pair in 0..pair_count {
-                    let power_index = block
-                        .checked_mul(pair_count)
-                        .and_then(|base| base.checked_add(pair))
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup("L2 selector index overflow".into())
-                        })?;
-                    let value = powers
-                        .get(power_index)
-                        .copied()
-                        .ok_or(AkitaError::InvalidProof)?;
-                    *selectors
-                        .get_mut(pair)
-                        .and_then(|selector| selector.get_mut(physical_index))
-                        .ok_or(AkitaError::InvalidProof)? = value;
+            let mut selectors =
+                vec![vec![E::zero(); plan.domain().domain_len()]; layout.pair_count()];
+            for (block_index, block) in layout.block_ranges().enumerate() {
+                for physical_index in block {
+                    for (pair_index, (left, right)) in layout.limb_pairs().enumerate() {
+                        let power_index = layout
+                            .subclaim_index(block_index, left, right)
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup("L2 selector index overflow".into())
+                            })?;
+                        let value = powers
+                            .get(power_index)
+                            .copied()
+                            .ok_or(AkitaError::InvalidProof)?;
+                        *selectors
+                            .get_mut(pair_index)
+                            .and_then(|selector| selector.get_mut(physical_index))
+                            .ok_or(AkitaError::InvalidProof)? = value;
+                    }
                 }
             }
-            let pairs = (0..limb_count)
-                .flat_map(|left| (left..limb_count).map(move |right| (left, right)))
-                .collect();
+            let pairs = layout.limb_pairs().collect();
             (NormTerms::LimbGram { selectors, pairs }, input_claim)
         }
     };

@@ -246,6 +246,7 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-field",
+ "akita-prover",
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
