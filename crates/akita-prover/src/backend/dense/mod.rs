@@ -7,7 +7,6 @@ mod commit;
 mod kernels;
 mod ops;
 mod poly;
-mod tensor_fold;
 #[cfg(test)]
 mod tests;
 mod views;

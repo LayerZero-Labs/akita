@@ -61,7 +61,7 @@ tables change deliberately.
 ```
 akita-config ──► akita-planner ──► akita-types / akita-challenges / akita-field
    (presets,        (pure Cfg-free DP:
-   policy_of,        find_schedule(key, &PlannerPolicy, stage1, fold_shape),
+   policy_of,        find_schedule(key, &PlannerPolicy, stage1),
    runtime_schedule, ajtai sizing — names no Cfg type)
    gen bin)
 ```
@@ -69,7 +69,7 @@ akita-config ──► akita-planner ──► akita-types / akita-challenges / 
 - **`akita-planner`** is trait-free. `find_schedule` takes a plain
   `PlannerPolicy` value (`ring_dimension`, `decomposition`, `sis_modulus_profile`,
   `ring_subfield_norm_bound`, `claim/chal_ext_degree`, `basis_range`) plus
-  `stage1` / `fold_shape` closures. It depends only on
+  a `stage1` closure. It depends only on
   `akita-types`/`akita-challenges`/`akita-field`. `akita-derive` is deleted; the
   `use_lookup` flag, `offline_schedule_for_key`, and `PlannerCfg` are gone.
 - **`akita-config`** now depends on `akita-planner`. `policy_of::<Cfg>()` derives

@@ -15,7 +15,7 @@ use common::*;
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 
 /// Production-scale fold-linf e2e is exercised at nv=20: still folds with
-/// intermediate handles and TailBoundWithGrind, without the nv=28 CI cost.
+/// intermediate handles and fold-l∞ grinding, without the nv=28 CI cost.
 const FOLD_LINF_E2E_NV: usize = 20;
 
 fn bump_flat_ring_vec(flat: &mut akita_types::RingVec<F>) {
@@ -27,7 +27,7 @@ fn bump_flat_ring_vec(flat: &mut akita_types::RingVec<F>) {
     *flat = akita_types::RingVec::from_coeffs(coeffs);
 }
 
-struct TailBoundGrindFixture {
+struct FoldLinfGrindFixture {
     proof: AkitaBatchedProof<F, F>,
     verifier_setup: AkitaVerifierSetup<F>,
     commitment: CommittedGroup<F>,
@@ -35,7 +35,7 @@ struct TailBoundGrindFixture {
     opening: F,
 }
 
-fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> TailBoundGrindFixture {
+fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfGrindFixture {
     let layout = OneHotCfg::get_params_for_batched_commitment(
         &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
     )
@@ -73,7 +73,7 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
     )
     .expect("verify");
 
-    TailBoundGrindFixture {
+    FoldLinfGrindFixture {
         proof,
         verifier_setup,
         commitment,
@@ -83,10 +83,10 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
 }
 
 #[test]
-fn tail_bound_with_grind_onehot_e2e_prove_verify() {
+fn fold_linf_grind_onehot_e2e_prove_verify() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let fixture = prove_tail_bound_with_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_01);
+        let fixture = prove_fold_linf_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_01);
         for step in fixture.proof.nonterminal_folds() {
             assert!(
                 step.fold_grind_nonce < MAX_FOLD_GRIND_ATTEMPTS,
@@ -101,7 +101,7 @@ fn tail_bound_with_grind_onehot_e2e_prove_verify() {
 fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let fixture = prove_tail_bound_with_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_02);
+        let fixture = prove_fold_linf_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_02);
         let shape = fixture.proof.shape();
         let mut bytes = Vec::new();
         fixture
@@ -145,12 +145,12 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
 fn fold_recursive_handle_tamper_rejected() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let fixture = prove_tail_bound_with_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_04);
+        let fixture = prove_fold_linf_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_04);
         let mut malformed = fixture.proof;
         let recursive = malformed
             .recursive_folds
             .first_mut()
-            .expect("tail-bound-with-grind onehot should include an intermediate fold");
+            .expect("onehot fixture should include an intermediate fold");
         bump_flat_ring_vec(&mut recursive.opening_payload);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
@@ -176,7 +176,7 @@ fn assert_invalid_proof<T: core::fmt::Debug>(label: &str, result: Result<T, Akit
 
 #[cfg(feature = "logging-transcript")]
 #[test]
-fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
+fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
     use akita_transcript::{labels, LoggingTranscript};
 
     init_rayon_pool();

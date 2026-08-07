@@ -9,7 +9,7 @@
 #![allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{SparseChallenge, TensorChallenges};
+use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 
@@ -492,16 +492,6 @@ where
         Ok(build_decompose_fold_witness::<F, D>(coeff_accum, q))
     }
 
-    pub(crate) fn decompose_fold_tensor_batched(
-        _polys: &[&Self],
-        _tensor: &TensorChallenges,
-        _num_positions_per_block: usize,
-        _num_digits: usize,
-        _log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
-        Ok(None)
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn commit_inner<B>(
         &self,
@@ -739,33 +729,10 @@ where
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,
-        source: SuffixWitnessBatchView<'_, F, D>,
-        plan: DecomposeFoldBatchPlan<'_>,
+        _source: SuffixWitnessBatchView<'_, F, D>,
+        _plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
-        let polys = source
-            .polys
-            .iter()
-            .map(|witness| witness.view::<F, D>())
-            .collect::<Result<Vec<_>, _>>()?;
-        let refs = polys.iter().collect::<Vec<_>>();
-        match plan {
-            DecomposeFoldBatchPlan::Sparse { .. } => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
-            DecomposeFoldBatchPlan::Tensor {
-                tensor,
-                num_positions_per_block,
-                num_digits,
-                log_basis,
-            } => match SuffixWitnessView::decompose_fold_tensor_batched(
-                &refs,
-                tensor,
-                num_positions_per_block,
-                num_digits,
-                log_basis,
-            )? {
-                Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
-                None => Ok(BatchDecomposeFoldOutcome::Unsupported),
-            },
-        }
+        Ok(BatchDecomposeFoldOutcome::FallbackPerPoly)
     }
 }
 

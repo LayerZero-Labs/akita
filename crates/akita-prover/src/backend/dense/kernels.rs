@@ -96,27 +96,10 @@ where
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,
-        source: DenseBatchView<'_, F, D>,
-        plan: DecomposeFoldBatchPlan<'_>,
+        _source: DenseBatchView<'_, F, D>,
+        _plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
-        match plan {
-            DecomposeFoldBatchPlan::Sparse { .. } => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
-            DecomposeFoldBatchPlan::Tensor {
-                tensor,
-                num_positions_per_block,
-                num_digits,
-                log_basis,
-            } => match DensePoly::decompose_fold_tensor_batched::<D>(
-                source.polys,
-                tensor,
-                num_positions_per_block,
-                num_digits,
-                log_basis,
-            )? {
-                Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
-                None => Ok(BatchDecomposeFoldOutcome::Unsupported),
-            },
-        }
+        Ok(BatchDecomposeFoldOutcome::FallbackPerPoly)
     }
 }
 

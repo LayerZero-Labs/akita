@@ -6,7 +6,7 @@
 
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
+use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
@@ -23,8 +23,6 @@ use crate::{CommitInnerWitness, DecomposeFoldWitness};
 mod ops;
 
 pub use ops::{SparseRingBatchView, SparseRingView};
-
-mod tensor_fold;
 
 type SparseLayoutCacheKey = (usize, usize);
 type SparseBlockCache = Arc<Mutex<HashMap<SparseLayoutCacheKey, Arc<SparseRingBlocks>>>>;
@@ -524,22 +522,6 @@ where
         build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
     }
 
-    #[tracing::instrument(skip_all, name = "SparseRingPoly::decompose_fold_tensor_batched")]
-    pub(crate) fn decompose_fold_tensor_batched<const D: usize>(
-        polys: &[&Self],
-        tensor: &TensorChallengeSet,
-        num_positions_per_block: usize,
-        num_digits: usize,
-        _log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
-        Ok(Some(tensor_fold::decompose_fold_batched_tensor_sparse::<
-            F,
-            D,
-        >(
-            polys, tensor, num_positions_per_block, num_digits
-        )?))
-    }
-
     #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner")]
     pub(crate) fn commit_inner<B, const D: usize>(
         &self,
@@ -917,9 +899,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::test_support::{
-        aggregate_witnesses, negacyclic_tensor_product_challenges_i8, tensor_oracle_challenges,
-    };
     use crate::DensePoly;
     use akita_field::Prime128OffsetA7F7 as F;
 
@@ -979,117 +958,6 @@ mod tests {
             sparse.fold_blocks_ring::<D>(&position_weights, num_positions_per_block),
             dense.fold_blocks_ring::<D>(&position_weights, num_positions_per_block)
         );
-    }
-
-    #[test]
-    fn sparse_ring_tensor_decompose_fold_matches_negacyclic_product_reference() {
-        const D: usize = 8;
-        let num_positions_per_block = 2;
-        let num_digits = 1;
-        let tensor = tensor_oracle_challenges::<D>();
-        let polys = [
-            SparseRingPoly::<F>::from_signed_coeffs(
-                6,
-                D,
-                8,
-                vec![(0, 1, 1), (1, 3, -1), (3, 2, 1), (6, 5, -1)],
-            )
-            .unwrap(),
-            SparseRingPoly::<F>::from_signed_coeffs(
-                6,
-                D,
-                8,
-                vec![(0, 0, -1), (2, 4, 1), (5, 7, 1), (7, 2, -1)],
-            )
-            .unwrap(),
-        ];
-        let product_challenges = negacyclic_tensor_product_challenges_i8::<D>(&tensor).unwrap();
-
-        let expected = aggregate_witnesses::<F, D>(
-            &polys
-                .iter()
-                .zip(product_challenges.chunks(4))
-                .map(|(poly, challenges)| {
-                    poly.decompose_fold::<D>(challenges, num_positions_per_block, num_digits, 0)
-                })
-                .collect::<Vec<_>>(),
-        );
-        let poly_refs = polys.iter().collect::<Vec<_>>();
-        let got = SparseRingPoly::<F>::decompose_fold_tensor_batched::<D>(
-            &poly_refs,
-            &tensor,
-            num_positions_per_block,
-            num_digits,
-            0,
-        )
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(got, expected);
-    }
-
-    #[test]
-    fn sparse_ring_tensor_decompose_fold_supports_partial_final_low_row() {
-        const D: usize = 8;
-        let num_positions_per_block = 2;
-        let num_digits = 1;
-        let base_tensor = tensor_oracle_challenges::<D>();
-        let tensor = TensorChallengeSet {
-            fold_high: vec![
-                base_tensor.fold_high[0].clone(),
-                base_tensor.fold_high[2].clone(),
-            ],
-            fold_low: (0..2)
-                .flat_map(|claim| {
-                    (0..8).map({
-                        let base_tensor = &base_tensor;
-                        move |low| base_tensor.fold_low[claim * 2 + low % 2].clone()
-                    })
-                })
-                .collect(),
-            num_live_blocks_per_claim: 4,
-            fold_low_len: 8,
-            num_claims: 2,
-        };
-        let polys = [
-            SparseRingPoly::<F>::from_signed_coeffs(
-                6,
-                D,
-                8,
-                vec![(0, 1, 1), (1, 3, -1), (3, 2, 1), (6, 5, -1)],
-            )
-            .unwrap(),
-            SparseRingPoly::<F>::from_signed_coeffs(
-                6,
-                D,
-                8,
-                vec![(0, 0, -1), (2, 4, 1), (5, 7, 1), (7, 2, -1)],
-            )
-            .unwrap(),
-        ];
-        let product_challenges = negacyclic_tensor_product_challenges_i8::<D>(&tensor).unwrap();
-
-        let expected = aggregate_witnesses::<F, D>(
-            &polys
-                .iter()
-                .zip(product_challenges.chunks(4))
-                .map(|(poly, challenges)| {
-                    poly.decompose_fold::<D>(challenges, num_positions_per_block, num_digits, 0)
-                })
-                .collect::<Vec<_>>(),
-        );
-        let poly_refs = polys.iter().collect::<Vec<_>>();
-        let got = SparseRingPoly::<F>::decompose_fold_tensor_batched::<D>(
-            &poly_refs,
-            &tensor,
-            num_positions_per_block,
-            num_digits,
-            0,
-        )
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(got, expected);
     }
 
     #[test]
