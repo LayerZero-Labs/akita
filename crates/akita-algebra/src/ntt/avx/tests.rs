@@ -810,8 +810,12 @@ fn avx512vnni_six_way_i16_dot_matches_scalar_with_tail() {
     let rhs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
         random_mont_array_i16::<D>(prime, 0x2200 + column as u64)
     });
-    let lhs_ptrs = lhs.map(|column| column.as_ptr().cast::<i16>());
-    let rhs_ptrs = rhs.map(|column| column.as_ptr().cast::<i16>());
+    let lhs_ptrs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
+        lhs[column].as_ptr().cast::<i16>()
+    });
+    let rhs_ptrs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
+        rhs[column].as_ptr().cast::<i16>()
+    });
 
     let mut avx_acc = acc_init;
     // SAFETY: guarded by runtime AVX2 and AVX-512F/BW/VNNI detection above.
@@ -830,8 +834,12 @@ fn avx512vnni_six_way_i16_dot_matches_scalar_with_tail() {
     for column in 0..I16_VNNI_DOT_BATCH {
         scalar_pointwise_i16(&mut scalar_acc, &lhs[column], &rhs[column], prime);
     }
-    for (actual, expected) in avx_acc.into_iter().zip(scalar_acc) {
-        assert_eq!(prime.normalize(actual), prime.normalize(expected));
+    for (index, (actual, expected)) in avx_acc.into_iter().zip(scalar_acc).enumerate() {
+        assert_eq!(
+            prime.normalize(actual),
+            prime.normalize(expected),
+            "coefficient {index}"
+        );
     }
 }
 
