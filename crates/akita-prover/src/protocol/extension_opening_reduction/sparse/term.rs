@@ -1,5 +1,4 @@
 use super::*;
-use akita_algebra::SplitEqEvals;
 
 /// One term in an extension-opening reduction sumcheck.
 ///
@@ -59,15 +58,21 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
             });
         }
         let projection = TensorFactorProjection::<F, E>::new(eta)?;
-        let equality = SplitEqEvals::new(tail_point)?;
-        debug_assert_eq!(equality.len(), expected);
-        let inner_len = equality.in_len();
-        let factor = EvaluationTable::from_multilinear_evaluation_fn(expected, |logical_row| {
-            let equality_value =
-                equality.e_out[logical_row / inner_len] * equality.e_in[logical_row % inner_len];
-            projection.project(equality_value)
-        })?;
-        let witness = EvaluationTable::from_multilinear_evaluations(&witness_evals)?;
+        let [factor] = {
+            let _span = tracing::debug_span!("extension_opening_factor_table", expected).entered();
+            let reversed_tail = tail_point.iter().rev().copied().collect::<Vec<_>>();
+            let equality = EqPolynomial::evals(&reversed_tail)?;
+            [EvaluationTable::from_evaluation_fn(
+                expected,
+                |stored_row| projection.project(equality[stored_row]),
+            )]
+        };
+        let [witness] = {
+            let _span = tracing::debug_span!("extension_opening_witness_table", expected).entered();
+            EvaluationTable::from_multilinear_evaluation_array_fn(expected, |logical_row| {
+                [witness_evals[logical_row]]
+            })?
+        };
         Ok(Self {
             tables: ExtensionOpeningTables::Dense { witness, factor },
             coeff,

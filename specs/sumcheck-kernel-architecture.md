@@ -762,6 +762,16 @@ Two complete one-worker fp32 D128 profiles reduced the root prefix from 71.9 ms
 to 70.1 and 70.8 ms; complete root Stage 2 measured 182 and 184 ms. Both proofs
 verified with the unchanged 77,834-byte proof.
 
+Dense EOR terms construct both canonical tables in stored binding order. The
+transparent equality point is reversed once so its ordinary little-endian
+evaluation table is already in binding order; its coordinate projection and
+coefficient-first write are then sequential. Witness conversion uses the same
+stored-row traversal. This removes the former cache-hostile bit-reversed output
+writes without changing the persistent representation or adding a second table
+type. On the largest recursive fp32 D128 EOR, factor construction fell to
+32.6 ms, complete dense-term construction to 42.1 ms from 75.5 ms, and complete
+EOR to 98.2 ms from 130 ms. The 1.391-second proof verified unchanged.
+
 Stage 3 now stores its coefficient and setup-index phases in `EvaluationTable`
 and uses the same detected fold, product-round, and fused fold-plus-next-round
 operations as dense EOR. The linear coefficient is derived from the carried

@@ -479,29 +479,6 @@ pub(crate) fn accum_lookup_vector_signed<E: FieldCore + HasUnreducedOps, const N
 }
 
 #[inline]
-pub(crate) fn accum_lookup_vector_small_signed_selected<
-    E: FieldCore + HasUnreducedOps,
-    const N: usize,
-    const M: usize,
->(
-    pos: &mut [E::SmallProductAccum; N],
-    neg: &mut [E::SmallProductAccum; N],
-    coeff: E,
-    values: &[i64; M],
-    selected_indices: &[usize; N],
-) {
-    for (dst_idx, &src_idx) in selected_indices.iter().enumerate() {
-        let value = values[src_idx];
-        debug_assert!(value.unsigned_abs() <= u64::from(u16::MAX));
-        if value > 0 {
-            pos[dst_idx] += coeff.mul_u16_to_small_product_accum(value as u16);
-        } else if value < 0 {
-            neg[dst_idx] += coeff.mul_u16_to_small_product_accum(value.unsigned_abs() as u16);
-        }
-    }
-}
-
-#[inline]
 pub(crate) fn accum_lookup_vector_small_unsigned_selected<
     E: FieldCore + HasUnreducedOps,
     const N: usize,
