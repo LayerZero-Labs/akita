@@ -49,13 +49,16 @@ dimension needed by this experiment:
   dimensions `d_a/d_b/d_d`, subject to A-to-role projection divisibility.
 
 The protocol, setup-contribution, quotient, and direct verifier paths consume
-this geometry. The offline planner has an opt-in direct scalar search over
-explicit per-matrix dimension tuples, and the fp128 nv32 one-hot family emits
-and replays a catalog using that search. Recursive setup offload, direct
-multi-chunk search, and heterogeneous mixed-D multi-group roots remain
-explicitly deferred; the current multi-group expander still uses the ordinary
-uniform-D contract. The benchmark profiles in this document remain synthetic
-schedules built in `akita-pcs` test support unless a section says otherwise.
+this geometry. For the default direct scalar fp128 one-hot and dense families,
+the offline planner searches the admitted A dimensions and block splits. It
+currently derives B and D by minimum secure rank before complete schedule
+comparison. Full Cartesian B/D optimization is deferred. Runtime code replays
+the generated catalogs and does not invoke the planner. Recursive setup
+offload, direct multi-chunk search, and heterogeneous mixed-D multi-group roots
+also remain deferred. Grouped paths preserve committed profiles and use the
+uniform D64 suffix policy rather than planner-native mixed-D search. The
+benchmark profiles in this document remain synthetic schedules built in
+`akita-pcs` test support unless a section says otherwise.
 
 The implemented direct-scalar policy is:
 
@@ -65,11 +68,17 @@ The implemented direct-scalar policy is:
 3. deterministic canonical tie-break only.
 ```
 
-This policy is catalog-bound for the fp128 nv32 mixed-D family. Its generated
-identity uses `MinSetupMatrixFieldElementsThenProofPayload`; callers that pass
-an explicit mixed dimension domain with a proof-payload policy are rejected
+This policy is catalog-bound for the default direct scalar fp128 one-hot and
+dense families. Their generated identities use
+`MinSetupMatrixFieldElementsThenProofPayload`. A caller that supplies an
+adaptive dimension policy with a proof-payload selection policy is rejected
 rather than silently changing objectives. Prover and verifier remain
 catalog-only and never run the planner.
+
+The current implementation applies this objective after choosing B and D by
+minimum secure rank. It is therefore not a global optimum over the full A/B/D
+Cartesian product. The complete Cartesian search and matching oracle are P0
+follow-up work below.
 
 The currently preferred measured design remains:
 
@@ -151,9 +160,14 @@ decomposition. Their physical columns use
 
 ### Across-level setup rule
 
-The setup is generated at `CommitmentConfig::D`. Every scheduled matrix
-dimension must be supported by field dispatch and divide the generation
-dimension. `validate_schedule_ring_dims` is the schedule boundary check.
+The public setup matrix is a dimension-free stream of base-field elements.
+Setup capacity is the largest physical matrix requirement in the schedule.
+There is no setup generation dimension and no global divisibility rule.
+
+Each scheduled A, B, and D dimension must have support for its protocol role
+and its SIS security table. A dimensions must also have production fold
+challenge support. The schedule separately enforces A-to-role projection and
+per-level transition rules.
 
 ### One compact outgoing witness per multi-group level
 
@@ -180,12 +194,13 @@ from the selected dimensions, plan the complete continuation from the exact
 outgoing witness, and retain enough alternatives to optimize the non-additive
 setup objective correctly.
 
-The approved search policy limits dimension choice to L0 and L1. Dimensions
-are component-wise non-increasing, and L2 and later are uniform D64. Rank-one
-dimension pruning is not part of the authoritative search: B and D widths
-depend on upstream ranks, so a geometry-only bucket is not an equivalence
-class. The correctness baseline is exhaustive L0/L1 enumeration with Pareto
-frontier retention and descriptor-byte tie-breaking.
+The target search policy limits dimension choice to L0 and L1. Dimensions are
+component-wise non-increasing, and L2 and later are uniform D64. The target
+does not use rank-one dimension pruning because B and D widths depend on
+upstream ranks. A geometry-only bucket is not an equivalence class. The target
+correctness baseline is exhaustive L0/L1 tuple enumeration with Pareto frontier
+retention and descriptor-byte tie-breaking. The current implementation reaches
+this baseline for A choices and block splits, but not for B and D choices.
 
 The direct-schedule score is:
 
@@ -332,29 +347,29 @@ rebuilt selected matrices, and recomputed boundaries outside the native
 planner. A native planner must produce the final matrices directly; it must not
 generate a uniform candidate and retarget it after selection.
 
-### Future broader ring-dimension policy
+### Target ring-dimension policy
 
-Replace the overloaded scalar planner dimension with a plain-value search
-policy conceptually equivalent to:
+The planner uses a plain-value search policy conceptually equivalent to:
 
 ```rust
 PlannerRingDimensionPolicy {
-    setup_generation_dimension,
     a_candidates,
     b_candidates,
     d_candidates,
+    uniform_suffix_dimension,
 }
 ```
 
 The exact Rust shape is an implementation detail, but the semantics are
 normative:
 
-- `setup_generation_dimension` is the setup envelope's generation ring
-  dimension. It must be a supported power of two and a multiple of every
-  admitted A/B/D dimension.
+- The public setup matrix has no ring dimension. Candidate admission does not
+  use a setup carrier or require divisibility against one.
 - `a_candidates` are dimensions with production fold-challenge support and an
   audited A-role SIS cell.
 - `b_candidates` and `d_candidates` are independently audited role domains.
+- `uniform_suffix_dimension` is the dimension used after the adaptive search
+  prefix. It must be admitted for A, B, and D.
 - Candidate lists are sorted, unique, non-empty, and catalog-identity-bound.
 - The planner enumerates the Cartesian product and keeps only tuples satisfying
   the canonical A-to-role divisibility validation.
@@ -362,6 +377,11 @@ normative:
   ordering between them.
 - Terminal candidates use the A domain because a terminal has only the inner
   commitment matrix.
+
+The current bounded fp128 implementation is a partial implementation of this
+target. It enumerates A but derives B and D locally by minimum secure rank. The
+P0 follow-up must enumerate the full role-valid Cartesian product and apply the
+catalog objective only after each complete schedule has been priced.
 
 For fp128 one-hot, the intended eventual role domains are:
 
@@ -659,10 +679,7 @@ canonical maximum group carrier. Group order must not influence the result.
 Outgoing sizing must call the compact `WitnessLayout` and successor-domain
 geometry rather than recomputing ring slots. Authenticated order fixes bytes;
 changing stable group identifiers without changing that order must not change
-the length. The planner must replace current uses of
-`policy.uniform_ring_dimension` in `d_segment_width` and carrier sizing with
-the selected shared D and the canonical maximum group carrier. Group order
-must not influence the result.
+the length.
 
 ### Generated catalog and replay integration
 
@@ -780,13 +797,13 @@ byte-identical.
 7. Select by setup field elements, then proof bytes, then descriptor bytes.
 8. Keep recursive setup families on singleton D64.
 
-#### Cut 2: catalog replay and shipped adaptive family (implemented for fp128 one-hot)
+#### Cut 2: catalog replay and shipped adaptive families (implemented for fp128 one-hot and dense)
 
 1. Make the canonical generated-entry walker replay per-matrix/per-level
    dimensions.
 2. Add DP-to-generated-to-runtime exact parity tests.
-3. Add one adaptive fp128 one-hot family rather than another set of fixed-D
-   selector wrappers.
+3. Add adaptive fp128 one-hot and dense families rather than another set of
+   fixed-D selector wrappers.
 4. Regenerate tables and update setup capacity/cache identity.
 
 #### Cut 3: broader topology
@@ -809,14 +826,15 @@ preserving all generated catalogs:
   uniform mode preserves the proof-payload objective, while adaptive mode
   selects by physical setup field elements and then exact modeled proof bytes;
 - root and recursive candidates derive role-local widths, SIS keys, and
-  matrices directly;
-- L0 and L1 exhaustively enumerate splits over admissible, component-wise
-  descending tuples;
+  matrices directly after choosing A and deriving B and D by minimum secure
+  rank;
+- L0 and L1 exhaustively enumerate block splits and admissible,
+  component-wise descending A choices;
 - dimensions are uniform D64 from L2 through the terminal;
-- rank-one dimension pruning is disabled in the authoritative mixed search;
-  a test-only unpruned traversal checks the production frontier and canonical
-  selection while deliberately sharing canonical candidate construction and
-  pricing primitives;
+- a test-only unpruned traversal checks the production frontier and canonical
+  selection over an A-varying domain with B and D fixed at D64. It deliberately
+  shares canonical candidate construction and pricing primitives. It does not
+  establish global optimality over the full B/D domain;
 - hand-calculated regressions independently pin exact field-element setup
   rounding, candidate-local EOR pricing, unsupported SIS-cell skipping, and
   complete-schedule descriptor ties;
@@ -858,22 +876,21 @@ Release-process measurements after the bounded-search change were:
 | 24 | 0.22 s | `256/128/128` | `128/64/64` | D64 | 524,288 | 90,976 |
 | 36 | 0.46 s | `256/128/128` | `64/64/64` | D64 | 67,108,864 | 99,368 |
 
-The `nv=24` and `nv=36` rows supersede the earlier rank-one-pruned
-checkpoint. Exhaustive L0/L1 enumeration admits the D256 root and selects it
-because setup fields are the primary objective, even though the `nv=36` proof
-is larger than the former pruned result.
+The `nv=24` and `nv=36` rows supersede the earlier A-pruned checkpoint.
+Exhaustive L0/L1 A enumeration admits the D256 root and selects it because
+setup fields are the primary objective, even though the `nv=36` proof is
+larger than the former pruned result.
 
 These are planner smoke-test wall times, not a controlled benchmark; the
 process and filesystem caches were warm after the first run. The material
 result is that `nv=24` and `nv=36` now complete normally. Before the bounded
 policy, `nv=24` exceeded one minute and `nv=36` was stopped after five minutes.
 
-The speedup comes from policy, not approximate pruning: mixed dimensions and
-exhaustive split enumeration stop after L1, monotonicity removes upward
-transitions, and the complete D64 suffix reuses the existing fixed planner
-split derivation. Rank-one dimension caps are intentionally absent from the
-authoritative search until an equivalence key is proved and checked against the
-unpruned traversal.
+The speedup comes from stopping mixed dimensions and exhaustive block-split
+enumeration after L1. Monotonicity removes upward transitions, and the complete
+D64 suffix reuses the existing fixed planner split derivation. The current
+local B/D rank choice also reduces the search space, but it is not equivalent
+to the target Cartesian objective. The P0 follow-up must remove it.
 
 For the PR recursive multi-group shape, the new entry point returns the
 expected unsupported-policy error because mixed recursive setup is a later
@@ -884,15 +901,18 @@ preservation, not planner-native recursive mixed-D support.
 
 ### Acceptance criteria
 
-The list below is the complete heterogeneous-planner target. PR341's scoped
-implementation satisfies items 1–10 and the scalar fp128 portion of items
-11–12. Mixed multi-group replay, direct multi-chunk mixed search, and fp32/fp64
-mixed catalogs remain deferred work; they are not represented as shipped
-capabilities by this PR.
+The list below is the complete heterogeneous-planner target. This PR implements
+the catalog and runtime path and the bounded scalar fp128 protocol path. It does
+not yet satisfy the full planner optimality requirements in items 2 and 4. The
+checked unpruned traversal varies A while holding B and D at D64, and production
+chooses B and D by minimum secure rank before the complete schedule comparison.
+Full Cartesian B/D search is P0 follow-up work. Mixed multi-group replay,
+direct multi-chunk mixed search, and fp32/fp64 mixed catalogs also remain
+deferred. This PR does not describe these items as shipped capabilities.
 
 1. Existing `find_schedule` reproduces uniform schedules, estimates, and
-   generated/runtime descriptor bytes; the opt-in mixed entry point requires
-   uniform D64 in its domain.
+   generated/runtime descriptor bytes. An adaptive policy must admit D64 for
+   every role and uses uniform D64 from L2 onward.
 2. A small-domain unpruned traversal agrees with the constrained L0/L1 search
    and selected score; independently calculated tests cover the concrete
    formulas that traversal shares with production.
@@ -942,7 +962,7 @@ These tests describe the implemented direct scalar cut. A future mixed
 multi-group or mixed multi-chunk cut must add corresponding frozen-precommit,
 chunk-partition, and generated-replay rows before claiming those capabilities.
 
-### Resolved search policy
+### Target search policy
 
 The approved first planner cut uses the deterministic
 `(physical setup fields, proof bytes, descriptor bytes)` comparator subject to
@@ -951,9 +971,10 @@ two catalog-bound constraints:
 1. only L0 and L1 search mixed dimensions;
 2. dimensions never increase and L2+ is uniform D64.
 
-Rank-one pruning is intentionally absent from this cut. Reintroduce it only
-after proving an equivalence key and checking it against the unpruned
-traversal.
+A rank-one pruning is absent from this cut. B and D still use a local minimum
+rank choice, which is not equivalent to the complete schedule objective. The
+P0 Cartesian follow-up must remove that choice. Any later pruning requires an
+equivalence proof checked against a full-domain traversal.
 
 Measured verifier latency remains a possible later objective. It requires a
 versioned deterministic work model; host timings are not planner inputs.
@@ -1246,11 +1267,11 @@ continue to cover mixed-D search and validation at the planning boundary.
 
 ### Lower-level coverage
 
-- planner tests compare the mixed Pareto frontier with an unpruned traversal,
-  show that a lower D256 A rank can reduce B width even after both B matrices
-  reach rank one, preserve a lower-proof child when a larger parent setup masks
-  child setup differences, and require descriptor-identical concurrent
-  generation.
+- planner tests compare the mixed Pareto frontier with an A-varying unpruned
+  traversal whose B and D dimensions remain D64. They also show that a lower
+  D256 A rank can reduce B width after both B matrices reach rank one, preserve
+  a lower-proof child when a larger parent setup masks child setup differences,
+  and require descriptor-identical concurrent generation.
 - `akita-types` setup-contribution span tests compare dense, materialized,
   direct, deferred, single-chunk, multi-chunk, and mixed-role projections.
 - verifier ring-switch tests check prepared relation geometry and deferred
@@ -1460,9 +1481,9 @@ form:
 - commit is about 28–29% slower in both workloads;
 - the plain prover is 58.5% slower, while W8R2 amortizes most of that penalty
   and is 5.5% slower;
-- the larger generation dimension sharply reduces the expanded setup vector;
-  for W8R2 it also reduces NTT cache and peak RSS, but the plain case needs
-  D256, D128, and D64 prepared slots and therefore uses more cache and RSS;
+- the mixed schedule sharply reduces the expanded setup vector; for W8R2 it
+  also reduces NTT cache and peak RSS, but the plain case needs D256, D128, and
+  D64 prepared slots and therefore uses more cache and RSS;
 - W8R2 proof size improves by 7,404 bytes, while the plain proof grows by
   2,213 bytes.
 
@@ -1613,10 +1634,19 @@ back.
 
 ### P0: broaden cataloged mixed planning
 
-The direct scalar fp128 one-hot family completes the bounded Cut 2 path. The
-next planner work is multi-group and recursive-setup admission under separately
-specified objectives. Remove the D512 D256-promotion heuristic only after the
-native planner reproduces or improves its geometry.
+The direct scalar fp128 one-hot and dense families complete the catalog and
+runtime part of the bounded Cut 2 path. Their planner does not yet produce the
+global optimum over the full A/B/D Cartesian product. For example, at fp128
+one-hot `nv=14`, the current search selects `256/64/64` with 73,764 proof bytes.
+An explicit tuple traversal selects `256/128/128` with the same 65,536 setup
+field elements and 73,652 proof bytes.
+
+The first follow-up must enumerate every role-valid B/D choice at L0 and L1,
+remove the local rank-based dimension choice, and compare the selected score
+and descriptor against a full-domain traversal. Later planner work includes
+multi-group and recursive setup admission under separately specified
+objectives. Remove the D512 D256-promotion heuristic only after the native
+planner reproduces or improves its geometry.
 
 ### P1: production heterogeneous-group admission
 
