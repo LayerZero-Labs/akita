@@ -3,6 +3,89 @@
 use akita_field::unreduced::HasUnreducedOps;
 use akita_field::{FieldCore, Zero};
 
+/// Accumulate an arbitrary sum of field products under the field's selected
+/// reduction policy.
+pub trait ProductSumAccumulator<E: FieldCore + HasUnreducedOps>: Sized + Send {
+    /// Return an empty product sum.
+    fn zero() -> Self;
+
+    /// Add `lhs * rhs` to the sum.
+    fn add_product(&mut self, lhs: E, rhs: E);
+
+    /// Combine two partial sums.
+    #[cfg(feature = "parallel")]
+    fn merge(self, other: Self) -> Self;
+
+    /// Reduce the complete sum to one field element.
+    fn finish(self) -> E;
+}
+
+/// Product sum that reduces once after all wide products have been added.
+pub struct DelayedProductSum<E: HasUnreducedOps> {
+    sum: E::ProductAccum,
+}
+
+impl<E: FieldCore + HasUnreducedOps> ProductSumAccumulator<E> for DelayedProductSum<E> {
+    #[inline]
+    fn zero() -> Self {
+        assert!(
+            E::DELAYED_PRODUCT_SUM_IS_EXACT,
+            "delayed product accumulation requires an exact field accumulator"
+        );
+        Self {
+            sum: E::ProductAccum::zero(),
+        }
+    }
+
+    #[inline]
+    fn add_product(&mut self, lhs: E, rhs: E) {
+        self.sum += lhs.mul_to_product_accum(rhs);
+    }
+
+    #[cfg(feature = "parallel")]
+    #[inline]
+    fn merge(self, other: Self) -> Self {
+        Self {
+            sum: self.sum + other.sum,
+        }
+    }
+
+    #[inline]
+    fn finish(self) -> E {
+        E::reduce_product_accum(self.sum)
+    }
+}
+
+/// Product sum that reduces every product before adding it.
+pub struct DirectProductSum<E> {
+    sum: E,
+}
+
+impl<E: FieldCore + HasUnreducedOps> ProductSumAccumulator<E> for DirectProductSum<E> {
+    #[inline]
+    fn zero() -> Self {
+        Self { sum: E::zero() }
+    }
+
+    #[inline]
+    fn add_product(&mut self, lhs: E, rhs: E) {
+        self.sum += lhs * rhs;
+    }
+
+    #[cfg(feature = "parallel")]
+    #[inline]
+    fn merge(self, other: Self) -> Self {
+        Self {
+            sum: self.sum + other.sum,
+        }
+    }
+
+    #[inline]
+    fn finish(self) -> E {
+        self.sum
+    }
+}
+
 /// Accumulate the constant and quadratic coefficients of a product round.
 ///
 /// Implementations differ only in when they reduce field products. Protocol
@@ -31,8 +114,8 @@ pub trait ProductRoundAccumulator<E: FieldCore + HasUnreducedOps>: Sized + Send 
 /// Construction rejects fields that have not declared delayed product sums
 /// exact.
 pub struct DelayedProductRoundAccumulator<E: HasUnreducedOps> {
-    constant: E::ProductAccum,
-    quadratic: E::ProductAccum,
+    constant: DelayedProductSum<E>,
+    quadratic: DelayedProductSum<E>,
 }
 
 impl<E: FieldCore + HasUnreducedOps> ProductRoundAccumulator<E>
@@ -40,41 +123,34 @@ impl<E: FieldCore + HasUnreducedOps> ProductRoundAccumulator<E>
 {
     #[inline]
     fn zero() -> Self {
-        assert!(
-            E::DELAYED_PRODUCT_SUM_IS_EXACT,
-            "delayed product round accumulation requires an exact field accumulator"
-        );
         Self {
-            constant: E::ProductAccum::zero(),
-            quadratic: E::ProductAccum::zero(),
+            constant: DelayedProductSum::zero(),
+            quadratic: DelayedProductSum::zero(),
         }
     }
 
     #[inline]
     fn add_constant_product(&mut self, lhs: E, rhs: E) {
-        self.constant += lhs.mul_to_product_accum(rhs);
+        self.constant.add_product(lhs, rhs);
     }
 
     #[inline]
     fn add_quadratic_product(&mut self, lhs: E, rhs: E) {
-        self.quadratic += lhs.mul_to_product_accum(rhs);
+        self.quadratic.add_product(lhs, rhs);
     }
 
     #[cfg(feature = "parallel")]
     #[inline]
     fn merge(self, other: Self) -> Self {
         Self {
-            constant: self.constant + other.constant,
-            quadratic: self.quadratic + other.quadratic,
+            constant: self.constant.merge(other.constant),
+            quadratic: self.quadratic.merge(other.quadratic),
         }
     }
 
     #[inline]
     fn finish(self) -> (E, E) {
-        (
-            E::reduce_product_accum(self.constant),
-            E::reduce_product_accum(self.quadratic),
-        )
+        (self.constant.finish(), self.quadratic.finish())
     }
 }
 
@@ -83,8 +159,8 @@ impl<E: FieldCore + HasUnreducedOps> ProductRoundAccumulator<E>
 /// This is the exact fallback when a field does not permit delayed product
 /// reduction for the batch.
 pub struct DirectProductRoundAccumulator<E> {
-    constant: E,
-    quadratic: E,
+    constant: DirectProductSum<E>,
+    quadratic: DirectProductSum<E>,
 }
 
 impl<E: FieldCore + HasUnreducedOps> ProductRoundAccumulator<E>
@@ -93,33 +169,33 @@ impl<E: FieldCore + HasUnreducedOps> ProductRoundAccumulator<E>
     #[inline]
     fn zero() -> Self {
         Self {
-            constant: E::zero(),
-            quadratic: E::zero(),
+            constant: DirectProductSum::zero(),
+            quadratic: DirectProductSum::zero(),
         }
     }
 
     #[inline]
     fn add_constant_product(&mut self, lhs: E, rhs: E) {
-        self.constant += lhs * rhs;
+        self.constant.add_product(lhs, rhs);
     }
 
     #[inline]
     fn add_quadratic_product(&mut self, lhs: E, rhs: E) {
-        self.quadratic += lhs * rhs;
+        self.quadratic.add_product(lhs, rhs);
     }
 
     #[cfg(feature = "parallel")]
     #[inline]
     fn merge(self, other: Self) -> Self {
         Self {
-            constant: self.constant + other.constant,
-            quadratic: self.quadratic + other.quadratic,
+            constant: self.constant.merge(other.constant),
+            quadratic: self.quadratic.merge(other.quadratic),
         }
     }
 
     #[inline]
     fn finish(self) -> (E, E) {
-        (self.constant, self.quadratic)
+        (self.constant.finish(), self.quadratic.finish())
     }
 }
 
@@ -139,9 +215,7 @@ mod tests {
     use akita_field::Prime128Offset275;
 
     #[test]
-    #[should_panic(
-        expected = "delayed product round accumulation requires an exact field accumulator"
-    )]
+    #[should_panic(expected = "delayed product accumulation requires an exact field accumulator")]
     fn delayed_product_round_rejects_inexact_field() {
         let _ = <DelayedProductRoundAccumulator<Prime128Offset275> as ProductRoundAccumulator<
             Prime128Offset275,

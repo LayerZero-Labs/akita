@@ -18,8 +18,9 @@ pub use akita_algebra::poly::{
 pub use akita_algebra::uni_poly::{CompressedUniPoly, UniPoly};
 
 pub use accum::{
-    reduce_signed_accum, DelayedProductRoundAccumulator, DirectProductRoundAccumulator,
-    ProductRoundAccumulator,
+    reduce_signed_accum, DelayedProductRoundAccumulator, DelayedProductSum,
+    DirectProductRoundAccumulator, DirectProductSum, ProductRoundAccumulator,
+    ProductSumAccumulator,
 };
 pub use batched_sumcheck::{
     check_batched_output_claim, compute_batched_expected_output_claim, prove_batched_sumcheck,

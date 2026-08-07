@@ -3,6 +3,7 @@ use super::*;
 #[allow(clippy::too_many_arguments)]
 fn fold_lane_and_compute_next_round<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
+    A: ProductSumAccumulator<E>,
     const SKIP_LINEAR: bool,
 >(
     prover: &RelationRangeImageProver<E>,
@@ -20,8 +21,8 @@ fn fold_lane_and_compute_next_round<
     let next_coeff_count = target.len();
     let next_coefficient_half = next_coeff_count / 2;
     let equality_address_base = lane * next_coefficient_half;
-    let mut virt = [E::zero(); 3];
-    let mut rel = [E::zero(); 3];
+    let mut virt: [A; 3] = std::array::from_fn(|_| A::zero());
+    let mut rel: [A; 3] = std::array::from_fn(|_| A::zero());
     let mut blk = 0usize;
 
     while blk < next_coefficient_half {
@@ -33,7 +34,7 @@ fn fold_lane_and_compute_next_round<
             block_size,
             next_coefficient_half,
         );
-        let mut inner_virt = [E::zero(); 3];
+        let mut inner_virt: [A; 3] = std::array::from_fn(|_| A::zero());
 
         for coefficient_pair in blk..blk_end {
             let left = 2 * coefficient_pair;
@@ -48,11 +49,11 @@ fn fold_lane_and_compute_next_round<
 
             let j_low = (equality_address_base + coefficient_pair) & (e_first.len() - 1);
             let e_in = e_first[j_low];
-            inner_virt[0] += e_in * (w0 * (w0 + E::one()));
+            inner_virt[0].add_product(e_in, w0 * (w0 + E::one()));
             if !SKIP_LINEAR {
-                inner_virt[1] += e_in * (dw * (w0 + w0 + E::one()));
+                inner_virt[1].add_product(e_in, dw * (w0 + w0 + E::one()));
             }
-            inner_virt[2] += e_in * (dw * dw);
+            inner_virt[2].add_product(e_in, dw * dw);
 
             let p0 = next_alpha_factor[left] * lane_weight;
             let p1 = next_alpha_factor[left + 1] * lane_weight;
@@ -60,19 +61,25 @@ fn fold_lane_and_compute_next_round<
             let (t0, t1) = prover
                 .evaluation_trace
                 .pair_from_flat_index(trace_index, next_coeff_count);
-            accumulate_relation_coeffs(&mut rel, w0, dw, p0 + t0, p1 + t1);
+            let p0 = p0 + t0;
+            let dp = p1 + t1 - p0;
+            rel[0].add_product(w0, p0);
+            rel[1].add_product(w0, dp);
+            rel[1].add_product(dw, p0);
+            rel[2].add_product(dw, dp);
         }
 
         let e_out = e_second[j_high];
-        virt[0] += e_out * inner_virt[0];
+        let [inner_constant, inner_linear, inner_quadratic] = inner_virt;
+        virt[0].add_product(e_out, inner_constant.finish());
         if !SKIP_LINEAR {
-            virt[1] += e_out * inner_virt[1];
+            virt[1].add_product(e_out, inner_linear.finish());
         }
-        virt[2] += e_out * inner_virt[2];
+        virt[2].add_product(e_out, inner_quadratic.finish());
         blk = blk_end;
     }
 
-    (virt, rel)
+    (virt.map(A::finish), rel.map(A::finish))
 }
 
 fn add_round_terms<E: FieldCore>(left: &mut ([E; 3], [E; 3]), right: ([E; 3], [E; 3])) {
@@ -90,6 +97,27 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         name = "RelationRangeImageProver::fuse_folded_coefficients_and_compute_next_round"
     )]
     pub(super) fn fuse_folded_coefficients_and_compute_next_round(
+        &self,
+        folded_witness: &[E],
+        next_alpha_factor: &[E],
+        challenge: E,
+    ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
+        if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+            self.fuse_folded_coefficient_round::<DelayedProductSum<E>>(
+                folded_witness,
+                next_alpha_factor,
+                challenge,
+            )
+        } else {
+            self.fuse_folded_coefficient_round::<DirectProductSum<E>>(
+                folded_witness,
+                next_alpha_factor,
+                challenge,
+            )
+        }
+    }
+
+    fn fuse_folded_coefficient_round<A: ProductSumAccumulator<E>>(
         &self,
         folded_witness: &[E],
         next_alpha_factor: &[E],
@@ -118,7 +146,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 let source = &folded_witness[source_start..source_start + old_coeff_count];
                 let lane_weight = self.relation_lane_weights[lane];
                 if skip_linear {
-                    fold_lane_and_compute_next_round::<E, true>(
+                    fold_lane_and_compute_next_round::<E, A, true>(
                         self,
                         source,
                         target,
@@ -132,7 +160,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         block_size,
                     )
                 } else {
-                    fold_lane_and_compute_next_round::<E, false>(
+                    fold_lane_and_compute_next_round::<E, A, false>(
                         self,
                         source,
                         target,
@@ -163,7 +191,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 let source = &folded_witness[source_start..source_start + old_coeff_count];
                 let lane_weight = self.relation_lane_weights[lane];
                 let round_terms = if skip_linear {
-                    fold_lane_and_compute_next_round::<E, true>(
+                    fold_lane_and_compute_next_round::<E, A, true>(
                         self,
                         source,
                         target,
@@ -177,7 +205,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         block_size,
                     )
                 } else {
-                    fold_lane_and_compute_next_round::<E, false>(
+                    fold_lane_and_compute_next_round::<E, A, false>(
                         self,
                         source,
                         target,

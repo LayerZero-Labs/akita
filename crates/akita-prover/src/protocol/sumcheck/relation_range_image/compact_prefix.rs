@@ -1,5 +1,92 @@
 use super::*;
 
+#[allow(clippy::too_many_arguments)]
+fn materialize_compact_lane_and_compute_next<
+    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
+    A: ProductSumAccumulator<E>,
+    const SKIP_LINEAR: bool,
+>(
+    lane: usize,
+    lane_values: &[i8],
+    lane_out: &mut [E],
+    alpha_round2: &[E],
+    trace_round2: &PreparedProverEvaluationTrace<E>,
+    lane_weight: E,
+    e_first: &[E],
+    e_second: &[E],
+    first_bits: usize,
+    block_size: usize,
+    quad_fold_lut: &[E],
+    quad_index_fn: fn(&[i8], usize) -> usize,
+) -> ([E; 3], [E; 3]) {
+    let next_coeff_count = lane_out.len();
+    let current_coefficient_half = next_coeff_count / 2;
+    let equality_address_base = lane * current_coefficient_half;
+    let mut virt: [A; 3] = std::array::from_fn(|_| A::zero());
+    let mut rel: [A; 3] = std::array::from_fn(|_| A::zero());
+    let mut blk = 0usize;
+
+    while blk < current_coefficient_half {
+        let (j_high, blk_end) = stage2_eq_block(
+            equality_address_base,
+            blk,
+            e_first.len(),
+            first_bits,
+            block_size,
+            current_coefficient_half,
+        );
+        let mut inner_virt: [A; 3] = std::array::from_fn(|_| A::zero());
+
+        for coefficient_pair in blk..blk_end {
+            let j_low = (equality_address_base + coefficient_pair) & (e_first.len() - 1);
+            let e_in = e_first[j_low];
+            let left = 2 * coefficient_pair;
+            let base = 8 * coefficient_pair;
+            let w0 = quad_fold_lut[quad_index_fn(lane_values, base)];
+            let w1 = quad_fold_lut[quad_index_fn(lane_values, base + 4)];
+            lane_out[left] = w0;
+            lane_out[left + 1] = w1;
+            let dw = w1 - w0;
+
+            inner_virt[0].add_product(e_in, w0 * (w0 + E::one()));
+            if !SKIP_LINEAR {
+                inner_virt[1].add_product(e_in, dw * (w0 + w0 + E::one()));
+            }
+            inner_virt[2].add_product(e_in, dw * dw);
+
+            let p0 =
+                alpha_round2[left] * lane_weight + trace_round2.get(lane, left, next_coeff_count);
+            let p1 = alpha_round2[left + 1] * lane_weight
+                + trace_round2.get(lane, left + 1, next_coeff_count);
+            let dp = p1 - p0;
+            rel[0].add_product(w0, p0);
+            rel[1].add_product(w0, dp);
+            rel[1].add_product(dw, p0);
+            rel[2].add_product(dw, dp);
+        }
+
+        let e_out = e_second[j_high];
+        let [inner_constant, inner_linear, inner_quadratic] = inner_virt;
+        virt[0].add_product(e_out, inner_constant.finish());
+        if !SKIP_LINEAR {
+            virt[1].add_product(e_out, inner_linear.finish());
+        }
+        virt[2].add_product(e_out, inner_quadratic.finish());
+        blk = blk_end;
+    }
+
+    (virt.map(A::finish), rel.map(A::finish))
+}
+
+fn add_compact_round_terms<E: FieldCore>(left: &mut ([E; 3], [E; 3]), right: ([E; 3], [E; 3])) {
+    for (left_term, right_term) in left.0.iter_mut().zip(right.0) {
+        *left_term += right_term;
+    }
+    for (left_term, right_term) in left.1.iter_mut().zip(right.1) {
+        *left_term += right_term;
+    }
+}
+
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
     #[inline]
     pub(super) fn direct_fold_w_quad_two_rounds(
@@ -138,24 +225,61 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         out
     }
 
-    #[inline]
-    fn add_trace_pair_to_relation_factor(
-        evaluation_trace: &PreparedProverEvaluationTrace<E>,
-        lane: usize,
-        left: usize,
-        coeff_count: usize,
-        p0: &mut E,
-        p1: &mut E,
-    ) {
-        *p0 += evaluation_trace.get(lane, left, coeff_count);
-        *p1 += evaluation_trace.get(lane, left + 1, coeff_count);
-    }
-
     #[tracing::instrument(
         skip_all,
         name = "RelationRangeImageProver::materialize_two_round_compact_prefix_and_compute_next_round"
     )]
     pub(super) fn materialize_two_round_compact_prefix_and_compute_next_round(
+        &self,
+        compact_witness: &[i8],
+        alpha_round2: &[E],
+        trace_round2: &PreparedProverEvaluationTrace<E>,
+        r0: E,
+        r1: E,
+    ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
+        match (
+            E::DELAYED_PRODUCT_SUM_IS_EXACT,
+            self.can_skip_norm_linear_coeff(),
+        ) {
+            (true, true) => self
+                .materialize_compact_prefix_and_compute_next::<DelayedProductSum<E>, true>(
+                    compact_witness,
+                    alpha_round2,
+                    trace_round2,
+                    r0,
+                    r1,
+                ),
+            (true, false) => self
+                .materialize_compact_prefix_and_compute_next::<DelayedProductSum<E>, false>(
+                    compact_witness,
+                    alpha_round2,
+                    trace_round2,
+                    r0,
+                    r1,
+                ),
+            (false, true) => self
+                .materialize_compact_prefix_and_compute_next::<DirectProductSum<E>, true>(
+                    compact_witness,
+                    alpha_round2,
+                    trace_round2,
+                    r0,
+                    r1,
+                ),
+            (false, false) => self
+                .materialize_compact_prefix_and_compute_next::<DirectProductSum<E>, false>(
+                    compact_witness,
+                    alpha_round2,
+                    trace_round2,
+                    r0,
+                    r1,
+                ),
+        }
+    }
+
+    fn materialize_compact_prefix_and_compute_next<
+        A: ProductSumAccumulator<E>,
+        const SKIP_LINEAR: bool,
+    >(
         &self,
         compact_witness: &[i8],
         alpha_round2: &[E],
@@ -187,280 +311,52 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         };
         let mut out = vec![E::zero(); self.live_lane_count * next_coeff_count];
 
-        if self.can_skip_norm_linear_coeff() {
-            #[cfg(feature = "parallel")]
-            let (virt_coeffs, rel_coeffs) = out
-                .par_chunks_mut(next_coeff_count)
-                .enumerate()
-                .map(|(lane, lane_out)| {
-                    let lane_start = lane * coeff_count;
-                    let lane_values = &compact_witness[lane_start..lane_start + coeff_count];
-                    let lane_weight = relation_lane_weights[lane];
-                    let equality_address_base = lane * current_coefficient_half;
-                    let mut virt = [E::zero(); 2];
-                    let mut rel = [E::zero(); 3];
-                    let mut blk = 0usize;
+        let compute_lane = |(lane, lane_out): (usize, &mut [E])| {
+            let lane_start = lane * coeff_count;
+            materialize_compact_lane_and_compute_next::<E, A, SKIP_LINEAR>(
+                lane,
+                &compact_witness[lane_start..lane_start + coeff_count],
+                lane_out,
+                alpha_round2,
+                trace_round2,
+                relation_lane_weights[lane],
+                e_first,
+                e_second,
+                first_bits,
+                block_size,
+                &quad_fold_lut,
+                quad_index_fn,
+            )
+        };
 
-                    while blk < current_coefficient_half {
-                        let (j_high, blk_end) = stage2_eq_block(
-                            equality_address_base,
-                            blk,
-                            num_first,
-                            first_bits,
-                            block_size,
-                            current_coefficient_half,
-                        );
-                        let mut inner_virt = [E::zero(); 2];
+        #[cfg(feature = "parallel")]
+        let totals = out
+            .par_chunks_mut(next_coeff_count)
+            .enumerate()
+            .map(compute_lane)
+            .reduce(
+                || ([E::zero(); 3], [E::zero(); 3]),
+                |mut left, right| {
+                    add_compact_round_terms(&mut left, right);
+                    left
+                },
+            );
 
-                        for coefficient_pair in blk..blk_end {
-                            let j_low =
-                                (equality_address_base + coefficient_pair) & (num_first - 1);
-                            let e_in = e_first[j_low];
-                            let left = 2 * coefficient_pair;
-                            let base = 8 * coefficient_pair;
-                            let w0 = quad_fold_lut[quad_index_fn(lane_values, base)];
-                            let w1 = quad_fold_lut[quad_index_fn(lane_values, base + 4)];
-                            lane_out[left] = w0;
-                            lane_out[left + 1] = w1;
-                            let dw = w1 - w0;
+        #[cfg(not(feature = "parallel"))]
+        let totals = out
+            .chunks_mut(next_coeff_count)
+            .enumerate()
+            .map(compute_lane)
+            .fold(([E::zero(); 3], [E::zero(); 3]), |mut left, right| {
+                add_compact_round_terms(&mut left, right);
+                left
+            });
 
-                            inner_virt[0] += e_in * (w0 * (w0 + E::one()));
-                            inner_virt[1] += e_in * (dw * dw);
-
-                            let mut p0 = alpha_round2[left] * lane_weight;
-                            let mut p1 = alpha_round2[left + 1] * lane_weight;
-                            Self::add_trace_pair_to_relation_factor(
-                                trace_round2,
-                                lane,
-                                left,
-                                next_coeff_count,
-                                &mut p0,
-                                &mut p1,
-                            );
-                            accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
-                        }
-
-                        let e_out = e_second[j_high];
-                        virt[0] += e_out * inner_virt[0];
-                        virt[1] += e_out * inner_virt[1];
-                        blk = blk_end;
-                    }
-
-                    (virt, rel)
-                })
-                .reduce(
-                    || ([E::zero(); 2], [E::zero(); 3]),
-                    |(mut va, mut ra), (vb, rb)| {
-                        for (ai, bi) in va.iter_mut().zip(vb.iter()) {
-                            *ai += *bi;
-                        }
-                        for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                            *ai += *bi;
-                        }
-                        (va, ra)
-                    },
-                );
-
-            #[cfg(not(feature = "parallel"))]
-            let (virt_coeffs, rel_coeffs) = {
-                let mut virt = [E::zero(); 2];
-                let mut rel = [E::zero(); 3];
-                for (lane, lane_out) in out.chunks_mut(next_coeff_count).enumerate() {
-                    let lane_start = lane * coeff_count;
-                    let lane_values = &compact_witness[lane_start..lane_start + coeff_count];
-                    let lane_weight = relation_lane_weights[lane];
-                    let equality_address_base = lane * current_coefficient_half;
-                    let mut blk = 0usize;
-
-                    while blk < current_coefficient_half {
-                        let (j_high, blk_end) = stage2_eq_block(
-                            equality_address_base,
-                            blk,
-                            num_first,
-                            first_bits,
-                            block_size,
-                            current_coefficient_half,
-                        );
-                        let mut inner_virt = [E::zero(); 2];
-
-                        for coefficient_pair in blk..blk_end {
-                            let j_low =
-                                (equality_address_base + coefficient_pair) & (num_first - 1);
-                            let e_in = e_first[j_low];
-                            let left = 2 * coefficient_pair;
-                            let base = 8 * coefficient_pair;
-                            let w0 = quad_fold_lut[quad_index_fn(lane_values, base)];
-                            let w1 = quad_fold_lut[quad_index_fn(lane_values, base + 4)];
-                            lane_out[left] = w0;
-                            lane_out[left + 1] = w1;
-                            let dw = w1 - w0;
-
-                            inner_virt[0] += e_in * (w0 * (w0 + E::one()));
-                            inner_virt[1] += e_in * (dw * dw);
-
-                            let mut p0 = alpha_round2[left] * lane_weight;
-                            let mut p1 = alpha_round2[left + 1] * lane_weight;
-                            Self::add_trace_pair_to_relation_factor(
-                                trace_round2,
-                                lane,
-                                left,
-                                next_coeff_count,
-                                &mut p0,
-                                &mut p1,
-                            );
-                            accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
-                        }
-
-                        let e_out = e_second[j_high];
-                        virt[0] += e_out * inner_virt[0];
-                        virt[1] += e_out * inner_virt[1];
-                        blk = blk_end;
-                    }
-                }
-                (virt, rel)
-            };
-
-            (out, NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs)
+        let virt_terms = if SKIP_LINEAR {
+            NormRoundTerms::SkipLinear([totals.0[0], totals.0[2]])
         } else {
-            #[cfg(feature = "parallel")]
-            let (virt_coeffs, rel_coeffs) = out
-                .par_chunks_mut(next_coeff_count)
-                .enumerate()
-                .map(|(lane, lane_out)| {
-                    let lane_start = lane * coeff_count;
-                    let lane_values = &compact_witness[lane_start..lane_start + coeff_count];
-                    let lane_weight = relation_lane_weights[lane];
-                    let equality_address_base = lane * current_coefficient_half;
-                    let mut virt = [E::zero(); 3];
-                    let mut rel = [E::zero(); 3];
-                    let mut blk = 0usize;
-
-                    while blk < current_coefficient_half {
-                        let (j_high, blk_end) = stage2_eq_block(
-                            equality_address_base,
-                            blk,
-                            num_first,
-                            first_bits,
-                            block_size,
-                            current_coefficient_half,
-                        );
-                        let mut inner_virt = [E::zero(); 3];
-
-                        for coefficient_pair in blk..blk_end {
-                            let j_low =
-                                (equality_address_base + coefficient_pair) & (num_first - 1);
-                            let e_in = e_first[j_low];
-                            let left = 2 * coefficient_pair;
-                            let base = 8 * coefficient_pair;
-                            let w0 = quad_fold_lut[quad_index_fn(lane_values, base)];
-                            let w1 = quad_fold_lut[quad_index_fn(lane_values, base + 4)];
-                            lane_out[left] = w0;
-                            lane_out[left + 1] = w1;
-                            let dw = w1 - w0;
-                            let two_w0_plus_one = w0 + w0 + E::one();
-
-                            inner_virt[0] += e_in * (w0 * (w0 + E::one()));
-                            inner_virt[1] += e_in * (dw * two_w0_plus_one);
-                            inner_virt[2] += e_in * (dw * dw);
-
-                            let mut p0 = alpha_round2[left] * lane_weight;
-                            let mut p1 = alpha_round2[left + 1] * lane_weight;
-                            Self::add_trace_pair_to_relation_factor(
-                                trace_round2,
-                                lane,
-                                left,
-                                next_coeff_count,
-                                &mut p0,
-                                &mut p1,
-                            );
-                            accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
-                        }
-
-                        let e_out = e_second[j_high];
-                        virt[0] += e_out * inner_virt[0];
-                        virt[1] += e_out * inner_virt[1];
-                        virt[2] += e_out * inner_virt[2];
-                        blk = blk_end;
-                    }
-
-                    (virt, rel)
-                })
-                .reduce(
-                    || ([E::zero(); 3], [E::zero(); 3]),
-                    |(mut va, mut ra), (vb, rb)| {
-                        for (ai, bi) in va.iter_mut().zip(vb.iter()) {
-                            *ai += *bi;
-                        }
-                        for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                            *ai += *bi;
-                        }
-                        (va, ra)
-                    },
-                );
-
-            #[cfg(not(feature = "parallel"))]
-            let (virt_coeffs, rel_coeffs) = {
-                let mut virt = [E::zero(); 3];
-                let mut rel = [E::zero(); 3];
-                for (lane, lane_out) in out.chunks_mut(next_coeff_count).enumerate() {
-                    let lane_start = lane * coeff_count;
-                    let lane_values = &compact_witness[lane_start..lane_start + coeff_count];
-                    let lane_weight = relation_lane_weights[lane];
-                    let equality_address_base = lane * current_coefficient_half;
-                    let mut blk = 0usize;
-
-                    while blk < current_coefficient_half {
-                        let (j_high, blk_end) = stage2_eq_block(
-                            equality_address_base,
-                            blk,
-                            num_first,
-                            first_bits,
-                            block_size,
-                            current_coefficient_half,
-                        );
-                        let mut inner_virt = [E::zero(); 3];
-
-                        for coefficient_pair in blk..blk_end {
-                            let j_low =
-                                (equality_address_base + coefficient_pair) & (num_first - 1);
-                            let e_in = e_first[j_low];
-                            let left = 2 * coefficient_pair;
-                            let base = 8 * coefficient_pair;
-                            let w0 = quad_fold_lut[quad_index_fn(lane_values, base)];
-                            let w1 = quad_fold_lut[quad_index_fn(lane_values, base + 4)];
-                            lane_out[left] = w0;
-                            lane_out[left + 1] = w1;
-                            let dw = w1 - w0;
-                            let two_w0_plus_one = w0 + w0 + E::one();
-
-                            inner_virt[0] += e_in * (w0 * (w0 + E::one()));
-                            inner_virt[1] += e_in * (dw * two_w0_plus_one);
-                            inner_virt[2] += e_in * (dw * dw);
-
-                            let mut p0 = alpha_round2[left] * lane_weight;
-                            let mut p1 = alpha_round2[left + 1] * lane_weight;
-                            Self::add_trace_pair_to_relation_factor(
-                                trace_round2,
-                                lane,
-                                left,
-                                next_coeff_count,
-                                &mut p0,
-                                &mut p1,
-                            );
-                            accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
-                        }
-
-                        let e_out = e_second[j_high];
-                        virt[0] += e_out * inner_virt[0];
-                        virt[1] += e_out * inner_virt[1];
-                        virt[2] += e_out * inner_virt[2];
-                        blk = blk_end;
-                    }
-                }
-                (virt, rel)
-            };
-
-            (out, NormRoundTerms::Full(virt_coeffs), rel_coeffs)
-        }
+            NormRoundTerms::Full(totals.0)
+        };
+        (out, virt_terms, totals.1)
     }
 }

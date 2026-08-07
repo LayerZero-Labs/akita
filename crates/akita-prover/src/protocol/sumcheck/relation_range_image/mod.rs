@@ -88,7 +88,8 @@ use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
-    fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver, UniPoly,
+    fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, DelayedProductSum,
+    DirectProductSum, ProductSumAccumulator, SumcheckInstanceProver, UniPoly,
 };
 use std::mem;
 use std::time::Instant;
