@@ -3,6 +3,7 @@
 use crate::accum::{
     DelayedProductRoundAccumulator, DirectProductRoundAccumulator, ProductRoundAccumulator,
 };
+use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, ExtField, FieldCore};
 use core::fmt;
@@ -368,30 +369,34 @@ where
     /// Returns an error if `len` is zero or is not a power of two.
     pub fn from_multilinear_evaluation_array_fn<const N: usize, G>(
         len: usize,
-        mut evaluations: G,
+        evaluation: G,
     ) -> Result<[Self; N], AkitaError>
     where
-        G: FnMut(usize) -> [E; N],
+        G: Fn(usize, usize) -> E + Sync,
     {
         Self::validate_multilinear_len(len)?;
-        let mut coefficients = std::array::from_fn(|_| Self::uninitialized_coefficients(len));
-        for stored_row in 0..len {
-            let logical_row = Self::logical_row(stored_row, len);
-            let values = evaluations(logical_row);
-            for (table, value) in coefficients.iter_mut().zip(values) {
-                for coefficient in 0..<E as ExtField<F>>::EXT_DEGREE {
-                    table[coefficient * len + stored_row]
-                        .write(value.base_coefficient(coefficient));
+        let tables = cfg_into_iter!(0..N)
+            .map(|table_index| {
+                let mut coefficients = Self::uninitialized_coefficients(len);
+                for stored_row in 0..len {
+                    let logical_row = Self::logical_row(stored_row, len);
+                    let value = evaluation(table_index, logical_row);
+                    for coefficient in 0..<E as ExtField<F>>::EXT_DEGREE {
+                        coefficients[coefficient * len + stored_row]
+                            .write(value.base_coefficient(coefficient));
+                    }
                 }
-            }
-        }
 
-        Ok(coefficients.map(|coefficients| {
-            // SAFETY: every slot in every table is written exactly once by
-            // the logical-row, table, and coefficient loops above.
-            let coefficients = unsafe { coefficients.assume_init() };
-            Self::from_initialized(coefficients, len)
-        }))
+                // SAFETY: every coefficient slot for this table is written
+                // exactly once by its stored-row traversal.
+                let coefficients = unsafe { coefficients.assume_init() };
+                Self::from_initialized(coefficients, len)
+            })
+            .collect::<Vec<_>>();
+        match tables.try_into() {
+            Ok(tables) => Ok(tables),
+            Err(_) => unreachable!("table iterator length matches the requested array length"),
+        }
     }
 
     /// Build a dense multilinear table from logical LSB-first coefficients.
@@ -516,6 +521,24 @@ where
             remaining = rest;
             &mut slab[..len]
         })
+    }
+
+    /// Return all live coefficient slices when the extension degree is dynamic.
+    ///
+    /// This form lets a generic traversal divide every coefficient slab into
+    /// the same disjoint row ranges. Fixed-degree SIMD kernels should use
+    /// [`Self::coefficient_slices_mut`] instead.
+    pub fn all_coefficient_slices_mut(&mut self) -> Vec<&mut [F]> {
+        let len = self.len;
+        let stride = self.stride;
+        let mut remaining: &mut [F] = &mut self.coefficients;
+        (0..<E as ExtField<F>>::EXT_DEGREE)
+            .map(|_| {
+                let (slab, rest) = core::mem::take(&mut remaining).split_at_mut(stride);
+                remaining = rest;
+                &mut slab[..len]
+            })
+            .collect()
     }
 
     /// Return the number of live stored rows.
@@ -757,11 +780,11 @@ mod tests {
 
     #[test]
     fn table_array_constructor_matches_independent_tables() {
-        let actual =
-            EvaluationTable::<F, E>::from_multilinear_evaluation_array_fn::<3, _>(16, |row| {
-                std::array::from_fn(|table| value(row + 100 * table))
-            })
-            .unwrap();
+        let actual = EvaluationTable::<F, E>::from_multilinear_evaluation_array_fn::<3, _>(
+            16,
+            |table, row| value(row + 100 * table),
+        )
+        .unwrap();
         let expected = std::array::from_fn(|table| {
             EvaluationTable::<F, E>::from_multilinear_evaluation_fn(16, |row| {
                 value(row + 100 * table)

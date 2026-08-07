@@ -1,6 +1,6 @@
 //! Runtime dispatch for compact fp32 affine-product rounds.
 
-use super::{Fp32Kernel, SumcheckKernelPlan};
+use super::{multiple_workers_available, Fp32Kernel, SumcheckKernelPlan};
 use akita_field::{Fp32, FpExt4};
 
 impl SumcheckKernelPlan {
@@ -16,6 +16,9 @@ impl SumcheckKernelPlan {
         arity: usize,
         parent_weights: &[FpExt4<Fp32<P>>],
     ) -> Option<[FpExt4<Fp32<P>>; 5]> {
+        if multiple_workers_available() {
+            return None;
+        }
         let quartet_count = ordered_pair_indices.len().div_ceil(2);
         if !matches!(arity, 2 | 4)
             || LANES != arity * parent_weights.len()
@@ -94,6 +97,9 @@ impl SumcheckKernelPlan {
         second_equality: &[FpExt4<Fp32<P>>],
         degree: usize,
     ) -> Option<[FpExt4<Fp32<P>>; 5]> {
+        if multiple_workers_available() {
+            return None;
+        }
         if !matches!(degree, 2 | 4)
             || !class_codes.len().is_multiple_of(2)
             || class_values.is_empty()
@@ -164,6 +170,9 @@ impl SumcheckKernelPlan {
         challenge: FpExt4<Fp32<P>>,
         degree: usize,
     ) -> Option<[FpExt4<Fp32<P>>; 5]> {
+        if multiple_workers_available() {
+            return None;
+        }
         if !matches!(degree, 2 | 4)
             || !values.len().is_multiple_of(4)
             || folded_values.len() != values.len() / 2
@@ -229,6 +238,9 @@ impl SumcheckKernelPlan {
         challenge: FpExt4<Fp32<P>>,
         degree: usize,
     ) -> Option<[FpExt4<Fp32<P>>; 5]> {
+        if multiple_workers_available() {
+            return None;
+        }
         let (first_equality, second_equality) = split_equality;
         if !matches!(degree, 2 | 4)
             || !class_codes.len().is_multiple_of(4)

@@ -321,7 +321,16 @@ where
             let right_index = Self::stage1_b8_quad_lookup_index_from_row(row, base + 4);
             Some((left_index << 8) | right_index)
         };
-        let accumulated = if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+        // A 65,536-entry class histogram removes repeated quartic work on one
+        // worker, but Rayon would create one multi-megabyte histogram for each
+        // fold task and then merge every entry. With more than one worker the
+        // direct entry traversal is both faster and bounded-memory.
+        #[cfg(feature = "parallel")]
+        let use_class_histogram =
+            E::DELAYED_PRODUCT_SUM_IS_EXACT && rayon::current_num_threads() == 1;
+        #[cfg(not(feature = "parallel"))]
+        let use_class_histogram = E::DELAYED_PRODUCT_SUM_IS_EXACT;
+        let accumulated = if use_class_histogram {
             const OCTET_CLASS_COUNT: usize = 1 << 16;
             let class_weights = cfg_fold_reduce!(
                 0..e_second.len(),

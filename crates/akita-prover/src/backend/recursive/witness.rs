@@ -253,16 +253,16 @@ where
             AkitaError::InvalidInput("recursive witness base length overflow".to_string())
         })?;
         let [table] =
-            EvaluationTable::from_multilinear_evaluation_array_fn(table_len, |logical_row| {
+            EvaluationTable::from_multilinear_evaluation_array_fn(table_len, |_, logical_row| {
                 let base = logical_row * width;
-                [E::from_base_fn(|coordinate| {
+                E::from_base_fn(|coordinate| {
                     let index = base + coordinate;
                     if index < live_base_len {
                         F::from_i8(self.coeffs[index / D][index % D])
                     } else {
                         F::zero()
                     }
-                })]
+                })
             })?;
         Ok(table)
     }

@@ -381,22 +381,20 @@ impl<
                     let table_len = source.domain_len() / 4;
                     let explicit_len = source.quartet_count();
                     let padding_pair = folded_pairs.row_by_pair_index(0);
-                    let padding = std::array::from_fn(|lane| {
+                    let padding: [E; LANES] = std::array::from_fn(|lane| {
                         E::fold_one(&fold_context, padding_pair[lane], padding_pair[lane])
                     });
                     let lanes = EvaluationTable::from_multilinear_evaluation_array_fn(
                         table_len,
-                        |logical_row| {
+                        |lane, logical_row| {
                             if logical_row < explicit_len {
                                 let (left_pair, right_pair) =
                                     source.ordered_pair_indices_for_quartet(logical_row);
                                 let left = folded_pairs.row_by_pair_index(left_pair);
                                 let right = folded_pairs.row_by_pair_index(right_pair);
-                                std::array::from_fn(|lane| {
-                                    E::fold_one(&fold_context, left[lane], right[lane])
-                                })
+                                E::fold_one(&fold_context, left[lane], right[lane])
                             } else {
-                                padding
+                                padding[lane]
                             }
                         },
                     )
@@ -441,11 +439,12 @@ impl<
                 let padding = folded_pairs.row_by_pair_index(0);
                 let lanes = EvaluationTable::from_multilinear_evaluation_array_fn(
                     table_len,
-                    |logical_row| {
+                    |lane, logical_row| {
                         if logical_row < explicit_len {
                             folded_pairs.row_by_pair_index(source.ordered_pair_index(logical_row))
+                                [lane]
                         } else {
-                            padding
+                            padding[lane]
                         }
                     },
                 )

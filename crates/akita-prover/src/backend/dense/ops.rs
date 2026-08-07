@@ -175,9 +175,9 @@ where
         let table_len = live_len / width;
         let [table] = akita_sumcheck::EvaluationTable::from_multilinear_evaluation_array_fn(
             table_len,
-            |logical_row| {
+            |_, logical_row| {
                 let base = logical_row * width;
-                [E::from_base_slice(&flat[base..base + width])]
+                E::from_base_slice(&flat[base..base + width])
             },
         )?;
         Ok(table)

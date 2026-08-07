@@ -115,9 +115,17 @@ rearranges it within every round.
     storage.
 14. The payload size of a materialized table is
     `len * E::EXT_DEGREE * size_of::<F>()`. Small fixed metadata is allowed.
-15. Rayon may divide a large table among workers. Each worker uses the same
-    selected CPU kernel and a private accumulator. The merge result must remain
+15. Large operations must preserve outer table parallelism. A field-specific
+    SIMD operation may own the whole table only when one worker is available.
+    With multiple workers, an operation either partitions disjoint row ranges
+    and runs the same selected inner kernel in every range, or uses the measured
+    parallel portable traversal until that chunked SIMD operation exists. Every
+    worker owns only bounded private accumulators, and the merge result remains
     field exact.
+16. A Rayon fold identity must be small. In particular, a class histogram with
+    field accumulators may be allocated once for a one-worker operation, but it
+    must not be cloned per Rayon task. Multiple-worker paths use a bounded direct
+    traversal or partition one shared output into disjoint writable ranges.
 
 ### Non goals
 
@@ -247,13 +255,20 @@ constructors:
 ```text
 from_multilinear_evaluations
 from_multilinear_evaluation_fn
+from_multilinear_evaluation_array_fn
 from_multilinear_coefficient_fn
 ```
 
 They accept or generate logical LSB first rows and write binding order directly.
 They require a nonzero power of two row count. Large production producers use
 the function constructors so they never hold a second full representation. The
-private bit reversal helper is shared by all three constructors.
+private bit reversal helper is shared by all dense constructors.
+
+The array constructor generates one of a fixed number of independent tables
+from `(table_index, logical_row)`. With multiple workers, those tables are the
+parallel units. Each table still traverses stored rows sequentially and writes
+each coefficient slab sequentially. Parallelizing logical rows would scatter
+bit-reversed writes through every slab and is not the canonical construction.
 
 `truncate` only changes the live length. It cannot grow the table. Mutable raw
 access to `coefficients`, `len`, or `stride` is not exposed.
@@ -565,6 +580,20 @@ table exceeds a measured threshold. Each partition begins and ends on a row
 boundary. Each worker returns scalar field accumulators, and the operation merges
 them exactly once.
 
+Operation selection is worker-count aware because a serial whole-table SIMD
+call can be slower than a parallel portable traversal even when its inner loop
+is much faster. One-worker runs select the measured SIMD operation. A
+multiple-worker run selects chunked SIMD only when the operation exposes safe
+disjoint ranges; otherwise it selects the existing parallel portable operation.
+This is one operation policy, not a second table representation or protocol
+implementation.
+
+Parallel mutation borrows all coefficient slabs once, divides every slab at the
+same row boundaries, and gives each task its corresponding disjoint slices. It
+must not copy table payloads into per-task buffers. A generic extension-degree
+operation may allocate a bounded vector of slice references at task setup. The
+fixed-degree SIMD accessors remain allocation free.
+
 The implementation must benchmark one worker and the normal parallel setting.
 The one worker result shows kernel quality. The parallel result shows application
 throughput. Neither result replaces the other.
@@ -869,6 +898,37 @@ to 95.9 ms, a 1.5 percent difference within the two-percent fp128 gate. The
 sumcheck portion improved from 50.0 ms to 49.4 to 49.5 ms. Logical-order direct
 construction avoids a rejected temporary-vector transpose that had measured
 224 ms for Stage 3.
+
+The first normal-worker benchmark exposed two parallel-architecture bugs that
+one-worker SIMD measurements could not show. First, a 65,536-entry Stage 1
+class histogram was used as a Rayon fold identity, which cloned several
+megabytes per task and raised fp32/fp64 peak RSS to about 1.7 GiB. The histogram
+is now a one-worker operation only; the multiple-worker path uses the bounded
+direct traversal. Warm local RSS returned to 539--543 MiB, matching main.
+
+Second, several detected fp32 operations consumed the whole table serially and
+bypassed the protocol's outer Rayon traversal. Multiple-worker dispatch now
+uses the parallel portable operation where a chunked SIMD entry does not yet
+exist. Stage 2's coefficient fold has a generic disjoint-slice traversal that
+partitions all coefficient slabs together and merges only its six small field
+accumulators. On the 16-worker fp32 D128, 28-variable proof, that fold fell from
+77.0 ms to 13.7--14.6 ms and complete Stage 2 fell from 147.7 ms to 87--92 ms.
+The complete proof measured 0.653--0.678 seconds versus 0.671 seconds on the
+same-machine main trace. For fp64, the same coefficient fold fell from 48.5 ms
+to 8.6 ms and complete Stage 2 from 99.6 ms to 65.4 ms.
+
+Independent table construction follows the same policy at the ownership
+boundary. Product lanes are generated as separate binding-order tables in
+parallel, while each table retains sequential stored-row writes. This reduced
+the measured fp32 two-round product materialization from 30.1 ms to 10.6 ms.
+A rejected logical-row parallel constructor scattered bit-reversed writes and
+measured 34.8 ms instead of about 6 ms for the sequential stored-row traversal.
+The exact current source also passes the separate Ice Lake one-worker gate: the
+pinned fp32 D128 proof measured 3.395 seconds traced and 3.365 seconds on a warm
+untraced repeat, compared with 3.493 seconds for the prior accepted head. The
+proof remained 77,819 bytes and verified in both runs. This confirms that the
+worker-aware policy restores normal-worker throughput without replacing the
+selected one-worker AVX-512 operations.
 
 ### Existing state changes
 

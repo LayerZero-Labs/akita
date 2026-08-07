@@ -2,9 +2,9 @@
 
 use super::{
     compute_weighted_affine_polynomial_round_scalar, compute_weighted_affine_product_round_scalar,
-    fold_and_compute_stage2_coefficient_round_scalar,
-    materialize_tensor_factor_and_compute_product_round_scalar, Fp32Kernel, SumcheckKernelPlan,
-    SumcheckTableOperations, TensorFactorRoundOutput,
+    fold_and_compute_stage2_coefficient_round_portable,
+    materialize_tensor_factor_and_compute_product_round_scalar, multiple_workers_available,
+    Fp32Kernel, SumcheckKernelPlan, SumcheckTableOperations, TensorFactorRoundOutput,
 };
 use akita_algebra::SplitEqEvals;
 use akita_field::{AkitaError, Fp32, FpExt4};
@@ -265,8 +265,22 @@ impl SumcheckKernelPlan {
         include_norm_linear: bool,
     ) -> ([FpExt4<Fp32<P>>; 3], [FpExt4<Fp32<P>>; 3]) {
         let next_len = live_lane_count * (old_coefficient_count / 2);
+        #[cfg(feature = "parallel")]
+        if multiple_workers_available() {
+            return fold_and_compute_stage2_coefficient_round_portable(
+                witness,
+                live_lane_count,
+                old_coefficient_count,
+                next_alpha_factor,
+                relation_lane_weights,
+                first_equality,
+                second_equality,
+                challenge,
+                include_norm_linear,
+            );
+        }
         let result = match self.fp32_stage2_coefficient_round {
-            Fp32Kernel::Scalar => fold_and_compute_stage2_coefficient_round_scalar(
+            Fp32Kernel::Scalar => fold_and_compute_stage2_coefficient_round_portable(
                 witness,
                 live_lane_count,
                 old_coefficient_count,
@@ -526,6 +540,14 @@ impl SumcheckKernelPlan {
         parent_weights: &[FpExt4<Fp32<P>>],
     ) -> [FpExt4<Fp32<P>>; 5] {
         validate_weighted_affine_product_tables(lanes, equality, arity, parent_weights.len());
+        if multiple_workers_available() {
+            return compute_weighted_affine_product_round_scalar(
+                lanes,
+                equality,
+                arity,
+                parent_weights,
+            );
+        }
         match self.fp32_product_round {
             Fp32Kernel::Scalar => {
                 compute_weighted_affine_product_round_scalar(lanes, equality, arity, parent_weights)
@@ -616,6 +638,13 @@ impl SumcheckKernelPlan {
         polynomial_coefficients: &[FpExt4<Fp32<P>>],
     ) -> [FpExt4<Fp32<P>>; 5] {
         validate_weighted_affine_polynomial_tables(values, equality, polynomial_coefficients.len());
+        if multiple_workers_available() {
+            return compute_weighted_affine_polynomial_round_scalar(
+                values,
+                equality,
+                polynomial_coefficients,
+            );
+        }
         match self.fp32_product_round {
             Fp32Kernel::Scalar => compute_weighted_affine_polynomial_round_scalar(
                 values,

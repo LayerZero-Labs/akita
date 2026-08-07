@@ -1,6 +1,7 @@
 //! Runtime-selected kernels over canonical sumcheck evaluation tables.
 
 use akita_algebra::SplitEqEvals;
+use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, ExtField, FieldCore, MulBaseUnreduced};
 use akita_sumcheck::{
@@ -15,6 +16,20 @@ mod fp32;
 mod fp32_affine;
 mod fp64;
 mod scalar;
+#[cfg(feature = "parallel")]
+mod stage2_parallel;
+
+#[inline]
+fn multiple_workers_available() -> bool {
+    #[cfg(feature = "parallel")]
+    {
+        rayon::current_num_threads() > 1
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        false
+    }
+}
 
 /// Host-detected operation choices for sumcheck tables.
 ///
@@ -232,7 +247,7 @@ where
     where
         Self: Sized,
     {
-        fold_and_compute_stage2_coefficient_round_scalar(
+        fold_and_compute_stage2_coefficient_round_portable(
             witness,
             live_lane_count,
             old_coefficient_count,
@@ -314,7 +329,7 @@ pub(crate) fn stage2_equality_block(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn fold_and_compute_stage2_coefficient_round_scalar<F, E>(
+pub(super) fn fold_and_compute_stage2_coefficient_round_portable<F, E>(
     witness: &mut EvaluationTable<F, E>,
     live_lane_count: usize,
     old_coefficient_count: usize,
@@ -329,6 +344,20 @@ where
     F: FieldCore,
     E: ExtField<F> + HasOptimizedFold + HasUnreducedOps,
 {
+    #[cfg(feature = "parallel")]
+    if multiple_workers_available() {
+        return stage2_parallel::fold_and_compute_stage2_coefficient_round_parallel(
+            witness,
+            live_lane_count,
+            old_coefficient_count,
+            next_alpha_factor,
+            relation_lane_weights,
+            first_equality,
+            second_equality,
+            challenge,
+            include_norm_linear,
+        );
+    }
     if E::DELAYED_PRODUCT_SUM_IS_EXACT {
         fold_and_compute_stage2_coefficient_round_with::<F, E, DelayedProductSum<E>>(
             witness,
@@ -425,22 +454,50 @@ where
             let equality_address = logical_lane * next_pair_count + logical_pair;
             let equality = first_equality[equality_address & (first_equality.len() - 1)]
                 * second_equality[equality_address / first_equality.len()];
-            let witness_delta = witness_1 - witness_0;
-            total_norm[0].add_product(equality, witness_0 * (witness_0 + E::one()));
-            if include_norm_linear {
-                total_norm[1]
-                    .add_product(equality, witness_delta * (witness_0 + witness_0 + E::one()));
-            }
-            total_norm[2].add_product(equality, witness_delta * witness_delta);
-
-            total_relation[0].add_product(witness_0, lane_weight * alpha_0);
-            total_relation[1].add_product(witness_0, lane_weight * alpha_delta);
-            total_relation[1].add_product(witness_delta, lane_weight * alpha_0);
-            total_relation[2].add_product(witness_delta, lane_weight * alpha_delta);
+            add_stage2_round_terms(
+                &mut total_norm,
+                &mut total_relation,
+                witness_0,
+                witness_1,
+                equality,
+                lane_weight,
+                alpha_0,
+                alpha_delta,
+                include_norm_linear,
+            );
         }
     }
     witness.truncate(live_lane_count * next_coefficient_count);
     (total_norm.map(A::finish), total_relation.map(A::finish))
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+pub(super) fn add_stage2_round_terms<E, A>(
+    norm: &mut [A; 3],
+    relation: &mut [A; 3],
+    witness_0: E,
+    witness_1: E,
+    equality: E,
+    lane_weight: E,
+    alpha_0: E,
+    alpha_delta: E,
+    include_norm_linear: bool,
+) where
+    E: FieldCore + HasUnreducedOps,
+    A: ProductSumAccumulator<E>,
+{
+    let witness_delta = witness_1 - witness_0;
+    norm[0].add_product(equality, witness_0 * (witness_0 + E::one()));
+    if include_norm_linear {
+        norm[1].add_product(equality, witness_delta * (witness_0 + witness_0 + E::one()));
+    }
+    norm[2].add_product(equality, witness_delta * witness_delta);
+
+    relation[0].add_product(witness_0, lane_weight * alpha_0);
+    relation[1].add_product(witness_0, lane_weight * alpha_delta);
+    relation[1].add_product(witness_delta, lane_weight * alpha_0);
+    relation[2].add_product(witness_delta, lane_weight * alpha_delta);
 }
 
 #[inline]
@@ -470,18 +527,27 @@ where
     assert!(polynomial_coefficients.len() <= MAX_AFFINE_POLYNOMIAL_DEGREE + 1);
 
     let half = values.len() / 2;
-    let mut result = [E::zero(); MAX_AFFINE_POLYNOMIAL_DEGREE + 1];
-    for row in 0..half {
-        let left = values.evaluation(row);
-        let right = values.evaluation(row + half);
-        let coefficients =
-            compose_polynomial_with_affine(polynomial_coefficients, left, right - left);
-        let equality_weight = equality.evaluation(row);
-        for degree in 0..polynomial_coefficients.len() {
-            result[degree] += equality_weight * coefficients[degree];
+    cfg_fold_reduce!(
+        0..half,
+        || [E::zero(); MAX_AFFINE_POLYNOMIAL_DEGREE + 1],
+        |mut result, row| {
+            let left = values.evaluation(row);
+            let right = values.evaluation(row + half);
+            let coefficients =
+                compose_polynomial_with_affine(polynomial_coefficients, left, right - left);
+            let equality_weight = equality.evaluation(row);
+            for degree in 0..polynomial_coefficients.len() {
+                result[degree] += equality_weight * coefficients[degree];
+            }
+            result
+        },
+        |mut left, right| {
+            for (left, right) in left.iter_mut().zip(right) {
+                *left += right;
+            }
+            left
         }
-    }
-    result
+    )
 }
 
 fn compute_weighted_affine_product_round_scalar<F, E, const LANES: usize>(
@@ -504,18 +570,28 @@ where
     assert_eq!(equality.len(), table_len / 2);
 
     let half = table_len / 2;
-    let mut result = [E::zero(); MAX_AFFINE_PRODUCT_DEGREE + 1];
-    for row in 0..half {
-        let left = std::array::from_fn::<_, LANES, _>(|lane| lanes[lane].evaluation(row));
-        let right = std::array::from_fn::<_, LANES, _>(|lane| lanes[lane].evaluation(row + half));
-        let coefficients =
-            batched_affine_product_coefficients(&left, &right, arity, parent_weights);
-        let equality_weight = equality.evaluation(row);
-        for degree in 0..=arity {
-            result[degree] += equality_weight * coefficients[degree];
+    cfg_fold_reduce!(
+        0..half,
+        || [E::zero(); MAX_AFFINE_PRODUCT_DEGREE + 1],
+        |mut result, row| {
+            let left = std::array::from_fn::<_, LANES, _>(|lane| lanes[lane].evaluation(row));
+            let right =
+                std::array::from_fn::<_, LANES, _>(|lane| lanes[lane].evaluation(row + half));
+            let coefficients =
+                batched_affine_product_coefficients(&left, &right, arity, parent_weights);
+            let equality_weight = equality.evaluation(row);
+            for degree in 0..=arity {
+                result[degree] += equality_weight * coefficients[degree];
+            }
+            result
+        },
+        |mut left, right| {
+            for (left, right) in left.iter_mut().zip(right) {
+                *left += right;
+            }
+            left
         }
-    }
-    result
+    )
 }
 
 impl SumcheckKernelPlan {

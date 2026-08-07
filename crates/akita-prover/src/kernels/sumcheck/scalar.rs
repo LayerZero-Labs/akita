@@ -1,6 +1,10 @@
 //! Portable operations for identity fields and extension families without selected SIMD kernels.
 
+#[cfg(feature = "parallel")]
+use super::multiple_workers_available;
 use super::{SumcheckKernelPlan, SumcheckTableOperations};
+#[cfg(feature = "parallel")]
+use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{ExtField, FieldCore, Fp128, Fp32, Fp64, FpExt2, FpExt2Config, FpExt4, FpExt8};
 use akita_sumcheck::{
@@ -86,6 +90,15 @@ where
     let half = table.len() / 2;
     let fold = F::precompute_fold(challenge);
     let [values] = table.coefficient_slices_mut::<1>();
+    #[cfg(feature = "parallel")]
+    if multiple_workers_available() {
+        let (left, right) = values.split_at_mut(half);
+        left.par_iter_mut()
+            .zip(right.par_iter())
+            .for_each(|(left, &right)| *left = F::fold_one(&fold, *left, right));
+        table.truncate(half);
+        return;
+    }
     for row in 0..half {
         values[row] = F::fold_one(&fold, values[row], values[row + half]);
     }
@@ -122,6 +135,22 @@ where
     let half = witness.len() / 2;
     let [witness] = witness.coefficient_slices::<1>();
     let [factor] = factor.coefficient_slices::<1>();
+    #[cfg(feature = "parallel")]
+    if multiple_workers_available() {
+        return (0..half)
+            .into_par_iter()
+            .fold(A::zero, |mut accumulator, row| {
+                let witness_0 = witness[row];
+                let witness_1 = witness[row + half];
+                let factor_0 = factor[row];
+                let factor_1 = factor[row + half];
+                accumulator.add_constant_product(witness_0, factor_0);
+                accumulator.add_quadratic_product(witness_1 - witness_0, factor_1 - factor_0);
+                accumulator
+            })
+            .reduce(A::zero, A::merge)
+            .finish();
+    }
     let mut accumulator = A::zero();
     for row in 0..half {
         let witness_0 = witness[row];
@@ -163,6 +192,12 @@ where
     F: FieldCore + ExtField<F> + HasOptimizedFold + HasUnreducedOps,
     A: ProductRoundAccumulator<F>,
 {
+    #[cfg(feature = "parallel")]
+    if multiple_workers_available() {
+        fold_first_variable_identity_scalar(witness, challenge);
+        fold_first_variable_identity_scalar(factor, challenge);
+        return compute_product_round_identity_scalar_with::<F, A>(witness, factor);
+    }
     let half = witness.len() / 2;
     let quarter = half / 2;
     let fold = F::precompute_fold(challenge);
