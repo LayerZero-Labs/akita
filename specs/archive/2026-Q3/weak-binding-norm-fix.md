@@ -4,8 +4,10 @@
 |-----------|--------------------------------|
 | Author(s) | Omid Bodaghi, Quang Dao, Cursor agent draft |
 | Created   | 2026-06-01                     |
-| Status    | implemented (the original anchored A-role bound is superseded by the committed-fold reprice below) |
+| Status    | superseded |
 | PR        | https://github.com/LayerZero-Labs/akita/pull/146 |
+| Superseded-by | [`selective-l2-fold-security-sizing.md`](../../selective-l2-fold-security-sizing.md) |
+| Book-chapter | book/src/how/security.md |
 
 > **Status note (2026-06-03).** The A-role weak-binding price that first
 > shipped on this branch (`collision_A = 2·ω̄·β̄·ν` with a single-block `β̄`,
@@ -17,7 +19,7 @@
 > outcome (2026-06-02)" onward is retained as historical / superseded context.
 
 > **Active correction (2026-08-06).**
-> [`selective-l2-fold-security-sizing.md`](selective-l2-fold-security-sizing.md)
+> [`selective-l2-fold-security-sizing.md`](../../selective-l2-fold-security-sizing.md)
 > removes `ring_subfield_norm_bound` from physical A role collision sizing.
 > The challenge and accepted folded response are already physical ring
 > coefficient vectors at this point, so applying the Hachi logical to ring

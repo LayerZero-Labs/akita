@@ -59,9 +59,10 @@ The complete decision, assumptions, claim language, certificates, and
 implementation acceptance criteria live in
 [`specs/sis-quantum128-scalar-n-table.md`](../../../specs/sis-quantum128-scalar-n-table.md).
 
-**Sources to fold in**
+**Implementation map**
 
-- `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `generated_sis_table/`, `norm_bound.rs`.
+- `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `l2_table.rs`,
+  `physical_l2.rs`, `generated_sis_table/`, and `norm_bound.rs`.
 - Paper §2.2 `def:msis`, §3.12 `sec:batched-soundness` ("MSIS targets", "Two norm models").
 - `docs/security-posture.md`, `specs/sis-quantum128-scalar-n-table.md`.
 - `scripts/sis_golden/infinity_width_table.csv` (generation provenance for the
@@ -95,11 +96,14 @@ integer proof shape into the schedule descriptor. The verifier proves the norm
 of the same physical Z coefficients used by the security calculation and then
 checks the public cap. The existing digit range proof remains mandatory.
 
-**Sources to fold in**
+**Implementation map**
 
-- `crates/akita-types/src/sis/norm_bound.rs`, `layout/digit_math.rs` (`optimal_block_geometry_split`).
+- `crates/akita-types/src/sis/norm_bound.rs` owns the two physical collision
+  formulas. `crates/akita-types/src/proof/relation_range_image.rs` owns the
+  physical response map. `crates/akita-prover/src/protocol/sumcheck/physical_l2_norm.rs`
+  and `crates/akita-verifier/src/stages/physical_l2_norm.rs` own proof and replay.
 - Paper §3.12 `sec:batched-soundness` (`def:batched-weak-opening`, `lem:batched-weak-binding`, `prop:committed-fold-price`).
-- `specs/weak-binding-norm-fix.md` (fold reprice — keep the correction section).
+- `specs/archive/2026-Q3/weak-binding-norm-fix.md` records the earlier fold reprice.
 - `specs/fold-linf-rejection.md` (fold digit-count tightening).
 - `specs/selective-l2-fold-security-sizing.md` (implemented physical norm correction
   and optional L2 route).

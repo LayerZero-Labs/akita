@@ -186,5 +186,5 @@ Risks to watch:
 ## References
 
 - PR 146 (security correction and A-role reprice): `https://github.com/LayerZero-Labs/akita/pull/146`
-- `specs/weak-binding-norm-fix.md` (context and derivation history)
+- `specs/archive/2026-Q3/weak-binding-norm-fix.md` (context and derivation history)
 - `crates/akita-types/src/sis/norm_bound.rs` (committed-fold collision pricing implementation)

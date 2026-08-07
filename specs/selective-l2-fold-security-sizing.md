@@ -4,9 +4,9 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-08-06 |
-| Status        | implemented |
+| Status        | active |
 | PR            | [#369](https://github.com/LayerZero-Labs/akita/pull/369) |
-| Supersedes    | The physical A role embedding factor in `weak-binding-norm-fix.md` |
+| Supersedes    | The physical A role embedding factor in `archive/2026-Q3/weak-binding-norm-fix.md` |
 | Superseded-by | |
 | Book-chapter  | book/src/how/security.md |
 
@@ -481,32 +481,32 @@ infinity correction to the new norm proof.
 
 ### Acceptance criteria
 
-* [ ] A level with `InnerCommitSecurityRoute::Linf` serializes no L2 claim and
+* [x] A level with `InnerCommitSecurityRoute::Linf` serializes no L2 claim and
       uses only coefficient L infinity A role sizing.
-* [ ] A level with `InnerCommitSecurityRoute::L2` verifies the complete physical
+* [x] A level with `InnerCommitSecurityRoute::L2` verifies the complete physical
       square sum and rejects `S > S_max`.
-* [ ] The prover and verifier derive the physical Z domain from one shared
+* [x] The prover and verifier derive the physical Z domain from one shared
       `WitnessLayout` authority.
-* [ ] Removing the Hachi factor changes physical A role collision sizing from
+* [x] Removing the Hachi factor changes physical A role collision sizing from
       `8 * kappa_1 * 2 * Z_inf` to `8 * kappa_1 * Z_inf` for fp32 and fp64.
-* [ ] Equal physical challenges and responses produce equal A role collision
+* [x] Equal physical challenges and responses produce equal A role collision
       bounds across field profiles, independent of extension degree.
-* [ ] A separate test shows that a bound stated before `psi` still applies its
+* [x] A separate test shows that a bound stated before `psi` still applies its
       logical to physical conversion once in honest sizing.
-* [ ] The Euclidean scalar mapping uses `sqrt(C_2_sq)` and never
+* [x] The Euclidean scalar mapping uses `sqrt(C_2_sq)` and never
       `sqrt(width * C_2_sq)` for a complete collision norm.
-* [ ] Production L2 table rows use quantum ADPS16 at 128 bits.
-* [ ] The planner retains distinct A rank candidates until their suffixes have
+* [x] Production L2 table rows use quantum ADPS16 at 128 bits.
+* [x] The planner retains distinct A rank candidates until their suffixes have
       been priced.
-* [ ] Root, early, and terminal levels carry no L2 proof.
-* [ ] Tampering with the norm, cap, route, subclaim, virtual evaluation, nonce,
+* [x] Root, early, and terminal levels carry no L2 proof.
+* [x] Tampering with the norm, cap, route, subclaim, virtual evaluation, nonce,
       or proof shape causes verification to fail.
-* [ ] Small field tests cover positive and negative limb inner products,
+* [x] Small field tests cover positive and negative limb inner products,
       centered lifting boundaries, block boundaries, and integer overflow.
-* [ ] Headerless deserialization rejects oversized shapes before allocation.
-* [ ] Proof size accounting equals actual serialization for every supported
+* [x] Headerless deserialization rejects oversized shapes before allocation.
+* [x] Proof size accounting equals actual serialization for every supported
       field family.
-* [ ] Generated schedules pass audit and the report contains all required
+* [x] Generated schedules pass audit and the report contains all required
       before and after values.
 * [ ] All repository CI gates and verifier no panic checks pass.
 
@@ -634,12 +634,12 @@ The implementation PR must update the following pages when the behavior lands.
   norm term and Stage 2 virtualization.
 * `book/src/how/configuration.md` must explain how the planner selects a route
   and cap.
-* `specs/weak-binding-norm-fix.md` must point to this correction for physical A
-  role sizing.
+* `specs/archive/2026-Q3/weak-binding-norm-fix.md` must point to this correction
+  for physical A role sizing.
 * Generated schedule tables and their book presentation must be refreshed.
 
-Once the implementation and book text land, this spec should be marked
-implemented. It can be archived after its durable security and protocol text
+The implementation PR keeps this spec active. Mark it implemented when the PR
+merges. It can then be archived because its durable security and protocol text
 has been folded into the book.
 
 ## Execution
