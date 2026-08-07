@@ -978,12 +978,6 @@ def extract_summary(
                 proof_levels[level]["response_l2_sq"] = response_l2_sq
             if "root_variant" in kvs:
                 proof_levels[level]["root_variant"] = kvs["root_variant"]
-        elif "fold grind summary" in line and kvs.get("label") == mode:
-            summary["grind_levels"] = int(kvs["grind_levels"])
-            if int(kvs["grind_levels"]) > 0:
-                summary["grind_nonce_max"] = int(kvs["grind_nonce_max"])
-                summary["grind_attempts_sum"] = int(kvs["grind_attempts_sum"])
-                summary["grind_nonces"] = kvs["grind_nonces"]
         elif "proof tail summary" in line and kvs.get("label") == mode:
             ingest_tail_summary_fields(summary, kvs)
         elif "z fold encoding stats" in line and kvs.get("label") == mode:
@@ -1149,7 +1143,17 @@ def compact_sample_summary(summary: dict[str, object]) -> dict[str, object]:
 def l2_grind_observations_for_run(summary: dict[str, object]) -> list[dict[str, object]]:
     planned_levels = summary.get("planned_levels")
     proof_levels = summary.get("proof_levels")
-    if not isinstance(planned_levels, list) or not isinstance(proof_levels, list):
+    if not isinstance(planned_levels, list):
+        return []
+    l2_planned_levels = [
+        planned
+        for planned in planned_levels
+        if isinstance(planned, dict) and planned.get("security_route") == "L2"
+    ]
+    run_failed = int(summary.get("exit_code", 0)) != 0
+    if not isinstance(proof_levels, list):
+        if l2_planned_levels and not run_failed:
+            raise ValueError("successful L2 run is missing proof-level grinding diagnostics")
         return []
     proofs_by_level = {
         int(level["level"]): level
@@ -1157,12 +1161,12 @@ def l2_grind_observations_for_run(summary: dict[str, object]) -> list[dict[str, 
         if isinstance(level, dict) and level.get("level") is not None
     }
     observations = []
-    for planned in planned_levels:
-        if not isinstance(planned, dict) or planned.get("security_route") != "L2":
-            continue
+    for planned in l2_planned_levels:
         level = int(planned["level"])
         proof = proofs_by_level.get(level)
         if proof is None or proof.get("grind_attempts") is None:
+            if run_failed:
+                continue
             raise ValueError(f"L2 fold level {level} is missing grinding diagnostics")
         nonce = int(proof["grind_nonce_val"])
         attempts = int(proof["grind_attempts"])

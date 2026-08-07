@@ -429,6 +429,35 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertIn("L2 cap grinding observations", report)
         self.assertIn("50.00%", report)
 
+    def test_failed_l2_run_preserves_partial_sample_without_grind_diagnostics(self) -> None:
+        from scripts.profile_bench_report import combine_case_run_summaries
+
+        failed = {
+            "run_index": 1,
+            "exit_code": 1,
+            "error": "prover failed before measured L2 level",
+            "planned_levels": [
+                {
+                    "level": 5,
+                    "security_route": "L2",
+                    "response_l2_sq_cap": 100,
+                }
+            ],
+            "proof_levels": [
+                {
+                    "level": 0,
+                    "grind_nonce_val": 0,
+                    "grind_attempts": 1,
+                }
+            ],
+        }
+
+        combined = combine_case_run_summaries([failed])
+
+        self.assertEqual(combined["exit_code"], 1)
+        self.assertEqual(combined["samples"][0]["exit_code"], 1)
+        self.assertNotIn("l2_grind_observations", combined)
+
     def test_matrix_embeds_main_delta_in_every_numeric_metric(self) -> None:
         from scripts.profile_bench_report import normalize_case_summary, render_matrix_summary
 
