@@ -17,6 +17,7 @@ use akita_prover::compute::{
     OpeningFoldKernel, OpeningFoldPlan, RecursiveProveBackend, RootPolyShape, RootProvePoly,
     RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly,
 };
+use akita_prover::kernels::sumcheck::SumcheckTableOperations;
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend, ComputeBackendSetup,
     CpuBackend,
@@ -536,6 +537,7 @@ fn run_prove<
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize
+        + SumcheckTableOperations<FF>
         + Valid,
     CpuBackend: RuntimeRootCommitBackend<FF, P, Cfg::ExtField>
         + RecursiveProveBackend<FF, P, Cfg::ExtField>,
@@ -696,6 +698,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize
+        + SumcheckTableOperations<FF>
         + Valid,
 {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
@@ -798,6 +801,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize
+        + SumcheckTableOperations<FF>
         + Valid,
 {
     let onehot_poly = make_profile_onehot_poly::<FF>(layout, 0xbeef_cafe);
@@ -876,6 +880,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize
+        + SumcheckTableOperations<FF>
         + Valid,
 {
     let polys: Vec<OneHotPoly<FF, u8>> = (0..num_polys)
@@ -1099,6 +1104,7 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize
+        + SumcheckTableOperations<FF>
         + Valid,
 {
     let setup_contribution_mode = profile_setup_contribution_mode();
@@ -1155,6 +1161,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize
+        + SumcheckTableOperations<FF>
         + Valid,
 {
     const PRE_GROUPS: usize = 2;

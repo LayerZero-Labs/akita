@@ -15,6 +15,7 @@ use akita_field::{
     CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
 };
+use akita_prover::kernels::sumcheck::SumcheckTableOperations;
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupParams, FpExtEncoding, MultiChunkProfileId,
@@ -69,6 +70,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize
+        + SumcheckTableOperations<FF>
         + Valid,
 {
     // The dense profile opens one polynomial at one point, so the schedule key
@@ -106,6 +108,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize
+        + SumcheckTableOperations<FF>
         + Valid,
 {
     tracing::info!("{}", title);

@@ -197,7 +197,9 @@ where
         + Valid,
     Cfg::ExtField: FrobeniusExtField<FField> + HasUnreducedOps + HasOptimizedFold,
     <FField as HasWide>::Wide: From<FField> + ReduceTo<FField>,
-    Cfg::ExtField: FpExtEncoding<FField> + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FField>
+        + AkitaSerialize
+        + akita_prover::kernels::sumcheck::SumcheckTableOperations<FField>,
 {
     let layout = singleton_layout::<Cfg>(nv);
 
