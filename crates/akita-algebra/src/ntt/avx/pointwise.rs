@@ -33,16 +33,42 @@ pub(crate) unsafe fn pointwise_dot_acc_i32(
     pinv: i32,
 ) {
     debug_assert!(count <= I32_LAZY_DOT_BATCH);
-    if count == 0 {
-        return;
+    macro_rules! dispatch_count {
+        ($count:literal) => {{
+            // SAFETY: inherited pointer contract and AVX2 target feature.
+            unsafe { pointwise_dot_acc_i32_count::<$count>(acc, lhs, rhs, d, p, pinv) }
+        }};
     }
+    match count {
+        0 => {}
+        1 => dispatch_count!(1),
+        2 => dispatch_count!(2),
+        3 => dispatch_count!(3),
+        4 => dispatch_count!(4),
+        5 => dispatch_count!(5),
+        6 => dispatch_count!(6),
+        _ => unreachable!("pointwise dot exceeds lazy reduction bound"),
+    }
+}
+
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn pointwise_dot_acc_i32_count<const COUNT: usize>(
+    acc: *mut i32,
+    lhs: *const *const i32,
+    rhs: *const *const i32,
+    d: usize,
+    p: i32,
+    pinv: i32,
+) {
+    debug_assert!(COUNT > 0 && COUNT <= I32_LAZY_DOT_BATCH);
     let p_v = _mm256_set1_epi32(p);
     let pinv_v = _mm256_set1_epi32(pinv);
     let mut i = 0;
     while i + 8 <= d {
         let mut even_sum = _mm256_setzero_si256();
         let mut odd_sum = _mm256_setzero_si256();
-        for product in 0..count {
+        for product in 0..COUNT {
             // SAFETY: guaranteed by this function's pointer contract and loop bounds.
             unsafe {
                 let l = _mm256_loadu_si256((*lhs.add(product)).add(i).cast());
@@ -73,7 +99,7 @@ pub(crate) unsafe fn pointwise_dot_acc_i32(
         let prime = NttPrime::compute(p);
         while i < d {
             let mut raw_sum = 0_i64;
-            for product in 0..count {
+            for product in 0..COUNT {
                 // SAFETY: guaranteed by this function's pointer contract and tail bound.
                 unsafe {
                     raw_sum += i64::from(*(*lhs.add(product)).add(i))
