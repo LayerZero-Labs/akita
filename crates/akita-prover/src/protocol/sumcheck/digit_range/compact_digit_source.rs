@@ -104,6 +104,10 @@ impl CompactDigitSource {
         self.ordered_range_class_pairs.len()
     }
 
+    pub(super) fn ordered_pair_indices(&self) -> &[u16] {
+        &self.ordered_range_class_pairs
+    }
+
     pub(super) fn quartet_count(&self) -> usize {
         self.pair_count().div_ceil(2)
     }

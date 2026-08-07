@@ -2,6 +2,7 @@ use super::compact_digit_source::RangeImageClass;
 use super::{compose_small_poly_with_affine, MAX_TREE_STAGE_Q_DEGREE};
 use akita_field::unreduced::HasOptimizedFold;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
+use akita_sumcheck::batched_affine_product_coefficients;
 use akita_types::DigitRangePlan;
 
 /// Plan-derived child-node values for every range-image class.
@@ -127,6 +128,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold, const LANES: usize>
     pub(super) fn row_by_pair_index(&self, pair_index: usize) -> [E; LANES] {
         self.rows[pair_index]
     }
+
+    pub(super) fn rows(&self) -> &[[E; LANES]] {
+        &self.rows
+    }
 }
 
 /// Range-image values folded at the first challenge, indexed by an ordered class pair.
@@ -205,73 +210,7 @@ pub(super) fn product_coefficients<E: FieldCore, const LANES: usize>(
     arity: usize,
     parent_weights: &[E],
 ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
-    debug_assert_eq!(LANES, arity * parent_weights.len());
-    debug_assert!(matches!(arity, 2 | 4));
-    let mut batched = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
-    for (parent_index, &weight) in parent_weights.iter().enumerate() {
-        let first_lane = parent_index * arity;
-        let polynomial = match arity {
-            2 => quadratic_affine_product(
-                [left[first_lane], left[first_lane + 1]],
-                [right[first_lane], right[first_lane + 1]],
-            ),
-            4 => quartic_affine_product(
-                [
-                    left[first_lane],
-                    left[first_lane + 1],
-                    left[first_lane + 2],
-                    left[first_lane + 3],
-                ],
-                [
-                    right[first_lane],
-                    right[first_lane + 1],
-                    right[first_lane + 2],
-                    right[first_lane + 3],
-                ],
-            ),
-            _ => unreachable!("validated range-product arity"),
-        };
-        if parent_weights.len() == 1 && weight == E::one() {
-            batched = polynomial;
-        } else {
-            for degree in 0..=arity {
-                batched[degree] += weight * polynomial[degree];
-            }
-        }
-    }
-    batched
-}
-
-#[inline(always)]
-fn quadratic_affine_product<E: FieldCore>(
-    left: [E; 2],
-    right: [E; 2],
-) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
-    let first_slope = right[0] - left[0];
-    let second_slope = right[1] - left[1];
-    [
-        left[0] * left[1],
-        left[0] * second_slope + first_slope * left[1],
-        first_slope * second_slope,
-        E::zero(),
-        E::zero(),
-    ]
-}
-
-#[inline(always)]
-fn quartic_affine_product<E: FieldCore>(
-    left: [E; 4],
-    right: [E; 4],
-) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
-    let first = quadratic_affine_product([left[0], left[1]], [right[0], right[1]]);
-    let second = quadratic_affine_product([left[2], left[3]], [right[2], right[3]]);
-    [
-        first[0] * second[0],
-        first[0] * second[1] + first[1] * second[0],
-        first[0] * second[2] + first[1] * second[1] + first[2] * second[0],
-        first[1] * second[2] + first[2] * second[1],
-        first[2] * second[2],
-    ]
+    batched_affine_product_coefficients(&left, &right, arity, parent_weights)
 }
 
 pub(super) struct OrderedProductPairCoefficients<E: FieldCore> {

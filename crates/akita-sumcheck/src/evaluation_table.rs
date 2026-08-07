@@ -311,6 +311,43 @@ where
         Ok(Self::from_initialized(coefficients, len))
     }
 
+    /// Build several dense multilinear tables in one logical-row traversal.
+    ///
+    /// The generator returns one value per table. Every table is written
+    /// directly in binding order and owns the same canonical coefficient-first
+    /// representation as the single-table constructor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `len` is zero or is not a power of two.
+    pub fn from_multilinear_evaluation_array_fn<const N: usize, G>(
+        len: usize,
+        mut evaluations: G,
+    ) -> Result<[Self; N], AkitaError>
+    where
+        G: FnMut(usize) -> [E; N],
+    {
+        Self::validate_multilinear_len(len)?;
+        let mut coefficients = std::array::from_fn(|_| Self::uninitialized_coefficients(len));
+        for stored_row in 0..len {
+            let logical_row = Self::logical_row(stored_row, len);
+            let values = evaluations(logical_row);
+            for (table, value) in coefficients.iter_mut().zip(values) {
+                for coefficient in 0..<E as ExtField<F>>::EXT_DEGREE {
+                    table[coefficient * len + stored_row]
+                        .write(value.base_coefficient(coefficient));
+                }
+            }
+        }
+
+        Ok(coefficients.map(|coefficients| {
+            // SAFETY: every slot in every table is written exactly once by
+            // the logical-row, table, and coefficient loops above.
+            let coefficients = unsafe { coefficients.assume_init() };
+            Self::from_initialized(coefficients, len)
+        }))
+    }
+
     /// Build a dense multilinear table from logical LSB-first coefficients.
     ///
     /// The stored rows are in binding order, so the next variable selects
@@ -456,6 +493,29 @@ where
     pub fn truncate(&mut self, new_len: usize) {
         assert!(new_len <= self.len, "evaluation table cannot grow");
         self.len = new_len;
+    }
+
+    /// Remove the first variable from a binding-order equality table.
+    ///
+    /// For `eq(tau, x)`, the two halves are `(1 - tau[0]) * suffix` and
+    /// `tau[0] * suffix`. Adding them recovers the unscaled suffix table.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the live length is a power of two with at least two rows.
+    pub fn sum_first_variable_halves(&mut self) {
+        assert!(
+            self.len.is_power_of_two() && self.len >= 2,
+            "equality table must have a nontrivial power-of-two length"
+        );
+        let half = self.len / 2;
+        for coefficient in 0..<E as ExtField<F>>::EXT_DEGREE {
+            let values = self.coefficient_slice_mut(coefficient);
+            for row in 0..half {
+                values[row] += values[row + half];
+            }
+        }
+        self.truncate(half);
     }
 
     /// Convert the live stored rows back into ordinary extension values.
@@ -647,6 +707,22 @@ mod tests {
         check::<Ext2<F>>();
         check::<FpExt4<F>>();
         check::<FpExt8<F>>();
+    }
+
+    #[test]
+    fn table_array_constructor_matches_independent_tables() {
+        let actual =
+            EvaluationTable::<F, E>::from_multilinear_evaluation_array_fn::<3, _>(16, |row| {
+                std::array::from_fn(|table| value(row + 100 * table))
+            })
+            .unwrap();
+        let expected = std::array::from_fn(|table| {
+            EvaluationTable::<F, E>::from_multilinear_evaluation_fn(16, |row| {
+                value(row + 100 * table)
+            })
+            .unwrap()
+        });
+        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -867,5 +943,16 @@ mod tests {
     fn truncate_cannot_grow() {
         let mut table = EvaluationTable::<F, E>::from_evaluation_fn(1, value);
         table.truncate(2);
+    }
+
+    #[test]
+    fn summing_equality_halves_removes_the_first_coordinate() {
+        let point = [value(31), value(47), value(59), value(71)];
+        let logical = akita_algebra::eq_poly::EqPolynomial::evals(&point).unwrap();
+        let suffix = akita_algebra::eq_poly::EqPolynomial::evals(&point[1..]).unwrap();
+        let mut table = EvaluationTable::<F, E>::from_multilinear_evaluations(&logical).unwrap();
+        table.sum_first_variable_halves();
+        let expected = EvaluationTable::<F, E>::from_multilinear_evaluations(&suffix).unwrap();
+        assert_eq!(table, expected);
     }
 }

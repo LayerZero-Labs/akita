@@ -27,8 +27,11 @@ struct FirstChallengeFoldedRangeLeafState<E: FieldCore> {
     cached_second_round_coefficients: [E; MAX_TREE_STAGE_Q_DEGREE + 1],
 }
 
-type RangeImageTableState<E> =
-    ClassIndexedTableState<CompactRangeLeafState<E>, FirstChallengeFoldedRangeLeafState<E>, E>;
+type RangeImageTableState<E> = ClassIndexedTableState<
+    CompactRangeLeafState<E>,
+    FirstChallengeFoldedRangeLeafState<E>,
+    ExactPrefixTable<E>,
+>;
 
 fn accumulate_round<E: FieldCore + HasUnreducedOps>(
     equality_prefix_weights: &[E],
@@ -99,9 +102,14 @@ impl<E: FieldCore + FromPrimitiveInt> ClassIndexedRangeLeafProver<E> {
     }
 
     pub(super) fn final_range_image_eval(&self) -> E {
-        self.range_image
-            .final_value()
-            .expect("range-image leaf was not fully folded")
+        match &self.range_image {
+            RangeImageTableState::Materialized(table) => table
+                .final_value()
+                .expect("range-image leaf was not fully folded"),
+            RangeImageTableState::Compact(_) | RangeImageTableState::FirstChallengeFolded(_) => {
+                panic!("range-image leaf was not fully folded")
+            }
+        }
     }
 }
 

@@ -649,6 +649,24 @@ rows cost 7.2 to 7.3 ms. The following fused rounds measured 31.0 to 31.1 ms,
 17.2 to 17.4 ms, and 10.7 to 10.8 ms. Both complete proofs verified; the second
 whole-proof sample measured 1.874 seconds.
 
+High-basis Stage 1 product substages now keep compact class-pair indices through
+their second round and use a runtime-selected packed affine-product operation.
+The operation gathers folded values from the bounded class table, evaluates the
+quadratic or quartic parent products in SIMD lanes, exploits the split equality
+table's contiguous inner blocks, and handles the implicit padding suffix once.
+After two challenges, every child lane materializes directly into its canonical
+coefficient-first table; all later rounds use the same packed operation and fold
+as other materialized sumchecks. The shared scalar affine-product coefficient
+formula remains the correctness reference.
+
+On the one-worker fp32 D128 Apple profile, the largest basis-64, eight-lane
+compact second round fell from 18.9 to 19.0 ms to 10.9 to 11.2 ms. Its complete
+product substage fell from 47.5 ms to 37.0 to 38.1 ms, and the enclosing Stage 1
+instance fell from 78.0 ms to about 68.2 ms. The other two basis-64 instances
+also improved. Two complete verified proofs measured 1.487 and 1.476 seconds.
+An earlier-materialization prototype was rejected: expanding after the first
+challenge cost 17.2 ms and made the same substage 51.9 ms.
+
 The fp32 Stage 2 compact prefix originally widened every digit-derived product
 into four `u128` coefficient sums. Accumulating each x-column first in the exact
 `u64` short-batch representation and promoting once per output reduced the root

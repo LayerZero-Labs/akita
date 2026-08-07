@@ -1,6 +1,6 @@
 use super::SumcheckKernelPlan;
 use akita_field::{Ext2, ExtField, FpExt4, Prime32Offset99, Prime64Offset59};
-use akita_sumcheck::EvaluationTable;
+use akita_sumcheck::{batched_affine_product_coefficients, EvaluationTable};
 
 type F = Prime32Offset99;
 type E = FpExt4<F>;
@@ -77,6 +77,76 @@ fn compare_fused_product_round_plan(plan: SumcheckKernelPlan) {
     }
 }
 
+fn compare_weighted_affine_product_plan<const LANES: usize>(
+    plan: SumcheckKernelPlan,
+    arity: usize,
+) {
+    for len in [2, 4, 8, 16, 32, 64, 256] {
+        let lanes: [EvaluationTable<F, E>; LANES] = std::array::from_fn(|lane| {
+            EvaluationTable::<F, E>::from_multilinear_evaluation_fn(len, |row| {
+                value(row + lane * len + 7)
+            })
+            .expect("valid lane table")
+        });
+        let equality = EvaluationTable::<F, E>::from_multilinear_evaluation_fn(len / 2, |row| {
+            value(row + LANES * len + 19)
+        })
+        .expect("valid equality table");
+        let parent_weights = (0..LANES / arity)
+            .map(|parent| value(parent + 101))
+            .collect::<Vec<_>>();
+        let expected = SumcheckKernelPlan::SCALAR.compute_weighted_affine_product_round_fp32(
+            &lanes,
+            &equality,
+            arity,
+            &parent_weights,
+        );
+        let actual = plan.compute_weighted_affine_product_round_fp32(
+            &lanes,
+            &equality,
+            arity,
+            &parent_weights,
+        );
+        assert_eq!(actual, expected, "weighted product mismatch at len={len}");
+    }
+}
+
+fn compare_compact_affine_product_plan<const LANES: usize>(plan: SumcheckKernelPlan, arity: usize) {
+    let rows: Vec<[E; LANES]> = (0..64)
+        .map(|row| std::array::from_fn(|lane| value(row * LANES + lane + 7)))
+        .collect();
+    let ordered_pair_indices = (0..128)
+        .map(|index| u16::try_from((index * 17 + 3) % rows.len()).unwrap())
+        .collect::<Vec<_>>();
+    let first_equality = (0..32).map(|row| value(row + 2_001)).collect::<Vec<_>>();
+    let second_equality = (0..2).map(|row| value(row + 3_001)).collect::<Vec<_>>();
+    let parent_weights = (0..LANES / arity)
+        .map(|parent| value(parent + 4_001))
+        .collect::<Vec<_>>();
+    let mut expected = [E::zero(); 5];
+    for quartet in 0..ordered_pair_indices.len() / 2 {
+        let left = rows[usize::from(ordered_pair_indices[2 * quartet])];
+        let right = rows[usize::from(ordered_pair_indices[2 * quartet + 1])];
+        let coefficients =
+            batched_affine_product_coefficients(&left, &right, arity, &parent_weights);
+        let weight = first_equality[quartet % first_equality.len()]
+            * second_equality[quartet / first_equality.len()];
+        for degree in 0..=arity {
+            expected[degree] += weight * coefficients[degree];
+        }
+    }
+    if let Some(actual) = plan.try_compute_compact_affine_product_round_fp32(
+        &ordered_pair_indices,
+        &rows,
+        &first_equality,
+        &second_equality,
+        arity,
+        &parent_weights,
+    ) {
+        assert_eq!(actual, expected);
+    }
+}
+
 fn compare_fp64_plan(plan: SumcheckKernelPlan) {
     for len in [2, 4, 8, 16, 32, 64, 256] {
         let source: Vec<_> = (0..len).map(value64).collect();
@@ -132,6 +202,12 @@ fn detected_fp32_fold_matches_scalar() {
     compare_plan(SumcheckKernelPlan::detect());
     compare_product_round_plan(SumcheckKernelPlan::detect());
     compare_fused_product_round_plan(SumcheckKernelPlan::detect());
+    compare_weighted_affine_product_plan::<2>(SumcheckKernelPlan::detect(), 2);
+    compare_weighted_affine_product_plan::<4>(SumcheckKernelPlan::detect(), 4);
+    compare_weighted_affine_product_plan::<8>(SumcheckKernelPlan::detect(), 4);
+    compare_compact_affine_product_plan::<2>(SumcheckKernelPlan::detect(), 2);
+    compare_compact_affine_product_plan::<4>(SumcheckKernelPlan::detect(), 4);
+    compare_compact_affine_product_plan::<8>(SumcheckKernelPlan::detect(), 4);
     compare_fp64_plan(SumcheckKernelPlan::detect());
 }
 
@@ -142,6 +218,12 @@ fn supported_x86_fp32_folds_match_scalar() {
         compare_plan(SumcheckKernelPlan::AVX2);
         compare_product_round_plan(SumcheckKernelPlan::AVX2);
         compare_fused_product_round_plan(SumcheckKernelPlan::AVX2);
+        compare_weighted_affine_product_plan::<2>(SumcheckKernelPlan::AVX2, 2);
+        compare_weighted_affine_product_plan::<4>(SumcheckKernelPlan::AVX2, 4);
+        compare_weighted_affine_product_plan::<8>(SumcheckKernelPlan::AVX2, 4);
+        compare_compact_affine_product_plan::<2>(SumcheckKernelPlan::AVX2, 2);
+        compare_compact_affine_product_plan::<4>(SumcheckKernelPlan::AVX2, 4);
+        compare_compact_affine_product_plan::<8>(SumcheckKernelPlan::AVX2, 4);
         compare_fp64_plan(SumcheckKernelPlan::AVX2);
     }
     if std::is_x86_feature_detected!("avx512f")
@@ -151,6 +233,12 @@ fn supported_x86_fp32_folds_match_scalar() {
         compare_plan(SumcheckKernelPlan::AVX512_IFMA);
         compare_product_round_plan(SumcheckKernelPlan::AVX512_IFMA);
         compare_fused_product_round_plan(SumcheckKernelPlan::AVX512_IFMA);
+        compare_weighted_affine_product_plan::<2>(SumcheckKernelPlan::AVX512_IFMA, 2);
+        compare_weighted_affine_product_plan::<4>(SumcheckKernelPlan::AVX512_IFMA, 4);
+        compare_weighted_affine_product_plan::<8>(SumcheckKernelPlan::AVX512_IFMA, 4);
+        compare_compact_affine_product_plan::<2>(SumcheckKernelPlan::AVX512_IFMA, 2);
+        compare_compact_affine_product_plan::<4>(SumcheckKernelPlan::AVX512_IFMA, 4);
+        compare_compact_affine_product_plan::<8>(SumcheckKernelPlan::AVX512_IFMA, 4);
         compare_fp64_plan(SumcheckKernelPlan::AVX512_IFMA);
     }
 }
@@ -162,6 +250,12 @@ fn supported_neon_fp32_folds_match_scalar() {
         compare_plan(SumcheckKernelPlan::NEON);
         compare_product_round_plan(SumcheckKernelPlan::NEON);
         compare_fused_product_round_plan(SumcheckKernelPlan::NEON);
+        compare_weighted_affine_product_plan::<2>(SumcheckKernelPlan::NEON, 2);
+        compare_weighted_affine_product_plan::<4>(SumcheckKernelPlan::NEON, 4);
+        compare_weighted_affine_product_plan::<8>(SumcheckKernelPlan::NEON, 4);
+        compare_compact_affine_product_plan::<2>(SumcheckKernelPlan::NEON, 2);
+        compare_compact_affine_product_plan::<4>(SumcheckKernelPlan::NEON, 4);
+        compare_compact_affine_product_plan::<8>(SumcheckKernelPlan::NEON, 4);
         compare_fp64_plan(SumcheckKernelPlan::NEON);
     }
 }

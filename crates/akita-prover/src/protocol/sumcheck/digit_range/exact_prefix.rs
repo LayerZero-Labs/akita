@@ -1,4 +1,21 @@
-use akita_field::{AkitaError, FieldCore};
+use akita_field::{AkitaError, ExtField, FieldCore};
+use akita_sumcheck::EvaluationTable;
+
+pub(super) fn materialize_remaining_equality<F, E>(
+    first: &[E],
+    second: &[E],
+) -> Result<EvaluationTable<F, E>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let len = first.len().checked_mul(second.len()).ok_or_else(|| {
+        AkitaError::InvalidInput("remaining equality table length overflow".to_string())
+    })?;
+    EvaluationTable::from_multilinear_evaluation_fn(len, |logical_row| {
+        first[logical_row % first.len()] * second[logical_row / first.len()]
+    })
+}
 
 /// Explicit prefix of a power-of-two table followed by one implicit default value.
 pub(super) struct ExactPrefixTable<T: Copy> {

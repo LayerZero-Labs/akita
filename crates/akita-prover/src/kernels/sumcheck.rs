@@ -3,11 +3,13 @@
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{ExtField, FieldCore};
 use akita_sumcheck::{
-    compute_product_round_scalar, fold_and_compute_product_round_scalar,
-    fold_first_variable_scalar, EvaluationTable,
+    batched_affine_product_coefficients, compute_product_round_scalar,
+    fold_and_compute_product_round_scalar, fold_first_variable_scalar, EvaluationTable,
+    MAX_AFFINE_PRODUCT_DEGREE,
 };
 
 mod fp32;
+mod fp32_affine;
 mod fp64;
 mod scalar;
 
@@ -93,6 +95,73 @@ where
     {
         fold_and_compute_product_round_scalar(witness, factor, challenge)
     }
+
+    /// Compute a weighted round for a batch of quadratic or quartic products.
+    fn compute_weighted_affine_product_round<const LANES: usize>(
+        _plan: SumcheckKernelPlan,
+        lanes: &[EvaluationTable<F, Self>; LANES],
+        equality: &EvaluationTable<F, Self>,
+        arity: usize,
+        parent_weights: &[Self],
+    ) -> [Self; MAX_AFFINE_PRODUCT_DEGREE + 1]
+    where
+        Self: Sized,
+    {
+        compute_weighted_affine_product_round_scalar(lanes, equality, arity, parent_weights)
+    }
+
+    /// Try a field-specific compact class-indexed affine-product round.
+    ///
+    /// Returning `None` selects the protocol's exact portable blocked
+    /// accumulator without changing the compact state.
+    fn try_compute_compact_affine_product_round<const LANES: usize>(
+        _plan: SumcheckKernelPlan,
+        _ordered_pair_indices: &[u16],
+        _folded_pair_rows: &[[Self; LANES]],
+        _first_equality: &[Self],
+        _second_equality: &[Self],
+        _arity: usize,
+        _parent_weights: &[Self],
+    ) -> Option<[Self; MAX_AFFINE_PRODUCT_DEGREE + 1]>
+    where
+        Self: Sized,
+    {
+        None
+    }
+}
+
+fn compute_weighted_affine_product_round_scalar<F, E, const LANES: usize>(
+    lanes: &[EvaluationTable<F, E>; LANES],
+    equality: &EvaluationTable<F, E>,
+    arity: usize,
+    parent_weights: &[E],
+) -> [E; MAX_AFFINE_PRODUCT_DEGREE + 1]
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    assert!(matches!(arity, 2 | 4), "product arity must be two or four");
+    assert_eq!(LANES, arity * parent_weights.len());
+    let table_len = lanes[0].len();
+    assert!(
+        lanes.iter().all(|lane| lane.len() == table_len),
+        "product lane tables must have equal lengths"
+    );
+    assert_eq!(equality.len(), table_len / 2);
+
+    let half = table_len / 2;
+    let mut result = [E::zero(); MAX_AFFINE_PRODUCT_DEGREE + 1];
+    for row in 0..half {
+        let left = std::array::from_fn::<_, LANES, _>(|lane| lanes[lane].evaluation(row));
+        let right = std::array::from_fn::<_, LANES, _>(|lane| lanes[lane].evaluation(row + half));
+        let coefficients =
+            batched_affine_product_coefficients(&left, &right, arity, parent_weights);
+        let equality_weight = equality.evaluation(row);
+        for degree in 0..=arity {
+            result[degree] += equality_weight * coefficients[degree];
+        }
+    }
+    result
 }
 
 impl SumcheckKernelPlan {

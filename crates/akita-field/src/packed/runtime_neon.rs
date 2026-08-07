@@ -2,7 +2,8 @@
 
 use super::neon::{PackedFp32Neon, PackedFp64Neon};
 use super::runtime_common::{
-    compute_product_round_fp_ext2_fp64_packed, compute_product_round_packed,
+    compute_compact_affine_product_round_packed, compute_product_round_fp_ext2_fp64_packed,
+    compute_product_round_packed, compute_weighted_affine_product_round_packed,
     fold_and_compute_product_round_fp_ext2_fp64_packed, fold_and_compute_product_round_packed,
     fold_fp_ext2_fp64_packed, fold_fp_ext4_fp32_packed,
 };
@@ -41,6 +42,64 @@ pub unsafe fn compute_product_round_fp_ext4_fp32_neon<const P: u32>(
     unsafe {
         compute_product_round_packed::<P, PackedFp32Neon<P>>(
             witness_0, witness_1, factor_0, factor_1,
+        )
+    }
+}
+
+/// Compute an equality-weighted affine-product round four rows at a time.
+///
+/// # Safety
+///
+/// The caller must establish that NEON is available on the current CPU.
+#[target_feature(enable = "neon")]
+pub unsafe fn compute_weighted_affine_product_round_fp_ext4_fp32_neon<
+    const P: u32,
+    const LANES: usize,
+>(
+    left: [[&[Fp32<P>]; 4]; LANES],
+    right: [[&[Fp32<P>]; 4]; LANES],
+    equality: [&[Fp32<P>]; 4],
+    arity: usize,
+    parent_weights: &[FpExt4<Fp32<P>>],
+) -> [FpExt4<Fp32<P>>; 5] {
+    // SAFETY: the target feature matches the packed backend, and the shared
+    // traversal validates every slice before reading it.
+    unsafe {
+        compute_weighted_affine_product_round_packed::<P, PackedFp32Neon<P>, LANES>(
+            left,
+            right,
+            equality,
+            arity,
+            parent_weights,
+        )
+    }
+}
+
+/// Compute a compact class-indexed product prefix four rows at a time.
+///
+/// # Safety
+///
+/// The caller must establish that NEON is available on the current CPU.
+#[target_feature(enable = "neon")]
+pub unsafe fn compute_compact_affine_product_round_fp_ext4_fp32_neon<
+    const P: u32,
+    const LANES: usize,
+>(
+    ordered_pair_indices: &[u16],
+    folded_pair_rows: &[[FpExt4<Fp32<P>>; LANES]],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    arity: usize,
+    parent_weights: &[FpExt4<Fp32<P>>],
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        compute_compact_affine_product_round_packed::<P, PackedFp32Neon<P>, LANES>(
+            ordered_pair_indices,
+            folded_pair_rows,
+            first_equality,
+            second_equality,
+            arity,
+            parent_weights,
         )
     }
 }

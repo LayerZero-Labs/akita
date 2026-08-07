@@ -589,7 +589,12 @@ pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
 ) -> Result<(AkitaStage1Proof<E>, Vec<E>, E), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
+    E: ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();

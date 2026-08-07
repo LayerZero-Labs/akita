@@ -22,6 +22,7 @@ pub(crate) mod direct_range_leaf;
 mod exact_prefix;
 mod range_class_tables;
 mod round_accumulation;
+use crate::kernels::sumcheck::SumcheckTableOperations;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
@@ -57,10 +58,15 @@ fn prove_class_indexed_product_subcheck<F, E, T, const LANES: usize>(
 ) -> Result<(AkitaStage1StageProof<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F> + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps + AkitaSerialize,
+    E: ExtField<F>
+        + FromPrimitiveInt
+        + HasOptimizedFold
+        + HasUnreducedOps
+        + AkitaSerialize
+        + SumcheckTableOperations<F>,
     T: Transcript<F>,
 {
-    let mut stage = ClassIndexedProductSubcheckProver::<E, LANES>::new(
+    let mut stage = ClassIndexedProductSubcheckProver::<F, E, LANES>::new(
         input.source,
         input.plan,
         input.leaf_polynomials,
@@ -185,7 +191,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
     pub fn prove<F, T>(self, transcript: &mut T) -> Result<DigitRangeProveOutput<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: ExtField<F>,
+        E: ExtField<F> + SumcheckTableOperations<F>,
         T: Transcript<F>,
     {
         let Self {

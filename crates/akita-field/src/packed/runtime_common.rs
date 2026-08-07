@@ -1,7 +1,7 @@
 //! Shared table traversal for runtime-selected packed field kernels.
 
 use super::{PackedField, PackedFpExt2, PackedFpExt4, PackedValue};
-use crate::{Fp32, Fp64, FpExt2, FpExt2Config, FpExt4};
+use crate::{ExtField, Fp32, Fp64, FpExt2, FpExt2Config, FpExt4};
 
 pub(super) type CoefficientSlices<'a, const P: u32> = [&'a [Fp32<P>]; 4];
 pub(super) type Fp64CoefficientSlices<'a, const P: u64> = [&'a [Fp64<P>]; 2];
@@ -64,6 +64,240 @@ where
     }
 
     sum_product_round_lanes(constant, quadratic)
+}
+
+/// Compute an equality-weighted batch of quadratic or quartic affine products.
+#[inline(always)]
+pub(super) unsafe fn compute_weighted_affine_product_round_packed<
+    const P: u32,
+    PF,
+    const LANES: usize,
+>(
+    left: [CoefficientSlices<'_, P>; LANES],
+    right: [CoefficientSlices<'_, P>; LANES],
+    equality: CoefficientSlices<'_, P>,
+    arity: usize,
+    parent_weights: &[FpExt4<Fp32<P>>],
+) -> [FpExt4<Fp32<P>>; 5]
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let len = validate_weighted_affine_product_slices(
+        &left,
+        &right,
+        &equality,
+        arity,
+        parent_weights.len(),
+        PF::WIDTH,
+    );
+    let left = left.map(|lane| lane.map(|slice| slice.as_ptr()));
+    let right = right.map(|lane| lane.map(|slice| slice.as_ptr()));
+    let equality = equality.map(|slice| slice.as_ptr());
+    let zero = PackedFpExt4::<Fp32<P>, PF>::broadcast(FpExt4::zero());
+    let mut sums = [zero; 5];
+
+    for row in (0..len).step_by(PF::WIDTH) {
+        // SAFETY: validation establishes one complete packed chunk for every
+        // lane and equality coefficient slice.
+        let left: [PackedFpExt4<Fp32<P>, PF>; LANES] =
+            std::array::from_fn(|lane| unsafe { read_packed_fp_ext4::<P, PF>(left[lane], row) });
+        let right: [PackedFpExt4<Fp32<P>, PF>; LANES] =
+            std::array::from_fn(|lane| unsafe { read_packed_fp_ext4::<P, PF>(right[lane], row) });
+        let equality = unsafe { read_packed_fp_ext4::<P, PF>(equality, row) };
+
+        for (parent, &parent_weight) in parent_weights.iter().enumerate() {
+            let first_lane = parent * arity;
+            let polynomial = match arity {
+                2 => packed_quadratic_affine_product(
+                    [left[first_lane], left[first_lane + 1]],
+                    [right[first_lane], right[first_lane + 1]],
+                    zero,
+                ),
+                4 => packed_quartic_affine_product(
+                    [
+                        left[first_lane],
+                        left[first_lane + 1],
+                        left[first_lane + 2],
+                        left[first_lane + 3],
+                    ],
+                    [
+                        right[first_lane],
+                        right[first_lane + 1],
+                        right[first_lane + 2],
+                        right[first_lane + 3],
+                    ],
+                    zero,
+                ),
+                _ => unreachable!("validated affine-product arity"),
+            };
+            let scale = equality * PackedFpExt4::broadcast(parent_weight);
+            for degree in 0..=arity {
+                sums[degree] = sums[degree] + scale * polynomial[degree];
+            }
+        }
+    }
+
+    sums.map(sum_fp32_lanes)
+}
+
+/// Compute the explicit prefix of a compact class-indexed product round.
+#[inline(always)]
+pub(super) unsafe fn compute_compact_affine_product_round_packed<
+    const P: u32,
+    PF,
+    const LANES: usize,
+>(
+    ordered_pair_indices: &[u16],
+    folded_pair_rows: &[[FpExt4<Fp32<P>>; LANES]],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    arity: usize,
+    parent_weights: &[FpExt4<Fp32<P>>],
+) -> [FpExt4<Fp32<P>>; 5]
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let quartet_count = ordered_pair_indices.len().div_ceil(2);
+    validate_compact_affine_product_inputs(
+        folded_pair_rows,
+        first_equality,
+        second_equality,
+        quartet_count,
+        arity,
+        parent_weights.len(),
+        PF::WIDTH,
+    );
+    let zero = PackedFpExt4::<Fp32<P>, PF>::broadcast(FpExt4::zero());
+    let mut sums = [zero; 5];
+
+    for quartet in (0..quartet_count).step_by(PF::WIDTH) {
+        let left: [PackedFpExt4<Fp32<P>, PF>; LANES] = std::array::from_fn(|child| {
+            packed_class_values::<P, PF, LANES>(folded_pair_rows, child, |packed_lane| {
+                usize::from(ordered_pair_indices[2 * (quartet + packed_lane)])
+            })
+        });
+        let right: [PackedFpExt4<Fp32<P>, PF>; LANES] = std::array::from_fn(|child| {
+            packed_class_values::<P, PF, LANES>(folded_pair_rows, child, |packed_lane| {
+                ordered_pair_indices
+                    .get(2 * (quartet + packed_lane) + 1)
+                    .copied()
+                    .map(usize::from)
+                    .unwrap_or(0)
+            })
+        });
+        let first = packed_extension_values::<P, PF>(|packed_lane| {
+            first_equality[quartet % first_equality.len() + packed_lane]
+        });
+        let second = PackedFpExt4::broadcast(second_equality[quartet / first_equality.len()]);
+        let equality = first * second;
+
+        for (parent, &parent_weight) in parent_weights.iter().enumerate() {
+            let first_lane = parent * arity;
+            let polynomial = match arity {
+                2 => packed_quadratic_affine_product(
+                    [left[first_lane], left[first_lane + 1]],
+                    [right[first_lane], right[first_lane + 1]],
+                    zero,
+                ),
+                4 => packed_quartic_affine_product(
+                    [
+                        left[first_lane],
+                        left[first_lane + 1],
+                        left[first_lane + 2],
+                        left[first_lane + 3],
+                    ],
+                    [
+                        right[first_lane],
+                        right[first_lane + 1],
+                        right[first_lane + 2],
+                        right[first_lane + 3],
+                    ],
+                    zero,
+                ),
+                _ => unreachable!("validated affine-product arity"),
+            };
+            let scale = equality * PackedFpExt4::broadcast(parent_weight);
+            for degree in 0..=arity {
+                sums[degree] = sums[degree] + scale * polynomial[degree];
+            }
+        }
+    }
+    sums.map(sum_fp32_lanes)
+}
+
+#[inline(always)]
+fn packed_class_values<const P: u32, PF, const LANES: usize>(
+    rows: &[[FpExt4<Fp32<P>>; LANES]],
+    child: usize,
+    mut row_index: impl FnMut(usize) -> usize,
+) -> PackedFpExt4<Fp32<P>, PF>
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let indices =
+        std::array::from_fn::<_, 16, _>(|lane| if lane < PF::WIDTH { row_index(lane) } else { 0 });
+    PackedFpExt4::new(std::array::from_fn(|coefficient| {
+        PF::from_fn(|lane| rows[indices[lane]][child].base_coefficient(coefficient))
+    }))
+}
+
+#[inline(always)]
+fn packed_extension_values<const P: u32, PF>(
+    mut value: impl FnMut(usize) -> FpExt4<Fp32<P>>,
+) -> PackedFpExt4<Fp32<P>, PF>
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let values = std::array::from_fn::<_, 16, _>(|lane| {
+        if lane < PF::WIDTH {
+            value(lane)
+        } else {
+            FpExt4::zero()
+        }
+    });
+    PackedFpExt4::new(std::array::from_fn(|coefficient| {
+        PF::from_fn(|lane| values[lane].base_coefficient(coefficient))
+    }))
+}
+
+#[inline(always)]
+fn packed_quadratic_affine_product<const P: u32, PF>(
+    left: [PackedFpExt4<Fp32<P>, PF>; 2],
+    right: [PackedFpExt4<Fp32<P>, PF>; 2],
+    zero: PackedFpExt4<Fp32<P>, PF>,
+) -> [PackedFpExt4<Fp32<P>, PF>; 5]
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let first_slope = right[0] - left[0];
+    let second_slope = right[1] - left[1];
+    [
+        left[0] * left[1],
+        left[0] * second_slope + first_slope * left[1],
+        first_slope * second_slope,
+        zero,
+        zero,
+    ]
+}
+
+#[inline(always)]
+fn packed_quartic_affine_product<const P: u32, PF>(
+    left: [PackedFpExt4<Fp32<P>, PF>; 4],
+    right: [PackedFpExt4<Fp32<P>, PF>; 4],
+    zero: PackedFpExt4<Fp32<P>, PF>,
+) -> [PackedFpExt4<Fp32<P>, PF>; 5]
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let first = packed_quadratic_affine_product([left[0], left[1]], [right[0], right[1]], zero);
+    let second = packed_quadratic_affine_product([left[2], left[3]], [right[2], right[3]], zero);
+    [
+        first[0] * second[0],
+        first[0] * second[1] + first[1] * second[0],
+        first[0] * second[2] + first[1] * second[1] + first[2] * second[0],
+        first[1] * second[2] + first[2] * second[1],
+        first[2] * second[2],
+    ]
 }
 
 #[inline(always)]
@@ -364,6 +598,18 @@ where
     (constant_sum, quadratic_sum)
 }
 
+#[inline(always)]
+fn sum_fp32_lanes<const P: u32, PF>(packed: PackedFpExt4<Fp32<P>, PF>) -> FpExt4<Fp32<P>>
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let mut sum = FpExt4::<Fp32<P>>::zero();
+    for lane in 0..PF::WIDTH {
+        sum += packed.extract(lane);
+    }
+    sum
+}
+
 fn validate_product_round_slices<const P: u32>(
     tables: &[&CoefficientSlices<'_, P>; 4],
     width: usize,
@@ -380,6 +626,61 @@ fn validate_product_round_slices<const P: u32>(
         "fp32 product round slice length must be a multiple of the SIMD width"
     );
     len
+}
+
+fn validate_weighted_affine_product_slices<const P: u32, const LANES: usize>(
+    left: &[CoefficientSlices<'_, P>; LANES],
+    right: &[CoefficientSlices<'_, P>; LANES],
+    equality: &CoefficientSlices<'_, P>,
+    arity: usize,
+    parent_count: usize,
+    width: usize,
+) -> usize {
+    assert!(matches!(arity, 2 | 4), "product arity must be two or four");
+    assert_eq!(LANES, arity * parent_count);
+    let len = equality[0].len();
+    assert!(
+        equality.iter().all(|slice| slice.len() == len)
+            && left
+                .iter()
+                .chain(right.iter())
+                .all(|lane| lane.iter().all(|slice| slice.len() == len)),
+        "weighted affine-product slices must have equal lengths"
+    );
+    assert!(
+        len.is_multiple_of(width),
+        "weighted affine-product slice length must be a multiple of the SIMD width"
+    );
+    len
+}
+
+fn validate_compact_affine_product_inputs<T, const LANES: usize>(
+    folded_rows: &[[T; LANES]],
+    first_equality: &[T],
+    second_equality: &[T],
+    quartet_count: usize,
+    arity: usize,
+    parent_count: usize,
+    width: usize,
+) {
+    assert!(
+        !folded_rows.is_empty(),
+        "folded class table cannot be empty"
+    );
+    assert!(matches!(arity, 2 | 4), "product arity must be two or four");
+    assert_eq!(LANES, arity * parent_count);
+    assert!(
+        first_equality.len().is_power_of_two() && second_equality.len().is_power_of_two(),
+        "split equality lengths must be powers of two"
+    );
+    assert!(
+        quartet_count <= first_equality.len() * second_equality.len(),
+        "compact product prefix exceeds its equality domain"
+    );
+    assert!(
+        first_equality.len().is_multiple_of(width) && quartet_count.is_multiple_of(width),
+        "compact product blocks must align to the SIMD width"
+    );
 }
 
 fn validate_fused_product_round_slices<const P: u32>(

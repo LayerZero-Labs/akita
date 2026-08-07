@@ -3,7 +3,8 @@
 use super::avx2::{PackedFp32Avx2, PackedFp64Avx2};
 use super::avx512::{PackedFp32Avx512, PackedFp64Avx512};
 use super::runtime_common::{
-    compute_product_round_fp_ext2_fp64_packed, compute_product_round_packed,
+    compute_compact_affine_product_round_packed, compute_product_round_fp_ext2_fp64_packed,
+    compute_product_round_packed, compute_weighted_affine_product_round_packed,
     fold_and_compute_product_round_fp_ext2_fp64_packed, fold_and_compute_product_round_packed,
     fold_fp_ext2_fp64_packed,
 };
@@ -176,6 +177,122 @@ pub unsafe fn compute_product_round_fp_ext4_fp32_avx512_ifma<const P: u32>(
     unsafe {
         compute_product_round_packed::<P, PackedFp32Avx512<P>>(
             witness_0, witness_1, factor_0, factor_1,
+        )
+    }
+}
+
+/// Compute an equality-weighted affine-product round eight rows at a time.
+///
+/// # Safety
+///
+/// The caller must establish that AVX2 is available on the current CPU.
+#[target_feature(enable = "avx2")]
+pub unsafe fn compute_weighted_affine_product_round_fp_ext4_fp32_avx2<
+    const P: u32,
+    const LANES: usize,
+>(
+    left: [CoefficientSlices<'_, P>; LANES],
+    right: [CoefficientSlices<'_, P>; LANES],
+    equality: CoefficientSlices<'_, P>,
+    arity: usize,
+    parent_weights: &[FpExt4<Fp32<P>>],
+) -> [FpExt4<Fp32<P>>; 5] {
+    // SAFETY: the target feature matches the packed backend, and the shared
+    // traversal validates every slice before reading it.
+    unsafe {
+        compute_weighted_affine_product_round_packed::<P, PackedFp32Avx2<P>, LANES>(
+            left,
+            right,
+            equality,
+            arity,
+            parent_weights,
+        )
+    }
+}
+
+/// Compute an equality-weighted affine-product round sixteen rows at a time.
+///
+/// # Safety
+///
+/// The caller must establish that AVX-512F, DQ, and IFMA are available.
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+pub unsafe fn compute_weighted_affine_product_round_fp_ext4_fp32_avx512_ifma<
+    const P: u32,
+    const LANES: usize,
+>(
+    left: [CoefficientSlices<'_, P>; LANES],
+    right: [CoefficientSlices<'_, P>; LANES],
+    equality: CoefficientSlices<'_, P>,
+    arity: usize,
+    parent_weights: &[FpExt4<Fp32<P>>],
+) -> [FpExt4<Fp32<P>>; 5] {
+    // SAFETY: the target features match the packed backend, and the shared
+    // traversal validates every slice before reading it.
+    unsafe {
+        compute_weighted_affine_product_round_packed::<P, PackedFp32Avx512<P>, LANES>(
+            left,
+            right,
+            equality,
+            arity,
+            parent_weights,
+        )
+    }
+}
+
+/// Compute a compact class-indexed product prefix with AVX2.
+///
+/// # Safety
+///
+/// The caller must establish that AVX2 is available on the current CPU.
+#[target_feature(enable = "avx2")]
+pub unsafe fn compute_compact_affine_product_round_fp_ext4_fp32_avx2<
+    const P: u32,
+    const LANES: usize,
+>(
+    ordered_pair_indices: &[u16],
+    folded_pair_rows: &[[FpExt4<Fp32<P>>; LANES]],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    arity: usize,
+    parent_weights: &[FpExt4<Fp32<P>>],
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        compute_compact_affine_product_round_packed::<P, PackedFp32Avx2<P>, LANES>(
+            ordered_pair_indices,
+            folded_pair_rows,
+            first_equality,
+            second_equality,
+            arity,
+            parent_weights,
+        )
+    }
+}
+
+/// Compute a compact class-indexed product prefix with AVX-512 IFMA.
+///
+/// # Safety
+///
+/// The caller must establish that AVX-512F, DQ, and IFMA are available.
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+pub unsafe fn compute_compact_affine_product_round_fp_ext4_fp32_avx512_ifma<
+    const P: u32,
+    const LANES: usize,
+>(
+    ordered_pair_indices: &[u16],
+    folded_pair_rows: &[[FpExt4<Fp32<P>>; LANES]],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    arity: usize,
+    parent_weights: &[FpExt4<Fp32<P>>],
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        compute_compact_affine_product_round_packed::<P, PackedFp32Avx512<P>, LANES>(
+            ordered_pair_indices,
+            folded_pair_rows,
+            first_equality,
+            second_equality,
+            arity,
+            parent_weights,
         )
     }
 }
