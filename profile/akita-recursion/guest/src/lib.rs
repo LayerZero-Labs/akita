@@ -29,8 +29,8 @@ use akita_verifier::batched_verify;
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
 type F = fp128::Field;
-const D: usize = 64;
 type Cfg = fp128::OneHot;
+const D: usize = <Cfg as CommitmentConfig>::D;
 
 fn verification_status(result: Result<(), AkitaError>) -> u32 {
     match result {
@@ -39,14 +39,8 @@ fn verification_status(result: Result<(), AkitaError>) -> u32 {
     }
 }
 
-const _: () = {
-    // The guest ring dimension is pinned by the recursion benchmark shape, not
-    // `Cfg::D` (the adaptive preset's envelope dimension).
-    assert!(D == 64);
-};
-
-// Memory limits sized for the Akita verifier with `D=64 OneHot`. Blob size
-// scales with `nv` (≈4 MiB at nv=20; tens-to-hundreds of MiB at nv=32).
+// Memory limits sized for the adaptive fp128 OneHot verifier. Blob size
+// scales with `nv` (≈2.6 MiB at nv=20; tens-to-hundreds of MiB at nv=32).
 // We give:
 //   - `max_input_size` = 768 MiB so large nv blobs fit with headroom.
 //                        Keep this literal equal to

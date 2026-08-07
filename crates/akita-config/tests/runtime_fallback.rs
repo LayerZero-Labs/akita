@@ -289,8 +289,20 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
 }
 
 #[test]
-fn removed_scalar_catalog_rejects_through_recursive_adapter_without_recursive_feature() {
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(18));
+fn grouped_recursive_catalog_rejects_without_recursive_feature() {
+    let precommitted_group = PolynomialGroupLayout::singleton(16);
+    let precommitted_params =
+        fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(precommitted_group))
+            .expect("base OneHot precommit schedule")
+            .root
+            .params
+            .final_group
+            .commitment;
+    let descriptor = CommittedGroupProfile::from_params(precommitted_group, &precommitted_params);
+    let key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(32, 2),
+        precommitteds: vec![descriptor, descriptor],
+    };
     assert!(matches!(
         RecursiveCommitmentConfig::<fp128::OneHot>::runtime_schedule(key),
         Err(akita_field::AkitaError::UnsupportedSchedule(_))

@@ -527,8 +527,7 @@ fn adaptive_nv36_minimizes_setup_before_proof_bytes() {
     .expect("nv36 mixed planner");
     let rank_one_capped_domain = RingDimensionSearchDomain::new([d64, d128_mixed, d128])
         .expect("rank-one-capped comparison domain");
-    let mut comparison_policy =
-        policy_for_domain(policy_of::<OneHot>(), &rank_one_capped_domain);
+    let mut comparison_policy = policy_for_domain(policy_of::<OneHot>(), &rank_one_capped_domain);
     comparison_policy.setup_field_budget = None;
     let rank_one_capped = find_schedule(
         PolynomialGroupLayout::singleton(36),
@@ -841,9 +840,9 @@ fn recursive_exact_cutover_proof_size_is_documented() {
     )
     .unwrap();
 
-    assert!(
-        planned.estimate.estimated_proof_payload_bytes().unwrap() > 0,
-        "recursive adaptive catalog must produce a finite proof-size estimate"
+    assert_eq!(
+        planned.estimate.estimated_proof_payload_bytes().unwrap(),
+        96_984
     );
 }
 

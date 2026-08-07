@@ -10,8 +10,9 @@
 //!
 //! Output paths are controlled via `AKITA_RECURSION_BLOB` (defaults to
 //! `target/akita_recursion_inputs.bin`). Set `AKITA_NUM_VARS` (default 20)
-//! to regenerate at a different polynomial arity. The default recursion blob
-//! pins ring dimension `D=64` for the benchmark shape.
+//! to regenerate at a different polynomial arity. The Jolt monomorphization
+//! uses the adaptive preset's D256 root envelope; the selected catalog row must
+//! use that A dimension.
 
 #![allow(missing_docs)]
 
@@ -48,8 +49,8 @@ use tracing_subscriber::EnvFilter;
 struct Args {}
 
 type F = fp128::Field;
-const D: usize = 64;
 type Cfg = fp128::OneHot;
+const D: usize = <Cfg as CommitmentConfig>::D;
 type Claim = <Cfg as CommitmentConfig>::ExtField;
 type Challenge = <Cfg as CommitmentConfig>::ExtField;
 const ONEHOT_K: usize = akita_config::proof_optimized::STANDARD_ONEHOT_CHUNK_SIZE;
@@ -238,7 +239,7 @@ fn run() -> Result<(), String> {
         d = D,
         onehot_k,
         prime = %prime,
-        "generating Akita verifier-input artifact (single-poly OneHot, D=64)"
+        "generating Akita verifier-input artifact (single-poly adaptive OneHot)"
     );
 
     let opening_layout = OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
@@ -313,13 +314,12 @@ fn run() -> Result<(), String> {
 
     let poly_refs: [&OneHotPoly<F, u8>; 1] = [&onehot_poly];
     let openings = [opening];
-    let schedule_selection =
-        Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
-            final_group: *commitment.profile(),
-            precommitteds: Vec::new(),
-        })
-        .map_err(|err| format!("schedule selection failed: {err}"))?
-        .selection();
+    let schedule_selection = Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+        final_group: *commitment.profile(),
+        precommitteds: Vec::new(),
+    })
+    .map_err(|err| format!("schedule selection failed: {err}"))?
+    .selection();
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);

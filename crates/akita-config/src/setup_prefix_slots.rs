@@ -266,7 +266,7 @@ mod tests {
         .expect("slot ids");
         assert!(!ids.is_empty());
         for slot_id in &ids {
-            assert_eq!(slot_id.d_setup(), 64);
+            assert_eq!(slot_id.d_setup(), 256);
             assert!(slot_id.natural_len > 0);
             assert!(slot_id.n_prefix().expect("n_prefix") >= slot_id.natural_len);
         }
