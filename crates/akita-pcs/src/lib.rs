@@ -40,8 +40,9 @@
 #![warn(unreachable_pub)]
 
 mod scheme;
-#[cfg(feature = "test-support")]
-pub mod test_support;
+#[cfg(all(test, any(feature = "schedules-default", feature = "profile-ci")))]
+#[path = "../tests/support/mod.rs"]
+mod test_support;
 
 pub use akita_algebra::Module;
 // Specialized field surfaces mirror jolt-field's curated facades.
@@ -51,13 +52,13 @@ pub use akita_prover::{
     CommitmentComputeBackend, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
     CyclicRowsComputeBackend, DecomposeFoldWitness, DenseCommitInput, DenseCommitRowsPlan,
     DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks, MultiChunkEntry, OneHotCommitBlocks,
-    OneHotCommitRowsPlan, OpeningProveBackendFor, OperationCtx, ProveBackendFor, ProverOpeningData,
-    RecursiveProveBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    RootCommitBackend, RootCommitSource, RootOpeningSource, RootPolyShape, RootProveBackend,
-    RootProvePoly, RootTensorSource, SingleChunkEntry, SparseRingBlockEntry,
-    SparseRingCommitRowsPlan, TensorBackendFor, TieredProveStacks, UniformProverStack,
-    RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    OneHotCommitRowsPlan, OpeningProveBackendFor, OperationCtx, PreparedGroupProveOps,
+    PreparedProverGroup, ProveBackendFor, ProverOpeningData, RecursiveProveBackend,
+    RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
+    RingSwitchRelationRows, RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource,
+    RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
+    SelectedProverOpeningData, SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan,
+    TensorBackendFor, TieredProveStacks, UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};

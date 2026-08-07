@@ -142,13 +142,6 @@ where
             Self::OneHot(poly) => RootPolyMeta::num_vars(poly),
         }
     }
-
-    fn onehot_chunk_size(&self) -> Option<usize> {
-        match self {
-            Self::Dense(_) => None,
-            Self::OneHot(poly) => RootPolyMeta::onehot_chunk_size(poly),
-        }
-    }
 }
 
 impl<F, const D: usize, I> RootPolyShape<F, D> for MultilinearPolynomial<F, I>

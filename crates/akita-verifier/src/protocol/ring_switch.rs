@@ -6,8 +6,9 @@ use akita_challenges::Challenges;
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    dispatch_for_field, shared_setup_fold_gadget, validate_role_dispatch, AkitaExpandedSetup,
-    CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, PreparedRelationAddress,
+    build_compression_relation_weights, dispatch_for_field, shared_setup_fold_gadget,
+    validate_role_dispatch, AkitaExpandedSetup, CommittedGroupParams, CompressionRelationWeights,
+    FpExtEncoding, NegativeBinarySupport, OpeningClaimsLayout, PreparedRelationAddress,
     RelationAddressGeometry, RingMultiplierOpeningPoint, RingRelationInstance, RingRole,
     SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
 };
@@ -37,6 +38,10 @@ pub use benchmark_support::{
 pub(crate) struct RingSwitchVerifyOutput<E: Field> {
     /// Prepared data for prepared relation-matrix MLE evaluation.
     pub relation_matrix_evaluator: RelationMatrixEvaluator<E>,
+    /// Independent compact F/H contribution; ordinary A/B/D geometry is unchanged.
+    pub compression_relation_weights: Option<CompressionRelationWeights<E>>,
+    /// Sparse support of every F/H negative-binary digit span.
+    pub negative_binary_support: Option<NegativeBinarySupport>,
     /// Canonical flat relation-witness domain and coefficient/lane split.
     pub relation_address_geometry: RelationAddressGeometry,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
@@ -53,6 +58,8 @@ pub(crate) struct RingSwitchVerifyOutput<E: Field> {
 
 struct RingSwitchVerifyCoreOutput<E: Field> {
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
+    compression_relation_weights: Option<CompressionRelationWeights<E>>,
+    negative_binary_support: Option<NegativeBinarySupport>,
     relation_address_geometry: RelationAddressGeometry,
     digit_range_equality_low_variable_count: usize,
     tau0: Option<Vec<E>>,
@@ -66,6 +73,8 @@ impl<E: Field> RingSwitchVerifyCoreOutput<E> {
         let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
         Ok(RingSwitchVerifyOutput {
             relation_matrix_evaluator: self.relation_matrix_evaluator,
+            compression_relation_weights: self.compression_relation_weights,
+            negative_binary_support: self.negative_binary_support,
             relation_address_geometry: self.relation_address_geometry,
             digit_range_equality_low_variable_count: self.digit_range_equality_low_variable_count,
             tau0,
@@ -240,8 +249,35 @@ where
     }
     let relation_matrix_evaluator =
         prepare_relation_matrix_evaluator::<F, E>(replay, alpha, &tau1, Some(w_len))?;
+    let physical_field_len = replay
+        .opening_source_len
+        .checked_mul(replay.opening_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("opening capacity overflow".into()))?;
+    let compression_relation_weights = lp
+        .payload_mode
+        .is_compressed()
+        .then(|| {
+            build_compression_relation_weights(
+                replay.setup,
+                relation,
+                alpha,
+                lp,
+                &tau1,
+                &witness_layout,
+                replay.opening_ring_dim,
+                physical_field_len,
+            )
+        })
+        .transpose()?;
+    let negative_binary_support = lp
+        .payload_mode
+        .is_compressed()
+        .then(|| NegativeBinarySupport::new(&witness_layout, physical_field_len))
+        .transpose()?;
     RingSwitchVerifyCoreOutput {
         relation_matrix_evaluator,
+        compression_relation_weights,
+        negative_binary_support,
         relation_address_geometry,
         digit_range_equality_low_variable_count,
         tau0,
@@ -368,7 +404,7 @@ where
         let num_live_blocks = group_lp.num_live_blocks();
         let num_positions_per_block = group_lp.num_positions_per_block();
         let depth_witness = group_lp.num_digits_inner();
-        let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
+        let depth_fold = group_lp.num_digits_fold();
         let log_basis_inner = group_lp.log_basis_inner();
         let log_basis_outer = group_lp.log_basis_outer();
         let log_basis_open = group_lp.log_basis_open();
@@ -538,7 +574,7 @@ where
 {
     validate_role_dispatch::<D>(lp.role_dims(), RingRole::Inner)?;
     let num_polys = opening_batch.num_total_polynomials();
-    let depth_fold = lp.num_digits_fold(num_polys, lp.field_bits_for_cache())?;
+    let depth_fold = lp.num_digits_fold();
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = gamma.len();
     if num_polys != num_claims {

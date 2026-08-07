@@ -113,16 +113,28 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
     }
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
-        if let Some(poly) = self.cached_round_poly.take() {
+        let mut polynomial = if let Some(poly) = self.cached_round_poly.take() {
             poly
         } else {
             self.compute_current_round_poly_from_state()
+        };
+        if let Some(additional) = self.additional_round_polynomial() {
+            if polynomial.coeffs.len() < additional.coeffs.len() {
+                polynomial.coeffs.resize(additional.coeffs.len(), E::zero());
+            }
+            for (coefficient, addition) in polynomial.coeffs.iter_mut().zip(additional.coeffs) {
+                *coefficient += addition;
+            }
         }
+        polynomial
     }
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
         let t_fold = Instant::now();
         let _span = tracing::info_span!("RelationRangeImageProver::fold_round").entered();
+        if let Some(additional) = &mut self.additional_relation_terms {
+            additional.bind(r);
+        }
         if let Some(prev_norm_poly) = self.prev_norm_poly.take() {
             self.prev_norm_claim = prev_norm_poly.evaluate(&r);
         }

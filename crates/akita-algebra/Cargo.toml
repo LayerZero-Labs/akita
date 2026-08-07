@@ -16,7 +16,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "505d8ebcb45e5796afcf16468972b10e51b4a355", default-features = false, features = ["solinas"] }
+jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "eb93a031027ee735f0827edb4539e971ab5fcc0b", default-features = false, features = ["solinas"] }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 rand_core = { version = "0.6", features = ["getrandom"] }
@@ -24,7 +24,12 @@ rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"
+
+[[bench]]
+name = "crt_ntt_ops"
+harness = false
 
 [features]
 default = []

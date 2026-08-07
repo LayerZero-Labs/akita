@@ -9,17 +9,18 @@ use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
-use akita_prover::ProverOpeningData;
+use akita_prover::{ProverOpeningData, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{lagrange_weights, CommittedGroupParams, FpExtEncoding};
 use akita_types::{
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, Commitment,
-    OpeningClaims, PolynomialGroupClaims,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, CommittedGroup,
+    CommittedGroupBatchProfile, GroupBatchStatement, OpeningClaims, OpeningScheduleSelection,
+    PolynomialGroupClaims,
 };
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 use jolt_field::{
-    CanonicalBytes, CanonicalEncoding, ExtField, Field, Fold, PseudoMersenne, Ring, Unreduced,
+    CanonicalBytes, CanonicalEncoding, ExtField, Field, Fold, PseudoMersenne, Ring, Unreduced, Zero,
 };
 
 use rand::rngs::StdRng;
@@ -105,44 +106,67 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-fn prove_input<'a, FF: Field + Clone, P, CommitF: Field>(
-    point: &'a [FF],
+fn prove_input<'a, Cfg: CommitmentConfig, P: akita_prover::RootPolyMeta<Cfg::Field>>(
+    selection: OpeningScheduleSelection,
+    point: &'a [Cfg::ExtField],
     polynomials: &'a [&'a P],
-    commitment: &'a Commitment<CommitF>,
-    hint: AkitaCommitmentHint<CommitF>,
-) -> ProverOpeningData<'a, FF, P, CommitF> {
+    commitment: &'a CommittedGroup<Cfg::Field>,
+    hint: AkitaCommitmentHint<Cfg::Field>,
+) -> SelectedProverOpeningData<
+    'a,
+    Cfg::ExtField,
+    akita_prover::PreparedProverGroup<'a, P>,
+    Cfg::Field,
+> {
     let group = PolynomialGroupClaims::new(
         point.to_vec(),
-        vec![FF::zero(); polynomials.len()],
+        vec![Cfg::ExtField::zero(); polynomials.len()],
         commitment.clone(),
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
-        .expect("valid prover opening data")
+    (
+        selection,
+        ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
+            .expect("valid prover opening data"),
+    )
 }
 
-fn verify_input<'a, FF: Field, C>(
-    point: &[FF],
-    openings: &[FF],
-    commitment: &'a C,
-) -> OpeningClaims<'static, FF, &'a C> {
-    OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+fn verify_input<'a, Cfg: CommitmentConfig>(
+    selection: OpeningScheduleSelection,
+    point: &[Cfg::ExtField],
+    openings: &[Cfg::ExtField],
+    commitment: &'a CommittedGroup<Cfg::Field>,
+) -> GroupBatchStatement<'a, Cfg::ExtField, Cfg::Field> {
+    let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.to_vec(),
         openings.to_vec(),
         commitment,
     )
     .expect("valid verifier claims group")])
-    .expect("valid verifier input")
+    .expect("valid verifier input");
+    GroupBatchStatement::new(selection, claims).expect("valid verifier statement")
+}
+
+fn selection_for<Cfg: CommitmentConfig>(
+    commitment: &CommittedGroup<Cfg::Field>,
+) -> OpeningScheduleSelection {
+    Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+        final_group: *commitment.profile(),
+        precommitteds: Vec::new(),
+    })
+    .expect("select schedule")
+    .selection()
 }
 
 type DenseFixture<FField, E, const D: usize> = (
     AkitaVerifierSetup<FField>,
-    Commitment<FField>,
+    CommittedGroup<FField>,
     AkitaBatchedProof<FField, E>,
     Vec<E>,
     E,
     CommittedGroupParams,
+    OpeningScheduleSelection,
 );
 
 /// Count the total number of fold levels (including the batched root and the
@@ -198,12 +222,14 @@ where
 
     let poly_refs: [&DensePoly<FField>; 1] = [&poly];
     let commitments = [commitment];
+    let selection = selection_for::<Cfg>(&commitments[0]);
     let hints = vec![hint];
 
     let mut prover_transcript = AkitaTranscript::<FField>::new(transcript_label);
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
-        prove_input(
+        prove_input::<Cfg, _>(
+            selection,
             &pt[..],
             &poly_refs[..],
             &commitments[0],
@@ -223,6 +249,7 @@ where
         pt,
         expected_opening,
         layout,
+        selection,
     )
 }
 
@@ -350,12 +377,14 @@ fn chunked_multi_chunk_prove_verify() {
         .unwrap();
 
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
+        let selection = selection_for::<Cfg>(&commitment);
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_chunked_e2e");
         let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<Cfg, _>(
+                selection,
                 &pt[..],
                 &poly_refs[..],
                 &commitment,
@@ -383,7 +412,7 @@ fn chunked_multi_chunk_prove_verify() {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], &openings[..], &commitment),
+            verify_input::<Cfg>(selection, &pt[..], &openings[..], &commitment),
             BasisMode::Lagrange,
         );
         assert!(
@@ -435,6 +464,7 @@ fn dense_d64_prove_verify() {
 
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let commitments = [commitment];
+        let selection = selection_for::<Cfg>(&commitments[0]);
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
@@ -443,7 +473,8 @@ fn dense_d64_prove_verify() {
         let prove_start = Instant::now();
         let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<Cfg, _>(
+                selection,
                 &pt[..],
                 &poly_refs[..],
                 &commitments[0],
@@ -475,7 +506,7 @@ fn dense_d64_prove_verify() {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<Cfg>(selection, &pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         let verify_time = verify_start.elapsed();
@@ -484,6 +515,22 @@ fn dense_d64_prove_verify() {
             verify_result.is_ok(),
             "verification must pass: {:?}",
             verify_result.err()
+        );
+
+        let mut mismatched_source = commitments[0].clone();
+        mismatched_source.profile.num_live_blocks =
+            mismatched_source.profile.num_live_blocks.saturating_add(1);
+        let mut mismatch_transcript = AkitaTranscript::<F>::new(b"akita_e2e");
+        let mismatch_result = AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut mismatch_transcript,
+            verify_input::<Cfg>(selection, &pt[..], opening_groups[0], &mismatched_source),
+            BasisMode::Lagrange,
+        );
+        assert_invalid_proof(
+            "mismatched committed-group profile geometry",
+            mismatch_result,
         );
 
         tracing::info!(
@@ -507,7 +554,7 @@ fn dense_d64_snap_regen_prove_verify_nv24() {
         const D: usize = Cfg::D;
         const NV: usize = 24;
 
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
             make_dense_fixture::<F, D, Cfg>(NV, b"akita_e2e/snap-regen-nv24");
 
         let commitments = [commitment];
@@ -517,7 +564,12 @@ fn dense_d64_snap_regen_prove_verify_nv24() {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&opening_point[..], &openings[..], &commitments[0]),
+            verify_input::<Cfg>(
+                selection,
+                &opening_point[..],
+                &openings[..],
+                &commitments[0],
+            ),
             BasisMode::Lagrange,
         );
         assert!(
@@ -536,10 +588,10 @@ fn trace_internalization_rejects_tampered_root_fold_handle() {
         type Cfg = fp128::D64Dense;
         const D: usize = Cfg::D;
 
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
             make_dense_fixture::<F, D, Cfg>(DENSE_TEST_NV, b"akita_e2e/root-trace-tamper");
         let mut malformed = proof.clone();
-        bump_flat_ring_vec(&mut malformed.root.v);
+        bump_flat_ring_vec(&mut malformed.root.opening_payload);
 
         let commitments = [commitment];
         let openings = [opening];
@@ -548,7 +600,12 @@ fn trace_internalization_rejects_tampered_root_fold_handle() {
             &malformed,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&opening_point[..], &openings[..], &commitments[0]),
+            verify_input::<Cfg>(
+                selection,
+                &opening_point[..],
+                &openings[..],
+                &commitments[0],
+            ),
             BasisMode::Lagrange,
         );
         assert_invalid_proof("tampered root fold handle", result);
@@ -604,11 +661,12 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         let (commitment, hint) =
             AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack).unwrap();
         let commitments = [commitment];
+        let selection = selection_for::<Cfg>(&commitments[0]);
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");
         let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(&point[..], &poly_refs[..], &commitments[0], hint),
+            prove_input::<Cfg, _>(selection, &point[..], &poly_refs[..], &commitments[0], hint),
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -620,7 +678,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
             .recursive_folds
             .first_mut()
             .expect("fixture should include an intermediate recursive fold");
-        bump_flat_ring_vec(&mut recursive.v);
+        bump_flat_ring_vec(&mut recursive.opening_payload);
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");
@@ -628,7 +686,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
             &malformed,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&point[..], &openings[..], &commitments[0]),
+            verify_input::<Cfg>(selection, &point[..], &openings[..], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert_invalid_proof("tampered recursive fold handle", result);
@@ -643,7 +701,7 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
         type Cfg = fp128::D64Dense;
         const D: usize = Cfg::D;
 
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
             make_dense_fixture::<F, D, Cfg>(DENSE_TEST_NV, b"akita_e2e/terminal-trace-tamper");
         let mut malformed = proof.clone();
         mutate_terminal_e_hat_digit(terminal_witness_mut(&mut malformed));
@@ -655,7 +713,12 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
             &malformed,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&opening_point[..], &openings[..], &commitments[0]),
+            verify_input::<Cfg>(
+                selection,
+                &opening_point[..],
+                &openings[..],
+                &commitments[0],
+            ),
             BasisMode::Lagrange,
         );
         assert_invalid_proof("tampered terminal e_hat digit", result);
@@ -712,7 +775,7 @@ fn dense_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
         const D: usize = Cfg::D;
 
         let nv = DENSE_TEST_NV;
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
             make_dense_fixture::<F, D, Cfg>(nv, b"akita_e2e/adaptive-dense-mixed");
 
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
@@ -740,7 +803,12 @@ fn dense_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
+            verify_input::<Cfg>(
+                selection,
+                &opening_point[..],
+                opening_groups[0],
+                &commitments[0],
+            ),
             BasisMode::Lagrange,
         );
         assert!(
@@ -797,6 +865,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
 
         let poly_refs: [&OneHotPoly<F>; 1] = [&onehot_poly];
         let commitments = [commitment];
+        let selection = selection_for::<Cfg>(&commitments[0]);
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
@@ -804,7 +873,8 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
         let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<Cfg, _>(
+                selection,
                 &pt[..],
                 &poly_refs[..],
                 &commitments[0],
@@ -837,7 +907,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<Cfg>(selection, &pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -920,12 +990,14 @@ fn batched_onehot_same_point_round_trip() {
         let (commitment, hint) =
             AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &commit_group, &stack).unwrap();
         let commitments = [commitment];
+        let selection = selection_for::<Cfg>(&commitments[0]);
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
         let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<Cfg, _>(
+                selection,
                 &pt[..],
                 &poly_group[..],
                 &commitments[0],
@@ -961,7 +1033,7 @@ fn batched_onehot_same_point_round_trip() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<Cfg>(selection, &pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -978,7 +1050,7 @@ fn batched_onehot_same_point_round_trip() {
             &truncated,
             &verifier_setup,
             &mut truncated_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<Cfg>(selection, &pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -1038,13 +1110,15 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
         let (commitment, hint) =
             AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack).unwrap();
         let commitments = [commitment];
+        let selection = selection_for::<Cfg>(&commitments[0]);
         let hints = vec![hint];
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
         let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<Cfg, _>(
+                selection,
                 &pt[..],
                 &poly_group[..],
                 &commitments[0],
@@ -1066,7 +1140,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
             &malformed,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<Cfg>(selection, &pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(

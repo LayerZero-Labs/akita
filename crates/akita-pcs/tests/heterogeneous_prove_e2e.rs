@@ -5,13 +5,16 @@ use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     batched_prove, CommitCluster, ComputeBackendSetup, CpuBackend, DensePoly, OpeningCluster,
-    ProverComputeStack, ProverOpeningData, RingSwitchCluster, TensorCluster, UniformProverStack,
+    ProverComputeStack, RingSwitchCluster, TensorCluster, UniformProverStack,
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    lagrange_weights, BasisMode, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    lagrange_weights, BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
+    PolynomialGroupClaims,
 };
 use jolt_field::{Ring, Zero};
+mod common;
+use common::selected_prover_data;
 use std::any::TypeId;
 
 type Cfg = fp128::D64Dense;
@@ -94,22 +97,24 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/heterogeneous-batched-prove");
+    let prover_claims = selected_prover_data::<Cfg, _>(
+        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+            opening_point.clone(),
+            vec![opening],
+            commitments[0].clone(),
+        )
+        .expect("valid prover group")])
+        .expect("valid prover claims"),
+        vec![hint],
+        vec![&poly_refs[..]],
+    );
+    let (selection, prover_claims) = prover_claims;
     let proof = batched_prove::<Cfg, _, _, _, _, _, _>(
         &setup.expanded,
         &setup.prefix_slots,
         &stack,
-        ProverOpeningData::new(
-            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                opening_point.clone(),
-                vec![opening],
-                commitments[0].clone(),
-            )
-            .expect("valid prover group")])
-            .expect("valid prover claims"),
-            vec![hint],
-            vec![&poly_refs[..]],
-        )
-        .expect("valid prover opening data"),
+        selection,
+        prover_claims,
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -122,13 +127,17 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-            opening_point.clone(),
-            vec![opening],
-            &commitments[0],
+        GroupBatchStatement::new(
+            selection,
+            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                opening_point.clone(),
+                vec![opening],
+                &commitments[0],
+            )
+            .expect("valid verifier group")])
+            .expect("valid verifier claims"),
         )
-        .expect("valid verifier group")])
-        .expect("valid verifier claims"),
+        .expect("valid verifier statement"),
         BasisMode::Lagrange,
     )
     .expect("heterogeneous batched verify");

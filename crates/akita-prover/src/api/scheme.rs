@@ -1,16 +1,20 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
-use crate::compute::ComputeBackendSetup;
 use crate::compute::{
-    LevelProveStacks, RecursiveProveBackend, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
-    RuntimeRootProvePoly, UniformProverStack,
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
+    RuntimeRootCommitPoly, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend, UniformProverStack,
 };
-use crate::ProverOpeningData;
 use crate::ProverTranscriptGrind;
+use crate::{
+    PreparedGroupProveOps, RecursiveFoldSource, RootTensorProjectionPoly, SelectedProverOpeningData,
+};
 use akita_error::AkitaError;
+use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
-use akita_types::{BasisMode, FpExtEncoding, PolynomialGroupLayout};
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring, Unreduced};
+use akita_types::{BasisMode, CommittedGroupProfile, FpExtEncoding, OpeningScheduleSelection};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring, Unreduced};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -29,7 +33,7 @@ where
     /// Protocol-facing commitment storage.
     type Commitment: Clone + PartialEq + Send + Sync;
     /// Public opening point, claimed-evaluation, and proof scalar field.
-    type ExtField: ExtField<F>;
+    type ExtField: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F> + AkitaSerialize;
     /// Prover-side hint produced for one opening-point commitment.
     type CommitHint: Clone + Send + Sync;
     /// Batched proof object produced by the scheme.
@@ -104,8 +108,8 @@ where
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B>,
-        precommitteds: Vec<PolynomialGroupLayout>,
-    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
+        precommitteds: Vec<CommittedGroupProfile>,
+    ) -> Result<(Self::Commitment, Self::CommitHint, OpeningScheduleSelection), AkitaError>
     where
         F: Ring + Unreduced + Field + 'static,
         Self::ExtField: FpExtEncoding<F>,
@@ -124,7 +128,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
-        claims: ProverOpeningData<'a, Self::ExtField, P, F>,
+        opening: SelectedProverOpeningData<'a, Self::ExtField, P, F>,
         stacks: &'a impl LevelProveStacks<'a, F, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,
@@ -132,7 +136,17 @@ where
     where
         T: Transcript<F> + ProverTranscriptGrind<F>,
         F: Ring + Unreduced + Field + 'static,
-        P: RuntimeRootProvePoly<F>,
-        B: RecursiveProveBackend<F, P, Self::ExtField> + ComputeBackendSetup<F> + 'a,
+        P: PreparedGroupProveOps<F, Self::ExtField, B, B>,
+        B: ComputeBackendSetup<F>
+            + CommitmentComputeBackend<F>
+            + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
+            + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
+            + SuffixOpeningProveBackend<F>
+            + DigitRowsComputeBackend<F>
+            + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, Self::ExtField>
+            + RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, Self::ExtField>
+            + SuffixTensorProveBackend<F, Self::ExtField>
+            + RuntimeRingSwitchProveBackend<F>
+            + 'a,
         <B as ComputeBackendSetup<F>>::PreparedSetup: 'a;
 }

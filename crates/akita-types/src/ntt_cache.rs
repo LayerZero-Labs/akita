@@ -20,37 +20,128 @@ use std::sync::{Arc, Mutex};
 use crate::dispatch::compression_ring_dim_supported_for_tier;
 use crate::{
     field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
-    proof::AkitaExpandedSetup, protocol_dispatch_tier, RingMatrixView,
+    protocol_dispatch_tier, AkitaExpandedSetup, RingMatrixView,
 };
 use akita_error::AkitaError;
 
-/// Identifies one full-envelope NTT cache entry at a concrete ring degree.
+/// Transform representation stored by one exact-prefix NTT cache entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NttTransformDomain {
+    /// Base-profile negacyclic transforms only.
+    Negacyclic,
+    /// Base-profile cyclic transforms only.
+    Cyclic,
+}
+
+/// Exact public-matrix prefix required at one ring dimension.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct NttPrefixRequirement {
+    /// Ring dimension used to interpret the flat public field stream.
+    pub ring_dimension: usize,
+    /// Number of ring elements in the required prefix.
+    pub num_ring_elements: usize,
+}
+
+impl NttPrefixRequirement {
+    /// Derive an exact prefix from the matrix rows and active row width passed
+    /// to a consuming kernel.
+    pub fn from_matrix_shape(
+        ring_dimension: usize,
+        num_rows: usize,
+        active_width: usize,
+    ) -> Result<Self, AkitaError> {
+        if ring_dimension == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "NTT prefix ring dimension must be nonzero".into(),
+            ));
+        }
+        let num_ring_elements = num_rows
+            .checked_mul(active_width)
+            .filter(|count| *count > 0)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("NTT prefix matrix shape overflows or is empty".into())
+            })?;
+        Ok(Self {
+            ring_dimension,
+            num_ring_elements,
+        })
+    }
+
+    /// Join overlapping public-matrix prefixes by maximum length.
+    pub fn join(self, other: Self) -> Result<Self, AkitaError> {
+        if self.ring_dimension != other.ring_dimension {
+            return Err(AkitaError::InvalidSetup(
+                "cannot join NTT prefixes at different ring dimensions".into(),
+            ));
+        }
+        Ok(Self {
+            ring_dimension: self.ring_dimension,
+            num_ring_elements: self.num_ring_elements.max(other.num_ring_elements),
+        })
+    }
+
+    /// Exact number of public field elements covered by this prefix.
+    pub fn num_field_elements(self) -> Result<usize, AkitaError> {
+        self.num_ring_elements
+            .checked_mul(self.ring_dimension)
+            .ok_or_else(|| AkitaError::InvalidSetup("NTT prefix field count overflow".into()))
+    }
+}
+
+/// Identifies one prepared NTT prefix at a concrete ring degree and domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct NttCacheKey {
     /// Ring dimension `D` for the cached transform family.
     pub ring_d: usize,
     /// Number of ring elements in the cached matrix view at `ring_d`.
     pub num_ring_elements: usize,
+    /// Transform domain materialized for this prefix.
+    pub domain: NttTransformDomain,
 }
 
 impl NttCacheKey {
-    /// Build the full-envelope cache key for `ring_d` on `expanded`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `ring_d` does not divide the setup envelope or the
-    /// matrix view length cannot be computed.
-    pub fn from_envelope<F: Field>(
-        expanded: &AkitaExpandedSetup<F>,
-        ring_d: usize,
+    /// Attach a transform domain to an exact prefix requirement.
+    #[must_use]
+    pub const fn new(requirement: NttPrefixRequirement, domain: NttTransformDomain) -> Self {
+        Self {
+            ring_d: requirement.ring_dimension,
+            num_ring_elements: requirement.num_ring_elements,
+            domain,
+        }
+    }
+
+    /// Derive a cache key from the exact matrix shape passed to a kernel.
+    pub fn from_matrix_shape(
+        ring_dimension: usize,
+        num_rows: usize,
+        active_width: usize,
+        domain: NttTransformDomain,
     ) -> Result<Self, AkitaError> {
-        let num_ring_elements = expanded
-            .shared_matrix()
-            .total_ring_elements_at_dyn(ring_d)?;
+        Ok(Self::new(
+            NttPrefixRequirement::from_matrix_shape(ring_dimension, num_rows, active_width)?,
+            domain,
+        ))
+    }
+
+    /// Join covering prefixes that share a ring dimension and transform domain.
+    pub fn join(self, other: Self) -> Result<Self, AkitaError> {
+        if self.ring_d != other.ring_d || self.domain != other.domain {
+            return Err(AkitaError::InvalidSetup(
+                "cannot join NTT cache keys with different dimensions or domains".into(),
+            ));
+        }
         Ok(Self {
-            ring_d,
-            num_ring_elements,
+            ring_d: self.ring_d,
+            num_ring_elements: self.num_ring_elements.max(other.num_ring_elements),
+            domain: self.domain,
         })
+    }
+
+    /// Exact number of public field elements covered by this cache key.
+    pub fn num_field_elements(self) -> Result<usize, AkitaError> {
+        self.num_ring_elements
+            .checked_mul(self.ring_d)
+            .ok_or_else(|| AkitaError::InvalidSetup("NTT cache field count overflow".into()))
     }
 }
 
@@ -297,6 +388,10 @@ pub fn max_safe_crt_accumulation_width<
 /// NTT representations requested by protocol and backend consumers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NttCacheMode {
+    /// Materialize only the base-profile negacyclic transform.
+    Negacyclic,
+    /// Materialize only the base-profile cyclic transform.
+    Cyclic,
     /// Materialize the base-profile negacyclic and cyclic transforms.
     BothTransforms,
     /// Materialize the minimum exact negacyclic representation for balanced
@@ -318,15 +413,15 @@ pub struct PreparedI16Tail<const K: usize, const D: usize> {
 
 /// One prepared NTT cache over the field-selected CRT profile.
 ///
-/// Every variant always contains the base negacyclic representation. `cyc` is
-/// present only for [`NttCacheMode::BothTransforms`]; `tail` is present only
-/// when an exact negacyclic request exceeds the base CRT product.
+/// Base negacyclic and cyclic representations are independently optional.
+/// `tail` is present only when an exact negacyclic request exceeds the base
+/// CRT product.
 #[derive(Debug)]
 #[allow(missing_docs, clippy::large_enum_variant)]
 pub enum PreparedNttCache<const D: usize> {
     #[non_exhaustive]
     Q32 {
-        neg: Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>,
+        neg: Option<Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>>,
         cyc: Option<Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>>,
         params: CrtNttParamSet<i32, Q32_NUM_PRIMES, D>,
         tail: Option<PreparedI16Tail<Q32_NUM_PRIMES, D>>,
@@ -334,7 +429,7 @@ pub enum PreparedNttCache<const D: usize> {
     },
     #[non_exhaustive]
     Q64 {
-        neg: Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>,
+        neg: Option<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
         cyc: Option<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
         params: CrtNttParamSet<i32, Q64_NUM_PRIMES, D>,
         tail: Option<PreparedI16Tail<Q64_NUM_PRIMES, D>>,
@@ -342,7 +437,7 @@ pub enum PreparedNttCache<const D: usize> {
     },
     #[non_exhaustive]
     Q128 {
-        neg: Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>,
+        neg: Option<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
         cyc: Option<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
         params: CrtNttParamSet<i32, Q128_NUM_PRIMES, D>,
         tail: Option<PreparedI16Tail<Q128_NUM_PRIMES, D>>,
@@ -354,18 +449,21 @@ impl<const D: usize> PreparedNttCache<D> {
     fn validate(&self) -> Result<(), AkitaError> {
         macro_rules! validate {
             ($neg:expr, $cyc:expr, $params:expr, $tail:expr, $exact:expr) => {{
-                if $exact == $cyc.is_some() {
+                if $neg.is_none() && $cyc.is_none() {
+                    return Err(AkitaError::InvalidSetup(
+                        "prepared NTT cache has no transform domain".into(),
+                    ));
+                }
+                if $exact && ($neg.is_none() || $cyc.is_some()) {
                     return Err(AkitaError::InvalidSetup(
                         "prepared NTT cache has an unsupported domain combination".into(),
                     ));
                 }
-                if $cyc.as_ref().is_some_and(|cyc| cyc.len() != $neg.len()) {
-                    return Err(AkitaError::InvalidSetup(
-                        "prepared cyclic and negacyclic NTT lengths differ".into(),
-                    ));
-                }
                 if $tail.as_ref().is_some_and(|tail| {
-                    tail.negacyclic.is_empty() || tail.negacyclic.len() > $neg.len()
+                    tail.negacyclic.is_empty()
+                        || $neg
+                            .as_ref()
+                            .is_none_or(|neg| tail.negacyclic.len() > neg.len())
                 }) {
                     return Err(AkitaError::InvalidSetup(
                         "prepared i16-tail NTT prefix is empty or exceeds its base".into(),
@@ -414,7 +512,8 @@ impl<const D: usize> PreparedNttCache<D> {
     pub fn cache_bytes(&self) -> usize {
         macro_rules! bytes {
             ($neg:expr, $cyc:expr, $tail:expr, $k:expr) => {{
-                let base_entries = $neg.len() + $cyc.as_ref().map_or(0, Vec::len);
+                let base_entries =
+                    $neg.as_ref().map_or(0, Vec::len) + $cyc.as_ref().map_or(0, Vec::len);
                 let base = base_entries * D * $k * core::mem::size_of::<i32>();
                 let tail = $tail.as_ref().map_or(0, |tail| {
                     tail.negacyclic.len() * D * core::mem::size_of::<i16>()
@@ -436,6 +535,16 @@ impl<const D: usize> PreparedNttCache<D> {
             Self::Q32 { cyc, .. } => cyc.is_some(),
             Self::Q64 { cyc, .. } => cyc.is_some(),
             Self::Q128 { cyc, .. } => cyc.is_some(),
+        }
+    }
+
+    /// Whether the base negacyclic representation was materialized.
+    #[must_use]
+    pub const fn has_negacyclic(&self) -> bool {
+        match self {
+            Self::Q32 { neg, .. } => neg.is_some(),
+            Self::Q64 { neg, .. } => neg.is_some(),
+            Self::Q128 { neg, .. } => neg.is_some(),
         }
     }
 
@@ -465,6 +574,9 @@ impl<const D: usize> PreparedNttCache<D> {
                 exact,
                 ..
             } => {
+                let neg = neg.as_deref().ok_or_else(|| {
+                    AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
+                })?;
                 if !matches!(
                     select_crt_ntt_params::<F, D>()?,
                     ProtocolCrtNttParams::Q32(_)
@@ -482,6 +594,9 @@ impl<const D: usize> PreparedNttCache<D> {
                 exact,
                 ..
             } => {
+                let neg = neg.as_deref().ok_or_else(|| {
+                    AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
+                })?;
                 if !matches!(
                     select_crt_ntt_params::<F, D>()?,
                     ProtocolCrtNttParams::Q64(_)
@@ -499,6 +614,9 @@ impl<const D: usize> PreparedNttCache<D> {
                 exact,
                 ..
             } => {
+                let neg = neg.as_deref().ok_or_else(|| {
+                    AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
+                })?;
                 if !matches!(
                     select_crt_ntt_params::<F, D>()?,
                     ProtocolCrtNttParams::Q128(_)
@@ -610,25 +728,21 @@ pub fn prepare_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
     prepare_ntt_cache_with_tail_prefix(matrix, mode, None, select_crt_ntt_params::<F, D>()?)
 }
 
-/// Prepare the exact-prefix, negacyclic-only cache used by compressed commitments.
+/// Prepare the exact-prefix paired-transform cache used by compressed commitments.
 ///
 /// Uses [`select_compression_crt_ntt_params`] so compression-only ring degrees do
 /// not widen the ordinary protocol NTT selector.
 #[tracing::instrument(
     skip_all,
     name = "prepare_compression_ntt_cache",
-    fields(ring_d = D, rings = matrix.as_slice().len(), width)
+    fields(ring_d = D, rings = matrix.as_slice().len())
 )]
 pub fn prepare_compression_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
-    width: usize,
 ) -> Result<PreparedNttCache<D>, AkitaError> {
     prepare_ntt_cache_with_tail_prefix(
         matrix,
-        NttCacheMode::ExactNegacyclic {
-            width,
-            log_basis: 1,
-        },
+        NttCacheMode::BothTransforms,
         None,
         select_compression_crt_ntt_params::<F, D>()?,
     )
@@ -656,10 +770,32 @@ fn prepare_ntt_cache_with_tail_prefix<F: Field + CanonicalEncoding, const D: usi
         ($params:expr, $variant:ident, $k:expr) => {{
             let params = $params;
             match mode {
+                NttCacheMode::Negacyclic => PreparedNttCache::$variant {
+                    neg: Some(
+                        cfg_iter!(matrix.as_slice())
+                            .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &params))
+                            .collect(),
+                    ),
+                    cyc: None,
+                    params,
+                    tail: None,
+                    exact: false,
+                },
+                NttCacheMode::Cyclic => PreparedNttCache::$variant {
+                    neg: None,
+                    cyc: Some(
+                        cfg_iter!(matrix.as_slice())
+                            .map(|ring| CyclotomicCrtNtt::from_ring_cyclic(ring, &params))
+                            .collect(),
+                    ),
+                    params,
+                    tail: None,
+                    exact: false,
+                },
                 NttCacheMode::BothTransforms => {
                     let (neg, cyc) = convert_flat_pair(matrix, &params);
                     PreparedNttCache::$variant {
-                        neg,
+                        neg: Some(neg),
                         cyc: Some(cyc),
                         params,
                         tail: None,
@@ -701,7 +837,7 @@ fn prepare_ntt_cache_with_tail_prefix<F: Field + CanonicalEncoding, const D: usi
                         None
                     };
                     PreparedNttCache::$variant {
-                        neg,
+                        neg: Some(neg),
                         cyc: None,
                         params,
                         tail,
@@ -901,13 +1037,35 @@ mod tests {
     }
 
     #[test]
+    fn prefix_requirements_join_by_maximum_in_one_dimension() {
+        let short = NttPrefixRequirement::from_matrix_shape(64, 2, 3).expect("short prefix");
+        let long = NttPrefixRequirement::from_matrix_shape(64, 4, 5).expect("long prefix");
+        assert_eq!(short.join(long).expect("join"), long);
+        assert_eq!(long.num_field_elements().expect("field count"), 20 * 64);
+
+        let other_dimension =
+            NttPrefixRequirement::from_matrix_shape(128, 1, 1).expect("other dimension");
+        assert!(short.join(other_dimension).is_err());
+    }
+
+    #[test]
     fn prepare_materializes_exactly_the_requested_layout() {
         const D: usize = 64;
         let flat = flat_zeros::<Prime32Offset99, D>(10);
         let view = flat.ring_view::<D>(1, 10).expect("matrix view");
         let both = prepare_ntt_cache(view, NttCacheMode::BothTransforms).expect("both transforms");
+        assert!(both.has_negacyclic());
         assert!(both.has_cyclic());
         assert!(!both.has_i16_tail());
+
+        let view = flat.ring_view::<D>(1, 7).expect("matrix view");
+        let cyclic = prepare_ntt_cache(view, NttCacheMode::Cyclic).expect("cyclic transform");
+        assert!(!cyclic.has_negacyclic());
+        assert!(cyclic.has_cyclic());
+        assert_eq!(
+            cyclic.cache_bytes(),
+            7 * D * Q32_NUM_PRIMES * size_of::<i32>()
+        );
 
         let view = flat.ring_view::<D>(1, 10).expect("matrix view");
         let base = prepare_ntt_cache(
@@ -918,6 +1076,7 @@ mod tests {
             },
         )
         .expect("base negacyclic");
+        assert!(base.has_negacyclic());
         assert!(!base.has_cyclic());
         assert!(!base.has_i16_tail());
 
@@ -1001,10 +1160,9 @@ mod tests {
             Ok(ProtocolCrtNttParams::Q128(_))
         ));
         let flat = flat_zeros::<Prime128OffsetA7F7, 8>(1);
-        let cache =
-            prepare_compression_ntt_cache(flat.ring_view::<8>(1, 1).expect("matrix view"), 1)
-                .expect("compression-only D8 cache");
-        assert!(!cache.has_cyclic());
+        let cache = prepare_compression_ntt_cache(flat.ring_view::<8>(1, 1).expect("matrix view"))
+            .expect("compression-only D8 cache");
+        assert!(cache.has_cyclic());
         assert!(matches!(
             prepare_ntt_cache(
                 flat.ring_view::<8>(1, 1).expect("matrix view"),

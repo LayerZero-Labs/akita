@@ -126,7 +126,7 @@ where
             |next| {
                 (
                     super::fold::FoldSuccessorParams::Recursive(&next.params),
-                    akita_types::NextWitnessBindingPolicy::OuterCommitment,
+                    akita_types::NextWitnessBindingPolicy::OuterPayload,
                 )
             },
         );
@@ -251,7 +251,7 @@ where
     }
     match binding {
         NextWitnessState::TerminalInnerState => {}
-        NextWitnessState::OuterCommitment(_) => return Err(AkitaError::InvalidProof),
+        NextWitnessState::OuterPayload(_) => return Err(AkitaError::InvalidProof),
     }
     let mut terminal_rows = hint.into_rows();
     if terminal_rows.len() != 1 {
@@ -279,18 +279,19 @@ where
         });
     }
     let opening_batch = OpeningClaimsLayout::new(sumcheck_challenges.len(), 1)?;
+    let polys = [&logical_source];
+    let logical_group = PreparedProverGroup::from_refs(&polys)?;
     let needs_reduction = E::DEGREE > 1;
     let (protocol_point, reduction, row_coefficients) = if needs_reduction {
         let eor_inputs = vec![ExtensionOpeningGroupInput {
-            polynomials: vec![&logical_source],
+            group: &logical_group,
             point: &sumcheck_challenges,
             ring_dimension: params.d_a(),
         }];
-        let proved = prove_extension_opening_reduction::<F, E, T, RecursiveFoldSource<F>, TS>(
+        let proved = prove_extension_opening_reduction::<F, E, T, _, TS>(
             stack.tensor().backend(),
             Some(stack.tensor().prepared()),
             &eor_inputs,
-            true,
             transcript,
             "terminal",
         )?;
@@ -450,18 +451,21 @@ where
     let logical_witness = optional_logical_w
         .map(Arc::new)
         .unwrap_or_else(|| Arc::clone(&witness));
-    let role_dims = level_params.role_dims();
-    let commit_d = role_dims.d_b();
+    let payload_geometry = level_params.outer_payload_geometry()?;
     let witness_commitment = match binding {
-        NextWitnessState::OuterCommitment(commitment) => {
-            if !commitment.can_decode_vec(commit_d) {
+        NextWitnessState::OuterPayload(commitment) => {
+            if commitment.coeff_len() != payload_geometry.transmitted_coefficients() {
                 return Err(AkitaError::InvalidInput(format!(
-                    "suffix commitment length {} is not decodable at B-role dimension {}",
+                    "suffix commitment length {} does not match expected coefficient count {}",
                     commitment.coeffs().len(),
-                    commit_d,
+                    payload_geometry.transmitted_coefficients(),
                 )));
             }
-            commitment.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, commit_d, transcript)?;
+            commitment.append_flat_to_transcript::<T>(
+                ABSORB_COMMITMENT,
+                payload_geometry.transcript_ring_dimension(),
+                transcript,
+            )?;
             commitment
         }
         NextWitnessState::TerminalInnerState => return Err(AkitaError::InvalidProof),
@@ -499,6 +503,15 @@ where
         &witness_polys[..],
         (Commitment::new(witness_commitment), suffix_hint),
     )?;
+    let logical_polys = setup_source_storage
+        .as_ref()
+        .into_iter()
+        .chain(std::iter::once(&logical_witness_source))
+        .collect::<Vec<_>>();
+    let logical_groups = logical_polys
+        .iter()
+        .map(|poly| PreparedProverGroup::from_ref_vec(vec![*poly]))
+        .collect::<Result<Vec<_>, _>>()?;
     if const { <E as ExtField<F>>::DEGREE == 1 } {
         prepare_single_field_fold::<F, E, T, _, _, C, O, TS, R>(
             stack,
@@ -510,17 +523,11 @@ where
             BasisMode::Lagrange,
         )
     } else {
-        let opening_batch = block_claims.opening_claims().layout()?;
-        let mut eor_polynomial_groups = Vec::with_capacity(opening_batch.num_groups());
-        if let Some(source) = setup_source_storage.as_ref() {
-            eor_polynomial_groups.push(vec![source]);
-        }
-        eor_polynomial_groups.push(vec![&logical_witness_source]);
         prepare_extension_claim_fold::<F, E, T, _, _, C, O, TS, R>(
             stack,
             needs_extension_reduction,
             block_claims,
-            eor_polynomial_groups,
+            ExtensionOpeningSource::Logical(&logical_groups),
             true,
             transcript,
             || Ok(()),

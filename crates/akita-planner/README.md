@@ -19,7 +19,8 @@ Estimates are neither serialized nor Fiat–Shamir bound.
 
 ## Inputs And Outputs
 
-The public search entry point is `find_schedule(&key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
+The public search entry point is
+`find_schedule(&key, &precommitted_fold_witness_norms, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
 
 `key: AkitaScheduleLookupKey` describes the supported root opening shape.
 Single-group openings store one `PolynomialGroupLayout` in `final_group` and
@@ -31,7 +32,7 @@ leave `precommitteds` empty:
   opened at that group's point (one claim per polynomial).
 
 Multi-group roots use the same lookup key with any earlier groups recorded as
-`PrecommittedGroupDescriptor` in `precommitteds`. For a single-group batch,
+`CommittedGroupProfile` in `precommitteds`. For a single-group batch,
 the root `t` and `w` multiplicities are just `num_polynomials` and the `z`
 multiplicity is always `1`; multi-group roots derive those counts from
 `final_group` plus `precommitteds`.
@@ -180,9 +181,9 @@ The planner owns the generated schedule-table representation and expansion
 logic. Generated table data is emitted into the `akita-schedules` crate during
 local/CI bootstrap. Compact entries mirror the protocol topology:
 
-- `GeneratedRootFold` records the root source, root-only challenge form,
-  ordered precommitted groups, final-group commitment, open matrix, and witness
-  partition.
+- `GeneratedRootFold` records the root-only challenge form, exact fold digits
+  and cap, ordered precommitted groups, final-group commitment, open matrix,
+  and witness partition.
 - `GeneratedRecursiveFold` records the recursive witness commitment, open
   matrix, optional incoming setup prefix, and witness partition.
 - `GeneratedTerminalFold` records only source geometry and the inner matrix
@@ -192,9 +193,18 @@ Generated matrices store ring dimension, digit basis, and slice count where
 applicable. Expansion reconstructs widths, collision buckets, and minimum
 SIS-secure output ranks from the shared security primitives.
 
-The reusable generated-table emitter lives in this crate and accepts explicit `EmitSpec` values. The `gen_schedule_tables` binary is enabled by the `catalog-gen` feature, which is allowed to name concrete `akita-config` preset `Cfg` types. The emitted family modules are written into `akita-schedules/src/generated/`, where feature-gated table constructors return `GeneratedScheduleTable` values to opted-in presets.
+The reusable generated-table emitter lives in this crate and accepts explicit
+`EmitSpec` values. The `gen_schedule_tables` binary is enabled by the
+`catalog-gen` feature, which is allowed to name concrete `akita-config` preset
+`Cfg` types. The emitted family modules are written into
+`akita-schedules/src/generated/`, where feature-gated table constructors return
+`GeneratedScheduleTable` values to opted-in presets.
 
-The large generated family modules are intentionally not checked into Git. Run the repository bootstrap script before schedule-enabled builds.
+The repository tracks a compact stock catalog for the shapes exercised by the
+checked-in tests, examples, and profiles. Downstream applications that need a
+different fixed catalog should run the standalone planner binary with their
+exact shapes instead of expanding the repository catalog for every possible
+polynomial size.
 
 To regenerate schedule tables:
 
@@ -202,7 +212,50 @@ To regenerate schedule tables:
 scripts/generate-schedule-tables.sh
 ```
 
-The family list is in `akita_planner::generated_families::ALL_GENERATED_FAMILIES`. It is shared by the emitter and drift-guard tests so generated entries and regeneration hooks stay aligned.
+The family list is in
+`akita_planner::generated_families::ALL_GENERATED_FAMILIES`. It is shared by the
+emitter and drift-guard tests so generated entries and regeneration hooks stay
+aligned. The family name selects the catalog class and planner policy: field,
+dense versus one-hot roots, tensor roots, chunking, and direct versus recursive
+verifier setup are encoded in the family row. Explicit custom rows are limited
+to D64 families; the standalone custom-catalog path does not accept ring
+dimension as an input.
+
+To emit a custom catalog, pass a final group and, when needed, an ordered list
+of precommitted groups:
+
+```bash
+cargo run --release -p akita-planner --features catalog-gen \
+  --bin gen_schedule_tables -- crates/akita-schedules/src/generated \
+  --final-group fp128_d64_onehot:32:2 \
+  --precommitted-group fp128_d64_onehot:16:1 \
+  --precommitted-group fp128_d64_dense:15:2
+```
+
+The explicit flags are:
+
+- `--final-group family:num_vars:num_polynomials` selects the generated catalog
+  family and the final group shape.
+- `--precommitted-group family:num_vars:num_polynomials` adds one ordered
+  precommitted group. Repeat the flag for each precommitted group position.
+
+Each numeric slot accepts either a single value or an inclusive range written as
+`start..=end` (or `start..end`). For example:
+
+```bash
+cargo run --release -p akita-planner --features catalog-gen \
+  --bin gen_schedule_tables -- crates/akita-schedules/src/generated \
+  --final-group fp128_d64_onehot:30..=32:2..=4 \
+  --precommitted-group fp128_d64_onehot:14..=16:1 \
+  --precommitted-group fp128_d64_dense:15:1..=2
+```
+
+The generator expands the cartesian product of the final-group range and every
+precommitted-group range. With no `--precommitted-group` flags, it emits
+final-only scalar rows. With precommitted groups, it emits grouped-root rows and
+the required standalone precommit profile registry rows. Repeating a
+precommitted group preserves its multiplicity in the lookup key, while the
+standalone precommit profile registry remains deduplicated.
 
 ## Supported Features
 

@@ -1,4 +1,4 @@
-//! Fold-linf tail-bound and grind-union sizing for `fold_witness_digit_plan`.
+//! Fold-l∞ tail-bound primitives for balanced signed-digit policy sizing.
 //!
 //! [`FoldWitnessLinfCapConfig`] selects whether digit depth uses worst-case
 //! `β_inf` alone or `min(β_inf, t*)` under a proved tail certificate.
@@ -20,8 +20,8 @@ pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN: u32 = 8;
 /// Minimum retained fraction of `t*` when snapping `δ_fold` downward after tail sizing.
 /// Retain `1/2` of `t*` (at most 50% reduction vs the tail cap).
 ///
-/// The active binding applies this value to every supported field other than
-/// Fp32; the Fp32-specific floor is bound separately below.
+/// The balanced signed-digit policy applies this value to every supported
+/// field other than Fp32.
 pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM: u32 = 1;
 pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN: u32 = 2;
 
@@ -29,8 +29,8 @@ pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN: u32 = 2;
 pub const FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM: u32 = 3;
 pub const FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN: u32 = 4;
 
-/// Whether [`crate::sis::fold_witness_digit_plan`] sizes `K` from the sub-Gaussian tail
-/// `t*` (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.
+/// Whether balanced signed-digit policy sizing uses the sub-Gaussian tail `t*`
+/// (`min(β_inf, t*)`) or the worst-case envelope `β_inf` alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FoldWitnessLinfCapPolicy {
     /// Proved sub-Gaussian tail: production signed-sparse at `D = 64`, or a
@@ -39,8 +39,7 @@ pub enum FoldWitnessLinfCapPolicy {
     /// Proved second-order tensor tail for tensor folds whose factors use the
     /// same certified sign-symmetric families as [`Self::TailBoundWithGrind`].
     TensorTailBoundWithGrind,
-    /// No tail certificate yet: uncertified flat presets; `cap = β_inf` only
-    /// and grind nonce must be zero.
+    /// No tail certificate yet: uncertified flat presets use `cap = β_inf` only.
     WorstCaseBetaOnly,
 }
 
@@ -338,7 +337,7 @@ pub fn rademacher_proxy_variance(
     }
 }
 
-/// Level-static configuration for [`super::norm_bound::fold_witness_digit_plan`].
+/// Level-static configuration for balanced signed-digit policy sizing.
 ///
 /// When the policy is [`WorstCaseBetaOnly`](FoldWitnessLinfCapPolicy::WorstCaseBetaOnly),
 /// tail-bound fields are ignored and sizing uses `β_inf` alone.
@@ -357,8 +356,7 @@ pub struct FoldWitnessLinfCapConfig {
     /// Tensor low-factor length, or zero for a flat challenge shape.
     pub tensor_fold_low_len: usize,
     pub num_fold_coeffs: u128,
-    /// Grind reroll target `p_grind` (`NUM / DEN`); copied from
-    /// [`crate::FoldLinfProtocolBinding`] at level construction time.
+    /// Fixed offline sizing cutoff `p_grind` (`NUM / DEN`).
     pub grind_target_accept_num: u128,
     pub grind_target_accept_den: u128,
     /// Precomputed flat union ln term, or tensor outer ln term.
@@ -385,14 +383,14 @@ impl FoldWitnessLinfCapConfig {
     /// Tail-aware sizing inputs for a fold level from its sparse family, shape,
     /// ring degree, and inner A-matrix width (`num_positions_per_block · δ_commit`).
     #[inline]
-    pub fn for_fold_level(
+    pub fn for_fold_coeffs(
         fold_challenge_config: &SparseChallengeConfig,
         fold_challenge_shape: TensorChallengeShape,
         ring_dimension: usize,
-        inner_width: usize,
+        num_fold_coeffs: usize,
     ) -> Result<Self, AkitaError> {
-        let (grind_target_accept_num, grind_target_accept_den) =
-            crate::FoldLinfProtocolBinding::CURRENT.grind_target_accept_prob();
+        let grind_target_accept_num = FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM as u128;
+        let grind_target_accept_den = FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN as u128;
         let policy = fold_witness_linf_cap_policy(
             fold_challenge_config,
             fold_challenge_shape,
@@ -403,30 +401,7 @@ impl FoldWitnessLinfCapConfig {
             fold_challenge_config,
             fold_challenge_shape,
             ring_dimension,
-            inner_width,
-            grind_target_accept_num,
-            grind_target_accept_den,
-        )
-    }
-
-    /// Build a tail-aware config for [`crate::layout::digit_math::optimal_block_geometry_split`] scoring.
-    #[allow(clippy::too_many_arguments)]
-    #[inline]
-    pub fn for_fold_level_scoring(
-        policy: FoldWitnessLinfCapPolicy,
-        fold_challenge_config: &SparseChallengeConfig,
-        fold_challenge_shape: TensorChallengeShape,
-        ring_dimension: usize,
-        inner_width: usize,
-        grind_target_accept_num: u128,
-        grind_target_accept_den: u128,
-    ) -> Result<Self, AkitaError> {
-        Self::assemble(
-            policy,
-            fold_challenge_config,
-            fold_challenge_shape,
-            ring_dimension,
-            inner_width,
+            num_fold_coeffs,
             grind_target_accept_num,
             grind_target_accept_den,
         )
@@ -437,12 +412,12 @@ impl FoldWitnessLinfCapConfig {
         policy: FoldWitnessLinfCapPolicy,
         fold_challenge_config: &SparseChallengeConfig,
         fold_challenge_shape: TensorChallengeShape,
-        ring_dimension: usize,
-        inner_width: usize,
+        _ring_dimension: usize,
+        num_fold_coeffs: usize,
         grind_target_accept_num: u128,
         grind_target_accept_den: u128,
     ) -> Result<Self, AkitaError> {
-        let num_fold_coeffs = (inner_width as u128).saturating_mul(ring_dimension as u128);
+        let num_fold_coeffs = num_fold_coeffs as u128;
         let grind_union_ln = match policy {
             FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 0,
             FoldWitnessLinfCapPolicy::TailBoundWithGrind => fold_witness_linf_grind_union_ln(
@@ -597,7 +572,7 @@ mod tests {
             infinity_norm: 2,
             l1_norm: 51,
         };
-        let witness = FoldWitnessNorms::new(3, 64, 64, true);
+        let witness = FoldWitnessNorms::sparse_binary(64, 64).unwrap();
         let (_, tight_beta) = crate::sis::fold_witness_digit_plan(
             4,
             1,

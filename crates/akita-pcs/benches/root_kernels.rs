@@ -44,11 +44,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
     )
     .expect("layout");
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
-    let total = setup
-        .expanded
-        .shared_matrix
-        .total_ring_elements_at::<D>()
-        .unwrap();
+    let total = setup.expanded.shared_matrix.num_field_elements() / D;
     let ntt_shared = prepare_ntt_cache(
         setup
             .expanded

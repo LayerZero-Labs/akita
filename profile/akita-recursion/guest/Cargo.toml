@@ -36,7 +36,7 @@ trusted-benchmark-artifact = ["akita-recursion-glue/trusted-benchmark-artifact"]
 jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false }
 akita-recursion-glue = { path = "../glue" }
 akita-config = { path = "../../../crates/akita-config", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "505d8ebcb45e5796afcf16468972b10e51b4a355", default-features = false, features = ["solinas"] }
+jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "eb93a031027ee735f0827edb4539e971ab5fcc0b", default-features = false, features = ["solinas"] }
 akita-error = { path = "../../../crates/akita-error" }
 akita-transcript = { path = "../../../crates/akita-transcript" }
 akita-types = { path = "../../../crates/akita-types" }

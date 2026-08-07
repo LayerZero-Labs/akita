@@ -19,7 +19,7 @@ use std::io::{Read, Write};
 
 /// Flat 1D vector of field elements, independent of ring dimension.
 ///
-/// Stores `total_ring_elements * gen_ring_dim` contiguous field elements.
+/// Stores one exact contiguous prefix of public field elements.
 /// Each role matrix (A, B, D) views a prefix of this vector reshaped into
 /// its own `(num_rows, num_cols)` dimensions via [`RingMatrixView`].
 ///
@@ -28,21 +28,13 @@ use std::io::{Read, Write};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlatMatrix<F: Field> {
     data: Vec<F>,
-    /// Ring dimension used when generating (D_max).
-    gen_ring_dim: usize,
 }
 
 impl<F: Field> FlatMatrix<F> {
-    /// Total number of ring elements at the generation dimension.
+    /// Number of stored base-field elements.
     #[inline]
-    pub fn total_ring_elements(&self) -> usize {
-        self.data.len().checked_div(self.gen_ring_dim).unwrap_or(0)
-    }
-
-    /// Ring dimension used during generation.
-    #[inline]
-    pub fn gen_ring_dim(&self) -> usize {
-        self.gen_ring_dim
+    pub fn num_field_elements(&self) -> usize {
+        self.data.len()
     }
 
     /// Borrow the backing field-element coefficients.
@@ -51,49 +43,9 @@ impl<F: Field> FlatMatrix<F> {
         &self.data
     }
 
-    /// Total number of ring elements when viewed at dimension D.
-    #[inline]
-    pub fn total_ring_elements_at<const D: usize>(&self) -> Result<usize, AkitaError> {
-        self.total_ring_elements_at_dyn(D)
-    }
-
-    /// Runtime sibling of [`Self::total_ring_elements_at`].
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `ring_d` is zero, does not divide `gen_ring_dim`, or
-    /// the viewed element count overflows.
-    #[inline]
-    pub fn total_ring_elements_at_dyn(&self, ring_d: usize) -> Result<usize, AkitaError> {
-        if ring_d == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "ring dimension must be non-zero".to_string(),
-            ));
-        }
-        if self.gen_ring_dim == 0 || !self.gen_ring_dim.is_multiple_of(ring_d) {
-            return Err(AkitaError::InvalidSetup(format!(
-                "D={ring_d} does not divide setup gen_ring_dim={}",
-                self.gen_ring_dim
-            )));
-        }
-        self.total_ring_elements()
-            .checked_mul(self.gen_ring_dim / ring_d)
-            .ok_or_else(|| AkitaError::InvalidSetup("matrix dimension overflow".to_string()))
-    }
-
     /// Build from pre-flattened field-element data.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `data.len()` is not a multiple of `gen_ring_dim`.
-    pub fn from_flat_data(data: Vec<F>, gen_ring_dim: usize) -> Self {
-        debug_assert!(
-            gen_ring_dim > 0 && data.len().is_multiple_of(gen_ring_dim),
-            "data length {} must be a positive multiple of gen_ring_dim={}",
-            data.len(),
-            gen_ring_dim,
-        );
-        Self { data, gen_ring_dim }
+    pub fn from_flat_data(data: Vec<F>) -> Self {
+        Self { data }
     }
 
     /// Build from a flat slice of ring elements.
@@ -102,10 +54,7 @@ impl<F: Field> FlatMatrix<F> {
         for ring_elem in elements {
             data.extend_from_slice(&ring_elem.coeffs);
         }
-        Self {
-            data,
-            gen_ring_dim: D,
-        }
+        Self { data }
     }
 
     /// Create a typed matrix view at ring dimension D with the given shape.
@@ -115,27 +64,27 @@ impl<F: Field> FlatMatrix<F> {
     ///
     /// # Errors
     ///
-    /// Returns an error if `D` does not divide `gen_ring_dim`, if the
-    /// requested shape overflows, or if it exceeds the available data.
+    /// Returns an error if the requested field footprint overflows or exceeds
+    /// the stored prefix.
     pub fn ring_view<const D: usize>(
         &self,
         num_rows: usize,
         num_cols: usize,
     ) -> Result<RingMatrixView<'_, F, D>, AkitaError> {
-        let total_at_d = self.total_ring_elements_at::<D>()?;
         let needed = num_rows
             .checked_mul(num_cols)
             .ok_or_else(|| AkitaError::InvalidSetup("matrix view shape overflow".to_string()))?;
-        if needed > total_at_d {
-            return Err(AkitaError::InvalidSetup(format!(
-                "requested {needed} ring elements at D={D}, but setup only has {total_at_d}"
-            )));
-        }
         let field_len = needed.checked_mul(D).ok_or_else(|| {
             AkitaError::InvalidSetup("matrix view field length overflow".to_string())
         })?;
+        let data = self.data.get(..field_len).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "requested {field_len} field elements for a {num_rows}x{num_cols} D={D} matrix, but setup only has {}",
+                self.data.len()
+            ))
+        })?;
         RingMatrixView {
-            data: &self.data[..field_len],
+            data,
             num_rows,
             num_cols,
         }
@@ -152,28 +101,33 @@ impl<F: Field> FlatMatrix<F> {
     ///
     /// # Errors
     ///
-    /// Returns an error when `ring_d` does not evenly view the matrix or the
-    /// requested shape exceeds the stored prefix.
+    /// Returns an error when `ring_d` is zero or the requested field footprint
+    /// exceeds the stored prefix.
     pub fn ring_view_dyn(
         &self,
         num_rows: usize,
         num_cols: usize,
         ring_d: usize,
     ) -> Result<FlatRingMatrixView<'_, F>, AkitaError> {
-        let total_at_d = self.total_ring_elements_at_dyn(ring_d)?;
+        if ring_d == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "ring dimension must be non-zero".to_string(),
+            ));
+        }
         let needed = num_rows
             .checked_mul(num_cols)
             .ok_or_else(|| AkitaError::InvalidSetup("matrix view shape overflow".to_string()))?;
-        if needed > total_at_d {
-            return Err(AkitaError::InvalidSetup(format!(
-                "requested {needed} ring elements at D={ring_d}, but setup only has {total_at_d}"
-            )));
-        }
         let field_len = needed.checked_mul(ring_d).ok_or_else(|| {
             AkitaError::InvalidSetup("matrix view field length overflow".to_string())
         })?;
+        let data = self.data.get(..field_len).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "requested {field_len} field elements for a {num_rows}x{num_cols} D={ring_d} matrix, but setup only has {}",
+                self.data.len()
+            ))
+        })?;
         Ok(FlatRingMatrixView {
-            data: &self.data[..field_len],
+            data,
             num_cols,
             ring_d,
         })
@@ -206,12 +160,17 @@ impl<'a, F: Field> FlatRingMatrixView<'a, F> {
     ///
     /// Returns an error when `row` lies outside the view.
     pub fn row_flat(&self, row: usize) -> Result<&'a [F], AkitaError> {
-        let row_len = self.num_cols * self.ring_d;
+        let row_len = self.num_cols.checked_mul(self.ring_d).ok_or_else(|| {
+            AkitaError::InvalidInput("ring matrix row length overflow".to_string())
+        })?;
         let start = row
             .checked_mul(row_len)
             .ok_or_else(|| AkitaError::InvalidInput("ring matrix row overflow".to_string()))?;
+        let end = start
+            .checked_add(row_len)
+            .ok_or_else(|| AkitaError::InvalidInput("ring matrix row overflow".to_string()))?;
         self.data
-            .get(start..start + row_len)
+            .get(start..end)
             .ok_or_else(|| AkitaError::InvalidInput(format!("ring matrix row {row} out of range")))
     }
 
@@ -234,8 +193,11 @@ impl<'a, F: Field> FlatRingMatrixView<'a, F> {
             .ok_or_else(|| {
                 AkitaError::InvalidInput("ring matrix element index overflow".to_string())
             })?;
+        let end = idx.checked_add(self.ring_d).ok_or_else(|| {
+            AkitaError::InvalidInput("ring matrix element index overflow".to_string())
+        })?;
         self.data
-            .get(idx..idx + self.ring_d)
+            .get(idx..end)
             .ok_or_else(|| AkitaError::InvalidInput(format!("ring matrix row {row} out of range")))
     }
 }
@@ -244,8 +206,8 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> FlatMatrix<F> {
     /// Deserialize a flat matrix whose shape is already fixed by trusted
     /// metadata.
     ///
-    /// The serialized matrix header is checked against `expected_total_ring`
-    /// and `expected_gen_ring_dim` before allocating the backing vector. This
+    /// The serialized matrix header is checked against
+    /// `expected_num_field_elements` before allocating the backing vector. This
     /// is the safe verifier-facing setup path: the setup seed is read first,
     /// then the matrix is bounded by that seed rather than by untrusted matrix
     /// header sizes.
@@ -258,63 +220,43 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> FlatMatrix<F> {
         mut reader: R,
         compress: Compress,
         validate: Validate,
-        expected_total_ring: usize,
-        expected_gen_ring_dim: usize,
+        expected_num_field_elements: usize,
         max_field_elements: usize,
     ) -> Result<Self, SerializationError> {
-        if expected_gen_ring_dim == 0 {
+        if expected_num_field_elements == 0 {
             return Err(SerializationError::InvalidData(
-                "expected flat matrix gen_ring_dim must be non-zero".to_string(),
+                "expected flat matrix field count must be non-zero".to_string(),
             ));
         }
-        if expected_total_ring == 0 {
-            return Err(SerializationError::InvalidData(
-                "expected flat matrix total_ring_elements must be non-zero".to_string(),
-            ));
-        }
-        let expected_fields = expected_total_ring
-            .checked_mul(expected_gen_ring_dim)
-            .ok_or_else(|| {
-                SerializationError::InvalidData("flat matrix field count overflow".to_string())
-            })?;
-        if expected_fields > max_field_elements {
+        if expected_num_field_elements > max_field_elements {
             return Err(SerializationError::LengthLimitExceeded {
-                len: u64::try_from(expected_fields).unwrap_or(u64::MAX),
+                len: u64::try_from(expected_num_field_elements).unwrap_or(u64::MAX),
                 max: max_field_elements,
             });
         }
 
-        let total_ring = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let gen_ring_dim = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        if total_ring != expected_total_ring {
+        let num_field_elements =
+            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        if num_field_elements != expected_num_field_elements {
             return Err(SerializationError::InvalidData(
-                "flat matrix total_ring_elements does not match expected setup shape".to_string(),
-            ));
-        }
-        if gen_ring_dim != expected_gen_ring_dim {
-            return Err(SerializationError::InvalidData(
-                "flat matrix gen_ring_dim does not match expected setup shape".to_string(),
+                "flat matrix field count does not match expected setup shape".to_string(),
             ));
         }
 
-        Self::deserialize_data(reader, compress, validate, total_ring, gen_ring_dim)
+        Self::deserialize_data(reader, compress, validate, num_field_elements)
     }
 
     fn deserialize_data<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
-        total_ring: usize,
-        gen_ring_dim: usize,
+        num_field_elements: usize,
     ) -> Result<Self, SerializationError> {
-        let total_fields = total_ring.checked_mul(gen_ring_dim).ok_or_else(|| {
-            SerializationError::InvalidData("flat matrix field count overflow".to_string())
-        })?;
         let mut data = Vec::new();
-        data.try_reserve_exact(total_fields).map_err(|_| {
+        data.try_reserve_exact(num_field_elements).map_err(|_| {
             SerializationError::InvalidData("flat matrix allocation failed".to_string())
         })?;
-        for _ in 0..total_fields {
+        for _ in 0..num_field_elements {
             data.push(F::deserialize_with_mode(
                 &mut reader,
                 compress,
@@ -322,7 +264,7 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> FlatMatrix<F> {
                 &(),
             )?);
         }
-        let out = Self { data, gen_ring_dim };
+        let out = Self { data };
         if matches!(validate, Validate::Yes) {
             out.check()?;
         }
@@ -332,17 +274,10 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> FlatMatrix<F> {
 
 impl<F: Field + Valid> Valid for FlatMatrix<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.gen_ring_dim == 0 {
+        if self.data.is_empty() {
             return Err(SerializationError::InvalidData(
-                "flat matrix gen_ring_dim must be non-zero".to_string(),
+                "flat matrix field count must be non-zero".to_string(),
             ));
-        }
-        if !self.data.len().is_multiple_of(self.gen_ring_dim) {
-            return Err(SerializationError::InvalidData(format!(
-                "flat matrix field count {} is not divisible by gen_ring_dim {}",
-                self.data.len(),
-                self.gen_ring_dim
-            )));
         }
         for f in &self.data {
             f.check()?;
@@ -357,9 +292,7 @@ impl<F: Field + AkitaSerialize> AkitaSerialize for FlatMatrix<F> {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.total_ring_elements()
-            .serialize_with_mode(&mut writer, compress)?;
-        self.gen_ring_dim
+        self.num_field_elements()
             .serialize_with_mode(&mut writer, compress)?;
         for f in &self.data {
             f.serialize_with_mode(&mut writer, compress)?;
@@ -368,7 +301,7 @@ impl<F: Field + AkitaSerialize> AkitaSerialize for FlatMatrix<F> {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        2 * std::mem::size_of::<usize>()
+        std::mem::size_of::<usize>()
             + self
                 .data
                 .iter()
@@ -385,14 +318,14 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for Fla
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let total_ring = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let gen_ring_dim = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        if gen_ring_dim == 0 {
+        let num_field_elements =
+            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        if num_field_elements == 0 {
             return Err(SerializationError::InvalidData(
-                "flat matrix gen_ring_dim must be non-zero".to_string(),
+                "flat matrix field count must be non-zero".to_string(),
             ));
         }
-        Self::deserialize_data(reader, compress, validate, total_ring, gen_ring_dim)
+        Self::deserialize_data(reader, compress, validate, num_field_elements)
     }
 }
 
@@ -505,8 +438,7 @@ mod tests {
             .collect();
 
         let flat = FlatMatrix::from_ring_slice(&elements);
-        assert_eq!(flat.total_ring_elements(), rows * cols);
-        assert_eq!(flat.gen_ring_dim(), 64);
+        assert_eq!(flat.num_field_elements(), rows * cols * 64);
 
         let view = flat.ring_view::<64>(rows, cols).unwrap();
         assert_eq!(view.num_rows(), rows);
@@ -529,7 +461,7 @@ mod tests {
             .collect();
 
         let flat = FlatMatrix::from_ring_slice(&elements);
-        assert_eq!(flat.total_ring_elements_at::<32>().unwrap(), total * 2);
+        assert_eq!(flat.num_field_elements(), total * 64);
 
         let view32 = flat.ring_view::<32>(2, total).unwrap();
         assert_eq!(view32.num_rows(), 2);
@@ -569,19 +501,31 @@ mod tests {
 
     #[test]
     fn malformed_ring_view_returns_error() {
-        let flat = FlatMatrix::<F>::from_flat_data(vec![F::zero(); 3], 3);
-        assert!(flat.ring_view::<2>(1, 1).is_err());
+        let flat = FlatMatrix::<F>::from_flat_data(vec![F::zero(); 3]);
+        assert!(flat.ring_view::<2>(1, 1).is_ok());
         assert!(flat.ring_view::<3>(2, 1).is_err());
         assert!(flat.ring_view::<3>(usize::MAX, usize::MAX).is_err());
+
+        let dynamic = flat.ring_view_dyn(1, 1, 1).unwrap();
+        assert!(dynamic.row_flat(usize::MAX).is_err());
+        assert!(dynamic.elem(usize::MAX, 0).is_err());
     }
 
     #[test]
-    fn deserialization_rejects_zero_generation_dimension_before_allocation() {
+    fn deserialization_rejects_zero_field_count_before_allocation() {
         let mut bytes = Vec::new();
-        0usize.serialize_uncompressed(&mut bytes).unwrap();
         0usize.serialize_uncompressed(&mut bytes).unwrap();
 
         let err = FlatMatrix::<F>::deserialize_uncompressed(&*bytes, &()).unwrap_err();
         assert!(matches!(err, SerializationError::InvalidData(_)));
+    }
+
+    #[test]
+    fn stored_prefix_need_not_be_divisible_by_view_dimension() {
+        let flat = FlatMatrix::<F>::from_flat_data(vec![F::zero(); 65]);
+
+        assert_eq!(flat.ring_view::<64>(1, 1).unwrap().as_slice().len(), 1);
+        assert!(flat.ring_view::<64>(1, 2).is_err());
+        assert_eq!(flat.num_field_elements(), 65);
     }
 }

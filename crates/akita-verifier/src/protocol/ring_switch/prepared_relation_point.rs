@@ -312,25 +312,25 @@ mod tests {
             (CommitmentRingDims::uniform(128), 64),
             (
                 CommitmentRingDims {
-                    inner: 64,
-                    outer: 32,
-                    opening: 32,
+                    inner: 128,
+                    outer: 64,
+                    opening: 64,
                 },
                 16,
             ),
             (
                 CommitmentRingDims {
-                    inner: 64,
-                    outer: 32,
-                    opening: 32,
+                    inner: 128,
+                    outer: 64,
+                    opening: 64,
                 },
                 32,
             ),
             (
                 CommitmentRingDims {
-                    inner: 64,
-                    outer: 32,
-                    opening: 32,
+                    inner: 128,
+                    outer: 64,
+                    opening: 64,
                 },
                 64,
             ),
@@ -338,7 +338,7 @@ mod tests {
                 CommitmentRingDims {
                     inner: 128,
                     outer: 64,
-                    opening: 32,
+                    opening: 64,
                 },
                 32,
             ),
@@ -379,9 +379,9 @@ mod tests {
         let role_dims = CommitmentRingDims {
             inner: 128,
             outer: 64,
-            opening: 32,
+            opening: 64,
         };
-        let live_witness_coeff_len = 288;
+        let live_witness_coeff_len = 320;
         let outgoing_ring_dim = 32;
         let geometry =
             RelationAddressGeometry::new(role_dims, outgoing_ring_dim, live_witness_coeff_len)
@@ -403,13 +403,13 @@ mod tests {
         let role_dims = CommitmentRingDims {
             inner: 256,
             outer: 128,
-            opening: 32,
+            opening: 128,
         };
         let geometry = RelationAddressGeometry::new_for_groups(
             role_dims,
             &[CommitmentRingDims::uniform(64)],
             32,
-            288,
+            320,
         )
         .unwrap();
         let point = point_for(geometry.committed_witness_coeff_len());

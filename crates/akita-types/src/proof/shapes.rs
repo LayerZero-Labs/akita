@@ -87,8 +87,8 @@ pub struct TerminalLevelProofShape {
 /// itself remains tag-free.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NextWitnessBindingShape {
-    /// Number of base-field coefficients in the outer commitment `u`.
-    OuterCommitment { coeffs: usize },
+    /// Number of base-field coefficients in the compressed outer payload.
+    OuterPayload { coeffs: usize },
     /// The following terminal proof owns the canonical `t` state bytes.
     TerminalInnerState,
 }
@@ -98,8 +98,8 @@ pub enum NextWitnessBindingShape {
 pub struct LevelProofShape {
     /// Shape of the optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
-    /// Number of field coefficients in `v`.
-    pub v_coeffs: usize,
+    /// Number of field coefficients in the compressed opening payload.
+    pub opening_payload_coeffs: usize,
     /// Stage-1 tree stage shapes in root-to-leaf order.
     pub stage1_stages: Vec<AkitaStage1StageShape>,
     /// Stage-2 sumcheck shape: `(num_rounds, degree)`.
@@ -141,7 +141,7 @@ fn eq_factored_sumcheck_shape<F: Field>(
 
 pub(super) fn level_proof_shape<F: Field, E: Field>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
-    v: &RingVec<F>,
+    opening_payload: &RingVec<F>,
     stage1: &AkitaStage1Proof<E>,
     stage2: &AkitaStage2Proof<F, E>,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
@@ -149,7 +149,7 @@ pub(super) fn level_proof_shape<F: Field, E: Field>(
     LevelProofShape {
         extension_opening_reduction: extension_opening_reduction
             .map(ExtensionOpeningReductionProof::shape),
-        v_coeffs: v.coeff_len(),
+        opening_payload_coeffs: opening_payload.coeff_len(),
         stage1_stages: stage1
             .stages
             .iter()
@@ -161,11 +161,9 @@ pub(super) fn level_proof_shape<F: Field, E: Field>(
         stage2_sumcheck_proof: sumcheck_shape(&stage2.sumcheck_proof),
         stage3_sumcheck: stage3_sumcheck_proof.map(SetupSumcheckProof::shape),
         next_witness_binding: match &stage2.next_witness_binding {
-            NextWitnessBinding::OuterCommitment(commitment) => {
-                NextWitnessBindingShape::OuterCommitment {
-                    coeffs: commitment.coeff_len(),
-                }
-            }
+            NextWitnessBinding::OuterPayload(commitment) => NextWitnessBindingShape::OuterPayload {
+                coeffs: commitment.coeff_len(),
+            },
             NextWitnessBinding::TerminalInnerState => NextWitnessBindingShape::TerminalInnerState,
         },
     }
@@ -267,7 +265,7 @@ impl Valid for LevelProofShape {
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.check()?;
         }
-        checked_shape_len(self.v_coeffs)?;
+        checked_shape_len(self.opening_payload_coeffs)?;
         checked_shape_sequence_len(self.stage1_stages.len())?;
         self.stage1_stages.check()?;
         checked_shape_sequence_len(self.stage2_sumcheck_proof.len())?;
@@ -277,7 +275,7 @@ impl Valid for LevelProofShape {
         if let Some(shape) = &self.stage3_sumcheck {
             shape.check()?;
         }
-        if let NextWitnessBindingShape::OuterCommitment { coeffs } = self.next_witness_binding {
+        if let NextWitnessBindingShape::OuterPayload { coeffs } = self.next_witness_binding {
             checked_shape_len(coeffs)?;
         }
         Ok(())
@@ -301,7 +299,8 @@ impl AkitaSerialize for LevelProofShape {
                 .sumcheck
                 .serialize_with_mode(&mut writer, compress)?;
         }
-        self.v_coeffs.serialize_with_mode(&mut writer, compress)?;
+        self.opening_payload_coeffs
+            .serialize_with_mode(&mut writer, compress)?;
         self.stage1_stages
             .serialize_with_mode(&mut writer, compress)?;
         self.stage2_sumcheck_proof
@@ -315,7 +314,7 @@ impl AkitaSerialize for LevelProofShape {
                 .serialize_with_mode(&mut writer, compress)?;
         }
         match self.next_witness_binding {
-            NextWitnessBindingShape::OuterCommitment { coeffs } => {
+            NextWitnessBindingShape::OuterPayload { coeffs } => {
                 0u8.serialize_with_mode(&mut writer, compress)?;
                 coeffs.serialize_with_mode(&mut writer, compress)?;
             }
@@ -336,7 +335,7 @@ impl AkitaSerialize for LevelProofShape {
                         + reduction.sumcheck.serialized_size(compress)
                 });
         reduction_size
-            + self.v_coeffs.serialized_size(compress)
+            + self.opening_payload_coeffs.serialized_size(compress)
             + self.stage1_stages.serialized_size(compress)
             + self.stage2_sumcheck_proof.serialized_size(compress)
             + true.serialized_size(compress)
@@ -346,7 +345,7 @@ impl AkitaSerialize for LevelProofShape {
                 .map_or(0, |shape| shape.sumcheck.serialized_size(compress))
             + 0u8.serialized_size(compress)
             + match self.next_witness_binding {
-                NextWitnessBindingShape::OuterCommitment { coeffs } => {
+                NextWitnessBindingShape::OuterPayload { coeffs } => {
                     coeffs.serialized_size(compress)
                 }
                 NextWitnessBindingShape::TerminalInnerState => 0,
@@ -371,7 +370,8 @@ impl AkitaDeserialize for LevelProofShape {
         } else {
             None
         };
-        let v_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let opening_payload_coeffs =
+            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let stage1_stages = deserialize_shape_vec(&mut reader, compress, validate)?;
         let stage2_sumcheck = deserialize_shape_vec(&mut reader, compress, validate)?;
         let has_stage3_sumcheck =
@@ -385,7 +385,7 @@ impl AkitaDeserialize for LevelProofShape {
         };
         let next_witness_binding =
             match u8::deserialize_with_mode(&mut reader, compress, validate, &())? {
-                0 => NextWitnessBindingShape::OuterCommitment {
+                0 => NextWitnessBindingShape::OuterPayload {
                     coeffs: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
                 },
                 1 => NextWitnessBindingShape::TerminalInnerState,
@@ -397,7 +397,7 @@ impl AkitaDeserialize for LevelProofShape {
             };
         let out = Self {
             extension_opening_reduction,
-            v_coeffs,
+            opening_payload_coeffs,
             stage1_stages,
             stage2_sumcheck_proof: stage2_sumcheck,
             stage3_sumcheck,

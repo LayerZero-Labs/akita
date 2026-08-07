@@ -43,6 +43,8 @@ pub const ABSORB_STAGE2_NEXT_W_EVAL: &[u8] = b"ak/a/s2w";
 pub const ABSORB_SUMCHECK_INTERSTAGE_CLAIM: &[u8] = b"ak/a/sci";
 /// Challenge for batched sumcheck coefficient sampling.
 pub const CHALLENGE_SUMCHECK_BATCH: &[u8] = b"ak/c/scb";
+/// Challenge batching the support-restricted negative-binary compression check.
+pub const CHALLENGE_COMPRESSION_BINARY: &[u8] = b"ak/c/cb";
 /// Challenge for batching stage-1 inter-stage claims into the next tree stage.
 pub const CHALLENGE_SUMCHECK_INTERSTAGE_BATCH: &[u8] = b"ak/c/scib";
 /// Absorb recursion/stop-condition message payloads (paper §4.5).
@@ -50,9 +52,8 @@ pub const ABSORB_STOP_CONDITION: &[u8] = b"ak/a/st";
 /// Challenge sampled for recursion stop-condition checks (paper §4.5).
 pub const CHALLENGE_STOP_CONDITION: &[u8] = b"ak/c/st";
 
-/// Absorb the prover's folded witness message `v = D · ŵ` before sampling fold
-/// challenges (paper §4.2, Figure 3).
-pub const ABSORB_PROVER_V: &[u8] = b"ak/a/v";
+/// Absorb the terminal compressed opening payload before sampling fold challenges.
+pub const ABSORB_OPENING_PAYLOAD: &[u8] = b"ak/a/v";
 /// Challenge label for witness-fold sparse ring elements `c_i` (flat shape).
 ///
 /// Prefixes the sparse-challenge Fiat–Shamir absorb buffer for one draw batch.
@@ -121,10 +122,11 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_STAGE2_NEXT_W_EVAL,
     ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
     CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_COMPRESSION_BINARY,
     CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
     ABSORB_STOP_CONDITION,
     CHALLENGE_STOP_CONDITION,
-    ABSORB_PROVER_V,
+    ABSORB_OPENING_PAYLOAD,
     CHALLENGE_WITNESS_FOLD,
     CHALLENGE_FOLD_HIGH,
     ABSORB_FOLD_HIGH,

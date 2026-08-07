@@ -9,8 +9,8 @@ use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_error::AkitaError;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, relation_rhs_layout_for, AkitaExpandedSetup,
-    CommitmentRingDims, CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout,
-    RelationAddressGeometry, RingRelationInstance, SetupProjectionGeometry,
+    CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, RelationAddressGeometry,
+    RelationRowFamily, RingRelationInstance, SetupProjectionGeometry,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
@@ -85,11 +85,7 @@ pub struct RelationWeightEventInputs<'a, F: Field, E: Field> {
 pub struct RelationWeightEvents<E: Field> {
     events: Vec<RelationWeightEvent<E>>,
     alpha_powers: Vec<E>,
-    role_dims: CommitmentRingDims,
-    group_role_dims: Vec<CommitmentRingDims>,
     relation_coefficient_block_len: usize,
-    live_witness_coeff_len: usize,
-    opening_ring_dim: usize,
     physical_field_len: usize,
     setup_is_deferred: bool,
 }
@@ -118,6 +114,24 @@ impl<E: Field> RelationWeightFactorization<E> {
     #[must_use]
     pub fn into_common_alpha_factor_and_relation_lane_weights(self) -> (Vec<E>, Vec<E>) {
         (self.common_alpha_factor, self.relation_lane_weights)
+    }
+
+    /// Expand this factorization over its complete padded flat domain.
+    pub fn materialize_dense(&self) -> Result<Vec<E>, AkitaError> {
+        let length = self
+            .common_alpha_factor
+            .len()
+            .checked_mul(self.relation_lane_weights.len())
+            .ok_or_else(|| AkitaError::InvalidSetup("relation weight length overflow".into()))?;
+        let mut weights = Vec::with_capacity(length);
+        for &lane in &self.relation_lane_weights {
+            weights.extend(
+                self.common_alpha_factor
+                    .iter()
+                    .map(|&coefficient| lane * coefficient),
+            );
+        }
+        Ok(weights)
     }
 }
 
@@ -187,13 +201,7 @@ impl<E: Field> RelationWeightEvents<E> {
                 "cannot materialize relation weights with a deferred setup claim".into(),
             ));
         }
-        let geometry = RelationAddressGeometry::new_for_groups(
-            self.role_dims,
-            &self.group_role_dims,
-            self.opening_ring_dim,
-            self.live_witness_coeff_len,
-        )?;
-        let mut weights = vec![E::zero(); geometry.committed_witness_coeff_len()];
+        let mut weights = vec![E::zero(); self.physical_field_len];
         for event in &self.events {
             for (offset, alpha_power) in self.alpha_powers[event.alpha_exponent_start
                 ..event.alpha_exponent_start + event.physical_coefficients.len()]
@@ -216,14 +224,13 @@ impl<E: Field> RelationWeightEvents<E> {
                 "relation factorization requires direct setup contributions".into(),
             ));
         }
-        let geometry = RelationAddressGeometry::new_for_groups(
-            self.role_dims,
-            &self.group_role_dims,
-            self.opening_ring_dim,
-            self.live_witness_coeff_len,
-        )?;
-        let coeff_count = geometry.relation_coefficient_block_len();
-        let mut relation_lane_weights = vec![E::zero(); geometry.relation_lane_capacity()];
+        let coeff_count = self.relation_coefficient_block_len;
+        let lane_capacity = self
+            .physical_field_len
+            .checked_div(coeff_count)
+            .filter(|capacity| capacity.is_power_of_two())
+            .ok_or_else(|| AkitaError::InvalidSetup("relation lane capacity is invalid".into()))?;
+        let mut relation_lane_weights = vec![E::zero(); lane_capacity];
         for event in &self.events {
             if !event
                 .physical_coefficients
@@ -278,13 +285,12 @@ impl<E: Field> RelationWeightEvents<E> {
             (true, None) | (false, Some(_)) => return Err(AkitaError::InvalidProof),
             _ => {}
         }
-        RelationAddressGeometry::new_for_groups(
-            self.role_dims,
-            &self.group_role_dims,
-            self.opening_ring_dim,
-            self.live_witness_coeff_len,
-        )?
-        .validate_relation_point_len(point.len())?;
+        if self.physical_field_len != 1usize.checked_shl(point.len() as u32).unwrap_or(0) {
+            return Err(AkitaError::InvalidSize {
+                expected: self.physical_field_len.trailing_zeros() as usize,
+                actual: point.len(),
+            });
+        }
 
         let equality = OffsetEqWindow::new(point)?;
         let mut low_factor_cache = Vec::new();
@@ -414,7 +420,11 @@ where
     let alpha_pows_b = scalar_powers(alpha, d_b);
     let alpha_pows_d = scalar_powers(alpha, d_d);
     let relation_rhs_layout = relation_rhs_layout_for(lp, opening_batch)?;
-    let quotient_row_dims = relation_rhs_layout.row_ring_dims()?;
+    let row_families = relation_rhs_layout.row_families()?;
+    let quotient_row_dims = row_families
+        .iter()
+        .map(|row| row.ring_dim())
+        .collect::<Vec<_>>();
     let rows = quotient_row_dims.len();
     if rows != lp.relation_matrix_row_count(opening_batch.num_groups())? {
         return Err(AkitaError::InvalidSetup(
@@ -455,14 +465,14 @@ where
             ));
         }
     }
-    let physical_field_len = witness_layout.live_coeff_len();
-    let expected_field_len = opening_source_len
+    let live_witness_coeff_len = witness_layout.live_coeff_len();
+    let physical_field_len = opening_source_len
         .checked_mul(opening_ring_dim)
         .ok_or_else(|| AkitaError::InvalidSetup("opening field length overflow".into()))?;
-    if physical_field_len > expected_field_len {
+    if live_witness_coeff_len > physical_field_len {
         return Err(AkitaError::InvalidSize {
-            expected: expected_field_len,
-            actual: physical_field_len,
+            expected: physical_field_len,
+            actual: live_witness_coeff_len,
         });
     }
     let setup_matrix = match setup {
@@ -482,7 +492,7 @@ where
         role_dims,
         &group_role_dims,
         opening_ring_dim,
-        physical_field_len,
+        live_witness_coeff_len,
     )?
     .relation_coefficient_block_len();
     let mut relation_events = RelationWeightEvents {
@@ -495,11 +505,7 @@ where
                 .max()
                 .ok_or(AkitaError::InvalidProof)?,
         ),
-        role_dims,
-        group_role_dims,
         relation_coefficient_block_len,
-        live_witness_coeff_len: physical_field_len,
-        opening_ring_dim,
         physical_field_len,
         setup_is_deferred,
     };
@@ -524,8 +530,9 @@ where
     } else {
         Vec::new()
     };
-    let d_start = rows
-        .checked_sub(n_d_active)
+    let d_start = row_families
+        .iter()
+        .position(|row| matches!(row, akita_types::RelationRowFamily::Opening { .. }))
         .ok_or(AkitaError::InvalidProof)?;
     for group_index in 0..opening_batch.num_groups() {
         let e_setup_offset = if setup_matrix.is_some() {
@@ -575,7 +582,7 @@ where
         let depth_witness = group_lp.num_digits_inner();
         let depth_commit = group_lp.num_digits_outer();
         let depth_open = group_lp.num_digits_open();
-        let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
+        let depth_fold = group_lp.num_digits_fold();
         let log_basis_inner = group_lp.log_basis_inner();
         let log_basis_outer = group_lp.log_basis_outer();
         let log_basis_open = group_lp.log_basis_open();
@@ -844,6 +851,12 @@ where
         .map(E::lift_base)
         .collect();
     for (row, &row_dim) in quotient_row_dims.iter().enumerate() {
+        if matches!(
+            row_families[row],
+            RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
+        ) {
+            continue;
+        }
         let eq_weight = eq_tau1.eval_at(row)?;
         let row_alpha_pows = if row_dim == d_a {
             relation_events.alpha_powers.as_slice()

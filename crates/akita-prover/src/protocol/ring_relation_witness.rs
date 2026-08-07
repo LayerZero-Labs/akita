@@ -1,5 +1,6 @@
 //! Prover-only secret witness for the negacyclic-ring relation.
 
+use crate::protocol::ring_relation::CompressionWitnessMaterialization;
 use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
@@ -142,11 +143,13 @@ impl<F: Field> RingRelationGroupWitness<F> {
 pub struct RingRelationWitness<F: Field> {
     pub fold_grind_nonce: u32,
     pub groups: Vec<RingRelationGroupWitness<F>>,
+    pub(crate) compression: Option<CompressionWitnessMaterialization<F>>,
 }
 
 impl<F: Field> RingRelationWitness<F> {
     /// Construct from D-free fold outputs under schedule-derived role dimensions.
-    pub fn from_flat_parts(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_flat_parts(
         z_folded_rings: DecomposeFoldWitness<F>,
         z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>>,
         fold_grind_nonce: u32,
@@ -154,6 +157,7 @@ impl<F: Field> RingRelationWitness<F> {
         e_folded: RingVec<F>,
         hint: AkitaCommitmentHint<F>,
         role_dims: CommitmentRingDims,
+        compression: Option<CompressionWitnessMaterialization<F>>,
     ) -> Self {
         Self {
             fold_grind_nonce,
@@ -165,14 +169,20 @@ impl<F: Field> RingRelationWitness<F> {
                 hint,
                 role_dims,
             )],
+            compression,
         }
     }
 
     /// Construct from already-grouped witnesses.
-    pub fn from_groups(fold_grind_nonce: u32, groups: Vec<RingRelationGroupWitness<F>>) -> Self {
+    pub(crate) fn from_groups(
+        fold_grind_nonce: u32,
+        groups: Vec<RingRelationGroupWitness<F>>,
+        compression: Option<CompressionWitnessMaterialization<F>>,
+    ) -> Self {
         Self {
             fold_grind_nonce,
             groups,
+            compression,
         }
     }
 
@@ -184,6 +194,26 @@ impl<F: Field> RingRelationWitness<F> {
                 self.groups.len()
             ))
         })
+    }
+
+    /// Public terminal payload of the shared opening-compression chain.
+    pub(crate) fn opening_payload(&self) -> Result<RingVec<F>, AkitaError>
+    where
+        F: jolt_field::Field + jolt_field::CanonicalEncoding,
+    {
+        let source = self
+            .compression
+            .as_ref()
+            .ok_or(AkitaError::InvalidProof)?
+            .source(crate::protocol::ring_relation::CompressionSourceId::Opening)?;
+        let ring_dim = source
+            .witness
+            .plan()
+            .maps()
+            .last()
+            .ok_or(AkitaError::InvalidProof)?
+            .ring_dimension();
+        RingVec::from_coeffs_with_ring_dim(source.terminal.coefficients().to_vec(), ring_dim)
     }
 
     /// Validate one role carrier against dispatch `D` for every group.

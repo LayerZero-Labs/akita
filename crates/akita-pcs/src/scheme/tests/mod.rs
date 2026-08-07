@@ -6,7 +6,9 @@ use akita_config::test_support::akita_batched_root_layout;
 use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig};
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_prover::{DensePoly, OneHotPoly, ProverOpeningData};
+use akita_prover::{
+    DensePoly, OneHotPoly, PreparedProverGroup, ProverOpeningData, SelectedProverOpeningData,
+};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::CommittedGroupParams;
@@ -21,7 +23,8 @@ use akita_types::{
     TerminalLevelProofShape,
 };
 use akita_types::{
-    AkitaCommitmentHint, Commitment, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    AkitaCommitmentHint, CommittedGroup, CommittedGroupBatchProfile, GroupBatchStatement,
+    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
 };
 use jolt_field::Zero;
 use rand::rngs::StdRng;
@@ -35,11 +38,16 @@ type OneHotF = fp128::Field;
 type OneHotCfg = fp128::D64OneHot;
 type PrecommittedOneHotCfg = PrecommittedCommitmentConfig<OneHotCfg>;
 const ONEHOT_D: usize = OneHotCfg::D;
-// `fp128::D64OneHot` requires K=256 one-hot schedules (must match
-// `OneHotCfg::onehot_chunk_size()`); chunks span `K/D = 4` ring elements.
+// `fp128::D64OneHot` uses K=256 one-hot chunks, spanning `K/D = 4` ring elements.
 const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
 type PrecommittedOneHotScheme = AkitaCommitmentScheme<PrecommittedOneHotCfg>;
+type HomogeneousSelectedProverData<'a, C, P> = SelectedProverOpeningData<
+    'a,
+    <C as CommitmentConfig>::ExtField,
+    PreparedProverGroup<'a, P>,
+    <C as CommitmentConfig>::Field,
+>;
 /// Minimum w vector length (in field elements) below which further folding
 /// is not beneficial.  When `w.len() <= MIN_W_LEN_FOR_FOLDING`, the prover
 /// sends `w` directly instead of recursing.
@@ -48,9 +56,67 @@ const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 mod batched;
 mod dense_group;
 mod fp32_ext4;
+mod heterogeneous_group;
 mod layout;
 mod onehot;
 mod single;
+
+fn selected_prover_data<'a, C, P>(
+    claims: OpeningClaims<'a, C::ExtField, CommittedGroup<C::Field>>,
+    hints: Vec<AkitaCommitmentHint<C::Field>>,
+    polynomials: Vec<&'a [&'a P]>,
+) -> Result<HomogeneousSelectedProverData<'a, C, P>, AkitaError>
+where
+    C: CommitmentConfig,
+    P: akita_prover::RootPolyMeta<C::Field>,
+{
+    let profiles = batch_profiles::<C>(&claims)?;
+    let selection = C::select_schedule_for_profiles(&profiles)?.selection();
+    Ok((
+        selection,
+        ProverOpeningData::new(claims, hints, polynomials)?,
+    ))
+}
+
+fn selected_statement<'a, C>(
+    claims: OpeningClaims<'a, C::ExtField, &'a CommittedGroup<C::Field>>,
+) -> Result<GroupBatchStatement<'a, C::ExtField, C::Field>, AkitaError>
+where
+    C: CommitmentConfig,
+{
+    let (final_group, precommitteds) = claims
+        .groups()
+        .split_last()
+        .ok_or_else(|| AkitaError::InvalidInput("opening statement requires a group".into()))?;
+    let profiles = CommittedGroupBatchProfile {
+        final_group: *final_group.commitment().profile(),
+        precommitteds: precommitteds
+            .iter()
+            .map(|group| *group.commitment().profile())
+            .collect(),
+    };
+    let selection = C::select_schedule_for_profiles(&profiles)?.selection();
+    GroupBatchStatement::new(selection, claims)
+}
+
+fn batch_profiles<C>(
+    claims: &OpeningClaims<'_, C::ExtField, CommittedGroup<C::Field>>,
+) -> Result<CommittedGroupBatchProfile, AkitaError>
+where
+    C: CommitmentConfig,
+{
+    let (final_group, precommitteds) = claims
+        .groups()
+        .split_last()
+        .ok_or_else(|| AkitaError::InvalidInput("opening data requires a group".into()))?;
+    Ok(CommittedGroupBatchProfile {
+        final_group: *final_group.commitment().profile(),
+        precommitteds: precommitteds
+            .iter()
+            .map(|group| *group.commitment().profile())
+            .collect(),
+    })
+}
 
 fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
     let num_ring_elems = output_witness_len.div_ceil(level_d);
@@ -86,10 +152,21 @@ fn expected_same_point_batched_shape(
     );
 
     let root_successor = schedule.recursive_folds.first();
+    let opening_payload_coeffs = |params: &akita_types::CommittedGroupParams| {
+        params
+            .opening_payload_geometry()
+            .expect("opening payload geometry")
+            .transmitted_coefficients()
+    };
+    let commitment_payload_coeffs = |params: &akita_types::CommittedGroupParams| {
+        params
+            .outer_payload_geometry()
+            .expect("commitment payload geometry")
+            .transmitted_coefficients()
+    };
     let root_shape = LevelProofShape {
         extension_opening_reduction: None,
-        v_coeffs: root_step.params.open_commit_matrix.output_rank()
-            * root_step.params.open_commit_matrix.ring_dimension(),
+        opening_payload_coeffs: opening_payload_coeffs(root_params),
         stage1_stages: DigitRangePlan::new(1usize << root_params.log_basis_open)
             .expect("scheduled root range basis")
             .stage_shapes(root_rounds),
@@ -98,9 +175,8 @@ fn expected_same_point_batched_shape(
         next_witness_binding: match root_successor {
             Some(successor) => {
                 let next_level_params = &successor.params.witness;
-                NextWitnessBindingShape::OuterCommitment {
-                    coeffs: next_level_params.outer_commit_matrix.output_rank()
-                        * next_level_params.outer_commit_matrix.ring_dimension(),
+                NextWitnessBindingShape::OuterPayload {
+                    coeffs: commitment_payload_coeffs(next_level_params),
                 }
             }
             None => NextWitnessBindingShape::TerminalInnerState,
@@ -118,8 +194,7 @@ fn expected_same_point_batched_shape(
         let rounds = batched_shape_rounds(level_params.d_a(), output_witness_len);
         recursive_folds.push(LevelProofShape {
             extension_opening_reduction: None,
-            v_coeffs: step.params.open_commit_matrix.output_rank()
-                * step.params.open_commit_matrix.ring_dimension(),
+            opening_payload_coeffs: opening_payload_coeffs(level_params),
             stage1_stages: DigitRangePlan::new(1usize << level_params.log_basis_open)
                 .expect("scheduled range basis")
                 .stage_shapes(rounds),
@@ -128,9 +203,8 @@ fn expected_same_point_batched_shape(
             next_witness_binding: match schedule.recursive_folds.get(index + 1) {
                 Some(successor) => {
                     let next_level_params = &successor.params.witness;
-                    NextWitnessBindingShape::OuterCommitment {
-                        coeffs: next_level_params.outer_commit_matrix.output_rank()
-                            * next_level_params.outer_commit_matrix.ring_dimension(),
+                    NextWitnessBindingShape::OuterPayload {
+                        coeffs: commitment_payload_coeffs(next_level_params),
                     }
                 }
                 None => NextWitnessBindingShape::TerminalInnerState,
@@ -154,35 +228,39 @@ fn expected_same_point_batched_shape(
     }
 }
 
-fn prover_claims<'a, E: Field, P, CommitF: Field>(
-    point: &'a [E],
+fn prover_claims<'a, P>(
+    point: &'a [F],
     polynomials: &'a [&'a P],
-    commitment: &'a Commitment<CommitF>,
-    hint: AkitaCommitmentHint<CommitF>,
-) -> ProverOpeningData<'a, E, P, CommitF> {
+    commitment: &'a CommittedGroup<F>,
+    hint: AkitaCommitmentHint<F>,
+) -> SelectedProverOpeningData<'a, F, PreparedProverGroup<'a, P>, F>
+where
+    P: akita_prover::RootPolyMeta<F>,
+{
     let group = PolynomialGroupClaims::new(
         point.to_vec(),
-        vec![E::zero(); polynomials.len()],
+        vec![F::zero(); polynomials.len()],
         commitment.clone(),
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
+    selected_prover_data::<Cfg, _>(opening_claims, vec![hint], vec![polynomials])
         .expect("valid prover opening data")
 }
 
-fn verifier_claims<'a, E: Field, C>(
-    point: &[E],
-    openings: &[E],
-    commitment: &'a C,
-) -> OpeningClaims<'static, E, &'a C> {
-    OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+fn verifier_claims<'a>(
+    point: &[F],
+    openings: &[F],
+    commitment: &'a CommittedGroup<F>,
+) -> GroupBatchStatement<'a, F, F> {
+    let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.to_vec(),
         openings.to_vec(),
         commitment,
     )
     .expect("valid verifier claims group")])
-    .expect("valid verifier claims")
+    .expect("valid verifier claims");
+    selected_statement::<Cfg>(claims).expect("valid verifier statement")
 }
 
 fn make_dense_poly(num_vars: usize) -> (DensePoly<F>, Vec<F>) {
@@ -199,7 +277,7 @@ fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> CommittedGroupParam
 
 type VerifyFixture = (
     AkitaVerifierSetup<F>,
-    Commitment<F>,
+    CommittedGroup<F>,
     AkitaBatchedProof<F, F>,
     Vec<F>,
     F,

@@ -299,7 +299,7 @@ Every field is already in the verifier's hands at this point, so this is a regro
 - `opening_points` / `ring_multiplier_points`: the verifier's reconstructed opening points (`RingMultiplierOpeningPoint::from_base` is already used in `proof/batch.rs`).
 - `incidence`: the `ClaimIncidenceSummary` the verifier already threads through `verify_root_level_inner` (`levels.rs:283`) and `verify_one_level_inner` (`recursive.rs:886`); this supplies `num_public_rows` and the three summary maps.
 - `commitment_routing`: built from the same per-path data the verifier already derives for `PreparedRingSwitchRowEval.claim_to_point_poly` (`ring_switch.rs:133`); root collapses to the point routing, recursive multipoint routes all claims to group 0.
-- `gamma` / `row_coefficient_rings`: sampled via the same shared `sample_public_row_coefficients::<F, C, T>(incidence_summary, transcript)` the prover calls. The verifier already invokes it at `levels.rs:360`; the prover calls it at `root_fold.rs:286,449,806`. Same function, same transcript position, so the values match by construction.
+- `gamma` / `row_coefficient_rings`: derived via the same shared `derive_public_row_coefficients::<F, C, T>(layout, openings, transcript)` the prover calls. The helper absorbs the claims before it samples coefficients, so the values match by construction.
 - `y` / `v`: the proof's `y_rings` / `v`.
 
 The verifier gains a single named statement it constructs once per level and reuses, instead of re-deriving incidence and row-coefficient data inline at each evaluation site, and prover and verifier now share one definition of what the ring-relation statement is.

@@ -35,6 +35,9 @@ pub fn validate_generated_schedule_table(
             fold_challenge_shape_at_level,
         )?;
     }
+    for row in catalog.precommitted_profiles {
+        row.expand_to_committed_profile(policy)?;
+    }
     Ok(())
 }
 

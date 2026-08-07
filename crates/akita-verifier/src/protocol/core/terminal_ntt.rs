@@ -104,7 +104,7 @@ mod tests {
     use akita_config::{proof_optimized::fp128::D64OneHot, CommitmentConfig};
     use akita_types::{
         max_safe_crt_accumulation_width, select_crt_ntt_params, AkitaExpandedSetup,
-        AkitaScheduleLookupKey, AkitaSetupSeed, FlatMatrix, PolynomialGroupLayout,
+        AkitaScheduleLookupKey, AkitaSetupDescriptor, FlatMatrix, PolynomialGroupLayout,
         ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
     };
     use jolt_field::Ring;
@@ -143,18 +143,18 @@ mod tests {
         AkitaVerifierSetup::from_parts(
             Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    AkitaSetupSeed {
+                    AkitaSetupDescriptor {
                         max_num_vars: 1,
                         max_num_batched_polys: 1,
-                        gen_ring_dim: D,
-                        max_setup_len: matrix.len(),
-                        public_matrix_seed: [9; 32],
+                        num_field_elements: matrix.len(),
+                        setup_seed: [9; 32].into(),
                     },
                     FlatMatrix::from_ring_slice(matrix),
                 ),
             ),
-            SetupPrefixVerifierRegistry::new(),
+            SetupPrefixVerifierRegistry::new([9; 32].into()),
         )
+        .expect("matching public-matrix identity")
     }
 
     fn centered_rings(values: &[[i16; D]]) -> Vec<CyclotomicRing<F, D>> {
@@ -218,18 +218,18 @@ mod tests {
         let setup = AkitaVerifierSetup::from_parts(
             Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    AkitaSetupSeed {
+                    AkitaSetupDescriptor {
                         max_num_vars: 1,
                         max_num_batched_polys: 1,
-                        gen_ring_dim: D,
-                        max_setup_len: matrix.len(),
-                        public_matrix_seed: [8; 32],
+                        num_field_elements: matrix.len(),
+                        setup_seed: [8; 32].into(),
                     },
                     FlatMatrix::from_ring_slice(&matrix),
                 ),
             ),
-            SetupPrefixVerifierRegistry::new(),
-        );
+            SetupPrefixVerifierRegistry::new([8; 32].into()),
+        )
+        .expect("matching public-matrix identity");
         let rhs = vec![[i16::MAX; D]; 5];
         assert!(
             !ntt_cache_requires_i16_tail::<F32, D>(rhs.len(), TERMINAL_I16_LOG_BASIS)

@@ -16,9 +16,12 @@
 //! Prove entry points call `stacks.prove_stack_at_level(level)` once per fold,
 //! then dispatch through the cluster accessors on that stack.
 
-use crate::compute::backend::ComputeBackendSetup;
+use crate::compute::backend::{ComputeBackendSetup, NttCacheOwnerId};
+use crate::compute::requirements::{
+    NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement,
+};
 use akita_error::AkitaError;
-use akita_types::{AkitaExpandedSetup, NttCacheKey};
+use akita_types::AkitaExpandedSetup;
 use jolt_field::{CanonicalEncoding, Field};
 use std::marker::PhantomData;
 
@@ -35,7 +38,6 @@ where
 {
     backend: &'a B,
     prepared: &'a B::PreparedSetup,
-    gen_ring_dim: usize,
     _field: PhantomData<fn() -> F>,
 }
 
@@ -60,7 +62,6 @@ where
         Ok(Self {
             backend,
             prepared,
-            gen_ring_dim: expanded.seed().gen_ring_dim,
             _field: PhantomData,
         })
     }
@@ -75,23 +76,19 @@ where
         self.prepared
     }
 
-    /// Setup-time generation ring dimension backing this prepared context.
-    pub fn gen_ring_dim(&self) -> usize {
-        self.gen_ring_dim
+    fn prewarm_ntt(&self, key: akita_types::NttCacheKey) -> Result<(), AkitaError> {
+        self.backend.ensure_ntt_slot(self.prepared, key)
     }
 
-    /// Warm the full-envelope NTT slot for `ring_d` on this cluster's prepared setup.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the envelope key cannot be derived or cache build fails.
-    pub fn ensure_envelope_ntt(
+    fn planned_ntt(
         &self,
-        expanded: &AkitaExpandedSetup<F>,
-        ring_d: usize,
-    ) -> Result<(), AkitaError> {
-        let key = NttCacheKey::from_envelope(expanded, ring_d)?;
-        self.backend.ensure_ntt_slot(self.prepared, key)
+        key: akita_types::NttCacheKey,
+    ) -> Result<(NttCacheOwnerId, usize), AkitaError> {
+        Ok((
+            self.backend.ntt_cache_owner_id(self.prepared),
+            self.backend
+                .planned_ntt_cache_entry_bytes(self.prepared, key)?,
+        ))
     }
 }
 
@@ -165,43 +162,25 @@ where
         &self.ring_switch
     }
 
-    /// Warm full-envelope NTT slots for every cluster at fold ring degree `ring_d`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when any cluster fails envelope key derivation or cache build.
-    pub fn ensure_fold_level_envelope_ntt(
-        &self,
-        expanded: &AkitaExpandedSetup<F>,
-        ring_d: usize,
-    ) -> Result<(), AkitaError> {
-        self.commit.ensure_envelope_ntt(expanded, ring_d)?;
-        self.opening.ensure_envelope_ntt(expanded, ring_d)?;
-        self.tensor.ensure_envelope_ntt(expanded, ring_d)?;
-        self.ring_switch.ensure_envelope_ntt(expanded, ring_d)
+    fn prewarm_requirement(&self, requirement: RoutedNttRequirement) -> Result<(), AkitaError> {
+        match requirement.cluster {
+            NttOperationCluster::Commit => self.commit.prewarm_ntt(requirement.key),
+            NttOperationCluster::Opening => self.opening.prewarm_ntt(requirement.key),
+            NttOperationCluster::Tensor => self.tensor.prewarm_ntt(requirement.key),
+            NttOperationCluster::RingSwitch => self.ring_switch.prewarm_ntt(requirement.key),
+        }
     }
 
-    /// Warm full-envelope NTT slots for each distinct role dimension at one fold level.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when any cluster fails envelope key derivation or cache build.
-    pub fn ensure_fold_level_role_ntt(
+    fn planned_requirement(
         &self,
-        expanded: &AkitaExpandedSetup<F>,
-        dims: akita_types::CommitmentRingDims,
-    ) -> Result<(), AkitaError> {
-        let mut unique = [0usize; 3];
-        let mut count = 0usize;
-        for d in [dims.d_a(), dims.d_b(), dims.d_d()] {
-            if d == 0 || unique[..count].contains(&d) {
-                continue;
-            }
-            unique[count] = d;
-            count += 1;
-            self.ensure_fold_level_envelope_ntt(expanded, d)?;
+        requirement: RoutedNttRequirement,
+    ) -> Result<(NttCacheOwnerId, usize), AkitaError> {
+        match requirement.cluster {
+            NttOperationCluster::Commit => self.commit.planned_ntt(requirement.key),
+            NttOperationCluster::Opening => self.opening.planned_ntt(requirement.key),
+            NttOperationCluster::Tensor => self.tensor.planned_ntt(requirement.key),
+            NttOperationCluster::RingSwitch => self.ring_switch.planned_ntt(requirement.key),
         }
-        Ok(())
     }
 }
 
@@ -246,6 +225,100 @@ where
         &self,
         level: usize,
     ) -> &ProverComputeStack<'a, F, Self::Commit, Self::Opening, Self::Tensor, Self::RingSwitch>;
+}
+
+/// Prewarm an exact cache plan on the cluster and level that will execute it.
+pub fn prewarm_ntt_requirements<'a, F, S>(
+    stacks: &S,
+    requirements: &NttExecutionRequirements,
+) -> Result<(), AkitaError>
+where
+    F: Field + CanonicalEncoding + 'a,
+    S: LevelProveStacks<'a, F> + ?Sized + 'a,
+{
+    for requirement in requirements.entries() {
+        stacks
+            .prove_stack_at_level(requirement.fold_level)
+            .prewarm_requirement(*requirement)?;
+    }
+    Ok(())
+}
+
+/// Planned cache state for one physical prepared owner after max-joining routes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlannedNttCacheOwnerMetric {
+    /// Process-local physical cache identity. Never serialized or transcript-bound.
+    pub owner_id: NttCacheOwnerId,
+    /// Max-joined exact keys resident on this owner.
+    pub keys: Vec<akita_types::NttCacheKey>,
+    /// Backend-reported resident bytes for `keys`.
+    pub cache_bytes: usize,
+}
+
+/// Report planned bytes after routing and physical prepared-owner aliasing.
+pub fn planned_ntt_cache_metrics<'a, F, S>(
+    stacks: &S,
+    requirements: &NttExecutionRequirements,
+) -> Result<Vec<PlannedNttCacheOwnerMetric>, AkitaError>
+where
+    F: Field + CanonicalEncoding + 'a,
+    S: LevelProveStacks<'a, F> + ?Sized + 'a,
+{
+    let mut owners = Vec::<PlannedNttCacheOwnerMetric>::new();
+    let mut entry_bytes = Vec::<Vec<usize>>::new();
+    for requirement in requirements.entries() {
+        let stack = stacks.prove_stack_at_level(requirement.fold_level);
+        let (owner_id, bytes) = stack.planned_requirement(*requirement)?;
+        let owner_index = owners
+            .iter()
+            .position(|owner| owner.owner_id == owner_id)
+            .unwrap_or_else(|| {
+                owners.push(PlannedNttCacheOwnerMetric {
+                    owner_id,
+                    keys: Vec::new(),
+                    cache_bytes: 0,
+                });
+                entry_bytes.push(Vec::new());
+                owners.len() - 1
+            });
+        let key_index = owners[owner_index].keys.iter().position(|key| {
+            key.ring_d == requirement.key.ring_d && key.domain == requirement.key.domain
+        });
+        match key_index {
+            Some(index) => {
+                let current = owners[owner_index].keys[index];
+                if requirement.key.num_ring_elements > current.num_ring_elements {
+                    owners[owner_index].keys[index] = requirement.key;
+                    entry_bytes[owner_index][index] = bytes;
+                } else if requirement.key.num_ring_elements == current.num_ring_elements
+                    && entry_bytes[owner_index][index] != bytes
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "aliased NTT cache backends disagree on planned bytes".into(),
+                    ));
+                }
+            }
+            None => {
+                owners[owner_index].keys.push(requirement.key);
+                entry_bytes[owner_index].push(bytes);
+            }
+        }
+    }
+    for (owner, bytes) in owners.iter_mut().zip(entry_bytes) {
+        owner.cache_bytes = bytes.into_iter().try_fold(0usize, |total, entry| {
+            total
+                .checked_add(entry)
+                .ok_or_else(|| AkitaError::InvalidSetup("planned NTT bytes overflow".into()))
+        })?;
+        owner.keys.sort_by_key(|key| {
+            let domain = match key.domain {
+                akita_types::NttTransformDomain::Negacyclic => 0,
+                akita_types::NttTransformDomain::Cyclic => 1,
+            };
+            (key.ring_d, domain)
+        });
+    }
+    Ok(owners)
 }
 
 impl<'a, F, C, O, T, R> LevelProveStacks<'a, F> for ProverComputeStack<'a, F, C, O, T, R>
@@ -411,21 +484,19 @@ mod tests {
     use crate::AkitaProverSetup;
     use crate::CpuBackend;
     use akita_error::AkitaError;
-    use akita_types::SetupMatrixEnvelope;
+    use akita_types::SetupMatrixCapacity;
     use jolt_field::Fp64;
 
     type F = Fp64<4294967197>;
-    const D: usize = 64;
-
-    fn test_envelope(max_setup_len: usize) -> SetupMatrixEnvelope {
-        SetupMatrixEnvelope { max_setup_len }
+    fn test_envelope(num_field_elements: usize) -> SetupMatrixCapacity {
+        SetupMatrixCapacity { num_field_elements }
     }
 
     #[test]
     fn operation_ctx_rejects_mismatched_expanded_setup() {
-        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
+        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup a");
-        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(8192))
+        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(8192))
             .expect("setup b");
         assert_ne!(setup_a.expanded.seed(), setup_b.expanded.seed());
 
@@ -438,7 +509,7 @@ mod tests {
 
     #[test]
     fn operation_ctx_accepts_matching_expanded_setup() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -458,9 +529,40 @@ mod tests {
     type TestHeterogeneousStack<'a> =
         ProverComputeStack<'a, F, CommitCluster, CpuBackend, CpuBackend, RingSwitchCluster>;
 
+    fn all_cluster_requirements() -> NttExecutionRequirements {
+        let mut requirements = NttExecutionRequirements::default();
+        for (cluster, domain, width) in [
+            (
+                NttOperationCluster::Commit,
+                akita_types::NttTransformDomain::Negacyclic,
+                3,
+            ),
+            (
+                NttOperationCluster::Opening,
+                akita_types::NttTransformDomain::Negacyclic,
+                4,
+            ),
+            (
+                NttOperationCluster::Tensor,
+                akita_types::NttTransformDomain::Cyclic,
+                5,
+            ),
+            (
+                NttOperationCluster::RingSwitch,
+                akita_types::NttTransformDomain::Cyclic,
+                6,
+            ),
+        ] {
+            requirements
+                .add_matrix(0, cluster, 64, 1, width, domain)
+                .unwrap();
+        }
+        requirements
+    }
+
     #[test]
     fn heterogeneous_stack_accepts_distinct_operation_clusters() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         let commit_backend = CommitCluster;
@@ -486,7 +588,7 @@ mod tests {
 
     #[test]
     fn heterogeneous_stack_implements_level_prove_stacks() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         let commit_backend = CommitCluster;
@@ -508,6 +610,121 @@ mod tests {
     }
 
     #[test]
+    fn prewarm_routes_only_to_declared_physical_cluster_owner() {
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
+            .expect("setup");
+        let commit_prepared = CpuBackend.prepare_setup(&setup).expect("commit prepared");
+        let ring_prepared = CpuBackend.prepare_setup(&setup).expect("ring prepared");
+        let commit_backend = CommitCluster;
+        let ring_backend = RingSwitchCluster;
+        let stack: TestHeterogeneousStack<'_> = ProverComputeStack::new(
+            (&commit_backend, &commit_prepared),
+            (&CpuBackend, &commit_prepared),
+            (&CpuBackend, &commit_prepared),
+            (&ring_backend, &ring_prepared),
+            setup.expanded.as_ref(),
+        )
+        .expect("heterogeneous stack");
+        let mut requirements = NttExecutionRequirements::default();
+        requirements
+            .add_matrix(
+                0,
+                NttOperationCluster::Commit,
+                64,
+                2,
+                3,
+                akita_types::NttTransformDomain::Negacyclic,
+            )
+            .unwrap();
+        requirements
+            .add_matrix(
+                0,
+                NttOperationCluster::RingSwitch,
+                64,
+                1,
+                5,
+                akita_types::NttTransformDomain::Cyclic,
+            )
+            .unwrap();
+
+        prewarm_ntt_requirements::<F, _>(&stack, &requirements).expect("prewarm plan");
+
+        assert_eq!(commit_prepared.shared_ntt_cache_metrics().unwrap().len(), 1);
+        assert_eq!(ring_prepared.shared_ntt_cache_metrics().unwrap().len(), 1);
+        assert_eq!(
+            commit_prepared.shared_ntt_cache_metrics().unwrap()[0]
+                .key
+                .domain,
+            akita_types::NttTransformDomain::Negacyclic
+        );
+        assert_eq!(
+            ring_prepared.shared_ntt_cache_metrics().unwrap()[0]
+                .key
+                .domain,
+            akita_types::NttTransformDomain::Cyclic
+        );
+        let metrics = planned_ntt_cache_metrics::<F, _>(&stack, &requirements).unwrap();
+        assert_eq!(metrics.len(), 2);
+        assert_eq!(
+            metrics
+                .iter()
+                .map(|metric| metric.cache_bytes)
+                .sum::<usize>(),
+            commit_prepared.shared_ntt_cache_bytes() + ring_prepared.shared_ntt_cache_bytes()
+        );
+    }
+
+    #[test]
+    fn planned_metrics_deduplicate_all_shared_clusters() {
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
+            .expect("setup");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let stack = TestUniformStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("uniform stack");
+        let requirements = all_cluster_requirements();
+
+        prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();
+        let metrics = planned_ntt_cache_metrics::<F, _>(&stack, &requirements).unwrap();
+
+        assert_eq!(metrics.len(), 1);
+        assert_eq!(metrics[0].cache_bytes, prepared.shared_ntt_cache_bytes());
+    }
+
+    #[test]
+    fn planned_metrics_keep_four_independent_clusters_separate() {
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
+            .expect("setup");
+        let commit = CpuBackend.prepare_setup(&setup).expect("commit prepared");
+        let opening = CpuBackend.prepare_setup(&setup).expect("opening prepared");
+        let tensor = CpuBackend.prepare_setup(&setup).expect("tensor prepared");
+        let ring = CpuBackend.prepare_setup(&setup).expect("ring prepared");
+        let stack = ProverComputeStack::new(
+            (&CpuBackend, &commit),
+            (&CpuBackend, &opening),
+            (&CpuBackend, &tensor),
+            (&CpuBackend, &ring),
+            setup.expanded.as_ref(),
+        )
+        .expect("independent stack");
+        let requirements = all_cluster_requirements();
+
+        prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();
+        let metrics = planned_ntt_cache_metrics::<F, _>(&stack, &requirements).unwrap();
+
+        assert_eq!(metrics.len(), 4);
+        assert_eq!(
+            metrics
+                .iter()
+                .map(|metric| metric.cache_bytes)
+                .sum::<usize>(),
+            commit.shared_ntt_cache_bytes()
+                + opening.shared_ntt_cache_bytes()
+                + tensor.shared_ntt_cache_bytes()
+                + ring.shared_ntt_cache_bytes()
+        );
+    }
+
+    #[test]
     fn tiered_prove_stacks_rejects_empty_table() {
         let result =
             TieredProveStacks::<F, CpuBackend, CpuBackend, CpuBackend, CpuBackend>::new(&[], &[]);
@@ -516,7 +733,7 @@ mod tests {
 
     #[test]
     fn tiered_prove_stacks_rejects_length_mismatch() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         let stack = TestUniformStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -528,9 +745,9 @@ mod tests {
 
     #[test]
     fn tiered_prove_stacks_rejects_non_increasing_bounds() {
-        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
+        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup a");
-        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(8192))
+        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(8192))
             .expect("setup b");
         let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
         let prepared_b = CpuBackend.prepare_setup(&setup_b).expect("prepared b");
@@ -547,9 +764,9 @@ mod tests {
 
     #[test]
     fn tiered_prove_stacks_selects_by_fold_level() {
-        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
+        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup a");
-        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(8192))
+        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(8192))
             .expect("setup b");
         let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
         let prepared_b = CpuBackend.prepare_setup(&setup_b).expect("prepared b");

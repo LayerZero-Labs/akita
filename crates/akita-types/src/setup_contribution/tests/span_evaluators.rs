@@ -159,9 +159,9 @@ fn canonical_tensors_match_dense_oracles_across_geometries() {
         (
             &[3, 5][..],
             CommitmentRingDims {
-                inner: 64,
-                outer: 32,
-                opening: 32,
+                inner: 128,
+                outer: 64,
+                opening: 64,
             },
             16,
         ),
@@ -261,14 +261,14 @@ fn uniform_setup_index_mle_ignores_outgoing_repacking() {
 fn setup_index_mle_matches_mixed_role_plans() {
     for role_dims in [
         CommitmentRingDims {
-            inner: 64,
-            outer: 32,
-            opening: 32,
+            inner: 128,
+            outer: 64,
+            opening: 64,
         },
         CommitmentRingDims {
-            inner: 64,
-            outer: 16,
-            opening: 32,
+            inner: 256,
+            outer: 64,
+            opening: 128,
         },
     ] {
         for ownership_widths in [&[8][..], &[2, 2, 2, 2][..], &[3, 5][..]] {
@@ -289,11 +289,11 @@ fn span_setup_index_mle_supports_non_power_of_two_ownership_widths() {
 fn span_setup_index_mle_applies_mixed_role_projection_lanes() {
     let alpha = test_scalar(3);
     let role_dims = crate::CommitmentRingDims {
-        inner: 64,
-        outer: 32,
-        opening: 32,
+        inner: 128,
+        outer: 64,
+        opening: 64,
     };
-    let setup_ring_dim = 32;
+    let setup_ring_dim = 64;
     for ownership_widths in [&[8][..], &[2, 2, 2, 2][..], &[3, 5][..]] {
         let (_, _, _, plan, _, _, _) = structured_weight_fixture(8, ownership_widths, role_dims);
         let rho = rho_for_required(plan.required());

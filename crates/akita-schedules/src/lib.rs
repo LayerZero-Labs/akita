@@ -1,5 +1,7 @@
 //! Runtime schedule catalogs and strict generated schedule resolution.
 
+mod audit;
+mod candidate;
 pub mod catalog_identity;
 pub mod generated;
 mod group_batch;
@@ -8,8 +10,8 @@ mod runtime;
 
 pub use akita_challenges::TensorChallengeShape;
 pub use akita_types::{
-    ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, SisModulusProfileId,
-    SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
+    suffix_opening_layout, ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams,
+    SisModulusProfileId, SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
 };
 pub use catalog_identity::{
     expected_catalog_identity, identity_digest, key_digest, policy_digest,
@@ -17,20 +19,23 @@ pub use catalog_identity::{
 };
 pub use generated::*;
 pub use resolve::{
-    estimate_proof_bytes, resolve_group_batch_schedule, resolve_schedule, schedule_from_entry,
+    estimate_proof_bytes, resolve_generated_precommitted_group_profile,
+    resolve_generated_schedule_selection, resolve_group_batch_schedule, resolve_schedule,
+    schedule_from_entry, select_generated_schedule_row, select_generated_schedule_row_for_profiles,
+    ResolvedScheduleRow,
 };
 pub use runtime::{
-    default_sis_security_policy, suffix_opening_layout, PlannerCostModelId, PlannerPolicy,
-    RuntimeSchedulePolicy, SelectionPolicyId,
+    default_sis_security_policy, PlannerCostModelId, PlannerPolicy, RuntimeSchedulePolicy,
+    SelectionPolicyId,
 };
 
 /// Shared schedule-construction primitives used by offline search and generated-row replay.
 #[doc(hidden)]
 pub mod planner_support {
+    pub use crate::candidate::{projected_collision_role_price, sis_key_at_dimension};
     pub use crate::runtime::{
-        checked_power_of_two_vars, grouped_segment_rings, materialize_candidate_schedule,
-        optimize_fold_challenge_shape, planned_next_witness_len,
-        stage3_payload_bytes_for_successor, validate_policy, CandidateFoldStep,
-        CandidateTerminalResponse,
+        grouped_segment_rings, materialize_candidate_schedule, optimize_fold_challenge_shape,
+        planned_next_witness_len, stage3_payload_bytes_for_successor, validate_policy,
+        CandidateFoldStep, CandidateTerminalResponse,
     };
 }

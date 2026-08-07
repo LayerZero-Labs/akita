@@ -4,11 +4,11 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp64};
-use akita_config::test_support::ring_plan_test_seed;
 use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_types::{
     validate_role_dispatch, validate_schedule_ring_dims, AkitaScheduleLookupKey,
-    OpeningClaimsLayout, PolynomialGroupLayout, RingRole,
+    CommittedGroupBatchProfile, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
+    RingRole,
 };
 use jolt_field::Zero;
 
@@ -16,17 +16,26 @@ use jolt_field::Zero;
 fn batched_selection_preserves_typed_schedule_topology() {
     type Cfg = fp64::D128Dense;
     let nv = 14;
-    let expected = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(nv),
-    ))
-    .expect("runtime schedule");
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(nv));
+    let expected = Cfg::runtime_schedule(key.clone()).expect("runtime schedule");
     let batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
     let final_group_point = vec![<Cfg as CommitmentConfig>::ExtField::zero(); nv];
-    let actual =
-        effective_batched_schedule::<Cfg>(&batch, &final_group_point).expect("effective schedule");
-    assert_eq!(actual.recursive_folds.len(), expected.recursive_folds.len());
+    let profiles = CommittedGroupBatchProfile {
+        final_group: CommittedGroupProfile::from_params(
+            key.final_group,
+            &expected.root.params.final_group.commitment,
+        ),
+        precommitteds: Vec::new(),
+    };
+    let selected = Cfg::select_schedule_for_profiles(&profiles).expect("selected schedule");
+    let actual = effective_batched_schedule::<Cfg>(selected, &batch, &final_group_point)
+        .expect("effective schedule");
     assert_eq!(
-        actual.terminal.input_witness_len,
+        actual.schedule().recursive_folds.len(),
+        expected.recursive_folds.len()
+    );
+    assert_eq!(
+        actual.schedule().terminal.input_witness_len,
         expected.terminal.input_witness_len
     );
 }
@@ -47,13 +56,11 @@ fn real_presets_validate_against_setup_ring_dimension() {
         PolynomialGroupLayout::singleton(14),
     ))
     .expect("fp64 schedule");
-    validate_schedule_ring_dims(&fp64_schedule, &ring_plan_test_seed(128))
-        .expect("D128 schedule envelope");
+    validate_schedule_ring_dims(&fp64_schedule).expect("D128 schedule envelope");
 
     let fp128_schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(13),
+        PolynomialGroupLayout::singleton(14),
     ))
     .expect("fp128 schedule");
-    validate_schedule_ring_dims(&fp128_schedule, &ring_plan_test_seed(64))
-        .expect("D64 schedule envelope");
+    validate_schedule_ring_dims(&fp128_schedule).expect("D64 schedule envelope");
 }

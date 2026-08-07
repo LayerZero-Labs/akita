@@ -13,8 +13,8 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::DigitBlocks;
 use akita_types::RingRelationInstance;
 use akita_types::{
-    r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding,
-    RingVec,
+    r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupParams,
+    CompressionRelationWeights, FpExtEncoding, RingVec,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
@@ -46,6 +46,8 @@ pub struct RingSwitchOutput<E: Field> {
     pub(crate) relation_address_geometry: akita_types::RelationAddressGeometry,
     /// Exact common-alpha factorization of the tau1-weighted relation table.
     pub(crate) relation_weight_factorization: RelationWeightFactorization<E>,
+    /// Sparse-compilable compact-geometry F/H relation weights.
+    pub(crate) compression_relation_weights: Option<CompressionRelationWeights<E>>,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
     pub digit_range_equality_low_variable_count: usize,
     /// Challenge tau0 for F_0 sumcheck.

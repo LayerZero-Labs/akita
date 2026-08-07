@@ -1,7 +1,7 @@
 use super::*;
 use crate::compute::{
-    ComputeBackendSetup, RootTensorSource, RuntimeRootProvePoly, RuntimeTensorBackendFor,
-    TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    ComputeBackendSetup, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 use std::ops::Range;
 
@@ -11,10 +11,10 @@ pub(in crate::protocol::core) struct ProvedExtensionOpeningReduction<E: Field> {
     pub(in crate::protocol::core) protocol_points: Vec<Vec<E>>,
 }
 
-struct PreparedExtensionOpeningGroup<E: Field> {
-    proof_partials: Vec<E>,
-    row_partials_by_claim: Vec<Vec<E>>,
-    openings: Vec<E>,
+pub(crate) struct PreparedExtensionOpeningGroup<E: Field> {
+    pub(crate) proof_partials: Vec<E>,
+    pub(crate) row_partials_by_claim: Vec<Vec<E>>,
+    pub(crate) openings: Vec<E>,
 }
 
 /// Truthful per-group input to extension-opening reduction.
@@ -22,13 +22,13 @@ struct PreparedExtensionOpeningGroup<E: Field> {
 /// EOR needs polynomial sources and point geometry, not claimed evaluations or
 /// commitments. Keeping those values out prevents recursive suffix proving
 /// from fabricating public claims merely to satisfy an adapter.
-pub(in crate::protocol::core) struct ExtensionOpeningGroupInput<'poly, 'point, E, P> {
-    pub(in crate::protocol::core) polynomials: Vec<&'poly P>,
+pub(in crate::protocol::core) struct ExtensionOpeningGroupInput<'group, 'point, E, G> {
+    pub(in crate::protocol::core) group: &'group G,
     pub(in crate::protocol::core) point: &'point [E],
     pub(in crate::protocol::core) ring_dimension: usize,
 }
 
-fn prepare_extension_opening_group<F, E, P, B, const D: usize>(
+pub(in crate::protocol::core) fn prepare_extension_opening_group<F, E, P, B, const D: usize>(
     backend: &B,
     prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup>,
     polys: &[&P],
@@ -79,11 +79,10 @@ where
 /// so every group participates in one sumcheck challenge sequence without
 /// materializing repeated witness tables.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, P, B>(
+pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, G, B>(
     tensor_backend: &B,
-    tensor_prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup>,
-    group_inputs: &[ExtensionOpeningGroupInput<'_, '_, E, P>],
-    pad_base_evals: bool,
+    tensor_prepared: Option<&B::PreparedSetup>,
+    group_inputs: &[ExtensionOpeningGroupInput<'_, '_, E, G>],
     transcript: &mut T,
     path: &'static str,
 ) -> Result<ProvedExtensionOpeningReduction<E>, AkitaError>
@@ -91,13 +90,15 @@ where
     F: Field + CanonicalEncoding + Ring + Unreduced + 'static + akita_serialization::AkitaSerialize,
     E: ExtField<F> + Unreduced + Fold + MulBaseUnreduced<F> + AkitaSerialize,
     T: Transcript<F>,
-    P: RuntimeRootProvePoly<F>,
-    B: RuntimeTensorBackendFor<F, P, E>,
+    G: RootProverGroupTensor<F, E, B>,
+    B: ComputeBackendSetup<F>,
 {
     let opening_batch = OpeningClaimsLayout::from_groups(
         group_inputs
             .iter()
-            .map(|group| PolynomialGroupLayout::new(group.point.len(), group.polynomials.len()))
+            .map(|input| {
+                PolynomialGroupLayout::new(input.point.len(), input.group.num_polynomials())
+            })
             .collect(),
     )?;
     let _span = tracing::info_span!(
@@ -115,7 +116,7 @@ where
         },
     )?;
 
-    let mut groups = Vec::with_capacity(opening_batch.num_groups());
+    let mut prepared_groups = Vec::with_capacity(opening_batch.num_groups());
     for (group_index, input) in group_inputs.iter().enumerate() {
         let point = input.point;
         if point.len() < split_bits {
@@ -124,26 +125,18 @@ where
                 actual: point.len(),
             });
         }
-        let group = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            input.ring_dimension,
-            |D| prepare_extension_opening_group::<F, E, P, B, D>(
-                tensor_backend,
-                tensor_prepared,
-                &input.polynomials,
-                point,
-            )
-        )
-        .map_err(|error| {
-            AkitaError::InvalidInput(format!(
-                "extension-opening group {group_index} partials failed: {error:?}"
-            ))
-        })?;
-        groups.push(group);
+        let group = input
+            .group
+            .prepare_extension_opening(tensor_backend, tensor_prepared, input.ring_dimension, point)
+            .map_err(|error| {
+                AkitaError::InvalidInput(format!(
+                    "extension-opening group {group_index} partials failed: {error:?}"
+                ))
+            })?;
+        prepared_groups.push(group);
     }
 
-    let openings = groups
+    let openings = prepared_groups
         .iter()
         .flat_map(|group| group.openings.iter().copied())
         .collect::<Vec<_>>();
@@ -154,13 +147,9 @@ where
             actual: openings.len(),
         });
     }
-    let row_coefficients = if pad_base_evals {
-        vec![E::one(); num_claims]
-    } else {
-        append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-        sample_public_row_coefficients::<F, E, T>(&opening_batch, transcript)?
-    };
-    let proof_partials = groups
+    let row_coefficients =
+        derive_public_row_coefficients::<F, E, T>(&opening_batch, &openings, transcript)?;
+    let proof_partials = prepared_groups
         .iter()
         .flat_map(|group| group.proof_partials.iter().copied())
         .collect::<Vec<_>>();
@@ -179,7 +168,7 @@ where
     let eta = (0..split_bits)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
         .collect::<Vec<_>>();
-    let true_input_claim = groups
+    let true_input_claim = prepared_groups
         .iter()
         .flat_map(|group| group.row_partials_by_claim.iter())
         .zip(row_coefficients.iter().copied())
@@ -189,8 +178,8 @@ where
         })?;
 
     let mut terms = Vec::new();
-    let mut term_ranges = Vec::<Range<usize>>::with_capacity(groups.len());
-    for group_index in 0..groups.len() {
+    let mut term_ranges = Vec::<Range<usize>>::with_capacity(group_inputs.len());
+    for group_index in 0..group_inputs.len() {
         let claim_range = opening_batch.root_group_claim_range(group_index)?;
         let input = group_inputs
             .get(group_index)
@@ -200,26 +189,23 @@ where
         let extra_vars = max_tail_vars
             .checked_sub(tail_point.len())
             .ok_or(AkitaError::InvalidProof)?;
-        let group_terms = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            input.ring_dimension,
-            |D| build_extension_opening_reduction_terms::<F, E, P, B, D>(
+        let group_terms = input
+            .group
+            .extension_opening_terms(
                 tensor_backend,
                 tensor_prepared,
-                &input.polynomials,
+                input.ring_dimension,
                 row_coefficients
                     .get(claim_range.clone())
                     .ok_or(AkitaError::InvalidProof)?,
                 tail_point,
                 &eta,
             )
-        )
-        .map_err(|error| {
-            AkitaError::InvalidInput(format!(
-                "extension-opening group {group_index} terms failed: {error:?}"
-            ))
-        })?;
+            .map_err(|error| {
+                AkitaError::InvalidInput(format!(
+                    "extension-opening group {group_index} terms failed: {error:?}"
+                ))
+            })?;
         let start = terms.len();
         let expected_domain_len = checked_table_len(max_tail_vars)?;
         for term in group_terms {
@@ -251,9 +237,9 @@ where
             "{path} extension-opening reduction has not reached a final point"
         ))
     })?;
-    let mut final_factors = Vec::with_capacity(groups.len());
-    let mut protocol_points = Vec::with_capacity(groups.len());
-    for group_index in 0..groups.len() {
+    let mut final_factors = Vec::with_capacity(group_inputs.len());
+    let mut protocol_points = Vec::with_capacity(group_inputs.len());
+    for group_index in 0..group_inputs.len() {
         let input = group_inputs
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;

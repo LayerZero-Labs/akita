@@ -1308,51 +1308,6 @@ fn affine_digit_intervals_batch_matches_independent_families() {
     }
 }
 
-// Micro-benchmark the canonical kernel across digit counts at balanced folds.
-// Run with:  cargo test -p akita-algebra --release affine_digit_interval_bench -- --ignored --nocapture
-#[test]
-#[ignore]
-fn affine_digit_interval_bench() {
-    use std::time::Instant;
-    let mut rng = StdRng::seed_from_u64(0xBEEF_CAFE);
-    let q = 512usize; // fold_low
-    let h = 512usize; // fold_high
-    let live_len = q * h; // B = Q*H
-    let bits = 26usize;
-    let iters = 20;
-    eprintln!("\n Q={q} H={h} B={live_len} challenge_bits={bits}  (median of {iters} runs)");
-    eprintln!(" delta | canonical (ms)");
-    for &delta in &[4usize, 8, 16, 32, 64] {
-        let stride = delta;
-        let challenges = random_vec(&mut rng, bits);
-        let digit_weights = random_vec(&mut rng, delta);
-        let high = random_vec(&mut rng, h);
-        let low = random_vec(&mut rng, q);
-
-        let mut best = f64::INFINITY;
-        for _ in 0..iters {
-            let start = Instant::now();
-            std::hint::black_box(
-                eval_affine_digit_intervals(
-                    &challenges,
-                    &[0],
-                    0,
-                    live_len,
-                    stride,
-                    1,
-                    &digit_weights,
-                    &high,
-                    &low,
-                    &[],
-                )
-                .unwrap(),
-            );
-            best = best.min(start.elapsed().as_secs_f64() * 1e3);
-        }
-        eprintln!(" {delta:>5} | {best:>14.3}");
-    }
-}
-
 /// (low_len, high_len, outer_start, live_len, digits, stride, base, challenge_bits)
 type AffineDigitCase = (usize, usize, usize, usize, usize, usize, usize, usize);
 
@@ -1425,52 +1380,5 @@ fn affine_digit_interval_matches_geometric_digits() {
             base,
         );
         assert_eq!(got, expected, "canonical evaluator mismatch (geom) {tag:?}");
-    }
-}
-
-// Geometric-digit microbenchmark: captures step (1) (high bucketing) and step
-// (2) (prefix low summary). The random-digit benchmark above exercises step (1)
-// without the geometric prefix path.
-// Run: cargo test -p akita-algebra --release affine_digit_interval_bench_geometric -- --ignored --nocapture
-#[test]
-#[ignore]
-fn affine_digit_interval_bench_geometric() {
-    use std::time::Instant;
-    let mut rng = StdRng::seed_from_u64(0x9E0_BEEF1);
-    let q = 512usize;
-    let h = 512usize;
-    let live_len = q * h;
-    let bits = 26usize;
-    let iters = 20;
-    let ratio = F::from_u64(7);
-    eprintln!("\n GEOMETRIC digits  Q={q} H={h} B={live_len}  (median of {iters} runs)");
-    eprintln!(" delta | canonical (ms)");
-    for &delta in &[4usize, 8, 16, 32, 64, 128, 256] {
-        let stride = delta;
-        let challenges = random_vec(&mut rng, bits);
-        let digit_weights = geometric_digit_vec(F::from_u64(3), ratio, delta);
-        let high = random_vec(&mut rng, h);
-        let low = random_vec(&mut rng, q);
-        let mut best = f64::INFINITY;
-        for _ in 0..iters {
-            let start = Instant::now();
-            std::hint::black_box(
-                eval_affine_digit_intervals(
-                    &challenges,
-                    &[0],
-                    0,
-                    live_len,
-                    stride,
-                    1,
-                    &digit_weights,
-                    &high,
-                    &low,
-                    &[],
-                )
-                .unwrap(),
-            );
-            best = best.min(start.elapsed().as_secs_f64() * 1e3);
-        }
-        eprintln!(" {delta:>5} | {best:>14.3}");
     }
 }

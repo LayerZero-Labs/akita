@@ -1,7 +1,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_error::AkitaError;
-use akita_types::CommittedGroupParams;
+use akita_types::{CommittedGroupParams, CommittedGroupProfile};
 use jolt_field::Field;
 
 // ===========================================================================
@@ -55,6 +55,16 @@ impl CommitInnerPlan {
             num_positions_per_block: params.num_positions_per_block,
             num_digits_inner: params.num_digits_inner,
             log_basis_inner: params.log_basis_inner,
+        }
+    }
+
+    /// Build inner-commit parameters from a frozen standalone precommit profile.
+    pub fn from_profile(profile: &CommittedGroupProfile) -> Self {
+        Self {
+            n_a: profile.inner_commit_matrix.output_rank(),
+            num_positions_per_block: profile.num_positions_per_block,
+            num_digits_inner: profile.num_digits_inner,
+            log_basis_inner: profile.log_basis_inner,
         }
     }
 }

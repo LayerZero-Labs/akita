@@ -22,7 +22,7 @@ pub struct D64OneHot;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHotK16;
 
-/// Binary onehot `D=128` preset for planner-backed experiments.
+/// Binary onehot `D=128`, `K=256` preset for planner-backed experiments.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
 
@@ -31,7 +31,7 @@ pub struct D128OneHot;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D256OneHot;
 
-/// Binary onehot preset with D256 setup generation and planner-selected
+/// Binary onehot preset with a D256 uniform planner policy and planner-selected
 /// per-level commitment dimensions.
 ///
 /// Mixed-dimension planning is an offline generation step. Runtime proving
@@ -91,6 +91,7 @@ impl_proof_optimized_preset!(
     128,
     128,
     128,
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 128),
     schedules = (
         "schedules-fp128-d128-dense",
         "fp128_d128_dense",
@@ -105,6 +106,7 @@ impl_proof_optimized_preset!(
     128,
     128,
     1,
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = (
         "schedules-fp128-d128-onehot",
         "fp128_d128_onehot",
@@ -119,6 +121,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     128,
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64),
     schedules = (
         "schedules-fp128-d64-dense",
         "fp128_d64_dense",
@@ -133,7 +136,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     1,
-    256,
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = (
         "schedules-fp128-d64-onehot",
         "fp128_d64_onehot",
@@ -148,7 +151,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     1,
-    16
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 4)
 );
 impl_proof_optimized_preset!(
     D256OneHot,
@@ -158,7 +161,12 @@ impl_proof_optimized_preset!(
     256,
     128,
     1,
-    256
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
+    schedules = (
+        "schedules-fp128-d256-onehot",
+        "fp128_d256_onehot",
+        fp128_d256_onehot_table
+    )
 );
 impl_proof_optimized_preset!(
     MixedDimFp128OneHot,
@@ -168,12 +176,14 @@ impl_proof_optimized_preset!(
     256,
     128,
     1,
-    256,
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = (
         "schedules-fp128-mixed-dim-onehot",
         "fp128_mixed_dim_onehot",
         fp128_mixed_dim_onehot_table
     ),
+    selection_policy =
+        akita_schedules::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload,
     ring_dimension_candidates = &MixedDimFp128OneHot::RING_DIMENSION_CANDIDATES
 );
 impl_proof_optimized_preset!(
@@ -184,7 +194,7 @@ impl_proof_optimized_preset!(
     512,
     128,
     1,
-    256
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 2)
 );
 impl_multi_chunk_companion!(
     D64OneHotMultiChunk,
@@ -296,7 +306,7 @@ fn candidate<Cfg: CommitmentConfig>(
             estimated_recursive_stage3_payload_bytes: Vec::new(),
             estimated_terminal_direct_payload_bytes: 0,
             estimated_terminal_response_payload_bytes: 0,
-            estimated_setup_envelope_ring_elements: 0,
+            estimated_num_setup_field_elements: 0,
             first_direct_setup_field_len: None,
             selected_offload_edges: 0,
         },

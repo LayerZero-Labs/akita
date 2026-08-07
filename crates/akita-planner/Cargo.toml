@@ -18,7 +18,7 @@ readme = "../../README.md"
 [dependencies]
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-config = { version = "0.1.0", path = "../akita-config", optional = true, default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "505d8ebcb45e5796afcf16468972b10e51b4a355", default-features = false, features = ["solinas"] }
+jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "eb93a031027ee735f0827edb4539e971ab5fcc0b", default-features = false, features = ["solinas"] }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types" }
@@ -26,7 +26,9 @@ akita-types = { version = "0.1.0", path = "../akita-types" }
 [features]
 default = []
 catalog-gen = ["dep:akita-config"]
-test-support = []
+
+[dev-dependencies]
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 
 [[bin]]
 name = "gen_schedule_tables"
@@ -36,6 +38,11 @@ required-features = ["catalog-gen"]
 [[example]]
 name = "mixed_dimension_search"
 path = "examples/mixed_dimension_search.rs"
+required-features = ["catalog-gen"]
+
+[[example]]
+name = "compression_schedule_census"
+path = "examples/compression_schedule_census.rs"
 required-features = ["catalog-gen"]
 
 [lints]

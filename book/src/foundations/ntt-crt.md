@@ -69,14 +69,14 @@ terminal verifier uses one signed-i16 relation kernel for every schedule and
 therefore selects the tail independently from its terminal width; current q32
 terminal schedules do require it.
 
-`BothTransforms` prepares the base negacyclic and cyclic forms used by prover
-commitment and quotient kernels. `ExactNegacyclic { width, log_basis }`
-prepares only the minimum exact negacyclic form: base residues alone when they
-fit, otherwise the base plus the 12289 tail. Verifier warming coalesces all
-terminal groups into one strongest prefix per ring degree. The base prefix
-covers every group, while the tail prefix covers only groups whose exact bound
-requires it, so another group cannot duplicate or unnecessarily extend the
-base or tail transforms.
+Prover caches store cyclic and negacyclic transforms in separate exact-prefix
+slots. Commitment kernels request only negacyclic entries. Ring-switch kernels
+join their D/B/A cyclic requirements by maximum and request the A negacyclic
+prefix separately. `ExactNegacyclic { width, log_basis }` prepares the terminal
+verifier's minimum exact negacyclic form: base residues alone when they fit,
+otherwise the base plus the 12289 tail. Verifier warming coalesces terminal
+groups into one strongest prefix per ring degree. The base prefix covers every
+group, while the tail prefix covers only groups whose exact bound requires it.
 
 **Sources to fold in**
 

@@ -308,7 +308,7 @@ mod tests {
                     CommitmentRingDims {
                         inner: 128,
                         outer: 64,
-                        opening: 32,
+                        opening: 64,
                     },
                 ] {
                     for basis in [4, 8, 16, 32, 64] {

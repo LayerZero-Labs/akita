@@ -43,19 +43,17 @@ or profiling when the changed files trigger them. The workflow files under
 
 Use [`rtk`](https://github.com/rtk-ai/rtk) for verbose dev commands (`rtk cargo test`, `rtk git diff`, etc.) to keep agent context small. Cursor auto-rewrites allowed shell commands via `~/.cursor/cli-config.json`.
 
-**Nextest is not auto-rewritten** — always prefix explicitly:
-
-```bash
-rtk cargo nextest run --profile ci --no-default-features --features parallel,disk-persistence
-```
+**Nextest is not auto-rewritten** — always prefix Nextest invocations with
+`rtk`.
 
 For focused feedback, scope Cargo's build graph with `-p`, `--lib`, `--bin`, or
 `--test` before adding a nextest `-E` expression. `-E` filters test execution,
-not compilation. Use the dev profile while iterating; reserve `--cargo-profile
-ci-test` for final CI-fidelity validation.
+not compilation. Use the dev profile while iterating.
 
-The CI test target set is `--lib --bins --tests`; keep those selectors when
-reproducing CI so Cargo does not compile examples. A command that returns a live
+For final CI-fidelity validation, copy the current test-pass invocation from
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml). That workflow is the
+source of truth for the target selectors, Cargo test profile, feature set, and
+sharding; do not duplicate the command here. A command that returns a live
 session is still running: poll it to an exit code, and inspect its Cargo/rustc
 children if compilation is unexpectedly broad or long.
 

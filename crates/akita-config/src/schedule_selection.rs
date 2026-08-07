@@ -4,7 +4,7 @@ use crate::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_types::{
     dispatch_for_field, folded_root_supports_opening_shape, root_tensor_projection_enabled,
-    FoldSchedule, FpExtEncoding, OpeningClaimsLayout,
+    FpExtEncoding, OpeningClaimsLayout,
 };
 use jolt_field::Field;
 
@@ -21,16 +21,22 @@ use jolt_field::Field;
 /// Returns an error when schedule lookup fails or an unsupported ring dimension
 /// is encountered during dispatch.
 pub fn effective_batched_schedule<Cfg>(
+    resolved: akita_schedules::ResolvedScheduleRow,
     opening_batch: &OpeningClaimsLayout,
     final_group_point: &[Cfg::ExtField],
-) -> Result<FoldSchedule, AkitaError>
+) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: Field,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
 {
     let num_vars = opening_batch.max_num_vars();
-    let schedule = Cfg::get_params_for_prove(opening_batch)?;
+    if resolved.profiles().opening_layout()? != *opening_batch {
+        return Err(AkitaError::InvalidInput(
+            "committed-group descriptors do not match the opening layout".to_string(),
+        ));
+    }
+    let schedule = resolved.schedule();
     schedule.validate_structure()?;
     let root_step = &schedule.root;
     let root_params = &root_step.params.final_group.commitment;
@@ -58,5 +64,5 @@ where
         ));
     }
 
-    Ok(schedule)
+    Ok(resolved)
 }

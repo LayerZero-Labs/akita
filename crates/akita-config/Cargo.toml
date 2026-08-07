@@ -24,6 +24,7 @@ schedules-default = [
   "schedules-fp128-d64-dense",
   "schedules-fp128-d128-onehot",
   "schedules-fp128-d128-dense",
+  "schedules-fp128-d256-onehot",
   "schedules-fp32-d128-onehot",
   "schedules-fp32-d256-onehot",
   "schedules-fp64-d128-dense",
@@ -52,6 +53,7 @@ schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2 = [
 schedules-fp128-d64-dense = ["akita-schedules/fp128-d64-dense"]
 schedules-fp128-d128-onehot = ["akita-schedules/fp128-d128-onehot"]
 schedules-fp128-d128-dense = ["akita-schedules/fp128-d128-dense"]
+schedules-fp128-d256-onehot = ["akita-schedules/fp128-d256-onehot"]
 schedules-fp128-d64-onehot-tensor = ["akita-schedules/fp128-d64-onehot-tensor"]
 schedules-fp128-d64-onehot-multi-chunk = [
   "akita-schedules/fp128-d64-onehot-multi-chunk",
@@ -74,7 +76,7 @@ schedules-fp64-d256-onehot = ["akita-schedules/fp64-d256-onehot"]
 
 [dependencies]
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
-jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "505d8ebcb45e5796afcf16468972b10e51b4a355", default-features = false, features = ["solinas"] }
+jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "eb93a031027ee735f0827edb4539e971ab5fcc0b", default-features = false, features = ["solinas"] }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }

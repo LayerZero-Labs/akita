@@ -5,7 +5,9 @@ use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::AkitaError;
 use akita_sumcheck::SumcheckInstanceVerifier;
-use akita_types::{AkitaExpandedSetup, FpExtEncoding};
+use akita_types::{
+    AkitaExpandedSetup, CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
+};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
@@ -15,6 +17,9 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     witness_eval: E,
     stage1_point: Vec<E>,
     relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
+    compression_relation_weights: Option<&'a CompressionRelationWeights<E>>,
+    negative_binary_support: Option<&'a NegativeBinarySupport>,
+    binary_batching: Option<E>,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     alpha: E,
@@ -41,6 +46,9 @@ where
         witness_eval: E,
         stage1_point: Vec<E>,
         relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
+        compression_relation_weights: Option<&'a CompressionRelationWeights<E>>,
+        negative_binary_support: Option<&'a NegativeBinarySupport>,
+        binary_batching: Option<E>,
         setup: &'a AkitaExpandedSetup<F>,
         alpha: E,
         setup_claim: Option<E>,
@@ -66,6 +74,9 @@ where
             witness_eval,
             stage1_point,
             relation_matrix_evaluator,
+            compression_relation_weights,
+            negative_binary_support,
+            binary_batching,
             setup_claim,
             setup,
             alpha,
@@ -114,7 +125,22 @@ where
                 self.setup_claim,
             )?
         };
-        let relation_oracle = w_eval * relation_weight;
+        let compression_oracle = match (
+            self.compression_relation_weights,
+            self.negative_binary_support,
+            self.binary_batching,
+        ) {
+            (Some(weights), Some(support), Some(binary_batching)) => {
+                let compression_relation_weight = weights.evaluate_at_point(challenges)?;
+                let binary_weight = support
+                    .evaluate_restricted_equality_at_point(&self.stage1_point, challenges)?;
+                w_eval * compression_relation_weight
+                    + binary_batching * binary_weight * w_eval * (w_eval + E::one())
+            }
+            (None, None, None) => E::zero(),
+            _ => return Err(AkitaError::InvalidProof),
+        };
+        let relation_oracle = w_eval * relation_weight + compression_oracle;
         let trace_oracle = {
             let _span = tracing::info_span!("stage2_trace_oracle").entered();
             let trace_weight = self.evaluation_trace.evaluate_at_point(challenges)?;

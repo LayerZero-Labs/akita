@@ -3,6 +3,13 @@
 > **Pre-zk-strip historical.** This umbrella spec predates the zk-strip
 > ([`akita-zk-strip-for-audit.md`](akita-zk-strip-for-audit.md)). References to
 > `feature = "zk"` or `PackedDigits` describe removed code preserved on `zk-wip`.
+>
+> **Architecture revision for #338.** The cap-derived wire behavior in this
+> document remains the regression baseline. The ownership changes under
+> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
+> The terminal response shape stores the exact admission cap, Rice remainder
+> width, and payload budget. Runtime code does not derive them from an
+> intermediate honest fold cap.
 
 | Field       | Value                                                     |
 |-------------|-----------------------------------------------------------|
@@ -363,7 +370,7 @@ Remaining audit/measurement items:
 - Exact two-fold tamper tests should continue pinning predecessor `t`/A binding
   without a terminal B block.
 - S3/S4 (landed in #190) must keep prover packing, verifier transcript slicing, and verifier row decoding byte-for-byte aligned across segment boundaries; `segment_typed_expand_matches_logical_w` guards this.
-- S5 descriptor binding (wire low-bits rule id + δ in [`FoldLinfProtocolBinding`](../crates/akita-types/src/instance_descriptor/fold_linf_binding.rs); `AKITA_INSTANCE_DESCRIPTOR_VERSION = 2`) is implemented; only Jolt cycle measurement remains open.
+- S5 descriptor binding (wire low-bits rule id + δ in [`FoldLinfProtocolBinding`](../crates/akita-types/src/instance_descriptor/fold_linf_binding.rs)) is implemented. The later flat public-matrix derivation cutover bumped `AKITA_INSTANCE_DESCRIPTOR_VERSION` to `2`; only Jolt cycle measurement remains open.
 
 ## References
 

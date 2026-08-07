@@ -5,10 +5,7 @@
 
 use akita_error::AkitaError;
 
-use crate::instance_descriptor::FoldLinfProtocolBinding;
-use crate::tail_golomb_rice_low_bits::{
-    cap_rice_low_bits, wire_rice_low_bits, wire_rice_low_bits_from_rule,
-};
+use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 
 /// Bit cursor over a byte slice for no-panic decode.
 #[derive(Debug, Clone)]
@@ -144,7 +141,7 @@ pub fn rice_low_bits_for_cap(scale: u128) -> u32 {
 /// Signed zigzag width for fold-response coefficients bounded by `scale`.
 ///
 /// Mirrors the `[-scale, scale]` envelope priced by
-/// [`crate::CommittedGroupParams::fold_witness_linf_cap_for_claims`].
+/// the terminal response shape's scheduled admission cap.
 #[must_use]
 pub fn golomb_rice_zigzag_width(scale: u128) -> u32 {
     if scale == 0 {
@@ -156,16 +153,7 @@ pub fn golomb_rice_zigzag_width(scale: u128) -> u32 {
         .max(1)
 }
 
-/// Average-case tail-`z` planner model bound into [`crate::instance_descriptor::FoldLinfProtocolBinding`].
-///
-/// Planner model: budget `cap_rice_low_bits + 2` bits per coordinate. Bump when recalibrating
-/// [`tail_z_planner_bits_per_coord`].
-pub const TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO: u8 = 1;
-
 /// Average-case planner bit budget per `z` coordinate from cap-derived low-bit width.
-///
-/// Public `(rice_low_bits, W)` still cover every coefficient in `[-cap, cap]`; this budget
-/// prices honest witnesses under [`TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO`].
 #[must_use]
 pub fn tail_z_planner_bits_per_coord(cap_rice_low_bits: u32) -> usize {
     (cap_rice_low_bits as usize).saturating_add(2)
@@ -482,12 +470,7 @@ pub(crate) fn golomb_rice_flat_admit_terminal_wire_with_caps(
             "centered coefficient exceeds terminal admission cap {admissible_cap}"
         ))
     })?;
-    let binding = FoldLinfProtocolBinding::CURRENT;
-    let rice_low_bits = wire_rice_low_bits_from_rule(
-        coding_scale,
-        binding.wire_rice_low_bits_rule_id,
-        binding.wire_rice_low_bits_delta,
-    )?;
+    let rice_low_bits = wire_rice_low_bits(coding_scale);
     let zigzag_w = golomb_rice_zigzag_width(admissible_cap);
     golomb_rice_values_fit_planner_wire_budget(values, coding_scale, rice_low_bits, zigzag_w)
 }

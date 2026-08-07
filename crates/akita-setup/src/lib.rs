@@ -1,8 +1,8 @@
 //! Config-backed prover setup construction.
 //!
-//! With `disk-persistence`, setup cache files store the expanded setup followed
-//! by setup-prefix slots. Caches written before setup-prefix persistence will
-//! fail to deserialize and should be regenerated.
+//! With `disk-persistence`, the public field prefix is stored by field and
+//! [`akita_types::AkitaSetupSeed`], separately from schedule-bound setup-prefix
+//! registries. Backend NTT caches are never persisted.
 
 mod recursive_prefixes;
 
@@ -18,11 +18,10 @@ use akita_serialization::{
 use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
-    detect_field_modulus, digest_effective_schedule, AkitaScheduleLookupKey, AkitaSetupSeed,
-    FlatMatrix, PolynomialGroupLayout, SetupPrefixProverRegistry,
+    detect_field_modulus, digest_effective_schedule, sample_akita_setup_seed, setup_seed_digest,
+    AkitaScheduleLookupKey, AkitaSetupDescriptor, AkitaSetupSeed, FlatMatrix,
+    PolynomialGroupLayout, SetupPrefixProverRegistry,
 };
-#[cfg(test)]
-use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
 use jolt_field::{CanonicalEncoding, Field, Unreduced};
 
 #[cfg(feature = "disk-persistence")]
@@ -30,27 +29,21 @@ use std::fmt::Write as _;
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 #[cfg(feature = "disk-persistence")]
-use std::io::Read;
+use std::io::{Read, Write};
 #[cfg(feature = "disk-persistence")]
 use std::path::PathBuf;
 #[cfg(feature = "disk-persistence")]
-use std::sync::Arc;
-
-/// The setup-time generation ring dimension for config `Cfg`.
-///
-/// Per the cutover decision, `gen_ring_dim` is the **max `ring_dimension` across
-/// the config's schedule policy/catalog**. Setup is generated once at capacity
-/// time and reused across instances, so it cannot depend on one runtime
-/// schedule. For the current uniform-D presets the policy carries a single
-/// `ring_dimension == Cfg::D`, so this equals `Cfg::D` (and the verifier binds
-/// the same `gen_ring_dim`, preserving transcript byte-parity). A future mixed-D
-/// catalog would set this to the maximum dimension its levels use.
-fn setup_gen_ring_dim<Cfg: CommitmentConfig>() -> usize {
-    akita_config::policy_of::<Cfg>().ring_dimension
-}
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "disk-persistence")]
+use std::sync::{Arc, LazyLock, Mutex};
 
 #[cfg(feature = "disk-persistence")]
-fn validate_loaded_prefix_registry<F, Cfg>(
+static CACHE_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "disk-persistence")]
+static PUBLIC_MATRIX_CACHE_WRITE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+#[cfg(feature = "disk-persistence")]
+fn validate_loaded_prefix_registry_coverage<F, Cfg>(
     setup: &AkitaProverSetup<F>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -75,9 +68,6 @@ where
 /// persistence; `akita-prover` owns the concrete setup artifact and
 /// matrix expansion.
 ///
-/// The prover setup artifact is D-free; the setup-time generation ring
-/// dimension `gen_ring_dim` is derived from `Cfg`'s schedule policy.
-///
 /// # Errors
 ///
 /// Returns an error if the requested setup capacity is invalid or setup
@@ -96,64 +86,30 @@ where
             "max_num_batched_polys must be at least 1".to_string(),
         ));
     }
-    let gen_ring_dim = setup_gen_ring_dim::<Cfg>();
-
-    #[cfg(feature = "disk-persistence")]
-    let max_setup_len =
-        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?.max_setup_len;
-
     #[cfg(feature = "disk-persistence")]
     {
         match load_prover_setup::<F, Cfg>(max_num_vars, max_num_batched_polys) {
             Ok(setup) => {
-                let cached_total = setup.expanded.shared_matrix().total_ring_elements();
-                let cached_shape_covers_request = cached_total >= max_setup_len;
-                if cached_shape_covers_request {
-                    validate_loaded_prefix_registry::<F, Cfg>(
-                        &setup,
-                        max_num_vars,
-                        max_num_batched_polys,
-                    )?;
-                    tracing::info!("Loaded setup from disk; backend preparation is explicit");
-                    return Ok(setup);
-                }
-                if let Some(storage_path) =
-                    get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys)
-                {
-                    let _ = fs::remove_file(&storage_path);
-                    tracing::warn!(
-                        "Rejected cached setup from {}: have total={cached_total}, need total>={max_setup_len}; regenerating",
-                        storage_path.display()
-                    );
-                } else {
-                    tracing::warn!(
-                        "Rejected cached setup: have total={cached_total}, need total>={max_setup_len}; regenerating"
-                    );
-                }
+                validate_loaded_prefix_registry_coverage::<F, Cfg>(
+                    &setup,
+                    max_num_vars,
+                    max_num_batched_polys,
+                )?;
+                tracing::info!("Loaded setup from disk; backend preparation is explicit");
+                return Ok(setup);
             }
-            Err(e) => {
-                if let Some(storage_path) =
-                    get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys)
-                {
-                    let _ = fs::remove_file(&storage_path);
-                    tracing::warn!(
-                        "Failed to load cached setup from {}: {e}; regenerating",
-                        storage_path.display()
-                    );
-                } else {
-                    tracing::warn!("Failed to load cached setup: {e}; regenerating");
-                }
+            Err(err) => {
+                tracing::warn!("Failed to load cached setup: {err}; regenerating");
             }
         }
     }
 
-    let setup_envelope = Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?;
+    let setup_capacity = Cfg::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?;
 
     let mut setup = AkitaProverSetup::generate_with_capacity(
         max_num_vars,
         max_num_batched_polys,
-        gen_ring_dim,
-        setup_envelope,
+        setup_capacity,
     )?;
 
     recursive_prefixes::populate_required_setup_prefix_slots::<F, Cfg>(
@@ -185,7 +141,7 @@ fn stable_type_hash(type_name: &str) -> u64 {
 }
 
 #[cfg(feature = "disk-persistence")]
-fn cache_file_name<Cfg: CommitmentConfig>(
+fn prefix_registry_cache_file_name<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> String {
@@ -197,7 +153,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
     // SIS-derived `n_a`/`n_b`/`n_d` ranks) changes for the same lookup
     // key — the full per-level params are hashed by
     // `digest_effective_schedule`. Akita is still in development, so the cache
-    // namespace remains v1; the digest prevents incompatible schedules from
+    // flat-v2 namespace; the digest prevents incompatible schedules from
     // aliasing within that namespace.
     let raw_schedule =
         match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_lookup_key)) {
@@ -208,7 +164,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
                     let _ = write!(hex, "{byte:02x}");
                 }
                 format!(
-                    "planner_v1_nv{}_batch{}_{hex}",
+                    "planner_flat_v2_nv{}_batch{}_{hex}",
                     schedule_lookup_key.num_vars(),
                     schedule_lookup_key.num_polynomials(),
                 )
@@ -225,224 +181,398 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .collect::<String>();
     let modulus = detect_field_modulus::<Cfg::Field>();
     format!(
-        "akita_q{modulus:032x}_cfg{family_hash:016x}_sched_{schedule}_d{}_nv{max_num_vars}_batch{max_num_batched_polys}.setup",
-        Cfg::D,
+        "akita_prefix_v2_q{modulus:032x}_cfg{family_hash:016x}_sched_{schedule}_nv{max_num_vars}_batch{max_num_batched_polys}.registry",
     )
 }
 
 #[cfg(feature = "disk-persistence")]
-pub(crate) fn get_storage_path<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Option<PathBuf> {
-    let cache_directory = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        Some(PathBuf::from(local_app_data))
+fn public_matrix_cache_file_name<F: Field + CanonicalEncoding>(
+    setup_seed: &AkitaSetupSeed,
+) -> Result<String, AkitaError> {
+    let digest = setup_seed_digest(setup_seed)
+        .map_err(|err| AkitaError::InvalidSetup(format!("public matrix identity: {err}")))?;
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    let modulus = detect_field_modulus::<F>();
+    Ok(format!("akita_flat_v3_q{modulus:032x}_id{hex}.matrix"))
+}
+
+#[cfg(feature = "disk-persistence")]
+fn cache_directory() -> Option<PathBuf> {
+    let mut path = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        PathBuf::from(local_app_data)
     } else if let Ok(home) = std::env::var("HOME") {
         let mut path = PathBuf::from(&home);
-        let macos_cache = {
-            let mut test_path = PathBuf::from(&home);
-            test_path.push("Library");
-            test_path.push("Caches");
-            test_path.exists()
-        };
-        if macos_cache {
+        let mut macos_cache = PathBuf::from(&home);
+        macos_cache.push("Library");
+        macos_cache.push("Caches");
+        if macos_cache.exists() {
             path.push("Library");
             path.push("Caches");
         } else {
             path.push(".cache");
         }
-        Some(path)
+        path
     } else {
-        None
+        return None;
     };
+    path.push("akita");
+    Some(path)
+}
 
-    cache_directory.map(|mut path| {
-        path.push("akita");
-        path.push(cache_file_name::<Cfg>(max_num_vars, max_num_batched_polys));
+#[cfg(feature = "disk-persistence")]
+pub(crate) fn get_prefix_registry_storage_path<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+) -> Option<PathBuf> {
+    cache_directory().map(|mut path| {
+        path.push(prefix_registry_cache_file_name::<Cfg>(
+            max_num_vars,
+            max_num_batched_polys,
+        ));
         path
     })
 }
 
 #[cfg(feature = "disk-persistence")]
+fn get_public_matrix_storage_path<F: Field + CanonicalEncoding>(
+    setup_seed: &AkitaSetupSeed,
+) -> Result<PathBuf, AkitaError> {
+    let mut path = cache_directory().ok_or_else(|| {
+        AkitaError::InvalidSetup("could not determine storage directory".to_string())
+    })?;
+    path.push(public_matrix_cache_file_name::<F>(setup_seed)?);
+    Ok(path)
+}
+
+#[cfg(feature = "disk-persistence")]
+fn atomic_write_cache(
+    storage_path: &std::path::Path,
+    write_cache: impl FnOnce(&mut std::io::BufWriter<fs::File>) -> Result<(), SerializationError>,
+) -> Result<(), AkitaError> {
+    let parent = storage_path.parent().ok_or_else(|| {
+        AkitaError::InvalidSetup("setup cache path has no parent directory".to_string())
+    })?;
+    fs::create_dir_all(parent).map_err(|err| {
+        AkitaError::InvalidSetup(format!(
+            "failed to create setup cache directory {}: {err}",
+            parent.display()
+        ))
+    })?;
+    let temp_id = CACHE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let temp_path = storage_path.with_extension(format!("tmp-{}-{temp_id}", std::process::id()));
+    let result = (|| {
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .map_err(|err| {
+                AkitaError::InvalidSetup(format!(
+                    "failed to create temporary setup cache {}: {err}",
+                    temp_path.display()
+                ))
+            })?;
+        let mut writer = std::io::BufWriter::new(file);
+        write_cache(&mut writer).map_err(|err| {
+            AkitaError::InvalidSetup(format!(
+                "failed to serialize setup cache {}: {err}",
+                storage_path.display()
+            ))
+        })?;
+        writer.flush().map_err(|err| {
+            AkitaError::InvalidSetup(format!(
+                "failed to flush setup cache {}: {err}",
+                temp_path.display()
+            ))
+        })?;
+        // These files are recoverable performance caches: a failed or partial
+        // write is rejected and regenerated on the next load. Flushing before
+        // the atomic rename gives readers a complete file without forcing a
+        // device flush on the setup hot path.
+        drop(writer);
+        fs::rename(&temp_path, storage_path).map_err(|err| {
+            AkitaError::InvalidSetup(format!(
+                "failed to atomically replace setup cache {}: {err}",
+                storage_path.display()
+            ))
+        })
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
+}
+
+#[cfg(feature = "disk-persistence")]
+fn serialize_public_matrix_cache<F: Field + AkitaSerialize>(
+    expanded: &AkitaExpandedSetup<F>,
+    writer: &mut std::io::BufWriter<fs::File>,
+) -> Result<(), SerializationError> {
+    expanded
+        .seed()
+        .setup_seed
+        .serialize_compressed(&mut *writer)?;
+    expanded
+        .shared_matrix()
+        .num_field_elements()
+        .serialize_compressed(&mut *writer)?;
+    expanded.shared_matrix().serialize_compressed(writer)
+}
+
+#[cfg(feature = "disk-persistence")]
 pub(crate) fn save_prover_setup<
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + Valid + akita_serialization::AkitaSerialize,
     Cfg: CommitmentConfig<Field = F>,
 >(
     setup: &AkitaProverSetup<F>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<(), AkitaError> {
-    let Some(storage_path) = get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys) else {
+    // `setup` was just derived inside this crate. Re-deriving and comparing
+    // every field element here would repeat the full setup-generation pass;
+    // public-matrix cache bytes are deterministically validated on load.
+    // Prefix-registry provenance is a separate setup-validation boundary.
+    let public_matrix_path =
+        get_public_matrix_storage_path::<F>(&setup.expanded.seed().setup_seed)?;
+    let Some(prefix_registry_path) =
+        get_prefix_registry_storage_path::<Cfg>(max_num_vars, max_num_batched_polys)
+    else {
         return Err(AkitaError::InvalidSetup(
             "could not determine storage directory".to_string(),
         ));
     };
 
-    if let Some(parent) = storage_path.parent() {
-        if let Err(e) = fs::create_dir_all(parent) {
-            return Err(AkitaError::InvalidSetup(format!(
-                "failed to create setup cache directory {}: {e}",
-                parent.display()
-            )));
+    let _matrix_write_guard = PUBLIC_MATRIX_CACHE_WRITE_LOCK
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("public matrix cache lock poisoned".to_string()))?;
+    let matrix_parent = public_matrix_path.parent().ok_or_else(|| {
+        AkitaError::InvalidSetup("public matrix cache path has no parent directory".to_string())
+    })?;
+    fs::create_dir_all(matrix_parent).map_err(|err| {
+        AkitaError::InvalidSetup(format!(
+            "failed to create public matrix cache directory: {err}"
+        ))
+    })?;
+    let matrix_lock_path = public_matrix_path.with_extension("matrix.lock");
+    let matrix_lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&matrix_lock_path)
+        .map_err(|err| {
+            AkitaError::InvalidSetup(format!("failed to open public matrix cache lock: {err}"))
+        })?;
+    matrix_lock.lock().map_err(|err| {
+        AkitaError::InvalidSetup(format!("failed to lock public matrix cache: {err}"))
+    })?;
+    let replace_public_matrix = match fs::File::open(&public_matrix_path) {
+        Ok(file) => {
+            let mut reader = std::io::BufReader::new(file);
+            let existing = deserialize_cached_public_matrix::<F>(
+                &mut reader,
+                0,
+                &setup.expanded.seed().setup_seed,
+            );
+            let mut trailing = [0u8; 1];
+            match existing {
+                Ok(existing)
+                    if reader.read(&mut trailing).is_ok_and(|read| read == 0)
+                        && validate_cached_matrix::<F>(&existing).is_ok() =>
+                {
+                    existing.shared_matrix().num_field_elements()
+                        < setup.expanded.shared_matrix().num_field_elements()
+                }
+                _ => true,
+            }
         }
-    }
-
-    tracing::info!("Saving setup to {}", storage_path.display());
-
-    let file = match fs::File::create(&storage_path) {
-        Ok(file) => file,
-        Err(e) => {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
+        Err(err) => {
             return Err(AkitaError::InvalidSetup(format!(
-                "failed to create setup cache file {}: {e}",
-                storage_path.display()
-            )));
+                "failed to inspect public matrix cache: {err}"
+            )))
         }
     };
-    let mut writer = std::io::BufWriter::new(file);
-
-    if let Err(e) = setup.expanded.serialize_compressed(&mut writer) {
-        let _ = fs::remove_file(&storage_path);
-        return Err(AkitaError::InvalidSetup(format!(
-            "failed to serialize setup cache {}: {e}",
-            storage_path.display()
-        )));
+    if replace_public_matrix {
+        atomic_write_cache(&public_matrix_path, |writer| {
+            serialize_public_matrix_cache(&setup.expanded, writer)
+        })?;
     }
-    if let Err(e) = setup.prefix_slots.serialize_compressed(&mut writer) {
-        let _ = fs::remove_file(&storage_path);
-        return Err(AkitaError::InvalidSetup(format!(
-            "failed to serialize setup-prefix cache {}: {e}",
-            storage_path.display()
-        )));
-    }
+    drop(matrix_lock);
+    drop(_matrix_write_guard);
+    atomic_write_cache(&prefix_registry_path, |writer| {
+        setup.prefix_slots.serialize_compressed(writer)
+    })?;
 
-    tracing::info!("Successfully saved setup to disk");
+    tracing::info!(
+        "Saved public matrix to {} and setup-prefix registry to {}",
+        public_matrix_path.display(),
+        prefix_registry_path.display()
+    );
     Ok(())
 }
 
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn load_prover_setup<
-    F: Field + Valid + CanonicalEncoding,
+    F: Field + Valid + CanonicalEncoding + AkitaSerialize,
     Cfg: CommitmentConfig<Field = F>,
 >(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<AkitaProverSetup<F>, AkitaError> {
-    let storage_path =
-        get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys).ok_or_else(|| {
-            AkitaError::InvalidSetup("Failed to determine storage directory".to_string())
-        })?;
-
-    if !storage_path.exists() {
+    let setup_seed = sample_akita_setup_seed();
+    let public_matrix_path = get_public_matrix_storage_path::<F>(&setup_seed)?;
+    if !public_matrix_path.exists() {
         return Err(AkitaError::InvalidSetup(format!(
-            "Setup file not found at {}",
-            storage_path.display()
+            "public matrix cache not found at {}",
+            public_matrix_path.display()
         )));
     }
-
-    tracing::info!("Loading setup from {}", storage_path.display());
-
-    let file = fs::File::open(&storage_path)
-        .map_err(|e| AkitaError::InvalidSetup(format!("Failed to open setup file: {e}")))?;
+    let required_num_field_elements =
+        Cfg::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?.num_field_elements;
+    let file = fs::File::open(&public_matrix_path).map_err(|err| {
+        AkitaError::InvalidSetup(format!("failed to open public matrix cache: {err}"))
+    })?;
     let mut reader = std::io::BufReader::new(file);
-
-    // Disk cache load first validates the byte structure and field elements,
-    // then `validate_cached_matrix` verifies the seed-derived matrix content.
-    let setup =
-        deserialize_cached_setup::<F, Cfg>(&mut reader, max_num_vars, max_num_batched_polys)
-            .map_err(|e| AkitaError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
-    let prefix_slots = SetupPrefixProverRegistry::<F>::deserialize_with_mode(
+    let mut expanded = deserialize_cached_public_matrix::<F>(
         &mut reader,
-        Compress::Yes,
-        Validate::Yes,
-        &(),
+        required_num_field_elements,
+        &setup_seed,
     )
-    .map_err(|e| {
-        AkitaError::InvalidSetup(format!("Failed to deserialize setup-prefix slots: {e}"))
+    .map_err(|err| {
+        AkitaError::InvalidSetup(format!("failed to deserialize public matrix: {err}"))
     })?;
     let mut trailing = [0u8; 1];
     if reader
         .read(&mut trailing)
-        .map_err(|e| AkitaError::InvalidSetup(format!("Failed to check setup EOF: {e}")))?
+        .map_err(|err| AkitaError::InvalidSetup(format!("failed to check matrix EOF: {err}")))?
         != 0
     {
         return Err(AkitaError::InvalidSetup(format!(
-            "cached setup has trailing bytes starting with 0x{:02x}",
+            "cached public matrix has trailing bytes starting with 0x{:02x}",
             trailing[0]
         )));
     }
-    validate_cached_matrix::<F, Cfg>(&setup)?;
+    expanded.seed = AkitaSetupDescriptor {
+        max_num_vars,
+        max_num_batched_polys,
+        num_field_elements: expanded.shared_matrix().num_field_elements(),
+        setup_seed: setup_seed.clone(),
+    };
+    validate_cached_matrix::<F>(&expanded)?;
+
+    let prefix_registry_path =
+        get_prefix_registry_storage_path::<Cfg>(max_num_vars, max_num_batched_polys).ok_or_else(
+            || AkitaError::InvalidSetup("failed to determine registry path".to_string()),
+        )?;
+    let prefix_slots = if prefix_registry_path.exists() {
+        let file = fs::File::open(&prefix_registry_path).map_err(|err| {
+            AkitaError::InvalidSetup(format!("failed to open setup-prefix registry: {err}"))
+        })?;
+        let mut reader = std::io::BufReader::new(file);
+        let slots = SetupPrefixProverRegistry::<F>::deserialize_with_mode(
+            &mut reader,
+            Compress::Yes,
+            Validate::Yes,
+            &(),
+        )
+        .map_err(|err| {
+            AkitaError::InvalidSetup(format!(
+                "failed to deserialize setup-prefix registry: {err}"
+            ))
+        })?;
+        if reader.read(&mut trailing).map_err(|err| {
+            AkitaError::InvalidSetup(format!("failed to check registry EOF: {err}"))
+        })? != 0
+        {
+            return Err(AkitaError::InvalidSetup(format!(
+                "cached setup-prefix registry has trailing bytes starting with 0x{:02x}",
+                trailing[0]
+            )));
+        }
+        slots
+    } else {
+        SetupPrefixProverRegistry::new(setup_seed)
+    };
+    if prefix_slots.setup_seed() != &expanded.seed().setup_seed {
+        return Err(AkitaError::InvalidSetup(
+            "cached setup-prefix registry belongs to a different public matrix".to_string(),
+        ));
+    }
+
+    let mut setup = AkitaProverSetup {
+        expanded: Arc::new(expanded),
+        prefix_slots,
+    };
+    if validate_loaded_prefix_registry_coverage::<F, Cfg>(
+        &setup,
+        max_num_vars,
+        max_num_batched_polys,
+    )
+    .is_err()
+    {
+        setup.prefix_slots =
+            SetupPrefixProverRegistry::new(setup.expanded.seed().setup_seed.clone());
+        recursive_prefixes::populate_required_setup_prefix_slots::<F, Cfg>(
+            &mut setup,
+            max_num_vars,
+            max_num_batched_polys,
+        )?;
+        save_prover_setup::<F, Cfg>(&setup, max_num_vars, max_num_batched_polys)?;
+    }
 
     tracing::info!(
-        "Loaded setup for max_num_vars={max_num_vars}, max_num_batched_polys={max_num_batched_polys}"
+        "Loaded covering public matrix for max_num_vars={max_num_vars}, max_num_batched_polys={max_num_batched_polys}"
     );
-    Ok(AkitaProverSetup {
-        expanded: Arc::new(setup),
-        prefix_slots,
-    })
+    Ok(setup)
 }
 
 #[cfg(feature = "disk-persistence")]
-fn deserialize_cached_setup<
-    F: Field + Valid + AkitaDeserialize<Context = ()>,
-    Cfg: CommitmentConfig<Field = F>,
->(
+fn deserialize_cached_public_matrix<F: Field + Valid + AkitaDeserialize<Context = ()>>(
     reader: &mut impl Read,
-    expected_max_num_vars: usize,
-    expected_max_num_batched_polys: usize,
+    minimum_num_field_elements: usize,
+    expected_setup_seed: &AkitaSetupSeed,
 ) -> Result<AkitaExpandedSetup<F>, SerializationError> {
-    let seed =
+    let setup_seed =
         AkitaSetupSeed::deserialize_with_mode(&mut *reader, Compress::Yes, Validate::Yes, &())?;
-    let expected_gen_ring_dim = setup_gen_ring_dim::<Cfg>();
-    if seed.gen_ring_dim != expected_gen_ring_dim {
-        return Err(SerializationError::InvalidData(format!(
-            "cached setup ring dimension {} does not match config gen_ring_dim={expected_gen_ring_dim}",
-            seed.gen_ring_dim
-        )));
-    }
-    if seed.max_num_vars != expected_max_num_vars
-        || seed.max_num_batched_polys != expected_max_num_batched_polys
-    {
+    if &setup_seed != expected_setup_seed {
         return Err(SerializationError::InvalidData(
-            "cached setup seed capacity does not match cache key".to_string(),
+            "cached public matrix identity does not match its lineage key".to_string(),
         ));
     }
-    let expected_envelope = Cfg::max_setup_matrix_size(
-        expected_max_num_vars,
-        expected_max_num_batched_polys,
-    )
-    .map_err(|err| {
-        SerializationError::InvalidData(format!("cached setup expected shape failed: {err}"))
-    })?;
-    if seed.max_setup_len != expected_envelope.max_setup_len {
+    let num_field_elements =
+        usize::deserialize_with_mode(&mut *reader, Compress::Yes, Validate::Yes, &())?;
+    if num_field_elements < minimum_num_field_elements {
         return Err(SerializationError::InvalidData(
-            "cached setup seed matrix shape does not match cache key".to_string(),
+            "cached public matrix prefix does not cover the requested field capacity".to_string(),
         ));
     }
     let shared_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
         &mut *reader,
         Compress::Yes,
         Validate::Yes,
-        seed.max_setup_len,
-        seed.gen_ring_dim,
-        seed.matrix_field_elements()?,
+        num_field_elements,
+        num_field_elements,
     )?;
-    Ok(AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix))
+    Ok(
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupDescriptor {
+                max_num_vars: 0,
+                max_num_batched_polys: 1,
+                num_field_elements,
+                setup_seed,
+            },
+            shared_matrix,
+        ),
+    )
 }
 
 #[cfg(feature = "disk-persistence")]
-fn validate_cached_matrix<
-    F: Field + CanonicalEncoding + Valid,
-    Cfg: CommitmentConfig<Field = F>,
->(
+fn validate_cached_matrix<F: Field + CanonicalEncoding + Valid>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError> {
-    let expected_gen_ring_dim = setup_gen_ring_dim::<Cfg>();
-    if setup.shared_matrix().gen_ring_dim() != expected_gen_ring_dim {
-        return Err(AkitaError::InvalidSetup(format!(
-            "cached setup ring dimension {} does not match config gen_ring_dim={expected_gen_ring_dim}",
-            setup.shared_matrix().gen_ring_dim()
-        )));
-    }
     setup
         .check()
         .map_err(|e| AkitaError::InvalidSetup(format!("cached setup matrix validation: {e}")))?;
@@ -454,15 +584,18 @@ mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-    use std::sync::Arc;
+    use akita_types::SetupMatrixCapacity;
 
     type Cfg = fp128::D64Dense;
     type TestF = fp128::Field;
 
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
-        let prover_setup = new_prover_setup::<TestF, Cfg>(13, 3).unwrap();
-        let verifier_setup = prover_setup.verifier_setup().unwrap();
+        let prover_setup = new_prover_setup::<TestF, Cfg>(14, 3).unwrap();
+        let capacity = SetupMatrixCapacity {
+            num_field_elements: prover_setup.expanded.shared_matrix().num_field_elements() / 2,
+        };
+        let verifier_setup = prover_setup.to_verifier_setup(capacity).unwrap();
 
         let mut bytes = Vec::new();
         prover_setup
@@ -474,20 +607,22 @@ mod tests {
         assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
         assert_eq!(decoded.seed().max_num_batched_polys, 3);
 
-        let derived_verifier = AkitaVerifierSetup::from_parts(
-            Arc::new(decoded.clone()),
-            SetupPrefixVerifierRegistry::new(),
-        );
+        let decoded_prover = AkitaProverSetup::from_validated_expanded(decoded.clone()).unwrap();
+        let derived_verifier = decoded_prover.to_verifier_setup(capacity).unwrap();
         assert_eq!(derived_verifier, verifier_setup);
+        assert_eq!(
+            verifier_setup.expanded.shared_matrix().num_field_elements(),
+            capacity.num_field_elements
+        );
     }
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
-        // Both folded-only catalogs begin at nv=13, the first singleton shape
-        // with the required root and suffix folds.
+        // The D128 catalog begins at nv=13; the D64 catalog begins at nv=14,
+        // the first singleton shapes with the required root and suffix folds.
         new_prover_setup::<fp128::Field, fp128::D128Dense>(13, 1)
             .expect("default fp128 D=128 preset should accept the fp128 field");
-        new_prover_setup::<fp128::Field, fp128::D64Dense>(13, 1)
+        new_prover_setup::<fp128::Field, fp128::D64Dense>(14, 1)
             .expect("small-D fp128 preset should accept the default field");
     }
 
@@ -501,30 +636,40 @@ mod tests {
         static DISK_TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
         fn cleanup_setup_file_shape(max_num_vars: usize, max_num_batched_polys: usize) {
-            if let Some(path) = get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys) {
+            if let Some(path) =
+                get_prefix_registry_storage_path::<Cfg>(max_num_vars, max_num_batched_polys)
+            {
+                let _ = fs::remove_file(path);
+            }
+            if let Ok(path) = get_public_matrix_storage_path::<TestF>(&sample_akita_setup_seed()) {
                 let _ = fs::remove_file(path);
             }
         }
 
         fn with_test_cache_dir<T>(test_name: &str, f: impl FnOnce() -> T) -> T {
-            let _guard = DISK_TEST_ENV_LOCK.lock().unwrap();
+            let _guard = DISK_TEST_ENV_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let cache_root = std::env::temp_dir().join(format!("akita-disk-tests-{test_name}"));
             fs::create_dir_all(&cache_root).unwrap();
 
             let old_local_app_data = std::env::var_os("LOCALAPPDATA");
             std::env::set_var("LOCALAPPDATA", &cache_root);
-            let out = f();
+            let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
             match old_local_app_data {
                 Some(path) => std::env::set_var("LOCALAPPDATA", path),
                 None => std::env::remove_var("LOCALAPPDATA"),
             }
-            out
+            match out {
+                Ok(value) => value,
+                Err(payload) => std::panic::resume_unwind(payload),
+            }
         }
 
         #[test]
         fn save_and_load_roundtrips() {
             with_test_cache_dir("roundtrip", || {
-                const MAX_VARS: usize = 13;
+                const MAX_VARS: usize = 14;
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
@@ -539,7 +684,7 @@ mod tests {
 
         #[test]
         fn cache_file_name_stays_below_common_component_limits() {
-            let name = cache_file_name::<Cfg>(16, 4);
+            let name = prefix_registry_cache_file_name::<Cfg>(16, 4);
             assert!(
                 name.len() < 200,
                 "setup cache file name should stay comfortably below 255 bytes, got {}: {name}",
@@ -548,70 +693,142 @@ mod tests {
         }
 
         #[test]
-        fn cache_file_name_uses_development_v1_namespace() {
-            let name = cache_file_name::<Cfg>(16, 4);
-            assert!(name.contains("planner_v1_"), "cache name: {name}");
+        fn cache_file_names_use_current_namespaces() {
+            let registry = prefix_registry_cache_file_name::<Cfg>(16, 4);
+            assert!(registry.contains("prefix_v2_"), "cache name: {registry}");
+            let matrix = public_matrix_cache_file_name::<TestF>(&sample_akita_setup_seed())
+                .expect("matrix cache name");
+            assert!(matrix.contains("flat_v3_"), "cache name: {matrix}");
+        }
+
+        #[test]
+        fn config_backed_cache_does_not_apply_generic_setup_decode_limit() {
+            let setup_seed = sample_akita_setup_seed();
+            let claimed_fields = akita_types::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS + 1;
+            let mut bytes = Vec::new();
+            setup_seed.serialize_compressed(&mut bytes).unwrap();
+            claimed_fields.serialize_compressed(&mut bytes).unwrap();
+
+            let error = deserialize_cached_public_matrix::<TestF>(
+                &mut bytes.as_slice(),
+                claimed_fields,
+                &setup_seed,
+            )
+            .unwrap_err();
+            assert!(
+                !matches!(
+                    error,
+                    SerializationError::LengthLimitExceeded { max, .. }
+                        if max == akita_types::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS
+                ),
+                "config-backed cache decoder reused the generic setup limit"
+            );
         }
 
         #[test]
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    setup_prefix_slot_id, AkitaCommitmentHint, InnerCommitMatrixParams,
-                    OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+                    setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile,
+                    CompressionChainPlan, CompressionChainWitness, InnerCommitMatrixParams,
+                    OuterCommitMatrixParams, PackedNegativeBinary, PolynomialGroupLayout,
                     PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
-                    SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
+                    SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
                 };
 
-                const MAX_VARS: usize = 13;
+                const MAX_VARS: usize = 14;
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let mut setup = new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
+                let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+                    SisTableKey {
+                        policy: DEFAULT_SIS_SECURITY_POLICY,
+                        table_digest: SisTableDigest::CURRENT,
+                        modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                        role: akita_types::SisMatrixRole::Inner,
+                        ring_dimension: u32::try_from(TEST_D).expect("test ring dimension"),
+                        coeff_linf_bound: 32_767,
+                    },
+                    1,
+                )
+                .expect("audited prefix A matrix");
+                let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+                    SisTableKey {
+                        policy: DEFAULT_SIS_SECURITY_POLICY,
+                        table_digest: SisTableDigest::CURRENT,
+                        modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                        role: akita_types::SisMatrixRole::Outer,
+                        ring_dimension: u32::try_from(TEST_D).expect("test ring dimension"),
+                        coeff_linf_bound: 3,
+                    },
+                    inner_commit_matrix.output_rank(),
+                )
+                .expect("audited prefix B matrix");
+                let commitment_rows = outer_commit_matrix.output_rank();
                 let commitment_params = PrecommittedLevelParams {
-                    layout: PrecommittedGroupDescriptor {
+                    layout: CommittedGroupProfile {
+                        version: CommittedGroupProfile::VERSION,
                         group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
                         num_live_ring_elements_per_claim: 1,
                         num_positions_per_block: 1,
                         num_live_blocks: 1,
                         log_basis_inner: 1,
+                        num_digits_inner: 1,
+                        inner_commit_matrix,
                         log_basis_outer: 1,
-                        inner_ring_dimension: TEST_D,
-                        outer_ring_dimension: TEST_D,
-                        n_a: 1,
-                        a_coeff_linf_bound: 1,
-                        n_b: 1,
-                        b_coeff_linf_bound: 1,
+                        num_digits_outer: 1,
+                        outer_commit_matrix,
                     },
-                    inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                        DEFAULT_SIS_SECURITY_POLICY,
-                        SisTableDigest::CURRENT,
-                        SisModulusProfileId::Q128OffsetA7F7,
-                        1,
-                        1,
-                        1,
-                        TEST_D,
-                    ),
-                    outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                        DEFAULT_SIS_SECURITY_POLICY,
-                        SisTableDigest::CURRENT,
-                        SisModulusProfileId::Q128OffsetA7F7,
-                        1,
-                        1,
-                        1,
-                        TEST_D,
-                    ),
                     log_basis_open: 1,
                     fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
-                    num_digits_inner: 1,
-                    num_digits_outer: 1,
                     num_digits_open: 1,
-                    num_digits_fold_one: 1,
+                    num_digits_fold: 1,
                 };
-                let id = setup_prefix_slot_id(TEST_D, 1, commitment_params);
-                let hint = AkitaCommitmentHint::singleton(
+                let id = setup_prefix_slot_id(1, commitment_params.clone());
+                let compression_plan = CompressionChainPlan::for_complete_source(
+                    commitment_params
+                        .layout
+                        .outer_commit_matrix
+                        .sis_modulus_profile(),
+                    commitment_params.layout.outer_commit_matrix.output_rank() * TEST_D,
+                )
+                .expect("compression plan");
+                let compression_stages = compression_plan
+                    .maps()
+                    .iter()
+                    .map(|map| {
+                        PackedNegativeBinary::from_bytes(*map, vec![0; map.packed_digit_bytes()])
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .expect("zero compression stages");
+                let compression_witness =
+                    CompressionChainWitness::new(compression_plan, compression_stages)
+                        .expect("zero compression witness");
+                let compression_quotients = compression_witness
+                    .plan()
+                    .maps()
+                    .iter()
+                    .map(|map| {
+                        RingVec::from_coeffs_with_ring_dim(
+                            vec![TestF::zero(); map.output_coefficients()],
+                            map.ring_dimension(),
+                        )
+                        .expect("zero compression quotient")
+                    })
+                    .collect::<Vec<_>>();
+                let terminal_map = compression_witness
+                    .plan()
+                    .maps()
+                    .last()
+                    .expect("terminal compression map");
+                let commitment_row =
+                    RingVec::from_coeffs(vec![TestF::zero(); terminal_map.output_coefficients()]);
+                let hint = AkitaCommitmentHint::singleton_with_outer_compression(
                     RingVec::from_coeffs_with_ring_dim(vec![TestF::zero(); TEST_D], TEST_D)
                         .expect("inner rows"),
+                    &compression_witness,
+                    &compression_quotients,
                 )
                 .expect("hint");
                 setup
@@ -621,7 +838,7 @@ mod tests {
                         natural_len: 1,
                         padded_len: TEST_D,
                         commitment: SetupPrefixPublicCommitment {
-                            rows: vec![RingVec::from_coeffs(vec![TestF::zero(); TEST_D])],
+                            rows: vec![commitment_row; commitment_rows],
                         },
                         hint,
                     })
@@ -638,7 +855,7 @@ mod tests {
         #[test]
         fn setup_uses_cache_on_second_call() {
             with_test_cache_dir("second-call", || {
-                const MAX_VARS: usize = 13;
+                const MAX_VARS: usize = 14;
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
@@ -653,25 +870,114 @@ mod tests {
         }
 
         #[test]
+        fn larger_public_prefix_covers_smaller_provisioning_request() {
+            with_test_cache_dir("covering-prefix", || {
+                const LARGE_VARS: usize = 15;
+                const SMALL_VARS: usize = 14;
+
+                cleanup_setup_file_shape(LARGE_VARS, 1);
+                if let Some(path) = get_prefix_registry_storage_path::<Cfg>(SMALL_VARS, 1) {
+                    let _ = fs::remove_file(path);
+                }
+
+                let large = new_prover_setup::<TestF, Cfg>(LARGE_VARS, 1).unwrap();
+                let large_fields = large.expanded.shared_matrix().num_field_elements();
+                let small_required = Cfg::setup_matrix_capacity(SMALL_VARS, 1)
+                    .unwrap()
+                    .num_field_elements;
+                assert!(large_fields >= small_required);
+
+                let covered = new_prover_setup::<TestF, Cfg>(SMALL_VARS, 1).unwrap();
+                assert_eq!(
+                    covered.expanded.shared_matrix().num_field_elements(),
+                    large_fields
+                );
+                assert_eq!(
+                    covered.expanded.seed().setup_seed,
+                    large.expanded.seed().setup_seed
+                );
+                assert_eq!(covered.expanded.seed().max_num_vars, SMALL_VARS);
+                assert_eq!(covered.expanded.seed().max_num_batched_polys, 1);
+
+                cleanup_setup_file_shape(LARGE_VARS, 1);
+                if let Some(path) = get_prefix_registry_storage_path::<Cfg>(SMALL_VARS, 1) {
+                    let _ = fs::remove_file(path);
+                }
+            });
+        }
+
+        #[test]
+        fn concurrent_public_matrix_writers_join_at_largest_prefix() {
+            with_test_cache_dir("concurrent-prefix-writers", || {
+                const SMALL_VARS: usize = 14;
+                const LARGE_VARS: usize = 15;
+
+                cleanup_setup_file_shape(LARGE_VARS, 1);
+                if let Some(path) = get_prefix_registry_storage_path::<Cfg>(SMALL_VARS, 1) {
+                    let _ = fs::remove_file(path);
+                }
+                let small = AkitaProverSetup::generate_with_capacity(
+                    SMALL_VARS,
+                    1,
+                    Cfg::setup_matrix_capacity(SMALL_VARS, 1).unwrap(),
+                )
+                .unwrap();
+                let large = AkitaProverSetup::generate_with_capacity(
+                    LARGE_VARS,
+                    1,
+                    Cfg::setup_matrix_capacity(LARGE_VARS, 1).unwrap(),
+                )
+                .unwrap();
+                let large_fields = large.expanded.shared_matrix().num_field_elements();
+                let barrier = Arc::new(std::sync::Barrier::new(3));
+                std::thread::scope(|scope| {
+                    let first_barrier = Arc::clone(&barrier);
+                    scope.spawn(move || {
+                        first_barrier.wait();
+                        save_prover_setup::<TestF, Cfg>(&small, SMALL_VARS, 1).unwrap();
+                    });
+                    let second_barrier = Arc::clone(&barrier);
+                    scope.spawn(move || {
+                        second_barrier.wait();
+                        save_prover_setup::<TestF, Cfg>(&large, LARGE_VARS, 1).unwrap();
+                    });
+                    barrier.wait();
+                });
+
+                let loaded = load_prover_setup::<TestF, Cfg>(LARGE_VARS, 1).unwrap();
+                assert_eq!(
+                    loaded.expanded.shared_matrix().num_field_elements(),
+                    large_fields
+                );
+
+                cleanup_setup_file_shape(LARGE_VARS, 1);
+                if let Some(path) = get_prefix_registry_storage_path::<Cfg>(SMALL_VARS, 1) {
+                    let _ = fs::remove_file(path);
+                }
+            });
+        }
+
+        #[test]
         fn load_rejects_cached_matrix_that_does_not_match_seed() {
             with_test_cache_dir("corrupt-matrix", || {
                 use akita_types::FlatMatrix;
 
-                const MAX_VARS: usize = 13;
+                const MAX_VARS: usize = 14;
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let prover_setup = new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
-                let total = prover_setup.expanded.shared_matrix().total_ring_elements();
+                let total = prover_setup.expanded.shared_matrix().num_field_elements();
                 let corrupt = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     prover_setup.expanded.seed().clone(),
-                    FlatMatrix::from_flat_data(vec![TestF::zero(); total * TEST_D], TEST_D),
+                    FlatMatrix::from_flat_data(vec![TestF::zero(); total]),
                 );
-                let corrupt = AkitaProverSetup {
-                    expanded: Arc::new(corrupt),
-                    prefix_slots: SetupPrefixProverRegistry::new(),
-                };
-                save_prover_setup::<TestF, Cfg>(&corrupt, MAX_VARS, 1).unwrap();
+                let path =
+                    get_public_matrix_storage_path::<TestF>(&sample_akita_setup_seed()).unwrap();
+                atomic_write_cache(&path, |writer| {
+                    serialize_public_matrix_cache(&corrupt, writer)
+                })
+                .unwrap();
 
                 let err = load_prover_setup::<TestF, Cfg>(MAX_VARS, 1)
                     .expect_err("corrupt cached matrix must be rejected");
@@ -688,12 +994,13 @@ mod tests {
             with_test_cache_dir("trailing-bytes", || {
                 use std::io::Write;
 
-                const MAX_VARS: usize = 13;
+                const MAX_VARS: usize = 14;
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
                 new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
-                let path = get_storage_path::<Cfg>(MAX_VARS, 1).unwrap();
+                let path =
+                    get_public_matrix_storage_path::<TestF>(&sample_akita_setup_seed()).unwrap();
                 let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
                 file.write_all(&[0]).unwrap();
 
@@ -702,36 +1009,6 @@ mod tests {
                 assert!(err.to_string().contains("trailing bytes"));
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
-            });
-        }
-
-        #[test]
-        fn cache_rejects_seed_capacity_that_is_too_small() {
-            with_test_cache_dir("undersized-seed", || {
-                const MAX_VARS: usize = 13;
-                const MAX_BATCH: usize = 2;
-
-                cleanup_setup_file_shape(MAX_VARS, MAX_BATCH);
-
-                let prover_setup = new_prover_setup::<TestF, Cfg>(MAX_VARS, MAX_BATCH).unwrap();
-                let mut stale_seed = prover_setup.expanded.seed().clone();
-                stale_seed.max_num_vars = MAX_VARS - 1;
-                stale_seed.max_num_batched_polys = MAX_BATCH - 1;
-                let stale = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    stale_seed,
-                    prover_setup.expanded.shared_matrix().clone(),
-                );
-                let stale = AkitaProverSetup {
-                    expanded: Arc::new(stale),
-                    prefix_slots: SetupPrefixProverRegistry::new(),
-                };
-                save_prover_setup::<TestF, Cfg>(&stale, MAX_VARS, MAX_BATCH).unwrap();
-
-                let regenerated = new_prover_setup::<TestF, Cfg>(MAX_VARS, MAX_BATCH).unwrap();
-                assert_eq!(regenerated.expanded.seed().max_num_vars, MAX_VARS);
-                assert_eq!(regenerated.expanded.seed().max_num_batched_polys, MAX_BATCH);
-
-                cleanup_setup_file_shape(MAX_VARS, MAX_BATCH);
             });
         }
 

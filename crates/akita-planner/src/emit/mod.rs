@@ -11,10 +11,11 @@ use std::process::Command;
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_error::AkitaError;
+use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule,
-    OpenCommitMatrixParams, PolynomialGroupLayout, PrecommittedGroupDescriptor, RootFinalChallenge,
-    RootSource, SetupPrefixSlotId, WitnessPartition,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, CommittedGroupProfile,
+    FoldSchedule, OpenCommitMatrixParams, PolynomialGroupLayout, RootFinalChallenge,
+    SetupPrefixSlotId, WitnessPartition,
 };
 
 use crate::PlannerPolicy;
@@ -23,9 +24,8 @@ use akita_schedules::generated::{
     GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
     GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix,
     GeneratedRecursiveFold, GeneratedRootFinalChallenge, GeneratedRootFinalGroup,
-    GeneratedRootFold, GeneratedRootPrecommittedGroup, GeneratedRootSource,
-    GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput, GeneratedTerminalFold,
-    GeneratedWitnessPartition,
+    GeneratedRootFold, GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity,
+    GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition,
 };
 
 /// One family the emitter writes to `akita-schedules/src/generated/`.
@@ -37,13 +37,15 @@ pub struct EmitSpec {
     pub schedule_feature: &'static str,
     pub policy: PlannerPolicy,
     pub keys: Vec<PolynomialGroupLayout>,
-    pub group_batch_keys: Vec<AkitaScheduleLookupKey>,
+    pub group_batch_keys: Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>,
     pub emit_group_batch: bool,
     pub output_dir: PathBuf,
     pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
-    pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
+    pub regen_group_batch:
+        fn(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>) -> Result<FoldSchedule, AkitaError>,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    pub precommitted_profiles: Vec<CommittedGroupProfile>,
     pub generator_command: &'static str,
 }
 
@@ -94,7 +96,7 @@ fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInpu
     let group = &slot.commitment_params;
     GeneratedSetupPrefixInput {
         natural_len: slot.natural_len as u64,
-        d_setup: group.inner_commit_matrix.ring_dimension() as u32,
+        num_digits_fold: group.num_digits_fold as u32,
         commitment: GeneratedCommittedGroup {
             geometry: GeneratedBlockGeometry {
                 live_ring_elements_per_claim: group.layout.num_live_ring_elements_per_claim as u64,
@@ -102,11 +104,11 @@ fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInpu
                 live_blocks: group.layout.num_live_blocks as u64,
             },
             inner_commit_matrix: GeneratedInnerCommitMatrix {
-                ring_dimension: group.inner_commit_matrix.ring_dimension() as u32,
+                ring_dimension: group.layout.inner_commit_matrix.ring_dimension() as u32,
                 log_basis: group.layout.log_basis_inner,
             },
             outer_commit_matrix: GeneratedOuterCommitMatrix {
-                ring_dimension: group.outer_commit_matrix.ring_dimension() as u32,
+                ring_dimension: group.layout.outer_commit_matrix.ring_dimension() as u32,
                 log_basis: group.layout.log_basis_outer,
                 slice_count: 1,
             },
@@ -117,7 +119,7 @@ fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInpu
 fn generated_entry(
     key: &AkitaScheduleLookupKey,
     schedule: &FoldSchedule,
-) -> GeneratedFoldScheduleEntry {
+) -> Result<GeneratedFoldScheduleEntry, String> {
     let root_fold = &schedule.root.params;
     let root_params = &root_fold.final_group.commitment;
     let precommitted_groups = key
@@ -127,6 +129,7 @@ fn generated_entry(
         .zip(&root_fold.precommitted_groups)
         .map(|(descriptor, group)| GeneratedRootPrecommittedGroup {
             descriptor,
+            num_digits_fold: group.commitment.num_digits_fold as u32,
             commitment: GeneratedCommittedGroup {
                 geometry: GeneratedBlockGeometry {
                     live_ring_elements_per_claim: group
@@ -138,11 +141,13 @@ fn generated_entry(
                     live_blocks: group.commitment.layout.num_live_blocks as u64,
                 },
                 inner_commit_matrix: GeneratedInnerCommitMatrix {
-                    ring_dimension: group.commitment.inner_commit_matrix.ring_dimension() as u32,
+                    ring_dimension: group.commitment.layout.inner_commit_matrix.ring_dimension()
+                        as u32,
                     log_basis: group.commitment.layout.log_basis_inner,
                 },
                 outer_commit_matrix: GeneratedOuterCommitMatrix {
-                    ring_dimension: group.commitment.outer_commit_matrix.ring_dimension() as u32,
+                    ring_dimension: group.commitment.layout.outer_commit_matrix.ring_dimension()
+                        as u32,
                     log_basis: group.commitment.layout.log_basis_outer,
                     slice_count: 1,
                 },
@@ -153,7 +158,9 @@ fn generated_entry(
         .recursive_folds
         .iter()
         .map(|step| GeneratedRecursiveFold {
+            payload_mode: step.params.witness.payload_mode,
             witness: committed_group(&step.params.witness),
+            num_digits_fold: step.params.witness.num_digits_fold as u32,
             open_commit_matrix: open_matrix_params(
                 &step.params.open_commit_matrix,
                 step.params.witness.log_basis_open,
@@ -172,17 +179,23 @@ fn generated_entry(
             fold_low_len: fold_low_len as u32,
         },
     };
-    let source = match root_fold.final_group.source {
-        RootSource::Dense { coefficient_bits } => GeneratedRootSource::Dense { coefficient_bits },
-        RootSource::OneHot { chunk_size } => GeneratedRootSource::OneHot {
-            chunk_size: chunk_size as u32,
-        },
-    };
-    GeneratedFoldScheduleEntry {
+    let terminal_group = schedule
+        .terminal
+        .params
+        .response_shape
+        .layout
+        .groups
+        .first()
+        .ok_or_else(|| "terminal response shape has no group".to_string())?;
+    if schedule.terminal.params.response_shape.layout.groups.len() != 1 {
+        return Err("generated scalar terminal response must have exactly one group".to_string());
+    }
+    Ok(GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
             final_group: GeneratedRootFinalGroup {
                 layout: key.final_group,
-                source,
+                num_digits_inner: root_params.num_digits_inner as u32,
+                num_digits_fold: root_params.num_digits_fold as u32,
                 challenge,
                 commitment: committed_group(root_params),
             },
@@ -215,8 +228,24 @@ fn generated_entry(
                     .ring_dimension() as u32,
                 log_basis: schedule.terminal.params.witness.log_basis_inner,
             },
+            num_digits_inner: schedule.terminal.params.witness.num_digits_inner as u32,
+            inner_output_rank: schedule
+                .terminal
+                .params
+                .witness
+                .inner_commit_matrix
+                .output_rank() as u32,
+            inner_coeff_linf_bound: schedule
+                .terminal
+                .params
+                .witness
+                .inner_commit_matrix
+                .coeff_linf_bound(),
+            z_admission_linf_cap: terminal_group.z_admission_linf_cap,
+            z_rice_low_bits: terminal_group.z_rice_low_bits,
+            z_payload_bytes: terminal_group.z_payload_bytes as u64,
         },
-    }
+    })
 }
 
 fn emit_key(key: PolynomialGroupLayout) -> String {
@@ -227,21 +256,82 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
     )
 }
 
-fn emit_precommitted_group_key(layout: &PrecommittedGroupDescriptor) -> String {
+fn emit_precommitted_group_key(layout: &CommittedGroupProfile) -> String {
     format!(
-        "PrecommittedGroupDescriptor {{ group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, log_basis_inner: {}, log_basis_outer: {}, inner_ring_dimension: {}, outer_ring_dimension: {}, n_a: {}, a_coeff_linf_bound: {}, n_b: {}, b_coeff_linf_bound: {} }}",
+        "CommittedGroupProfile {{ version: CommittedGroupProfile::VERSION, group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, log_basis_inner: {}, num_digits_inner: {}, inner_commit_matrix: {}, log_basis_outer: {}, num_digits_outer: {}, outer_commit_matrix: {} }}",
         emit_key(layout.group),
         layout.num_live_ring_elements_per_claim,
         layout.num_positions_per_block,
         layout.num_live_blocks,
         layout.log_basis_inner,
+        layout.num_digits_inner,
+        emit_profile_matrix(
+            "InnerCommitMatrixParams",
+            layout.inner_commit_matrix.output_rank(),
+            layout.inner_commit_matrix.input_width(),
+            layout.inner_commit_matrix.sis_table_key(),
+        ),
         layout.log_basis_outer,
-        layout.inner_ring_dimension,
-        layout.outer_ring_dimension,
-        layout.n_a,
-        layout.a_coeff_linf_bound,
-        layout.n_b,
-        layout.b_coeff_linf_bound,
+        layout.num_digits_outer,
+        emit_profile_matrix(
+            "OuterCommitMatrixParams",
+            layout.outer_commit_matrix.output_rank(),
+            layout.outer_commit_matrix.input_width(),
+            layout.outer_commit_matrix.sis_table_key(),
+        ),
+    )
+}
+
+fn precommitted_profiles_const_name(spec: &EmitSpec) -> String {
+    format!("{}_PRECOMMITTED_PROFILES", spec.const_name)
+}
+
+fn precommitted_profiles_module_name(spec: &EmitSpec) -> String {
+    format!("{}_precommitted", spec.module_name)
+}
+
+fn emit_generated_precommitted_profile(profile: &CommittedGroupProfile) -> String {
+    format!(
+        "GeneratedPrecommittedProfile {{ group: {}, commitment: {}, num_digits_inner: {}, inner_output_rank: {}, inner_coeff_linf_bound: {}, num_digits_outer: {}, outer_output_rank: {}, outer_coeff_linf_bound: {} }}",
+        emit_key(profile.group),
+        emit_generated_committed_profile_group(profile),
+        profile.num_digits_inner,
+        profile.inner_commit_matrix.output_rank(),
+        profile.inner_commit_matrix.coeff_linf_bound(),
+        profile.num_digits_outer,
+        profile.outer_commit_matrix.output_rank(),
+        profile.outer_commit_matrix.coeff_linf_bound(),
+    )
+}
+
+fn emit_generated_committed_profile_group(profile: &CommittedGroupProfile) -> String {
+    format!(
+        "GeneratedCommittedGroup {{ geometry: GeneratedBlockGeometry {{ live_ring_elements_per_claim: {}, positions_per_block: {}, live_blocks: {} }}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_commit_matrix: GeneratedOuterCommitMatrix {{ ring_dimension: {}, log_basis: {}, slice_count: 1 }} }}",
+        profile.num_live_ring_elements_per_claim,
+        profile.num_positions_per_block,
+        profile.num_live_blocks,
+        profile.inner_commit_matrix.ring_dimension(),
+        profile.log_basis_inner,
+        profile.outer_commit_matrix.ring_dimension(),
+        profile.log_basis_outer,
+    )
+}
+
+fn emit_profile_matrix(
+    type_name: &str,
+    output_rank: usize,
+    input_width: usize,
+    key: akita_types::SisTableKey,
+) -> String {
+    format!(
+        "{type_name}::new_unchecked(SisSecurityPolicyId::{:?}, SisTableDigest({:?}), SisModulusProfileId::{:?}, {}, {}, {}, {})",
+        key.policy,
+        key.table_digest.0,
+        key.modulus_profile,
+        output_rank,
+        input_width,
+        key.coeff_linf_bound,
+        key.ring_dimension,
     )
 }
 
@@ -280,12 +370,19 @@ fn emit_partition(value: GeneratedWitnessPartition) -> String {
     }
 }
 
+fn emit_payload_mode(value: akita_types::CommitmentPayloadMode) -> &'static str {
+    match value {
+        akita_types::CommitmentPayloadMode::Compressed => "CommitmentPayloadMode::Compressed",
+        akita_types::CommitmentPayloadMode::Raw => "CommitmentPayloadMode::Raw",
+    }
+}
+
 fn emit_setup_prefix(value: Option<GeneratedSetupPrefixInput>) -> String {
     match value {
         Some(value) => format!(
-            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, d_setup: {}, commitment: {} }})",
+            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, num_digits_fold: {}, commitment: {} }})",
             value.natural_len,
-            value.d_setup,
+            value.num_digits_fold,
             emit_committed_group(value.commitment)
         ),
         None => "None".to_string(),
@@ -297,15 +394,7 @@ fn emit_schedule_entry(
     key: &AkitaScheduleLookupKey,
     schedule: &FoldSchedule,
 ) -> Result<(), String> {
-    let entry = generated_entry(key, schedule);
-    let source = match entry.root.final_group.source {
-        GeneratedRootSource::Dense { coefficient_bits } => {
-            format!("GeneratedRootSource::Dense {{ coefficient_bits: {coefficient_bits} }}")
-        }
-        GeneratedRootSource::OneHot { chunk_size } => {
-            format!("GeneratedRootSource::OneHot {{ chunk_size: {chunk_size} }}")
-        }
-    };
+    let entry = generated_entry(key, schedule)?;
     let challenge = match entry.root.final_group.challenge {
         GeneratedRootFinalChallenge::Flat => "GeneratedRootFinalChallenge::Flat".to_string(),
         GeneratedRootFinalChallenge::Tensor { fold_low_len } => {
@@ -316,9 +405,10 @@ fn emit_schedule_entry(
     writeln!(out, "        root: GeneratedRootFold {{").map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "            final_group: GeneratedRootFinalGroup {{ layout: {}, source: {}, challenge: {},",
+        "            final_group: GeneratedRootFinalGroup {{ layout: {}, num_digits_inner: {}, num_digits_fold: {}, challenge: {},",
         emit_key(entry.root.final_group.layout),
-        source,
+        entry.root.final_group.num_digits_inner,
+        entry.root.final_group.num_digits_fold,
         challenge,
     )
     .map_err(|e| e.to_string())?;
@@ -335,8 +425,9 @@ fn emit_schedule_entry(
         for group in entry.root.precommitted_groups {
             writeln!(
                 out,
-                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, commitment: {} }},",
+                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, num_digits_fold: {}, commitment: {} }},",
                 emit_precommitted_group_key(&group.descriptor),
+                group.num_digits_fold,
                 emit_committed_group(group.commitment),
             )
             .map_err(|e| e.to_string())?;
@@ -363,8 +454,10 @@ fn emit_schedule_entry(
         for fold in entry.recursive_folds {
             writeln!(
                 out,
-                "            GeneratedRecursiveFold {{ witness: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
+                "            GeneratedRecursiveFold {{ payload_mode: {}, witness: {}, num_digits_fold: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
+                emit_payload_mode(fold.payload_mode),
                 emit_committed_group(fold.witness),
+                fold.num_digits_fold,
                 emit_open_matrix(fold.open_commit_matrix),
                 emit_setup_prefix(fold.incoming_setup_prefix),
                 emit_partition(fold.witness_partition),
@@ -375,10 +468,16 @@ fn emit_schedule_entry(
     }
     writeln!(
         out,
-        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }} }},",
+        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, num_digits_inner: {}, inner_output_rank: {}, inner_coeff_linf_bound: {}, z_admission_linf_cap: {}, z_rice_low_bits: {}, z_payload_bytes: {} }},",
         emit_geometry(entry.terminal.geometry),
         entry.terminal.inner_commit_matrix.ring_dimension,
         entry.terminal.inner_commit_matrix.log_basis,
+        entry.terminal.num_digits_inner,
+        entry.terminal.inner_output_rank,
+        entry.terminal.inner_coeff_linf_bound,
+        entry.terminal.z_admission_linf_cap,
+        entry.terminal.z_rice_low_bits,
+        entry.terminal.z_payload_bytes,
     )
     .map_err(|e| e.to_string())?;
     writeln!(out, "    }},").map_err(|e| e.to_string())
@@ -459,18 +558,18 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    protocol_epoch: {protocol_epoch},\n",
             "    cost_model: PlannerCostModelId::{cost_model},\n",
             "    selection_policy: SelectionPolicyId::{selection_policy},\n",
-            "    max_setup_envelope_field_elements: {max_setup_envelope_field_elements},\n",
+            "    setup_field_budget: {setup_field_budget},\n",
             "    min_offloaded_witness_contraction: {min_offloaded_witness_contraction},\n",
             "    sis_modulus_profile: {sis_modulus_profile},\n",
             "    sis_security_policy: SisSecurityPolicyId::{sis_security_policy},\n",
             "    sis_table_digest: SisTableDigest({sis_table_digest}),\n",
-            "    ring_dimension: {ring_dimension},\n",
+            "    uniform_ring_dimension: {uniform_ring_dimension},\n",
+            "    setup_prefix_inner_ring_dimension: {setup_prefix_inner_ring_dimension},\n",
             "    decomposition: {decomposition},\n",
             "    ring_subfield_norm_bound: {ring_subfield_norm_bound},\n",
             "    claim_ext_degree: {claim_ext_degree},\n",
             "    chal_ext_degree: {chal_ext_degree},\n",
             "    basis_range: ({basis_min}, {basis_max}),\n",
-            "    onehot_chunk_size: {onehot_chunk_size},\n",
             "    witness_chunk: {witness_chunk},\n",
             "    recursive_setup_planning: {recursive_setup_planning},\n",
             "    root_fold_shape: {root_fold_shape},\n",
@@ -487,19 +586,22 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         protocol_epoch = identity.protocol_epoch,
         cost_model = identity.cost_model.name(),
         selection_policy = identity.selection_policy.name(),
-        max_setup_envelope_field_elements = identity.max_setup_envelope_field_elements,
+        setup_field_budget = match identity.setup_field_budget {
+            Some(value) => format!("Some({value})"),
+            None => "None".to_string(),
+        },
         min_offloaded_witness_contraction = identity.min_offloaded_witness_contraction,
         sis_modulus_profile = emit_sis_modulus_profile(identity.sis_modulus_profile),
         sis_security_policy = identity.sis_security_policy.name(),
         sis_table_digest = format_bytes(identity.sis_table_digest.0),
-        ring_dimension = identity.ring_dimension,
+        uniform_ring_dimension = identity.uniform_ring_dimension,
+        setup_prefix_inner_ring_dimension = identity.setup_prefix_inner_ring_dimension,
         decomposition = emit_decomposition(identity.decomposition),
         ring_subfield_norm_bound = identity.ring_subfield_norm_bound,
         claim_ext_degree = identity.claim_ext_degree,
         chal_ext_degree = identity.chal_ext_degree,
         basis_min = identity.basis_range.0,
         basis_max = identity.basis_range.1,
-        onehot_chunk_size = identity.onehot_chunk_size,
         witness_chunk = emit_witness_chunk(identity.witness_chunk),
         recursive_setup_planning = identity.recursive_setup_planning,
         root_fold_shape = emit_root_fold_shape(identity.root_fold_shape),
@@ -527,7 +629,7 @@ fn materialized_entries(
             .copied()
             .map(AkitaScheduleLookupKey::single),
     );
-    keys.extend(spec.group_batch_keys.iter().cloned());
+    keys.extend(spec.group_batch_keys.iter().map(|(key, _)| key.clone()));
 
     let workers = std::thread::available_parallelism()
         .map(|count| count.get())
@@ -589,7 +691,13 @@ fn materialized_entry(
     let result = if key.precommitteds.is_empty() {
         (spec.regen)(key.final_group)
     } else {
-        (spec.regen_group_batch)(key.clone())
+        let (key, norms) = spec
+            .group_batch_keys
+            .iter()
+            .find(|(candidate, _)| candidate == &key)
+            .cloned()
+            .ok_or_else(|| format!("{}: missing grouped planning request", spec.module_name))?;
+        (spec.regen_group_batch)(key, norms)
     };
     match result {
         Ok(schedule) => Ok(Some((key, schedule))),
@@ -619,10 +727,11 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
          GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedInnerCommitMatrix, \
          GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix, GeneratedRecursiveFold, \
          GeneratedRootFinalChallenge, GeneratedRootFinalGroup, GeneratedRootFold, \
-         GeneratedRootPrecommittedGroup, GeneratedRootSource, GeneratedScheduleCatalogIdentity, \
+         GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, \
          GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
-         CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, PrecommittedGroupDescriptor, \
-         SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \
+         CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, CommittedGroupProfile, \
+         InnerCommitMatrixParams, OuterCommitMatrixParams, \
+         CommitmentPayloadMode, SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \
          TensorChallengeShape,\n}};"
     )
     .map_err(|e| e.to_string())?;
@@ -639,7 +748,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
 
     for (key, schedule) in materialized {
         emit_schedule_entry(&mut out, &key, &schedule)?;
-        memory_entries.push(generated_entry(&key, &schedule));
+        memory_entries.push(generated_entry(&key, &schedule)?);
     }
     debug_assert!(akita_schedules::catalog_entries_sorted_for_lookup(
         &memory_entries
@@ -661,6 +770,33 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     Ok(out)
 }
 
+/// Emit the compact standalone precommit registry module for one family.
+pub fn emit_precommitted_profiles_module(spec: &EmitSpec) -> Result<String, String> {
+    let mut out = String::new();
+    let precommitted_profiles_const = precommitted_profiles_const_name(spec);
+    writeln!(out, "// Generated by `{}`", spec.generator_command).map_err(|e| e.to_string())?;
+    writeln!(
+        out,
+        "use super::{{\n    GeneratedBlockGeometry, GeneratedCommittedGroup, \
+         GeneratedInnerCommitMatrix, GeneratedOuterCommitMatrix, \
+         GeneratedPrecommittedProfile, PolynomialGroupLayout,\n}};"
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(out).map_err(|e| e.to_string())?;
+    writeln!(out, "#[rustfmt::skip]").map_err(|e| e.to_string())?;
+    writeln!(
+        out,
+        "pub(crate) static {precommitted_profiles_const}: &[GeneratedPrecommittedProfile] = &["
+    )
+    .map_err(|e| e.to_string())?;
+    for profile in &spec.precommitted_profiles {
+        writeln!(out, "    {},", emit_generated_precommitted_profile(profile))
+            .map_err(|e| e.to_string())?;
+    }
+    writeln!(out, "];").map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
 fn emit_module_declarations(specs: &[EmitSpec]) -> Result<String, String> {
     let mut out = String::new();
     let mut seen = std::collections::BTreeSet::new();
@@ -669,9 +805,12 @@ fn emit_module_declarations(specs: &[EmitSpec]) -> Result<String, String> {
             continue;
         }
         let module_name = spec.module_name;
+        let precommitted_module_name = precommitted_profiles_module_name(spec);
         let feat = spec.schedule_feature;
         writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
         writeln!(out, "pub mod {module_name};").map_err(|e| e.to_string())?;
+        writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
+        writeln!(out, "pub mod {precommitted_module_name};").map_err(|e| e.to_string())?;
     }
     writeln!(out).map_err(|e| e.to_string())?;
     Ok(out)
@@ -685,10 +824,12 @@ fn emit_table_accessor(spec: &EmitSpec) -> Result<String, String> {
     let fn_name = table_fn_name(spec.module_name);
     let feat = spec.schedule_feature;
     let module_name = spec.module_name;
+    let precommitted_module_name = precommitted_profiles_module_name(spec);
     let const_name = spec.const_name;
+    let precommitted_profiles_const = precommitted_profiles_const_name(spec);
     Ok(format!(
         "#[cfg(feature = \"{feat}\")]\n\
-         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
+         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        precommitted_profiles: {precommitted_module_name}::{precommitted_profiles_const},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
     ))
 }
 
@@ -762,6 +903,16 @@ pub fn write_family_module(spec: &EmitSpec) -> Result<PathBuf, String> {
     let dest = spec
         .output_dir
         .join(format!("{}.rs", output_module_name(spec)));
+    fs::write(&dest, &body).map_err(|e| format!("write {}: {e}", dest.display()))?;
+    Ok(dest)
+}
+
+/// Write one compact standalone precommit registry module to `spec.output_dir`.
+pub fn write_precommitted_profiles_module(spec: &EmitSpec) -> Result<PathBuf, String> {
+    let body = emit_precommitted_profiles_module(spec)?;
+    let dest = spec
+        .output_dir
+        .join(format!("{}.rs", precommitted_profiles_module_name(spec)));
     fs::write(&dest, &body).map_err(|e| format!("write {}: {e}", dest.display()))?;
     Ok(dest)
 }

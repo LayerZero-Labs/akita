@@ -56,11 +56,11 @@ pub mod fp128 {
             SisModulusProfileId::Q128OffsetA7F7
         }
 
-        fn max_setup_matrix_size(
+        fn setup_matrix_capacity(
             max_num_vars: usize,
             max_num_batched_polys: usize,
-        ) -> Result<akita_types::SetupMatrixEnvelope, akita_error::AkitaError> {
-            crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
+        ) -> Result<akita_types::SetupMatrixCapacity, akita_error::AkitaError> {
+            crate::proof_optimized::proof_optimized_setup_matrix_capacity::<Self>(
                 max_num_vars,
                 max_num_batched_polys,
             )
@@ -73,8 +73,13 @@ pub mod fp128 {
             )
         }
 
-        fn onehot_chunk_size() -> usize {
-            256
+        fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+            akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
+                akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
+                    128,
+                    akita_types::sis::FoldWitnessNorms::new(1, 1),
+                ),
+            )
         }
 
         fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
@@ -91,9 +96,9 @@ pub mod fp128 {
         fn get_params_for_prove(
             layout: &OpeningClaimsLayout,
         ) -> Result<FoldSchedule, akita_error::AkitaError> {
-            Self::runtime_schedule(
-                crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
-            )
+            Self::runtime_schedule(crate::proof_optimized::proof_optimized_schedule_key(
+                layout,
+            )?)
         }
     }
 }

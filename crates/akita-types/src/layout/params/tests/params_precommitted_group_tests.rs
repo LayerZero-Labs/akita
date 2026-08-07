@@ -1,4 +1,5 @@
 use super::*;
+use crate::schedule::CommittedGroupProfile;
 use crate::WitnessLayout;
 
 #[test]
@@ -6,13 +7,19 @@ fn multi_group_m_row_count_matches_canonical_layout() {
     let (lp, _) = sample_multi_group_root_params();
     let n_a_final = lp.inner_commit_matrix.output_rank();
     let n_b_final = lp.outer_commit_matrix.output_rank();
-    let n_a_pre = lp.precommitted_groups[0].inner_commit_matrix.output_rank();
-    let n_b_pre = lp.precommitted_groups[0].outer_commit_matrix.output_rank();
+    let n_a_pre = lp.precommitted_groups[0]
+        .layout
+        .inner_commit_matrix
+        .output_rank();
+    let n_b_pre = lp.precommitted_groups[0]
+        .layout
+        .outer_commit_matrix
+        .output_rank();
     let n_d = lp.open_commit_matrix.output_rank();
 
     assert_eq!(
         lp.relation_matrix_row_count(2).unwrap(),
-        1 + n_a_final + n_b_final + 1 + n_a_pre + n_b_pre + n_d
+        1 + n_a_final + n_b_final + 1 + n_a_pre + n_b_pre + n_d + 6
     );
 }
 
@@ -21,8 +28,14 @@ fn multi_group_row_offsets_match_a_before_b_layout() {
     let (lp, batch) = sample_multi_group_root_params();
     let n_a_final = lp.inner_commit_matrix.output_rank();
     let n_b_final = lp.outer_commit_matrix.output_rank();
-    let n_a_pre = lp.precommitted_groups[0].inner_commit_matrix.output_rank();
-    let n_b_pre = lp.precommitted_groups[0].outer_commit_matrix.output_rank();
+    let n_a_pre = lp.precommitted_groups[0]
+        .layout
+        .inner_commit_matrix
+        .output_rank();
+    let n_b_pre = lp.precommitted_groups[0]
+        .layout
+        .outer_commit_matrix
+        .output_rank();
     let final_group = batch.root_final_group_index().expect("final group");
 
     assert_eq!(
@@ -63,17 +76,16 @@ fn multi_group_root_accepts_multi_chunk_witness_layout() {
 fn group_role_dims_use_group_a_b_and_level_shared_d() {
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
-    let outer = &precommitted.outer_commit_matrix;
-    precommitted.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &precommitted.layout.outer_commit_matrix;
+    precommitted.layout.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
         outer.output_rank(),
-        outer.input_width() * 2,
+        outer.input_width(),
         outer.coeff_linf_bound(),
-        32,
+        64,
     );
-    precommitted.layout.outer_ring_dimension = 32;
     let dims = lp
         .group_role_dims(&batch, 0)
         .expect("precommitted group role dimensions");
@@ -81,7 +93,7 @@ fn group_role_dims_use_group_a_b_and_level_shared_d() {
         dims,
         CommitmentRingDims {
             inner: 64,
-            outer: 32,
+            outer: 64,
             opening: 64,
         }
     );
@@ -97,7 +109,11 @@ fn group_role_dims_use_group_a_b_and_level_shared_d() {
 fn precommitted_params_reject_frozen_matrix_dimension_mismatch() {
     let (mut lp, _) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
-    precommitted.layout.outer_ring_dimension /= 2;
+    precommitted
+        .layout
+        .outer_commit_matrix
+        .sis_table_key
+        .ring_dimension /= 2;
     let err = precommitted
         .validate()
         .expect_err("frozen B dimension must match the serialized B matrix");
@@ -110,8 +126,8 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
 
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
-    let inner = &precommitted.inner_commit_matrix;
-    precommitted.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+    let inner = &precommitted.layout.inner_commit_matrix;
+    precommitted.layout.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner.sis_table_key().table_digest,
         inner.sis_modulus_profile(),
@@ -120,9 +136,8 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         inner.coeff_linf_bound(),
         128,
     );
-    precommitted.layout.inner_ring_dimension = 128;
-    let outer = &precommitted.outer_commit_matrix;
-    precommitted.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &precommitted.layout.outer_commit_matrix;
+    precommitted.layout.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -213,8 +228,6 @@ fn address_oracle_precommit(
     blocks: usize,
     claims: usize,
 ) -> PrecommittedLevelParams {
-    use crate::schedule::PrecommittedGroupDescriptor;
-
     let mut lp = address_oracle_group_params(d_a, d_b, d_d, blocks);
     certify_test_sis_bounds(&mut lp);
     let outer = &lp.outer_commit_matrix;
@@ -227,28 +240,23 @@ fn address_oracle_precommit(
         outer.coeff_linf_bound(),
         d_b,
     );
-    let layout =
-        PrecommittedGroupDescriptor::from_params(PolynomialGroupLayout::new(4, claims), &lp);
+    let layout = CommittedGroupProfile::from_params(PolynomialGroupLayout::new(4, claims), &lp);
     PrecommittedLevelParams {
         layout,
-        inner_commit_matrix: lp.inner_commit_matrix,
-        outer_commit_matrix: lp.outer_commit_matrix,
         log_basis_open: lp.log_basis_open,
         fold_challenge_config: lp.fold_challenge_config,
-        num_digits_inner: lp.num_digits_inner,
-        num_digits_outer: lp.num_digits_outer,
         num_digits_open: lp.num_digits_open,
-        num_digits_fold_one: lp.num_digits_fold_one,
+        num_digits_fold: lp.num_digits_fold,
     }
 }
 
 fn address_oracle_fixture(group_count: usize) -> (CommittedGroupParams, OpeningClaimsLayout) {
     let (final_dims, precommitted) = match group_count {
         1 => ((64, 64, 64, 8, 2), Vec::new()),
-        2 => ((64, 64, 32, 8, 2), vec![(128, 64, 32, 16, 1)]),
+        2 => ((64, 64, 64, 8, 2), vec![(128, 64, 64, 16, 1)]),
         3 => (
-            (64, 32, 64, 8, 2),
-            vec![(128, 32, 64, 16, 1), (64, 64, 64, 8, 3)],
+            (64, 64, 64, 8, 2),
+            vec![(128, 64, 64, 16, 1), (64, 64, 64, 8, 3)],
         ),
         _ => panic!("address-oracle fixture supports one to three groups"),
     };
@@ -319,9 +327,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     let q_b = d_a / d_b;
                     let q_d = d_a / d_d;
                     let delta_z = params.num_digits_inner();
-                    let delta_f = lp
-                        .num_digits_fold_for_params(params, claims, lp.field_bits_for_cache())
-                        .expect("fold depth");
+                    let delta_f = params.num_digits_fold();
                     let delta_d = params.num_digits_open();
                     let delta_b = params.num_digits_outer();
                     let n_a = params.a_rows_len();
@@ -435,6 +441,8 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     }
                 }
             }
+            let relation_layout =
+                crate::relation_rhs_layout_for(&lp, &batch).expect("compression relation layout");
             assert_eq!(layout.r_range().start, cursor);
             let mut expected_r_dims = Vec::new();
             for &group_index in &group_order {
@@ -449,9 +457,33 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 lp.role_dims().d_d(),
                 lp.open_commit_matrix.output_rank(),
             ));
+            for map_index in 0..crate::COMPRESSION_MAP_COUNT {
+                for relation_group_index in 0..group_order.len() {
+                    expected_r_dims.push(
+                        relation_layout
+                            .group_compression_plan(relation_group_index)
+                            .expect("F plan")
+                            .1
+                            .maps()[map_index]
+                            .ring_dimension(),
+                    );
+                }
+                expected_r_dims.push(
+                    relation_layout
+                        .opening_compression_plan()
+                        .expect("H plan")
+                        .maps()[map_index]
+                        .ring_dimension(),
+                );
+            }
             assert_eq!(layout.r_rows().len(), expected_r_dims.len());
-            for (row_index, (&ring_dim, row)) in
-                expected_r_dims.iter().zip(layout.r_rows()).enumerate()
+            let compression_row_count = crate::COMPRESSION_MAP_COUNT * (group_order.len() + 1);
+            let ordinary_row_count = expected_r_dims.len() - compression_row_count;
+            for (row_index, (&ring_dim, row)) in expected_r_dims
+                .iter()
+                .zip(layout.r_rows())
+                .take(ordinary_row_count)
+                .enumerate()
             {
                 assert_eq!(row.ring_dim(), ring_dim);
                 assert_eq!(row.range(), cursor..cursor + quotient_depth * ring_dim);
@@ -467,6 +499,78 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 }
                 cursor += quotient_depth * ring_dim;
             }
+            let support = layout.negative_binary_support_intervals();
+            assert_eq!(support.len(), crate::COMPRESSION_MAP_COUNT);
+            let prefix_alignment = cursor..support[0].start;
+            if !prefix_alignment.is_empty() {
+                assert!(layout
+                    .compression_alignment_ranges()
+                    .contains(&prefix_alignment));
+            }
+            assert_eq!(
+                layout.compression_layers().len(),
+                crate::COMPRESSION_MAP_COUNT
+            );
+            for (map_index, support_interval) in support.iter().enumerate() {
+                let layer_alignment = cursor..support_interval.start;
+                if !layer_alignment.is_empty() {
+                    assert!(layout
+                        .compression_alignment_ranges()
+                        .contains(&layer_alignment));
+                }
+                cursor = support_interval.start;
+                let layer = &layout.compression_layers()[map_index];
+                assert_eq!(layer.map_index(), map_index);
+                assert_eq!(layer.f_spans().len(), group_order.len());
+                for (relation_group_index, &group_index) in group_order.iter().enumerate() {
+                    let (planned_group_index, plan) = relation_layout
+                        .group_compression_plan(relation_group_index)
+                        .expect("group compression plan");
+                    assert_eq!(planned_group_index, group_index);
+                    let (span_group_index, span) = &layer.f_spans()[relation_group_index];
+                    assert_eq!(*span_group_index, group_index);
+                    assert_eq!(span.map(), plan.maps()[map_index]);
+                    assert_eq!(
+                        span.range(),
+                        cursor..cursor + span.map().padded_digit_count()
+                    );
+                    cursor += span.map().padded_digit_count();
+                }
+                let h_map = relation_layout
+                    .opening_compression_plan()
+                    .expect("H plan")
+                    .maps()[map_index];
+                assert_eq!(layer.h_span().map(), h_map);
+                assert_eq!(
+                    layer.h_span().range(),
+                    cursor..cursor + h_map.padded_digit_count()
+                );
+                cursor += h_map.padded_digit_count();
+                assert_eq!(support_interval.end, cursor);
+                for &(group_index, row_index) in layer.f_quotient_rows() {
+                    assert!(group_order.contains(&group_index));
+                    let row = &layout.r_rows()[row_index];
+                    assert_eq!(
+                        row.range(),
+                        cursor..cursor + quotient_depth * row.ring_dim()
+                    );
+                    cursor = row.range().end;
+                }
+                let h_row = &layout.r_rows()[layer.h_quotient_row()];
+                assert_eq!(
+                    h_row.range(),
+                    cursor..cursor + quotient_depth * h_row.ring_dim()
+                );
+                cursor = h_row.range().end;
+            }
+            let suffix_alignment = cursor..layout.live_coeff_len();
+            if !suffix_alignment.is_empty() {
+                assert!(layout
+                    .compression_alignment_ranges()
+                    .contains(&suffix_alignment));
+            }
+            cursor = layout.live_coeff_len();
+            assert_eq!(layout.r_range().end, cursor);
             assert_eq!(layout.live_coeff_len(), cursor);
             assert_eq!(
                 lp.output_witness_len::<Prime128OffsetA7F7>(&batch)

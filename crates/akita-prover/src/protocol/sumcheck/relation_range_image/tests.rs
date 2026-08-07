@@ -108,6 +108,7 @@ fn new_stage2_test_prover(
             1usize << params.coefficient_bits,
         ),
         F::zero(),
+        None,
     )
     .unwrap()
 }
@@ -146,6 +147,7 @@ pub(super) fn new_stage2_test_prover_with_trace(
             1usize << params.coefficient_bits,
         ),
         direct.evaluation_trace,
+        None,
     )
     .unwrap()
 }

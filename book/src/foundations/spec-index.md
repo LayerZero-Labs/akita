@@ -7,8 +7,9 @@ a chapter and tell active design from historical record. Each entry: spec, one
 line, status (`active` / `implemented` / `superseded` / `archived`), and the book
 chapter it feeds. Keep this in sync with `specs/PRUNING.md` and the archive index.
 
-The active design frontier (keep as live specs): `setup-layout-repack`,
-`role-native-projected-digit-layout`,
+The active design frontier (keep as live specs):
+`flat-public-matrix-and-exact-ntt-cache`, `role-native-projected-digit-layout`,
+`setup-layout-repack`,
 `setup-offloading-planner`, `eor-streamed-prover`, `packed-sumcheck`,
 `planner-incidence-generalization`, `single-point-opening-batch`,
 `jolt-field-unification`, `akita-compute-backend-metal` (Metal tail),

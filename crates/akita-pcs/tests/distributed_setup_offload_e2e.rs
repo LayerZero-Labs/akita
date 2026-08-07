@@ -20,10 +20,70 @@
 
 mod common;
 
-use akita_types::{FoldSchedule, SetupContributionMode};
+use akita_config::proof_optimized::fp128;
+use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
+use akita_types::{
+    setup_matrix_capacity_for_schedule, verifier_setup_matrix_capacity_for_schedule,
+    AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule, OpeningClaimsLayout,
+    PolynomialGroupLayout, SetupContributionMode,
+};
 use common::*;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
+
+type W8R2Cfg = RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>;
+type W8R2PrecommittedCfg = PrecommittedCommitmentConfig<fp128::D64OneHotMultiChunk>;
+
+fn w8r2_profiling_key() -> AkitaScheduleLookupKey {
+    let pre_group = PolynomialGroupLayout::new(16, 1);
+    let pre_layout = OpeningClaimsLayout::new(16, 1).expect("precommit layout");
+    let pre_params = W8R2PrecommittedCfg::get_params_for_batched_commitment(&pre_layout)
+        .expect("precommit params");
+    let precommitted = CommittedGroupProfile::from_params(pre_group, &pre_params);
+    AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(32, 2),
+        precommitteds: vec![precommitted, precommitted],
+    }
+}
+
+#[test]
+fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
+    let key = w8r2_profiling_key();
+    let root_layout = key.opening_layout().expect("root layout");
+    let schedule = W8R2Cfg::runtime_schedule(key).expect("W8R2 schedule");
+    let prover = setup_matrix_capacity_for_schedule(&schedule).expect("prover capacity");
+    let verifier = verifier_setup_matrix_capacity_for_schedule(&schedule, &root_layout)
+        .expect("verifier capacity");
+    let setup_for_two = W8R2Cfg::setup_matrix_capacity(32, 2).expect("setup capacity for K=2");
+    let setup_for_four = W8R2Cfg::setup_matrix_capacity(32, 4).expect("setup capacity for K=4");
+    let incoming_prefixes = schedule
+        .recursive_folds
+        .iter()
+        .map(|fold| {
+            fold.params
+                .incoming_setup_prefix
+                .as_ref()
+                .map(|slot| slot.natural_len)
+        })
+        .collect::<Vec<_>>();
+    eprintln!(
+        "W8R2 setup capacities: provisioned_k2={}, provisioned_k4={}, exact_prover={}, exact_verifier={}, incoming_prefixes={:?}",
+        setup_for_two.num_field_elements,
+        setup_for_four.num_field_elements,
+        prover.num_field_elements,
+        verifier.num_field_elements,
+        incoming_prefixes
+    );
+    assert_eq!(
+        &incoming_prefixes[..2],
+        &[Some(28_180_480), Some(20_447_232)]
+    );
+    assert!(incoming_prefixes[2..].iter().all(Option::is_none));
+    assert_eq!(prover.num_field_elements, 28_180_480);
+    assert_eq!(verifier.num_field_elements, 10_223_616);
+    assert_eq!(setup_for_two.num_field_elements, 112_721_920);
+    assert_eq!(setup_for_four.num_field_elements, 225_443_840);
+}
 
 /// Assert the exact shipped `W8R2` profile shape, not just "some mixed fold".
 ///

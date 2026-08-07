@@ -28,6 +28,7 @@ version = "0.1.0"
 dependencies = [
  "akita-error",
  "akita-serialization",
+ "criterion",
  "jolt-field",
  "rand 0.8.6",
  "rand_core 0.6.4",
@@ -78,7 +79,6 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-error",
- "akita-pcs",
  "akita-planner",
  "akita-prover",
  "akita-schedules",
@@ -730,7 +730,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/Acentelles/jolt.git?rev=505d8ebcb45e5796afcf16468972b10e51b4a355#505d8ebcb45e5796afcf16468972b10e51b4a355"
+source = "git+https://github.com/Acentelles/jolt.git?rev=eb93a031027ee735f0827edb4539e971ab5fcc0b#eb93a031027ee735f0827edb4539e971ab5fcc0b"
 dependencies = [
  "num-traits",
  "rand_core 0.6.4",

@@ -2,4 +2,4 @@
 
 mod opening_data;
 
-pub use opening_data::ProverOpeningData;
+pub use opening_data::{ProverOpeningData, SelectedProverOpeningData};

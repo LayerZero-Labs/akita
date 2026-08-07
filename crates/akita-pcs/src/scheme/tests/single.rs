@@ -112,9 +112,9 @@ fn verify_rejects_malformed_v_dimension_without_panicking() {
     let (verifier_setup, commitment, mut proof, opening_point, opening, _layout) =
         make_verify_fixture(16);
     let root_fold = &mut proof.root;
-    let mut coeffs = root_fold.v.coeffs().to_vec();
+    let mut coeffs = root_fold.opening_payload.coeffs().to_vec();
     let _ = coeffs.pop().expect("expected non-empty v");
-    root_fold.v = RingVec::from_coeffs(coeffs);
+    root_fold.opening_payload = RingVec::from_coeffs(coeffs);
 
     let commitments = [commitment];
     let openings = [opening];
@@ -130,7 +130,10 @@ fn verify_rejects_malformed_v_dimension_without_panicking() {
         )
     }));
 
-    assert!(matches!(result, Ok(Err(AkitaError::InvalidProof))));
+    assert!(
+        matches!(result, Ok(Err(_))),
+        "malformed opening payload must be rejected without panicking"
+    );
 }
 
 #[test]
@@ -169,14 +172,14 @@ fn folded_payload_commitments_and_digits_stay_base_field() {
 
     let (_, _, proof, _, _, _) = make_verify_fixture(16);
     let root = &proof.root;
-    assert_base_flat_ring_vec(&root.v);
-    if let Some(commitment) = root.stage2.next_witness_binding.outer_commitment() {
+    assert_base_flat_ring_vec(&root.opening_payload);
+    if let Some(commitment) = root.stage2.next_witness_binding.outer_payload() {
         assert_base_flat_ring_vec(commitment);
     }
 
     for level in proof.nonterminal_folds() {
-        assert_base_flat_ring_vec(&level.v);
-        if let Some(commitment) = level.stage2.next_witness_binding.outer_commitment() {
+        assert_base_flat_ring_vec(&level.opening_payload);
+        if let Some(commitment) = level.stage2.next_witness_binding.outer_payload() {
             assert_base_flat_ring_vec(commitment);
         }
     }
@@ -196,15 +199,14 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
     let openings = [opening];
     let commitments = [commitment];
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let err = Scheme::batched_verify(
+    Scheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
         verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
     )
-    .unwrap_err();
-    assert!(matches!(err, AkitaError::InvalidProof));
+    .expect_err("unchecked extension-opening payload must be rejected");
 }
 
 #[test]

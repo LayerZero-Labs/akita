@@ -1,15 +1,13 @@
-//! Cap-derived Rice low-bit width for terminal Golomb `z` (descriptor-bound wire rule).
-
-use akita_error::AkitaError;
+//! Offline selection of the terminal Golomb-Rice low-bit width.
+//!
+//! Schedule generation stores the selected width in the terminal response
+//! shape. Runtime encoding and decoding consume that exact stored value.
 
 use crate::golomb_rice::rice_low_bits_for_cap;
 
-/// Wire low-bits rule: `wire = cap_rice_low_bits - delta`.
-pub const WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA: u8 = 1;
-
 /// Profile-calibrated tightening vs [`rice_low_bits_for_cap`]: honest tails sit ~2 low bits below
 /// `floor(log2(cap))` on CI profile cells.
-pub const WIRE_RICE_LOW_BITS_DELTA: u8 = 2;
+const OFFLINE_RICE_LOW_BITS_DELTA: u32 = 2;
 
 /// Cap-derived Rice low-bit width: `floor(log2(cap))` for worst-case `|n| ≤ cap`.
 #[must_use]
@@ -17,35 +15,10 @@ pub fn cap_rice_low_bits(cap: u128) -> u32 {
     rice_low_bits_for_cap(cap)
 }
 
-/// Wire Rice low-bit width from a descriptor-bound cap→wire rule.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidSetup`] when `rule_id` is unsupported.
-pub fn wire_rice_low_bits_from_rule(cap: u128, rule_id: u8, delta: u8) -> Result<u32, AkitaError> {
-    match rule_id {
-        WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA => {
-            Ok(cap_rice_low_bits(cap).saturating_sub(u32::from(delta)))
-        }
-        other => Err(AkitaError::InvalidSetup(format!(
-            "unsupported terminal z wire rice low-bits rule id {other}"
-        ))),
-    }
-}
-
-/// Wire Rice low-bit width under [`crate::FoldLinfProtocolBinding::CURRENT`].
-///
-/// Under [`WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA`]: `rice_low_bits_for_cap(cap) - δ` with
-/// δ = [`WIRE_RICE_LOW_BITS_DELTA`]. Typical coefficients pay `wire_rice_low_bits` fixed low
-/// bits; coefficients near `±cap` pay longer unary runs.
+/// Select the Rice low-bit width emitted into a terminal response shape.
 #[must_use]
 pub fn wire_rice_low_bits(cap: u128) -> u32 {
-    wire_rice_low_bits_from_rule(
-        cap,
-        WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
-        WIRE_RICE_LOW_BITS_DELTA,
-    )
-    .expect("active wire rule is valid")
+    cap_rice_low_bits(cap).saturating_sub(OFFLINE_RICE_LOW_BITS_DELTA)
 }
 
 #[cfg(test)]
@@ -76,7 +49,7 @@ mod tests {
         for cap in [504u128, 1008, 1568, 2016] {
             assert_eq!(
                 wire_rice_low_bits(cap),
-                cap_rice_low_bits(cap).saturating_sub(u32::from(WIRE_RICE_LOW_BITS_DELTA)),
+                cap_rice_low_bits(cap).saturating_sub(OFFLINE_RICE_LOW_BITS_DELTA),
                 "cap={cap}"
             );
         }

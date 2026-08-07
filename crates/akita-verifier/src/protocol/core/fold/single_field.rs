@@ -8,8 +8,8 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::ABSORB_EVALUATION_CLAIMS;
 use akita_transcript::{append_ext_field, Transcript};
 use akita_types::{
-    append_claim_values_to_transcript, dispatch_for_field, prepare_opening_point,
-    sample_public_row_coefficients, BasisMode, Commitment, CommittedGroupParams, FpExtEncoding,
+    append_claim_values_to_transcript, derive_public_row_coefficients, dispatch_for_field,
+    prepare_opening_point, BasisMode, Commitment, CommittedGroupParams, FpExtEncoding,
     OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, TerminalCommittedGroupParams,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
@@ -76,8 +76,8 @@ where
         )?;
         prepared_points.push(prepared);
     }
-    append_claim_values_to_transcript::<F, E, T>(openings, transcript);
-    let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
+    let row_coefficients =
+        derive_public_row_coefficients::<F, E, T>(opening_batch, openings, transcript)?;
     let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, openings)?;
     Ok(FoldPrefix {
         prepared_points,
@@ -127,23 +127,23 @@ pub(in crate::protocol::core) fn prepare_single_field_suffix_groups<F, E>(
     block_claims: &OpeningClaims<'_, E>,
     lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
-    role_d_a: usize,
-    alpha_bits: usize,
 ) -> Result<Vec<PreparedOpeningPoint<F, E>>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + ExtField<F> + ExtField<F> + Ring + AkitaSerialize,
 {
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        role_d_a,
-        |D| {
-            let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
-            let final_group_index = opening_batch.root_final_group_index()?;
-            for group_index in 0..opening_batch.num_groups() {
-                let group_lp = lp.group_params(opening_batch, group_index)?;
-                let target_len = alpha_bits
+    let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
+    let final_group_index = opening_batch.root_final_group_index()?;
+    for group_index in 0..opening_batch.num_groups() {
+        let group_lp = lp.group_params(opening_batch, group_index)?;
+        let group_dims = lp.group_role_dims(opening_batch, group_index)?;
+        let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
+        let prepared = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            group_dims.d_a(),
+            |D| {
+                let target_len = group_alpha_bits
                     .checked_add(group_lp.position_index_bits())
                     .and_then(|n| n.checked_add(group_lp.block_index_bits()))
                     .ok_or_else(|| {
@@ -164,15 +164,16 @@ where
                         group_protocol_point.len()
                     )));
                 }
-                prepared_points.push(prepare_opening_point::<F, E, D>(
+                prepare_opening_point::<F, E, D>(
                     group_protocol_point,
                     BasisMode::Lagrange,
                     group_lp.num_positions_per_block(),
                     group_lp.num_live_blocks(),
-                    alpha_bits,
-                )?);
+                    group_alpha_bits,
+                )
             }
-            Ok(prepared_points)
-        }
-    )
+        )?;
+        prepared_points.push(prepared);
+    }
+    Ok(prepared_points)
 }

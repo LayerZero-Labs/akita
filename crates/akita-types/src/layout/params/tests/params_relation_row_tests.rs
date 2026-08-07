@@ -1,8 +1,13 @@
 use super::*;
-use crate::proof::relation::{relation_rhs_layout_for, relation_rhs_row_count};
+use crate::proof::relation::{
+    assemble_compressed_relation_rhs, relation_rhs_coeff_len, relation_rhs_layout_for,
+    relation_rhs_row_count, RelationRowFamily,
+};
+use crate::WitnessLayout;
+use jolt_field::{One, Prime128OffsetA7F7, Zero};
 
 #[test]
-fn eight_quotient_rows_adds_one_tau1_var_for_evaluation_trace() {
+fn compression_quotient_rows_are_included_before_evaluation_trace() {
     let mut lp = laid_out_sample_lp();
     lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         lp.inner_commit_matrix.security_policy(),
@@ -33,10 +38,10 @@ fn eight_quotient_rows_adds_one_tau1_var_for_evaluation_trace() {
     );
     let batch = OpeningClaimsLayout::new(4, 1).expect("batch");
     let quotient = lp.relation_matrix_row_count(1).unwrap();
-    assert_eq!(quotient, 8);
+    assert_eq!(quotient, 12);
 
     let quotient_only_vars = quotient.next_power_of_two().trailing_zeros() as usize;
-    assert_eq!(quotient_only_vars, 3);
+    assert_eq!(quotient_only_vars, 4);
     assert_eq!(
         lp.evaluation_trace_row_index(&batch).expect("row"),
         quotient
@@ -85,6 +90,75 @@ fn relation_rhs_row_count_matches_level_params() {
         lp.relation_matrix_row_count(batch.num_groups())
             .expect("row count"),
     );
+    let compression_rows = rhs_layout
+        .row_families()
+        .expect("row families")
+        .into_iter()
+        .filter(|row| {
+            matches!(
+                row,
+                RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(compression_rows.len(), 4);
+    assert!(matches!(
+        compression_rows.as_slice(),
+        [
+            RelationRowFamily::CompressionF { map_index: 0, .. },
+            RelationRowFamily::CompressionH { map_index: 0, .. },
+            RelationRowFamily::CompressionF { map_index: 1, .. },
+            RelationRowFamily::CompressionH { map_index: 1, .. }
+        ]
+    ));
+    let witness_layout = WitnessLayout::new(&lp, &batch, 1, 2).expect("witness layout");
+    let relation_geometry = lp
+        .relation_address_geometry(&batch, lp.d_a(), witness_layout.live_coeff_len())
+        .expect("A/B/D geometry");
+    let compression_geometry = lp
+        .compression_relation_address_geometry(&batch, lp.d_a(), witness_layout.live_coeff_len())
+        .expect("F/H geometry");
+    assert_eq!(
+        relation_geometry.relation_coefficient_block_len(),
+        lp.role_dims().common_relation_coeff_count()
+    );
+    assert!(
+        compression_geometry.coefficient_block_len()
+            < relation_geometry.relation_coefficient_block_len()
+    );
+
+    let group_terminal = vec![
+        Prime128OffsetA7F7::one();
+        rhs_layout
+            .group_compression_plan(0)
+            .expect("F plan")
+            .1
+            .terminal_coefficients()
+    ];
+    let opening_terminal = vec![
+        Prime128OffsetA7F7::one();
+        rhs_layout
+            .opening_compression_plan()
+            .expect("H plan")
+            .terminal_coefficients()
+    ];
+    let rhs = assemble_compressed_relation_rhs(
+        &rhs_layout,
+        &[group_terminal.as_slice()],
+        &opening_terminal,
+    )
+    .expect("compressed rhs");
+    assert_eq!(
+        rhs.coeff_len(),
+        relation_rhs_coeff_len(&rhs_layout).expect("rhs coefficient length")
+    );
+    assert_eq!(
+        rhs.coeffs()
+            .iter()
+            .filter(|coefficient| !coefficient.is_zero())
+            .count(),
+        group_terminal.len() + opening_terminal.len()
+    );
 
     let (grouped_lp, grouped_batch) = sample_multi_group_root_params();
     let rhs_layout = relation_rhs_layout_for(&grouped_lp, &grouped_batch).expect("rhs layout");
@@ -93,5 +167,14 @@ fn relation_rhs_row_count_matches_level_params() {
         grouped_lp
             .relation_matrix_row_count(grouped_batch.num_groups())
             .expect("row count"),
+    );
+    assert_eq!(
+        rhs_layout
+            .row_families()
+            .expect("grouped row families")
+            .into_iter()
+            .filter(|row| matches!(row, RelationRowFamily::CompressionF { .. }))
+            .count(),
+        2 * grouped_batch.num_groups()
     );
 }

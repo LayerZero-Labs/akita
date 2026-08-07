@@ -36,11 +36,11 @@ pub enum ProtocolRingDispatchTierId {
 pub enum ProtocolDispatchSlot {
     /// A/B/D matrix role (`RingRole`).
     Role(RingRole),
-    /// Setup seed `gen_ring_dim`.
-    Envelope,
+    /// Configured uniform-policy algebra ring dimension.
+    UniformPolicy,
     /// CRT/NTT cache warm and build.
     Ntt,
-    /// Diagnostic compressed-commitment F/H matrices.
+    /// Compression-only F/H matrices under the modulus-profile ladder.
     Compression,
 }
 
@@ -84,7 +84,7 @@ pub fn ntt_ring_degree_supported_for_field<F: Field + CanonicalEncoding>(d: usiz
 
 /// Field-tier validation for per-role dimensions after global [`crate::validate_role_dims`].
 ///
-/// Rejects B/D dimensions below the tier floor and any role dimension outside
+/// Rejects A/B/D dimensions below 64 and any role dimension outside
 /// the live protocol dispatch arm tables for this PCS field tier.
 ///
 /// # Errors
@@ -94,14 +94,14 @@ pub fn validate_role_dims_for_field<F: Field + CanonicalEncoding>(
     dims: CommitmentRingDims,
 ) -> Result<(), AkitaError> {
     let tier = protocol_dispatch_tier::<F>();
-    let min_bd = outer_opening_min_ring_d(tier);
     for (role, d) in [
+        (RingRole::Inner, dims.inner),
         (RingRole::Outer, dims.outer),
         (RingRole::Opening, dims.opening),
     ] {
-        if d < min_bd {
+        if d < crate::MIN_A_ROLE_FOLD_CHALLENGE_RING_D {
             return Err(AkitaError::InvalidSetup(format!(
-                "{role:?} ring dimension {d} is below tier minimum {min_bd} for this PCS field"
+                "{role:?} commitment-matrix ring dimension {d} is below the protocol minimum 64"
             )));
         }
         if !role_dim_supported_for_tier(tier, role, d) {
@@ -109,12 +109,6 @@ pub fn validate_role_dims_for_field<F: Field + CanonicalEncoding>(
                 "{role:?} ring dimension {d} is outside the protocol dispatch table for this PCS field tier"
             )));
         }
-    }
-    if !role_dim_supported_for_tier(tier, RingRole::Inner, dims.inner) {
-        return Err(AkitaError::InvalidSetup(format!(
-            "A-role ring dimension {} is outside the inner protocol dispatch table for this PCS field tier",
-            dims.inner
-        )));
     }
     Ok(())
 }
@@ -206,18 +200,20 @@ mod tests {
     }
 
     #[test]
-    fn outer_dispatch_floor_is_d32_on_fp128() {
+    fn outer_dispatch_floor_is_d64_on_every_profile() {
+        for d in [16usize, 32] {
+            assert!(dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Outer),
+                Prime128OffsetA7F7,
+                d,
+                |D| Ok(D)
+            )
+            .is_err());
+        }
         assert!(dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Outer),
             Prime128OffsetA7F7,
-            16usize,
-            |D| Ok(D)
-        )
-        .is_err());
-        assert!(dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Outer),
-            Prime128OffsetA7F7,
-            32usize,
+            64usize,
             |D| Ok(D)
         )
         .is_ok());
@@ -242,11 +238,18 @@ mod tests {
     }
 
     #[test]
-    fn ntt_dispatch_fp128_accepts_d16_and_caps_at_512() {
+    fn shared_ntt_dispatch_fp128_includes_first_compression_stage_and_caps_at_d512() {
         assert!(dispatch_for_field!(
             ProtocolDispatchSlot::Ntt,
             Prime128OffsetA7F7,
             16usize,
+            |D| Ok(D)
+        )
+        .is_ok());
+        assert!(dispatch_for_field!(
+            ProtocolDispatchSlot::Ntt,
+            Prime128OffsetA7F7,
+            64usize,
             |D| Ok(D)
         )
         .is_ok());
@@ -297,15 +300,24 @@ mod tests {
     }
 
     #[test]
-    fn global_ring_dims_keep_d16_for_ntt_but_not_fp128_roles() {
-        assert!(crate::layout::SUPPORTED_RING_DIMS.contains(&16));
-        assert!(crate::layout::SUPPORTED_RING_DIMS.contains(&32));
+    fn commitment_compression_and_ntt_dimension_domains_are_separate() {
+        assert!(!crate::SUPPORTED_COMMITMENT_RING_DIMS.contains(&16));
+        assert!(!crate::SUPPORTED_COMMITMENT_RING_DIMS.contains(&32));
         assert!(!crate::layout::SUPPORTED_CHALLENGE_RING_DIMS.contains(&32));
         assert_eq!(
             outer_opening_min_ring_d(ProtocolRingDispatchTierId::Fp128),
-            32
+            64
         );
         assert_eq!(ntt_min_ring_d(ProtocolRingDispatchTierId::Fp128), 16);
+        for (field_tier, dimensions) in [
+            (ProtocolRingDispatchTierId::Fp128, [16, 8]),
+            (ProtocolRingDispatchTierId::Fp64, [32, 16]),
+            (ProtocolRingDispatchTierId::Fp32, [64, 32]),
+        ] {
+            assert!(dimensions
+                .into_iter()
+                .all(|d| compression_ring_dim_supported_for_tier(field_tier, d)));
+        }
     }
 
     #[test]

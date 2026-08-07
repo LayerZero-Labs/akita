@@ -6,14 +6,23 @@ macro_rules! dispatch_slot {
         let nc: usize = $num_cols;
         match $slot {
             PreparedNttCache::Q32 { neg, params: p, .. } => {
+                let neg = neg.as_deref().ok_or_else(|| {
+                    AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
+                })?;
                 let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
                 $func(&rows, $($arg,)* p)
             }
             PreparedNttCache::Q64 { neg, params: p, .. } => {
+                let neg = neg.as_deref().ok_or_else(|| {
+                    AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
+                })?;
                 let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
                 $func(&rows, $($arg,)* p)
             }
             PreparedNttCache::Q128 { neg, params: p, .. } => {
+                let neg = neg.as_deref().ok_or_else(|| {
+                    AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
+                })?;
                 let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
                 $func(&rows, $($arg,)* p)
             }

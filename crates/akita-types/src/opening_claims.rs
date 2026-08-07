@@ -2,9 +2,12 @@
 
 use crate::descriptor_bytes::push_usize;
 use crate::instance_descriptor::DescriptorDigest;
+use crate::proof::batch::append_claim_values_to_transcript;
 use crate::proof::scheme::OpeningPoints;
-use crate::proof::setup::AkitaSetupSeed;
+use crate::proof::setup::AkitaSetupDescriptor;
+use crate::{CommittedGroup, OpeningScheduleSelection};
 use akita_error::AkitaError;
+use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use blake2::digest::consts::U32;
@@ -99,8 +102,8 @@ impl OpeningClaimsLayout {
         Self::from_groups(groups)
     }
 
-    /// Worst-case setup envelope as a one-group layout.
-    pub fn from_setup_seed(seed: &AkitaSetupSeed) -> Result<Self, AkitaError> {
+    /// Worst-case setup-capacity request as a one-group layout.
+    pub fn from_setup_seed(seed: &AkitaSetupDescriptor) -> Result<Self, AkitaError> {
         Self::new(seed.max_num_vars, seed.max_num_batched_polys)
     }
 
@@ -376,6 +379,46 @@ pub struct OpeningClaims<'a, F: Clone, C = ()> {
     groups: Vec<PolynomialGroupClaims<'a, F, C>>,
 }
 
+/// Public opening statement bound to one exact verifier-approved schedule row.
+///
+/// The schedule selection is batch-level. Individual commitments remain
+/// reusable and carry only their exact algebraic profiles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupBatchStatement<'a, E: Clone, F: Field> {
+    selection: OpeningScheduleSelection,
+    claims: OpeningClaims<'a, E, &'a CommittedGroup<F>>,
+}
+
+impl<'a, E: Clone, F: Field> GroupBatchStatement<'a, E, F> {
+    /// Bind ordered self-describing claims to an approved schedule row.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the claim set is empty or structurally malformed.
+    pub fn new(
+        selection: OpeningScheduleSelection,
+        claims: OpeningClaims<'a, E, &'a CommittedGroup<F>>,
+    ) -> Result<Self, AkitaError> {
+        claims.check()?;
+        Ok(Self { selection, claims })
+    }
+
+    /// Exact catalog and row identity selected for this batch.
+    pub const fn selection(&self) -> OpeningScheduleSelection {
+        self.selection
+    }
+
+    /// Ordered public opening claims.
+    pub fn claims(&self) -> &OpeningClaims<'a, E, &'a CommittedGroup<F>> {
+        &self.claims
+    }
+
+    /// Consume the statement into its ordered public claims.
+    pub fn into_claims(self) -> OpeningClaims<'a, E, &'a CommittedGroup<F>> {
+        self.claims
+    }
+}
+
 impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     /// Build public claims from ordered groups.
     pub fn from_groups(groups: Vec<PolynomialGroupClaims<'a, F, C>>) -> Result<Self, AkitaError> {
@@ -397,8 +440,8 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
         Ok(())
     }
 
-    /// Validate consistency plus public capacity against the setup envelope.
-    pub fn validate(&self, seed: &AkitaSetupSeed) -> Result<(), AkitaError> {
+    /// Validate consistency plus public capacity against the setup limits.
+    pub fn validate(&self, seed: &AkitaSetupDescriptor) -> Result<(), AkitaError> {
         self.check()?;
         let max_num_vars = self.layout()?.max_num_vars();
         if max_num_vars > seed.max_num_vars {
@@ -511,17 +554,25 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     }
 }
 
-/// Sample gamma coefficients for the one public row.
-pub fn sample_public_row_coefficients<F, L, T>(
+/// Bind claimed evaluations and derive their public-row batching coefficients.
+pub fn derive_public_row_coefficients<F, L, T>(
     layout: &OpeningClaimsLayout,
+    openings: &[L],
     transcript: &mut T,
 ) -> Result<Vec<L>, AkitaError>
 where
-    F: Field + CanonicalEncoding,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     L: ExtField<F>,
     T: Transcript<F>,
 {
     layout.check()?;
+    if openings.len() != layout.num_total_polynomials() {
+        return Err(AkitaError::InvalidSize {
+            expected: layout.num_total_polynomials(),
+            actual: openings.len(),
+        });
+    }
+    append_claim_values_to_transcript::<F, L, T>(openings, transcript);
     if layout.num_total_polynomials() == 1 {
         return Ok(vec![L::one()]);
     }
@@ -543,6 +594,7 @@ mod tests {
     use super::*;
     use akita_algebra::Ring;
     use akita_algebra::Zero;
+    use akita_transcript::AkitaTranscript;
     use jolt_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
@@ -661,5 +713,29 @@ mod tests {
             layout.root_final_group_layout().expect("final group"),
             final_group
         );
+    }
+
+    #[test]
+    fn public_row_coefficients_bind_against_claim_cancellation() {
+        let layout = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::singleton(2),
+            PolynomialGroupLayout::singleton(3),
+        ])
+        .expect("two-group layout");
+        let openings = [F::from_u64(5), F::from_u64(11)];
+        let delta = F::from_u64(3);
+        let tampered = [openings[0] + delta, openings[1] - delta];
+
+        let target = |values: &[F]| {
+            let mut transcript = AkitaTranscript::<F>::new(b"test/public-row-claim-binding");
+            let coefficients =
+                derive_public_row_coefficients::<F, F, _>(&layout, values, &mut transcript)
+                    .expect("derive coefficients");
+            layout
+                .batched_eval_target(&coefficients, values)
+                .expect("batched target")
+        };
+
+        assert_ne!(target(&openings), target(&tampered));
     }
 }

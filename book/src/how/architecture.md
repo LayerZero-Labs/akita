@@ -69,9 +69,16 @@ differ. Here, *role* is the historical protocol name for a commitment matrix's
 fixed job: A carries the relation witness, B commits the next witness, and D
 commits the opening digits. The matrices do not switch roles when their ring
 dimensions change. User-facing prose therefore calls a non-uniform tuple such
-as `128/64/32` **per-matrix ring dimensions** and a change between levels a
-**ring-dimension transition**. [`validate_schedule_ring_dims`] checks
-every level dimension against the setup's generation dimension.
+as `128/64/64` **per-matrix ring dimensions** and a change between levels a
+**ring-dimension transition**. [`validate_schedule_ring_dims`] checks every
+scheduled dimension directly against the field's dispatch and NTT support.
+The public setup is one flat field stream with no ring dimension.
+
+A, B, and D matrix dimensions form a separate admission domain and are all at
+least 64. Compressed commitments derive their two smaller dimensions directly
+from the modulus profile (`q128: 16/8`, `q64: 32/16`, `q32: 64/32`). Those
+compression-only dimensions never become `CommitmentRingDims` and never reduce
+the ordinary relation's common coefficient block.
 
 Every function on the prove/verify path has one of two roles:
 
@@ -93,16 +100,15 @@ names the per-matrix ring dimensions; prove/verify hot paths dispatch on
 
 The normative contract (discriminator rule, forbidden facade/level-
 monomorphization patterns) lives in `specs/runtime-ring-cutover.md`.
-Mixed-dimension execution is exercised end-to-end by
-`crates/akita-pcs/tests/mixed_d_per_level_e2e.rs` and
-`crates/akita-verifier/tests/mixed_d_rejections.rs` through the normal public API.
+Mixed-dimension malformed proof rejection is covered by
+`crates/akita-verifier/tests/mixed_d_rejections.rs` through the verifier API.
 
 ## Core types
 
 | Type | Role |
 |------|------|
 | `AkitaCommitmentScheme<Cfg>` | Top-level PCS `commit` / `prove` / `verify` orchestration (`akita-pcs`) |
-| `AkitaProverSetup<F>` | Prover setup wrapper; `gen_ring_dim` is runtime shape metadata |
+| `AkitaProverSetup<F>` | Prover setup wrapper around a materialized prefix of the dimension-free public field stream |
 | `Commitment<F>`, `RingVec<F>` | protocol commitment and field-vector storage |
 | `CommitmentRingDims`, `validate_schedule_ring_dims` | A/B/D commitment-matrix ring dimensions and schedule validation |
 | `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, exact SIS profile, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
@@ -114,5 +120,9 @@ Mixed-dimension execution is exercised end-to-end by
 | `PolynomialGroupClaims` | One commitment group's complete opening point, evaluations, and commitment |
 | `OpeningClaims` | Ordered group-owned public claims in transcript order |
 | `OpeningClaimsLayout` | Value-free group arities and polynomial counts for setup and schedule lookup |
+| `CommittedGroupProfile`, `CommittedGroup` | Source-free public commitment geometry and its commitment rows |
+| `PreparedProverGroup` | Coarse borrowed prover group; applications may use one concrete enum polynomial type for heterogeneous representations |
+| `ProverOpeningData`, `SelectedProverOpeningData` | Private ordered group-local hint/polynomial records bound to public claims, then paired once with one exact schedule selection |
+| `OpeningScheduleSelection`, `GroupBatchStatement` | Exact generated-row identity and verifier-side self-describing opening statement |
 | `AkitaTranscript`, `Transcript` | Spongefish-backed Fiat-Shamir layer |
 | `AkitaInstanceDescriptor` | Canonical transcript preamble binding algebra, setup, plan, and call shape |

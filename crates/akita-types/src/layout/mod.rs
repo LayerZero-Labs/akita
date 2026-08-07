@@ -3,8 +3,8 @@
 //! Pure data and pure verifier-reachable helpers only. The recursion layout is
 //! owned by the schedule: runtime expands catalog rows through
 //! `akita_schedules::schedule_from_entry`, while the offline planner builds new
-//! candidates with `akita_planner::find_schedule` and the digit-math
-//! `optimal_block_geometry_split` sweep. Prover/verifier read those params directly.
+//! candidates with `akita_planner::find_schedule`. Prover/verifier
+//! read those params directly.
 //! This module retains the layout glue the replay path reaches through
 //! `CommitmentConfig`.
 
@@ -33,5 +33,6 @@ pub use proof_size::{
 };
 pub use ring_dims::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,
-    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
+    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
+    SUPPORTED_COMMITMENT_RING_DIMS,
 };

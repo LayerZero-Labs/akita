@@ -47,6 +47,8 @@ fn trace_layout(
         num_digits_open,
     )
     .unwrap();
+    let mut lp = lp;
+    lp.num_digits_fold = 2;
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
     let witness_layout = WitnessLayout::new(&lp, &opening_batch, num_chunks, 1).unwrap();
     let opening_source_len = witness_layout.live_coeff_len() / (1usize << ring_bits);

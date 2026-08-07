@@ -426,8 +426,8 @@ where
             prepared_points.push(prepared);
         }
     }
-    append_claim_values_to_transcript::<F, E, T>(openings, transcript);
-    let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
+    let row_coefficients =
+        derive_public_row_coefficients::<F, E, T>(opening_batch, openings, transcript)?;
     let eor_replay = verify_fold_eor::<F, E, T>(
         extension_opening_reduction,
         &group_points,
@@ -481,10 +481,15 @@ pub(in crate::protocol::core) fn verify_extension_claim_terminal_suffix<F, E, T>
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: Field + CanonicalEncoding,
-    E: FpExtEncoding<F> + ExtField<F> + ExtField<F> + Ring + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
+    let row_coefficients = derive_public_row_coefficients::<F, E, T>(
+        opening_batch,
+        std::slice::from_ref(opening),
+        transcript,
+    )?;
     let FoldEorReplay {
         groups,
         final_relation,
@@ -492,7 +497,7 @@ where
         extension_opening_reduction,
         protocol_point,
         std::slice::from_ref(opening),
-        &[E::one()],
+        &row_coefficients,
         opening_batch,
         basis,
         params.d_a(),
