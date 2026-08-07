@@ -234,24 +234,37 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                 LowBasisRangeImageStorage::Materialized(Vec::new()),
             ) {
                 LowBasisRangeImageStorage::Compact(compact_range_image) => {
-                    let range_image = match self.basis {
-                        4 => Self::materialize_binary_range_image_after_third_round(
-                            &compact_range_image,
-                            self.live_x_cols,
-                            y_len,
-                            r0,
-                            r1,
-                            r,
-                        ),
-                        8 => Self::materialize_quartic_range_image_after_third_round(
-                            &compact_range_image,
-                            self.live_x_cols,
-                            y_len,
-                            r0,
-                            r1,
-                            r,
-                        ),
-                        _ => unreachable!("third-round deferral requires a low basis"),
+                    let range_image = if self.next_use_sparse_x_y_round_after_current() {
+                        let (range_image, round_poly) = self
+                            .materialize_compact_third_round_and_compute_next(
+                                &compact_range_image,
+                                y_len,
+                                r0,
+                                r1,
+                                r,
+                            );
+                        self.cached_round_poly = Some(round_poly);
+                        range_image
+                    } else {
+                        match self.basis {
+                            4 => Self::materialize_binary_range_image_after_third_round(
+                                &compact_range_image,
+                                self.live_x_cols,
+                                y_len,
+                                r0,
+                                r1,
+                                r,
+                            ),
+                            8 => Self::materialize_quartic_range_image_after_third_round(
+                                &compact_range_image,
+                                self.live_x_cols,
+                                y_len,
+                                r0,
+                                r1,
+                                r,
+                            ),
+                            _ => unreachable!("third-round deferral requires a low basis"),
+                        }
                     };
                     LowBasisRangeImageStorage::Materialized(range_image)
                 }
@@ -259,7 +272,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
             };
             self.rounds_completed += 1;
             if self.rounds_completed < self.num_vars {
-                self.cached_round_poly = Some(self.compute_current_round_eq_poly_from_state());
+                if self.cached_round_poly.is_none() {
+                    self.cached_round_poly = Some(self.compute_current_round_eq_poly_from_state());
+                }
             } else {
                 self.cached_round_poly = None;
             }

@@ -342,43 +342,84 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             let right_index = Self::stage1_b8_quad_lookup_index_from_row(row, base + 4);
             Some((left_index << 8) | right_index)
         };
-        let accumulated = cfg_fold_reduce!(
-            0..e_second.len(),
-            || [E::ProductAccum::zero(); 5],
-            |mut outer_accum, j_high| {
-                let mut inner_accum = [E::ProductAccum::zero(); 5];
-                let mut coefficients = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
-                let base_j = j_high * num_first;
-                for (j_low, &inner_equality_weight) in e_first.iter().enumerate() {
-                    let Some(class) = octet_class(base_j + j_low) else {
-                        continue;
-                    };
-                    Self::quartic_affine_coefficients_from_octet_class(
-                        &mut coefficients,
-                        class,
-                        &folded_quads,
-                        &taylor_coefficients,
-                    );
-                    accumulate_dense_entry_coeffs(
-                        &mut inner_accum,
-                        &coefficients,
-                        inner_equality_weight,
-                    );
+        let accumulated = if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+            const OCTET_CLASS_COUNT: usize = 1 << 16;
+            let class_weights = cfg_fold_reduce!(
+                0..e_second.len(),
+                || vec![E::ProductAccum::zero(); OCTET_CLASS_COUNT],
+                |mut histogram, j_high| {
+                    let outer_equality_weight = e_second[j_high];
+                    let base_j = j_high * num_first;
+                    for (j_low, &inner_equality_weight) in e_first.iter().enumerate() {
+                        if let Some(class) = octet_class(base_j + j_low) {
+                            histogram[class] +=
+                                inner_equality_weight.mul_to_product_accum(outer_equality_weight);
+                        }
+                    }
+                    histogram
+                },
+                |mut left, right| {
+                    for (left_weight, right_weight) in left.iter_mut().zip(right) {
+                        *left_weight += right_weight;
+                    }
+                    left
                 }
-                let outer_equality_weight = e_second[j_high];
-                for (accumulator, inner) in outer_accum.iter_mut().zip(inner_accum) {
-                    *accumulator +=
-                        outer_equality_weight.mul_to_product_accum(E::reduce_product_accum(inner));
+            );
+            let mut accumulated = [E::ProductAccum::zero(); 5];
+            let mut coefficients = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+            for (class, class_weight) in class_weights.into_iter().enumerate() {
+                let equality_weight = E::reduce_product_accum(class_weight);
+                if equality_weight.is_zero() {
+                    continue;
                 }
-                outer_accum
-            },
-            |mut left, right| {
-                for (left_coefficient, right_coefficient) in left.iter_mut().zip(right) {
-                    *left_coefficient += right_coefficient;
-                }
-                left
+                Self::quartic_affine_coefficients_from_octet_class(
+                    &mut coefficients,
+                    class,
+                    &folded_quads,
+                    &taylor_coefficients,
+                );
+                accumulate_dense_entry_coeffs(&mut accumulated, &coefficients, equality_weight);
             }
-        );
+            accumulated
+        } else {
+            cfg_fold_reduce!(
+                0..e_second.len(),
+                || [E::ProductAccum::zero(); 5],
+                |mut outer_accum, j_high| {
+                    let mut inner_accum = [E::ProductAccum::zero(); 5];
+                    let mut coefficients = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+                    let base_j = j_high * num_first;
+                    for (j_low, &inner_equality_weight) in e_first.iter().enumerate() {
+                        let Some(class) = octet_class(base_j + j_low) else {
+                            continue;
+                        };
+                        Self::quartic_affine_coefficients_from_octet_class(
+                            &mut coefficients,
+                            class,
+                            &folded_quads,
+                            &taylor_coefficients,
+                        );
+                        accumulate_dense_entry_coeffs(
+                            &mut inner_accum,
+                            &coefficients,
+                            inner_equality_weight,
+                        );
+                    }
+                    let outer_equality_weight = e_second[j_high];
+                    for (accumulator, inner) in outer_accum.iter_mut().zip(inner_accum) {
+                        *accumulator += outer_equality_weight
+                            .mul_to_product_accum(E::reduce_product_accum(inner));
+                    }
+                    outer_accum
+                },
+                |mut left, right| {
+                    for (left_coefficient, right_coefficient) in left.iter_mut().zip(right) {
+                        *left_coefficient += right_coefficient;
+                    }
+                    left
+                }
+            )
+        };
 
         EqFactoredUniPoly::from_q_coeffs(
             accumulated
@@ -417,6 +458,122 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 }
             });
         output
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "LowBasisRangeCheckProver::materialize_compact_third_round_and_compute_next"
+    )]
+    pub(super) fn materialize_compact_third_round_and_compute_next<V: CompactRangeImageValue>(
+        &self,
+        compact_range_image: &[V],
+        y_len: usize,
+        r0: E,
+        r1: E,
+        r2: E,
+    ) -> (Vec<E>, EqFactoredUniPoly<E>) {
+        debug_assert!(self.next_use_sparse_x_y_round_after_current());
+        debug_assert_eq!(y_len % 16, 0);
+        let next_y_len = y_len / 8;
+        let binary_fold_table =
+            (self.basis == 4).then(|| Self::build_binary_range_image_octet_fold_table(r0, r1, r2));
+        let quartic_folded_quads =
+            (self.basis == 8).then(|| Self::build_round2_range_image_lookup_b8(r0, r1));
+        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
+        let num_first = e_first.len();
+        let polynomial_precomputation = &self.polynomial_precomputation;
+        let num_coeffs = polynomial_precomputation.degree_q + 1;
+        let output_block_len = 2 * num_first;
+        let mut output = vec![E::zero(); self.live_x_cols * next_y_len];
+
+        let process_block = |(j_high, output_block): (usize, &mut [E])| {
+            let mut inner_accum = [E::ProductAccum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+            let mut coefficients = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+            let output_base = j_high * output_block_len;
+            for (j_low, pair_output) in output_block.chunks_exact_mut(2).enumerate() {
+                let output_index = output_base + 2 * j_low;
+                let x = output_index / next_y_len;
+                let first_octet = output_index % next_y_len;
+                let row = &compact_range_image[x * y_len..(x + 1) * y_len];
+                let fold_octet = |octet: usize| match self.basis {
+                    4 => {
+                        let table_index =
+                            Self::stage1_b4_octet_lookup_index_from_row(row, 8 * octet);
+                        binary_fold_table.as_ref().expect("binary fold table")[table_index]
+                    }
+                    8 => {
+                        let base = 8 * octet;
+                        let folded_quads = quartic_folded_quads
+                            .as_ref()
+                            .expect("quartic folded-quad table");
+                        let left =
+                            folded_quads[Self::stage1_b8_quad_lookup_index_from_row(row, base)];
+                        let right =
+                            folded_quads[Self::stage1_b8_quad_lookup_index_from_row(row, base + 4)];
+                        left + r2 * (right - left)
+                    }
+                    _ => unreachable!("third-round deferral requires a low basis"),
+                };
+                let left = fold_octet(first_octet);
+                let right = fold_octet(first_octet + 1);
+                pair_output[0] = left;
+                pair_output[1] = right;
+                compute_entry_coefficients(
+                    &mut coefficients,
+                    polynomial_precomputation,
+                    left,
+                    right - left,
+                );
+                accumulate_dense_entry_coeffs(
+                    &mut inner_accum[..num_coeffs],
+                    &coefficients[..num_coeffs],
+                    e_first[j_low],
+                );
+            }
+            let outer_weight = e_second[j_high];
+            let mut outer_accum = [E::ProductAccum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+            for (outer, inner) in outer_accum[..num_coeffs]
+                .iter_mut()
+                .zip(&inner_accum[..num_coeffs])
+            {
+                *outer += outer_weight.mul_to_product_accum(E::reduce_product_accum(*inner));
+            }
+            outer_accum
+        };
+        let merge = |mut left: [E::ProductAccum; MAX_DIRECT_RANGE_COEFFICIENTS],
+                     right: [E::ProductAccum; MAX_DIRECT_RANGE_COEFFICIENTS]| {
+            for (left_coefficient, right_coefficient) in left.iter_mut().zip(right) {
+                *left_coefficient += right_coefficient;
+            }
+            left
+        };
+
+        #[cfg(feature = "parallel")]
+        let accumulated = cfg_chunks_mut!(output, output_block_len)
+            .enumerate()
+            .map(process_block)
+            .reduce(
+                || [E::ProductAccum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS],
+                merge,
+            );
+
+        #[cfg(not(feature = "parallel"))]
+        let accumulated = cfg_chunks_mut!(output, output_block_len)
+            .enumerate()
+            .map(process_block)
+            .fold(
+                [E::ProductAccum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS],
+                merge,
+            );
+
+        let polynomial = EqFactoredUniPoly::from_q_coeffs(
+            accumulated[..num_coeffs]
+                .iter()
+                .copied()
+                .map(E::reduce_product_accum)
+                .collect(),
+        );
+        (output, polynomial)
     }
 
     #[tracing::instrument(
