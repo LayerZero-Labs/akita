@@ -660,14 +660,6 @@ impl TerminalCommittedGroupParams {
         Ok(certified_capacity.min(i16::MAX as u128))
     }
 
-    /// Validate the terminal Fiat–Shamir grind nonce.
-    pub fn validate_fold_grind_nonce(&self, nonce: u32) -> Result<(), AkitaError> {
-        if nonce >= crate::FoldLinfProtocolBinding::CURRENT.max_grind_attempts {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(())
-    }
-
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         push_u32(bytes, self.log_basis_inner);
         self.inner_commit_matrix.append_descriptor_bytes(bytes);
