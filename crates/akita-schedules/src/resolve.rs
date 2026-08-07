@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    schedule_row_digest, AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupBatchProfile,
-    CommittedGroupProfile, FoldSchedule, OpeningScheduleSelection, PolynomialGroupLayout,
+    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
+    FoldSchedule, OpeningScheduleSelection, PolynomialGroupLayout,
 };
 
 use crate::audit::audit_resolved_schedule;
@@ -121,19 +121,12 @@ fn materialize_catalog_rows_uncached(
     table: GeneratedScheduleTable,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<MaterializedCatalog, AkitaError> {
     let mut rows = Vec::with_capacity(table.entries.len());
     let mut digests = Vec::with_capacity(table.entries.len());
     for entry in table.entries {
         let key = entry.to_runtime_lookup_key();
-        let schedule = schedule_from_entry(
-            entry,
-            &key,
-            policy,
-            ring_challenge_config,
-            fold_challenge_shape_at_level,
-        )?;
+        let schedule = schedule_from_entry(entry, &key, policy, ring_challenge_config)?;
         let profiles = profiles_for_entry(entry, &schedule);
         let row_digest = schedule_row_digest(&profiles, &schedule)?;
         digests.push(row_digest);
@@ -169,7 +162,6 @@ fn materialized_catalog(
     table: GeneratedScheduleTable,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Arc<MaterializedCatalog>, AkitaError> {
     if table.entries.is_empty() || table.entries.len() > MAX_RESOLVED_CATALOG_ROWS {
         return Err(AkitaError::InvalidSetup(format!(
@@ -181,12 +173,7 @@ fn materialized_catalog(
     // This call is intentionally outside the materialization cache. The
     // catalog validator cheaply rechecks runtime hooks on its own cache hits,
     // so a caller cannot reuse rows under different hook behavior.
-    validate_catalog_identity(
-        &table,
-        policy,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
-    )?;
+    validate_catalog_identity(&table, policy, ring_challenge_config)?;
     let cache_key = MaterializedCatalogCacheKey {
         entries_ptr: table.entries.as_ptr() as usize,
         entries_len: table.entries.len(),
@@ -201,7 +188,6 @@ fn materialized_catalog(
         table,
         policy,
         ring_challenge_config,
-        fold_challenge_shape_at_level,
     )?);
     let mut cache = lock_materialized_catalogs()?;
     Ok(cache
@@ -219,19 +205,13 @@ pub fn resolve_generated_schedule_selection(
     selection: OpeningScheduleSelection,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<ResolvedScheduleRow, AkitaError> {
     validate_policy(policy)?;
     let table = catalog.ok_or_else(|| {
         AkitaError::UnsupportedSchedule("schedule catalog is not enabled".to_string())
     })?;
-    let catalog = materialized_catalog(
-        table,
-        policy,
-        &ring_challenge_config,
-        &fold_challenge_shape_at_level,
-    )?;
+    let catalog = materialized_catalog(table, policy, &ring_challenge_config)?;
     let index = catalog
         .rows_by_digest
         .binary_search_by_key(&selection.row_digest, |row| row.selection.row_digest)
@@ -250,15 +230,9 @@ fn select_generated_schedule_row_matching(
     exact_profiles: Option<&CommittedGroupBatchProfile>,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     table: GeneratedScheduleTable,
 ) -> Result<ResolvedScheduleRow, AkitaError> {
-    let catalog = materialized_catalog(
-        table,
-        policy,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
-    )?;
+    let catalog = materialized_catalog(table, policy, ring_challenge_config)?;
     let candidate_range = table_entry_range(table, key);
     if candidate_range.is_empty() {
         return Err(AkitaError::UnsupportedSchedule(format!(
@@ -331,7 +305,6 @@ pub fn select_generated_schedule_row(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<ResolvedScheduleRow, AkitaError> {
     key.validate(policy.decomposition.field_bits())?;
@@ -342,14 +315,7 @@ pub fn select_generated_schedule_row(
             key
         ))
     })?;
-    select_generated_schedule_row_matching(
-        key,
-        None,
-        policy,
-        &ring_challenge_config,
-        &fold_challenge_shape_at_level,
-        table,
-    )
+    select_generated_schedule_row_matching(key, None, policy, &ring_challenge_config, table)
 }
 
 /// Select the canonical generated row matching exact committed profiles.
@@ -358,7 +324,6 @@ pub fn select_generated_schedule_row_for_profiles(
     profiles: &CommittedGroupBatchProfile,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<ResolvedScheduleRow, AkitaError> {
     key.validate(policy.decomposition.field_bits())?;
@@ -375,7 +340,6 @@ pub fn select_generated_schedule_row_for_profiles(
         Some(profiles),
         policy,
         &ring_challenge_config,
-        &fold_challenge_shape_at_level,
         table,
     )
 }
@@ -388,7 +352,6 @@ pub fn resolve_generated_precommitted_group_profile(
     key: &PolynomialGroupLayout,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<CommittedGroupProfile, AkitaError> {
     key.validate()?;
@@ -399,12 +362,7 @@ pub fn resolve_generated_precommitted_group_profile(
             key
         ))
     })?;
-    validate_catalog_identity(
-        &table,
-        policy,
-        &ring_challenge_config,
-        &fold_challenge_shape_at_level,
-    )?;
+    validate_catalog_identity(&table, policy, &ring_challenge_config)?;
 
     let mut selected = None;
     for &row in table.precommitted_profiles {
@@ -436,17 +394,10 @@ pub fn resolve_group_batch_schedule(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<FoldSchedule, AkitaError> {
-    select_generated_schedule_row(
-        key,
-        policy,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
-        catalog,
-    )
-    .map(ResolvedScheduleRow::into_schedule)
+    select_generated_schedule_row(key, policy, ring_challenge_config, catalog)
+        .map(ResolvedScheduleRow::into_schedule)
 }
 
 /// Resolve a scalar-root runtime schedule using only the enabled generated catalog.
@@ -454,14 +405,12 @@ pub fn resolve_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<FoldSchedule, AkitaError> {
     resolve_group_batch_schedule(
         &AkitaScheduleLookupKey::single(key),
         policy,
         ring_challenge_config,
-        fold_challenge_shape_at_level,
         catalog,
     )
 }
@@ -472,17 +421,10 @@ pub fn schedule_from_entry(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<FoldSchedule, AkitaError> {
-    let schedule = walk_generated_schedule_entry(
-        entry,
-        key,
-        policy,
-        &ring_challenge_config,
-        &fold_challenge_shape_at_level,
-    )?
-    .planned_schedule
-    .schedule;
+    let schedule = walk_generated_schedule_entry(entry, key, policy, &ring_challenge_config)?
+        .planned_schedule
+        .schedule;
     schedule.validate_structure()?;
     Ok(schedule)
 }
@@ -493,16 +435,9 @@ pub fn estimate_proof_bytes(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<usize, AkitaError> {
-    walk_generated_schedule_entry(
-        entry,
-        key,
-        policy,
-        &ring_challenge_config,
-        &fold_challenge_shape_at_level,
-    )?
-    .planned_schedule
-    .estimate
-    .estimated_proof_payload_bytes()
+    walk_generated_schedule_entry(entry, key, policy, &ring_challenge_config)?
+        .planned_schedule
+        .estimate
+        .estimated_proof_payload_bytes()
 }

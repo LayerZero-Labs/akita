@@ -16,7 +16,6 @@ fn miswired_catalog_rejects_before_lookup() {
         key,
         &policy_of::<fp128::D64Dense>(),
         fp128::D64Dense::ring_challenge_config,
-        fp128::D64Dense::fold_challenge_shape_at_level,
         Some(wrong_catalog),
     )
     .expect_err("D64 dense preset must reject D64 one-hot catalog");

@@ -162,99 +162,47 @@ where
         + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
 {
-    match challenges {
-        Challenges::Sparse {
-            challenges: sparse,
-            num_live_blocks_per_claim,
-            ..
-        } => {
-            let mut point_challenges =
-                Vec::with_capacity(point_indices.len() * *num_live_blocks_per_claim);
-            for &claim_idx in point_indices {
-                let start = claim_idx
-                    .checked_mul(*num_live_blocks_per_claim)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("batched challenge offset overflow".to_string())
-                    })?;
-                let end = start
-                    .checked_add(*num_live_blocks_per_claim)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("batched challenge offset overflow".to_string())
-                    })?;
-                point_challenges.extend_from_slice(sparse.get(start..end).ok_or(
-                    AkitaError::InvalidSize {
-                        expected: end,
-                        actual: sparse.len(),
-                    },
-                )?);
-            }
-            let batch_view = P::opening_batch(point_polys)?;
-            match OpeningBatchKernel::decompose_fold_batch(
-                backend,
-                prepared,
-                batch_view,
-                DecomposeFoldBatchPlan::Sparse {
-                    challenges: &point_challenges,
-                    num_positions_per_block,
-                    num_digits: num_digits_inner,
-                    log_basis: log_basis_inner,
-                },
-            )? {
-                BatchDecomposeFoldOutcome::Fused(z_point) => Ok(z_point),
-                BatchDecomposeFoldOutcome::FallbackPerPoly => {
-                    let witnesses: Vec<DecomposeFoldWitness<F>> = point_polys
-                        .iter()
-                        .zip(point_challenges.chunks(*num_live_blocks_per_claim))
-                        .map(|(poly, poly_challenges)| -> Result<_, AkitaError> {
-                            OpeningFoldKernel::decompose_fold(
-                                backend,
-                                prepared,
-                                poly.opening_view()?,
-                                DecomposeFoldPlan {
-                                    challenges: poly_challenges,
-                                    num_positions_per_block,
-                                    num_digits: num_digits_inner,
-                                    log_basis: log_basis_inner,
-                                },
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    aggregate_decompose_fold_witnesses::<F, D>(witnesses)
-                }
-                BatchDecomposeFoldOutcome::Unsupported => Err(AkitaError::InvalidSetup(
-                    "sparse batched fold is unsupported for this polynomial backend".to_string(),
-                )),
-            }
+    let point_challenges = challenges.select_claims(point_indices)?;
+    let batch_view = P::opening_batch(point_polys)?;
+    match OpeningBatchKernel::decompose_fold_batch(
+        backend,
+        prepared,
+        batch_view,
+        DecomposeFoldBatchPlan::Sparse {
+            challenges: point_challenges.as_slice(),
+            num_positions_per_block,
+            num_digits: num_digits_inner,
+            log_basis: log_basis_inner,
+        },
+    )? {
+        BatchDecomposeFoldOutcome::Fused(z_point) => Ok(z_point),
+        BatchDecomposeFoldOutcome::FallbackPerPoly => {
+            let witnesses: Vec<DecomposeFoldWitness<F>> = point_polys
+                .iter()
+                .zip(
+                    point_challenges
+                        .as_slice()
+                        .chunks(point_challenges.num_live_blocks_per_claim()),
+                )
+                .map(|(poly, poly_challenges)| -> Result<_, AkitaError> {
+                    OpeningFoldKernel::decompose_fold(
+                        backend,
+                        prepared,
+                        poly.opening_view()?,
+                        DecomposeFoldPlan {
+                            challenges: poly_challenges,
+                            num_positions_per_block,
+                            num_digits: num_digits_inner,
+                            log_basis: log_basis_inner,
+                        },
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            aggregate_decompose_fold_witnesses::<F, D>(witnesses)
         }
-        Challenges::Tensor { factored: _ } => {
-            let selected = challenges.select_claims::<D>(point_indices)?;
-            let point_factored = match selected {
-                Challenges::Tensor { factored } => factored,
-                Challenges::Sparse { .. } => {
-                    return Err(AkitaError::InvalidSetup(
-                        "tensor claim selection returned sparse challenges".to_string(),
-                    ))
-                }
-            };
-            let batch_view = P::opening_batch(point_polys)?;
-            match OpeningBatchKernel::decompose_fold_batch(
-                backend,
-                prepared,
-                batch_view,
-                DecomposeFoldBatchPlan::Tensor {
-                    tensor: &point_factored,
-                    num_positions_per_block,
-                    num_digits: num_digits_inner,
-                    log_basis: log_basis_inner,
-                },
-            )? {
-                BatchDecomposeFoldOutcome::Fused(witness) => Ok(witness),
-                BatchDecomposeFoldOutcome::FallbackPerPoly
-                | BatchDecomposeFoldOutcome::Unsupported => Err(AkitaError::InvalidSetup(
-                    "polynomial backend has no tensor-shaped fold kernel".to_string(),
-                )),
-            }
-        }
+        BatchDecomposeFoldOutcome::Unsupported => Err(AkitaError::InvalidSetup(
+            "sparse batched fold is unsupported for this polynomial backend".to_string(),
+        )),
     }
 }
 
@@ -349,33 +297,27 @@ pub(super) fn window_sparse_challenges(
     challenges: &Challenges,
     fold_range: std::ops::Range<usize>,
 ) -> Result<Challenges, AkitaError> {
-    match challenges {
-        Challenges::Sparse {
-            challenges: sparse,
-            num_live_blocks_per_claim,
-            num_claims,
-        } => {
-            let windowed: Vec<SparseChallenge> = sparse
-                .iter()
-                .enumerate()
-                .map(|(idx, ch)| {
-                    let block = idx % num_live_blocks_per_claim;
-                    if fold_range.contains(&block) {
-                        ch.clone()
-                    } else {
-                        SparseChallenge {
-                            positions: Vec::new(),
-                            coeffs: Vec::new(),
-                        }
-                    }
-                })
-                .collect();
-            Challenges::from_sparse(windowed, *num_live_blocks_per_claim, *num_claims)
-        }
-        Challenges::Tensor { .. } => Err(AkitaError::InvalidSetup(
-            "chunked fold response requires sparse fold challenges".to_string(),
-        )),
-    }
+    let windowed: Vec<SparseChallenge> = challenges
+        .as_slice()
+        .iter()
+        .enumerate()
+        .map(|(index, challenge)| {
+            let block = index % challenges.num_live_blocks_per_claim();
+            if fold_range.contains(&block) {
+                challenge.clone()
+            } else {
+                SparseChallenge {
+                    positions: Vec::new(),
+                    coeffs: Vec::new(),
+                }
+            }
+        })
+        .collect();
+    Challenges::from_sparse(
+        windowed,
+        challenges.num_live_blocks_per_claim(),
+        challenges.num_claims(),
+    )
 }
 
 /// Prover-side builder for the ring relation $M(x) \cdot z = y(x) + (X^D + 1) \cdot r(x)$.

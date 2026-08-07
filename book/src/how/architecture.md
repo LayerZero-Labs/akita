@@ -82,7 +82,7 @@ Every function on the prove/verify path has one of two roles:
 
 - **Orchestration** reads schedule types, drives the transcript, and moves
   D-free storage. It never carries `const D`.
-- **Kernels** (NTT, digit decomposition, commit/opening/tensor folds,
+- **Kernels** (NTT, digit decomposition, commit/opening folds,
   ring-switch arithmetic) are const-generic over `D` and receive extracted
   numbers, never schedule types.
 
@@ -110,7 +110,7 @@ Mixed-dimension malformed proof rejection is covered by
 | `Commitment<F>`, `RingVec<F>` | protocol commitment and field-vector storage |
 | `CommitmentRingDims`, `validate_schedule_ring_dims` | A/B/D commitment-matrix ring dimensions and schedule validation |
 | `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, exact SIS profile, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
-| `LevelParams` | Per-level recursion layout and config (fold shape, ring/ext degrees, decomposition depth, `role_dims`) |
+| `LevelParams` | Per-level recursion layout and config (ring/ext degrees, decomposition depth, `role_dims`) |
 | `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
 | `DensePoly`, `OneHotPoly`, `Root*Source`, compute-backend traits | Polynomial sources and operation capabilities consumed by the scheme |
 | `WitnessLayout`, `WitnessUnitLayout` | Canonical digit-innermost group-and-chunk ranges ([opening layout](./proving/opening-points-layout.md)) |
