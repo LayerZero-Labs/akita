@@ -30,7 +30,7 @@ use tracing_subscriber::EnvFilter;
 const TRUSTED_BENCHMARK_ARTIFACT_ENV: &str = "AKITA_RECURSION_TRUSTED_BENCHMARK_ARTIFACT";
 type F = fp128::Field;
 const D: usize = 64;
-type Cfg = fp128::D64OneHot;
+type Cfg = fp128::OneHot;
 
 const _: () = {
     assert!(D == <Cfg as CommitmentConfig>::D);

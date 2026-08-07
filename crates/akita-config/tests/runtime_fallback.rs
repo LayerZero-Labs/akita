@@ -289,10 +289,10 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
 }
 
 #[test]
-fn removed_d64_scalar_catalog_rejects_through_recursive_adapter() {
+fn removed_scalar_catalog_rejects_through_recursive_adapter_without_recursive_feature() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(18));
     assert!(matches!(
-        RecursiveCommitmentConfig::<fp128::D64OneHot>::runtime_schedule(key),
+        RecursiveCommitmentConfig::<fp128::OneHot>::runtime_schedule(key),
         Err(akita_field::AkitaError::UnsupportedSchedule(_))
     ));
 }

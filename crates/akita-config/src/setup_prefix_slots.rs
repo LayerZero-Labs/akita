@@ -149,7 +149,7 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
     Ok(keys)
 }
 
-#[cfg(all(test, feature = "schedules-fp128-d64-onehot-recursive"))]
+#[cfg(all(test, feature = "schedules-fp128-onehot-recursive"))]
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
@@ -158,7 +158,7 @@ mod tests {
         AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
     };
 
-    type SetupCfg = RecursiveCommitmentConfig<fp128::D64OneHot>;
+    type SetupCfg = RecursiveCommitmentConfig<fp128::OneHot>;
 
     fn profiling_recursive_key() -> AkitaScheduleLookupKey {
         let pre = PolynomialGroupLayout::new(16, 1);

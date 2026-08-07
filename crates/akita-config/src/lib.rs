@@ -649,7 +649,6 @@ mod fp128_policy_tests {
             }
         ));
         assert!(fp128::OneHot::schedule_catalog().is_some());
-        assert!(fp128::D256OneHot::schedule_catalog().is_none());
     }
 
     #[test]

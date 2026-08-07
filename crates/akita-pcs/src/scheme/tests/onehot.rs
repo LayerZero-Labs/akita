@@ -629,32 +629,6 @@ fn multi_group_root_opens_multi_polynomial_precommitted_group() {
 }
 
 #[test]
-fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
-    const PRE_NV: usize = 14;
-    const FINAL_NV: usize = 24;
-    type ProtocolCfg =
-        crate::test_support::EnvelopeFinalGroupConfig<fp128::D256OneHot, fp128::D64OneHot>;
-
-    let pre_group = akita_types::PolynomialGroupLayout::new(PRE_NV, 1);
-    let precommitted = akita_planner::derive_standalone_precommit_profile(
-        pre_group,
-        &akita_config::policy_of::<fp128::D256OneHot>(),
-        fp128::D256OneHot::root_honest_fold_policy(),
-        fp128::D256OneHot::ring_challenge_config,
-    )
-    .expect("synthetic D256 precommit profile");
-    let key = akita_types::AkitaScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, 2),
-        precommitteds: vec![precommitted],
-    };
-    let opening_layout = key.opening_layout().unwrap();
-    let schedule = ProtocolCfg::runtime_schedule(key).expect("descending-A schedule");
-    let root = multi_group_root_params(&schedule);
-    assert_eq!(root.d_a(), 64);
-    assert_eq!(root.group_role_dims(&opening_layout, 0).unwrap().d_a(), 256);
-}
-
-#[test]
 #[cfg(feature = "profile-ci")]
 fn multi_group_multi_chunk_fold_round_trips() {
     multi_group_root_round_trip_onehot::<fp128::OneHotMultiChunkW2R2, fp128::OneHotMultiChunkW2R2>(

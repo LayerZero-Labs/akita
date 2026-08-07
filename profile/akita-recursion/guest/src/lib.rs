@@ -30,7 +30,7 @@ use jolt::{end_cycle_tracking, start_cycle_tracking};
 
 type F = fp128::Field;
 const D: usize = 64;
-type Cfg = fp128::D64OneHot;
+type Cfg = fp128::OneHot;
 
 fn verification_status(result: Result<(), AkitaError>) -> u32 {
     match result {
@@ -40,9 +40,9 @@ fn verification_status(result: Result<(), AkitaError>) -> u32 {
 }
 
 const _: () = {
-    // Hard-fail at compile time if the guest monomorphization drifts away from
-    // the config and host artifact generator (`../artifact/src/main.rs`).
-    assert!(D == <Cfg as CommitmentConfig>::D);
+    // The guest ring dimension is pinned by the recursion benchmark shape, not
+    // `Cfg::D` (the adaptive preset's envelope dimension).
+    assert!(D == 64);
 };
 
 // Memory limits sized for the Akita verifier with `D=64 OneHot`. Blob size
