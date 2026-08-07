@@ -47,21 +47,20 @@ fn generated_schedule_has_explicit_terminal_inner_only_topology() {
 
 #[cfg(feature = "schedules-default")]
 #[test]
-fn setup_envelope_includes_terminal_inner_matrix() {
+fn setup_capacity_includes_terminal_inner_matrix() {
     let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(28),
     ))
     .expect("generated fp128 schedule");
-    let envelope =
-        setup_matrix_envelope_for_schedule(&schedule, fp128::D64Dense::D).expect("setup envelope");
-    let terminal_a = schedule
-        .terminal
-        .params
-        .witness
+    let envelope = setup_matrix_capacity_for_schedule(&schedule).expect("setup capacity");
+    let terminal = &schedule.terminal.params.witness;
+    let terminal_a = terminal
         .inner_commit_matrix
         .output_rank()
-        * schedule.terminal.params.witness.inner_width();
-    assert!(envelope.max_setup_len >= terminal_a);
+        .checked_mul(terminal.inner_width())
+        .and_then(|width| width.checked_mul(terminal.inner_commit_matrix.ring_dimension()))
+        .expect("terminal setup capacity");
+    assert!(envelope.num_field_elements >= terminal_a);
 }
 
 #[cfg(feature = "schedules-default")]
@@ -81,7 +80,6 @@ fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig, const D: usi
             &AkitaScheduleLookupKey::single(key),
             &policy,
             Cfg::ring_challenge_config,
-            Cfg::fold_challenge_shape_at_level,
         )
         .expect("shipped entry should materialize");
         let terminal = &schedule.terminal.params.witness;
@@ -119,16 +117,26 @@ fn generated_q32_terminals_require_the_i16_tail() {
 
 #[cfg(feature = "schedules-default")]
 #[test]
-fn d64_onehot_k16_uses_the_canonical_chunk_policy_without_a_catalog() {
-    assert_eq!(fp128::D64OneHotK16::onehot_chunk_size(), 16);
-    assert!(fp128::D64OneHotK16::schedule_catalog().is_none());
+fn fp128_d128_onehot_catalog_freezes_root_fold_digits() {
+    let table = fp128::D128OneHot::schedule_catalog().expect("D128 one-hot schedule catalog");
+    let first = table
+        .entries
+        .first()
+        .expect("nonempty D128 one-hot catalog");
+    let schedule = fp128::D128OneHot::runtime_schedule(first.to_runtime_lookup_key())
+        .expect("resolve D128 one-hot row");
+    let root = &schedule.root.params.final_group.commitment;
+    assert_eq!(
+        root.num_digits_fold,
+        first.root.final_group.num_digits_fold as usize
+    );
 }
 
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_envelope_scan_includes_multi_polynomial_precommitted_groups() {
     let layouts =
-        setup_envelope_scan_layouts::<fp128::D64OneHot>(14, 3).expect("setup scan layouts");
+        setup_capacity_scan_layouts::<fp128::D64OneHot>(14, 3).expect("setup scan layouts");
 
     assert!(layouts.iter().any(|layout| {
         layout.groups()

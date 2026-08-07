@@ -191,12 +191,7 @@ where
     let row_coefficients = if let Some(row_coefficients) = row_coefficients {
         row_coefficients
     } else {
-        append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-        if opening_batch.num_total_polynomials() == 1 {
-            vec![E::one()]
-        } else {
-            sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
-        }
+        derive_public_row_coefficients::<F, E, T>(opening_batch, &openings, transcript)?
     };
     let claim_coefficients = reduction.as_ref().map_or_else(
         || Ok(row_coefficients.clone()),
@@ -320,12 +315,7 @@ where
     let row_coefficients = if let Some(row_coefficients) = row_coefficients {
         row_coefficients
     } else {
-        append_claim_values_to_transcript::<F, E, T>(openings, transcript);
-        if opening_batch.num_total_polynomials() == 1 {
-            vec![E::one()]
-        } else {
-            sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
-        }
+        derive_public_row_coefficients::<F, E, T>(opening_batch, openings, transcript)?
     };
     let claim_coefficients = reduction.as_ref().map_or_else(
         || Ok(row_coefficients.clone()),

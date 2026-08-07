@@ -273,7 +273,6 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
             flat.resize(physical_len, 0i8);
             flat
         });
-
         let mut flat = Vec::with_capacity(physical_len);
         for ring in &coeffs {
             flat.extend_from_slice(ring.coefficients());
@@ -351,7 +350,7 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
 /// within that ring; runs are `width`-aligned and `width` divides `D`, so a
 /// run never crossed a ring boundary and flat indexing reads the identical
 /// coefficients. `flat` is bounded to the LIVE length (`1 << num_vars`); the
-/// tensor fold's tails cover exactly that range.
+/// folding reads exactly that live range.
 pub(super) struct DenseColumnSource<'a, F: FieldCore> {
     pub(super) flat: &'a [F],
     pub(super) width: usize,

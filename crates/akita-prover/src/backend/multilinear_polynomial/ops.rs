@@ -131,22 +131,12 @@ where
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
         let Some(first) = source.polys().first() else {
-            return Ok(match plan {
-                DecomposeFoldBatchPlan::Sparse { .. } => BatchDecomposeFoldOutcome::FallbackPerPoly,
-                DecomposeFoldBatchPlan::Tensor { .. } => BatchDecomposeFoldOutcome::Unsupported,
-            });
+            return Ok(BatchDecomposeFoldOutcome::FallbackPerPoly);
         };
         match first {
             MultilinearPolynomial::Dense(_) => {
                 let Some(dense_polys) = source.homogeneous_dense_polys() else {
-                    return Ok(match plan {
-                        DecomposeFoldBatchPlan::Sparse { .. } => {
-                            BatchDecomposeFoldOutcome::FallbackPerPoly
-                        }
-                        DecomposeFoldBatchPlan::Tensor { .. } => {
-                            BatchDecomposeFoldOutcome::Unsupported
-                        }
-                    });
+                    return Ok(BatchDecomposeFoldOutcome::FallbackPerPoly);
                 };
                 let dense_view =
                     <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_polys)?;
@@ -156,14 +146,7 @@ where
             }
             MultilinearPolynomial::OneHot(_) => {
                 let Some(onehot_polys) = source.homogeneous_onehot_polys() else {
-                    return Ok(match plan {
-                        DecomposeFoldBatchPlan::Sparse { .. } => {
-                            BatchDecomposeFoldOutcome::FallbackPerPoly
-                        }
-                        DecomposeFoldBatchPlan::Tensor { .. } => {
-                            BatchDecomposeFoldOutcome::Unsupported
-                        }
-                    });
+                    return Ok(BatchDecomposeFoldOutcome::FallbackPerPoly);
                 };
                 let onehot_view =
                     <OneHotPoly<F, I> as RootOpeningSource<F, D>>::opening_batch(&onehot_polys)?;

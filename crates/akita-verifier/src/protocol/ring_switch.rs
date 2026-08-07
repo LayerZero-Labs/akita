@@ -10,21 +10,20 @@ use akita_field::{
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    dispatch_for_field, shared_setup_fold_gadget, validate_role_dispatch, AkitaExpandedSetup,
-    CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, PreparedRelationAddress,
+    build_compression_relation_weights, dispatch_for_field, shared_setup_fold_gadget,
+    validate_role_dispatch, AkitaExpandedSetup, CommittedGroupParams, CompressionRelationWeights,
+    FpExtEncoding, NegativeBinarySupport, OpeningClaimsLayout, PreparedRelationAddress,
     RelationAddressGeometry, RingMultiplierOpeningPoint, RingRelationInstance, RingRole,
     SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
 };
 use std::sync::{Arc, Mutex};
 
 use super::validate_log_basis;
-pub(crate) use tensor_challenges::PreparedChallengeEvals;
 
 #[cfg(feature = "benchmark-support")]
 mod benchmark_support;
 mod prepared_relation_point;
 mod relation_evaluation;
-mod tensor_challenges;
 #[cfg(test)]
 mod tests;
 
@@ -39,6 +38,10 @@ pub use benchmark_support::{
 pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     /// Prepared data for prepared relation-matrix MLE evaluation.
     pub relation_matrix_evaluator: RelationMatrixEvaluator<E>,
+    /// Independent compact F/H contribution; ordinary A/B/D geometry is unchanged.
+    pub compression_relation_weights: Option<CompressionRelationWeights<E>>,
+    /// Sparse support of every F/H negative-binary digit span.
+    pub negative_binary_support: Option<NegativeBinarySupport>,
     /// Canonical flat relation-witness domain and coefficient/lane split.
     pub relation_address_geometry: RelationAddressGeometry,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
@@ -55,6 +58,8 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
 
 struct RingSwitchVerifyCoreOutput<E: FieldCore> {
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
+    compression_relation_weights: Option<CompressionRelationWeights<E>>,
+    negative_binary_support: Option<NegativeBinarySupport>,
     relation_address_geometry: RelationAddressGeometry,
     digit_range_equality_low_variable_count: usize,
     tau0: Option<Vec<E>>,
@@ -68,6 +73,8 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
         let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
         Ok(RingSwitchVerifyOutput {
             relation_matrix_evaluator: self.relation_matrix_evaluator,
+            compression_relation_weights: self.compression_relation_weights,
+            negative_binary_support: self.negative_binary_support,
             relation_address_geometry: self.relation_address_geometry,
             digit_range_equality_low_variable_count: self.digit_range_equality_low_variable_count,
             tau0,
@@ -109,40 +116,13 @@ pub(crate) struct FlatRelationContext {
 
 #[derive(Clone)]
 pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
-    pub(crate) c_alphas: PreparedChallengeEvals<F>,
+    pub(crate) c_alphas: Vec<F>,
     pub(crate) opening_a_evals: Vec<F>,
     pub(crate) group_id: usize,
     pub(crate) num_claims: usize,
-    pub(crate) num_live_blocks: usize,
     pub(crate) depth_fold: usize,
     pub(crate) a_row_start: usize,
     pub(crate) b_row_start: usize,
-}
-
-impl<E: FieldCore> RelationMatrixGroupEvaluator<E> {
-    fn structured_block_challenges<F>(&self) -> Result<Vec<E>, AkitaError>
-    where
-        F: FieldCore + FromPrimitiveInt,
-        E: MulBase<F>,
-    {
-        let capacity = self
-            .num_claims
-            .checked_mul(self.num_live_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("structured block count overflow".into()))?;
-        let mut block_challenges = Vec::with_capacity(capacity);
-        for claim in 0..self.num_claims {
-            let factors = self
-                .c_alphas
-                .affine_factors::<F>(claim, self.num_live_blocks)?;
-            block_challenges.extend_from_slice(
-                factors
-                    .low
-                    .get(..self.num_live_blocks)
-                    .ok_or(AkitaError::InvalidProof)?,
-            );
-        }
-        Ok(block_challenges)
-    }
 }
 
 /// Fixed public relation inputs for verifier ring-switch replay.
@@ -242,8 +222,35 @@ where
     }
     let relation_matrix_evaluator =
         prepare_relation_matrix_evaluator::<F, E>(replay, alpha, &tau1, Some(w_len))?;
+    let physical_field_len = replay
+        .opening_source_len
+        .checked_mul(replay.opening_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("opening capacity overflow".into()))?;
+    let compression_relation_weights = lp
+        .payload_mode
+        .is_compressed()
+        .then(|| {
+            build_compression_relation_weights(
+                replay.setup,
+                relation,
+                alpha,
+                lp,
+                &tau1,
+                &witness_layout,
+                replay.opening_ring_dim,
+                physical_field_len,
+            )
+        })
+        .transpose()?;
+    let negative_binary_support = lp
+        .payload_mode
+        .is_compressed()
+        .then(|| NegativeBinarySupport::new(&witness_layout, physical_field_len))
+        .transpose()?;
     RingSwitchVerifyCoreOutput {
         relation_matrix_evaluator,
+        compression_relation_weights,
+        negative_binary_support,
         relation_address_geometry,
         digit_range_equality_low_variable_count,
         tau0,
@@ -370,7 +377,7 @@ where
         let num_live_blocks = group_lp.num_live_blocks();
         let num_positions_per_block = group_lp.num_positions_per_block();
         let depth_witness = group_lp.num_digits_inner();
-        let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
+        let depth_fold = group_lp.num_digits_fold();
         let log_basis_inner = group_lp.log_basis_inner();
         let log_basis_outer = group_lp.log_basis_outer();
         let log_basis_open = group_lp.log_basis_open();
@@ -411,10 +418,10 @@ where
             .group_challenges()
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
-        if challenges.logical_len() != total_blocks {
+        if challenges.len() != total_blocks {
             return Err(AkitaError::InvalidSize {
                 expected: total_blocks,
-                actual: challenges.logical_len(),
+                actual: challenges.len(),
             });
         }
         let (c_alphas, opening_a_evals) = dispatch_for_field!(
@@ -423,12 +430,8 @@ where
             group_role_dims.d_a(),
             |D_GROUP| {
                 let alpha_pows = scalar_powers(alpha, D_GROUP);
-                let c_alphas = prepare_challenge_evals::<F, E, D_GROUP>(
-                    challenges,
-                    &alpha_pows,
-                    k_g,
-                    num_live_blocks,
-                )?;
+                let c_alphas =
+                    prepare_challenge_evals::<F, E>(challenges, &alpha_pows, k_g, num_live_blocks)?;
                 let opening_a_evals = (0..num_positions_per_block)
                     .map(|idx| {
                         ring_multiplier_point.eval_position_at::<D_GROUP, E>(idx, &alpha_pows)
@@ -451,7 +454,6 @@ where
             opening_a_evals,
             group_id: group_index,
             num_claims: k_g,
-            num_live_blocks,
             depth_fold,
             a_row_start: a_range.start,
             b_row_start: b_range.start,
@@ -474,51 +476,29 @@ where
     })
 }
 
-fn prepare_challenge_evals<F, E, const D: usize>(
+fn prepare_challenge_evals<F, E>(
     challenges: &Challenges,
     alpha_pows: &[E],
     num_claims: usize,
     num_live_blocks: usize,
-) -> Result<PreparedChallengeEvals<E>, AkitaError>
+) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
+    F: FieldCore + FromPrimitiveInt,
+    E: FieldCore + MulBase<F>,
 {
-    match challenges {
-        Challenges::Sparse {
-            challenges: sparse, ..
-        } => Ok(PreparedChallengeEvals::Flat(
-            sparse
-                .iter()
-                .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
-                .collect::<Result<_, _>>()?,
-        )),
-        Challenges::Tensor { factored } => {
-            if D < 2 {
-                return Err(AkitaError::InvalidInput(
-                    "tensor challenge factored evaluation requires D >= 2".to_string(),
-                ));
-            }
-            factored.validate::<D>()?;
-            if factored.num_claims != num_claims {
-                return Err(AkitaError::InvalidSize {
-                    expected: num_claims,
-                    actual: factored.num_claims,
-                });
-            }
-            let num_live_blocks_per_claim = factored.num_live_blocks_per_claim;
-            if num_live_blocks_per_claim != num_live_blocks {
-                return Err(AkitaError::InvalidSize {
-                    expected: num_live_blocks,
-                    actual: num_live_blocks_per_claim,
-                });
-            }
-            Ok(PreparedChallengeEvals::Tensor {
-                challenges: factored.clone(),
-                alpha_pows: alpha_pows.to_vec(),
-            })
-        }
+    if challenges.num_claims() != num_claims {
+        return Err(AkitaError::InvalidSize {
+            expected: num_claims,
+            actual: challenges.num_claims(),
+        });
     }
+    if challenges.num_live_blocks_per_claim() != num_live_blocks {
+        return Err(AkitaError::InvalidSize {
+            expected: num_live_blocks,
+            actual: challenges.num_live_blocks_per_claim(),
+        });
+    }
+    challenges.evals_at_pows::<F, E>(alpha_pows)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -540,7 +520,7 @@ where
 {
     validate_role_dispatch::<D>(lp.role_dims(), RingRole::Inner)?;
     let num_polys = opening_batch.num_total_polynomials();
-    let depth_fold = lp.num_digits_fold(num_polys, lp.field_bits_for_cache())?;
+    let depth_fold = lp.num_digits_fold();
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = gamma.len();
     if num_polys != num_claims {
@@ -557,21 +537,17 @@ where
     let total_blocks = num_live_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
-    if challenges.logical_len() != total_blocks {
+    if challenges.len() != total_blocks {
         return Err(AkitaError::InvalidSize {
             expected: total_blocks,
-            actual: challenges.logical_len(),
+            actual: challenges.len(),
         });
     }
     let num_positions_per_block = lp.num_positions_per_block;
     let n_a = lp.inner_commit_matrix.output_rank();
 
-    let c_alphas = prepare_challenge_evals::<F, E, D>(
-        challenges,
-        &alpha_pows,
-        num_claims,
-        lp.num_live_blocks,
-    )?;
+    let c_alphas =
+        prepare_challenge_evals::<F, E>(challenges, &alpha_pows, num_claims, lp.num_live_blocks)?;
     let opening_a_evals = (0..num_positions_per_block)
         .map(|idx| ring_multiplier_point.eval_position_at::<D, E>(idx, &alpha_pows))
         .collect::<Result<Vec<_>, _>>()?;
@@ -580,7 +556,6 @@ where
         opening_a_evals,
         group_id: 0,
         num_claims,
-        num_live_blocks,
         depth_fold,
         a_row_start: 1,
         b_row_start: 1 + n_a,

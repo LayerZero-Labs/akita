@@ -1,18 +1,31 @@
-# Spec: Schedule catalog ownership and opt-in shipped tables
+# Historical spec: Schedule catalog ownership and opt-in shipped tables
+
+> **Superseded runtime contract (2026-07-31).** The active contract is
+> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
+> Runtime schedule resolution now requires an approved generated catalog and
+> exact row. A missing catalog or row is rejected. Runtime prover and verifier
+> code MUST NOT fall back to planner search. Statements below describing tables
+> as optional caches, DP fallback, or table-independent runtime correctness are
+> retained only as the historical design record for PR #203 and MUST NOT be
+> implemented.
 
 > **Pre-zk-strip historical.** This spec predates the zk-strip
 > ([`akita-zk-strip-for-audit.md`](akita-zk-strip-for-audit.md)). References to
 > `zk_enabled` or `feature = "zk"` describe removed catalog paths preserved on
 > `zk-wip`.
+>
+> **Profile-key supersession (2026-07-30).** Public schedule identity now binds
+> exact ordered commitment profiles and an approved row selection, not private
+> polynomial representation. Verifier runtime remains planner-free.
 
 | Field         | Value |
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-06-18 |
-| Status        | proposed |
+| Status        | superseded |
 | PR            | [#203](https://github.com/LayerZero-Labs/akita/pull/203) |
 | Supersedes    | (partial) schedule-key scope in [`planner-incidence-generalization.md`](planner-incidence-generalization.md) |
-| Superseded-by | |
+| Superseded-by | [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md) |
 | Book-chapter  | how/configuration.md |
 
 ## Summary
@@ -41,7 +54,7 @@ The planner keeps DP fallback as the universal correctness path.
 
 Because a preset can now hand the planner an arbitrary catalog, every generated table
 also carries a compact **catalog identity**. `resolve_schedule` validates that
-identity against the caller's `PlannerPolicy`, root fold shape, ZK mode, and generated
+identity against the caller's `PlannerPolicy`, ZK mode, and generated
 ring-challenge digest before consulting the entries. A mismatched catalog is rejected
 with `AkitaError`, not silently treated as a cache miss. Table absence still falls
 back to DP.
@@ -142,7 +155,6 @@ everyone shares at link time**.
   (same-point)  ──► │    resolve_schedule(                 │
                     │      key, policy,                    │
                     │      ring_challenge_config,          │
-                    │      fold_challenge_shape_at_level,  │
                     │      Self::schedule_catalog(),  ◄── opt-in
                     │    )                                 │
                     └──────────────┬──────────────────────┘
@@ -191,10 +203,10 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
   this per catalog (today: `generated_schedule_tables_match_find_schedule`; becomes
   per-family tests in `akita-schedules` and downstream catalogs).
 - **Catalog identity is checked before lookup.** A catalog is not just an entry slice.
-  It carries the generated policy identity, ZK mode, root fold shape, and a digest of
+  It carries the generated policy identity, ZK mode, and a digest of
   the ring-challenge configs used for every ring dimension represented by the table.
   `resolve_schedule` compares that identity with the caller's `PlannerPolicy`,
-  `ring_challenge_config`, and `fold_challenge_shape_at_level`. A mismatch returns
+  `ring_challenge_config`. A mismatch returns
   `AkitaError::InvalidSetup`; it must not fall through to DP because that would hide
   a broken preset/cargo-feature wiring bug.
 - **Verifier no-panic.** `resolve_schedule` and `find_schedule` return `Result`,
@@ -218,9 +230,8 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
   `akita-schedules` through a weak dependency feature, so the accessor cannot pair ZK
   planner semantics with non-ZK table data. Non-ZK-only families (currently tiered)
   are inert under `zk` and excluded from the ZK drift guard.
-- **Same-point batching only.** Scalar lookup keys derive from
-  `OpeningClaimsLayout` / `PolynomialGroupLayout` via
-  `AkitaScheduleLookupKey::from_layout`. No multipoint keys, no
+- **Same-point batching only.** Scalar lookup keys derive from a validated
+  singleton `OpeningClaimsLayout` via `AkitaScheduleLookupKey::single`. No multipoint keys, no
   `ClaimIncidenceSummary` schedule path (type not in tree).
 - **Table miss falls back to DP**, never errors solely because a row is absent (unless
   DP itself rejects the key).
@@ -251,11 +262,11 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 #### Engine and API
 
 - [ ] `akita_planner::shipped_table` and `get_schedule` are removed, along with the
-  global `crate::generated::*_table` import block and the `root_fold_is_tensor`
+  global `crate::generated::*_table` import block and preset-specific resolver
   disambiguation hack they required.
-- [ ] `akita_planner::resolve_schedule(key, policy, ring_challenge_config, fold_challenge_shape_at_level, catalog: Option<GeneratedScheduleTable>)` is the single runtime entry point (catalog passed **by value** because `GeneratedScheduleTable` is `Copy`).
+- [ ] `akita_planner::resolve_schedule(key, policy, ring_challenge_config, catalog: Option<GeneratedScheduleTable>)` is the single runtime entry point (catalog passed **by value** because `GeneratedScheduleTable` is `Copy`).
 - [ ] `GeneratedScheduleTable` contains a validated identity, not only `sis_modulus_profile`:
-  generated policy fields, `zk_enabled`, root fold shape, ring dimensions covered by
+  generated policy fields, `zk_enabled`, ring dimensions covered by
   the table, and a deterministic digest of `ring_challenge_config(d)` for those
   dimensions.
 - [ ] `resolve_schedule` validates the catalog identity against the caller before
@@ -264,7 +275,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 - [ ] Add a negative unit test with a deliberately miswired catalog (e.g. D64 full
   preset given a D64 one-hot catalog) proving `resolve_schedule` rejects the catalog
   instead of falling back to DP.
-- [ ] Planner public closures use `ring_challenge_config` (not `stage1`) and `fold_challenge_shape_at_level` (not `fold_shape`) in signatures and docs.
+- [ ] Planner public closures use `ring_challenge_config` (not `stage1`) in signatures and docs.
 - [ ] Internal type `Stage1Fn` renamed to `RingChallengeConfigFn`.
 - [ ] `estimate_proof_bytes` and `schedule_from_entry` use the renamed closure
   parameters so generated-table readers do not keep the old `stage1` terminology.
@@ -329,7 +340,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 #### Same-point keys only
 
 - [ ] Schedule lookup for production prove/verify paths uses
-  `AkitaScheduleLookupKey::from_layout` / `OpeningClaimsLayout::new`.
+  `AkitaScheduleLookupKey::single` / `OpeningClaimsLayout::new`.
 - [ ] `GeneratedFamily` replaces the current hardcoded `[1, 4]` enumeration with a
   per-family `num_polys: &'static [usize]` list. Akita defaults use `[1, 4]`; Jolt can
   emit `[1, 38]` without changing Akita core.
@@ -406,14 +417,14 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 | Area | Tests |
 |------|-------|
 | Engine | Existing `runtime_fallback.rs` (migrated off `shipped_table`), planner unit tests, negative mismatched-catalog rejection test |
-| Catalog identity | Unit tests for identity match/mismatch, ZK mismatch, root fold shape mismatch, and ring-challenge digest mismatch |
+| Catalog identity | Unit tests for identity match/mismatch, ZK mismatch, and ring-challenge digest mismatch |
 | Per-family drift | `generated_schedule_tables_match_find_schedule` in `akita-config`, gated per `schedules-*` feature; `all-schedules` meta-feature for full cross-product |
 | Preset opt-in | `akita-config` tests: with feature on, catalog is `Some` and table hit; with feature off, catalog is `None` and runtime uses DP |
 | Direct table tests | `proof_optimized/tests.rs` migrated to feature-gated `schedule_catalog()` or `akita_schedules::*_table()` access |
 | profile-ci coverage | `scripts/check_profile_ci_features.sh` in CI (parses `AKITA_BENCH_CASES`) |
 | profile-ci linkage | Hard smoke check that profile-ci binary does not contain an obvious non-profile family symbol |
 | Profile compile | CI builds head with `--no-default-features --features parallel,profile-ci`; merge-base build probes feature availability |
-| E2E | `akita-pcs` e2e, `batched_aggregated_e2e`, tiered/tensor cases with appropriate features |
+| E2E | `akita-pcs` e2e, `batched_aggregated_e2e`, and tiered cases with appropriate features |
 
 Feature combinations: run drift guards under default and `zk` for families that ship
 `zk` tables. The required schedule-specific jobs are:
@@ -478,7 +489,6 @@ pub fn resolve_schedule(
     key: AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<Schedule, AkitaError>
 ```
@@ -486,16 +496,11 @@ pub fn resolve_schedule(
 Behavior:
 
 1. If `catalog` is `Some`, validate the catalog identity against `policy`,
-   `ring_challenge_config`, and `fold_challenge_shape_at_level`.
+   `ring_challenge_config`.
 2. If identity validation fails, return `AkitaError::InvalidSetup`.
 3. If identity validation succeeds, look up `generated_schedule_lookup_key(key)` in
    the table; on hit, `schedule_from_entry`.
 4. Otherwise (no catalog, or miss), `find_schedule`.
-
-`resolve_schedule` no longer computes `root_fold_is_tensor` at all — that hack only
-existed so the global registry could disambiguate the tensor table from the flat one.
-`fp128::D64OneHot` and `tensor_verifier::fp128::D64OneHotTensor` are different presets
-that each return their own `schedule_catalog()`, so the discriminator is deleted.
 
 #### Catalog identity
 
@@ -515,7 +520,6 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub basis_range: (u32, u32),
     pub onehot_chunk_size: usize,
     pub tiered: bool,
-    pub root_fold_shape: TensorChallengeShape,
     pub ring_dimensions: &'static [usize],
     pub ring_challenge_config_digest: u64,
     pub key_count: usize,
@@ -533,8 +537,6 @@ Validation derives the expected identity as follows:
 
 - Policy fields copy directly from `PlannerPolicy`.
 - `zk_enabled` is `cfg!(feature = "zk")` in `akita-planner`.
-- `root_fold_shape` is evaluated with `AkitaScheduleInputs { num_vars: key.num_vars,
-  level: 0, current_w_len: 1usize.checked_shl(key.num_vars as u32)? }`.
 - `ring_dimensions` are the distinct ring degrees represented by the compact table,
   including fold steps and root-direct commit payloads. The emitter stores them sorted
   and deduplicated.
@@ -550,14 +552,8 @@ Digest inputs use a fixed little-endian byte format:
 
 - `usize` / `u32` fields are encoded as `u64::to_le_bytes` after checked conversion.
 - `bool` is one byte (`0` or `1`).
-- `SparseChallengeConfig` is encoded by variant tag plus canonical fields:
-  uniform configs encode weight and ordered `nonzero_coeffs` bytes; bounded-L1 /
-  signed-sparse configs encode their public scalar parameters in declaration order.
-  Adding a new challenge variant must update this encoder.
-
-The emitter rejects a table whose key envelope would produce mixed root fold shapes.
-All current Akita families are constant across the envelope (flat, tensor, or tiered
-flat), and a future dynamic-shape family should be split into separate catalogs.
+- `SparseChallengeConfig` is encoded by its canonical `count_pm1` and
+  `count_pm2` fields in declaration order.
 
 If `checked_shl` or `ring_challenge_config(d)` fails while validating a `Some`
 catalog, return the same `AkitaError` shape the DP would return for invalid setup.
@@ -580,7 +576,6 @@ fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>
         key,
         &policy_of::<Self>(),
         Self::ring_challenge_config,
-        Self::fold_challenge_shape_at_level,
         Self::schedule_catalog(),
     )
 }
@@ -630,13 +625,11 @@ Meaning (from `CommitmentConfig` docs): the sparse ring element `c(X)` used in t
 challenge. The planner passes this closure to price folded-witness norms and ω-based
 collision bounds during DP and entry expansion.
 
-`fold_challenge_shape_at_level` (flat vs tensor root fold) stays aligned with the
-existing `CommitmentConfig` hook name.
-
 ### Schedule lookup keys (same-point only)
 
-Production folded path uses `OpeningClaimsLayout::new(padded_num_vars, num_polys)?`
-and `AkitaScheduleLookupKey::from_layout(&layout)?`:
+Production folded paths validate
+`OpeningClaimsLayout::new(padded_num_vars, num_polys)?`, extract its singleton
+group, and call `AkitaScheduleLookupKey::single(group)`:
 
 ```text
 num_t_vectors = num_polys        (polynomials in the bundled commitment)
@@ -645,8 +638,8 @@ num_z_vectors = 1                (one commitment group)
 num_commitment_groups = 1        (in generated key shape)
 ```
 
-`AkitaScheduleLookupKey::from_layout` is the canonical scalar projection; grouped
-roots build an explicit key with `final_group` and `precommitteds`.
+`AkitaScheduleLookupKey::single` is the canonical scalar constructor; grouped
+roots build an explicit key with `final_group` and ordered `precommitteds`.
 
 **Generated table enumeration** (`family_keys` in emitter) crosses:
 
@@ -661,7 +654,7 @@ This replaces the stale incidence generalization plan for scalar same-bundle
 batching. Multi-commitment same-point batching is tracked separately in
 [`multi-group-batching.md`](multi-group-batching.md); grouped roots construct an
 explicit `AkitaScheduleLookupKey` from their final and precommitted groups rather
-than projecting through the scalar `AkitaScheduleLookupKey::from_layout` path.
+than projecting through the scalar `AkitaScheduleLookupKey::single` path.
 
 ### `akita-schedules` crate
 
@@ -686,7 +679,6 @@ than projecting through the scalar `AkitaScheduleLookupKey::from_layout` path.
 | `fp128-d32-onehot` | (new/emitted) | `fp128::D32OneHot` |
 | `fp32-d128-onehot` | `fp32_d128_onehot.rs` | `fp32::D128OneHot` |
 | … | … | … |
-| `fp128-d64-onehot-tensor` | `fp128_d64_onehot_tensor.rs` | `D64OneHotTensor` |
 
 Meta-features:
 
@@ -730,7 +722,6 @@ schedules-default = [
 ]
 all-schedules = [
     "schedules-default",
-    "schedules-fp128-d64-onehot-tensor",
     "schedules-fp128-d64-onehot-tiered", # non-ZK-only; gated out under feature = "zk"
 ]
 schedules-fp128-d64-onehot = [
@@ -807,7 +798,6 @@ pub struct EmitSpec {
     pub keys: Vec<AkitaScheduleLookupKey>,
     pub output_dir: PathBuf,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
     pub zk_enabled: bool,
 }
 ```
@@ -955,7 +945,7 @@ measure binary footprint.
 | Alternative | Why rejected |
 |-------------|--------------|
 | Keep `shipped_table()` global registry | Cannot isolate link-time catalogs; forces downstream upstreaming |
-| Trust per-preset catalog wiring without runtime identity | Too easy to silently attach a one-hot/tensor/tiered catalog to the wrong preset; verifier-reachable code should reject this as invalid setup |
+| Trust per-preset catalog wiring without runtime identity | Too easy to silently attach a catalog to the wrong preset; verifier-reachable code should reject this as invalid setup |
 | Move all tables out of Akita repo | User requirement: tables stay on `main`, grow as needed (e.g. D32) |
 | Runtime plugin / dynamic loading | Rust static tables; unnecessary complexity |
 | Per-case CI binaries (Option A) | Compile cost; user chose Option B |
@@ -998,7 +988,7 @@ measure binary footprint.
 3. Move generated table **types and expansion only** to the stable planner namespace;
    keep table data temporarily where it is until the new crate compiles.
 4. Add `GeneratedScheduleCatalogIdentity`, canonical digest encoders, and runtime
-   identity validation tests for wrong family, wrong root fold shape, wrong ZK mode,
+   identity validation tests for wrong family, wrong ZK mode,
    wrong ring-challenge digest, and wrong key digest.
 5. Add `resolve_schedule` with `catalog: Option<GeneratedScheduleTable>` parameter
    (by value); rename planner `stage1`/`Stage1Fn` to `ring_challenge_config`/
@@ -1013,7 +1003,7 @@ measure binary footprint.
 10. Point presets at catalogs via `#[cfg]`-gated `schedule_catalog()` overrides
     (default features = current behavior through forwarded `schedules-default`).
 11. Delete `shipped_table`, `get_schedule`, the planner generated table-data imports,
-    and the `root_fold_is_tensor` hack in `resolve.rs`.
+    and the preset-specific resolver hack in `resolve.rs`.
 12. Keep `ALL_GENERATED_FAMILIES` + drift guard in `akita-config`; gate each family row
     behind its `schedules-*` feature; add `all-schedules` meta-feature. Migrate
     `tests/runtime_fallback.rs` and `proof_optimized/tests.rs` off direct planner table
@@ -1049,7 +1039,7 @@ measure binary footprint.
 | Production preset silently degraded to DP by a missing feature | Forward `schedules-default` through top-level crates; drift guard asserts `schedule_catalog().is_some()` and table hits for enabled rows |
 | Wrong catalog attached to a preset | Runtime catalog identity validation rejects the mismatch before lookup |
 | `zk` / non-`zk` table split | `akita-config/zk` forwards `akita-schedules?/zk`; identity includes `zk_enabled`; non-ZK-only tiered is inert under `zk` |
-| Tensor/tiered presets | Separate families (already separate tables); each names its own catalog, so the `root_fold_is_tensor` runtime hack is deleted |
+| Tiered presets | Separate families (already separate tables); each names its own catalog, so preset-specific resolver hacks are deleted |
 | Profile-ci accidentally links defaults | Build with `--no-default-features`, set `akita-setup` dependency defaults to false, and run linkage smoke check |
 
 ## References

@@ -36,13 +36,6 @@ where
     /// Total number of variables (representation-derived, D-independent).
     fn num_vars(&self) -> usize;
 
-    /// One-hot chunk size for sparse one-hot backends.
-    ///
-    /// `None` means this backend is not a one-hot root representation.
-    fn onehot_chunk_size(&self) -> Option<usize> {
-        None
-    }
-
     /// Release prover-only storage that is no longer needed once the accepted
     /// root fold has been prepared.
     ///
@@ -987,10 +980,6 @@ where
 
     fn num_vars(&self) -> usize {
         RootPolyMeta::num_vars(*self)
-    }
-
-    fn onehot_chunk_size(&self) -> Option<usize> {
-        RootPolyMeta::onehot_chunk_size(*self)
     }
 
     fn release_root_opening_storage(&self) {

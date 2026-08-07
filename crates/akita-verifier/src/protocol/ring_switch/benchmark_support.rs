@@ -1,17 +1,14 @@
 //! Feature-gated fixtures for benchmarking the production relation evaluator.
 
-use super::{
-    FlatRelationContext, PreparedChallengeEvals, RelationMatrixEvaluator,
-    RelationMatrixGroupEvaluator,
-};
+use super::{FlatRelationContext, RelationMatrixEvaluator, RelationMatrixGroupEvaluator};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
-    CommittedGroupParams, FlatMatrix, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress, RelationAddressGeometry,
-    SetupContributionPlan, SisModulusProfileId, WitnessLayout,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, AkitaSetupDescriptor,
+    CommitmentRingDims, CommittedGroupParams, FlatMatrix, InnerCommitMatrixParams,
+    OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress,
+    RelationAddressGeometry, SetupContributionPlan, SisModulusProfileId, WitnessLayout,
 };
 use std::sync::Arc;
 
@@ -143,17 +140,14 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
     let evaluator = RelationMatrixEvaluator {
         relation_address_geometry,
         groups: vec![RelationMatrixGroupEvaluator {
-            c_alphas: PreparedChallengeEvals::Flat(
-                (0..NUM_CLAIMS * NUM_LIVE_BLOCKS)
-                    .map(|index| scalar(307 + index as u128))
-                    .collect(),
-            ),
+            c_alphas: (0..NUM_CLAIMS * NUM_LIVE_BLOCKS)
+                .map(|index| scalar(307 + index as u128))
+                .collect(),
             opening_a_evals: (0..NUM_POSITIONS_PER_BLOCK)
                 .map(|index| scalar(401 + index as u128))
                 .collect(),
             group_id: 0,
             num_claims: NUM_CLAIMS,
-            num_live_blocks: NUM_LIVE_BLOCKS,
             depth_fold,
             a_row_start: 1,
             b_row_start: 1 + N_A,
@@ -183,7 +177,7 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         .ok_or_else(|| AkitaError::InvalidSetup("benchmark setup A ratio is zero".into()))?;
     let setup_ring_elements = plan.required().div_ceil(a_ratio);
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupSeed {
+        AkitaSetupDescriptor {
             max_num_vars: 0,
             max_num_batched_polys: NUM_CLAIMS,
             gen_ring_dim: A_D,

@@ -35,12 +35,11 @@ It also sits naturally beside the Greyhound/LaBRADOR lineage: a concrete, memora
 The rename is justified because the implementation target is no longer only a packaging refactor of the original Hachi paper.
 The Akita line includes, or is being designed to include, material protocol improvements over the original Hachi design:
 
-- faster verifier-oriented reductions through matrix-claim delegation and tensor-structured challenges;
+- faster verifier-oriented reductions through matrix-claim delegation;
 - smaller proof sizes for large-field deployments, including 128-bit-field settings, through modulus switching and field-size lowering;
 - an efficient zero-knowledge layer, tentatively named Whiteout, based on fully blinding the proof with committed sumcheck masks and Gaussian masking noise.
 
-The crate decomposition should keep these protocol improvements cleanly separable from foundational crates.
-For example, tensor challenge sampling belongs in `akita-challenges` or role crates as appropriate, shared public proof/config shapes belong in `akita-types`, and Whiteout prover-only machinery must not leak into `akita-verifier`.
+The crate decomposition should keep protocol improvements cleanly separable from foundational crates. Shared public proof/config shapes belong in `akita-types`, and Whiteout prover-only machinery must not leak into `akita-verifier`.
 
 The target workspace layout uses a central top-level `crates/` directory.
 Each extracted package lives under `crates/<package-name>/`.
@@ -94,7 +93,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 
 ### Non-Goals
 
-1. Changing current protocol behavior, security assumptions, schedule choices, proof layout semantics, Fiat-Shamir domain labels, or field/ring arithmetic as part of the crate split. Akita protocol improvements such as matrix-claim delegation, tensor challenges, modulus switching, and Whiteout should land as explicit protocol changes, not accidental side effects of moving files.
+1. Changing current protocol behavior, security assumptions, schedule choices, proof layout semantics, Fiat-Shamir domain labels, or field/ring arithmetic as part of the crate split. Akita protocol improvements such as matrix-claim delegation, modulus switching, and Whiteout should land as explicit protocol changes, not accidental side effects of moving files.
 2. Migrating Jolt to consume the new Akita crates in this PR. The output should make that integration straightforward, but the Jolt-side dependency change is separate.
 3. Importing Jolt's code, eval framework, or crate names into Akita.
 4. Keeping temporary compatibility shims for old module paths such as `akita_pcs::protocol::...`, or preserving the old monolithic protocol tree under a new `akita_pcs::protocol::...` facade.
@@ -327,7 +326,7 @@ Use current `main` paths, not the stale older plan.
 - Config adapters for SIS derivation now live under `akita-config`, because they are preset policy over `akita-types` SIS derivation helpers rather than commitment machinery.
 - The obsolete root `protocol::commitment` module has been deleted. Prover trait/data imports now come from `akita-prover` or direct aggregate crate re-exports instead of a compatibility wrapper.
 - Shared config data shapes (`DecompositionParams`, `CommitmentEnvelope`, and `AjtaiRole`) are now in `akita-types`; concrete config policy now lives in `akita-config`.
-- Shared setup contracts from the former root setup module: `AkitaSetupSeed`, `AkitaExpandedSetup`, and `AkitaVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `AkitaProverSetup` and config-free setup expansion now live in `akita-prover`, while `akita-config` owns setup sizing and `akita-setup` owns optional disk persistence.
+- Shared setup contracts from the former root setup module: `AkitaSetupDescriptor`, `AkitaExpandedSetup`, and `AkitaVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `AkitaProverSetup` and config-free setup expansion now live in `akita-prover`, while `akita-config` owns setup sizing and `akita-setup` owns optional disk persistence.
 - `src/protocol/prg.rs` only if both prover and verifier need it. If it is setup/prover-only, place it in `akita-prover`.
 - Runtime-to-const dispatch helpers now live in `akita-prover`, beside the
   multi-D NTT cache and prover kernels that consume them.
@@ -814,7 +813,7 @@ The intended sequence is:
     schedule/SIS tables. Follow-up cuts should move schedule/config/setup shared
     shapes once the schedule-provider boundary is explicit enough to keep
     planner search out of runtime verifier/prover crates.
-    The current setup-contract cut moves `AkitaSetupSeed`, `AkitaExpandedSetup`,
+    The current setup-contract cut moves `AkitaSetupDescriptor`, `AkitaExpandedSetup`,
     `AkitaVerifierSetup`, and the public matrix seed type into `akita-types`,
     while later cuts move `AkitaProverSetup` and config-free setup expansion
     into `akita-prover`.

@@ -38,7 +38,7 @@ proof-format cutover.
 Land the immediate Fiat-Shamir fixes that are independent of grinding:
 
 - Descriptor setup binding is seed/layout derived. Fiat-Shamir binds the
-  canonical `AkitaSetupSeed` digest plus protocol-affecting layout, schedule,
+  canonical `AkitaSetupDescriptor` digest plus protocol-affecting layout, schedule,
   security, decomposition, SIS-family, and feature-mode metadata. It does not
   hash the full expanded shared matrix or prover NTT cache into the transcript.
 
@@ -93,7 +93,7 @@ Land the immediate Fiat-Shamir fixes that are independent of grinding:
 ### Acceptance Criteria
 
 - [ ] `AkitaInstanceDescriptor` setup binding derives setup identity directly
-      from the canonical `AkitaSetupSeed` bytes and descriptor-bound layout
+      from the canonical `AkitaSetupDescriptor` bytes and descriptor-bound layout
       metadata. No cached setup-identity artifact should be stored in expanded
       setup state.
 - [ ] `SetupSection` binds `setup_seed_digest`, decomposition, SIS modulus
@@ -180,7 +180,7 @@ pub struct SetupSection {
 }
 ```
 
-`setup_seed_digest` covers the canonical `AkitaSetupSeed` bytes. The level
+`setup_seed_digest` covers the canonical `AkitaSetupDescriptor` bytes. The level
 parameter digest covers the effective schedule and layout parameters that
 determine how the generated matrix is interpreted and used: ring dimensions,
 fold/direct/terminal steps, digit depths, row counts, block sizes, stage-1
@@ -331,7 +331,7 @@ Update:
 Suggested implementation order:
 
 1. Remove cached setup-artifact digest state from descriptor identity. Derive
-   `SetupSection` from canonical `AkitaSetupSeed` bytes plus the
+   `SetupSection` from canonical `AkitaSetupDescriptor` bytes plus the
    descriptor-bound layout/schedule metadata that determines how the transparent
    setup is interpreted.
 2. Make the setup seed carry exact generation capacity, including generation

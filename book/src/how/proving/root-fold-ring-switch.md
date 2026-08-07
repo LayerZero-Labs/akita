@@ -2,9 +2,8 @@
 
 > **Status:** stub. Part of the initial Akita Book scaffold.
 
-The heart of one folding step: building the batched root relation, switching it
-into the next-level ring witness, and the tensor-structured challenges that make
-the fold's contribution to the verifier evaluation succinct.
+The heart of one folding step: building the batched root relation and switching
+it into the next-level ring witness.
 
 ## The root fold
 
@@ -34,15 +33,3 @@ extension-opening reduction (a different "ring switch"; see
 - Paper §3.5 (`fig:akita-ring-switch`), App B.3 `sec:akita-ring-switching` (quotient via cyclic/negacyclic NTT, `eq:akita-quotient-identity`).
 - `specs/terminal-fold-cutover.md` (D-block at intermediate vs terminal).
 - Council math report B4 (lattice fold vs EOR distinction).
-
-## Tensor folding challenges
-
-The tensor-structured folding-challenge family, how its contribution to the MLE
-evaluation is computed succinctly at the ring-switch point, and the 2-level CWSS
-extraction it supports.
-
-**Sources to fold in**
-
-- `crates/akita-challenges/src/tensor.rs` (`ChallengeShape`).
-- Paper §4.2 `sec:tensor-challenges` (`eq:tensor-challenge`, `lem:tensor-cwss`, `lem:tensor-norm`).
-- `specs/tensor-structured-folding-challenges.md` (implemented), `specs/archive/bounded-l1-sparse-challenge.md` (archived).

@@ -7,10 +7,16 @@
 | Status        | active                                     |
 | PR            | #301; revised by #318                      |
 | Supersedes    | Fixed two-level rollout in this document   |
-| Superseded-by |                                            |
+| Superseded-by | Flat setup/capacity portions superseded by `flat-public-matrix-and-exact-ntt-cache.md`; recursive selection policy remains active |
 | Book-chapter  | book/src/roadmap/verifier-offloading.md    |
 
 ## Revision authority
+
+The public-matrix derivation, setup-capacity unit, and NTT-cache contracts in
+this document are historical where they conflict with
+[`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
+This document remains authoritative for recursive offloading feasibility,
+contraction, and its distinct first-direct-setup selection objective.
 
 The current target is the planner-selected policy in this revision. It
 supersedes the original rollout rule that forced setup offloading at fold
@@ -58,7 +64,8 @@ offloaded levels. No fold index, contiguity rule, or prefix-size threshold
 decides the count.
 
 The selected schedule minimizes the first remaining direct setup footprint and
-uses exact estimated proof bytes, including Stage 3, as its tie-breaker.
+then exact estimated proof bytes, including Stage 3. Equal candidates then use
+the smaller total physical setup envelope and the canonical schedule descriptor.
 Recursive successors use the existing multi-group representation with the setup
 prefix as a precommitted group and the folded witness as the final group.
 Recursive multi-group generated schedules are stored separately from ordinary
@@ -228,33 +235,37 @@ Among feasible complete schedules, the PR #318 policy compares:
 (
     first_direct_setup_field_len,
     exact_estimated_proof_bytes,
+    total_setup_field_elements,
+    canonical_descriptor,
 )
 ```
 
-where `exact_estimated_proof_bytes` includes every Stage 3 payload. The future
-Pareto planner may replace this policy, but generated catalogs must bind whichever
-selection policy produced them.
+where `exact_estimated_proof_bytes` includes every Stage 3 payload. The suffix
+frontier retains the first three numeric coordinates. The descriptor is only a
+complete-schedule tie-break. The future Pareto planner may replace this policy,
+but generated catalogs must bind whichever selection policy produced them.
 
-The recursive search also rejects candidates whose exact setup-matrix envelope
-exceeds `PlannerPolicy::max_setup_envelope_field_elements`. The shipped policy
-sets this field to `MAX_SETUP_MATRIX_FIELD_ELEMENTS`. The contraction threshold
-is likewise explicit as `PlannerPolicy::min_offloaded_witness_contraction`, with
-a shipped value of three. Both values are candidate-feasibility inputs, so the
-generated catalog identity binds them alongside the selection policy. They are
-not hidden constants whose changes can silently reinterpret an existing table.
+The recursive search applies `PlannerPolicy::setup_field_budget` when a host
+sets it to `Some(limit)`. The shipped policy uses `None` because the
+deterministic public stream has no protocol length ceiling. An explicit host
+budget remains a candidate-feasibility input, so the generated catalog identity
+binds `None` or the exact `Some(limit)` value alongside the selection policy.
+The contraction threshold is likewise explicit as
+`PlannerPolicy::min_offloaded_witness_contraction`, with a shipped value of
+three.
 
-The envelope limit is a supported-runtime ceiling, not a claim that offloading
-has no storage cost relative to the independently optimized direct schedule.
-Comparing the direct and offloaded envelope–proof frontiers is explicitly
-deferred to the multi-objective planner.
+A host setup budget is an admission and resource policy. It is not a setup
+decoder allocation guard and it is not proof-system semantics. Comparing the
+direct and offloaded capacity and proof frontiers remains deferred to the
+multi-objective planner.
 
 The generated catalog binds:
 
 ```text
 cost model      = ExactPayloadAndSetupEnvelope
 direct policy   = MinEstimatedProofPayload
-recursive policy = MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-maximum setup envelope = policy.max_setup_envelope_field_elements
+recursive policy = MinFirstDirectSetupThenPayload
+optional setup field budget = policy.setup_field_budget
 minimum offload contraction = policy.min_offloaded_witness_contraction
 ```
 
@@ -607,7 +618,6 @@ ring_d      = SETUP_OFFLOAD_D_SETUP
 log_basis   = successor fold log_basis
 delta_open  = successor fold delta_open
 delta_commit= successor fold delta_commit
-fold shape  = successor fold challenge shape
 ```
 
 It owns:
@@ -699,7 +709,7 @@ For each existing `block_index_bits` candidate:
    precommitted group:
    - `group = PolynomialGroupLayout::singleton(log2(n_prefix))`;
    - `num_live_blocks_prefix * num_positions_per_block_prefix = n_prefix / D_setup`;
-   - `log_basis`, digit depths, fold shape, and ring dimension are shared with
+   - `log_basis`, digit depths, and ring dimension are shared with
      the current fold candidate;
    - `n_a_prefix`, `n_b_prefix`, `A_prefix`, and `B_prefix` are derived for the
      prefix group itself.
@@ -1110,6 +1120,10 @@ the candidate score that decides whether and how long to offload.
 - duplicate slot IDs deduplicate;
 - natural lengths are never truncated;
 - rounded prefix capacity is included in the setup envelope.
+- schedule-scoped verifier capacity skips every offloaded producer, retains
+  the first remaining direct producer and terminal matrix, and rejects a
+  prefix shorter than either requirement;
+- all verifier setup-prefix registry entries survive matrix-prefix narrowing.
 
 Prover/verifier end to end:
 

@@ -19,14 +19,11 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
     let num_positions_per_block = 16;
     let depth_commit = 3;
     let depth_fold = 2;
-    let full_vec_randomness = (0..8)
-        .map(|idx| test_scalar(101 + idx as u128))
-        .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
     let inputs = test_inputs(
         1,
-        0,
-        0,
+        1,
+        1,
         1,
         4,
         num_positions_per_block,
@@ -34,20 +31,22 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         depth_commit,
         depth_fold,
         4,
-        vec![test_scalar(11), test_scalar(12)],
+        (0..8).map(|index| test_scalar(11 + index)).collect(),
     );
-    let layout = test_witness_layout(
-        inputs.num_claims(),
-        inputs.num_live_blocks(),
-        inputs.num_positions_per_block(),
-        inputs.depth_open(),
-        inputs.depth_commit(),
-        inputs.depth_fold().unwrap(),
-        inputs.n_a(),
-        1,
+    let layout = WitnessLayout::new(
+        &inputs.level_params,
+        &inputs.opening_batch,
         1,
         inputs.depth_fold().unwrap(),
-    );
+    )
+    .unwrap();
+    let relation_geometry = inputs
+        .level_params
+        .relation_address_geometry(&inputs.opening_batch, TEST_D, layout.live_coeff_len())
+        .unwrap();
+    let full_vec_randomness = (0..relation_geometry.relation_lane_variable_count())
+        .map(|idx| test_scalar(101 + idx as u128))
+        .collect::<Vec<_>>();
     let plan =
         prepare_single_group_plan(&inputs, &full_vec_randomness, &fold_gadget, &layout).unwrap();
     let expected = expected_z_setup_weights(
@@ -94,10 +93,9 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         1,
         64,
     );
+    lp.num_digits_fold = 2;
     let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
-    let depth_fold = lp
-        .num_digits_fold_for_params(&lp, 2, lp.field_bits_for_cache())
-        .unwrap();
+    let depth_fold = lp.num_digits_fold();
     let rows = lp
         .relation_matrix_row_count(opening_batch.num_groups())
         .unwrap();

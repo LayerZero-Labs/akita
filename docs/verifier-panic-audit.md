@@ -1,8 +1,8 @@
 # Verifier Panic-Hardening Audit
 
 > **Historical snapshot.** This is a point-in-time audit artifact (PR #81), not
-> a maintained reference. It predates the setup-layout rename (it still refers to
-> `setup.seed.max_stride`; runtime uses `max_setup_len`). The durable verifier
+> a maintained reference. It predates the flat public-matrix cutover and uses
+> obsolete setup-stride terminology. The durable verifier
 > no-panic contract lives in the Akita Book
 > ([`book/src/how/verification.md`](../book/src/how/verification.md)) and
 > [`docs/verifier-contract.md`](verifier-contract.md). Scheduled to move to
@@ -19,7 +19,7 @@ panicking or allocating from an unchecked shape.
 
 | Requirement | Evidence | Status |
 | --- | --- | --- |
-| Setup matrix metadata rejects zero generation dimensions, incompatible ring dimensions, wrapped field counts, and insufficient view capacity before row views are used. | `FlatMatrix::check`, `FlatMatrix::deserialize_with_mode`, `FlatMatrix::total_ring_elements_at`, `FlatMatrix::ring_view`, and `RingMatrixView::row` in `crates/akita-types/src/layout/flat_matrix.rs`; matrix-capacity checks in `crates/akita-verifier/src/protocol/slice_mle/setup_contribution.rs` and root-direct recommitment validation in `crates/akita-verifier/src/protocol/batched.rs`. | Guarded |
+| Setup matrix metadata rejects wrapped field counts and insufficient exact-prefix capacity before row views are used. | `FlatMatrix::check`, `FlatMatrix::deserialize_with_mode`, `FlatMatrix::ring_view`, and `RingMatrixView::row` in `crates/akita-types/src/layout/flat_matrix.rs`; matrix-capacity checks in verifier setup-contribution and root recommitment paths. | Guarded |
 | Schedule and `LevelParams`-derived verifier layouts reject invalid ring dimensions, `log_basis`, zero block geometry, zero digit depths, row-count overflow, and undersized matrix widths before replay. | `LevelParams::relation_matrix_row_count_for` with explicit `RelationMatrixRowLayout` in `crates/akita-types/src/layout/params.rs`; witness-size helpers in `crates/akita-types/src/schedule.rs`; ring-switch layout checks in `prepare_relation_weight_evaluator` and `RelationWeightEvaluator::eval_flat_at_point`. | Guarded |
 | Ring-switch preparation rejects inconsistent opening-point, challenge, gamma, group-routing, block, and row-weight shapes before constructing row-eval state. | `ring_switch_verifier`, `prepare_relation_weight_evaluator`, and the semantic event builder in `crates/akita-types/src/proof/relation_weights.rs`; tests `ring_switch_prepare_rejects_invalid_log_basis` and `ring_switch_prepare_rejects_zero_num_live_blocks`. | Guarded |
 | Claim opening-batch transcript absorption validates routing/count vectors. | `append_opening_batch_shape_to_transcript` in `crates/akita-types/src/proof/opening_batch.rs`, with malformed-shape tests in the same module. | Guarded |

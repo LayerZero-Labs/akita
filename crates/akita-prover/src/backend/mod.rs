@@ -10,7 +10,6 @@ pub mod poly_helpers;
 mod recursive;
 mod ring_switch;
 pub(crate) mod sparse_ring;
-mod tensor_fold;
 
 pub use dense::{DenseBatchView, DensePoly, DenseView};
 pub use field_reduction::{

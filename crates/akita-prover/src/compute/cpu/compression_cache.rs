@@ -1,4 +1,4 @@
-//! Exact-prefix NTT cache used only by shadow compression diagnostics.
+//! Exact-prefix paired NTT cache used by compressed commitments.
 
 use super::ErasedCpuNttCache;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -98,12 +98,11 @@ fn build_slot<F: FieldCore + CanonicalField, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     input_width: usize,
 ) -> Result<ErasedCpuNttCache, AkitaError> {
-    let matrix = expanded.shared_matrix().covering_at_dyn(input_width, D)?;
-    let view = matrix.ring_view::<D>(1, input_width)?;
-    let cache = Arc::new(prepare_compression_ntt_cache(view, input_width)?);
-    if cache.has_cyclic() {
+    let view = expanded.shared_matrix().ring_view::<D>(1, input_width)?;
+    let cache = Arc::new(prepare_compression_ntt_cache(view)?);
+    if !cache.has_cyclic() {
         return Err(AkitaError::InvalidSetup(
-            "compression NTT cache unexpectedly contains a cyclic transform".into(),
+            "compression NTT cache is missing its cyclic transform".into(),
         ));
     }
     Ok(ErasedCpuNttCache {
@@ -117,43 +116,43 @@ fn build_slot<F: FieldCore + CanonicalField, const D: usize>(
 mod tests {
     use super::super::{CpuBackend, CpuPreparedSetup};
     use crate::compute::{
-        CompressionDiagnosticBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
+        CompressionComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
     };
     use crate::AkitaProverSetup;
     use akita_field::Prime64Offset59;
-    use akita_types::{NttCacheKey, SetupMatrixEnvelope};
+    use akita_types::{NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
 
     type F = Prime64Offset59;
-    const D: usize = 64;
+    const D: usize = 32;
 
-    fn setup_envelope(max_setup_len: usize) -> SetupMatrixEnvelope {
-        SetupMatrixEnvelope { max_setup_len }
+    fn setup_envelope(num_field_elements: usize) -> SetupMatrixCapacity {
+        SetupMatrixCapacity { num_field_elements }
     }
 
     fn empty_prepared() -> CpuPreparedSetup<F> {
         let setup =
-            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_envelope(6 * D)).unwrap();
         CpuBackend
-            .prepare_expanded::<D>(setup.expanded)
+            .prepare_expanded(setup.expanded)
             .expect("empty prepared setup")
     }
 
     #[test]
-    fn cache_is_exact_prefix_and_negacyclic_only() {
+    fn cache_is_exact_prefix_and_paired() {
         let prepared = empty_prepared();
         let vectors = [vec![[0i8; D]; 3], vec![[-1i8; D]; 3]];
         let views = vectors.iter().map(Vec::as_slice).collect::<Vec<_>>();
 
         CpuBackend
-            .compression_rows::<D>(&prepared, &views)
+            .compression_rows_products::<D>(&prepared, &views)
             .expect("compression rows");
 
-        let expected_bytes = 3 * D * 3 * core::mem::size_of::<i32>();
+        let expected_bytes = 2 * 3 * D * 3 * core::mem::size_of::<i32>();
         assert_eq!(prepared.compression_ntt_cache_bytes(), expected_bytes);
         assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
         prepared
             .with_compression_ntt::<D, _>(3, |cache| {
-                assert!(!cache.has_cyclic());
+                assert!(cache.has_cyclic());
                 Ok(())
             })
             .expect("typed compression cache");
@@ -162,22 +161,21 @@ mod tests {
     #[test]
     fn cache_cannot_alias_full_envelope_both_transform_cache() {
         let prepared = empty_prepared();
-        let envelope_width = prepared
-            .expanded
-            .shared_matrix()
-            .total_ring_elements_at::<D>()
-            .expect("envelope width");
+        let envelope_width = prepared.expanded.shared_matrix().num_field_elements() / D;
         let compression_digits = vec![[0i8; D]; envelope_width];
         CpuBackend
-            .compression_rows::<D>(&prepared, &[compression_digits.as_slice()])
-            .expect("compression cache at full envelope length");
+            .compression_rows_products::<D>(&prepared, &[compression_digits.as_slice()])
+            .expect("compression cache at the full materialized prefix length");
         assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
 
-        let envelope_key =
-            NttCacheKey::from_envelope(prepared.expanded.as_ref(), D).expect("envelope key");
+        let envelope_key = NttCacheKey {
+            ring_d: D,
+            num_ring_elements: envelope_width,
+            domain: NttTransformDomain::Cyclic,
+        };
         CpuBackend
             .ensure_ntt_slot(&prepared, envelope_key)
-            .expect("independent both-transform envelope cache");
+            .expect("independent cyclic envelope cache");
         assert!(prepared.shared_ntt_cache_bytes() > 0);
         let cyclic_digits = vec![[0i8; D]; envelope_width];
         CpuBackend
@@ -196,7 +194,7 @@ mod tests {
                 let digits = &digits;
                 scope.spawn(move || {
                     CpuBackend
-                        .compression_rows::<D>(prepared, &[digits.as_slice()])
+                        .compression_rows_products::<D>(prepared, &[digits.as_slice()])
                         .expect("compression rows");
                 });
             }
@@ -211,7 +209,7 @@ mod tests {
         for input_width in [3, 6] {
             let digits = vec![[0i8; D]; input_width];
             CpuBackend
-                .compression_rows::<D>(&prepared, &[digits.as_slice()])
+                .compression_rows_products::<D>(&prepared, &[digits.as_slice()])
                 .expect("compression rows");
         }
 
@@ -226,7 +224,7 @@ mod tests {
         let short = vec![[0i8; D]; 2];
 
         assert!(CpuBackend
-            .compression_rows::<D>(&prepared, &[valid.as_slice(), short.as_slice()])
+            .compression_rows_products::<D>(&prepared, &[valid.as_slice(), short.as_slice()])
             .is_err());
         assert_eq!(prepared.compression_ntt.slot_count(), 0);
         assert_eq!(prepared.compression_ntt_cache_bytes(), 0);

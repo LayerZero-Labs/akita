@@ -62,7 +62,7 @@ envelope** the stage-1 range check actually certifies:
 ```text
 β^resp = num_claims · num_live_blocks · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
        = fold_witness_beta(...)
-δ_fold = num_digits_fold(..., honest cap = min(β_inf, t*) when tail-bound-with-grind)
+δ_fold = num_digits_fold(..., honest cap = min(β_inf, t*))
 z_verifier = balanced_digit_abs_max(log_basis, δ_fold)
 
 collision_A_inf = 8 · ω · z_verifier · ν
@@ -75,7 +75,7 @@ collision_A     = ceil_bucket(d · collision_A_inf²)   (L2 MSIS table)
 
 This is implemented in
 [`crates/akita-types/src/sis/norm_bound.rs`](../crates/akita-types/src/sis/norm_bound.rs)
-(with fold-linf cap policy in
+(with fold-linf cap sizing in
 [`fold_linf_cap.rs`](../crates/akita-types/src/sis/fold_linf_cap.rs)):
 `rounded_up_role_a_inf_norm` prices the
 `8·ω·balanced_digit_abs_max·ν` coefficient-`L∞` envelope into the audited
@@ -117,7 +117,7 @@ private Akita write-up and are not reproduced here.
   entirely, fp16 was removed from the production and profile paths, and the
   small-D fp128 / fp32 / fp64 families that cannot fold securely under honest
   pricing were removed. The shipping families are now fp128 D128 (plus the D64
-  one-hot and D64 one-hot tensor), fp64 D128 / D256, and fp32 D128 / D256
+  one-hot), fp64 D128 / D256, and fp32 D128 / D256
   one-hot (see `akita_config::generated_families::ALL_GENERATED_FAMILIES`); fp32
   ships no dense family, and the smallest secure small-field ring degree is now
   `D = 128`.
@@ -137,11 +137,9 @@ This branch also ships a second, independent soundness fix that this spec does
 not own: a real ≥128-bit ring-challenge policy for 64-bit-and-lower fields. The
 historical small-field challenge was the toy `pm1-only { weight: 8, [−1, 1] }`,
 which has only ~31 bits of Fiat-Shamir support at `D = 32`, far below 128-bit
-soundness. It is replaced by the shared, dimension-keyed family specified in
-[`specs/bounded-l1-sparse-challenge.md`](bounded-l1-sparse-challenge.md)
-("Current Proof-Optimized Policy"): `D=32` `BoundedL1Norm` (`||c||_1 = 121`,
-`||c||_inf = 8`), `D=64` `signed-sparse{30,12}` (`54, 2`), `D=128` `Uniform{31}`
-(`31, 1`), `D=256` `Uniform{23}` (`23, 1`).
+soundness. It is replaced by the shared, dimension-keyed fixed-weight
+signed-sparse family. The production ladder defines the exact ±1 and ±2 counts
+for every supported ring dimension.
 
 The two fixes are coupled in the regenerated tables: those `(||c||_1, ||c||_inf)`
 values are exactly the challenge norms `fold_witness_beta` and the corrected
@@ -236,13 +234,6 @@ regenerating the SIS-floor security tables and one deferred follow-up:
   norms (the SIS-secure widths it admits are too small), so `fp16::*Full`
   schedules degrade to cleartext (`Direct`) — sound, but non-succinct. Q16
   one-hot and all fp32/fp64/fp128 families keep folding.
-- **Deferred: dense poly under a one-hot tensor config.** `D64OneHotTensor`
-  has `log_commit_bound == 1`, so the corrected fold `β` sizes against one-hot
-  witness sparsity. Committing a *dense* poly under it folds to a larger
-  `||z||_inf` than that `β`, so the prover aborts. The affected
-  `single_poly_tensor_e2e::*dense_tensor*` tests are `#[ignore]`d pending a
-  follow-up (the tensor + dense-witness β interaction).
-
 ## Follow-up fix (2026-06-02): root-dense witness L∞ off-by-one
 
 While reviewing the consolidated `akita_types::sis` module, a second, smaller
@@ -376,9 +367,8 @@ In the negacyclic ring `R = Z[X]/(X^D + 1)`, for any `a, b ∈ R`:
 `D`-fold convolution sum); using it is the core mistake in the current
 binding-norm code.
 
-This is already the basis of the existing fold bound — see
-[`specs/bounded-l1-sparse-challenge.md`](bounded-l1-sparse-challenge.md),
-which tracks the challenge L1 mass precisely *because*
+This is already the basis of the existing fold bound, which tracks the
+challenge L1 mass precisely *because*
 `||c · s||_inf <= ||c||_1 · ||s||_inf`. This spec extends the same reasoning to
 (a) the weak-binding collision norm, which was never updated to track L1, and
 (b) the `min(...)` refinement for sparse witnesses.
@@ -701,9 +691,9 @@ Both fixes change `collision_inf` buckets and/or `δ_fold`, hence ranks, widths,
 and `total_bytes`, so every shipped table under
 `crates/akita-planner/src/generated/*.rs` must be regenerated with the
 `gen_schedule_tables` binary (owned by `akita-config`, per AGENTS.md). The
-existing `old_tables/` snapshots and `tests/regen_diff.rs` /
-`generated_tables.rs` machinery (already touched on this branch) diffs and
-re-pins the tables.
+`generated_schedule_tables_match_key_planner` drift guard in
+`tests/generated_tables.rs` compares the checked-in tables with fresh planner
+output.
 
 ## Evaluation
 
@@ -729,7 +719,8 @@ re-pins the tables.
 - [ ] `K` is plumbed via a `CommitmentConfig` hook and `PlannerPolicy`; every
   shipped preset sets it so `witness_block_l1_norm`'s `nonzeros` matches its
   actual sparsity (incl. any multi-chunk preset).
-- [ ] All `generated/*.rs` tables regenerated; `regen_diff` is clean.
+- [ ] All `generated/*.rs` tables regenerated;
+  `generated_schedule_tables_match_key_planner` is green.
 - [ ] A unit test pins `collision_inf` against a hand-computed Lemma-7 value for
   one-hot single-chunk, multi-chunk, and dense.
 
@@ -748,8 +739,9 @@ re-pins the tables.
   (`ajtai_a_width_bucket`) == `sis_offline` derivation bucket.
 - `cargo test` end-to-end (`akita-pcs`: `akita_e2e`, `single_poly_e2e`, `zk`)
   on at least one dense and one one-hot preset.
-- Regenerate tables; confirm `tests/generated_tables.rs` / `tests/regen_diff.rs`
-  pass.
+- Regenerate tables; confirm
+  `cargo test -p akita-config --features all-schedules generated_schedule_tables_match_key_planner`
+  passes.
 
 ### Performance / proof-size direction
 
@@ -796,10 +788,6 @@ re-pins the tables.
 - Hachi paper: Lemma 7 (Weak Binding); "Basic parameters" / Section 4.2 /
   Figure 3 (the fold bound `β = 2^r · ω · b`). (Screenshots in the originating
   task.)
-- [`specs/bounded-l1-sparse-challenge.md`](bounded-l1-sparse-challenge.md) —
-  prior art tracking challenge L1 mass for the fold bound.
-- [`specs/tensor-structured-folding-challenges.md`](tensor-structured-folding-challenges.md)
-  — `challenge_l1_mass` / `effective_l1_mass` definitions.
 - Code: `crates/akita-planner/src/ajtai_params.rs`,
   `crates/akita-types/src/sis_offline.rs`,
   `crates/akita-types/src/layout/digit_math.rs`,

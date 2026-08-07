@@ -1,7 +1,7 @@
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{SparseChallenge, TensorChallenges};
+use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, FieldCore};
-use akita_types::CommittedGroupParams;
+use akita_types::{CommittedGroupParams, CommittedGroupProfile};
 
 // ===========================================================================
 // Open, source-typed operation boundary (PO1)
@@ -54,6 +54,16 @@ impl CommitInnerPlan {
             num_positions_per_block: params.num_positions_per_block,
             num_digits_inner: params.num_digits_inner,
             log_basis_inner: params.log_basis_inner,
+        }
+    }
+
+    /// Build inner-commit parameters from a frozen standalone precommit profile.
+    pub fn from_profile(profile: &CommittedGroupProfile) -> Self {
+        Self {
+            n_a: profile.inner_commit_matrix.output_rank(),
+            num_positions_per_block: profile.num_positions_per_block,
+            num_digits_inner: profile.num_digits_inner,
+            log_basis_inner: profile.log_basis_inner,
         }
     }
 }
@@ -158,26 +168,14 @@ pub struct DecomposeFoldPlan<'a> {
 
 /// Batched decompose + fold parameters at one opening point.
 ///
-/// Both the sparse-challenge and tensor-shaped fused batched paths are exposed
-/// so a representation can keep its fast batched kernel rather than folding
-/// each polynomial independently and aggregating later.
+/// A representation may keep a fast batched kernel rather than folding each
+/// polynomial independently and aggregating later.
 #[derive(Debug, Clone, Copy)]
 pub enum DecomposeFoldBatchPlan<'a> {
     /// Sparse-challenge batched fold.
     Sparse {
         /// Sparse fold challenges, outermost first.
         challenges: &'a [SparseChallenge],
-        /// Number of ring-element positions in each block.
-        num_positions_per_block: usize,
-        /// Number of balanced digits.
-        num_digits: usize,
-        /// Logarithm of the gadget basis.
-        log_basis: u32,
-    },
-    /// Tensor-shaped batched fold.
-    Tensor {
-        /// Tensor-structured fold challenges.
-        tensor: &'a TensorChallenges,
         /// Number of ring-element positions in each block.
         num_positions_per_block: usize,
         /// Number of balanced digits.

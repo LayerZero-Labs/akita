@@ -1,5 +1,10 @@
 # Spec: Typed Fold-Schedule Topology and Planner Cutover
 
+> **Source/profile supersession (2026-07-30).** The typed
+> `root -> recursive_folds[] -> terminal` topology remains authoritative.
+> Source-family fields and lookup ownership are superseded by exact commitment
+> profiles and batch-level approved row selection.
+
 | Field         | Value                                       |
 |---------------|---------------------------------------------|
 | Author(s)     | Quang Dao                                   |
@@ -15,11 +20,10 @@
 Akita's proof object already distinguishes the root fold, recursive folds, and
 terminal fold, but the planner and generated catalogs encode every fold in one
 homogeneous array. Root-only behavior is then recovered from `level == 0`,
-terminal behavior from array position, setup-offload transitions from redundant
-mode flags, and tensor support from a per-level callback. The representation is
-therefore less precise than the protocol and makes invalid combinations, such
-as a tensor recursive fold or arbitrary multi-group recursive fold,
-representable.
+terminal behavior from array position, and setup-offload transitions from
+redundant mode flags. The representation is therefore less precise than the
+protocol and makes invalid combinations, such as an arbitrary multi-group
+recursive fold, representable.
 
 This cutover gives schedules the same typed topology as proofs:
 
@@ -28,9 +32,7 @@ root -> recursive_folds[] -> terminal
 ```
 
 The root type exclusively owns root source structure and arbitrary
-precommitted groups. Within it, only the final group may select a tensor
-challenge; every standalone precommitted group is flat by protocol definition.
-Recursive folds always use flat challenges and may consume at most one incoming
+precommitted groups. Recursive folds may consume at most one incoming
 setup-prefix commitment. The terminal type owns the final committed fold and
 cleartext witness handoff and cannot carry root-only or recursive-setup
 features.
@@ -46,8 +48,8 @@ descriptive names. Mathematical notation remains in docstrings:
 
 Every matrix plan owns its ring dimension. There is no schedule-global
 `ring_d` in the final representation. The generated schema records every
-independent planner decision, including role-specific ring dimensions, exact
-final-root-group tensor factorization, decomposition digit widths, block
+independent planner decision, including role-specific ring dimensions,
+decomposition digit widths, block
 geometry, per-fold witness partitioning, setup-prefix inputs, and balanced
 outer/open matrix slicing. Commitment compression is added only with its exact
 protocol types. Derived widths, digit depths, collision bounds, witness lengths,
@@ -65,8 +67,7 @@ implementation is a direct cutover with no legacy schedule adapter.
 
 Replace the flattened schedule and overloaded `LevelParams` representation
 with role-specific generated and runtime types that make the legal protocol
-topology explicit, make tensor challenges structurally final-root-group-only,
-expose all matrix-role ring dimensions, and provide stable extension points for
+topology explicit, expose all matrix-role ring dimensions, and provide stable extension points for
 mixed rings, distributed witness partitions, setup offloading, slicing, and
 commitment compression.
 
@@ -86,25 +87,6 @@ commitment compression.
   disagree with the topology.
 - The terminal fold cannot consume or produce a setup prefix, cannot contain
   arbitrary precommitted groups, and cannot use a multi-chunk witness layout.
-
-#### Tensor challenges
-
-- Tensor challenges are supported only by `RootFinalGroupParams` and
-  `GeneratedRootFinalGroup`.
-- Standalone precommitted root groups are flat by protocol definition. Their
-  generated/runtime types contain no challenge-family or tensor-factor field.
-- Recursive and terminal parameter types do not contain a challenge-shape
-  field. Their fold challenge is flat by protocol definition.
-- A generated final-root-group entry stores the exact selected `fold_low_len`.
-  A value such as `Tensor { fold_low_len: 2 }` is never used merely as an
-  enablement marker.
-- Root groups still receive independent, group-index-domain-separated
-  challenge draws. The final group uses its selected flat/tensor shape; every
-  precommitted group uses the canonical flat draw for its own live geometry.
-- A setup prefix consumed by a recursive fold always uses flat challenge
-  geometry. Tensor metadata cannot be serialized into a setup-prefix slot.
-- The planner config surface exposes a final-root-group challenge-family policy,
-  not a callback accepting an arbitrary fold level or group index.
 
 #### Group ownership
 
@@ -179,20 +161,19 @@ commitment compression.
   geometry as an auditable checksum; replay rederives it from the statement or
   predecessor and requires equality.
 - A catalog identity contains search/security policy identity, not row-local
-  decisions. Exact final-root-group tensor factorization and per-level
-  partitioning live in the entry.
+  decisions. Per-level partitioning lives in the entry.
 - Table expansion and dynamic planning produce descriptor-identical runtime
   schedules for the same lookup key and policy.
 - Generated lookup order and key digests include the complete root statement:
   final group plus ordered standalone precommitted commitment descriptors.
-- Generated catalogs with different source families, final-root-group challenge
-  families, chunk policies, setup-offload policies, matrix dimension domains,
-  slicing capability, or SIS table digests cannot alias.
+- Generated catalogs with different final-root-group challenge families, chunk
+  policies, setup-offload policies, matrix dimension domains, slicing
+  capability, or SIS table digests cannot alias.
 
 #### Transcript, serialization, and safety
 
 - The instance descriptor binds topology tags, ordered groups, exact final-root
-  challenge shape, the flat precommitted-group invariant, all matrix dimensions
+  challenge configuration, all matrix dimensions
   and ranks, decomposition digit widths, block geometry, witness partitions,
   setup-prefix identities, balanced slicing plans, witness lengths, and terminal
   response shape.
@@ -211,13 +192,11 @@ commitment compression.
 
 - Choosing new production parameters in the topology cutover itself. The first
   regeneration preserves current-main planner choices except for the explicit
-  terminal direct-response correction and the removal of tensor-shaped
-  standalone precommitments.
+  terminal direct-response correction.
 - Changing planner search behavior, objective weighting, tie-breaking outcomes,
   or emitted schedule numbers merely because the new representation can express
   more choices. Cuts 2, 3, and 5 are behavior-preserving cutovers. Any generated
-  value change must be required by Cut 1's protocol correction, the typed
-  root-only tensor invariant, or another individually identified correctness
+  value change must be required by Cut 1's protocol correction or another individually identified correctness
   requirement, and must be recorded in the implementation worklog.
 - Treating open PR behavior as landed. Later commits on this branch may add
   features only after their implementation and canonical formulas are present.
@@ -226,8 +205,6 @@ commitment compression.
 - Preserving source compatibility for `GeneratedFold`, `LevelParams.a_key`,
   `LevelParams.b_key`, `LevelParams.d_key`, `CommitmentRingDims`, or the
   per-level fold-shape callback.
-- Supporting tensor challenges for precommitted-root, recursive, or terminal
-  groups, now or later.
 - Adding arbitrary precommitted groups to recursive folds.
 - Encoding commitment-compression placeholders before its exact protocol types,
   cost model, and validation rules land.
@@ -265,14 +242,13 @@ pub enum GeneratedFold {
 
 pub struct GeneratedScheduleTableEntry {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: &'static [PrecommittedGroupDescriptor],
+    pub precommitteds: &'static [CommittedGroupProfile],
     pub folds: &'static [GeneratedFold],
 }
 ```
 
 The catalog identity stores one `ring_dimension`, an allowed
-`ring_dimensions` slice, a global `ChunkedWitnessCfg`, and a
-`root_fold_shape`. Expansion still requires `GeneratedFoldStep.ring_d` to equal
+`ring_dimensions` slice, and a global `ChunkedWitnessCfg`. Expansion still requires `GeneratedFoldStep.ring_d` to equal
 the policy's global ring dimension. Root and terminal roles are inferred from
 the fold index. The setup mode is redundantly stored on the producer while the
 setup-prefix group is stored on the consumer.
@@ -285,7 +261,7 @@ Current `LevelParams` combines all of the following:
 - three `log_basis` digit-width fields;
 - `a_key`, `b_key`, and `d_key`;
 - block geometry;
-- sparse challenge configuration and flat/tensor shape;
+- sparse challenge configuration;
 - derived digit depths and folded-response caches;
 - root one-hot metadata;
 - multi-chunk witness metadata;
@@ -340,7 +316,6 @@ d_inner                        = 64
 live ring elements per claim   = 67,108,864
 positions per block            = 32,768
 live blocks                    = 2,048
-root challenge                 = Flat
 inner digit width / output rank      = 3 / 5
 outer digit width / output rank      = 3 / 2
 shared open digit width / output rank = 3 / 1
@@ -354,7 +329,6 @@ d_inner / d_outer              = 64 / 64
 live ring elements per claim   = 1,024
 positions per block            = 32
 live blocks                    = 32
-root challenge                 = Flat
 inner digit width / output rank      = 2 / 4
 outer digit width / output rank      = 2 / 2
 ```
@@ -622,37 +596,23 @@ pub enum GeneratedRootSource {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeneratedRootFinalChallenge {
-    Flat,
-    Tensor {
-        /// Exact optimizer-selected power-of-two low factor.
-        fold_low_len: u32,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRootFinalGroup {
     pub layout: PolynomialGroupLayout,
     pub source: GeneratedRootSource,
-    pub challenge: GeneratedRootFinalChallenge,
     pub commitment: GeneratedCommittedGroup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRootPrecommittedGroup {
     /// Frozen standalone commitment identity and certified bounds.
-    pub descriptor: PrecommittedGroupDescriptor,
+    pub descriptor: CommittedGroupProfile,
     pub commitment: GeneratedCommittedGroup,
 }
 ```
 
 The precommitted descriptor is part of the schedule lookup key because the
 commitment already exists. Expansion rederives its matrix dimensions, input
-widths, bounds, and flat root-opening geometry and requires descriptor
-equality. The current v1 descriptor binds the standalone-precommitted role, for
-which flat challenge security is invariant; it does not expose a selectable
-challenge family. A stale descriptor authorizing tensor use as a
-precommitted group is rejected rather than silently reinterpreted.
+widths, bounds, and root-opening geometry and requires descriptor equality.
 
 ### Witness partitioning
 
@@ -685,8 +645,8 @@ pub struct GeneratedRootFold {
 ```
 
 `GeneratedRootFinalGroup` is the only generated group type that mentions
-`GeneratedRootSource` or `GeneratedRootFinalChallenge`. `GeneratedRootFold` is
-the only generated fold type that can contain arbitrary precommitted groups.
+`GeneratedRootSource`. `GeneratedRootFold` is the only generated fold type that
+can contain arbitrary precommitted groups.
 
 ### Recursive fold and setup-prefix input
 
@@ -709,7 +669,7 @@ pub struct GeneratedRecursiveFold {
 }
 ```
 
-There is deliberately no challenge field: recursive folding is flat. There is
+Every fold uses its committed group's sparse challenge configuration. There is
 also no outgoing setup mode. If this fold's successor has an incoming setup
 prefix, this fold offloads; otherwise its setup contribution is direct.
 
@@ -799,7 +759,7 @@ Digit depths are expanded results, never independent generated inputs.
 ```rust
 pub struct RootFoldParams {
     pub final_group: RootFinalGroupParams,
-    pub precommitted_groups: Vec<RootPrecommittedGroupDescriptor>,
+    pub precommitted_groups: Vec<RootCommittedGroupProfile>,
     pub open_commit_matrix: OpenCommitMatrixParams,
     pub sparse_challenge_config: SparseChallengeConfig,
     pub witness_partition: WitnessPartition,
@@ -820,11 +780,8 @@ pub struct TerminalFoldParams {
 }
 ```
 
-Only `RootFinalGroupParams` contains a `RootFinalChallenge` field.
-`RootPrecommittedGroupDescriptor`, `RecursiveFoldParams`, and `TerminalFoldParams`
-are flat by type. Sparse sampler configuration remains explicit because it
-determines challenge distribution and certified norms even for a flat
-challenge.
+Sparse sampler configuration remains explicit because it determines challenge
+distribution and certified norms.
 
 `TerminalCommittedGroupParams` contains the geometry, inner matrix, and inner
 source-decomposition depth required by the terminal relation. It contains no
@@ -1049,7 +1006,7 @@ performs the following checks with checked arithmetic, in this order:
    protocol epoch, catalog policy identity, and SIS table digest.
 2. Recompute every group's exact live geometry from the statement or incoming
    witness. Emitted live counts are equality-checked audit checksums.
-3. Validate selected digit widths, ring dimensions, root-final challenge shape,
+3. Validate selected digit widths, ring dimensions, root-final challenge configuration,
    partition counts, setup-prefix identities, and balanced slice counts against
    both `MAX_COMMIT_MATRIX_SLICES` and the catalog's implemented capability
    domains.
@@ -1252,43 +1209,6 @@ and the derived shape. Codec choice and byte budget can narrow the accepted
 proof set for efficiency, but they never enlarge the capacity-based, matrix-secure
 norm set. The schedule's A-role capacity validation is the security rule.
 
-## Final-Root-Group Tensor API
-
-The current config hook:
-
-```rust
-fn fold_challenge_shape_at_level(
-    inputs: AkitaScheduleInputs,
-) -> TensorChallengeShape;
-```
-
-is deleted. Its replacement cannot name a recursive level:
-
-```rust
-pub struct RootFinalGroupPlanningInputs {
-    pub statement: RootStatementLayout,
-    pub input_witness_len: usize,
-}
-
-pub enum RootFinalChallengeFamily {
-    Flat,
-    Tensor,
-}
-
-fn root_final_challenge_family(
-    inputs: RootFinalGroupPlanningInputs,
-) -> RootFinalChallengeFamily;
-```
-
-The optimizer enumerates legal power-of-two tensor low factors only while
-constructing the final root-group candidate. It writes the selected exact
-`GeneratedRootFinalChallenge::Tensor { fold_low_len }` into the entry.
-Generated replay does not optimize or reinterpret the value.
-
-Precommitted root groups and recursive candidate construction always call the
-flat challenge calculation. There is no per-precommitted-group or recursive
-shape parameter to thread through planner functions.
-
 ## Setup-Offload Transition Encoding
 
 For a schedule:
@@ -1337,8 +1257,7 @@ ring-challenge configuration digest by supported inner ring dimension
 sorted lookup-key count and digest
 ```
 
-It no longer contains one ambiguous `ring_dimension`, a root tensor marker
-standing in for row-local geometry, or a global activated-level count that must
+It no longer contains one ambiguous `ring_dimension` or a global activated-level count that must
 be replayed to discover per-level partitioning.
 
 The protocol instance descriptor binds the fully expanded schedule, not merely
@@ -1356,7 +1275,6 @@ The durable planner searches, subject to implemented capabilities:
 - inner, outer, and open decomposition digit widths;
 - per-group inner and outer ring dimensions;
 - per-fold shared open ring dimension;
-- exact final-root-group tensor low factor, only for tensor final-group families;
 - per-fold witness partition;
 - setup-offload edges;
 - outer/open balanced slice counts.
@@ -1413,24 +1331,24 @@ Catalog families explicitly bind one of the current policies:
 ```rust
 pub enum SelectionPolicyId {
     MinEstimatedProofPayload,
-    MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
+    MinFirstDirectSetupThenPayload,
 }
 ```
 
 `MinEstimatedProofPayload` is the ordinary direct-only proof-byte policy.
-`MinFirstDirectSetupThenPayloadWithinSupportedEnvelope` rejects recursive
-candidates beyond `PlannerPolicy::max_setup_envelope_field_elements`, then
-compares:
+`MinFirstDirectSetupThenPayload` applies an explicit
+`PlannerPolicy::setup_field_budget` when one is configured, then compares:
 
 1. first later direct setup scan;
 2. exact estimated proof payload, including Stage 3; and
 3. the existing deterministic candidate ordering for ties.
 
 `PlannerPolicy::min_offloaded_witness_contraction` and
-`PlannerPolicy::max_setup_envelope_field_elements` are explicit generated-table
-identity inputs. The shipped policy sets them to three and
-`MAX_SETUP_MATRIX_FIELD_ELEMENTS`, respectively. Changing either value requires
-catalog regeneration and produces an identity mismatch against an older table.
+`PlannerPolicy::setup_field_budget` are explicit generated-table identity
+inputs. The shipped policy sets them to three and `None`, respectively. The
+public stream has no protocol length ceiling. Changing either policy value
+requires catalog regeneration and produces an identity mismatch against an
+older table.
 
 This is deliberately not the final Pareto planner. In particular, it does not
 claim that an offloaded schedule preserves the independently optimized direct
@@ -1540,14 +1458,9 @@ introduced.
   updated incrementally by suffix DP and Pareto search. Materialization
   recomputes the component sum and rejects disagreement with the cached score.
 - Move root standalone precommitted groups into `GeneratedRootFold`; move setup
-  prefix metadata onto recursive consumers; emit exact final-root-group tensor
-  factorization; and make partitioning explicit on every eligible fold.
-- Remove challenge-shape selection from standalone-precommit planning and
-  descriptors. It always sizes the inner collision relation for a flat draw and
-  never calls the final-group tensor policy.
-- In multi-group prover/verifier sampling, dispatch the final group through its
-  typed selected shape and every later precommitted group through the flat
-  sampler while preserving group-index domain separation and transcript order.
+  prefix metadata onto recursive consumers; and make partitioning explicit on every eligible fold.
+- Keep one sparse-challenge sampling path for every root group while preserving
+  group-index domain separation and transcript order.
 - Update planner expansion, generated lookup/sorting/hashing/emission, setup,
   prover, verifier, PCS orchestration, persistence, profiles, and tests against
   the concrete typed steps.
@@ -1561,8 +1474,6 @@ introduced.
 - Compare all non-terminal selected decisions and derived values against the
   Cut 0 ledger. Compare terminal values against the new direct-response model,
   with an explicit old/new byte and security-bound report.
-- Record the intentional rejection of any old tensor-shaped standalone
-  precommitment descriptor and the independently regenerated flat replacement.
 - Require table replay and dynamic planning to produce descriptor-identical
   typed schedules.
 - Keep the instance/proof descriptor at development version 1, re-pin its
@@ -1628,14 +1539,6 @@ bounded setup-offload planner cut.
       `recursive_folds`, and `terminal` fields and no homogeneous fold enum.
 - [ ] Runtime `FoldSchedule` mirrors the proof topology and contains no
       homogeneous `Vec<FoldStep>`.
-- [ ] Tensor challenge types appear only below `RootFinalGroupParams` and
-      `GeneratedRootFinalGroup`.
-- [ ] No planner/config API accepts a challenge shape for an arbitrary level or
-      precommitted group.
-- [ ] Every generated tensor final-group entry stores its exact optimized
-      `fold_low_len`.
-- [ ] Precommitted-root, recursive, and terminal tensor schedules are
-      unrepresentable in safe Rust.
 - [ ] Arbitrary standalone precommitted groups are root-only.
 - [ ] Recursive folds accept zero or one typed incoming setup prefix.
 - [ ] `SetupContributionMode` is absent from selected schedules; producer mode
@@ -1678,7 +1581,7 @@ bounded setup-offload planner cut.
 - [x] Table replay and dynamic planning produce equal schedule descriptors for
       every emitted lookup key.
 - [ ] Descriptor mutation tests cover topology, every role dimension and rank,
-      every digit width, final-root-group tensor factor, block geometry,
+      every digit width, block geometry,
       partitions, prefix IDs, and balanced slice counts.
 - [ ] Verifier-facing malformed schedule and serialization tests return errors
       without panics or unchecked allocations.
@@ -1692,9 +1595,7 @@ bounded setup-offload planner cut.
 
 #### Compile-time topology tests
 
-Rust type ownership is the primary test: only the final-root-group structs have
-a tensor selector; precommitted-root, recursive, and terminal structs do not.
-Recursive and terminal structs also have no arbitrary-group fields.
+Rust type ownership is the primary test: recursive and terminal structs have no arbitrary-group fields.
 The cutover does not add a new compile-test framework. Ordinary construction
 tests and exhaustive matches demonstrate the legal surface.
 
@@ -1719,20 +1620,6 @@ fixtures are neutral snapshots containing semantic fields.
   `FoldScheduleEstimate` whose recomputed aggregate equals its `CandidateCost`.
 - Mutating any estimate fixture component changes the recomputed aggregate and
   makes the cache-consistency check reject.
-
-#### Final-root-group tensor tests
-
-- Flat presets emit `GeneratedRootFinalChallenge::Flat`.
-- Tensor presets emit the exact low factor selected for the final root group.
-- Every precommitted root group takes the flat sampling path and has no
-  serialized shape selector.
-- Multi-group transcript tests cover a tensor final group followed by one or
-  more flat precommitted groups in canonical group order.
-- Replay never calls the tensor optimizer.
-- Changing the exact low factor changes the descriptor and the certified fold
-  bound.
-- Every precommitted root group, recursive fold, and terminal fold follows the
-  flat transcript path.
 
 #### Setup-offload tests
 
@@ -1785,7 +1672,7 @@ fixtures are neutral snapshots containing semantic fields.
 
 Fuzz or table-driven tests cover excessive group/fold/slice counts, zero
 dimensions, arithmetic overflow in derived balanced slices, malformed prefix
-IDs, invalid tensor low factors, and inconsistent witness-length transitions.
+IDs and inconsistent witness-length transitions.
 
 ### Performance
 
@@ -1809,20 +1696,6 @@ prover/verifier work.
 
 Rejected. It preserves the exact source of the current ambiguity and makes
 root-only capabilities representable at other levels.
-
-### Keep tensor on `LevelParams` but reject non-root use
-
-Rejected. The feature is not useful outside the root and should not burden
-every recursive schedule, descriptor, test, or verifier branch forever.
-
-### Allow tensor selection independently for every root group
-
-Rejected. Current main can represent this, but intended applications tensor
-only the large final group. Per-precommitted-group selection would keep tensor
-shape in frozen commitment descriptors, planner lookup keys, transcript shape
-validation, norm sizing, generated entries, and verifier dispatch without a
-corresponding use case. Precommitted groups retain independent challenge draws,
-but those draws are unconditionally flat.
 
 ### Keep `A/B/D` as public names
 
@@ -1874,9 +1747,6 @@ construct and hard to audit.
   surfaces stabilize.
 - Update `book/src/how/recursion.md` for the typed root/recursive/terminal
   topology.
-- Update `book/src/how/proving/root-fold-ring-switch.md` to state that tensor
-  challenges are permanently final-root-group-only and precommitted root
-  groups are flat.
 - Update `book/src/how/verifying/matrix_evaluation.md` to use descriptive matrix
   names with A/B/D notation in parentheses.
 - Update `book/src/how/architecture.md` for the runtime parameter types.
@@ -1894,7 +1764,6 @@ construct and hard to audit.
 - [`specs/setup-offloading-planner.md`](setup-offloading-planner.md)
 - [`specs/multi-group-batching.md`](multi-group-batching.md)
 - [`specs/distributed-planner.md`](distributed-planner.md)
-- [`specs/tensor-structured-folding-challenges.md`](tensor-structured-folding-challenges.md)
 - [`specs/commitment-compression-cutover.md`](commitment-compression-cutover.md)
 - [`specs/terminal-direct-ring-relations-cutover.md`](terminal-direct-ring-relations-cutover.md)
 - [`specs/digit-innermost-layout.md`](digit-innermost-layout.md)

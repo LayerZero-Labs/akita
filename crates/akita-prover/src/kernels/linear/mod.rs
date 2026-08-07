@@ -23,7 +23,6 @@ mod block_parallel;
 mod capacity;
 mod chunked_matvec;
 mod common;
-#[cfg(any(test, feature = "compression-diagnostics"))]
 mod compression;
 mod crt_matvec;
 mod decompose;
@@ -41,7 +40,6 @@ pub(crate) use capacity::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile
 use chunked_matvec::*;
 pub(crate) use common::digit_blocks_are_balanced;
 use common::*;
-#[cfg(any(test, feature = "compression-diagnostics"))]
 pub(crate) use compression::validate_compression_batch_shape;
 #[cfg(test)]
 use crt_matvec::precompute_dense_mat_ntt_with_params;

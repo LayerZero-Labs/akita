@@ -160,6 +160,32 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertEqual(summary["z_rice_low_bits_cap"], 12)
         self.assertAlmostEqual(summary["z_bits_per_coord_golomb"], 12.5)
 
+    def test_setup_size_parses_flat_field_count(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        log = (
+            " INFO setup sizes label=onehot_fp128_d64 "
+            "num_setup_field_elements=4096 setup_vector_bytes=65536 "
+            "setup_ntt_cache_bytes=131072\n"
+        )
+
+        summary = extract_summary(log, "onehot_fp128_d64", 24, 1)
+
+        self.assertEqual(summary["num_setup_field_elements"], 4096)
+
+    def test_setup_size_converts_merge_base_ring_count_to_flat_fields(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        log = (
+            " INFO setup sizes label=onehot_fp128_d64 "
+            "setup_ring_elements=64 setup_vector_bytes=65536 "
+            "setup_ntt_cache_bytes=131072\n"
+        )
+
+        summary = extract_summary(log, "onehot_fp128_d64", 24, 1)
+
+        self.assertEqual(summary["num_setup_field_elements"], 4096)
+
     def test_planned_fold_level_parses_physical_geometry(self) -> None:
         from scripts.profile_bench_report import extract_summary
 
@@ -419,13 +445,13 @@ class ProfileBenchReportTests(unittest.TestCase):
             "extension_opening_partials_bytes": 0,
             "extension_opening_sumcheck_bytes": 0,
             "fold_grind_nonce_bytes": 4,
-            "v_bytes": 0,
+            "opening_payload_bytes": 0,
             "stage1_sumcheck_bytes": 0,
             "stage1_interstage_claims_bytes": 0,
             "stage1_range_image_evaluation_bytes": 0,
             "stage2_sumcheck_bytes": 0,
             "stage3_sumcheck_bytes": 0,
-            "next_w_commitment_bytes": 0,
+            "next_w_payload_bytes": 0,
             "next_w_eval_bytes": 0,
             "root_variant": "terminal",
         }

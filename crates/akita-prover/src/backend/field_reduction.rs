@@ -263,10 +263,7 @@ where
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
         let Some(first) = source.polys.first() else {
-            return Ok(match plan {
-                DecomposeFoldBatchPlan::Sparse { .. } => BatchDecomposeFoldOutcome::FallbackPerPoly,
-                DecomposeFoldBatchPlan::Tensor { .. } => BatchDecomposeFoldOutcome::Unsupported,
-            });
+            return Ok(BatchDecomposeFoldOutcome::FallbackPerPoly);
         };
         match *first {
             RootTensorProjectionPoly::Dense(_) => {
@@ -275,14 +272,7 @@ where
                     match *poly {
                         RootTensorProjectionPoly::Dense(inner) => dense_polys.push(inner),
                         _ => {
-                            return Ok(match plan {
-                                DecomposeFoldBatchPlan::Sparse { .. } => {
-                                    BatchDecomposeFoldOutcome::FallbackPerPoly
-                                }
-                                DecomposeFoldBatchPlan::Tensor { .. } => {
-                                    BatchDecomposeFoldOutcome::Unsupported
-                                }
-                            });
+                            return Ok(BatchDecomposeFoldOutcome::FallbackPerPoly);
                         }
                     }
                 }
@@ -300,14 +290,7 @@ where
                             sparse_polys.push(inner.as_ref())
                         }
                         _ => {
-                            return Ok(match plan {
-                                DecomposeFoldBatchPlan::Sparse { .. } => {
-                                    BatchDecomposeFoldOutcome::FallbackPerPoly
-                                }
-                                DecomposeFoldBatchPlan::Tensor { .. } => {
-                                    BatchDecomposeFoldOutcome::Unsupported
-                                }
-                            });
+                            return Ok(BatchDecomposeFoldOutcome::FallbackPerPoly);
                         }
                     }
                 }

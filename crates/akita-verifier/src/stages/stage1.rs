@@ -6,11 +6,11 @@
 //! prover/root path.
 
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_challenges::{witness_fold_challenge_labels, Challenges, FoldDraw, LiveFoldDraw};
+use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
-use akita_transcript::labels::{self, ABSORB_PROVER_V};
+use akita_transcript::labels::{self, ABSORB_OPENING_PAYLOAD};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::proof::append_flat_coefficients;
 use akita_types::{
@@ -27,8 +27,7 @@ type DigitRangeVerifyOutput<E> = Vec<E>;
 /// D-block `v = D · concat_g(ê_g)` is absorbed a single time (it spans every
 /// group; the terminal layout drops the D-block so the absorb is skipped on
 /// both sides), then each group samples with its own `num_live_blocks`/`K_g` under
-/// each group's native fold-challenge config and local challenge shape,
-/// and the shared
+/// each group's native fold-challenge config and the shared
 /// accepted grind nonce. A scalar batch (`num_groups == 1`) samples a single
 /// `Challenges` set with `lp.num_live_blocks`/`num_total_polynomials`.
 ///
@@ -38,7 +37,7 @@ type DigitRangeVerifyOutput<E> = Vec<E>;
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn derive_multi_group_stage1_challenges<F, T>(
     transcript: &mut T,
-    v_coeffs: &[F],
+    opening_payload_coeffs: &[F],
     v_ring_d: usize,
     opening_batch: &OpeningClaimsLayout,
     lp: &CommittedGroupParams,
@@ -48,8 +47,12 @@ where
     F: FieldCore + CanonicalField + AkitaSerialize,
     T: Transcript<F>,
 {
-    append_flat_coefficients(ABSORB_PROVER_V, v_coeffs, v_ring_d, transcript)?;
-    let labels = witness_fold_challenge_labels();
+    append_flat_coefficients(
+        ABSORB_OPENING_PAYLOAD,
+        opening_payload_coeffs,
+        v_ring_d,
+        transcript,
+    )?;
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = lp.group_params(opening_batch, group_index)?;
@@ -62,8 +65,6 @@ where
                 group_lp.num_live_blocks(),
                 k_g,
                 &group_lp.fold_challenge_config(),
-                &group_lp.fold_challenge_shape(),
-                labels,
                 grind_nonce,
             )?,
         );
@@ -245,87 +246,5 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
         leaf_verifier.verify::<F, T, _>(&leaf_stage_proof.sumcheck_proof, transcript, |tr| {
             sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)
         })
-    }
-}
-
-#[cfg(test)]
-mod fold_grind_nonce_tests {
-    use super::*;
-    use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-    use akita_types::{FoldLinfProtocolBinding, SisModulusProfileId};
-
-    fn sample_level_params(
-        fold_challenge_config: SparseChallengeConfig,
-        fold_shape: TensorChallengeShape,
-    ) -> CommittedGroupParams {
-        CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
-            64,
-            3,
-            2,
-            4,
-            3,
-            fold_challenge_config,
-        )
-        .with_decomp(16, 64, 2, 2, 2)
-        .expect("level params")
-        .with_fold_challenge_shape(fold_shape)
-        .expect("fold challenge shape")
-    }
-
-    #[test]
-    fn worst_case_beta_only_rejects_nonzero_nonce() {
-        let lp = sample_level_params(
-            SparseChallengeConfig::pm1_only(31),
-            TensorChallengeShape::Tensor { fold_low_len: 2 },
-        );
-        let contract = lp.fold_witness_grind_contract(1).expect("contract");
-        assert_eq!(
-            contract.policy,
-            akita_types::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
-        );
-        let max_grind_attempts = FoldLinfProtocolBinding::CURRENT.max_grind_attempts;
-        assert!(contract.validate_nonce(0, max_grind_attempts).is_ok());
-        assert!(contract.validate_nonce(1, max_grind_attempts).is_err());
-    }
-
-    #[test]
-    fn tail_bound_with_grind_accepts_nonce_below_cap() {
-        let lp = sample_level_params(
-            SparseChallengeConfig {
-                count_pm1: 30,
-                count_pm2: 12,
-            },
-            TensorChallengeShape::Flat,
-        );
-        let contract = lp.fold_witness_grind_contract(1).expect("contract");
-        assert_eq!(
-            contract.policy,
-            akita_types::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
-        );
-        let cap = FoldLinfProtocolBinding::CURRENT.max_grind_attempts;
-        assert!(contract.validate_nonce(0, cap).is_ok());
-        assert!(contract.validate_nonce(cap - 1, cap).is_ok());
-        assert!(contract.validate_nonce(cap, cap).is_err());
-    }
-
-    #[test]
-    fn tensor_tail_bound_with_grind_accepts_nonce_below_cap() {
-        let lp = sample_level_params(
-            SparseChallengeConfig {
-                count_pm1: 30,
-                count_pm2: 12,
-            },
-            TensorChallengeShape::Tensor { fold_low_len: 2 },
-        );
-        let contract = lp.fold_witness_grind_contract(1).expect("contract");
-        assert_eq!(
-            contract.policy,
-            akita_types::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind
-        );
-        let cap = FoldLinfProtocolBinding::CURRENT.max_grind_attempts;
-        assert!(contract.validate_nonce(0, cap).is_ok());
-        assert!(contract.validate_nonce(cap - 1, cap).is_ok());
-        assert!(contract.validate_nonce(cap, cap).is_err());
     }
 }

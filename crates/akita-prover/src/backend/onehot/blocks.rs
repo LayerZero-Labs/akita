@@ -371,16 +371,6 @@ impl<'a, E> LazyOneHotBlocks<'a, E> {
         )
     }
 
-    /// Materialize one block's entries inside a position window; the result
-    /// holds exactly that block (offsets length 2).
-    pub(crate) fn build_position_window(
-        &self,
-        block: usize,
-        positions: std::ops::Range<usize>,
-    ) -> Result<FlatBlocks<E>, AkitaError> {
-        let base = block * self.num_positions_per_block;
-        (self.build)(base + positions.start..base + positions.end, block)
-    }
 }
 
 impl<E> core::fmt::Debug for LazyOneHotBlocks<'_, E> {

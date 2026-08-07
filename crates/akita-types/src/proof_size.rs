@@ -8,7 +8,7 @@
 //! schedule-table representation it consumes.
 
 use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
-use crate::{CommittedGroupParams, DigitRangePlan};
+use crate::{CommitmentPayloadGeometry, CommittedGroupParams, DigitRangePlan};
 use akita_field::AkitaError;
 
 /// Fixed wire size of `fold_grind_nonce` on every fold level proof.
@@ -37,30 +37,30 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 
 /// Header-stripped byte size of one non-terminal folded proof level.
 ///
-/// Ring-valued objects (`y`, `v`, next-witness commitment) serialize over
-/// the base SIS field. Sumcheck objects and scalar evaluations serialize
-/// over the challenge field, which may be a non-trivial extension of the
-/// base field for small-prime configurations.
+/// Compressed D and B images serialize as fixed-size base-field payloads.
+/// Sumcheck objects and scalar evaluations serialize over the challenge field,
+/// which may be a non-trivial extension of the base field for small-prime
+/// configurations.
 ///
 /// This prices the **direct-mode** folded payload only
-/// (`SetupContributionMode::Direct`): the y/v ring blocks, the stage-1
+/// (`SetupContributionMode::Direct`): the range-image and opening payloads, the stage-1
 /// range-check tree, the fused stage-2 sumcheck, and the next-level witness
-/// binding plus its evaluation. An ordinary recursive edge ships the outer
-/// commitment; an edge into the suffix terminal reuses that terminal proof's
-/// inner `t` state and ships no duplicate commitment bytes. It deliberately
-/// **excludes** the optional
+/// binding plus its evaluation. An ordinary recursive edge ships the
+/// compressed outer payload; an edge into the suffix terminal reuses that
+/// terminal proof's inner `t` state and ships no duplicate payload bytes. It
+/// deliberately **excludes** the optional
 /// recursive stage-3 setup-product sumcheck
 /// (`SetupContributionMode::Recursive`), whose per-level overhead is priced
 /// separately by [`stage3_setup_product_bytes`]. The planner adds that exact
 /// payload when the selected successor consumes an incoming setup prefix.
 ///
-/// `next_lp` is required only for an intermediate outer-commitment binding
-/// (it sizes the next-level witness commitment shipped on the wire). It is
+/// `next_lp` is required only for an intermediate outer-payload binding
+/// (it sizes the next-level compressed payload shipped on the wire). It is
 /// unused for a terminal-inner binding.
 ///
 /// # Errors
 ///
-/// Returns an error if an outer-commitment binding has no `next_lp`, or if an
+/// Returns an error if an outer-payload binding has no `next_lp`, or if an
 /// intermediate layout has no outgoing witness binding.
 pub fn level_proof_bytes(
     base_field_bits: u32,
@@ -70,27 +70,26 @@ pub fn level_proof_bytes(
     output_witness_len: usize,
     next_witness_binding: Option<crate::NextWitnessBindingPolicy>,
 ) -> Result<usize, AkitaError> {
-    let base_elem_bytes = field_bytes(base_field_bits);
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
     let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
     let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
-    let v_bytes = proof_ring_vec_bytes(
-        lp.open_commit_matrix.output_rank(),
-        lp.role_dims().d_d(),
-        base_elem_bytes,
-    );
+    let v_bytes = payload_bytes(
+        base_field_bits,
+        lp.open_commit_matrix.sis_modulus_profile(),
+        lp.opening_payload_geometry()?,
+    )?;
     let next_commit_bytes = match next_witness_binding {
-        Some(crate::NextWitnessBindingPolicy::OuterCommitment) => {
+        Some(crate::NextWitnessBindingPolicy::OuterPayload) => {
             let next_lp = next_lp.ok_or_else(|| {
                 AkitaError::InvalidSetup(
-                    "outer-commitment level proof is missing successor params".to_string(),
+                    "outer-payload level proof is missing successor params".to_string(),
                 )
             })?;
-            proof_ring_vec_bytes(
-                next_lp.outer_commit_matrix.output_rank(),
-                next_lp.role_dims().d_b(),
-                base_elem_bytes,
-            )
+            payload_bytes(
+                base_field_bits,
+                next_lp.outer_commit_matrix.sis_modulus_profile(),
+                next_lp.outer_payload_geometry()?,
+            )?
         }
         Some(crate::NextWitnessBindingPolicy::TerminalInnerState) => 0,
         None => {
@@ -108,6 +107,23 @@ pub fn level_proof_bytes(
         + sumcheck
         + next_commit_bytes
         + next_eval_bytes)
+}
+
+fn payload_bytes(
+    base_field_bits: u32,
+    profile: crate::SisModulusProfileId,
+    geometry: CommitmentPayloadGeometry,
+) -> Result<usize, AkitaError> {
+    if base_field_bits != profile.field_bits() {
+        return Err(AkitaError::InvalidSetup(
+            "commitment payload profile disagrees with the base field width".into(),
+        ));
+    }
+    Ok(proof_ring_vec_bytes(
+        geometry.transmitted_rows()?,
+        geometry.transcript_ring_dimension(),
+        field_bytes(base_field_bits),
+    ))
 }
 
 /// Header-stripped byte size of the recursive-mode stage-3 setup-product
@@ -155,7 +171,6 @@ mod tests {
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 
     use crate::golomb_rice::golomb_rice_encode_vec;
-    use crate::tail_golomb_rice_z_params;
     use crate::{
         terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
         FoldLevelProof, RingVec, SetupSumcheckProof, SisModulusProfileId, TerminalLevelProof,
@@ -172,13 +187,19 @@ mod tests {
         let shape = TerminalResponseShape::from_groups(
             lp,
             field_bits,
-            [(lp as &dyn crate::LevelParamsLike, num_claims, num_claims, 1)],
+            [(
+                lp as &dyn crate::LevelParamsLike,
+                num_claims,
+                num_claims,
+                1,
+                127,
+            )],
         )
         .expect("terminal response shape");
         let layout = shape.layout.clone();
         let group = layout.groups[0];
-        let (rice_low_bits, zigzag_w) =
-            tail_golomb_rice_z_params(lp, num_claims).expect("golomb z params");
+        let rice_low_bits = group.z_rice_low_bits;
+        let zigzag_w = crate::golomb_rice::golomb_rice_zigzag_width(group.z_admission_linf_cap);
         let z_payload =
             golomb_rice_encode_vec(&vec![0i64; group.z_coords], rice_low_bits, zigzag_w)
                 .expect("encode zero z segment");
@@ -258,33 +279,21 @@ mod tests {
         stage3_setup_ring_len: Option<usize>,
         next_witness_binding: crate::NextWitnessBindingPolicy,
     ) -> Result<usize, AkitaError> {
-        let current_coeffs = lp
-            .open_commit_matrix
-            .output_rank()
-            .checked_mul(lp.role_dims().d_d())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
-            })?;
-        let next_commit_coeffs = next_lp
-            .outer_commit_matrix
-            .output_rank()
-            .checked_mul(next_lp.role_dims().d_b())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
-            })?;
+        let current_coeffs = lp.opening_payload_geometry()?.transmitted_coefficients();
+        let next_commit_coeffs = next_lp.outer_payload_geometry()?.transmitted_coefficients();
         let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
         let b = 1usize << lp.log_basis_open;
 
         let proof = FoldLevelProof {
             extension_opening_reduction: None,
-            v: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
+            opening_payload: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
                 next_witness_binding: match next_witness_binding {
-                    crate::NextWitnessBindingPolicy::OuterCommitment => {
-                        crate::NextWitnessBinding::OuterCommitment(RingVec::from_coeffs(vec![
+                    crate::NextWitnessBindingPolicy::OuterPayload => {
+                        crate::NextWitnessBinding::OuterPayload(RingVec::from_coeffs(vec![
                             F::zero();
                             next_commit_coeffs
                         ]))
@@ -335,7 +344,7 @@ mod tests {
                     &lp,
                     Some(&next_lp),
                     output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 exact_level_proof_bytes::<F>(
@@ -343,7 +352,7 @@ mod tests {
                     &next_lp,
                     output_witness_len,
                     None,
-                    crate::NextWitnessBindingPolicy::OuterCommitment,
+                    crate::NextWitnessBindingPolicy::OuterPayload,
                 )
                 .unwrap(),
                 "planned level bytes should match the serialized non-offloaded body at log_basis={log_basis}"
@@ -352,7 +361,7 @@ mod tests {
     }
 
     #[test]
-    fn planned_level_bytes_use_native_d_and_successor_b_dimensions() {
+    fn planned_level_bytes_use_fixed_compressed_d_and_successor_b_payloads() {
         const D_A: usize = 128;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let mut lp = CommittedGroupParams::params_only(
@@ -420,7 +429,7 @@ mod tests {
             &lp,
             Some(&next_lp),
             output_witness_len,
-            Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+            Some(crate::NextWitnessBindingPolicy::OuterPayload),
         )
         .unwrap();
         let serialized = exact_level_proof_bytes::<F>(
@@ -428,7 +437,7 @@ mod tests {
             &next_lp,
             output_witness_len,
             None,
-            crate::NextWitnessBindingPolicy::OuterCommitment,
+            crate::NextWitnessBindingPolicy::OuterPayload,
         )
         .unwrap();
         assert_eq!(planned, serialized);
@@ -466,7 +475,7 @@ mod tests {
             &lp,
             Some(&next_lp),
             output_witness_len,
-            Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+            Some(crate::NextWitnessBindingPolicy::OuterPayload),
         )
         .unwrap();
         let terminal_inner = level_proof_bytes(
@@ -478,12 +487,7 @@ mod tests {
             Some(crate::NextWitnessBindingPolicy::TerminalInnerState),
         )
         .unwrap();
-        let expected_outer_commitment = proof_ring_vec_bytes(
-            next_lp.outer_commit_matrix.output_rank(),
-            D,
-            field_bytes(128),
-        );
-        assert_eq!(outer - terminal_inner, expected_outer_commitment);
+        assert_eq!(outer - terminal_inner, crate::COMPRESSION_TARGET_BYTES);
         assert_eq!(
             terminal_inner,
             exact_level_proof_bytes::<F>(
@@ -518,7 +522,7 @@ mod tests {
             &lp,
             None,
             D * 8,
-            Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+            Some(crate::NextWitnessBindingPolicy::OuterPayload),
         );
         assert!(matches!(
             missing_successor,
@@ -591,7 +595,7 @@ mod tests {
                 &next_lp,
                 output_witness_len,
                 None,
-                crate::NextWitnessBindingPolicy::OuterCommitment,
+                crate::NextWitnessBindingPolicy::OuterPayload,
             )
             .unwrap();
             let recursive_bytes = exact_level_proof_bytes::<F>(
@@ -599,7 +603,7 @@ mod tests {
                 &next_lp,
                 output_witness_len,
                 Some(setup_ring_len),
-                crate::NextWitnessBindingPolicy::OuterCommitment,
+                crate::NextWitnessBindingPolicy::OuterPayload,
             )
             .unwrap();
 
@@ -610,7 +614,7 @@ mod tests {
                     &lp,
                     Some(&next_lp),
                     output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 terminal_bytes,

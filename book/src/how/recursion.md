@@ -1,9 +1,9 @@
 # Recursion and proof shape
 
 Akita uses the same digit-innermost source and witness geometry at every fold.
-An intermediate fold emits one recursive witness commitment. The final fold
+An intermediate fold emits one 128-byte recursive witness payload. The final fold
 instead hands its predecessor-bound inner `t` state to a scalar terminal
-checker, which consumes the cleartext witness without another commitment.
+checker, which consumes the cleartext witness without another payload.
 
 ## Intermediate vs terminal levels
 
@@ -24,12 +24,17 @@ The transcript binds the schedule and exact group geometry before challenges
 that depend on them. Changing a terminal or recursive handoff is therefore a
 protocol change, not a serialization-only change.
 
+Every nonterminal fold carries `opening_payload = p_H` for its D relation and
+binds its successor with `OuterPayload(p_F)` for the successor B relation. The
+raw D and B images remain internal prover relation values. A terminal successor
+uses `TerminalInnerState` and carries no duplicate compression payload.
+
 ## Proof anatomy
 
 `AkitaBatchedProof` stores one `FoldLevelProof` root, zero or more recursive
 `FoldLevelProof` records, and one `TerminalLevelProof`. Supported schedules
 always contain at least two fold records, so the terminal state is bound by its
 predecessor and there is no root-terminal proof variant. Each level's
-descriptor binds the resolved `L`, exact `F`, chunk count, challenge shape, and
+descriptor binds the resolved `L`, exact `F`, chunk count, and
 decomposition parameters. Singleton openings and terminal folds are ordinary
 one-group, one-chunk cases; there is no alternate block order.

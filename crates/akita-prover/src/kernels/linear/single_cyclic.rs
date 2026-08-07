@@ -24,18 +24,27 @@ pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
     )?;
     Ok(match slot {
         PreparedNttCache::Q32 { neg, params: p, .. } => {
+            let neg = neg.as_deref().ok_or_else(|| {
+                AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
+            })?;
             let rows: Vec<&[_]> = (0..num_rows)
                 .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
                 .collect();
             mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, p)
         }
         PreparedNttCache::Q64 { neg, params: p, .. } => {
+            let neg = neg.as_deref().ok_or_else(|| {
+                AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
+            })?;
             let rows: Vec<&[_]> = (0..num_rows)
                 .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
                 .collect();
             mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, p)
         }
         PreparedNttCache::Q128 { neg, params: p, .. } => {
+            let neg = neg.as_deref().ok_or_else(|| {
+                AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
+            })?;
             let rows: Vec<&[_]> = (0..num_rows)
                 .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
                 .collect();

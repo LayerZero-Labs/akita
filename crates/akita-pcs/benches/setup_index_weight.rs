@@ -6,7 +6,6 @@ use akita_field::Prime128OffsetA7F7;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PolynomialGroupLayout, PrecommittedGroupDescriptor, PrecommittedLevelParams,
     PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan,
     SisModulusProfileId, WitnessLayout, MAX_WITNESS_CHUNKS,
 };
@@ -125,46 +124,8 @@ fn make_case_with_shape(
         1,
         role_dims.d_d(),
     );
-    if num_groups > 1 {
-        let group_layout = PolynomialGroupLayout::new(0, num_claims);
-        let frozen_layout = PrecommittedGroupDescriptor::from_params(group_layout, &level_params);
-        let outer_projection_ratio = role_dims.d_a() / role_dims.d_b();
-        let frozen_b_width = n_a
-            .checked_mul(depth_commit)
-            .and_then(|width| width.checked_mul(num_live_blocks))
-            .and_then(|width| width.checked_mul(num_claims))
-            .and_then(|width| width.checked_mul(outer_projection_ratio))
-            .unwrap();
-        let frozen_outer = OuterCommitMatrixParams::new_unchecked(
-            level_params.outer_commit_matrix.security_policy(),
-            level_params
-                .outer_commit_matrix
-                .sis_table_key()
-                .table_digest,
-            level_params.outer_commit_matrix.sis_modulus_profile(),
-            n_b,
-            frozen_b_width,
-            level_params.outer_commit_matrix.coeff_linf_bound(),
-            role_dims.d_b(),
-        );
-        let frozen = PrecommittedLevelParams {
-            layout: frozen_layout,
-            inner_commit_matrix: level_params.inner_commit_matrix.clone(),
-            outer_commit_matrix: frozen_outer,
-            log_basis_open: level_params.log_basis_open,
-            fold_challenge_config: level_params.fold_challenge_config,
-            num_digits_inner: level_params.num_digits_inner,
-            num_digits_outer: level_params.num_digits_outer,
-            num_digits_open: level_params.num_digits_open,
-            num_digits_fold_one: level_params.num_digits_fold_one,
-        };
-        level_params.precommitted_groups = vec![frozen; num_groups - 1];
-    }
-    let depth_fold = level_params
-        .num_digits_fold(num_claims, level_params.field_bits_for_cache())
-        .unwrap();
-    let opening_batch =
-        OpeningClaimsLayout::from_group_sizes(0, &vec![num_claims; num_groups]).unwrap();
+    let depth_fold = level_params.num_digits_fold();
+    let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
     let layout = WitnessLayout::new(
         &level_params,
         &opening_batch,
@@ -191,13 +152,7 @@ fn make_case_with_shape(
             SetupContributionGroupInputs {
                 group_id,
                 num_claims,
-                depth_fold: level_params
-                    .num_digits_fold_for_params(
-                        group_params,
-                        num_claims,
-                        level_params.field_bits_for_cache(),
-                    )
-                    .unwrap(),
+                depth_fold: group_params.num_digits_fold(),
                 a_row_start: level_params
                     .a_row_range(&opening_batch, group_id)
                     .unwrap()

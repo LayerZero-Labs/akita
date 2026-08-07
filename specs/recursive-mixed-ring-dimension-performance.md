@@ -38,7 +38,7 @@ The W8R2 workload activates an eight-way distributed witness partition in the
 recursive suffix. It does not split the multi-group root: each precommitted
 root group has only four live blocks and cannot support eight chunks.
 
-The mixed profile is a synthetic, test-support schedule. It is not selected by
+The mixed profile was a synthetic test fixture schedule. It is not selected by
 the production planner.
 
 ## Measurement summary
@@ -329,7 +329,7 @@ claim recursive mixed-D planner completion.
 
 Before declaring a recursive mixed-D default:
 
-1. Build a synthetic all-D64 control through the same test-support path and
+1. Build a synthetic all-D64 control through the same test-local fixture path and
    benchmark it in the same binary as mixed candidates.
 2. Collect verifier spans by level and stage, especially:
    - root setup-plan preparation;

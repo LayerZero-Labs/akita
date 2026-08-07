@@ -58,9 +58,24 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let (d_rows, d_physical_cols, d_weights) = {
             let _span = tracing::info_span!("setup_prepare_global_geometry").entered();
             let d_rows = level_params.open_commit_matrix.output_rank();
-            let d_row_start = rows.checked_sub(d_rows).ok_or_else(|| {
-                AkitaError::InvalidSetup("setup D rows exceed relation rows".into())
-            })?;
+            let row_families =
+                crate::relation_rhs_layout_for(level_params, opening_batch)?.row_families()?;
+            let d_row_start = row_families
+                .iter()
+                .position(|family| matches!(family, crate::RelationRowFamily::Opening { .. }))
+                .ok_or_else(|| AkitaError::InvalidSetup("setup D rows are missing".into()))?;
+            let d_row_end = d_row_start
+                .checked_add(d_rows)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup D row range overflow".into()))?;
+            if d_row_end > rows
+                || row_families[d_row_start..d_row_end]
+                    .iter()
+                    .any(|family| !matches!(family, crate::RelationRowFamily::Opening { .. }))
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "setup D rows disagree with the relation layout".into(),
+                ));
+            }
             let d_physical_cols = d_cursor;
             let d_weights: std::sync::Arc<[E]> = if d_rows == 0 {
                 Vec::new().into()
@@ -316,9 +331,7 @@ fn validate_static_inputs<E: FieldCore>(
 ) -> Result<usize, AkitaError> {
     opening_batch.check()?;
     let num_groups = opening_batch.num_groups();
-    let num_polynomials = opening_batch.num_total_polynomials();
-    let depth_fold =
-        level_params.num_digits_fold(num_polynomials, level_params.field_bits_for_cache())?;
+    let depth_fold = level_params.num_digits_fold();
     if level_params.num_live_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
             "num_live_blocks must be positive".into(),

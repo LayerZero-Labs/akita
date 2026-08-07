@@ -115,7 +115,7 @@ Use these targets (not the pre-consolidation folder paths):
 | PCS decomposition / crate map | `book/src/how/architecture.md` |
 | Optimized verifier | `book/src/how/verification.md` |
 | Extension opening batching | `book/src/how/proving/extension-opening-reduction.md` |
-| Tensor / sparse challenges | `book/src/how/proving/root-fold-ring-switch.md` |
+| Sparse challenges | `book/src/how/proving/root-fold-ring-switch.md` |
 | Terminal fold | `book/src/how/recursion.md` |
 | Weak binding / norm fix | `book/src/how/security.md` |
 | SIS consolidation | `book/src/how/security.md` |
@@ -142,7 +142,6 @@ for a stacked follow-up.
 |------|--------------|
 | `akita-pcs-crate-decomposition.md` | `how/architecture.md` |
 | `extension-field-opening-batching.md` | `how/proving/extension-opening-reduction.md` |
-| `tensor-structured-folding-challenges.md`, `archive/bounded-l1-sparse-challenge.md` | `how/proving/root-fold-ring-switch.md` |
 | `terminal-fold-cutover.md` | `how/recursion.md` |
 | `weak-binding-norm-fix.md` (committed-fold section) | `how/security.md` |
 | `akita-sis-consolidation.md` | `how/security.md` |
@@ -175,7 +174,8 @@ for a stacked follow-up.
 
 ### Keep as live specs
 
-`setup-layout-repack.md`, `role-native-projected-digit-layout.md`,
+`flat-public-matrix-and-exact-ntt-cache.md`,
+`role-native-projected-digit-layout.md`, `setup-layout-repack.md`,
 `setup-offloading-planner.md`,
 `eor-streamed-prover.md`, `packed-sumcheck.md`,
 `planner-incidence-generalization.md`, `akita-field-refactor.md`,

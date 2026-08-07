@@ -2,15 +2,14 @@
 
 | Field | Value |
 |---|---|
-| Status | Bounded direct scalar mixed-D search and one fp128 one-hot generated/runtime catalog implemented; broader topology pending |
-| Review snapshot | 2026-07-31, PR #334 reviewed through `a0b436dc5` plus the fixes recorded below |
+| Status | Direct scalar mixed-D planner search and catalog/runtime replay implemented; recursive setup, multi-chunk, and mixed multi-group integration deferred |
+| Review snapshot | 2026-07-28, planner reviewed on `main` at `af770e129` |
 | Benchmark snapshot | 2026-07-28, release build of `25a1e94a6` |
 | Recursive benchmark snapshot | 2026-07-28, working tree based on `af770e1296` |
 | Primary workload | fp128 one-hot, `nv = 36`, `np = 1` |
 | Primary profile mode | `onehot_fp128_mixed_dim` |
 | Related spec | `specs/runtime-ring-cutover.md` |
 | Projected digit layout | `specs/role-native-projected-digit-layout.md` |
-| Current synthetic implementation | `crates/akita-pcs/src/test_support.rs` |
 | Planner implementation | `crates/akita-planner/src/schedule_params/` |
 
 ## Purpose of this document
@@ -35,25 +34,30 @@ where its provenance is explicit.
 
 ## Executive state
 
-Akita now supports both forms of mixed ring dimension needed by this
-experiment:
+> **Scoped revision (stacked follow-up to PR #334):** Mixed schedule and planner
+> findings remain in force, but setup no longer has a generation/carrier
+> dimension. Flat public matrix derivation, exact field capacity, setup-prefix
+> padding, and per-domain NTT cache sizing are specified by
+> [`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
+
+Akita's protocol and direct scalar planner support both forms of mixed ring
+dimension needed by this experiment:
 
 - **Across levels:** a large-ring leading band can hand off to a smaller-ring
   recursive suffix.
 - **Within a level:** the A, B, and D commitment matrices can use distinct
   dimensions `d_a/d_b/d_d`, subject to A-to-role projection divisibility.
 
-The protocol, setup-contribution, quotient, direct verifier, recursive
-verifier, and multi-group paths all understand this geometry. The offline
-planner now has an opt-in direct scalar search over explicit per-matrix
-dimension tuples. One generated fp128 one-hot family now records and replays a
-planner-selected mixed schedule at runtime. Multi-group root search and
-recursive setup offload remain outside the mixed search. The older transition
-profiles in this document are synthetic schedules built in `akita-pcs` test
-support and are labeled as such.
+The protocol, setup-contribution, quotient, and direct verifier paths consume
+this geometry. The offline planner has an opt-in direct scalar search over
+explicit per-matrix dimension tuples, and the fp128 nv32 one-hot family emits
+and replays a catalog using that search. Recursive setup offload, direct
+multi-chunk search, and heterogeneous mixed-D multi-group roots remain
+explicitly deferred; the current multi-group expander still uses the ordinary
+uniform-D contract. The benchmark profiles in this document remain synthetic
+schedules built in `akita-pcs` test support unless a section says otherwise.
 
-The proposed next step is to make dimension choice part of the offline planner.
-The requested selection order is:
+The implemented direct-scalar policy is:
 
 ```text
 1. smallest physical setup matrix, measured in base-field elements;
@@ -61,9 +65,10 @@ The requested selection order is:
 3. deterministic canonical tie-break only.
 ```
 
-This policy is implemented by the offline direct scalar entry point and bound
-to the generated mixed catalog as
-`MinSetupMatrixFieldElementsThenProofPayload`. Prover and verifier remain
+This policy is catalog-bound for the fp128 nv32 mixed-D family. Its generated
+identity uses `MinSetupMatrixFieldElementsThenProofPayload`; callers that pass
+an explicit mixed dimension domain with a proof-payload policy are rejected
+rather than silently changing objectives. Prover and verifier remain
 catalog-only and never run the planner.
 
 The currently preferred measured design remains:
@@ -165,7 +170,7 @@ There is no batch ring dimension derived from `max_g d_a,g`. Physical units are
 chunk-major with authenticated group order inside each chunk, as specified by
 [`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md).
 
-## Planner integration proposal
+## Planner integration and scope
 
 ### Decision summary
 
@@ -182,7 +187,7 @@ depend on upstream ranks, so a geometry-only bucket is not an equivalence
 class. The correctness baseline is exhaustive L0/L1 enumeration with Pareto
 frontier retention and descriptor-byte tie-breaking.
 
-The proposed direct-schedule score is:
+The direct-schedule score is:
 
 ```text
 score(schedule) = (
@@ -254,7 +259,7 @@ The shipped selection policies are:
 | Policy | Current comparison |
 |---|---|
 | `MinEstimatedProofPayload` | Direct schedules: exact proof payload only |
-| `MinFirstDirectSetupThenPayloadWithinSupportedEnvelope` | Recursive setup schedules: first later direct setup scan, then exact proof payload, subject to an envelope cap |
+| `MinFirstDirectSetupThenPayload` | Recursive setup schedules: first later direct setup scan, then exact proof payload, subject to an optional host budget |
 
 The ordinary direct policy computes a setup envelope but does not use it for
 selection. The fp128 `best_dense_schedule` and `best_onehot_schedule` helpers
@@ -281,8 +286,8 @@ For one fixed scalar D, the scalar planner does the following:
 7. Recompute proof bytes and setup envelope and reject any disagreement with
    the cached estimates.
 
-`layout_candidate_score` combines next-witness physical width, tensor challenge
-work, chunk work, and chunk imbalance. It is a local recursive-split heuristic.
+`layout_candidate_score` combines next-witness physical width, challenge work,
+chunk work, and chunk imbalance. It is a local recursive-split heuristic.
 The source explicitly notes that selecting the smallest next witness is not the
 same as globally minimizing current proof plus suffix cost. Therefore the
 current planner should not be described as exhaustive over all recursive
@@ -297,7 +302,11 @@ The suffix memo currently retains two maps per first-fold basis:
 That is sufficient for the two current scalar-D policies. It is not sufficient
 for a setup-envelope-first mixed-D objective.
 
-### Current mixed-D gap
+### Historical pre-cutover mixed-D gap
+
+The following list records the implementation gaps that motivated this cut.
+The direct scalar path and its generated catalog now address the scalar items;
+the multi-group and recursive items remain deferred as stated above.
 
 The production planner assumes uniform D in all candidate derivation:
 
@@ -317,14 +326,13 @@ emitter also copies dimensions from a completed schedule. The blocking work is
 search, runtime expansion, policy identity, and setup accounting—not a second
 schedule or proof format.
 
-The synthetic builders demonstrate protocol feasibility but are not suitable
-planner architecture. They plan a uniform schedule, mutate or rebuild selected
-matrices, recompute the boundary, and invoke
-`akita_planner::test_support::plan_optimal_suffix` again. A native planner
-must produce the final matrices directly; it must not generate a uniform
-candidate and retarget it after selection.
+The removed synthetic builders demonstrated protocol feasibility but were not
+suitable planner architecture. They planned a uniform schedule, mutated or
+rebuilt selected matrices, and recomputed boundaries outside the native
+planner. A native planner must produce the final matrices directly; it must not
+generate a uniform candidate and retarget it after selection.
 
-### Proposed ring-dimension policy
+### Future broader ring-dimension policy
 
 Replace the overloaded scalar planner dimension with a plain-value search
 policy conceptually equivalent to:
@@ -399,26 +407,17 @@ max_setup_matrix_field_elements =
     )
 ```
 
-The current `SetupMatrixEnvelope::max_setup_len` is expressed in ring elements
-at the active level's A dimension. Taking a raw maximum across levels with
-different A dimensions is not a general cross-D comparison. The planner cost
-model should instead retain `max_setup_matrix_field_elements`. Setup
-construction converts once:
+The flat setup cutover now uses `max_setup_matrix_field_elements` directly.
+There is no current `SetupMatrixEnvelope::max_setup_len` conversion and no
+setup-generation dimension. The planner score, setup-capacity check,
+generated-row replay, and flat matrix allocation all consume the same physical
+field-element quantity. The old ring-element conversion is retained only in
+the historical snapshot below.
 
-```text
-max_setup_len_at_generation_D =
-    ceil(max_setup_matrix_field_elements / setup_generation_dimension)
-```
-
-This makes the planner score, setup-capacity check, generated-row replay, and
-actual flat matrix allocation use one physical quantity. No parallel setup
-formula should be introduced; extend the canonical
-`setup_matrix_envelope_for_schedule`/accumulation primitives and use them
-everywhere.
-
-The policy's setup ceiling must use the same field-element unit. Any existing
-field named `max_setup_envelope_field_elements` must be checked for unit
-consistency rather than compared with a level-local ring-element count.
+An optional host setup budget uses the same field-element unit through
+`setup_field_budget`. The shipped policy is uncapped. The historical
+`max_setup_envelope_field_elements` and `max_num_setup_field_elements` names
+are removed.
 
 ### Per-level candidate derivation
 
@@ -563,7 +562,7 @@ including `d_setup`, not only its natural length.
 
 ### Selection policy and the current nv=36 data
 
-Add a new catalog-bound selection policy with semantics equivalent to:
+The catalog-bound selection policy has semantics:
 
 ```text
 MinSetupMatrixFieldElementsThenProofPayload
@@ -653,11 +652,16 @@ For each candidate final-group tuple:
 - physical setup cost includes every frozen and final A/B matrix plus shared D;
 - key identity continues to include exact frozen precommit descriptors.
 
-The planner must replace current uses of `policy.ring_dimension` in
-`d_segment_width` with the selected shared D. Outgoing sizing must call the
-compact `WitnessLayout` and successor-domain geometry rather than recomputing
-ring slots. Authenticated order fixes bytes; changing stable group identifiers
-without changing that order must not change the length.
+The planner must replace current uses of `policy.uniform_ring_dimension` in
+`d_segment_width` and carrier sizing with the selected shared D and the
+canonical maximum group carrier. Group order must not influence the result.
+Outgoing sizing must call the compact `WitnessLayout` and successor-domain
+geometry rather than recomputing ring slots. Authenticated order fixes bytes;
+changing stable group identifiers without changing that order must not change
+the length. The planner must replace current uses of
+`policy.uniform_ring_dimension` in `d_segment_width` and carrier sizing with
+the selected shared D and the canonical maximum group carrier. Group order
+must not influence the result.
 
 ### Generated catalog and replay integration
 
@@ -685,9 +689,8 @@ runtime expansion:
 Remove the current checks that require every stored A/terminal dimension to
 equal one scalar policy D. Do not add a second mixed-D expansion path.
 
-Catalog identity now binds:
+Catalog identity for the implemented direct scalar family binds:
 
-- setup generation dimension;
 - ordered A/B/D candidate domains;
 - new cost-model and selection-policy IDs;
 - whole SIS table digest;
@@ -702,30 +705,20 @@ remain byte-identical. Validation also checks that every emitted root and
 recursive A/B/D tuple belongs to the bound domain, and challenge-hook coverage
 is recomputed over every admitted A dimension.
 
-### Setup/config cutover
+### Historical setup/config cutover (superseded)
 
-`CommitmentConfig::D` and `PlannerPolicy::ring_dimension` currently conflate:
+The original mixed-D proposal treated `CommitmentConfig::D` and a scalar
+`PlannerPolicy::ring_dimension` as a setup-generation dimension, a uniform
+planner candidate, and a backend policy at once. That model was removed by
+the flat setup cutover in
+[`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
 
-1. setup generation dimension;
-2. uniform planner candidate dimension;
-3. root/backend policy dimension.
-
-Planner-native mixed D requires separating these concepts. The config should
-expose one canonical setup-generation dimension and one canonical
-ring-dimension candidate policy. Scheme setup validation dispatches on the
-former; commitment and fold operations dispatch on dimensions read from the
-selected schedule.
-
-Because this repository makes no backward-compatibility guarantee, prefer a
-direct rename/cutover over compatibility accessors. Do not keep a scalar-D
-planner wrapper that constructs a singleton candidate list; uniform presets
-can express their policy with singleton A/B/D domains.
-
-Setup capacity still scans every supported catalog row under the requested
-`(max_num_vars, max_num_polys)` capacity and takes the largest physical
-field-element envelope. It then converts that envelope to generation-ring
-elements once. Cache identity must include the setup-generation dimension,
-catalog/policy digest, and effective schedule digest.
+Current code keeps `CommitmentConfig::D` only as the uniform candidate for
+presets that choose one, exposes `PlannerPolicy::uniform_ring_dimension`, and
+measures setup capacity directly in base-field elements. The public matrix has
+no generation dimension, and cache/catalog identity does not include one.
+The historical design below is retained only to explain why the separation
+was required; it is not an active implementation contract.
 
 ### Determinism and tie-breaking
 
@@ -890,7 +883,11 @@ preservation, not planner-native recursive mixed-D support.
 
 ### Acceptance criteria
 
-The planner integration is complete only when all of these hold:
+The list below is the complete heterogeneous-planner target. PR341's scoped
+implementation satisfies items 1–10 and the scalar fp128 portion of items
+11–12. Mixed multi-group replay, direct multi-chunk mixed search, and fp32/fp64
+mixed catalogs remain deferred work; they are not represented as shipped
+capabilities by this PR.
 
 1. Existing `find_schedule` reproduces uniform schedules, estimates, and
    generated/runtime descriptor bytes; the opt-in mixed entry point requires
@@ -905,7 +902,7 @@ The planner integration is complete only when all of these hold:
 5. Every selected role key is covered by the canonical SIS table at its exact
    width and coefficient bucket.
 6. Planner, generated-row replay, setup allocation, and
-   `ensure_schedule_fits_setup` agree on physical setup field elements.
+   `ensure_prover_schedule_fits_setup` agree on physical setup field elements.
 7. DP output and generated-row expansion produce identical schedule descriptor
    bytes, proof-byte estimates, level counts, witness transitions, and setup
    cost.
@@ -914,9 +911,10 @@ The planner integration is complete only when all of these hold:
 9. Runtime row misses reject without planner fallback or panic.
 10. Existing uniform direct, recursive, multi-chunk, and multi-group benchmark
     paths retain their fast verifier kernels.
-11. Mixed-D E2Es cover honest verification, wrong openings, proof/commitment
-    tampering, malformed dimensions, unsupported SIS cells, and setup
-    under-capacity.
+11. The scalar fp128 mixed-D E2Es cover honest verification, wrong openings,
+    proof/commitment tampering, malformed dimensions, unsupported SIS cells,
+    and setup under-capacity. Mixed multi-group and mixed multi-chunk E2Es are
+    a later acceptance gate after their planner/catalog paths are implemented.
 12. The `nv=36` constrained search completes, obeys all transition/rank caps,
     and the complete A/A′/B/E/F/C/D benchmark matrix is rerun from one build.
 
@@ -938,6 +936,10 @@ The planner integration is complete only when all of these hold:
 | Setup parity | Planned field-element envelope equals allocated setup capacity and runtime fit checks |
 | Determinism | Repeated and parallel table generation emits byte-identical rows |
 | Benchmark policy | The constrained `nv=36` search completes and reports `256/128/128 → D64` with 67,108,864 physical setup fields |
+
+These tests describe the implemented direct scalar cut. A future mixed
+multi-group or mixed multi-chunk cut must add corresponding frozen-precommit,
+chunk-partition, and generated-replay rows before claiming those capabilities.
 
 ### Resolved search policy
 
@@ -972,14 +974,17 @@ The labels below are local to this spec.
 C and D are per-matrix-root experiments. They are not D64-tail variants and
 must not be described as alternatives that share E's suffix policy.
 
-## Current deterministic schedule snapshot
+## Historical deterministic schedule snapshot
 
-This section was regenerated from the schedule builders at `25a1e94a6` for
-`nv = 36`, `np = 1`. It contains geometry, not wall-clock measurements.
+This section was regenerated from the pre-flat schedule builders at
+`25a1e94a6` for `nv = 36`, `np = 1`. It contains historical geometry, not
+wall-clock measurements or a current setup-allocation contract.
 
-`setup length` is `SetupMatrixEnvelope::max_setup_len` in generation-ring
-elements. Multiplying by the generation dimension and 16-byte fp128 field
-elements gives the setup-vector byte footprint.
+The historical `setup length` values below are
+`SetupMatrixEnvelope::max_setup_len` in generation-ring elements. The `@ D`
+annotations and conversion to bytes are obsolete under the flat setup model;
+current capacity is reported directly as base-field elements by the flat setup
+spec.
 
 | Profile | Levels including terminal | Root `d_a/d_b/d_d` | Root ranks `n_a/n_b/n_d` | Root output field elements | Setup length | Terminal input / D |
 |---|---:|---|---|---:|---:|---|
@@ -1019,115 +1024,18 @@ and D.
 
 ## Schedule construction
 
-All builders below live in `crates/akita-pcs/src/test_support.rs`. They are
-cached by configuration type, input arity, and dimension parameters to avoid
-rerunning offline dynamic programming during profiles.
+The synthetic PCS mixed-D builders described below were test-only artifacts.
+They have been removed from `akita-pcs`; production callers must exercise the
+planner and PCS through normal schedule resolution rather than depending on
+crate-local fixtures.
 
-### Uniform leading band: `mixed_d_per_level_schedule`
+### Removed synthetic PCS fixtures
 
-```rust
-mixed_d_per_level_schedule::<Envelope, Suffix>(
-    num_vars,
-    num_polynomials,
-    switch_at_fold,
-)
-```
-
-Construction:
-
-1. Plan the envelope schedule.
-2. Keep the root and exactly the recursive folds before
-   `switch_at_fold`.
-3. Read the kept prefix's exact output witness length and opening basis.
-4. Call `akita_planner::test_support::plan_optimal_suffix` under the suffix policy.
-5. Convert the planned suffix into `FoldSchedule` wire types and validate the
-   result.
-
-This fixes the original “repriced suffix” defect. Repricing an existing D128
-tail at D64 did not preserve shrinkage and could terminate with a very large
-cleartext witness. The suffix planner, not the synthetic builder, remains the
-single authority for fold geometry.
-
-Adapter:
-
-```rust
-MixedDConfig<Envelope, Suffix, SWITCH_AT_FOLD>
-```
-
-### Per-matrix root: `per_matrix_ring_dims_root_schedule`
-
-```rust
-per_matrix_ring_dims_root_schedule::<Env>(
-    num_vars,
-    num_polynomials,
-    b_ring_dim,
-    d_ring_dim,
-)
-```
-
-Construction:
-
-1. Plan a uniform `Env` root.
-2. Rebuild B and D from the final A-source projection geometry.
-3. Recompute the root's exact outgoing witness length.
-4. Replan the **complete** uniform-`Env` suffix from that boundary.
-5. Derive the setup envelope from the completed mixed schedule.
-
-Adapter:
-
-```rust
-PerMatrixRingDimsRootConfig<Env, B_RING_DIM, D_RING_DIM>
-```
-
-The suffix is uniform `Env::D`. With `Env = D128OneHot`, this produces C and D,
-whose terminal remains D128.
-
-### Multi-band transition: `ring_dimension_transition_schedule`
-
-```rust
-ring_dimension_transition_schedule::<Root, Mid, Suffix>(
-    num_vars,
-    num_polynomials,
-    root_dims,
-    middle_dims,
-)
-```
-
-This is the canonical builder for E, F, and the active transition E2E:
-
-1. Plan the root under `Root`.
-2. If `Root::D == 512`, temporarily plan D256 root geometry and promote A to
-   D512 using the audited D512 A-role SIS table.
-3. Rebuild root B/D from the **final** A geometry.
-4. Recompute the root output.
-5. Plan a `Mid` suffix from that exact root output and retain its first fold.
-6. Rebuild that fold's B/D matrices from its final A geometry.
-7. Recompute the middle-fold output.
-8. Plan the complete `Suffix` continuation from that exact output.
-9. Validate the finished schedule and exact setup envelope.
-
-The builder accepts only singleton batches. Its cache key contains
-`Root`/`Mid`/`Suffix` type IDs plus root and middle B/D dimensions. The A
-dimensions are encoded by the `Root` and `Mid` types.
-
-Adapters:
-
-```rust
-RingDimensionTransitionConfig<
-    Env,
-    Suffix,
-    MID_BD_RING_DIM,
-    ROOT_D_RING_DIM,
->
-
-ThreeBandRingDimensionTransitionConfig<
-    Root,
-    Mid,
-    Suffix,
-    ROOT_BD_RING_DIM,
-    L1_BD_RING_DIM,
->
-```
+The former test-local PCS builders covered uniform leading bands, per-matrix
+root overrides, and multi-band transitions. Those fixtures were intentionally
+removed so no crate depends on planner test artifacts. Mixed-D behavior should
+now be exercised either in planner tests or through production schedule
+resolution.
 
 ### Exact matrix retargeting
 
@@ -1275,8 +1183,7 @@ This is a behavioral test-support fix, not only a test rename.
 
 Changes:
 
-- Replaced mutation of already-planned suffixes with staged calls to
-  `akita_planner::test_support::plan_optimal_suffix`.
+- Replaced mutation of already-planned suffixes with staged suffix replanning.
 - Replaced separate B/D retarget helpers with
   `retarget_commitment_matrices`.
 - Made width derivation use the final A projection source.
@@ -1311,13 +1218,6 @@ Backward compatibility is not provided.
 | Old | Current |
 |---|---|
 | `compressed_role_root_schedule` | `per_matrix_ring_dims_root_schedule` |
-| `CompressedRoleRootConfig` | `PerMatrixRingDimsRootConfig` |
-| `role_switch_schedule` / `three_band_role_switch_schedule` | `ring_dimension_transition_schedule` |
-| `RoleSwitchConfig` | `RingDimensionTransitionConfig` |
-| `ThreeBandRoleSwitchConfig` | `ThreeBandRingDimensionTransitionConfig` |
-| `compressed_role_e2e.rs` | `per_matrix_ring_dims_root_e2e.rs` |
-| `role_switch_e2e.rs` | `ring_dimension_transition_e2e.rs` |
-| `three_band_schedule.rs` | folded into `ring_dimension_transition_schedule.rs` |
 
 Profile environment renames:
 
@@ -1339,17 +1239,9 @@ transition.”
 
 ### Active acceptance tests
 
-| Test | What it proves |
-|---|---|
-| `mixed_d_per_level_e2e.rs` | Cross-level D128→D64 prove/verify, replay, malformed input, tamper rejection |
-| `per_matrix_ring_dims_root_e2e.rs` | Active `128/32/64` root through public PCS API; wrong opening and commitment tamper rejection |
-| `ring_dimension_transition_e2e.rs` | Direct L0 `128/128/64`, L1 `128/64/64`, then D64; public PCS API and tamper rejection |
-| `ring_dimension_transition_schedule.rs` | Exact widths, independently planned suffixes, D256/D512 schedule invariants, setup envelope equality, dynamic D128 recursive prefix, and W8R2 partition preservation |
-| `recursive_ring_dimension_transition_e2e.rs` | CI-sized recursive mixed-D (`256/128/128 → 128/64/64 → 64`) plain and W8R2 prove/verify at `nv=24`, serialize round-trip, transcript agreement, wrong-opening rejection, and missing D64 outer-NTT rejection. The cases run serially to cap peak memory. Stage 3 tampering remains in the shared recursive-profile E2E coverage. |
-| profile modes `onehot_fp128_mixed_d_multi_group_recursive*` | Benchmark-only `nv=32` recursive prove/verify for the plain and W8R2 mixed-D workloads; excluded from active `profile-ci` |
-
-The disabled legacy fixture `mixed_role_e2e.rs` has been deleted. Active
-per-matrix coverage is `per_matrix_ring_dims_root_e2e.rs`.
+The former `akita-pcs` synthetic mixed-D integration tests have been deleted.
+Verifier malformed-proof coverage remains in `akita-verifier`; planner tests
+continue to cover mixed-D search and validation at the planning boundary.
 
 ### Lower-level coverage
 
@@ -1473,7 +1365,7 @@ verify, 2,461 proof bytes, and approximately 10.1 GiB of peak RSS. E therefore
 remains the balanced profile; F is only attractive when root commitment time
 dominates those costs.
 
-### Recursive mixed-D results (`nv = 32`, two multi-group workloads)
+### Archived Recursive Mixed-D Results (`nv = 32`, two multi-group workloads)
 
 This experiment applies the requested recursive transition to the two PR #331
 CI benchmark workloads:
@@ -1483,9 +1375,9 @@ CI benchmark workloads:
 | Recursive multi-group | `onehot_fp128_d64_multi_group_recursive` | `onehot_fp128_mixed_d_multi_group_recursive` |
 | Recursive multi-group W8R2 | `onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2` | `onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2` |
 
-Both workloads open two precommitted 16-variable singleton groups plus two
-32-variable final-group polynomials. The profile argument is therefore
-`nv=32`, `np=4`. Both mixed runs use:
+Both workloads opened two precommitted 16-variable singleton groups plus two
+32-variable final-group polynomials. The profile argument was therefore
+`nv=32`, `np=4`. Both mixed runs used:
 
 ```text
 L0 final and precommitted groups: A/B/D = 256/128/128
@@ -1513,18 +1405,19 @@ The D64 controls were built with the exact CI profiler feature graph:
 --no-default-features --features parallel,profile-ci
 ```
 
-The experimental mixed modes intentionally are not linked into
-`profile-ci`, because they use the offline planner through `akita-pcs`
-test-support. They were built from the same source with:
+At measurement time, the experimental mixed modes were intentionally not linked
+into `profile-ci`, because they used offline-planner schedule fixtures through
+the former `akita-pcs` test-support path. They were built from the same source
+with:
 
 ```text
 --no-default-features --features parallel
 ```
 
-This preserves the production rule that the CI/runtime profiler does not link
-the offline planner. It does mean the comparison uses two feature graphs, not
-one binary. The measured prover and verifier protocol implementations are the
-same; only schedule availability and experimental test-support linkage differ.
+These PCS profile modes have since been removed because recursive mixed-D
+verification is not a production-supported verifier path. Keep recursive
+mixed-D experiments in tests or planner-only tooling until that verifier path
+is promoted.
 
 #### Two-run means
 
@@ -1615,62 +1508,13 @@ kernels fixed at `2f0c35b66`.
 
 ## Reproduction
 
-Use the default profile feature set. The mixed experimental modes are compiled
-out by `profile-ci` and by the dedicated D64-only profile feature.
+Use the default profile feature set for production-supported profile modes.
+Synthetic mixed-D PCS profile modes that depended on `akita-pcs` test fixtures
+have been removed from the profile example.
 
 ```bash
-# A: uniform D64
 AKITA_NUM_VARS=36 \
 AKITA_MODE=onehot_fp128_d64 \
-AKITA_PROFILE_TRACE=0 \
-AKITA_PROFILE_LOG=info \
-cargo run --release -p akita-pcs --example profile
-
-# A′ or B: D128 leading band, then D64
-AKITA_NUM_VARS=36 \
-AKITA_MODE=onehot_fp128_d64_root_d128 \
-AKITA_MIXED_ROOT_D=128 \
-AKITA_MIXED_SWITCH=1 \
-AKITA_PROFILE_TRACE=0 \
-AKITA_PROFILE_LOG=info \
-cargo run --release -p akita-pcs --example profile
-
-# Change AKITA_MIXED_SWITCH to 2 for B.
-
-# E: uniform D128 root, 128/64/64 at L1, then D64
-AKITA_NUM_VARS=36 \
-AKITA_MODE=onehot_fp128_d64_root_d128 \
-AKITA_RING_DIMENSION_TRANSITION=1 \
-AKITA_TRANSITION_ROOT_D_RING_DIM=128 \
-AKITA_PROFILE_TRACE=0 \
-AKITA_PROFILE_LOG=info \
-cargo run --release -p akita-pcs --example profile
-
-# F: temporary D512 A-only root
-AKITA_NUM_VARS=36 \
-AKITA_MODE=onehot_fp128_d64_root_d128 \
-AKITA_THREE_BAND_RING_DIMENSION_TRANSITION=1 \
-AKITA_THREE_BAND_ROOT_A_RING_DIM=512 \
-AKITA_PROFILE_TRACE=0 \
-AKITA_PROFILE_LOG=info \
-cargo run --release -p akita-pcs --example profile
-
-# C: root 128/64/64, then uniform D128
-AKITA_NUM_VARS=36 \
-AKITA_MODE=onehot_fp128_d64_root_d128 \
-AKITA_PER_MATRIX_RING_DIMS_ROOT=1 \
-AKITA_ROOT_B_RING_DIM=64 \
-AKITA_ROOT_D_RING_DIM=64 \
-AKITA_PROFILE_TRACE=0 \
-AKITA_PROFILE_LOG=info \
-cargo run --release -p akita-pcs --example profile
-
-# D: root 128/128/64, then uniform D128
-AKITA_NUM_VARS=36 \
-AKITA_MODE=onehot_fp128_d64_root_d128 \
-AKITA_PER_MATRIX_RING_DIMS_ROOT=1 \
-AKITA_ROOT_B_RING_DIM=128 \
-AKITA_ROOT_D_RING_DIM=64 \
 AKITA_PROFILE_TRACE=0 \
 AKITA_PROFILE_LOG=info \
 cargo run --release -p akita-pcs --example profile
@@ -1695,26 +1539,9 @@ python3 scripts/profile_bench_report.py run \
   --case onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2:32:4:recursive
 ```
 
-Then build and run the test-support mixed profiles:
-
-```bash
-cargo build --release -p akita-pcs --example profile \
-  --no-default-features --features parallel
-
-python3 scripts/profile_bench_report.py run \
-  --binary ./target/release/examples/profile \
-  --output-dir /tmp/akita-recursive-mixed \
-  --runs 2 --warmups 1 \
-  --case onehot_fp128_mixed_d_multi_group_recursive:32:4:recursive
-
-python3 scripts/profile_bench_report.py run \
-  --binary ./target/release/examples/profile \
-  --output-dir /tmp/akita-recursive-w8r2-mixed \
-  --runs 2 --warmups 1 \
-  --case onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2:32:4:recursive
-```
-
-Extract the comparable phase metrics:
+The archived recursive mixed-D runs are no longer reproducible through
+`akita-pcs --example profile`. Extract comparable phase metrics from archived
+logs with:
 
 ```bash
 rg '\] (setup|commit|prove|verify OK|proof: total)' <log>
@@ -1736,11 +1563,6 @@ For a publishable table:
 Focused schedule and E2E checks:
 
 ```bash
-cargo test -p akita-pcs --test ring_dimension_transition_schedule
-cargo test -p akita-pcs --test per_matrix_ring_dims_root_e2e
-cargo test -p akita-pcs --test ring_dimension_transition_e2e
-cargo test -p akita-pcs --test mixed_d_per_level_e2e
-cargo test -p akita-pcs --test recursive_ring_dimension_transition_e2e
 cargo test -p akita-planner --lib --features catalog-gen
 ```
 
@@ -1775,7 +1597,6 @@ back.
 | Catalog identity | `crates/akita-schedules/src/catalog_identity.rs` |
 | Config-to-policy projection | `crates/akita-config/src/lib.rs` |
 | Proof-byte and setup-envelope accounting | `crates/akita-types/src/proof_size.rs`, `crates/akita-types/src/proof/setup_envelope.rs` |
-| Mixed schedule builders and adapters | `crates/akita-pcs/src/test_support.rs` |
 | Profile selection and environment variables | `crates/akita-pcs/examples/profile/modes.rs` |
 | A/B/D dimension validation | `crates/akita-types/src/layout/ring_dims.rs` |
 | Relation-address geometry | `crates/akita-types/src/proof/relation_address.rs` |
@@ -1786,7 +1607,6 @@ back.
 | Verifier relation evaluation | `crates/akita-verifier/src/protocol/ring_switch.rs` and `ring_switch/` |
 | Prover Stage 3 | `crates/akita-prover/src/protocol/sumcheck/akita_stage3/` |
 | Verifier Stage 3 | `crates/akita-verifier/src/stages/stage3.rs` |
-| Active acceptance tests | `crates/akita-pcs/tests/{mixed_d_per_level_e2e,per_matrix_ring_dims_root_e2e,ring_dimension_transition_e2e,ring_dimension_transition_schedule}.rs` |
 
 ## Known limits and next work
 
@@ -1799,7 +1619,7 @@ native planner reproduces or improves its geometry.
 
 ### P1: production heterogeneous-group admission
 
-`PlannerPolicy` still exposes one scalar `ring_dimension`. The protocol can
+`PlannerPolicy` still exposes one scalar `uniform_ring_dimension`. The protocol can
 consume group-local dimensions, but production planning and shipped catalogs
 cannot emit a heterogeneous-group root. Add explicit final/precommitted
 `CommitmentRingDims` to the planner boundary and generate an end-to-end catalog
@@ -1808,12 +1628,9 @@ row.
 ### P1: dynamic setup-prefix dimension
 
 Setup-prefix offload still uses the D64 registry contract for catalog
-recursive families. The synthetic recursive mixed-D profile materializes a
-dynamic D128 prefix outside that registry and is covered by
-`recursive_ring_dimension_transition_e2e.rs`. A production mixed batch whose
-common relation dimension is below 64 remains rejected until setup generation,
-registry lookup, planner admission, and verifier dispatch select `d_setup`
-consistently.
+recursive families. A production mixed batch whose common relation dimension is
+below 64 remains rejected until setup generation, registry lookup, planner
+admission, and verifier dispatch select `d_setup` consistently.
 
 ### P2: expand the sweep
 

@@ -130,16 +130,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             });
         }
         let required = self.projection_geometry.required();
-        let setup_len = setup.shared_matrix().total_ring_elements_at::<BASE_D>()?;
+        let setup_len = setup.shared_matrix().num_field_elements() / BASE_D;
         if required > setup_len {
             return Err(AkitaError::InvalidSetup(
                 "shared matrix is too small for selected verifier layout".into(),
             ));
         }
-        // The scan reads `required` leading rings; covering the full setup
-        // length would re-derive the whole released matrix per level.
-        let setup_matrix = setup.shared_matrix().covering_at_dyn(required, BASE_D)?;
-        let setup_view = setup_matrix.ring_view::<BASE_D>(1, required)?;
+        // The scan reads only the `required` leading rings.
+        let setup_view = setup.shared_matrix().ring_view::<BASE_D>(1, required)?;
         if fused_groups {
             return self.evaluate_groups_fused::<F, BASE_D>(&setup_view, base_pows, projections);
         }

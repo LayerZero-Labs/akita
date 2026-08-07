@@ -144,11 +144,7 @@ fn setup_prefix_field_evals<F: FieldCore>(
     slot: &SetupPrefixSlot<F>,
 ) -> Result<Vec<F>, AkitaError> {
     let n_prefix = slot.id.n_prefix()?;
-    let gen_ring_dim = expanded.shared_matrix().gen_ring_dim();
-    let matrix = expanded
-        .shared_matrix()
-        .covering_at_dyn(slot.natural_len.div_ceil(gen_ring_dim).max(1), gen_ring_dim)?;
-    let fields = matrix.as_field_slice();
+    let fields = expanded.shared_matrix().as_field_slice();
     if slot.natural_len > fields.len() || slot.natural_len > n_prefix {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix slot exceeds shared setup matrix".to_string(),
@@ -175,8 +171,15 @@ fn setup_prefix_fold_geometry<const D: usize>(
     source_ring_len: usize,
 ) -> Result<(usize, usize), AkitaError> {
     let geometry = &slot.id.commitment_params.layout;
-    geometry.validate()?;
-    if slot.id.d_setup != D
+    geometry.validate(
+        slot.id
+            .commitment_params
+            .layout
+            .inner_commit_matrix
+            .sis_modulus_profile()
+            .field_bits(),
+    )?;
+    if slot.id.d_setup() != D
         || geometry.group.num_polynomials() != 1
         || geometry.num_live_ring_elements_per_claim != source_ring_len
         || geometry.num_positions_per_block == 0

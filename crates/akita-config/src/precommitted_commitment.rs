@@ -7,12 +7,12 @@
 //! worst-case envelope over every supported basis.
 
 use crate::{policy_of, CommitmentConfig};
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    accumulate_matrix_field_elements_for_level, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldSchedule,
-    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusProfileId,
+    accumulate_matrix_field_elements_for_level, CommitmentRingDims, CommittedGroupParams,
+    CommittedGroupProfile, DecompositionParams, FoldSchedule, OpenCommitMatrixParams,
+    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixCapacity, SisModulusProfileId,
 };
 use std::marker::PhantomData;
 
@@ -36,10 +36,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
         Cfg::ring_challenge_config(d)
     }
 
-    fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
-        Cfg::fold_challenge_shape_at_level(inputs)
-    }
-
     fn sis_modulus_profile() -> SisModulusProfileId {
         Cfg::sis_modulus_profile()
     }
@@ -48,10 +44,14 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
         Cfg::ring_subfield_embedding_norm_bound()
     }
 
-    fn max_setup_matrix_size(
+    fn selection_policy() -> akita_schedules::SelectionPolicyId {
+        Cfg::selection_policy()
+    }
+
+    fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError> {
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
         if max_num_batched_polys == 0 {
             return Err(AkitaError::InvalidSetup(
                 "max_num_batched_polys must be at least 1".to_string(),
@@ -63,8 +63,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
             let params = Self::get_params_for_batched_commitment(&opening_batch)?;
             accumulate_matrix_field_elements_for_level(&params, &mut max_field_elements)?;
         }
-        Ok(SetupMatrixEnvelope {
-            max_setup_len: max_field_elements.div_ceil(Cfg::D),
+        Ok(SetupMatrixCapacity {
+            num_field_elements: max_field_elements,
         })
     }
 
@@ -72,8 +72,12 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
         Cfg::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Cfg::onehot_chunk_size()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Cfg::root_honest_fold_policy()
+    }
+
+    fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
+        Cfg::schedule_catalog()
     }
 
     fn supports_multi_group_final_commit() -> bool {
@@ -100,97 +104,99 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
             ));
         }
         let key = opening_batch.root_final_group_layout()?;
-        if let Some(params) = catalog_precommitted_commit_params::<Cfg>(&key)? {
-            return Ok(params);
-        }
-        let schedule = precommitted_commit_schedule::<Cfg>(&key)?;
-        Ok(schedule.root.params.final_group.commitment.clone())
+        committed_group_params::<Cfg>(&key)
     }
 }
 
-fn catalog_precommitted_commit_params<Cfg: CommitmentConfig>(
+/// Resolve standalone A/B commitment parameters for one group using the base
+/// config's generated precommit profile.
+///
+/// This legacy adapter exists for callers still shaped around
+/// [`CommittedGroupParams`]. The generated source of truth is the
+/// descriptor-only [`committed_group_profile`]; final grouped-root expansion
+/// derives opening metadata later from the selected schedule row.
+pub fn committed_group_params<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
-) -> Result<Option<CommittedGroupParams>, AkitaError> {
-    let Some(catalog) = Cfg::schedule_catalog() else {
-        return Ok(None);
-    };
-    let policy = policy_of::<Cfg>();
-    akita_schedules::validate_catalog_identity(
-        &catalog,
-        &policy,
+) -> Result<CommittedGroupParams, AkitaError> {
+    let profile = committed_group_profile::<Cfg>(key)?;
+    precommit_profile_as_commit_params::<Cfg>(profile)
+}
+
+/// Resolve the generated standalone precommit profile for one group.
+pub fn committed_group_profile<Cfg: CommitmentConfig>(
+    key: &PolynomialGroupLayout,
+) -> Result<CommittedGroupProfile, AkitaError> {
+    Cfg::validate_sis_modulus_profile()?;
+    akita_schedules::resolve_generated_precommitted_group_profile(
+        key,
+        &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
-    )?;
-
-    for entry in catalog.entries {
-        let Some((group_idx, _)) = entry
-            .root
-            .precommitted_groups
-            .iter()
-            .enumerate()
-            .find(|(_, group)| group.descriptor.group == *key)
-        else {
-            continue;
-        };
-        let runtime_key = AkitaScheduleLookupKey {
-            final_group: entry.root.final_group.layout,
-            precommitteds: entry
-                .root
-                .precommitted_groups
-                .iter()
-                .map(|group| group.descriptor)
-                .collect(),
-        };
-        let schedule = akita_schedules::schedule_from_entry(
-            entry,
-            &runtime_key,
-            &policy,
-            Cfg::ring_challenge_config,
-            Cfg::fold_challenge_shape_at_level,
-        )?;
-        let Some(precommitted) = schedule.root.params.precommitted_groups.get(group_idx) else {
-            return Err(AkitaError::InvalidSetup(
-                "generated precommit row did not expand the expected group".to_string(),
-            ));
-        };
-        if precommitted.descriptor.group != *key {
-            return Err(AkitaError::InvalidSetup(
-                "generated precommit row expanded a different group".to_string(),
-            ));
-        }
-
-        let mut params = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(*key))?
-            .root
-            .params
-            .final_group
-            .commitment;
-        let group = &precommitted.commitment;
-        params.log_basis_inner = group.layout.log_basis_inner;
-        params.log_basis_outer = group.layout.log_basis_outer;
-        params.log_basis_open = group.log_basis_open;
-        params.inner_commit_matrix = group.inner_commit_matrix.clone();
-        params.outer_commit_matrix = group.outer_commit_matrix.clone();
-        params.num_live_ring_elements_per_claim = group.layout.num_live_ring_elements_per_claim;
-        params.num_positions_per_block = group.layout.num_positions_per_block;
-        params.num_live_blocks = group.layout.num_live_blocks;
-        params.num_digits_inner = group.num_digits_inner;
-        params.num_digits_outer = group.num_digits_outer;
-        params.num_digits_open = group.num_digits_open;
-        params.num_digits_fold_one = group.num_digits_fold_one;
-        return Ok(Some(params));
-    }
-
-    Ok(None)
+        Cfg::schedule_catalog(),
+    )
 }
 
-pub(crate) fn precommitted_commit_schedule<Cfg: CommitmentConfig>(
-    key: &PolynomialGroupLayout,
-) -> Result<FoldSchedule, AkitaError> {
-    key.validate()?;
+fn precommit_profile_as_commit_params<Cfg: CommitmentConfig>(
+    profile: CommittedGroupProfile,
+) -> Result<CommittedGroupParams, AkitaError> {
+    let policy = policy_of::<Cfg>();
+    let d_open = profile.outer_commit_matrix.ring_dimension();
+    let open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+        policy.sis_security_policy,
+        policy.sis_table_digest,
+        policy.sis_modulus_profile,
+        1,
+        1,
+        profile.outer_commit_matrix.coeff_linf_bound(),
+        d_open,
+    );
+    Ok(CommittedGroupParams {
+        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+        log_basis_inner: profile.log_basis_inner,
+        log_basis_outer: profile.log_basis_outer,
+        log_basis_open: profile.log_basis_outer,
+        inner_commit_matrix: profile.inner_commit_matrix,
+        outer_commit_matrix: profile.outer_commit_matrix,
+        open_commit_matrix,
+        num_live_ring_elements_per_claim: profile.num_live_ring_elements_per_claim,
+        num_positions_per_block: profile.num_positions_per_block,
+        num_live_blocks: profile.num_live_blocks,
+        fold_challenge_config: Cfg::ring_challenge_config(
+            profile.inner_commit_matrix.ring_dimension(),
+        )?,
+        num_digits_inner: profile.num_digits_inner,
+        num_digits_outer: profile.num_digits_outer,
+        num_digits_open: profile.num_digits_outer,
+        num_digits_fold: 1,
+        witness_chunk: policy.witness_chunk_for_level(0),
+        precommitted_groups: Vec::new(),
+        setup_prefix: None,
+    })
+}
 
-    // Runtime config must remain planner-free. The generated catalog identity
-    // already fixes the root basis to the configured minimum, so resolving the
-    // singleton runtime key yields the exact frozen root params without the
-    // former conservative widening pass.
-    Cfg::runtime_schedule(AkitaScheduleLookupKey::single(*key))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proof_optimized::fp128;
+    use akita_types::CommittedGroupProfile;
+
+    #[test]
+    fn same_layout_can_resolve_config_specific_profiles() {
+        let key = PolynomialGroupLayout::new(16, 1);
+        let dense = committed_group_params::<fp128::D64Dense>(&key).expect("dense params");
+        let one_hot = committed_group_params::<fp128::D64OneHot>(&key).expect("one-hot params");
+        assert_ne!(
+            CommittedGroupProfile::from_params(key, &dense),
+            CommittedGroupProfile::from_params(key, &one_hot),
+            "commitment config must affect standalone commitment parameters"
+        );
+    }
+
+    #[test]
+    fn dense_precommit_profile_uses_dense_config() {
+        let key = PolynomialGroupLayout::new(15, 2);
+        let params = committed_group_params::<fp128::D64Dense>(&key).expect("dense params");
+        assert_eq!(params.log_basis_inner, 3);
+        assert_eq!(params.log_basis_outer, 3);
+        assert_eq!(params.num_digits_inner, 43);
+    }
 }

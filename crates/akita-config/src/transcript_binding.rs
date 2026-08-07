@@ -12,7 +12,8 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaExpandedSetup, AkitaInstanceDescriptor, AlgebraSection, BasisMode, CallSection,
-    FoldSchedule, FpExtEncoding, OpeningClaimsLayout, PlanSection, SetupSection,
+    FoldSchedule, FpExtEncoding, OpeningClaimsLayout, OpeningScheduleSelection, PlanSection,
+    SetupSection,
 };
 
 /// Bind the canonical [`AkitaInstanceDescriptor`] bytes into a transcript.
@@ -32,9 +33,10 @@ use akita_types::{
 /// Returns an error when:
 /// - the algebra section cannot be derived for the field tower, or
 /// - canonical descriptor serialization fails.
-pub fn bind_transcript_instance_descriptor<F, T, const D: usize, Cfg>(
+pub fn bind_transcript_instance_descriptor<F, T, Cfg>(
     setup: &AkitaExpandedSetup<F>,
     opening_batch: &OpeningClaimsLayout,
+    selection: OpeningScheduleSelection,
     schedule: &FoldSchedule,
     basis: BasisMode,
     transcript: &mut T,
@@ -46,14 +48,14 @@ where
     Cfg::ExtField: FpExtEncoding<F>,
 {
     let descriptor = AkitaInstanceDescriptor::new(
-        AlgebraSection::for_fields::<F, Cfg::ExtField, D>()?,
+        AlgebraSection::for_fields::<F, Cfg::ExtField>()?,
         SetupSection::from_parts(
             Cfg::decomposition(),
             Cfg::sis_modulus_profile(),
-            setup.seed(),
+            &setup.seed().setup_seed,
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
-        PlanSection::from_schedule(schedule),
+        PlanSection::from_schedule(selection, schedule),
         CallSection::from_layout(opening_batch, basis)?,
     );
     let descriptor_bytes = descriptor

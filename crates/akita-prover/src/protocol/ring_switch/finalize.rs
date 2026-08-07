@@ -71,7 +71,7 @@ where
         });
     }
     // Bind the low coefficient block shared by every role first, then the
-    // remaining relation lanes. The flat challenge order is unchanged: the
+    // remaining relation lanes. The challenge order is unchanged: the
     // common coefficients are the low Boolean coordinates.
     let geometry = lp.relation_address_geometry(
         opening_batch,
@@ -95,6 +95,9 @@ where
     let digit_range_equality_low_variable_count = ring_bits;
     let num_sc_vars = col_bits + ring_bits;
     let num_i = lp.relation_row_index_num_vars(opening_batch)?;
+    let physical_field_len = opening_source_len
+        .checked_mul(opening_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("opening field length overflow".into()))?;
 
     let tau0: Vec<E> = (0..num_sc_vars)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
@@ -120,7 +123,24 @@ where
             opening_source_len,
             opening_ring_dim,
         })?;
-        events.factor_common_alpha()
+        let ordinary = events.factor_common_alpha()?;
+        let compression = lp
+            .payload_mode
+            .is_compressed()
+            .then(|| {
+                akita_types::build_compression_relation_weights(
+                    setup,
+                    instance,
+                    alpha,
+                    lp,
+                    &tau1,
+                    &witness_layout,
+                    opening_ring_dim,
+                    physical_field_len,
+                )
+            })
+            .transpose()?;
+        Ok::<_, AkitaError>((ordinary, compression))
     };
 
     #[cfg(feature = "parallel")]
@@ -145,9 +165,10 @@ where
         (relation_weight_factorization, w_compact)
     };
 
-    let relation_weight_factorization = relation_weight_factorization_result.map_err(|err| {
-        AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
-    })?;
+    let (relation_weight_factorization, compression_relation_weights) =
+        relation_weight_factorization_result.map_err(|err| {
+            AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
+        })?;
     let (w_evals_compact, witness_col_bits, witness_ring_bits) = w_result.map_err(|err| {
         AkitaError::InvalidInput(format!("witness opening materialization failed: {err:?}"))
     })?;
@@ -161,6 +182,7 @@ where
         w_evals_compact,
         relation_address_geometry: geometry,
         relation_weight_factorization,
+        compression_relation_weights,
         digit_range_equality_low_variable_count,
         tau0,
         tau1,

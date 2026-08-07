@@ -142,9 +142,9 @@ setup-contribution planner consume the same definitions):
 - **`RelationMatrixEvaluator`** carries the resolved `WitnessLayout` (replacing
   `witness_segment_layout`), and `eval_flat_at_point` becomes a fold over
   `chunk_layout.chunks()` zipped with `chunk_layout.chunk_lengths`.
-- **`PreparedChallengeEvals::summarize_chunk_block_carries`** (new, generalizes
+- **`summarize_chunk_block_carries`** (new, generalizes
   `summarize_all_block_carries` in
-  `crates/akita-verifier/src/protocol/ring_switch/tensor_challenges.rs`): the
+  the existing block-summary logic): the
   per-claim two-bucket `c_alpha` block summaries for one chunk's block window
   `[global_block_base, global_block_base + B_w)`, peeling `B_w` instead of `B`.
 - **`SetupContributionPlanInputs`** / **`SetupContributionPlan::prepare`**: take
@@ -224,11 +224,6 @@ at recursive levels and the dense fallback exists today.
 - **ZK blinding interaction.** The historical slice-MLE `b_zk` / `d_zk`
 blinding path is not part of the current production relation evaluator; this
 spec targets the non-zk core evaluation.
-- **Tensor (factored) challenges under chunking.** The flat-`c_alpha` path is the
-primary target. Factored challenges require restricting the block-window to a
-chunk's contiguous range (which lands in the `left` factor of the left⊗right
-block factorization); a sub-task that may land separately (see
-Implementation Stages).
 
 ## Evaluation
 
@@ -334,7 +329,7 @@ three independent consumers of witness column geometry:
 `e_hat`/`t_hat`/`z_hat` and `r` contributions.
 - `SetupContributionPlan::prepare`, which translates the same geometry into
 column-equality weights for the packed setup scan.
-- `PreparedChallengeEvals::summarize_all_block_carries`, which binds the
+- challenge block summarization, which binds the
 challenge vector's global block axis to the verifier's low-bit peeled window.
 
 Factoring the layout into `akita-types` is also the right crate boundary. The
@@ -914,8 +909,8 @@ compiler reveals every caller that still expects single offsets.
 Expected code shape:
 
 ```rust
-pub struct RelationMatrixEvaluator<F: FieldCore> {
-    pub(crate) c_alphas: PreparedChallengeEvals<F>,
+pub struct RelationMatrixGroupEvaluator<F: FieldCore> {
+    pub(crate) c_alphas: Vec<F>,
     // ...
     pub(crate) chunk_layout: WitnessLayout,
 }
@@ -950,9 +945,7 @@ Tests:
 
 ### Stage 3 — Chunk-Window Challenge Summaries
 
-Generalize `summarize_all_block_carries` into a chunk-window helper. The flat
-path is the first implementation target; the tensor path can preserve current
-behavior for `num_chunks = 1` and reject chunk windows until the follow-up lands.
+Generalize `summarize_all_block_carries` into a sparse-challenge chunk-window helper.
 
 Expected code shape:
 
@@ -971,8 +964,8 @@ where
     Base: FieldCore + FromPrimitiveInt,
     F: MulBase<Base>,
 {
-    match self {
-        Self::Flat(c_alphas) => (0..num_claims)
+    let c_alphas = self.values();
+    (0..num_claims)
             .map(|claim_idx| {
                 let claim_start = claim_idx.checked_mul(num_live_blocks).ok_or_else(...)?;
                 let start = claim_start.checked_add(global_block_base).ok_or_else(...)?;
@@ -983,16 +976,7 @@ where
                 })?;
                 summarize_pow2_block_carries(eq_low, offset_low, values)
             })
-            .collect(),
-        Self::Tensor { .. } if blocks_per_chunk == num_live_blocks && global_block_base == 0 => {
-            self.summarize_all_block_carries::<Base, D>(
-                num_claims, x_low_challenges, eq_low, offset_low, num_live_blocks,
-            )
-        }
-        Self::Tensor { .. } => Err(AkitaError::InvalidInput(
-            "chunked tensor challenge summaries are not implemented".into(),
-        )),
-    }
+            .collect()
 }
 ```
 
@@ -1000,10 +984,8 @@ Tests:
 
 - For `global_block_base = 0`, `blocks_per_chunk = num_live_blocks`, the new helper
   matches `summarize_all_block_carries`.
-- For `W ∈ {1,2,4,8}`, the flat helper matches a direct dense summary over the
+- For `W ∈ {1,2,4,8}`, the helper matches a direct dense summary over the
   corresponding `c_alpha[claim][global_block_base..][..B_w]` window.
-- Tensor `num_chunks = 1` still passes existing tensor summary tests.
-- Tensor `num_chunks > 1` returns `AkitaError` until the follow-up is implemented.
 
 ### Stage 4 — Structured `eval_flat_at_point` Chunk Fold
 
@@ -1287,7 +1269,6 @@ Implementation checklist:
 
 Follow-ups after the first full landing:
 
-- tensor/factored `c_alpha` chunk windowing.
 - non-power-of-two `B_w` dense per-chunk fallback.
 - ZK blinding under chunking.
 - chunked ZK witness layout (rejected today).

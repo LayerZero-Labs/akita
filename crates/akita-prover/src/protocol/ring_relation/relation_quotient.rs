@@ -4,6 +4,7 @@ use crate::compute::{
     OperationCtx, RingSwitchProveBackend, RingSwitchQuotientKernel, RingSwitchQuotientPlan,
     RingSwitchRelationKernel, RingSwitchRelationPlan, RuntimeRingSwitchProveBackend,
 };
+use crate::protocol::ring_relation::{CompressionSourceId, CompressionWitnessMaterialization};
 use crate::protocol::ring_switch::PreparedRingSwitchGroup;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_types::{CommittedGroupParams, RingVec};
@@ -44,30 +45,6 @@ fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usi
     }
 }
 
-#[inline(always)]
-fn add_tensor_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
-    quotient: &mut [F],
-    fold_high: &SparseChallenge,
-    fold_low: &SparseChallenge,
-    ring: &CyclotomicRing<F, D>,
-) {
-    let rc = ring.coefficients();
-    for (&high_pos, &high_coeff) in fold_high.positions.iter().zip(fold_high.coeffs.iter()) {
-        for (&low_pos, &low_coeff) in fold_low.positions.iter().zip(fold_low.coeffs.iter()) {
-            let degree = high_pos as usize + low_pos as usize;
-            let (pos, sign) = if degree < D {
-                (degree, 1i64)
-            } else {
-                (degree - D, -1i64)
-            };
-            let coeff = sign * i64::from(high_coeff) * i64::from(low_coeff);
-            for s in (D - pos)..D {
-                accumulate_small_signed(&mut quotient[pos + s - D], rc[s], coeff);
-            }
-        }
-    }
-}
-
 fn parallel_high_half_accumulate<F, R, const D: usize>(
     challenges: &Challenges,
     ring_fn: R,
@@ -76,17 +53,7 @@ where
     F: FieldCore + CanonicalField + Send + Sync,
     R: Fn(usize) -> Option<CyclotomicRing<F, D>> + Sync,
 {
-    let tensor_blocks_per_claim = match challenges {
-        Challenges::Tensor { factored } => {
-            factored.validate::<D>()?;
-            Some(factored.num_live_blocks_per_claim)
-        }
-        Challenges::Sparse { .. } => None,
-    };
-    let total = match challenges {
-        Challenges::Tensor { factored } => factored.total_blocks()?,
-        Challenges::Sparse { .. } => challenges.logical_len(),
-    };
+    let total = challenges.len();
     let out = cfg_fold_reduce!(
         0..total,
         || vec![F::zero(); D],
@@ -94,26 +61,7 @@ where
             let Some(ring) = ring_fn(i) else {
                 return acc;
             };
-            match challenges {
-                Challenges::Sparse {
-                    challenges: sparse, ..
-                } => add_sparse_ring_product_high_half::<F, D>(&mut acc, &sparse[i], &ring),
-                Challenges::Tensor { factored } => {
-                    let num_live_blocks_per_claim = tensor_blocks_per_claim.unwrap_or(0);
-                    let claim_idx = i / num_live_blocks_per_claim;
-                    let local_idx = i % num_live_blocks_per_claim;
-                    let high_idx =
-                        claim_idx * factored.fold_high_len() + (local_idx / factored.fold_low_len);
-                    let low_idx =
-                        claim_idx * factored.fold_low_len + (local_idx % factored.fold_low_len);
-                    add_tensor_ring_product_high_half::<F, D>(
-                        &mut acc,
-                        &factored.fold_high[high_idx],
-                        &factored.fold_low[low_idx],
-                        &ring,
-                    );
-                }
-            }
+            add_sparse_ring_product_high_half::<F, D>(&mut acc, &challenges.as_slice()[i], &ring);
             acc
         },
         |mut a: Vec<F>, b: Vec<F>| {
@@ -418,6 +366,7 @@ pub(crate) fn compute_multi_group_relation_quotient<F, B>(
     group_challenges: &[Challenges],
     e_hat_concat: &DigitBlocks,
     y: &RingVec<F>,
+    compression: Option<&CompressionWitnessMaterialization<F>>,
 ) -> Result<RelationQuotientOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
@@ -432,18 +381,43 @@ where
     }
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
-    let n_d_active = lp.open_commit_matrix.output_rank();
-    let num_rows = lp.relation_matrix_row_count(opening_batch.num_groups())?;
-    let d_start = num_rows
-        .checked_sub(n_d_active)
-        .ok_or(AkitaError::InvalidProof)?;
     let rhs_layout = akita_types::relation_rhs_layout_for(lp, opening_batch)?;
+    let row_families = rhs_layout.row_families()?;
+    let num_rows = row_families.len();
+    let n_d_active = lp.open_commit_matrix.output_rank();
+    let d_start = row_families
+        .iter()
+        .position(|row| matches!(row, akita_types::RelationRowFamily::Opening { .. }))
+        .ok_or(AkitaError::InvalidProof)?;
     let expected_y_len = akita_types::relation_rhs_coeff_len(&rhs_layout)?;
     if y.coeff_len() != expected_y_len {
         return Err(AkitaError::InvalidSize {
             expected: expected_y_len,
             actual: y.coeff_len(),
         });
+    }
+    let ordinary_rhs_len = row_families
+        .iter()
+        .take_while(|row| {
+            !matches!(
+                row,
+                akita_types::RelationRowFamily::CompressionF { .. }
+                    | akita_types::RelationRowFamily::CompressionH { .. }
+            )
+        })
+        .try_fold(0usize, |length, row| {
+            length
+                .checked_add(row.ring_dim())
+                .ok_or(AkitaError::InvalidProof)
+        })?;
+    if compression.is_some()
+        && y.coeffs()
+            .get(..ordinary_rhs_len)
+            .ok_or(AkitaError::InvalidProof)?
+            .iter()
+            .any(|coefficient| !coefficient.is_zero())
+    {
+        return Err(AkitaError::InvalidProof);
     }
     let mut result: Vec<Option<RelationQuotientRow<F>>> = vec![None; num_rows];
     let order = opening_batch.root_group_order()?;
@@ -511,14 +485,14 @@ where
         let expected_recomposed_coeffs = n_a
             .checked_mul(group_dims.d_a())
             .ok_or(AkitaError::InvalidProof)?;
-        if challenges.logical_len() != expected_blocks
+        if challenges.len() != expected_blocks
             || group.e_folded.coeff_len() != expected_e_coeffs
             || group.e_hat.total_planes() != expected_e_planes
             || group.e_hat.digit_stride() != group_dims.d_d()
         {
             return Err(AkitaError::InvalidInput(format!(
                 "relation quotient group shape mismatch: challenges={} e_folded={} recomposed={} e_planes={} e_stride={} expected_blocks={} expected_e_planes={} expected_d_d={}",
-                challenges.logical_len(),
+                challenges.len(),
                 group.e_folded.coeff_len() / group_dims.d_a(),
                 group.recomposed_inner_rows.coeff_len() / expected_recomposed_coeffs,
                 group.e_hat.total_planes(),
@@ -601,6 +575,30 @@ where
         if b_range.len() != n_b {
             return Err(AkitaError::InvalidProof);
         }
+        let b_coeff_len = n_b
+            .checked_mul(group_dims.d_b())
+            .ok_or(AkitaError::InvalidProof)?;
+        let b_end = y_offset
+            .checked_add(b_coeff_len)
+            .ok_or(AkitaError::InvalidProof)?;
+        let recomposed_b = if let Some(compression) = compression {
+            RingVec::from_coeffs(
+                compression
+                    .source(CompressionSourceId::Outer { group_index })?
+                    .witness
+                    .stages()
+                    .first()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .recompose::<F>()?,
+            )
+        } else {
+            RingVec::from_coeffs(
+                y.coeffs()
+                    .get(y_offset..b_end)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .to_vec(),
+            )
+        };
         akita_types::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Outer),
             F,
@@ -637,7 +635,7 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 for (commit_idx, row_idx) in b_range.clone().enumerate() {
-                    let reduced = ring_from_flat_y::<F, D_B>(y, y_offset + commit_idx * D_B)?;
+                    let reduced = ring_from_flat_y::<F, D_B>(&recomposed_b, commit_idx * D_B)?;
                     result[row_idx] = Some(RelationQuotientOutput::row_from_ring(
                         quotient_from_cyclic_and_reduced(
                             b_rows
@@ -651,15 +649,34 @@ where
                 Ok::<(), AkitaError>(())
             }
         )?;
-        y_offset = y_offset
-            .checked_add(
-                n_b.checked_mul(group_dims.d_b())
-                    .ok_or(AkitaError::InvalidProof)?,
-            )
-            .ok_or(AkitaError::InvalidProof)?;
+        y_offset = b_end;
     }
 
     if n_d_active != 0 {
+        let d_coeff_len = n_d_active
+            .checked_mul(rhs_layout.opening_ring_dim)
+            .ok_or(AkitaError::InvalidProof)?;
+        let d_end = y_offset
+            .checked_add(d_coeff_len)
+            .ok_or(AkitaError::InvalidProof)?;
+        let recomposed_d = if let Some(compression) = compression {
+            RingVec::from_coeffs(
+                compression
+                    .source(CompressionSourceId::Opening)?
+                    .witness
+                    .stages()
+                    .first()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .recompose::<F>()?,
+            )
+        } else {
+            RingVec::from_coeffs(
+                y.coeffs()
+                    .get(y_offset..d_end)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .to_vec(),
+            )
+        };
         akita_types::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
@@ -693,7 +710,7 @@ where
                 }
                 for (d_idx, cyclic) in d_rows.d_cyclic.iter().enumerate() {
                     let row_idx = d_start.checked_add(d_idx).ok_or(AkitaError::InvalidProof)?;
-                    let reduced = ring_from_flat_y::<F, D_D>(y, y_offset + d_idx * D_D)?;
+                    let reduced = ring_from_flat_y::<F, D_D>(&recomposed_d, d_idx * D_D)?;
                     result[row_idx] = Some(RelationQuotientOutput::row_from_ring(
                         quotient_from_cyclic_and_reduced(cyclic, &reduced),
                     ));
@@ -701,13 +718,57 @@ where
                 Ok::<(), AkitaError>(())
             }
         )?;
-        y_offset = y_offset
-            .checked_add(
-                n_d_active
-                    .checked_mul(rhs_layout.opening_ring_dim)
-                    .ok_or(AkitaError::InvalidProof)?,
-            )
+        y_offset = d_end;
+    }
+    for (row_index, family) in row_families.iter().enumerate() {
+        let (source, map_index, ring_dim) = match *family {
+            akita_types::RelationRowFamily::CompressionF {
+                group_index,
+                map_index,
+                ring_dim,
+            } => (
+                CompressionSourceId::Outer { group_index },
+                map_index,
+                ring_dim,
+            ),
+            akita_types::RelationRowFamily::CompressionH {
+                map_index,
+                ring_dim,
+            } => (CompressionSourceId::Opening, map_index, ring_dim),
+            _ => continue,
+        };
+        let compression = compression.ok_or(AkitaError::InvalidProof)?;
+        let quotient = compression
+            .source(source)?
+            .quotients
+            .get(map_index)
             .ok_or(AkitaError::InvalidProof)?;
+        if quotient.ring_dim() != ring_dim || quotient.coeff_len() != ring_dim {
+            return Err(AkitaError::InvalidSize {
+                expected: ring_dim,
+                actual: quotient.coeff_len(),
+            });
+        }
+        result[row_index] = Some(RelationQuotientRow {
+            ring_dim,
+            coeffs: quotient.coeffs().to_vec(),
+        });
+        let rhs_end = y_offset
+            .checked_add(ring_dim)
+            .ok_or(AkitaError::InvalidProof)?;
+        let rhs_row = y
+            .coeffs()
+            .get(y_offset..rhs_end)
+            .ok_or(AkitaError::InvalidProof)?;
+        let source_witness = compression.source(source)?;
+        if map_index + 1 == akita_types::COMPRESSION_MAP_COUNT {
+            if rhs_row != source_witness.terminal.coefficients() {
+                return Err(AkitaError::InvalidProof);
+            }
+        } else if rhs_row.iter().any(|coefficient| !coefficient.is_zero()) {
+            return Err(AkitaError::InvalidProof);
+        }
+        y_offset = rhs_end;
     }
     if y_offset != y.coeff_len() {
         return Err(AkitaError::InvalidProof);
@@ -718,7 +779,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::test_support::tensor_oracle_challenges;
     use akita_challenges::SparseChallenge;
     use akita_field::Prime128OffsetA7F7 as F;
 
@@ -752,27 +812,36 @@ mod tests {
     }
 
     #[test]
-    fn tensor_high_half_streaming_matches_ring_multiplication_reference() {
+    fn sparse_high_half_streaming_matches_ring_multiplication_reference() {
         const D: usize = 8;
-        let tensor = tensor_oracle_challenges::<D>();
-        let rings = (0..tensor.total_blocks().unwrap())
+        let sparse = vec![
+            SparseChallenge {
+                positions: vec![0, 7],
+                coeffs: vec![1, -1],
+            },
+            SparseChallenge {
+                positions: vec![2, 4],
+                coeffs: vec![1, 2],
+            },
+            SparseChallenge {
+                positions: vec![1],
+                coeffs: vec![-1],
+            },
+            SparseChallenge {
+                positions: vec![3, 6],
+                coeffs: vec![1, 1],
+            },
+        ];
+        let rings = (0..sparse.len())
             .map(|idx| (idx != 3).then(|| ring::<D>(10 * idx as u64)))
             .collect::<Vec<_>>();
-        let challenges = Challenges::Tensor {
-            factored: tensor.clone(),
-        };
+        let challenges = Challenges::from_sparse(sparse.clone(), sparse.len(), 1).unwrap();
 
         let got = parallel_high_half_accumulate::<F, _, D>(&challenges, |idx| rings[idx]).unwrap();
         let mut expected = vec![F::zero(); D];
-        for (idx, ring) in rings
-            .iter()
-            .enumerate()
-            .take(tensor.total_blocks().unwrap())
-        {
+        for (idx, ring) in rings.iter().enumerate() {
             if let Some(ring) = ring {
-                let (_, _, fold_high, fold_low) = tensor.factors_for_logical_block(idx).unwrap();
-                let challenge = sparse_challenge_as_ring::<D>(fold_high)
-                    * sparse_challenge_as_ring::<D>(fold_low);
+                let challenge = sparse_challenge_as_ring::<D>(&sparse[idx]);
                 add_ring_product_reference_high_half::<D>(&mut expected, &challenge, ring);
             }
         }

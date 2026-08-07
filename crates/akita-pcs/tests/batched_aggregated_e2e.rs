@@ -90,7 +90,7 @@ mod non_zk_aggregated_cases {
             let mut prover_transcript = AkitaTranscript::<F>::new(b"batched_aggregated_e2e/onehot");
             let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
                 &setup,
-                prove_input(
+                prove_input::<OneHotCfg, _>(
                     &pt[..],
                     &polys.iter().collect::<Vec<_>>()[..],
                     &commitments[0],
@@ -126,7 +126,7 @@ mod non_zk_aggregated_cases {
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
-                verify_input(&pt[..], opening_groups[0], &commitments[0]),
+                verify_input::<OneHotCfg>(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
             );
             assert!(
@@ -180,7 +180,7 @@ mod non_zk_aggregated_cases {
             let mut prover_transcript = AkitaTranscript::<F>::new(b"batched_aggregated_e2e/dense");
             let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _>(
                 &setup,
-                prove_input(
+                prove_input::<DenseCfg, _>(
                     &pt[..],
                     &polys.iter().collect::<Vec<_>>()[..],
                     &commitments[0],
@@ -216,7 +216,7 @@ mod non_zk_aggregated_cases {
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
-                verify_input(&pt[..], opening_groups[0], &commitments[0]),
+                verify_input::<DenseCfg>(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
             );
             assert!(
@@ -248,7 +248,7 @@ mod non_zk_aggregated_cases {
     aggregated_onehot_case!(aggregated_onehot_nv12_batch1, 12, 1, true);
     aggregated_onehot_case!(aggregated_onehot_nv20_batch4, 20, 4, true);
 
-    aggregated_dense_case!(aggregated_dense_nv13_batch1, 13, 1, true);
+    aggregated_dense_case!(aggregated_dense_nv14_batch1, 14, 1, true);
     aggregated_dense_case!(aggregated_dense_nv17_batch4, 17, 4, true);
 }
 
@@ -299,7 +299,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             AkitaTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
         let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<DenseCfg, _>(
                 &pt[..],
                 &polys.iter().collect::<Vec<_>>()[..],
                 &commitments[0],
@@ -333,7 +333,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<DenseCfg>(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(

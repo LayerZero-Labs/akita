@@ -7,8 +7,6 @@
 pub mod api;
 pub mod backend;
 pub mod compute;
-#[cfg(feature = "compression-diagnostics")]
-mod diagnostics;
 pub mod kernels;
 pub mod protocol;
 pub mod types;
@@ -22,30 +20,33 @@ pub use api::{
     batched_commit, batched_commit_with_params, commit, commit_final_group, commit_group,
     commit_setup_prefix, commit_with_params, prepare_batched_commit_inputs, prepare_commit_inputs,
     AkitaProverSetup, CommitmentProver, CommitmentWithHint, CommittedGroupWithHint,
+    FinalCommittedGroupWithHint, PreparedGroupProveOps, PreparedProverGroup,
 };
 
 pub use backend::{
     tensor_pack_recursive_witness, DensePoly, MultiChunkEntry, MultilinearPolynomial, OneHotIndex,
-    OneHotPoly, RecursiveWitnessFlat, RootTensorProjectionPoly, SingleChunkEntry,
-    SparseRingBlockEntry, SparseRingPoly, SuffixWitnessBatchView, SuffixWitnessView,
+    OneHotPoly, RecursiveFoldSource, RecursiveWitnessFlat, RootTensorProjectionPoly,
+    SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly, SuffixWitnessBatchView,
+    SuffixWitnessView,
 };
 pub use compute::{
-    BatchDecomposeFoldOutcome, CommitBackendFor, CommitCluster, CommitmentComputeBackend,
-    ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput,
-    DenseCommitRowsPlan, DigitRowsComputeBackend, FlatBlockTable, LazyOneHotBlocks,
-    LevelProveStacks, OneHotCommitBlocks, OneHotCommitRowsPlan, OpeningCluster,
-    OpeningProveBackendFor, OperationCtx, PreparedCrtNttProfile, ProveBackendFor,
-    ProveFlowBackendFor, ProveStackFor, ProverComputeStack, RecursiveProveBackend,
-    RecursiveWitnessCommitRowsPlan, RingSwitchCluster, RingSwitchComputeBackend,
-    RingSwitchProveBackend, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
-    RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
+    planned_ntt_cache_metrics, prewarm_ntt_requirements, BatchDecomposeFoldOutcome,
+    CommitBackendFor, CommitCluster, CommitmentComputeBackend, ComputeBackendSetup, CpuBackend,
+    CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan,
+    DigitRowsComputeBackend, FlatBlockTable, LazyOneHotBlocks, LevelProveStacks, NttCacheOwnerId,
+    NttExecutionRequirements, NttOperationCluster, OneHotCommitBlocks, OneHotCommitRowsPlan,
+    OpeningCluster, OpeningProveBackendFor, OperationCtx, PlannedNttCacheOwnerMetric,
+    PreparedCrtNttProfile, PreparedNttCacheMetric, ProveBackendFor, ProveFlowBackendFor,
+    ProveStackFor, ProverComputeStack, RecursiveProveBackend, RecursiveWitnessCommitRowsPlan,
+    RingSwitchCluster, RingSwitchComputeBackend, RingSwitchProveBackend,
+    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
+    RootCommitBackend, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
+    RootProveBackend, RootProvePoly, RootTensorSource, RoutedNttRequirement,
     RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor, RuntimeProveBackendFor,
     RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
     RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor, SparseRingCommitRowsPlan,
     SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor, TensorCluster,
-    TieredProveStacks, UniformProverStack, NTT_STREAM_THRESHOLD_RING_ELEMENTS,
-    RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    TieredProveStacks, UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::sumcheck::{DigitRangeProver, RelationRangeImageProver};
@@ -56,7 +57,7 @@ pub use protocol::{
     RelationWeightFactorization, RingSwitchOutput, SuffixProverState,
 };
 pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness};
-pub use types::ProverOpeningData;
+pub use types::{ProverOpeningData, SelectedProverOpeningData};
 
 /// Prover-side output of the decompose + challenge-fold step.
 ///

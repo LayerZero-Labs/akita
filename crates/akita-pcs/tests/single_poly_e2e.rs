@@ -5,7 +5,7 @@
 //!
 //! Two polynomial representations are covered:
 //!
-//! * **One-hot** — `fp128::D64OneHot` (D = 64, K = D).
+//! * **One-hot** — `fp128::D64OneHot` (D = 64, K = 256).
 //! * **Dense**   — `fp128::D128Dense`   (D = 128, arbitrary field coefficients).
 //!
 //! Variable counts:
@@ -15,7 +15,9 @@
 
 #![allow(missing_docs)]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_prover::{
+    planned_ntt_cache_metrics, ComputeBackendSetup, CpuBackend, NttExecutionRequirements,
+};
 
 mod common;
 
@@ -69,7 +71,7 @@ fn run_single_onehot(nv: usize) {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot");
         let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<OneHotCfg, _>(
                 &pt[..],
                 &poly_refs[..],
                 &commitments[0],
@@ -97,7 +99,7 @@ fn run_single_onehot(nv: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<OneHotCfg>(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -130,10 +132,10 @@ fn run_single_dense(nv: usize) {
         let expected_opening = opening_from_poly::<DENSE_D, _>(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
+        let commit_prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let commit_stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
-            &prepared,
+            &commit_prepared,
             setup.expanded.as_ref(),
         )
         .expect("stack");
@@ -141,7 +143,7 @@ fn run_single_dense(nv: usize) {
             AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
-            AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, commit_input, &stack)
+            AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, commit_input, &commit_stack)
                 .expect("commit");
 
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
@@ -149,21 +151,52 @@ fn run_single_dense(nv: usize) {
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
+        let prove_prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prove_stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prove_prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("prove stack");
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/dense");
         let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<DenseCfg, _>(
                 &pt[..],
                 &poly_refs[..],
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &stack,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
         .expect("prove");
+        let schedule = DenseCfg::get_params_for_prove(
+            &akita_types::OpeningClaimsLayout::new(nv, 1).expect("opening layout"),
+        )
+        .expect("resolved schedule");
+        let requirements =
+            NttExecutionRequirements::from_prove_schedule(&schedule).expect("NTT requirements");
+        let metrics = planned_ntt_cache_metrics::<F, _>(&prove_stack, &requirements)
+            .expect("planned NTT metrics");
+        assert_eq!(metrics.len(), 1, "uniform stack must have one cache owner");
+        assert_eq!(
+            prove_prepared.shared_ntt_cache_bytes(),
+            metrics[0].cache_bytes,
+            "lazy kernels and prewarm requirement compiler diverged"
+        );
+
+        let mut uncompressed = Vec::new();
+        proof
+            .serialize_uncompressed(&mut uncompressed)
+            .expect("serialize uncompressed balanced proof");
+        // Check the public size calculation against actual serialization. Do
+        // not freeze an exact byte total here: transcript changes alter proof
+        // values, and the terminal response uses variable-length encoding.
+        // Dedicated proof-size tests own the schedule's upper-bound formulas.
+        assert_eq!(proof.size(), uncompressed.len());
 
         let mut serialized = Vec::new();
         let proof_shape = proof.shape();
@@ -181,7 +214,7 @@ fn run_single_dense(nv: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<DenseCfg>(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -289,7 +322,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
         let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<OneHotCfg, _>(
                 &pt[..],
                 &poly_refs[..],
                 &commitments[0],
@@ -318,7 +351,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<OneHotCfg>(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(

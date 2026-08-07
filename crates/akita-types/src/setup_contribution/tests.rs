@@ -2,7 +2,7 @@ use super::plan::{DirectScanWeights, SetupContributionGroupPlan};
 use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec};
 use super::*;
 use crate::{
-    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
+    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupDescriptor, CommitmentRingDims,
     CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, RingRole, WitnessLayout,
     WitnessQuotientRowLayout, WitnessUnitLayout,
 };
@@ -37,12 +37,6 @@ impl TestSetupInputs {
     fn n_a(&self) -> usize {
         self.level_params.inner_commit_matrix.output_rank()
     }
-    fn num_claims(&self) -> usize {
-        self.opening_batch.num_total_polynomials()
-    }
-    fn num_live_blocks(&self) -> usize {
-        self.level_params.num_live_blocks
-    }
     fn num_positions_per_block(&self) -> usize {
         self.level_params.num_positions_per_block
     }
@@ -53,10 +47,7 @@ impl TestSetupInputs {
         self.level_params.num_digits_inner
     }
     fn depth_fold(&self) -> Result<usize, AkitaError> {
-        self.level_params.num_digits_fold(
-            self.opening_batch.num_total_polynomials(),
-            self.level_params.field_bits_for_cache(),
-        )
+        Ok(self.level_params.num_digits_fold())
     }
 }
 fn test_scalar(value: u128) -> F {
@@ -106,9 +97,10 @@ fn retarget_precommitted_test_role_dims(
     group.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
             .expect("test precommitted ring has a production challenge");
-    let inner = &group.inner_commit_matrix;
+    let mut layout = group.layout;
+    let inner = &layout.inner_commit_matrix;
     let inner_output_rank = inner.output_rank();
-    group.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+    layout.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner.sis_table_key().table_digest,
         inner.sis_modulus_profile(),
@@ -117,14 +109,14 @@ fn retarget_precommitted_test_role_dims(
         inner.coeff_linf_bound(),
         inner_ring_dimension,
     );
-    let outer = &group.outer_commit_matrix;
+    let outer = &layout.outer_commit_matrix;
     let projected_width = inner_output_rank
-        .checked_mul(group.num_digits_outer)
+        .checked_mul(layout.num_digits_outer)
         .and_then(|width| width.checked_mul(group.layout.num_live_blocks))
         .and_then(|width| width.checked_mul(group.layout.group.num_polynomials()))
         .and_then(|width| width.checked_mul(inner_ring_dimension / outer_ring_dimension))
         .expect("test precommitted B width");
-    group.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+    layout.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -133,8 +125,7 @@ fn retarget_precommitted_test_role_dims(
         outer.coeff_linf_bound(),
         outer_ring_dimension,
     );
-    group.layout.inner_ring_dimension = inner_ring_dimension;
-    group.layout.outer_ring_dimension = outer_ring_dimension;
+    group.layout = layout;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -177,7 +168,7 @@ fn test_inputs_for_group_sizes(
     depth_commit: usize,
     depth_fold: usize,
     log_basis: u32,
-    eq_tau1: Vec<F>,
+    mut eq_tau1: Vec<F>,
 ) -> TestSetupInputs {
     let num_claims: usize = group_sizes.iter().copied().sum();
     let mut lp = CommittedGroupParams::params_only(
@@ -210,7 +201,7 @@ fn test_inputs_for_group_sizes(
             crate::sis::SisModulusProfileId::Q128OffsetA7F7,
             n_b,
             expected_b_width,
-            1,
+            3,
             TEST_D,
         );
     }
@@ -221,18 +212,27 @@ fn test_inputs_for_group_sizes(
             crate::sis::SisModulusProfileId::Q128OffsetA7F7,
             n_a,
             lp.inner_commit_matrix.input_width(),
-            1,
+            2,
             TEST_D,
         );
     }
-    lp.num_digits_fold_one = depth_fold;
-    lp.cached_num_digits_block_claims = num_claims;
-    lp.cached_num_digits_fold_value = depth_fold;
+    if lp.outer_commit_matrix.coeff_linf_bound() == 0 {
+        lp.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+            crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+            crate::sis::SisTableDigest::CURRENT,
+            crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+            n_b,
+            lp.outer_commit_matrix.input_width(),
+            3,
+            TEST_D,
+        );
+    }
+    lp.num_digits_fold = depth_fold;
     if group_sizes.len() > 1 {
         lp.precommitted_groups = group_sizes[..group_sizes.len() - 1]
             .iter()
             .map(|&_group_size| {
-                let layout = crate::PrecommittedGroupDescriptor::from_params(
+                let mut layout = crate::CommittedGroupProfile::from_params(
                     crate::PolynomialGroupLayout::new(0, 1),
                     &lp,
                 );
@@ -252,22 +252,23 @@ fn test_inputs_for_group_sizes(
                     lp.outer_commit_matrix.coeff_linf_bound(),
                     lp.d_a(),
                 );
+                layout.outer_commit_matrix = outer_commit_matrix;
                 crate::PrecommittedLevelParams {
                     layout,
-                    inner_commit_matrix: lp.inner_commit_matrix.clone(),
-                    outer_commit_matrix,
                     log_basis_open: lp.log_basis_open,
                     fold_challenge_config: lp.fold_challenge_config,
-                    num_digits_inner: lp.num_digits_inner,
-                    num_digits_outer: lp.num_digits_outer,
                     num_digits_open: lp.num_digits_open,
-                    num_digits_fold_one: depth_fold,
+                    num_digits_fold: depth_fold,
                 }
             })
             .collect();
     }
     let opening_batch =
         OpeningClaimsLayout::from_group_sizes(0, group_sizes).expect("test opening batch");
+    let relation_rows = lp
+        .relation_matrix_row_count(opening_batch.num_groups())
+        .expect("test relation rows");
+    eq_tau1.resize(relation_rows, F::zero());
     TestSetupInputs {
         level_params: lp,
         opening_batch,
@@ -524,11 +525,7 @@ fn test_single_group_descriptor(
     Ok(SetupContributionGroupInputs {
         group_id: *group_index,
         num_claims,
-        depth_fold: inputs.level_params.num_digits_fold_for_params(
-            group_lp,
-            num_claims,
-            inputs.level_params.field_bits_for_cache(),
-        )?,
+        depth_fold: group_lp.num_digits_fold(),
         a_row_start: a_range.start,
         b_row_start: b_range.start,
     })
@@ -597,7 +594,7 @@ fn structured_weight_fixture_with_outgoing(
         })
         .collect();
     let layout = WitnessLayout::new_for_test(ownership_units, r_rows, depth_fold);
-    let tau1 = (0..3)
+    let tau1 = (0..4)
         .map(|idx| test_scalar(31 + idx as u128))
         .collect::<Vec<_>>();
     let mut inputs = test_inputs(
@@ -691,7 +688,12 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         (1usize, 1usize, 1usize, 1usize, 1usize),
         (0usize, 1usize, 1usize, 1usize, 1usize),
     ];
-    let tau1 = vec![test_scalar(31), test_scalar(32), test_scalar(33)];
+    let tau1 = vec![
+        test_scalar(31),
+        test_scalar(32),
+        test_scalar(33),
+        test_scalar(34),
+    ];
     let mut inputs = test_inputs_for_group_sizes(
         1,
         1,
@@ -713,51 +715,14 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             opening: 64,
         },
     );
-    retarget_precommitted_test_role_dims(&mut inputs.level_params, 0, 64, 32);
-    let mut cursor = 0usize;
-    let units = group_shapes
-        .iter()
-        .map(
-            |&(group_id, num_claims, num_live_blocks, depth_open, depth_commit)| {
-                let source_ring_dimension = inputs
-                    .level_params
-                    .group_role_dims(&inputs.opening_batch, group_id)
-                    .unwrap()
-                    .d_a();
-                let z_len = 2 * depth_commit * quotient_depth * source_ring_dimension;
-                let z_range = cursor..cursor + z_len;
-                let e_range = z_range.end
-                    ..z_range.end
-                        + num_claims * num_live_blocks * depth_open * source_ring_dimension;
-                let t_range = e_range.end
-                    ..e_range.end
-                        + num_claims * num_live_blocks * depth_commit * source_ring_dimension;
-                cursor = t_range.end;
-                WitnessUnitLayout::new_for_test(
-                    group_id,
-                    0,
-                    0,
-                    num_live_blocks,
-                    z_range,
-                    e_range,
-                    t_range,
-                )
-            },
-        )
-        .collect();
-    let row_ring_dims = crate::relation_rhs_layout_for(&inputs.level_params, &inputs.opening_batch)
-        .unwrap()
-        .row_ring_dims()
-        .unwrap();
-    let r_rows = row_ring_dims
-        .into_iter()
-        .map(|ring_dim| {
-            let range = cursor..cursor + quotient_depth * ring_dim;
-            cursor = range.end;
-            WitnessQuotientRowLayout::new_for_test(ring_dim, range)
-        })
-        .collect();
-    let witness_layout = WitnessLayout::new_for_test(units, r_rows, quotient_depth);
+    retarget_precommitted_test_role_dims(&mut inputs.level_params, 0, 64, 64);
+    let witness_layout = WitnessLayout::new(
+        &inputs.level_params,
+        &inputs.opening_batch,
+        1,
+        quotient_depth,
+    )
+    .unwrap();
     let opening_source_len = witness_layout.live_coeff_len();
     let groups: Vec<_> = group_shapes
         .iter()
@@ -882,8 +847,8 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
     let commit_gadget = gadget_row_scalars::<F>(depth_commit, log_basis);
     let inputs = test_inputs(
         1,
-        0,
-        0,
+        1,
+        1,
         1,
         4,
         num_positions_per_block,
@@ -893,24 +858,17 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         log_basis,
         vec![test_scalar(11), test_scalar(12)],
     );
-    let layout = test_witness_layout(
-        inputs.num_claims(),
-        inputs.num_live_blocks(),
-        inputs.num_positions_per_block(),
-        inputs.depth_open(),
-        inputs.depth_commit(),
-        inputs.depth_fold().unwrap(),
-        inputs.n_a(),
-        1,
+    let layout = WitnessLayout::new(
+        &inputs.level_params,
+        &inputs.opening_batch,
         1,
         inputs.depth_fold().unwrap(),
-    );
-    let relation_geometry = crate::RelationAddressGeometry::new(
-        CommitmentRingDims::uniform(TEST_D),
-        TEST_D,
-        layout.live_coeff_len(),
     )
     .unwrap();
+    let relation_geometry = inputs
+        .level_params
+        .relation_address_geometry(&inputs.opening_batch, TEST_D, layout.live_coeff_len())
+        .unwrap();
     let full_vec_randomness = (0..relation_geometry.relation_lane_variable_count())
         .map(|idx| test_scalar(701 + idx as u128))
         .collect::<Vec<_>>();
@@ -1072,18 +1030,16 @@ fn single_group_plan_supports_multi_chunk_weights() {
     .unwrap();
     let setup_len = plan.required();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupSeed {
+        AkitaSetupDescriptor {
             max_num_vars: 0,
             max_num_batched_polys: 0,
-            gen_ring_dim: TEST_D,
-            max_setup_len: setup_len,
-            public_matrix_seed: [0u8; 32],
+            num_field_elements: setup_len * TEST_D,
+            setup_seed: [0u8; 32].into(),
         },
         FlatMatrix::from_flat_data(
             (0..setup_len * TEST_D)
                 .map(|idx| test_scalar(211 + idx as u128))
                 .collect(),
-            TEST_D,
         ),
     );
     let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
@@ -1121,18 +1077,16 @@ fn packed_direct_matches_row_fallback_with_d_offset() {
     );
     let setup_len = 10;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupSeed {
+        AkitaSetupDescriptor {
             max_num_vars: 0,
             max_num_batched_polys: 0,
-            gen_ring_dim: TEST_D,
-            max_setup_len: setup_len,
-            public_matrix_seed: [0u8; 32],
+            num_field_elements: setup_len * TEST_D,
+            setup_seed: [0u8; 32].into(),
         },
         FlatMatrix::from_flat_data(
             (0..setup_len * TEST_D)
                 .map(|idx| test_scalar(211 + idx as u128))
                 .collect(),
-            TEST_D,
         ),
     );
     let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
@@ -1189,18 +1143,16 @@ fn multi_group_packed_direct_matches_row_fallback() {
     );
     let setup_len = 10;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupSeed {
+        AkitaSetupDescriptor {
             max_num_vars: 0,
             max_num_batched_polys: 0,
-            gen_ring_dim: TEST_D,
-            max_setup_len: setup_len,
-            public_matrix_seed: [0u8; 32],
+            num_field_elements: setup_len * TEST_D,
+            setup_seed: [0u8; 32].into(),
         },
         FlatMatrix::from_flat_data(
             (0..setup_len * TEST_D)
                 .map(|idx| test_scalar(211 + idx as u128))
                 .collect(),
-            TEST_D,
         ),
     );
     let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
@@ -1214,9 +1166,9 @@ fn multi_group_packed_direct_matches_row_fallback() {
 }
 #[test]
 fn packed_direct_matches_row_fallback_with_nested_role_dims() {
-    const D: usize = 64;
-    const D_B: usize = 32;
-    const D_D: usize = 32;
+    const D: usize = 128;
+    const D_B: usize = 64;
+    const D_D: usize = 64;
     let plan = finalize_test_plan(
         2,
         5,
@@ -1245,18 +1197,16 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
     );
     let setup_len = 10;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupSeed {
+        AkitaSetupDescriptor {
             max_num_vars: 0,
             max_num_batched_polys: 0,
-            gen_ring_dim: D,
-            max_setup_len: setup_len,
-            public_matrix_seed: [0u8; 32],
+            num_field_elements: setup_len * D,
+            setup_seed: [0u8; 32].into(),
         },
         FlatMatrix::from_flat_data(
             (0..setup_len * D)
                 .map(|idx| test_scalar(211 + idx as u128))
                 .collect(),
-            D,
         ),
     );
     let alpha = test_scalar(3);
@@ -1274,9 +1224,9 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
 
 #[test]
 fn packed_direct_rejects_non_decomposable_role_alpha_pows() {
-    const D_A: usize = 64;
-    const D_B: usize = 32;
-    const D_D: usize = 32;
+    const D_A: usize = 128;
+    const D_B: usize = 64;
+    const D_D: usize = 64;
     let plan = finalize_test_plan(
         2,
         5,
@@ -1305,18 +1255,16 @@ fn packed_direct_rejects_non_decomposable_role_alpha_pows() {
     );
     let setup_len = 10;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupSeed {
+        AkitaSetupDescriptor {
             max_num_vars: 0,
             max_num_batched_polys: 0,
-            gen_ring_dim: D_A,
-            max_setup_len: setup_len,
-            public_matrix_seed: [0u8; 32],
+            num_field_elements: setup_len * D_A,
+            setup_seed: [0u8; 32].into(),
         },
         FlatMatrix::from_flat_data(
             (0..setup_len * D_A)
                 .map(|idx| test_scalar(211 + idx as u128))
                 .collect(),
-            D_A,
         ),
     );
     let alpha = test_scalar(3);
@@ -1334,9 +1282,9 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
     // D-role columns are counted at d_d; comparing `required` against
     // total_ring_elements_at_dyn(d_a) falsely rejects valid setups when
     // d_d < d_a and the D footprint dominates.
-    const D_A: usize = 64;
-    const D_B: usize = 64;
-    const D_D: usize = 32;
+    const D_A: usize = 128;
+    const D_B: usize = 128;
+    const D_D: usize = 64;
     let plan = finalize_test_plan(
         2,
         11,
@@ -1365,18 +1313,16 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
     );
     let setup_ring_elements = 20usize;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupSeed {
+        AkitaSetupDescriptor {
             max_num_vars: 0,
             max_num_batched_polys: 0,
-            gen_ring_dim: D_A,
-            max_setup_len: setup_ring_elements,
-            public_matrix_seed: [0u8; 32],
+            num_field_elements: setup_ring_elements * D_A,
+            setup_seed: [0u8; 32].into(),
         },
         FlatMatrix::from_flat_data(
             (0..setup_ring_elements * D_A)
                 .map(|idx| test_scalar(311 + idx as u128))
                 .collect(),
-            D_A,
         ),
     );
     let alpha = test_scalar(3);
@@ -1438,18 +1384,16 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
     );
     let setup_len = 12;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupSeed {
+        AkitaSetupDescriptor {
             max_num_vars: 0,
             max_num_batched_polys: 0,
-            gen_ring_dim: TEST_D,
-            max_setup_len: setup_len,
-            public_matrix_seed: [0u8; 32],
+            num_field_elements: setup_len * TEST_D,
+            setup_seed: [0u8; 32].into(),
         },
         FlatMatrix::from_flat_data(
             (0..setup_len * TEST_D)
                 .map(|idx| test_scalar(211 + idx as u128))
                 .collect(),
-            TEST_D,
         ),
     );
     let alpha_pows = scalar_powers(test_scalar(3), TEST_D);

@@ -11,9 +11,17 @@ Any malformed verifier-facing proof, setup, schedule, public claim, opening poin
 - `akita-verifier`
 - Verifier-reachable code in `akita-types` (including SIS derivation and table materialization), `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, verifier-used `akita-field` paths
 - `akita-config` (every `CommitmentConfig` method reachable from `batched_verify`)
-- `akita-planner` (the schedule-search DP is verifier-reachable through `CommitmentConfig::runtime_schedule` table-miss fallback)
+- `akita-schedules` generated-catalog identity, row resolution, and canonical
+  resolved-row audit paths
 
-The verifier must validate `key.num_vars` against setup capacity before invoking the DP so a malformed proof cannot blow up the search's bounded state space.
+The verifier never invokes planner search. It accepts only an explicit
+`OpeningScheduleSelection` that resolves in the enabled generated catalog.
+Before setup access or transcript replay, it validates catalog identity and
+runtime hooks, resolves the public row digest, compares every ordered public
+`CommittedGroupProfile`, re-audits every A/B/D/recursive/terminal SIS matrix,
+checks challenge and full terminal cap geometry, and confirms the schedule fits
+the setup field capacity. Private polynomial representations and honest-prover
+witness models are not verifier inputs.
 
 The accepted proof topology is structural: a root fold, at least one suffix
 fold, and one terminal cleartext witness. The verifier rejects empty/one-fold

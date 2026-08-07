@@ -4,7 +4,7 @@
 //! is [`find_schedule`], which runs an exhaustive dynamic program to
 //! minimize proof size for a schedule lookup key. Every per-preset input is
 //! carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
-//! `fold_challenge_shape_at_level` closure pair, so the planner names no `CommitmentConfig`
+//! ring-challenge closure, so the planner names no `CommitmentConfig`
 //! types and depends only on `akita-schedules` / `akita-types` /
 //! `akita-challenges` / `akita-field`.
 //! Scalar and mixed-D planning are selected internally by the grouped gate from
@@ -26,7 +26,6 @@ pub mod generated_families;
 mod planner;
 pub mod schedule_params;
 
-pub use akita_challenges::TensorChallengeShape;
 pub use akita_schedules::{
     catalog_entries_sorted_for_lookup, estimate_proof_bytes, expected_catalog_identity,
     identity_digest, key_digest, policy_digest, resolve_group_batch_schedule, resolve_schedule,
@@ -34,15 +33,11 @@ pub use akita_schedules::{
     validate_catalog_identity, validate_generated_schedule_entry,
     validate_generated_schedule_table, GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
 };
-pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
+pub use emit::{
+    refresh_generated_wiring, run_regen_fmt, write_family_module,
+    write_precommitted_profiles_module, EmitSpec,
+};
 pub use planner::find_schedule;
-pub use schedule_params::suffix_opening_layout;
-
-/// Helpers available only to synthetic schedule fixtures and profile experiments.
-#[cfg(feature = "test-support")]
-pub mod test_support {
-    pub use crate::schedule_params::derive_setup_prefix_group;
-    pub use crate::schedule_params::test_support::{
-        plan_optimal_suffix, PlannedSuffix, PlannedSuffixFold, PlannedSuffixTerminal,
-    };
-}
+pub use schedule_params::{
+    derive_standalone_precommit_profile, suffix_opening_layout, RingDimensionSearchDomain,
+};

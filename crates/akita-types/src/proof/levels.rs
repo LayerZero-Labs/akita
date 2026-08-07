@@ -28,22 +28,22 @@ pub struct AkitaStage1Proof<F: FieldCore> {
 ///
 /// The proof stream carries no variant tag. Headerless decoding obtains the
 /// variant from [`NextWitnessBindingShape`]: ordinary recursive edges carry an
-/// outer `u`, while an edge into the suffix terminal binds the `t` segment
+/// compressed outer payload, while an edge into the suffix terminal binds the `t` segment
 /// owned by the following [`TerminalLevelProof`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NextWitnessBinding<F: FieldCore> {
-    /// Outer commitment `u = B * decompose(t)` for an ordinary recursive edge.
-    OuterCommitment(RingVec<F>),
+    /// Terminal compressed commitment payload for an ordinary recursive edge.
+    OuterPayload(RingVec<F>),
     /// The following terminal proof's canonical `t` segment is the state.
     TerminalInnerState,
 }
 
 impl<F: FieldCore> NextWitnessBinding<F> {
-    /// Borrow the outer commitment when this is an ordinary recursive edge.
+    /// Borrow the compressed outer payload when this is an ordinary recursive edge.
     #[must_use]
-    pub fn outer_commitment(&self) -> Option<&RingVec<F>> {
+    pub fn outer_payload(&self) -> Option<&RingVec<F>> {
         match self {
-            Self::OuterCommitment(commitment) => Some(commitment),
+            Self::OuterPayload(commitment) => Some(commitment),
             Self::TerminalInnerState => None,
         }
     }
@@ -121,9 +121,9 @@ impl<E: FieldCore> ExtensionOpeningReductionProof<E> {
 pub struct FoldLevelProof<F: FieldCore, E: FieldCore> {
     /// Optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
-    /// `v = D · ŵ` in the current level's ring dimension.
-    pub v: RingVec<F>,
-    /// Accepted fold-l∞ grind nonce (`0` under deterministic policy).
+    /// Terminal compressed opening payload `p_H`.
+    pub opening_payload: RingVec<F>,
+    /// Accepted fold-l∞ grind nonce (`0` when the first probe succeeds).
     pub fold_grind_nonce: u32,
     /// Stage-1 norm-check payload.
     pub stage1: AkitaStage1Proof<E>,
@@ -137,13 +137,13 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
     /// Construct from typed ring elements for the current level and its
     /// inline norm-check payloads.
     pub fn new<const D: usize>(
-        v: Vec<CyclotomicRing<F, D>>,
+        opening_payload: Vec<CyclotomicRing<F, D>>,
         stage1: AkitaStage1Proof<E>,
         stage2: AkitaStage2Proof<F, E>,
     ) -> Self {
         Self {
             extension_opening_reduction: None,
-            v: RingVec::from_ring_elems(&v).into_compact(),
+            opening_payload: RingVec::from_ring_elems(&opening_payload).into_compact(),
             fold_grind_nonce: 0,
             stage1,
             stage2,
@@ -151,7 +151,7 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
         }
     }
 
-    /// Accepted fold grind nonce (`0` under deterministic policy).
+    /// Accepted fold grind nonce (`0` when the first probe succeeds).
     pub fn fold_grind_nonce(&self) -> u32 {
         self.fold_grind_nonce
     }
@@ -161,14 +161,14 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
         self.extension_opening_reduction.as_ref()
     }
 
-    /// Borrow the `v` payload.
-    pub fn v(&self) -> &RingVec<F> {
-        &self.v
+    /// Borrow the compressed opening payload.
+    pub fn opening_payload(&self) -> &RingVec<F> {
+        &self.opening_payload
     }
 
-    /// Mutably borrow the `v` payload.
-    pub fn v_mut(&mut self) -> &mut RingVec<F> {
-        &mut self.v
+    /// Mutably borrow the compressed opening payload.
+    pub fn opening_payload_mut(&mut self) -> &mut RingVec<F> {
+        &mut self.opening_payload
     }
 
     /// Borrow the stage-1 payload.
@@ -222,19 +222,21 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
         }
     }
 
-    /// Reconstruct typed `v`, returning `InvalidProof` on shape mismatch.
+    /// Reconstruct the typed opening payload, returning `InvalidProof` on shape mismatch.
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored `v` payload is not
+    /// Returns [`AkitaError::InvalidProof`] if the stored opening payload is not
     /// well-formed for ring dimension `D`.
-    pub fn try_v_typed<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        self.v.try_to_vec()
+    pub fn try_opening_payload_typed<const D: usize>(
+        &self,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        self.opening_payload.try_to_vec()
     }
 
-    /// Borrow the next witness's outer commitment when this level has one.
-    pub fn next_w_commitment(&self) -> Option<&RingVec<F>> {
-        self.stage2.next_witness_binding.outer_commitment()
+    /// Borrow the next witness's compressed payload when this level has one.
+    pub fn next_w_payload(&self) -> Option<&RingVec<F>> {
+        self.stage2.next_witness_binding.outer_payload()
     }
 
     /// Claimed evaluation of the next witness `w` at the norm-check output point.
@@ -246,7 +248,7 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
     pub fn shape(&self) -> LevelProofShape {
         level_proof_shape(
             self.extension_opening_reduction.as_ref(),
-            &self.v,
+            &self.opening_payload,
             &self.stage1,
             &self.stage2,
             self.stage3_sumcheck_proof.as_ref(),
@@ -270,7 +272,7 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
 pub struct TerminalLevelProof<F: FieldCore, E: FieldCore> {
     /// Optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
-    /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
+    /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection.
     pub fold_grind_nonce: u32,
     /// Quotient-free terminal response checked directly by the verifier.
     pub terminal_response: TerminalResponse<F>,

@@ -1,6 +1,6 @@
 //! Setup-product sumcheck for a dense table against two disjoint factors.
 //!
-//! The table is laid out as `left * fold_low_len + right`. The right factor is
+//! The table is laid out as `left * right_len + right`. The right factor is
 //! bound first, then the left factor. This matches setup products of the form
 //! `S(i, y) * setup_index_weight(i) * alpha(y)` without materializing the full
 //! `setup_index_weight(i) * alpha(y)` table.
@@ -39,12 +39,12 @@ pub struct AkitaStage3ProverOutput<E: FieldCore> {
 }
 
 /// Stage-3 setup-product sumcheck prover.
-pub struct AkitaStage3Prover<F: FieldCore, E: FieldCore> {
-    setup: RectangularSetupProductTerm<F, E>,
+pub struct AkitaStage3Prover<'a, F: FieldCore, E: FieldCore> {
+    setup: RectangularSetupProductTerm<'a, F, E>,
     setup_product_claim: E,
 }
 
-impl<F, E> AkitaStage3Prover<F, E>
+impl<'a, F, E> AkitaStage3Prover<'a, F, E>
 where
     F: FieldCore,
     E: FieldCore + FromPrimitiveInt + MulBaseUnreduced<F>,
@@ -52,7 +52,7 @@ where
     /// Construct a recursive setup-product sumcheck prover.
     #[allow(clippy::too_many_arguments)]
     pub fn new<T>(
-        expanded: &AkitaExpandedSetup<F>,
+        expanded: &'a AkitaExpandedSetup<F>,
         prefix_slots: &SetupPrefixProverRegistry<F>,
         lp: &CommittedGroupParams,
         next_fold_level_params: &CommittedGroupParams,
@@ -121,7 +121,7 @@ where
     }
 }
 
-impl<F, E> SumcheckInstanceProver<E> for AkitaStage3Prover<F, E>
+impl<F, E> SumcheckInstanceProver<E> for AkitaStage3Prover<'_, F, E>
 where
     F: FieldCore,
     E: FieldCore + FromPrimitiveInt + MulBaseUnreduced<F>,
@@ -148,8 +148,8 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_setup_product_term<F, E, T>(
-    expanded: &AkitaExpandedSetup<F>,
+fn build_setup_product_term<'a, F, E, T>(
+    expanded: &'a AkitaExpandedSetup<F>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
     lp: &CommittedGroupParams,
     next_fold_level_params: &CommittedGroupParams,
@@ -159,7 +159,7 @@ fn build_setup_product_term<F, E, T>(
     x_challenges: &[E],
     relation_address_geometry: RelationAddressGeometry,
     transcript: &mut T,
-) -> Result<RectangularSetupProductTerm<F, E>, AkitaError>
+) -> Result<RectangularSetupProductTerm<'a, F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBaseUnreduced<F> + AkitaSerialize,
@@ -187,12 +187,10 @@ where
     .entered();
     ensure_setup_envelope(expanded, required, ring_d)?;
     let natural_field_len = geometry.natural_field_len();
-    let setup_len = expanded
-        .shared_matrix()
-        .total_ring_elements_at_dyn(ring_d)?;
+    let setup_len = expanded.shared_matrix().num_field_elements() / ring_d;
     let setup_eval_len = if next_fold_level_params.setup_prefix.is_some() {
         let setup_prefix_selection = select_setup_prefix_slot(
-            setup_len,
+            Some(expanded.shared_matrix().num_field_elements()),
             |slot_id| {
                 prefix_slots
                     .get(slot_id)
@@ -222,9 +220,7 @@ where
     // setup-prefix slot may have a padded evaluation domain larger than this
     // source: only `required` natural rows are read, and the table remainder is
     // explicit zero padding.
-    // Cover only the `required` rows the product term reads — the padded
-    // view length would re-derive the full released matrix.
-    let setup_matrix = expanded.shared_matrix().covering_at_dyn(required, ring_d)?;
+    let setup_field = expanded.shared_matrix().as_field_slice();
     if required > setup_eval_len {
         return Err(AkitaError::InvalidSetup(
             "setup product exceeds selected setup view".to_string(),
@@ -238,16 +234,13 @@ where
     let required_source_len = required
         .checked_mul(ring_d)
         .ok_or_else(|| AkitaError::InvalidSetup("setup product source length overflow".into()))?;
-    if setup_matrix.as_field_slice().len() < required_source_len {
-        return Err(AkitaError::InvalidSetup(
-            "setup source is shorter than product view".into(),
-        ));
-    }
+    let setup_source = setup_field.get(..required_source_len).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup source is shorter than product view".into())
+    })?;
     drop(_source_span);
 
     RectangularSetupProductTerm::new(
-        setup_matrix,
-        required_source_len,
+        setup_source,
         required,
         setup_index_weight,
         alpha_pows.to_vec(),
@@ -326,11 +319,7 @@ where
         groups.push(SetupContributionGroupInputs {
             group_id: group_index,
             num_claims,
-            depth_fold: lp.num_digits_fold_for_params(
-                group_lp,
-                num_claims,
-                lp.field_bits_for_cache(),
-            )?,
+            depth_fold: group_lp.num_digits_fold(),
             a_row_start: a_range.start,
             b_row_start: b_range.start,
         });

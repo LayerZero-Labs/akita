@@ -22,7 +22,7 @@ macro_rules! protocol_dispatch_policy {
             inner: [$($i128:literal),* $(,)?]
             outer: [$($o128:literal),* $(,)?]
             opening: [$($p128:literal),* $(,)?]
-            envelope: [$($e128:literal),* $(,)?]
+            uniform_policy: [$($e128:literal),* $(,)?]
             ntt: [$($n128:literal),* $(,)?]
             compression: [$($c128:literal),* $(,)?]
             min_bd: $min128:literal
@@ -32,7 +32,7 @@ macro_rules! protocol_dispatch_policy {
             inner: [$($i64:literal),* $(,)?]
             outer: [$($o64:literal),* $(,)?]
             opening: [$($p64:literal),* $(,)?]
-            envelope: [$($e64:literal),* $(,)?]
+            uniform_policy: [$($e64:literal),* $(,)?]
             ntt: [$($n64:literal),* $(,)?]
             compression: [$($c64:literal),* $(,)?]
             min_bd: $min64:literal
@@ -42,17 +42,16 @@ macro_rules! protocol_dispatch_policy {
             inner: [$($i32:literal),* $(,)?]
             outer: [$($o32:literal),* $(,)?]
             opening: [$($p32:literal),* $(,)?]
-            envelope: [$($e32:literal),* $(,)?]
+            uniform_policy: [$($e32:literal),* $(,)?]
             ntt: [$($n32:literal),* $(,)?]
             compression: [$($c32:literal),* $(,)?]
             min_bd: $min32:literal
             ntt_max: $max32:literal
         }
     ) => {
-        /// All protocol dispatch arms across tiers and slots (sorted union for planner sync tests).
+        /// All A/B/D commitment-role dispatch arms across field tiers.
         #[allow(dead_code)]
-        pub(crate) const ALL_PROTOCOL_DISPATCH_ARMS: &[usize] =
-            &[16, 32, 64, 128, 256, 512, 1024, 2048];
+        pub(crate) const ALL_COMMITMENT_ROLE_DISPATCH_ARMS: &[usize] = &[64, 128, 256, 512];
 
         #[inline]
         #[must_use]
@@ -96,7 +95,7 @@ macro_rules! protocol_dispatch_policy {
                 (ProtocolRingDispatchTierId::Fp128, ProtocolDispatchSlot::Role(RingRole::Opening)) => {
                     &[$($p128),*]
                 }
-                (ProtocolRingDispatchTierId::Fp128, ProtocolDispatchSlot::Envelope) => &[$($e128),*],
+                (ProtocolRingDispatchTierId::Fp128, ProtocolDispatchSlot::UniformPolicy) => &[$($e128),*],
                 (ProtocolRingDispatchTierId::Fp128, ProtocolDispatchSlot::Ntt) => &[$($n128),*],
                 (ProtocolRingDispatchTierId::Fp128, ProtocolDispatchSlot::Compression) => &[$($c128),*],
                 (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::Role(RingRole::Inner)) => {
@@ -108,7 +107,7 @@ macro_rules! protocol_dispatch_policy {
                 (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::Role(RingRole::Opening)) => {
                     &[$($p64),*]
                 }
-                (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::Envelope) => &[$($e64),*],
+                (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::UniformPolicy) => &[$($e64),*],
                 (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::Ntt) => &[$($n64),*],
                 (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::Compression) => &[$($c64),*],
                 (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::Role(RingRole::Inner)) => {
@@ -120,7 +119,7 @@ macro_rules! protocol_dispatch_policy {
                 (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::Role(RingRole::Opening)) => {
                     &[$($p32),*]
                 }
-                (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::Envelope) => &[$($e32),*],
+                (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::UniformPolicy) => &[$($e32),*],
                 (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::Ntt) => &[$($n32),*],
                 (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::Compression) => &[$($c32),*],
             }
@@ -148,7 +147,7 @@ macro_rules! protocol_dispatch_policy {
             slot_dim_supported_for_tier(tier, ProtocolDispatchSlot::Role(role), d)
         }
 
-        /// Whether `d` is supported for diagnostic compression on `tier`.
+        /// Whether `d` is supported for production compression on `tier`.
         #[inline]
         #[must_use]
         pub fn compression_ring_dim_supported_for_tier(
@@ -238,10 +237,10 @@ macro_rules! __dispatch_for_field_outer {
     ($F:ty, $d:expr, |$D:ident| $body:expr) => {{
         match $crate::protocol_dispatch_tier::<$F>() {
             $crate::ProtocolRingDispatchTierId::Fp128 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128, 256 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
             }
             $crate::ProtocolRingDispatchTierId::Fp64 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128, 256 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
             }
             $crate::ProtocolRingDispatchTierId::Fp32 => {
                 $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
@@ -256,10 +255,10 @@ macro_rules! __dispatch_for_field_opening {
     ($F:ty, $d:expr, |$D:ident| $body:expr) => {{
         match $crate::protocol_dispatch_tier::<$F>() {
             $crate::ProtocolRingDispatchTierId::Fp128 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128, 256 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
             }
             $crate::ProtocolRingDispatchTierId::Fp64 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128, 256 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
             }
             $crate::ProtocolRingDispatchTierId::Fp32 => {
                 $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
@@ -270,14 +269,14 @@ macro_rules! __dispatch_for_field_opening {
 
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __dispatch_for_field_envelope {
+macro_rules! __dispatch_for_field_uniform_policy {
     ($F:ty, $d:expr, |$D:ident| $body:expr) => {{
         match $crate::protocol_dispatch_tier::<$F>() {
             $crate::ProtocolRingDispatchTierId::Fp128 => {
                 $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256, 512 })
             }
             $crate::ProtocolRingDispatchTierId::Fp64 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128, 256 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
             }
             $crate::ProtocolRingDispatchTierId::Fp32 => {
                 $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
@@ -310,13 +309,13 @@ macro_rules! __dispatch_for_field_compression {
     ($F:ty, $d:expr, |$D:ident| $body:expr) => {{
         match $crate::protocol_dispatch_tier::<$F>() {
             $crate::ProtocolRingDispatchTierId::Fp128 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 8, 16, 32 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 8, 16 })
             }
             $crate::ProtocolRingDispatchTierId::Fp64 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 16, 32, 64 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 16, 32 })
             }
             $crate::ProtocolRingDispatchTierId::Fp32 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64 })
             }
         }
     }};
@@ -354,14 +353,14 @@ macro_rules! dispatch_for_field {
         $crate::__dispatch_for_field_opening!($F, $d, |$D| $body)
     };
 
-    ($crate::ProtocolDispatchSlot::Envelope, $F:ty, $d:expr, |$D:ident| $body:expr) => {
-        $crate::__dispatch_for_field_envelope!($F, $d, |$D| $body)
+    ($crate::ProtocolDispatchSlot::UniformPolicy, $F:ty, $d:expr, |$D:ident| $body:expr) => {
+        $crate::__dispatch_for_field_uniform_policy!($F, $d, |$D| $body)
     };
-    (ProtocolDispatchSlot::Envelope, $F:ty, $d:expr, |$D:ident| $body:expr) => {
-        $crate::__dispatch_for_field_envelope!($F, $d, |$D| $body)
+    (ProtocolDispatchSlot::UniformPolicy, $F:ty, $d:expr, |$D:ident| $body:expr) => {
+        $crate::__dispatch_for_field_uniform_policy!($F, $d, |$D| $body)
     };
-    (akita_types::ProtocolDispatchSlot::Envelope, $F:ty, $d:expr, |$D:ident| $body:expr) => {
-        $crate::__dispatch_for_field_envelope!($F, $d, |$D| $body)
+    (akita_types::ProtocolDispatchSlot::UniformPolicy, $F:ty, $d:expr, |$D:ident| $body:expr) => {
+        $crate::__dispatch_for_field_uniform_policy!($F, $d, |$D| $body)
     };
 
     ($crate::ProtocolDispatchSlot::Ntt, $F:ty, $d:expr, |$D:ident| $body:expr) => {
@@ -388,31 +387,31 @@ macro_rules! dispatch_for_field {
 protocol_dispatch_policy! {
     Fp128: {
         inner: [64, 128, 256, 512]
-        outer: [32, 64, 128, 256]
-        opening: [32, 64, 128, 256]
-        envelope: [64, 128, 256, 512]
+        outer: [64, 128, 256]
+        opening: [64, 128, 256]
+        uniform_policy: [64, 128, 256, 512]
         ntt: [16, 32, 64, 128, 256, 512]
-        compression: [8, 16, 32]
-        min_bd: 32
+        compression: [8, 16]
+        min_bd: 64
         ntt_max: 512
     }
     Fp64: {
         inner: [64, 128, 256]
-        outer: [32, 64, 128, 256]
-        opening: [32, 64, 128, 256]
-        envelope: [32, 64, 128, 256]
+        outer: [64, 128, 256]
+        opening: [64, 128, 256]
+        uniform_policy: [64, 128, 256]
         ntt: [32, 64, 128, 256, 512, 1024]
-        compression: [16, 32, 64]
-        min_bd: 32
+        compression: [16, 32]
+        min_bd: 64
         ntt_max: 1024
     }
     Fp32: {
         inner: [64, 128, 256]
         outer: [64, 128, 256]
         opening: [64, 128, 256]
-        envelope: [64, 128, 256]
+        uniform_policy: [64, 128, 256]
         ntt: [64, 128, 256, 512, 1024, 2048]
-        compression: [32, 64, 128]
+        compression: [32, 64]
         min_bd: 64
         ntt_max: 2048
     }
@@ -421,11 +420,15 @@ protocol_dispatch_policy! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::SUPPORTED_RING_DIMS;
+    use crate::layout::SUPPORTED_COMMITMENT_RING_DIMS;
+    use crate::{compression_ring_dimensions, SisModulusProfileId};
 
     #[test]
-    fn supported_ring_dims_matches_policy_union() {
-        assert_eq!(ALL_PROTOCOL_DISPATCH_ARMS, SUPPORTED_RING_DIMS);
+    fn supported_commitment_ring_dims_match_role_policy_union() {
+        assert_eq!(
+            ALL_COMMITMENT_ROLE_DISPATCH_ARMS,
+            SUPPORTED_COMMITMENT_RING_DIMS
+        );
     }
 
     #[test]
@@ -464,28 +467,28 @@ mod tests {
     }
 
     #[test]
-    fn compression_arms_cover_the_rank_one_ladder_for_each_tier() {
-        assert_eq!(
-            arms_for_slot(
+    fn compression_arms_are_exactly_the_two_profile_ladder_dimensions() {
+        for (tier, profile) in [
+            (
                 ProtocolRingDispatchTierId::Fp128,
-                ProtocolDispatchSlot::Compression
+                SisModulusProfileId::Q128OffsetA7F7,
             ),
-            &[8, 16, 32]
-        );
-        assert_eq!(
-            arms_for_slot(
+            (
                 ProtocolRingDispatchTierId::Fp64,
-                ProtocolDispatchSlot::Compression
+                SisModulusProfileId::Q64Offset59,
             ),
-            &[16, 32, 64]
-        );
-        assert_eq!(
-            arms_for_slot(
+            (
                 ProtocolRingDispatchTierId::Fp32,
-                ProtocolDispatchSlot::Compression
+                SisModulusProfileId::Q32Offset99,
             ),
-            &[32, 64, 128]
-        );
+        ] {
+            let mut canonical = compression_ring_dimensions(profile);
+            canonical.sort_unstable();
+            assert_eq!(
+                arms_for_slot(tier, ProtocolDispatchSlot::Compression),
+                canonical
+            );
+        }
     }
 
     #[test]
@@ -499,7 +502,7 @@ mod tests {
                 ProtocolDispatchSlot::Role(RingRole::Inner),
                 ProtocolDispatchSlot::Role(RingRole::Outer),
                 ProtocolDispatchSlot::Role(RingRole::Opening),
-                ProtocolDispatchSlot::Envelope,
+                ProtocolDispatchSlot::UniformPolicy,
                 ProtocolDispatchSlot::Ntt,
                 ProtocolDispatchSlot::Compression,
             ] {

@@ -1,12 +1,11 @@
 //! Recursive setup-offloading config adapter.
 
-use crate::{CommitmentConfig, PrecommittedCommitmentConfig};
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use crate::CommitmentConfig;
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims,
-    DecompositionParams, FoldSchedule, OpeningClaimsLayout, PrecommittedGroupDescriptor,
-    SetupMatrixEnvelope, SisModulusProfileId, SETUP_OFFLOAD_D_SETUP,
+    ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
+    SetupMatrixCapacity, SisModulusProfileId,
 };
 #[cfg(any(
     feature = "schedules-fp128-d64-onehot-recursive",
@@ -34,10 +33,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::ring_challenge_config(d)
     }
 
-    fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
-        Cfg::fold_challenge_shape_at_level(inputs)
-    }
-
     fn sis_modulus_profile() -> SisModulusProfileId {
         Cfg::sis_modulus_profile()
     }
@@ -46,11 +41,11 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::ring_subfield_embedding_norm_bound()
     }
 
-    fn max_setup_matrix_size(
+    fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError> {
-        crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
+        crate::proof_optimized::proof_optimized_setup_matrix_capacity::<Self>(
             max_num_vars,
             max_num_batched_polys,
         )
@@ -60,8 +55,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Cfg::onehot_chunk_size()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Cfg::root_honest_fold_policy()
     }
 
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {
@@ -93,11 +88,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     fn runtime_schedule(
         key: akita_types::AkitaScheduleLookupKey,
     ) -> Result<akita_types::FoldSchedule, AkitaError> {
-        if Cfg::D != SETUP_OFFLOAD_D_SETUP {
-            return Err(AkitaError::InvalidSetup(
-                "recursive setup planning requires D64".to_string(),
-            ));
-        }
         if key.precommitteds.is_empty() {
             return Cfg::runtime_schedule(key);
         }
@@ -105,44 +95,15 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
             &key,
             &crate::policy_of::<Self>(),
             Self::ring_challenge_config,
-            Self::fold_challenge_shape_at_level,
             Self::schedule_catalog(),
         )
     }
 
     fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError> {
-        Self::runtime_schedule(recursive_schedule_key::<Self>(layout)?)
+        Self::runtime_schedule(crate::proof_optimized::proof_optimized_schedule_key(
+            layout,
+        )?)
     }
-}
-
-fn recursive_schedule_key<Cfg: CommitmentConfig>(
-    layout: &OpeningClaimsLayout,
-) -> Result<AkitaScheduleLookupKey, AkitaError> {
-    layout.check()?;
-    let final_group = layout.root_final_group_layout()?;
-    if layout.num_groups() == 1 {
-        return Ok(AkitaScheduleLookupKey::single(final_group));
-    }
-    let precommitteds = layout
-        .root_precommitted_group_layouts()?
-        .iter()
-        .copied()
-        .map(|group| {
-            group.validate()?;
-            let singleton =
-                OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
-            let params = <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-                &singleton,
-            )?;
-            Ok(PrecommittedGroupDescriptor::from_params(group, &params))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let key = AkitaScheduleLookupKey {
-        final_group,
-        precommitteds,
-    };
-    key.validate()?;
-    Ok(key)
 }
 
 #[cfg(all(
@@ -153,11 +114,12 @@ fn recursive_schedule_key<Cfg: CommitmentConfig>(
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
+    use crate::PrecommittedCommitmentConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        r_decomp_levels, shared_setup_fold_gadget, PolynomialGroupLayout, PreparedRelationAddress,
-        RelationAddressGeometry, SetupContributionGroupInputs, SetupContributionPlan,
-        WitnessLayout,
+        r_decomp_levels, shared_setup_fold_gadget, AkitaScheduleLookupKey, CommittedGroupProfile,
+        PolynomialGroupLayout, PreparedRelationAddress, RelationAddressGeometry,
+        SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
     };
 
     fn scalar(value: u128) -> Prime128OffsetA7F7 {
@@ -185,7 +147,7 @@ mod tests {
         let params =
             PrecommittedCommitmentConfig::<Cfg>::get_params_for_batched_commitment(&singleton)
                 .expect("recursive-catalog precommit params");
-        let descriptor = PrecommittedGroupDescriptor::from_params(precommitted, &params);
+        let descriptor = CommittedGroupProfile::from_params(precommitted, &params);
         let key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![descriptor, descriptor],
@@ -201,16 +163,16 @@ mod tests {
 
         let precommitted = PolynomialGroupLayout::new(16, 1);
         let final_group = PolynomialGroupLayout::new(32, 2);
-        let layout =
-            OpeningClaimsLayout::from_root_groups(&[precommitted, precommitted], final_group)
-                .expect("multi-group layout");
-        let schedule = Cfg::get_params_for_prove(&layout).expect("recursive schedule");
-
         let singleton = OpeningClaimsLayout::new(16, 1).expect("singleton precommit layout");
         let params =
             PrecommittedCommitmentConfig::<Cfg>::get_params_for_batched_commitment(&singleton)
                 .expect("recursive-catalog precommit params");
-        let expected = PrecommittedGroupDescriptor::from_params(precommitted, &params);
+        let expected = CommittedGroupProfile::from_params(precommitted, &params);
+        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey {
+            final_group,
+            precommitteds: vec![expected, expected],
+        })
+        .expect("recursive schedule");
 
         assert_eq!(schedule.root.params.precommitted_groups.len(), 2);
         assert!(schedule
@@ -244,13 +206,7 @@ mod tests {
                 SetupContributionGroupInputs {
                     group_id,
                     num_claims: group_layout.num_polynomials(),
-                    depth_fold: params
-                        .num_digits_fold_for_params(
-                            group_params,
-                            group_layout.num_polynomials(),
-                            params.field_bits_for_cache(),
-                        )
-                        .expect("group fold depth"),
+                    depth_fold: group_params.num_digits_fold(),
                     a_row_start: params
                         .a_row_range(&opening_batch, group_id)
                         .expect("A rows")

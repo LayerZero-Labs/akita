@@ -3,7 +3,7 @@ use akita_algebra::ring::scalar_powers;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{Fp32, Prime128OffsetA7F7};
 use akita_types::{
-    r_decomp_levels, AkitaSetupSeed, CommitmentRingDims, FlatMatrix, OpenCommitMatrixParams,
+    r_decomp_levels, AkitaSetupDescriptor, CommitmentRingDims, FlatMatrix, OpenCommitMatrixParams,
     OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress,
     SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId,
 };
@@ -78,8 +78,8 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
 #[test]
 fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
     type MixedF = Prime128OffsetA7F7;
-    const D_INNER: usize = 64;
-    const D_PROJECTED: usize = 32;
+    const D_INNER: usize = 128;
+    const D_PROJECTED: usize = 64;
     let mut lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D_INNER,
@@ -126,26 +126,18 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
         .map(|index| MixedF::from_u64(11 + index as u64))
         .collect::<Vec<_>>()
         .into();
-    let depth_fold = lp
-        .num_digits_fold(
-            opening_batch.num_total_polynomials(),
-            lp.field_bits_for_cache(),
-        )
-        .unwrap();
+    let depth_fold = lp.num_digits_fold();
     let evaluator = RelationMatrixEvaluator {
         relation_address_geometry,
         groups: vec![RelationMatrixGroupEvaluator {
-            c_alphas: PreparedChallengeEvals::Flat(
-                (0..lp.num_live_blocks)
-                    .map(|index| MixedF::from_u64(31 + index as u64))
-                    .collect(),
-            ),
+            c_alphas: (0..lp.num_live_blocks)
+                .map(|index| MixedF::from_u64(31 + index as u64))
+                .collect(),
             opening_a_evals: (0..lp.num_positions_per_block)
                 .map(|index| MixedF::from_u64(41 + index as u64))
                 .collect(),
             group_id: 0,
             num_claims: 1,
-            num_live_blocks: lp.num_live_blocks,
             depth_fold,
             a_row_start: 1,
             b_row_start: 1 + lp.inner_commit_matrix.output_rank(),
@@ -161,18 +153,16 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
     };
     let setup_ring_elements = 1 << 14;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupSeed {
+        AkitaSetupDescriptor {
             max_num_vars: 16,
             max_num_batched_polys: 1,
-            gen_ring_dim: D_INNER,
-            max_setup_len: setup_ring_elements,
-            public_matrix_seed: [7; 32],
+            num_field_elements: setup_ring_elements,
+            setup_seed: [7; 32].into(),
         },
         FlatMatrix::from_flat_data(
             (0..setup_ring_elements * D_INNER)
                 .map(|index| MixedF::from_u64(101 + index as u64))
                 .collect(),
-            D_INNER,
         ),
     );
     let point = (0..relation_address_geometry.relation_point_variable_count())

@@ -74,7 +74,6 @@ Committed-fold A-role pricing (every cell folds securely):
 | `onehot_fp32_d128` | 28 | 1 | `direct` |
 | `onehot_fp64_d128` | 28 | 1 | `direct` |
 | `dense_fp128_d64` | 24 | 1 | `direct` |
-| `onehot_fp128_d64_tensor` | 26 | 1 | `direct` |
 | `onehot_fp128_d64` | 32 | 1 | `direct` |
 | `onehot_fp128_d64` | 30 | 4 | `direct` |
 | `onehot_fp128_d64_multi_group_recursive` | 32 | 4 | `direct` |
@@ -92,6 +91,15 @@ and are compared against merge-base like the other rows.
 
 Report pipeline: `scripts/profile_bench_report.py`.
 Coverage matrix spec: `specs/profile-bench-coverage-matrix.md`.
+
+`Setup and preparation` includes exact NTT prewarming for the resolved profile
+execution on its uniform CPU stack. This is an execution prewarm, not part of
+public setup identity or `ComputeBackendSetup::prepare_setup`: it joins the root
+commitment requirements with `NttExecutionRequirements::from_prove_schedule`
+and materializes the resulting per-dimension, per-domain prefixes before the
+online timers begin. The harness rejects any later cache growth during commit
+or prove. Consequently, `Commit` and `Prove` measure hot-cache protocol work,
+while `Prepared NTT cache size` remains the exact execution-resident footprint.
 
 ## NTT matvec microbenchmarks
 
