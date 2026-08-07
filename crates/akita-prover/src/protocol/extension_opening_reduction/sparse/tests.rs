@@ -1,6 +1,7 @@
 use super::*;
 use akita_field::RandomSampling;
 use akita_field::{FpExt4, Prime24Offset3};
+use akita_types::tensor_equality_factor_evals;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
@@ -181,6 +182,59 @@ fn fused_term_matches_unfused_reference() {
             "final factor mismatch (log_chunks={log_chunks})"
         );
     }
+}
+
+#[test]
+fn grouped_tensor_fold_respects_merge_free_boundary() {
+    use akita_field::{FpExt4, Prime32Offset99};
+    type B = Prime32Offset99;
+    type G = FpExt4<B>;
+
+    let mut rng = StdRng::seed_from_u64(0x7e11_50a7);
+    let palette = (0..4).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
+    let witness = SparseExtensionOpeningWitness::new(
+        1 << 9,
+        (0..64)
+            .map(|chunk| {
+                let offset = (rng.next_u32() as usize) & 7;
+                (chunk * 8 + offset, palette[chunk & 3])
+            })
+            .collect(),
+    )
+    .unwrap();
+    assert_eq!(witness.merge_free_rounds_left, 3);
+    let tail_point = (0..9).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
+    let eta = (0..2).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
+    let factor = tensor_equality_factor_evals::<B, G>(&tail_point, &eta).unwrap();
+    let coeff = G::random(&mut rng);
+
+    let mut grouped = ExtensionOpeningReductionTerm::new_sparse_tensor_factor(
+        witness.clone(),
+        tail_point,
+        eta,
+        coeff,
+        5,
+    )
+    .unwrap();
+    let mut dense =
+        ExtensionOpeningReductionTerm::new_sparse(witness.clone(), factor, coeff).unwrap();
+    let plan = SumcheckKernelPlan::detect();
+
+    for round in 0..9 {
+        let mut grouped_round = (G::zero(), G::zero());
+        grouped.accumulate_into(plan, &mut grouped_round.0, &mut grouped_round.1);
+        let mut dense_round = (G::zero(), G::zero());
+        dense.accumulate_into(plan, &mut dense_round.0, &mut dense_round.1);
+        assert_eq!(grouped_round, dense_round, "round {round}");
+
+        let challenge = G::random(&mut rng);
+        grouped.ingest_challenge(plan, challenge);
+        dense.ingest_challenge(plan, challenge);
+    }
+    assert_eq!(
+        grouped.final_witness_and_factor_evals(),
+        dense.final_witness_and_factor_evals()
+    );
 }
 
 #[test]

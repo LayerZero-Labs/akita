@@ -337,6 +337,37 @@ impl<E: FieldCore + HasUnreducedOps, const N: usize> GroupedRoundAccumulator<E, 
         }
     }
 
+    /// Add one known-nonzero child of a sparse pair.
+    ///
+    /// During a merge-free witness round, construction guarantees that the
+    /// other child is zero. Consuming the stored entry directly avoids
+    /// rebuilding the logical pair only to discard that zero again.
+    #[inline(always)]
+    fn add_single_child(&mut self, factor: &TensorEqualityFactor<E>, index: usize, value: E) {
+        let pair = index >> 1;
+        let rest_low_bits = factor.materialize_at - factor.round - 1;
+        let suffix_index = pair >> rest_low_bits;
+        if self.suffix_index != Some(suffix_index) {
+            self.flush(factor);
+            self.suffix_index = Some(suffix_index);
+        }
+
+        let low_mask = (1usize << rest_low_bits).saturating_sub(1);
+        let (state_zero, state_delta) = factor.low_pair(pair & low_mask);
+        if index & 1 == 0 {
+            for (column, (&state_zero, &state_delta)) in
+                state_zero.iter().zip(state_delta.iter()).enumerate()
+            {
+                self.constant[column] += value.mul_to_product_accum(state_zero);
+                self.quadratic[column] += (E::zero() - value).mul_to_product_accum(state_delta);
+            }
+        } else {
+            for (column, &state_delta) in state_delta.iter().enumerate() {
+                self.quadratic[column] += value.mul_to_product_accum(state_delta);
+            }
+        }
+    }
+
     fn flush(&mut self, factor: &TensorEqualityFactor<E>) {
         let Some(suffix_index) = self.suffix_index else {
             return;
@@ -428,7 +459,26 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
         E: ExtField<F> + HasOptimizedFold,
     {
         debug_assert!(self.supports_grouped_rounds());
+        // This pass computes the round *after* the fold. Two guaranteed
+        // merge-free rounds are therefore required: one for the fold itself
+        // and one for the cached round being accumulated.
+        let merge_free = witness.merge_free_rounds_left >= 2;
+        if !merge_free {
+            witness.materialize_merge_free_value_palette();
+        }
         let round = match self.prefix_state.len() {
+            1 if merge_free => {
+                self.fold_and_compute_grouped_round_merge_free::<F, 1>(witness, challenge)
+            }
+            2 if merge_free => {
+                self.fold_and_compute_grouped_round_merge_free::<F, 2>(witness, challenge)
+            }
+            4 if merge_free => {
+                self.fold_and_compute_grouped_round_merge_free::<F, 4>(witness, challenge)
+            }
+            8 if merge_free => {
+                self.fold_and_compute_grouped_round_merge_free::<F, 8>(witness, challenge)
+            }
             1 => self.fold_and_compute_grouped_round_with_width::<F, 1>(witness, challenge),
             2 => self.fold_and_compute_grouped_round_with_width::<F, 2>(witness, challenge),
             4 => self.fold_and_compute_grouped_round_with_width::<F, 4>(witness, challenge),
@@ -438,6 +488,45 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
         witness.table_len /= 2;
         witness.merge_free_rounds_left = witness.merge_free_rounds_left.saturating_sub(1);
         round
+    }
+
+    fn fold_and_compute_grouped_round_merge_free<F, const N: usize>(
+        &self,
+        witness: &mut SparseExtensionOpeningWitness<F, E>,
+        challenge: E,
+    ) -> (E, E)
+    where
+        F: FieldCore,
+        E: ExtField<F> + HasOptimizedFold,
+    {
+        debug_assert_eq!(self.prefix_state.len(), N);
+        debug_assert!(witness.merge_free_rounds_left >= 2);
+        let use_palette = witness.fold_merge_free_value_palette(challenge);
+        let one_minus = E::one() - challenge;
+        let mut round = GroupedRoundAccumulator::<E, N>::new();
+
+        for row in 0..witness.indices.len() {
+            let index = witness.indices[row];
+            let folded = if use_palette {
+                witness
+                    .merge_free_palette_value(row)
+                    .expect("merge-free palette was prepared for every sparse row")
+            } else {
+                let value = witness.values.evaluation(row);
+                if index & 1 == 0 {
+                    value * one_minus
+                } else {
+                    value * challenge
+                }
+            };
+            let folded_index = index >> 1;
+            witness.indices[row] = folded_index;
+            if !use_palette {
+                witness.values.set_evaluation(row, folded);
+            }
+            round.add_single_child(self, folded_index, folded);
+        }
+        round.finish(self)
     }
 
     fn fold_and_compute_grouped_round_with_width<F, const N: usize>(

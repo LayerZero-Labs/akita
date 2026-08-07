@@ -84,7 +84,10 @@ rearranges it within every round.
 2. The transcript absorbs the same values in the same order for every CPU plan.
 3. The verifier and all verifier reachable types remain unchanged.
 4. A materialized value has exactly one stored representation. The prover must
-   not keep a scalar `Vec<E>` beside a coefficient first copy.
+   not keep a scalar `Vec<E>` beside a coefficient first copy. A bounded
+   repeated-value palette is a compact sparse state, not a second materialized
+   table. While it is active, the table allocation is dormant backing storage
+   and cannot be read as current evaluations.
 5. The stored representation does not depend on SIMD width or CPU architecture.
 6. Production release builds select SIMD at runtime. Compiling without
    `target-cpu=native` must not force the scalar path on a capable CPU.
@@ -269,6 +272,7 @@ table_len: usize
 indices: Vec<usize>
 values: EvaluationTable<F, E>
 merge_free_rounds_left: usize
+merge_free_values: Unchecked | Unavailable | Palette
 ```
 
 The indices stay sorted according to the sparse algorithm's current logical
@@ -278,6 +282,20 @@ rows follow the index sidecar rather than dense binding order.
 Duplicate normalization, zero removal, and merge detection remain one canonical
 constructor operation. A constructor cannot accept independently prepared
 indices and values that have not passed that normalization.
+
+The private palette state is attempted only by the tensor operation when at
+least two merge-free rounds remain. Detection accepts at most eight distinct
+values and at most eight low path bits. Each row then stores one `u16`: the low
+byte is its original merge-free path and the high byte is its palette tag. The
+folded palette has at most `8 * 2^8` extension values. It reserves its full
+bounded capacity when detected and performs no allocation in a round.
+
+During this state, the coefficient-first allocation is retained only as the
+destination for the first merging round. It is not a second current value
+representation. The palette is materialized into that allocation exactly once
+before any general pair traversal, dense-factor fallback, or public final value
+can read it. Failed detection is remembered so later rounds do not rescan the
+rows.
 
 The root one hot EOR is the only path with the fixed support plateau seen in the
 profile. Its 2^20 entries remain live for the first six folds of a 2^26 domain.
@@ -318,6 +336,14 @@ pairs while feeding each nonzero output into the next grouped round. This is one
 streaming pass. It supports arbitrary pair merges and does not depend on the
 merge free plateau. The existing merge free formula remains the fallback for a
 dense factor or a field without an exact grouped product accumulator.
+
+When both the current fold and the cached next round are proven merge free, the
+grouped operation consumes the stored nonzero child directly. If the repeated
+value palette is available, it reads the already-folded value by row code rather
+than multiplying and rewriting one full extension value per row. Requiring two
+guaranteed rounds is essential: one round proves the current pair is isolated
+but does not prove that two outputs will not become siblings in the cached next
+round.
 
 `ExtensionOpeningTables` owns the choice of fused operation for its active
 representation. A term asks the table to fold and compute the next round, then
@@ -514,6 +540,15 @@ folding, and the ordinary sparse fallback reduced the same fp32 benchmark to a
 182.94 ms clean median. This is 40.0 percent below the 305.00 ms sparse-table
 baseline.
 
+On the pinned one-worker fp32 D128 proof at 28 variables, the root witness has
+2^20 rows, four repeated extension values, and six merge-free rounds. Folding a
+bounded value palette instead of every row reduced root EOR from 296 ms to 258
+to 260 ms. The four middle plateau folds fell from 38 to 39 ms each to 28.5 to
+30.0 ms. The complete proof verified, and its second sample measured 1.898
+seconds versus a 1.893-second pushed-head sample while unrelated Stage 1 and
+Stage 2 spans were slower in the new run. The protocol-local 12 percent EOR gain
+is stable; whole-proof attribution requires pinned Ice Lake confirmation.
+
 The fp32 Stage 2 compact prefix originally widened every digit-derived product
 into four `u128` coefficient sums. Accumulating each x-column first in the exact
 `u64` short-batch representation and promoting once per output reduced the root
@@ -539,7 +574,7 @@ The cutover evolves current owners rather than adding parallel wrappers:
 | Current owner | New materialized state |
 |---|---|
 | `ExtensionOpeningTables::Dense` | witness and factor `EvaluationTable<F, E>` values |
-| `SparseExtensionOpeningWitness` | index sidecar plus one `EvaluationTable<F, E>` for values |
+| `SparseExtensionOpeningWitness` | index sidecar plus one `EvaluationTable<F, E>` for materialized values; bounded private palette while repeated merge-free values remain compact |
 | `SparseFactor::Dense` | `EvaluationTable<F, E>` |
 | `LowBasisRangeImageStorage::Materialized` | `EvaluationTable<F, E>` |
 | Stage 2 `WitnessState::FoldedSuffix` | `EvaluationTable<F, E>` |
@@ -586,6 +621,8 @@ small public API boundaries and must not survive in a production round loop.
   sync through merge free and merging folds.
 - [x] Sparse tensor EOR groups arbitrary merging pairs by shared suffix and
   folds, compacts, and computes the next round in one traversal.
+- [x] Repeated sparse EOR values remain compact during the proven merge-free
+  plateau and materialize once before the first possible merge.
 - [ ] Stage 2 uses the canonical table for its folded witness, factors, and full
   trace values.
 - [ ] Stage 1 keeps i8 and i16 values compact and materializes directly into the
@@ -616,7 +653,9 @@ coefficients.
 Sparse tests cover duplicate normalization, zeros, sorted and unsorted input,
 merge free folds, the first merging fold, and final evaluation. They compare the
 new index sidecar and value table against the current pair representation before
-that representation is removed.
+that representation is removed. A repeated-value differential crosses the exact
+`3 -> 2 -> 1 -> merge` boundary and compares every cached round and final value
+against a fully materialized dense-factor term.
 
 Forced plan tests run scalar versus every host supported plan. Cross architecture
 CI covers x86 portable, x86 AVX2, x86 AVX512 when available, aarch64 NEON, and a
@@ -699,7 +738,9 @@ bound experiments.
 5. Move dense EOR to the table and operation set. Measure before continuing.
 6. Move root sparse EOR. Keep values coefficient first and indices separate.
    Group arbitrary tensor pairs by suffix and fuse compaction with the next
-   round instead of gating the operation on a global merge-free flag.
+   round instead of gating the operation on a global merge-free flag. Keep a
+   bounded repeated-value palette compact only while two proven merge-free
+   rounds remain, then materialize it once.
 7. Move Stage 2 dense witness, factor, and trace tables.
 8. Move Stage 1 materialized state. Add direct i8 and i16 kernels and direct
    materialization.

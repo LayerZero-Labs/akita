@@ -1,6 +1,95 @@
 use super::*;
 use core::ops::Range;
 
+const MAX_MERGE_FREE_VALUE_PALETTE: usize = 8;
+
+#[derive(Debug, Clone)]
+struct MergeFreeValuePalette<E: FieldCore> {
+    palette_len: usize,
+    /// Low byte: original merge-free path. High byte: palette tag.
+    row_codes: Vec<u16>,
+    folded_values: Vec<E>,
+    rounds_folded: usize,
+}
+
+impl<E: FieldCore> MergeFreeValuePalette<E> {
+    fn detect<F>(witness: &SparseExtensionOpeningWitness<F, E>) -> Option<Self>
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        if witness.merge_free_rounds_left == 0 || witness.merge_free_rounds_left > u8::BITS as usize
+        {
+            return None;
+        }
+        let mask = (1usize << witness.merge_free_rounds_left) - 1;
+        let mut palette = Vec::with_capacity(MAX_MERGE_FREE_VALUE_PALETTE);
+        let mut row_codes = Vec::with_capacity(witness.indices.len());
+        for row in 0..witness.indices.len() {
+            let value = witness.values.evaluation(row);
+            let tag = match palette.iter().position(|&candidate| candidate == value) {
+                Some(tag) => tag,
+                None if palette.len() < MAX_MERGE_FREE_VALUE_PALETTE => {
+                    palette.push(value);
+                    palette.len() - 1
+                }
+                None => return None,
+            };
+            let path = witness.indices[row] & mask;
+            row_codes.push(
+                u16::try_from((tag << u8::BITS) | path)
+                    .expect("merge-free palette tag and path each fit one byte"),
+            );
+        }
+        let palette_len = palette.len();
+        let mut folded_values = palette;
+        folded_values.reserve_exact(
+            ((1usize << witness.merge_free_rounds_left) * folded_values.len())
+                .saturating_sub(folded_values.len()),
+        );
+        Some(Self {
+            palette_len,
+            row_codes,
+            folded_values,
+            rounds_folded: 0,
+        })
+    }
+
+    fn fold(&mut self, challenge: E) {
+        let old_class_count = 1usize << self.rounds_folded;
+        let new_class_count = old_class_count * 2;
+        let palette_len = self.palette_len;
+        let one_minus = E::one() - challenge;
+        self.folded_values
+            .resize(new_class_count * palette_len, E::zero());
+        for source in 0..old_class_count {
+            for tag in 0..palette_len {
+                let value = self.folded_values[source * palette_len + tag];
+                self.folded_values[(old_class_count + source) * palette_len + tag] =
+                    value * challenge;
+                self.folded_values[source * palette_len + tag] = value * one_minus;
+            }
+        }
+        self.rounds_folded += 1;
+    }
+
+    #[inline(always)]
+    fn value(&self, row: usize) -> E {
+        let class_mask = (1usize << self.rounds_folded) - 1;
+        let code = usize::from(self.row_codes[row]);
+        let class = (code & usize::from(u8::MAX)) & class_mask;
+        let tag = code >> u8::BITS;
+        self.folded_values[class * self.palette_len + tag]
+    }
+}
+
+#[derive(Debug, Clone)]
+enum MergeFreeValueState<E: FieldCore> {
+    Unchecked,
+    Unavailable,
+    Palette(MergeFreeValuePalette<E>),
+}
+
 /// Sparse transformed-witness evaluations for extension-opening reduction.
 #[derive(Debug, Clone)]
 pub struct SparseExtensionOpeningWitness<F: FieldCore, E: ExtField<F>> {
@@ -13,6 +102,7 @@ pub struct SparseExtensionOpeningWitness<F: FieldCore, E: ExtField<F>> {
     /// reallocating. Derived once at construction from the entry spacing; see
     /// [`Self::leading_merge_free_rounds`].
     pub(super) merge_free_rounds_left: usize,
+    merge_free_values: MergeFreeValueState<E>,
 }
 
 #[cfg(feature = "parallel")]
@@ -160,7 +250,45 @@ impl<F: FieldCore, E: ExtField<F>> SparseExtensionOpeningWitness<F, E> {
             indices,
             values: EvaluationTable::from_evaluations(&evaluations),
             merge_free_rounds_left,
+            merge_free_values: MergeFreeValueState::Unchecked,
         }
+    }
+
+    /// Fold a small repeated value palette without rewriting the full sparse
+    /// extension table. Returns whether palette values are available to the
+    /// caller for this folded round.
+    pub(super) fn fold_merge_free_value_palette(&mut self, challenge: E) -> bool {
+        if matches!(self.merge_free_values, MergeFreeValueState::Unchecked) {
+            self.merge_free_values = MergeFreeValuePalette::detect(self).map_or(
+                MergeFreeValueState::Unavailable,
+                MergeFreeValueState::Palette,
+            );
+        }
+        match &mut self.merge_free_values {
+            MergeFreeValueState::Palette(palette) => {
+                palette.fold(challenge);
+                true
+            }
+            MergeFreeValueState::Unchecked | MergeFreeValueState::Unavailable => false,
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn merge_free_palette_value(&self, row: usize) -> Option<E> {
+        match &self.merge_free_values {
+            MergeFreeValueState::Palette(palette) => Some(palette.value(row)),
+            MergeFreeValueState::Unchecked | MergeFreeValueState::Unavailable => None,
+        }
+    }
+
+    pub(super) fn materialize_merge_free_value_palette(&mut self) {
+        let MergeFreeValueState::Palette(palette) = &self.merge_free_values else {
+            return;
+        };
+        for row in 0..self.indices.len() {
+            self.values.set_evaluation(row, palette.value(row));
+        }
+        self.merge_free_values = MergeFreeValueState::Unavailable;
     }
 
     /// Number of leading folds guaranteed to be merge-free.
@@ -612,6 +740,7 @@ where
     where
         P: Fn(usize) -> (E, E) + Sync,
     {
+        self.materialize_merge_free_value_palette();
         let round = if E::DELAYED_PRODUCT_SUM_IS_EXACT {
             self.fused_fold_accumulate_merge_free_using::<DelayedProductRoundAccumulator<E>, P>(
                 r_round,
@@ -675,6 +804,7 @@ impl<F: FieldCore, E: ExtField<F>> SparseExtensionOpeningWitness<F, E> {
         if self.table_len <= 1 {
             return;
         }
+        self.materialize_merge_free_value_palette();
         if self.merge_free_rounds_left > 0 {
             self.fold_in_place_merge_free(r_round);
             self.table_len /= 2;
