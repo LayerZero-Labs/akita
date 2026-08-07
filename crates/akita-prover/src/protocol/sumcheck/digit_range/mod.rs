@@ -168,7 +168,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
         .entered();
         if plan.basis() <= 8 {
             let _leaf_span = tracing::info_span!("digit_range_direct_leaf").entered();
-            let mut leaf_stage = direct_range_leaf::LowBasisRangeCheckProver::new(
+            let mut leaf_stage = direct_range_leaf::LowBasisRangeCheckProver::<E, F>::new(
                 digit_source.digits(),
                 &equality_point,
                 plan,

@@ -383,9 +383,14 @@ FoldedOctets {
 
 Basis 4 has 256 classes and basis 8 has 65,536. The third challenge evaluates
 each possible class once. The next round reads class codes and computes its
-quartic coefficients from the cached Taylor row. The following challenge folds
-the coded rows and materializes only the already halved field table. The state
-cannot survive into the x-variable phase or the final evaluation.
+quartic coefficients from the cached Taylor row. Fp32 uses the detected packed
+operation for this class lookup and polynomial arithmetic without changing the
+compact representation. The following challenge folds the coded rows and
+materializes only the already halved field table. Later sparse low-variable
+challenges use one fused operation that reads four materialized values, writes
+the two folded values, and computes the following quadratic or quartic round in
+the same pass. The state cannot survive into the x-variable phase or the final
+evaluation.
 
 The canonical quartic entry formula is the Taylor expansion at the left child:
 
@@ -396,10 +401,11 @@ Q(left + delta X) = t0 + t1 delta X + t2 delta^2 X^2
 
 where `t0 = Q(left)`, `t1 = Q'(left)`, `t2 = Q''(left)/2`, and
 `t3 = Q'''(left)/6`. Compact class tables and ordinary materialized rounds use
-the same Taylor helpers. The sparse low-variable traversal accepts an entry
-coefficient producer, so coded and materialized states share the equality
-accumulation and challenge-fold implementation rather than carrying parallel
-sumcheck algorithms.
+the same Taylor formula. The protocol owns one sparse low-variable traversal
+over either class-coded or materialized values. The field operation plan may
+handle a complete storage shape in SIMD; returning no implementation keeps the
+same traversal on its exact blocked scalar accumulator. This retains one
+protocol state machine rather than parallel scalar and packed sumcheck paths.
 
 AVX512 byte and word operations require AVX512BW. The fp32 fold uses AVX512F,
 AVX512DQ, and AVX512IFMA. Without IFMA, the current plan falls back to AVX2
@@ -648,6 +654,18 @@ and using the canonical Taylor kernel reduced the root Stage 1 sumcheck from
 rows cost 7.2 to 7.3 ms. The following fused rounds measured 31.0 to 31.1 ms,
 17.2 to 17.4 ms, and 10.7 to 10.8 ms. Both complete proofs verified; the second
 whole-proof sample measured 1.874 seconds.
+
+The fp32 operation plan now also handles the class-coded polynomial round and
+the later materialized sparse folds. The class-coded round keeps its `u16`
+codes and gathers the bounded value and Taylor tables into SIMD lanes. Once the
+state is materialized, one packed traversal folds adjacent pairs, writes the
+halved table, composes the direct-range polynomial, and accumulates the split
+equality weights. Partial final register chunks use zero equality lanes, so the
+stored shape remains independent of SIMD width. On the same one-worker fp32
+D128 Apple profile, the two largest materialized sparse folds fell from about
+17 and 10 ms to 11.0 and 5.51 ms. Complete root Stage 1 fell from about 125 ms
+after the class-coded round alone to 115 ms. The complete 1.454-second proof
+verified and retained the 77,834-byte proof size.
 
 High-basis Stage 1 product substages now keep compact class-pair indices through
 their second round and use a runtime-selected packed affine-product operation.

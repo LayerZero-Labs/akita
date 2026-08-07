@@ -1,6 +1,13 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
+impl<F, E> LowBasisRangeCheckProver<E, F>
+where
+    F: FieldCore,
+    E: ExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
+{
     #[inline]
     pub(super) fn use_sparse_x_y_round(&self) -> bool {
         !self.in_x_phase() && self.live_x_cols < (1usize << self.col_bits)
@@ -66,12 +73,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
     )]
     pub(super) fn fuse_sparse_x_y_fold_and_compute_round(
         &self,
-        range_image_len: usize,
-        range_image_at: impl Fn(usize) -> E + Sync,
+        range_image: SparseRangeImageValues<'_, E>,
         r: E,
     ) -> (Vec<E>, EqFactoredUniPoly<E>) {
         debug_assert!(self.use_sparse_x_y_round());
         debug_assert!(self.next_use_sparse_x_y_round_after_current());
+        let range_image_len = range_image.len();
         let live_x_cols = self.live_x_cols;
         let y_len = range_image_len / live_x_cols;
         debug_assert_eq!(y_len % 4, 0);
@@ -86,6 +93,22 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
         let num_coeffs_q = full_num_coeffs_q;
         let mut out = vec![E::zero(); live_x_cols * next_y_len];
+
+        if let SparseRangeImageValues::Materialized(values) = range_image {
+            if let Some(coefficients) = E::try_fold_and_compute_sparse_affine_polynomial_round(
+                self.kernel_plan,
+                values,
+                &mut out,
+                e_first,
+                e_second,
+                r,
+                polynomial_precomputation.degree_q,
+            ) {
+                let poly =
+                    EqFactoredUniPoly::from_q_coeffs(coefficients[..full_num_coeffs_q].to_vec());
+                return (out, poly);
+            }
+        }
 
         let process_column = |(x, col_out): (usize, &mut [E])| {
             debug_assert!(full_num_coeffs_q <= MAX_DIRECT_RANGE_COEFFICIENTS);
@@ -110,10 +133,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                         let top_y = 2 * pair_y;
                         let top = 4 * pair_y;
                         let source = column_base + top;
-                        let left = range_image_at(source);
-                        let right = range_image_at(source + 1);
-                        let next_left = range_image_at(source + 2);
-                        let next_right = range_image_at(source + 3);
+                        let left = range_image.value(source);
+                        let right = range_image.value(source + 1);
+                        let next_left = range_image.value(source + 2);
+                        let next_right = range_image.value(source + 3);
                         let left_range_image = left + r * (right - left);
                         let right_range_image = next_left + r * (next_right - next_left);
                         col_out[top_y] = left_range_image;
@@ -149,10 +172,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                     let top_y = 2 * pair_y;
                     let top = 4 * pair_y;
                     let source = column_base + top;
-                    let left = range_image_at(source);
-                    let right = range_image_at(source + 1);
-                    let next_left = range_image_at(source + 2);
-                    let next_right = range_image_at(source + 3);
+                    let left = range_image.value(source);
+                    let right = range_image.value(source + 1);
+                    let next_left = range_image.value(source + 2);
+                    let next_right = range_image.value(source + 3);
                     let left_range_image = left + r * (right - left);
                     let right_range_image = next_left + r * (next_right - next_left);
                     col_out[top_y] = left_range_image;

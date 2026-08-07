@@ -1,6 +1,36 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
+impl<F, E> LowBasisRangeCheckProver<E, F>
+where
+    F: FieldCore,
+    E: ExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
+{
+    fn compute_round_from_folded_octets(
+        &self,
+        range_image: &FoldedOctetRangeImage<E>,
+    ) -> EqFactoredUniPoly<E> {
+        let degree = self.polynomial_precomputation.degree_q;
+        let (first_equality, second_equality) = self.split_eq.remaining_eq_tables();
+        E::try_compute_class_coded_affine_polynomial_round(
+            self.kernel_plan,
+            &range_image.class_codes,
+            &range_image.class_values,
+            &range_image.class_taylor_coefficients,
+            first_equality,
+            second_equality,
+            degree,
+        )
+        .map(|coefficients| EqFactoredUniPoly::from_q_coeffs(coefficients[..=degree].to_vec()))
+        .unwrap_or_else(|| {
+            self.compute_round_sparse_x_y(range_image.len(), |out, index| {
+                range_image.entry_coefficients(out, degree, index);
+            })
+        })
+    }
+
     pub(super) fn compute_current_round_eq_poly_from_state(&mut self) -> EqFactoredUniPoly<E> {
         let use_two_round_prefix = self.using_two_round_prefix();
         let use_prefix_x_round = !use_two_round_prefix && self.use_prefix_x_round();
@@ -77,13 +107,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 }
                 LowBasisRangeImageStorage::FoldedOctets(range_image) => {
                     debug_assert!(use_sparse_x_y_round);
-                    self.compute_round_sparse_x_y(range_image.len(), |out, index| {
-                        range_image.entry_coefficients(
-                            out,
-                            self.polynomial_precomputation.degree_q,
-                            index,
-                        );
-                    })
+                    self.compute_round_from_folded_octets(range_image)
                 }
             }
         };
@@ -110,8 +134,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
-    EqFactoredSumcheckInstanceProver<E> for LowBasisRangeCheckProver<E>
+impl<F, E> EqFactoredSumcheckInstanceProver<E> for LowBasisRangeCheckProver<E, F>
+where
+    F: FieldCore,
+    E: ExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
 {
     fn num_rounds(&self) -> usize {
         self.num_vars
@@ -284,14 +314,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                             r1,
                             r,
                         );
-                        let round_poly =
-                            self.compute_round_sparse_x_y(range_image.len(), |out, index| {
-                                range_image.entry_coefficients(
-                                    out,
-                                    self.polynomial_precomputation.degree_q,
-                                    index,
-                                );
-                            });
+                        let round_poly = self.compute_round_from_folded_octets(&range_image);
                         self.cached_round_poly = Some(round_poly);
                         LowBasisRangeImageStorage::FoldedOctets(range_image)
                     } else {
@@ -373,8 +396,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                 let next_range_image = if fuse_next_sparse_x_y {
                     let (next_range_image, round_poly) = self
                         .fuse_sparse_x_y_fold_and_compute_round(
-                            range_image.len(),
-                            |index| range_image.value(index),
+                            SparseRangeImageValues::ClassCoded(&range_image),
                             r,
                         );
                     self.cached_round_poly = Some(round_poly);
@@ -410,8 +432,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                     if fuse_next_sparse_x_y {
                         let (next_range_image, round_poly) = self
                             .fuse_sparse_x_y_fold_and_compute_round(
-                                range_image.len(),
-                                |index| range_image[index],
+                                SparseRangeImageValues::Materialized(&range_image),
                                 r,
                             );
                         self.cached_round_poly = Some(round_poly);

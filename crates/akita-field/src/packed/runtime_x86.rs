@@ -3,11 +3,12 @@
 use super::avx2::{PackedFp32Avx2, PackedFp64Avx2};
 use super::avx512::{PackedFp32Avx512, PackedFp64Avx512};
 use super::runtime_common::{
+    compute_class_coded_affine_polynomial_round_packed,
     compute_compact_affine_product_round_packed, compute_product_round_fp_ext2_fp64_packed,
     compute_product_round_packed, compute_weighted_affine_polynomial_round_packed,
     compute_weighted_affine_product_round_packed,
     fold_and_compute_product_round_fp_ext2_fp64_packed, fold_and_compute_product_round_packed,
-    fold_fp_ext2_fp64_packed,
+    fold_and_compute_sparse_affine_polynomial_round_packed, fold_fp_ext2_fp64_packed,
 };
 use super::{PackedField, PackedFpExt4};
 use crate::{Fp32, Fp64, FpExt2, FpExt2Config, FpExt4};
@@ -338,6 +339,112 @@ pub unsafe fn compute_compact_affine_product_round_fp_ext4_fp32_avx512_ifma<
             second_equality,
             arity,
             parent_weights,
+        )
+    }
+}
+
+/// Compute a class-coded polynomial round with AVX2.
+///
+/// # Safety
+///
+/// The caller must establish that AVX2 is available on the current CPU.
+#[target_feature(enable = "avx2")]
+pub unsafe fn compute_class_coded_affine_polynomial_round_fp_ext4_fp32_avx2<const P: u32>(
+    class_codes: &[u16],
+    class_values: &[FpExt4<Fp32<P>>],
+    class_taylor_coefficients: &[[FpExt4<Fp32<P>>; 4]],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    degree: usize,
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        compute_class_coded_affine_polynomial_round_packed::<P, PackedFp32Avx2<P>>(
+            class_codes,
+            class_values,
+            class_taylor_coefficients,
+            first_equality,
+            second_equality,
+            degree,
+        )
+    }
+}
+
+/// Compute a class-coded polynomial round with AVX-512 IFMA.
+///
+/// # Safety
+///
+/// The caller must establish that AVX-512F, DQ, and IFMA are available.
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+pub unsafe fn compute_class_coded_affine_polynomial_round_fp_ext4_fp32_avx512_ifma<const P: u32>(
+    class_codes: &[u16],
+    class_values: &[FpExt4<Fp32<P>>],
+    class_taylor_coefficients: &[[FpExt4<Fp32<P>>; 4]],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    degree: usize,
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        compute_class_coded_affine_polynomial_round_packed::<P, PackedFp32Avx512<P>>(
+            class_codes,
+            class_values,
+            class_taylor_coefficients,
+            first_equality,
+            second_equality,
+            degree,
+        )
+    }
+}
+
+/// Fold a sparse-prefix value table and compute its next round with AVX2.
+///
+/// # Safety
+///
+/// The caller must establish that AVX2 is available on the current CPU.
+#[target_feature(enable = "avx2")]
+pub unsafe fn fold_and_compute_sparse_affine_polynomial_round_fp_ext4_fp32_avx2<const P: u32>(
+    values: &[FpExt4<Fp32<P>>],
+    folded_values: &mut [FpExt4<Fp32<P>>],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    challenge: FpExt4<Fp32<P>>,
+    degree: usize,
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        fold_and_compute_sparse_affine_polynomial_round_packed::<P, PackedFp32Avx2<P>>(
+            values,
+            folded_values,
+            first_equality,
+            second_equality,
+            challenge,
+            degree,
+        )
+    }
+}
+
+/// Fold a sparse-prefix value table and compute its next round with AVX-512 IFMA.
+///
+/// # Safety
+///
+/// The caller must establish that AVX-512F, DQ, and IFMA are available.
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+pub unsafe fn fold_and_compute_sparse_affine_polynomial_round_fp_ext4_fp32_avx512_ifma<
+    const P: u32,
+>(
+    values: &[FpExt4<Fp32<P>>],
+    folded_values: &mut [FpExt4<Fp32<P>>],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    challenge: FpExt4<Fp32<P>>,
+    degree: usize,
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        fold_and_compute_sparse_affine_polynomial_round_packed::<P, PackedFp32Avx512<P>>(
+            values,
+            folded_values,
+            first_equality,
+            second_equality,
+            challenge,
+            degree,
         )
     }
 }

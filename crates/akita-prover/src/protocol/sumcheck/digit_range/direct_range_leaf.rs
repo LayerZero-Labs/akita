@@ -49,7 +49,7 @@ use super::super::two_round_prefix::{
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
+use akita_field::{AkitaError, ExtField, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly,
 };
@@ -566,6 +566,30 @@ enum LowBasisRangeImageStorage<E: FieldCore> {
     Materialized(Vec<E>),
 }
 
+#[derive(Clone, Copy)]
+enum SparseRangeImageValues<'a, E: FieldCore> {
+    ClassCoded(&'a FoldedOctetRangeImage<E>),
+    Materialized(&'a [E]),
+}
+
+impl<E: FieldCore + HasUnreducedOps> SparseRangeImageValues<'_, E> {
+    #[inline]
+    fn len(self) -> usize {
+        match self {
+            Self::ClassCoded(values) => values.len(),
+            Self::Materialized(values) => values.len(),
+        }
+    }
+
+    #[inline]
+    fn value(self, index: usize) -> E {
+        match self {
+            Self::ClassCoded(values) => values.value(index),
+            Self::Materialized(values) => values[index],
+        }
+    }
+}
+
 pub(crate) trait CompactRangeImageValue: Copy + Send + Sync {
     fn range_image_value(self) -> i16;
 }
@@ -608,7 +632,11 @@ struct DirectRangePrefixState<E: FieldCore> {
 }
 
 /// Direct leaf state over `range_image(x) = w(x)(w(x)+1)`.
-pub(crate) struct LowBasisRangeCheckProver<E: FieldCore> {
+pub(crate) struct LowBasisRangeCheckProver<E, F = E>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
     range_image: LowBasisRangeImageStorage<E>,
     split_eq: GruenSplitEq<E>,
     polynomial_precomputation: RangePolynomialPrecomputation,
@@ -620,6 +648,8 @@ pub(crate) struct LowBasisRangeCheckProver<E: FieldCore> {
     initial_round_prefix: Option<DirectRangePrefixState<E>>,
     cached_round_poly: Option<EqFactoredUniPoly<E>>,
     rounds_completed: usize,
+    kernel_plan: crate::kernels::sumcheck::SumcheckKernelPlan,
+    base_field: core::marker::PhantomData<fn() -> F>,
 }
 
 mod initial_round_deferral;

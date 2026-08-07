@@ -303,6 +303,188 @@ where
     sums.map(sum_fp32_lanes)
 }
 
+/// Compute an explicit class-coded polynomial round.
+#[inline(always)]
+pub(super) unsafe fn compute_class_coded_affine_polynomial_round_packed<const P: u32, PF>(
+    class_codes: &[u16],
+    class_values: &[FpExt4<Fp32<P>>],
+    class_taylor_coefficients: &[[FpExt4<Fp32<P>>; 4]],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    degree: usize,
+) -> [FpExt4<Fp32<P>>; 5]
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let pair_count = class_codes.len() / 2;
+    validate_class_coded_affine_polynomial_inputs(
+        class_codes,
+        class_values.len(),
+        class_taylor_coefficients.len(),
+        first_equality,
+        second_equality,
+        degree,
+        PF::WIDTH,
+    );
+    let zero = PackedFpExt4::<Fp32<P>, PF>::broadcast(FpExt4::zero());
+    let mut sums = [zero; 5];
+
+    for pair in (0..pair_count).step_by(PF::WIDTH) {
+        let left_classes = std::array::from_fn::<_, 16, _>(|lane| {
+            if lane < PF::WIDTH && pair + lane < pair_count {
+                usize::from(class_codes[2 * (pair + lane)])
+            } else {
+                0
+            }
+        });
+        let right_classes = std::array::from_fn::<_, 16, _>(|lane| {
+            if lane < PF::WIDTH && pair + lane < pair_count {
+                usize::from(class_codes[2 * (pair + lane) + 1])
+            } else {
+                0
+            }
+        });
+        let left = packed_extension_values::<P, PF>(|lane| class_values[left_classes[lane]]);
+        let right = packed_extension_values::<P, PF>(|lane| class_values[right_classes[lane]]);
+        let taylor: [PackedFpExt4<Fp32<P>, PF>; 4] = std::array::from_fn(|coefficient| {
+            packed_extension_values::<P, PF>(|lane| {
+                class_taylor_coefficients[left_classes[lane]][coefficient]
+            })
+        });
+        let first = packed_extension_values::<P, PF>(|lane| {
+            if pair + lane < pair_count {
+                first_equality[(pair + lane) % first_equality.len()]
+            } else {
+                FpExt4::zero()
+            }
+        });
+        let second = PackedFpExt4::broadcast(second_equality[pair / first_equality.len()]);
+        let equality = first * second;
+        let delta = right - left;
+        let delta_squared = delta * delta;
+        let coefficients = match degree {
+            2 => [taylor[0], taylor[1] * delta, delta_squared, zero, zero],
+            4 => {
+                let delta_cubed = delta_squared * delta;
+                [
+                    taylor[0],
+                    taylor[1] * delta,
+                    taylor[2] * delta_squared,
+                    taylor[3] * delta_cubed,
+                    delta_squared * delta_squared,
+                ]
+            }
+            _ => unreachable!("validated direct-range polynomial degree"),
+        };
+        for coefficient in 0..=degree {
+            sums[coefficient] = sums[coefficient] + equality * coefficients[coefficient];
+        }
+    }
+    sums.map(sum_fp32_lanes)
+}
+
+/// Fold adjacent value pairs and compute the next direct-range polynomial round.
+#[inline(always)]
+pub(super) unsafe fn fold_and_compute_sparse_affine_polynomial_round_packed<const P: u32, PF>(
+    values: &[FpExt4<Fp32<P>>],
+    folded_values: &mut [FpExt4<Fp32<P>>],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    challenge: FpExt4<Fp32<P>>,
+    degree: usize,
+) -> [FpExt4<Fp32<P>>; 5]
+where
+    PF: PackedField<Scalar = Fp32<P>>,
+{
+    let pair_count = validate_sparse_affine_polynomial_inputs(
+        values,
+        folded_values,
+        first_equality,
+        second_equality,
+        degree,
+        PF::WIDTH,
+    );
+    let zero = PackedFpExt4::<Fp32<P>, PF>::broadcast(FpExt4::zero());
+    let two = PackedFpExt4::broadcast(FpExt4::from_u64(2));
+    let eighteen = PackedFpExt4::broadcast(FpExt4::from_u64(18));
+    let twenty = PackedFpExt4::broadcast(FpExt4::from_u64(20));
+    let seventy_two = PackedFpExt4::broadcast(FpExt4::from_u64(72));
+    let one_hundred_eight = PackedFpExt4::broadcast(FpExt4::from_u64(108));
+    let challenge = PackedFpExt4::broadcast(challenge);
+    let mut sums = [zero; 5];
+
+    for pair in (0..pair_count).step_by(PF::WIDTH) {
+        let active_lanes = (pair_count - pair).min(PF::WIDTH);
+        let packed_source = |offset| {
+            packed_extension_values::<P, PF>(|lane| {
+                if lane < active_lanes {
+                    values[4 * (pair + lane) + offset]
+                } else {
+                    FpExt4::zero()
+                }
+            })
+        };
+        let first_even = packed_source(0);
+        let first_odd = packed_source(1);
+        let second_even = packed_source(2);
+        let second_odd = packed_source(3);
+        let first_folded = first_even + (first_odd - first_even) * challenge;
+        let second_folded = second_even + (second_odd - second_even) * challenge;
+        for lane in 0..active_lanes {
+            folded_values[2 * (pair + lane)] = first_folded.extract(lane);
+            folded_values[2 * (pair + lane) + 1] = second_folded.extract(lane);
+        }
+
+        let first = packed_extension_values::<P, PF>(|lane| {
+            if lane < active_lanes {
+                first_equality[(pair + lane) % first_equality.len()]
+            } else {
+                FpExt4::zero()
+            }
+        });
+        let second = PackedFpExt4::broadcast(second_equality[pair / first_equality.len()]);
+        let equality = first * second;
+        let delta = second_folded - first_folded;
+        let delta_squared = delta * delta;
+        let coefficients = match degree {
+            2 => [
+                first_folded * (first_folded - two),
+                (first_folded + first_folded - two) * delta,
+                delta_squared,
+                zero,
+                zero,
+            ],
+            4 => {
+                let four_left = first_folded + first_folded + first_folded + first_folded;
+                let sixteen_left = four_left + four_left + four_left + four_left;
+                let eighteen_left = sixteen_left + first_folded + first_folded;
+                let sixty_four_left = sixteen_left + sixteen_left + sixteen_left + sixteen_left;
+                let sixty_left = sixty_four_left - four_left;
+                let left_squared = first_folded * first_folded;
+                let first_quadratic = left_squared - first_folded - first_folded;
+                let second_quadratic = left_squared - eighteen_left + seventy_two;
+                let delta_cubed = delta_squared * delta;
+                [
+                    first_quadratic * second_quadratic,
+                    (first_quadratic * (first_folded + first_folded - eighteen)
+                        + second_quadratic * (first_folded + first_folded - two))
+                        * delta,
+                    (left_squared + left_squared + four_left * first_folded - sixty_left
+                        + one_hundred_eight)
+                        * delta_squared,
+                    (four_left - twenty) * delta_cubed,
+                    delta_squared * delta_squared,
+                ]
+            }
+            _ => unreachable!("validated direct-range polynomial degree"),
+        };
+        for coefficient in 0..=degree {
+            sums[coefficient] = sums[coefficient] + equality * coefficients[coefficient];
+        }
+    }
+    sums.map(sum_fp32_lanes)
+}
+
 #[inline(always)]
 fn packed_class_values<const P: u32, PF, const LANES: usize>(
     rows: &[[FpExt4<Fp32<P>>; LANES]],
@@ -782,6 +964,61 @@ fn validate_compact_affine_product_inputs<T, const LANES: usize>(
         first_equality.len().is_multiple_of(width) && quartet_count.is_multiple_of(width),
         "compact product blocks must align to the SIMD width"
     );
+}
+
+fn validate_class_coded_affine_polynomial_inputs<T>(
+    class_codes: &[u16],
+    class_value_count: usize,
+    taylor_row_count: usize,
+    first_equality: &[T],
+    second_equality: &[T],
+    degree: usize,
+    width: usize,
+) {
+    assert!(matches!(degree, 2 | 4));
+    assert_eq!(class_value_count, taylor_row_count);
+    assert!(class_codes.len().is_multiple_of(2));
+    assert!(
+        class_codes
+            .iter()
+            .all(|&class| usize::from(class) < class_value_count),
+        "class code exceeds the prepared value table"
+    );
+    assert!(
+        first_equality.len().is_power_of_two()
+            && second_equality.len().is_power_of_two()
+            && first_equality.len().is_multiple_of(width),
+        "split equality tables must align to the SIMD width"
+    );
+    assert!(
+        class_codes.len() / 2 <= first_equality.len() * second_equality.len(),
+        "class-coded prefix exceeds its equality domain"
+    );
+}
+
+fn validate_sparse_affine_polynomial_inputs<T>(
+    values: &[T],
+    folded_values: &[T],
+    first_equality: &[T],
+    second_equality: &[T],
+    degree: usize,
+    width: usize,
+) -> usize {
+    assert!(matches!(degree, 2 | 4));
+    assert!(values.len().is_multiple_of(4));
+    assert_eq!(folded_values.len(), values.len() / 2);
+    assert!(
+        first_equality.len().is_power_of_two()
+            && second_equality.len().is_power_of_two()
+            && first_equality.len().is_multiple_of(width),
+        "split equality tables must align to the SIMD width"
+    );
+    let pair_count = values.len() / 4;
+    assert!(
+        pair_count <= first_equality.len() * second_equality.len(),
+        "sparse value prefix exceeds its equality domain"
+    );
+    pair_count
 }
 
 fn validate_fused_product_round_slices<const P: u32>(

@@ -1,6 +1,8 @@
 use super::SumcheckKernelPlan;
 use akita_field::{Ext2, ExtField, FpExt4, Prime32Offset99, Prime64Offset59};
-use akita_sumcheck::{batched_affine_product_coefficients, EvaluationTable};
+use akita_sumcheck::{
+    batched_affine_product_coefficients, compose_polynomial_with_affine, EvaluationTable,
+};
 
 type F = Prime32Offset99;
 type E = FpExt4<F>;
@@ -174,6 +176,100 @@ fn compare_compact_affine_product_plan<const LANES: usize>(plan: SumcheckKernelP
     }
 }
 
+fn direct_range_polynomial(degree: usize) -> Vec<E> {
+    match degree {
+        2 => vec![E::zero(), E::zero() - E::from_u64(2), E::from_u64(1)],
+        4 => vec![
+            E::zero(),
+            E::zero() - E::from_u64(144),
+            E::from_u64(108),
+            E::zero() - E::from_u64(20),
+            E::from_u64(1),
+        ],
+        _ => unreachable!(),
+    }
+}
+
+fn compare_class_coded_affine_polynomial_plan(plan: SumcheckKernelPlan) {
+    let class_values = (0..64).map(|row| value(row + 5_001)).collect::<Vec<_>>();
+    let class_codes = (0..272)
+        .map(|index| u16::try_from((index * 29 + 7) % class_values.len()).unwrap())
+        .collect::<Vec<_>>();
+    let first_equality = (0..32).map(|row| value(row + 6_001)).collect::<Vec<_>>();
+    let second_equality = (0..8).map(|row| value(row + 7_001)).collect::<Vec<_>>();
+
+    for degree in [2, 4] {
+        let polynomial = direct_range_polynomial(degree);
+        let class_taylor_coefficients = class_values
+            .iter()
+            .map(|&class_value| {
+                let coefficients =
+                    compose_polynomial_with_affine(&polynomial, class_value, E::from_u64(1));
+                std::array::from_fn(|index| coefficients[index])
+            })
+            .collect::<Vec<_>>();
+        let mut expected = [E::zero(); 5];
+        for pair in 0..class_codes.len() / 2 {
+            let left = class_values[usize::from(class_codes[2 * pair])];
+            let right = class_values[usize::from(class_codes[2 * pair + 1])];
+            let coefficients = compose_polynomial_with_affine(&polynomial, left, right - left);
+            let equality = first_equality[pair % first_equality.len()]
+                * second_equality[pair / first_equality.len()];
+            for coefficient in 0..=degree {
+                expected[coefficient] += equality * coefficients[coefficient];
+            }
+        }
+        if let Some(actual) = plan.try_compute_class_coded_affine_polynomial_round_fp32(
+            &class_codes,
+            &class_values,
+            &class_taylor_coefficients,
+            &first_equality,
+            &second_equality,
+            degree,
+        ) {
+            assert_eq!(actual, expected, "class-coded degree {degree}");
+        }
+    }
+}
+
+fn compare_sparse_affine_polynomial_fold_plan(plan: SumcheckKernelPlan) {
+    let values = (0..544).map(|row| value(row + 8_001)).collect::<Vec<_>>();
+    let first_equality = (0..32).map(|row| value(row + 9_001)).collect::<Vec<_>>();
+    let second_equality = (0..8).map(|row| value(row + 10_001)).collect::<Vec<_>>();
+    let challenge = value(11_001);
+
+    for degree in [2, 4] {
+        let polynomial = direct_range_polynomial(degree);
+        let mut expected_values = vec![E::zero(); values.len() / 2];
+        let mut expected = [E::zero(); 5];
+        for pair in 0..values.len() / 4 {
+            let left = values[4 * pair] + challenge * (values[4 * pair + 1] - values[4 * pair]);
+            let right =
+                values[4 * pair + 2] + challenge * (values[4 * pair + 3] - values[4 * pair + 2]);
+            expected_values[2 * pair] = left;
+            expected_values[2 * pair + 1] = right;
+            let coefficients = compose_polynomial_with_affine(&polynomial, left, right - left);
+            let equality = first_equality[pair % first_equality.len()]
+                * second_equality[pair / first_equality.len()];
+            for coefficient in 0..=degree {
+                expected[coefficient] += equality * coefficients[coefficient];
+            }
+        }
+        let mut actual_values = vec![E::zero(); values.len() / 2];
+        if let Some(actual) = plan.try_fold_and_compute_sparse_affine_polynomial_round_fp32(
+            &values,
+            &mut actual_values,
+            &first_equality,
+            &second_equality,
+            challenge,
+            degree,
+        ) {
+            assert_eq!(actual_values, expected_values, "folded degree {degree}");
+            assert_eq!(actual, expected, "fused sparse degree {degree}");
+        }
+    }
+}
+
 fn compare_fp64_plan(plan: SumcheckKernelPlan) {
     for len in [2, 4, 8, 16, 32, 64, 256] {
         let source: Vec<_> = (0..len).map(value64).collect();
@@ -236,6 +332,8 @@ fn detected_fp32_fold_matches_scalar() {
     compare_compact_affine_product_plan::<2>(SumcheckKernelPlan::detect(), 2);
     compare_compact_affine_product_plan::<4>(SumcheckKernelPlan::detect(), 4);
     compare_compact_affine_product_plan::<8>(SumcheckKernelPlan::detect(), 4);
+    compare_class_coded_affine_polynomial_plan(SumcheckKernelPlan::detect());
+    compare_sparse_affine_polynomial_fold_plan(SumcheckKernelPlan::detect());
     compare_fp64_plan(SumcheckKernelPlan::detect());
 }
 
@@ -253,6 +351,8 @@ fn supported_x86_fp32_folds_match_scalar() {
         compare_compact_affine_product_plan::<2>(SumcheckKernelPlan::AVX2, 2);
         compare_compact_affine_product_plan::<4>(SumcheckKernelPlan::AVX2, 4);
         compare_compact_affine_product_plan::<8>(SumcheckKernelPlan::AVX2, 4);
+        compare_class_coded_affine_polynomial_plan(SumcheckKernelPlan::AVX2);
+        compare_sparse_affine_polynomial_fold_plan(SumcheckKernelPlan::AVX2);
         compare_fp64_plan(SumcheckKernelPlan::AVX2);
     }
     if std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512ifma") {
@@ -266,6 +366,8 @@ fn supported_x86_fp32_folds_match_scalar() {
         compare_compact_affine_product_plan::<2>(SumcheckKernelPlan::AVX512_IFMA, 2);
         compare_compact_affine_product_plan::<4>(SumcheckKernelPlan::AVX512_IFMA, 4);
         compare_compact_affine_product_plan::<8>(SumcheckKernelPlan::AVX512_IFMA, 4);
+        compare_class_coded_affine_polynomial_plan(SumcheckKernelPlan::AVX512_IFMA);
+        compare_sparse_affine_polynomial_fold_plan(SumcheckKernelPlan::AVX512_IFMA);
         compare_fp64_plan(SumcheckKernelPlan::AVX512_IFMA);
     }
 }
@@ -284,6 +386,8 @@ fn supported_neon_fp32_folds_match_scalar() {
         compare_compact_affine_product_plan::<2>(SumcheckKernelPlan::NEON, 2);
         compare_compact_affine_product_plan::<4>(SumcheckKernelPlan::NEON, 4);
         compare_compact_affine_product_plan::<8>(SumcheckKernelPlan::NEON, 4);
+        compare_class_coded_affine_polynomial_plan(SumcheckKernelPlan::NEON);
+        compare_sparse_affine_polynomial_fold_plan(SumcheckKernelPlan::NEON);
         compare_fp64_plan(SumcheckKernelPlan::NEON);
     }
 }

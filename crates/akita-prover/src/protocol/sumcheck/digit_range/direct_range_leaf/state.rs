@@ -1,6 +1,13 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
+impl<F, E> LowBasisRangeCheckProver<E, F>
+where
+    F: FieldCore,
+    E: ExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
+{
     /// Build the low-basis prover from the compact witness table.
     pub(crate) fn new(
         digit_witness: std::sync::Arc<[i8]>,
@@ -62,6 +69,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             initial_round_prefix: None,
             cached_round_poly: None,
             rounds_completed: 0,
+            kernel_plan: crate::kernels::sumcheck::SumcheckKernelPlan::detect(),
+            base_field: core::marker::PhantomData,
         })
     }
 

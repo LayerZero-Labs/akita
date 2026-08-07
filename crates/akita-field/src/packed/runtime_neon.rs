@@ -2,11 +2,13 @@
 
 use super::neon::{PackedFp32Neon, PackedFp64Neon};
 use super::runtime_common::{
+    compute_class_coded_affine_polynomial_round_packed,
     compute_compact_affine_product_round_packed, compute_product_round_fp_ext2_fp64_packed,
     compute_product_round_packed, compute_weighted_affine_polynomial_round_packed,
     compute_weighted_affine_product_round_packed,
     fold_and_compute_product_round_fp_ext2_fp64_packed, fold_and_compute_product_round_packed,
-    fold_fp_ext2_fp64_packed, fold_fp_ext4_fp32_packed,
+    fold_and_compute_sparse_affine_polynomial_round_packed, fold_fp_ext2_fp64_packed,
+    fold_fp_ext4_fp32_packed,
 };
 use crate::{Fp32, Fp64, FpExt2, FpExt2Config, FpExt4};
 
@@ -123,6 +125,58 @@ pub unsafe fn compute_compact_affine_product_round_fp_ext4_fp32_neon<
             second_equality,
             arity,
             parent_weights,
+        )
+    }
+}
+
+/// Compute a class-coded polynomial round with NEON.
+///
+/// # Safety
+///
+/// The caller must establish that NEON is available on the current CPU.
+#[target_feature(enable = "neon")]
+pub unsafe fn compute_class_coded_affine_polynomial_round_fp_ext4_fp32_neon<const P: u32>(
+    class_codes: &[u16],
+    class_values: &[FpExt4<Fp32<P>>],
+    class_taylor_coefficients: &[[FpExt4<Fp32<P>>; 4]],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    degree: usize,
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        compute_class_coded_affine_polynomial_round_packed::<P, PackedFp32Neon<P>>(
+            class_codes,
+            class_values,
+            class_taylor_coefficients,
+            first_equality,
+            second_equality,
+            degree,
+        )
+    }
+}
+
+/// Fold a sparse-prefix value table and compute its next round with NEON.
+///
+/// # Safety
+///
+/// The caller must establish that NEON is available on the current CPU.
+#[target_feature(enable = "neon")]
+pub unsafe fn fold_and_compute_sparse_affine_polynomial_round_fp_ext4_fp32_neon<const P: u32>(
+    values: &[FpExt4<Fp32<P>>],
+    folded_values: &mut [FpExt4<Fp32<P>>],
+    first_equality: &[FpExt4<Fp32<P>>],
+    second_equality: &[FpExt4<Fp32<P>>],
+    challenge: FpExt4<Fp32<P>>,
+    degree: usize,
+) -> [FpExt4<Fp32<P>>; 5] {
+    unsafe {
+        fold_and_compute_sparse_affine_polynomial_round_packed::<P, PackedFp32Neon<P>>(
+            values,
+            folded_values,
+            first_equality,
+            second_equality,
+            challenge,
+            degree,
         )
     }
 }

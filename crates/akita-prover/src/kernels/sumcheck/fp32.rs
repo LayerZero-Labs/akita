@@ -77,6 +77,44 @@ impl<const P: u32> SumcheckTableOperations<Fp32<P>> for FpExt4<Fp32<P>> {
             parent_weights,
         )
     }
+
+    fn try_compute_class_coded_affine_polynomial_round(
+        plan: SumcheckKernelPlan,
+        class_codes: &[u16],
+        class_values: &[Self],
+        class_taylor_coefficients: &[[Self; 4]],
+        first_equality: &[Self],
+        second_equality: &[Self],
+        degree: usize,
+    ) -> Option<[Self; 5]> {
+        plan.try_compute_class_coded_affine_polynomial_round_fp32(
+            class_codes,
+            class_values,
+            class_taylor_coefficients,
+            first_equality,
+            second_equality,
+            degree,
+        )
+    }
+
+    fn try_fold_and_compute_sparse_affine_polynomial_round(
+        plan: SumcheckKernelPlan,
+        values: &[Self],
+        folded_values: &mut [Self],
+        first_equality: &[Self],
+        second_equality: &[Self],
+        challenge: Self,
+        degree: usize,
+    ) -> Option<[Self; 5]> {
+        plan.try_fold_and_compute_sparse_affine_polynomial_round_fp32(
+            values,
+            folded_values,
+            first_equality,
+            second_equality,
+            challenge,
+            degree,
+        )
+    }
 }
 
 impl SumcheckKernelPlan {

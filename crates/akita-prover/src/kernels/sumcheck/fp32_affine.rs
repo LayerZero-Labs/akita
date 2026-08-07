@@ -92,4 +92,153 @@ impl SumcheckKernelPlan {
             }
         }
     }
+
+    pub(super) fn try_compute_class_coded_affine_polynomial_round_fp32<const P: u32>(
+        self,
+        class_codes: &[u16],
+        class_values: &[FpExt4<Fp32<P>>],
+        class_taylor_coefficients: &[[FpExt4<Fp32<P>>; 4]],
+        first_equality: &[FpExt4<Fp32<P>>],
+        second_equality: &[FpExt4<Fp32<P>>],
+        degree: usize,
+    ) -> Option<[FpExt4<Fp32<P>>; 5]> {
+        if !matches!(degree, 2 | 4)
+            || !class_codes.len().is_multiple_of(2)
+            || class_values.is_empty()
+            || class_values.len() != class_taylor_coefficients.len()
+            || first_equality.is_empty()
+            || second_equality.is_empty()
+            || !first_equality.len().is_power_of_two()
+            || !second_equality.len().is_power_of_two()
+            || class_codes
+                .iter()
+                .any(|&class| usize::from(class) >= class_values.len())
+        {
+            return None;
+        }
+        let pair_count = class_codes.len() / 2;
+        if pair_count > first_equality.len().checked_mul(second_equality.len())? {
+            return None;
+        }
+        let width = match self.fp32_product_round {
+            Fp32Kernel::Scalar => return None,
+            #[cfg(target_arch = "aarch64")]
+            Fp32Kernel::Neon => 4,
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx2 => 8,
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx512Ifma => 16,
+        };
+        if !first_equality.len().is_multiple_of(width) {
+            return None;
+        }
+
+        match self.fp32_product_round {
+            Fp32Kernel::Scalar => None,
+            #[cfg(target_arch = "aarch64")]
+            Fp32Kernel::Neon => Some(unsafe {
+                akita_field::packed::runtime_neon::compute_class_coded_affine_polynomial_round_fp_ext4_fp32_neon(
+                    class_codes,
+                    class_values,
+                    class_taylor_coefficients,
+                    first_equality,
+                    second_equality,
+                    degree,
+                )
+            }),
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx2 => Some(unsafe {
+                akita_field::packed::runtime_x86::compute_class_coded_affine_polynomial_round_fp_ext4_fp32_avx2(
+                    class_codes,
+                    class_values,
+                    class_taylor_coefficients,
+                    first_equality,
+                    second_equality,
+                    degree,
+                )
+            }),
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx512Ifma => Some(unsafe {
+                akita_field::packed::runtime_x86::compute_class_coded_affine_polynomial_round_fp_ext4_fp32_avx512_ifma(
+                    class_codes,
+                    class_values,
+                    class_taylor_coefficients,
+                    first_equality,
+                    second_equality,
+                    degree,
+                )
+            }),
+        }
+    }
+
+    pub(super) fn try_fold_and_compute_sparse_affine_polynomial_round_fp32<const P: u32>(
+        self,
+        values: &[FpExt4<Fp32<P>>],
+        folded_values: &mut [FpExt4<Fp32<P>>],
+        first_equality: &[FpExt4<Fp32<P>>],
+        second_equality: &[FpExt4<Fp32<P>>],
+        challenge: FpExt4<Fp32<P>>,
+        degree: usize,
+    ) -> Option<[FpExt4<Fp32<P>>; 5]> {
+        if !matches!(degree, 2 | 4)
+            || !values.len().is_multiple_of(4)
+            || folded_values.len() != values.len() / 2
+            || first_equality.is_empty()
+            || second_equality.is_empty()
+            || !first_equality.len().is_power_of_two()
+            || !second_equality.len().is_power_of_two()
+            || values.len() / 4 > first_equality.len().checked_mul(second_equality.len())?
+        {
+            return None;
+        }
+        let width = match self.fp32_product_round {
+            Fp32Kernel::Scalar => return None,
+            #[cfg(target_arch = "aarch64")]
+            Fp32Kernel::Neon => 4,
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx2 => 8,
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx512Ifma => 16,
+        };
+        if !first_equality.len().is_multiple_of(width) {
+            return None;
+        }
+
+        match self.fp32_product_round {
+            Fp32Kernel::Scalar => None,
+            #[cfg(target_arch = "aarch64")]
+            Fp32Kernel::Neon => Some(unsafe {
+                akita_field::packed::runtime_neon::fold_and_compute_sparse_affine_polynomial_round_fp_ext4_fp32_neon(
+                    values,
+                    folded_values,
+                    first_equality,
+                    second_equality,
+                    challenge,
+                    degree,
+                )
+            }),
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx2 => Some(unsafe {
+                akita_field::packed::runtime_x86::fold_and_compute_sparse_affine_polynomial_round_fp_ext4_fp32_avx2(
+                    values,
+                    folded_values,
+                    first_equality,
+                    second_equality,
+                    challenge,
+                    degree,
+                )
+            }),
+            #[cfg(target_arch = "x86_64")]
+            Fp32Kernel::Avx512Ifma => Some(unsafe {
+                akita_field::packed::runtime_x86::fold_and_compute_sparse_affine_polynomial_round_fp_ext4_fp32_avx512_ifma(
+                    values,
+                    folded_values,
+                    first_equality,
+                    second_equality,
+                    challenge,
+                    degree,
+                )
+            }),
+        }
+    }
 }
