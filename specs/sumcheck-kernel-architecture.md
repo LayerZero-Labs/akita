@@ -648,6 +648,18 @@ and complete root EOR from 250 to 253 ms to 191 to 192 ms. The largest recursive
 construction fell from 87.2 to 87.7 ms to 75.8 to 77.5 ms. Complete proofs
 measured 1.496 and 1.522 seconds and verified.
 
+Root sparse EOR now transposes the fixed high-factor contraction during its
+merge-free plateau. The first round groups each suffix factor by the entry's
+original low index and bounded witness-value tag. Later challenges change only
+the low tensor state and the folded value palette, so the next round polynomial
+is evaluated from those suffix sums instead of rescanning one million rows.
+Indices still shift in place each round, and the cache is discarded at the first
+merging fold; the ordinary sparse path remains the transition oracle. The
+one-time suffix grouping costs 3.11 to 3.13 ms. Root round zero fell from about
+40.9 ms to 14.0 ms, the next four plateau rounds from 16.5 to 17.2 ms each to
+0.68 to 1.36 ms, and complete root EOR from 191 ms to 102 and 111 ms. Two full
+proofs measured 1.301 seconds and verified unchanged.
+
 On the same profile, retaining Stage 1 octet classes after the third challenge
 and using the canonical Taylor kernel reduced the root Stage 1 sumcheck from
 160 to 161 ms to 138 to 139 ms. Its largest next-round polynomial fell from

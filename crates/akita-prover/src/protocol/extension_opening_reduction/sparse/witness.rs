@@ -90,6 +90,15 @@ impl<E: FieldCore> MergeFreeValuePalette<E> {
     pub(super) fn folded_values(&self) -> &[E] {
         &self.folded_values
     }
+
+    pub(super) fn palette_len(&self) -> usize {
+        self.palette_len
+    }
+
+    #[inline(always)]
+    pub(super) fn original_tag(&self, row: usize) -> usize {
+        usize::from(self.row_codes[row]) >> u8::BITS
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -735,6 +744,24 @@ where
                 self.merge_free_value_palette()
                     .expect("merge-free palette was prepared for the first round"),
             );
+            factor.prepare_merge_free_suffix_sums(
+                self,
+                self.merge_free_value_palette()
+                    .expect("merge-free palette was prepared for the first round"),
+            );
+        }
+
+        if use_precomputed_products {
+            if let Some((round_constant, round_quadratic)) = factor
+                .compute_merge_free_suffix_summed_round(
+                    self.merge_free_value_palette()
+                        .expect("merge-free palette was prepared for the first round"),
+                )
+            {
+                *constant += coeff * round_constant;
+                *quadratic += coeff * round_quadratic;
+                return;
+            }
         }
 
         #[cfg(feature = "parallel")]

@@ -1,3 +1,4 @@
+use super::suffix_sums::MergeFreeSuffixSums;
 use super::witness::{MergeFreeValuePalette, MAX_MERGE_FREE_VALUE_PALETTE};
 use super::*;
 use core::ops::Range;
@@ -24,6 +25,7 @@ pub(in crate::protocol::extension_opening_reduction) struct TensorEqualityFactor
     transitions: Vec<TensorFactorTransition<E>>,
     suffix_tables: Vec<Vec<E>>,
     low_pair_states: Vec<E>,
+    merge_free_suffix_sums: Option<Box<MergeFreeSuffixSums<E>>>,
 }
 
 impl<E: FieldCore> TensorEqualityFactor<E> {
@@ -100,6 +102,7 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
                     0
                 },
             ),
+            merge_free_suffix_sums: None,
         };
         factor.rebuild_low_pairs();
         Ok(factor)
@@ -468,6 +471,80 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
         }
     }
 
+    pub(super) fn prepare_merge_free_suffix_sums<F>(
+        &mut self,
+        witness: &SparseExtensionOpeningWitness<F, E>,
+        palette: &MergeFreeValuePalette<E>,
+    ) where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        if self.merge_free_suffix_sums.is_some() || self.round != 0 {
+            return;
+        }
+        let low_count = 1usize << self.materialize_at;
+        if witness.indices.len() <= low_count * palette.palette_len() * 4 {
+            return;
+        }
+        let _span = tracing::trace_span!(
+            "TensorEqualityFactor::prepare_merge_free_suffix_sums",
+            entries_len = witness.indices.len(),
+            low_count,
+            palette_len = palette.palette_len(),
+        )
+        .entered();
+        self.merge_free_suffix_sums = Some(Box::new(MergeFreeSuffixSums::build(
+            witness
+                .indices
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(row, index)| (index, palette.original_tag(row))),
+            self.materialize_at,
+            palette.palette_len(),
+            &self.suffix_tables,
+        )));
+    }
+
+    pub(super) fn compute_merge_free_suffix_summed_round(
+        &self,
+        palette: &MergeFreeValuePalette<E>,
+    ) -> Option<(E, E)> {
+        let sums = self.merge_free_suffix_sums.as_ref()?;
+        debug_assert_eq!(sums.palette_len(), palette.palette_len());
+        let class_mask = (1usize << self.round) - 1;
+        let rest_low_bits = self.materialize_at - self.round - 1;
+        let low_pair_mask = (1usize << rest_low_bits).saturating_sub(1);
+        let mut constant = E::ProductAccum::zero();
+        let mut quadratic = E::ProductAccum::zero();
+
+        for original_low in 0..sums.low_count() {
+            let current_low = original_low >> self.round;
+            let low_pair = (current_low >> 1) & low_pair_mask;
+            for tag in 0..sums.palette_len() {
+                let value_class = (original_low & class_mask) * sums.palette_len() + tag;
+                let (constant_products, delta_products) =
+                    self.merge_free_products(value_class, low_pair);
+                for (column, &suffix_sum) in sums.get(original_low, tag).iter().enumerate() {
+                    if suffix_sum == E::zero() {
+                        continue;
+                    }
+                    if current_low & 1 == 0 {
+                        constant += constant_products[column].mul_to_product_accum(suffix_sum);
+                        quadratic +=
+                            (E::zero() - delta_products[column]).mul_to_product_accum(suffix_sum);
+                    } else {
+                        quadratic += delta_products[column].mul_to_product_accum(suffix_sum);
+                    }
+                }
+            }
+        }
+        Some((
+            E::reduce_product_accum(constant),
+            E::reduce_product_accum(quadratic),
+        ))
+    }
+
     fn merge_free_products(&self, value_class: usize, low_pair: usize) -> (&[E], &[E]) {
         let rest_low_bits = self.materialize_at - self.round - 1;
         let low_pair_count = 1usize << rest_low_bits;
@@ -590,6 +667,7 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
         // and one for the cached round being accumulated.
         let merge_free = witness.merge_free_rounds_left >= 2;
         if !merge_free {
+            self.merge_free_suffix_sums = None;
             witness.materialize_merge_free_value_palette();
         }
         let round = match self.prefix_state.len() {
@@ -640,6 +718,18 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
                     .merge_free_value_palette()
                     .expect("merge-free palette was prepared for this round"),
             );
+        }
+        if use_precomputed_products && self.merge_free_suffix_sums.is_some() {
+            for index in &mut witness.indices {
+                *index >>= 1;
+            }
+            return self
+                .compute_merge_free_suffix_summed_round(
+                    witness
+                        .merge_free_value_palette()
+                        .expect("merge-free palette was prepared for this round"),
+                )
+                .expect("merge-free suffix sums were prepared for this round");
         }
         let one_minus = E::one() - challenge;
         let mut round = GroupedRoundAccumulator::<E, N>::new();

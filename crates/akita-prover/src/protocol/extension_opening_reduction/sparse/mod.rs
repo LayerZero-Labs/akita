@@ -1,5 +1,6 @@
 use super::*;
 
+mod suffix_sums;
 mod tables;
 mod tensor_factor;
 mod term;

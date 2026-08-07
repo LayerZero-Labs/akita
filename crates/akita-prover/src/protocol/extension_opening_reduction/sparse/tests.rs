@@ -251,19 +251,19 @@ fn grouped_tensor_fold_respects_merge_free_boundary() {
     type G = FpExt4<B>;
 
     let mut rng = StdRng::seed_from_u64(0x7e11_50a7);
-    let palette = (0..4).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
+    let palette = (0..2).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
     let witness = SparseExtensionOpeningWitness::new(
-        1 << 9,
-        (0..64)
+        1 << 14,
+        (0..2048)
             .map(|chunk| {
                 let offset = (rng.next_u32() as usize) & 7;
-                (chunk * 8 + offset, palette[chunk & 3])
+                (chunk * 8 + offset, palette[chunk & 1])
             })
             .collect(),
     )
     .unwrap();
     assert_eq!(witness.merge_free_rounds_left, 3);
-    let tail_point = (0..9).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
+    let tail_point = (0..14).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
     let eta = (0..2).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
     let factor = tensor_equality_factor_evals::<B, G>(&tail_point, &eta).unwrap();
     let coeff = G::random(&mut rng);
@@ -273,14 +273,14 @@ fn grouped_tensor_fold_respects_merge_free_boundary() {
         tail_point,
         eta,
         coeff,
-        5,
+        6,
     )
     .unwrap();
     let mut dense =
         ExtensionOpeningReductionTerm::new_sparse(witness.clone(), factor, coeff).unwrap();
     let plan = SumcheckKernelPlan::detect();
 
-    for round in 0..9 {
+    for round in 0..14 {
         let mut grouped_round = (G::zero(), G::zero());
         grouped.accumulate_into(plan, &mut grouped_round.0, &mut grouped_round.1);
         let mut dense_round = (G::zero(), G::zero());
