@@ -4,7 +4,7 @@ use std::array::from_fn;
 
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::crt::GarnerData;
-use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
+use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I16_VNNI_DOT_BATCH, I32_LAZY_DOT_BATCH};
 use crate::{CanonicalField, CrtCapacity, FieldCore, NttKernelPlan};
 
 /// CRT+NTT-domain representation of a cyclotomic ring element.
@@ -92,8 +92,22 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     pub const fn pointwise_dot_batch_size(&self) -> usize {
         if self.uses_lazy_i32_dot() {
             I32_LAZY_DOT_BATCH
+        } else if self.uses_vnni_i16_dot() {
+            I16_VNNI_DOT_BATCH
         } else {
             1
+        }
+    }
+
+    pub(crate) const fn uses_vnni_i16_dot(&self) -> bool {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            core::mem::size_of::<W>() == core::mem::size_of::<i16>()
+                && self.kernel_plan.uses_avx512_pointwise()
+        }
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+        {
+            false
         }
     }
 

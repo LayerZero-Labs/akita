@@ -34,7 +34,9 @@ impl NttKernelPlan {
             use super::avx::AvxNttMode;
 
             if core::mem::size_of::<W>() == core::mem::size_of::<i16>() {
-                return if super::avx::use_avx2_transform_ntt() {
+                return if super::avx::use_avx512_vnni_pointwise() {
+                    Self(NttKernelKind::Avx2TransformAvx512Pointwise)
+                } else if super::avx::use_avx2_transform_ntt() {
                     Self(NttKernelKind::Avx2)
                 } else {
                     Self::SCALAR
@@ -73,6 +75,14 @@ impl NttKernelPlan {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     pub(crate) const fn uses_avx512_transform(self) -> bool {
         matches!(self.0, NttKernelKind::Avx512)
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    pub(crate) const fn uses_avx512_pointwise(self) -> bool {
+        matches!(
+            self.0,
+            NttKernelKind::Avx2TransformAvx512Pointwise | NttKernelKind::Avx512
+        )
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]

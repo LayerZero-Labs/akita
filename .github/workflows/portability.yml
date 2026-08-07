@@ -65,6 +65,7 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: qemu-x86_64 -cpu max
         run: |
           cargo test --release --target x86_64-unknown-linux-gnu -p akita-algebra --lib ifma52
+          AKITA_REQUIRE_AVX512VNNI=1 cargo test --release --target x86_64-unknown-linux-gnu -p akita-algebra --lib avx512vnni_six_way_i16_dot
           cargo test --release --target x86_64-unknown-linux-gnu -p akita-types --lib ntt_cache
           cargo test --release --target x86_64-unknown-linux-gnu -p akita-verifier --lib terminal_ntt
 

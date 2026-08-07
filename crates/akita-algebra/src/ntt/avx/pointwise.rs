@@ -5,9 +5,10 @@ use std::arch::x86_64::*;
 
 use super::montgomery::{
     caddp_8x_i32_avx2, mont_mul_16x_i16_avx2, mont_mul_16x_i32_avx512, mont_mul_8x_i32_avx2,
-    reduce_range_16x_i16_avx2, reduce_range_16x_i32_avx512, reduce_range_8x_i32_avx2,
+    mont_reduce_i16_dot_avx512, reduce_range_16x_i16_avx2, reduce_range_16x_i32_avx512,
+    reduce_range_8x_i32_avx2,
 };
-use crate::ntt::prime::{MontCoeff, NttPrime, I32_LAZY_DOT_BATCH};
+use crate::ntt::prime::{MontCoeff, NttPrime, I16_VNNI_DOT_BATCH, I32_LAZY_DOT_BATCH};
 
 /// AVX2 pointwise dot-product accumulation for up to six i32 CRT entries.
 ///
@@ -552,6 +553,114 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
                     MontCoeff::from_raw(*rhs.add(i)),
                 );
                 let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(prod.raw()));
+                *acc.add(i) = prime.reduce_range(sum).raw();
+            }
+            i += 1;
+        }
+    }
+}
+
+/// AVX-512VNNI pointwise dot accumulation for exactly six `i16` CRT entries.
+///
+/// Adjacent columns are interleaved in registers so each `vpdpwssd` computes
+/// two products per frequency. Three instructions therefore cover the six
+/// columns, followed by one Montgomery reduction. The input arrays remain in
+/// Akita's canonical coefficient order; a later prepared-layout experiment
+/// can remove this dynamic interleave without changing the arithmetic kernel.
+///
+/// # Safety
+///
+/// The caller must ensure AVX2 and AVX-512F/BW/VNNI are available. `acc` must be valid
+/// for `d` writable `i16` elements. Every pointer in the six-entry `lhs` and
+/// `rhs` arrays must be valid for `d` readable `i16` elements and obey Rust's
+/// aliasing rules with `acc`. All values must lie in `(-p, p)` for `p < 2^14`.
+#[target_feature(enable = "avx2,avx512f,avx512bw,avx512vnni")]
+pub(crate) unsafe fn pointwise_dot_acc_6_i16_avx512vnni(
+    acc: *mut i16,
+    lhs: *const *const i16,
+    rhs: *const *const i16,
+    d: usize,
+    p: i16,
+    pinv: i16,
+) {
+    const EVEN_WORDS: __mmask32 = 0x5555_5555;
+
+    let p_i32 = _mm512_set1_epi32(i32::from(p));
+    let pinv_i32 = _mm512_set1_epi32(i32::from(pinv));
+    let p_i16 = _mm256_set1_epi16(p);
+    let mut i = 0usize;
+    while i + 32 <= d {
+        let mut even = _mm512_setzero_si512();
+        let mut odd = _mm512_setzero_si512();
+        for pair in 0..(I16_VNNI_DOT_BATCH / 2) {
+            let column = pair * 2;
+            // SAFETY: guaranteed by the pointer contract and loop bound.
+            unsafe {
+                let lhs0 = _mm512_loadu_si512((*lhs.add(column)).add(i).cast());
+                let lhs1 = _mm512_loadu_si512((*lhs.add(column + 1)).add(i).cast());
+                let rhs0 = _mm512_loadu_si512((*rhs.add(column)).add(i).cast());
+                let rhs1 = _mm512_loadu_si512((*rhs.add(column + 1)).add(i).cast());
+
+                let lhs_even =
+                    _mm512_mask_mov_epi16(_mm512_slli_epi32::<16>(lhs1), EVEN_WORDS, lhs0);
+                let rhs_even =
+                    _mm512_mask_mov_epi16(_mm512_slli_epi32::<16>(rhs1), EVEN_WORDS, rhs0);
+                even = _mm512_dpwssd_epi32(even, lhs_even, rhs_even);
+
+                let lhs_odd =
+                    _mm512_mask_mov_epi16(lhs1, EVEN_WORDS, _mm512_srli_epi32::<16>(lhs0));
+                let rhs_odd =
+                    _mm512_mask_mov_epi16(rhs1, EVEN_WORDS, _mm512_srli_epi32::<16>(rhs0));
+                odd = _mm512_dpwssd_epi32(odd, lhs_odd, rhs_odd);
+            }
+        }
+
+        let even =
+            reduce_range_16x_i32_avx512(mont_reduce_i16_dot_avx512(even, p_i32, pinv_i32), p_i32);
+        let odd =
+            reduce_range_16x_i32_avx512(mont_reduce_i16_dot_avx512(odd, p_i32, pinv_i32), p_i32);
+        let even = _mm512_cvtepi32_epi16(even);
+        let odd = _mm512_cvtepi32_epi16(odd);
+        let split_lo = _mm256_unpacklo_epi16(even, odd);
+        let split_hi = _mm256_unpackhi_epi16(even, odd);
+        let batch_lo = _mm256_permute2x128_si256::<0x20>(split_lo, split_hi);
+        let batch_hi = _mm256_permute2x128_si256::<0x31>(split_lo, split_hi);
+
+        // SAFETY: guaranteed by the pointer contract and loop bound.
+        unsafe {
+            let acc_lo_ptr = acc.add(i);
+            let acc_hi_ptr = acc.add(i + 16);
+            let acc_lo = _mm256_loadu_si256(acc_lo_ptr.cast());
+            let acc_hi = _mm256_loadu_si256(acc_hi_ptr.cast());
+            _mm256_storeu_si256(
+                acc_lo_ptr.cast(),
+                reduce_range_16x_i16_avx2(_mm256_add_epi16(acc_lo, batch_lo), p_i16),
+            );
+            _mm256_storeu_si256(
+                acc_hi_ptr.cast(),
+                reduce_range_16x_i16_avx2(_mm256_add_epi16(acc_hi, batch_hi), p_i16),
+            );
+        }
+        i += 32;
+    }
+
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            let mut products = 0_i32;
+            for column in 0..I16_VNNI_DOT_BATCH {
+                // SAFETY: guaranteed by the pointer contract and tail bound.
+                unsafe {
+                    products += i32::from(*(*lhs.add(column)).add(i))
+                        * i32::from(*(*rhs.add(column)).add(i));
+                }
+            }
+            let correction = (products as i16).wrapping_mul(pinv);
+            let reduced = ((products - i32::from(correction) * i32::from(p)) >> 16) as i16;
+            let reduced = prime.reduce_range(MontCoeff::from_raw(reduced));
+            // SAFETY: guaranteed by the pointer contract.
+            unsafe {
+                let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(reduced.raw()));
                 *acc.add(i) = prime.reduce_range(sum).raw();
             }
             i += 1;

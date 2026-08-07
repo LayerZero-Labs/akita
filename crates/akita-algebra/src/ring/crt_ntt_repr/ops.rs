@@ -8,6 +8,8 @@ use crate::ntt::avx::{self, AvxNttMode};
 use crate::ntt::butterfly::forward_ntt;
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::ntt::prime::I16_VNNI_DOT_BATCH;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
 use crate::{AkitaError, CanonicalField, CyclotomicRing, FieldCore};
 
@@ -148,6 +150,31 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             lhs.len() <= I32_LAZY_DOT_BATCH,
             "pointwise dot exceeds lazy reduction bound"
         );
+
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if params.uses_vnni_i16_dot() && lhs.len() == I16_VNNI_DOT_BATCH {
+            for k in 0..K {
+                let lhs_pointers: [*const i16; I16_VNNI_DOT_BATCH] =
+                    std::array::from_fn(|index| lhs[index].limbs[k].as_ptr().cast::<i16>());
+                let rhs_pointers: [*const i16; I16_VNNI_DOT_BATCH] =
+                    std::array::from_fn(|index| rhs[index].limbs[k].as_ptr().cast::<i16>());
+                let prime = params.primes[k];
+                // SAFETY: the opaque stored plan proves AVX2 and
+                // AVX-512F/BW/VNNI support. The dispatch predicate proves
+                // `W == i16`, and all six limbs contain `D` coefficients.
+                unsafe {
+                    avx::pointwise_dot_acc_6_i16_avx512vnni(
+                        self.limbs[k].as_mut_ptr().cast::<i16>(),
+                        lhs_pointers.as_ptr(),
+                        rhs_pointers.as_ptr(),
+                        D,
+                        prime.p.to_i64() as i16,
+                        prime.pinv.to_i64() as i16,
+                    )
+                }
+            }
+            return;
+        }
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         if params.uses_lazy_i32_dot() {

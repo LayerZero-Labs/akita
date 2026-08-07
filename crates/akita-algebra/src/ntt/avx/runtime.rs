@@ -15,6 +15,15 @@ pub(super) struct AvxCpuFeatures {
     pub(super) avx512f: bool,
     pub(super) avx512dq: bool,
     pub(super) avx512bw: bool,
+    pub(super) avx512vnni: bool,
+}
+
+/// Whether a prepared `i16` backend may use VNNI pointwise dot products.
+///
+/// The general AVX-512 mode already proves AVX2/F/DQ/BW and respects the
+/// scalar/AVX environment overrides. VNNI is the only additional capability.
+pub(crate) fn use_avx512_vnni_pointwise() -> bool {
+    matches!(avx_ntt_mode(), Some(AvxNttMode::Avx512)) && detect_cpu_features().avx512vnni
 }
 
 impl AvxCpuFeatures {
@@ -106,5 +115,6 @@ pub(super) fn detect_cpu_features() -> AvxCpuFeatures {
         avx512f: std::is_x86_feature_detected!("avx512f"),
         avx512dq: std::is_x86_feature_detected!("avx512dq"),
         avx512bw: std::is_x86_feature_detected!("avx512bw"),
+        avx512vnni: std::is_x86_feature_detected!("avx512vnni"),
     }
 }

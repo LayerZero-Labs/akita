@@ -1,6 +1,6 @@
 use super::*;
 use crate::ntt::butterfly::NttTwiddles;
-use crate::ntt::prime::{MontCoeff, NttPrime, I32_LAZY_DOT_BATCH};
+use crate::ntt::prime::{MontCoeff, NttPrime, I16_VNNI_DOT_BATCH, I32_LAZY_DOT_BATCH};
 use crate::ntt::tables::Q128_RAW_PRIMES;
 
 const AVX2_ONLY: AvxCpuFeatures = AvxCpuFeatures {
@@ -8,6 +8,7 @@ const AVX2_ONLY: AvxCpuFeatures = AvxCpuFeatures {
     avx512f: false,
     avx512dq: false,
     avx512bw: false,
+    avx512vnni: false,
 };
 
 const AVX512_CAPABLE: AvxCpuFeatures = AvxCpuFeatures {
@@ -15,6 +16,7 @@ const AVX512_CAPABLE: AvxCpuFeatures = AvxCpuFeatures {
     avx512f: true,
     avx512dq: true,
     avx512bw: true,
+    avx512vnni: true,
 };
 
 const AVX512_WITHOUT_AVX2: AvxCpuFeatures = AvxCpuFeatures {
@@ -22,6 +24,7 @@ const AVX512_WITHOUT_AVX2: AvxCpuFeatures = AvxCpuFeatures {
     avx512f: true,
     avx512dq: true,
     avx512bw: true,
+    avx512vnni: true,
 };
 
 #[test]
@@ -690,7 +693,8 @@ fn avx2_add_reduce_i32_matches_scalar_with_tail() {
 
 #[test]
 fn avx512_pointwise_mul_acc_i32_matches_scalar_with_tail() {
-    if !(std::is_x86_feature_detected!("avx512f")
+    if !(std::is_x86_feature_detected!("avx2")
+        && std::is_x86_feature_detected!("avx512f")
         && std::is_x86_feature_detected!("avx512dq")
         && std::is_x86_feature_detected!("avx512bw"))
     {
@@ -777,6 +781,58 @@ fn avx2_pointwise_mul_acc_i16_matches_scalar_with_tail() {
     let mut scalar_acc = acc_init;
     scalar_pointwise_i16(&mut scalar_acc, &lhs, &rhs, prime);
     assert_eq!(avx_acc, scalar_acc);
+}
+
+#[test]
+fn avx512vnni_six_way_i16_dot_matches_scalar_with_tail() {
+    let available = std::is_x86_feature_detected!("avx2")
+        && std::is_x86_feature_detected!("avx512f")
+        && std::is_x86_feature_detected!("avx512bw")
+        && std::is_x86_feature_detected!("avx512vnni");
+    if !available {
+        assert_ne!(
+            std::env::var("AKITA_REQUIRE_AVX512VNNI").ok().as_deref(),
+            Some("1"),
+            "required AVX-512VNNI test backend is unavailable"
+        );
+        return;
+    }
+    let prime = NttPrime::compute(15361_i16);
+    const D: usize = 47;
+    let acc_init = random_mont_array_i16::<D>(prime, 0xd0d0);
+    let lhs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
+        if column == 0 {
+            edge_mont_array_i16::<D>(prime)
+        } else {
+            random_mont_array_i16::<D>(prime, 0x1100 + column as u64)
+        }
+    });
+    let rhs = std::array::from_fn::<_, I16_VNNI_DOT_BATCH, _>(|column| {
+        random_mont_array_i16::<D>(prime, 0x2200 + column as u64)
+    });
+    let lhs_ptrs = lhs.map(|column| column.as_ptr().cast::<i16>());
+    let rhs_ptrs = rhs.map(|column| column.as_ptr().cast::<i16>());
+
+    let mut avx_acc = acc_init;
+    // SAFETY: guarded by runtime AVX2 and AVX-512F/BW/VNNI detection above.
+    unsafe {
+        pointwise_dot_acc_6_i16_avx512vnni(
+            avx_acc.as_mut_ptr().cast::<i16>(),
+            lhs_ptrs.as_ptr(),
+            rhs_ptrs.as_ptr(),
+            D,
+            prime.p,
+            prime.pinv,
+        );
+    }
+
+    let mut scalar_acc = acc_init;
+    for column in 0..I16_VNNI_DOT_BATCH {
+        scalar_pointwise_i16(&mut scalar_acc, &lhs[column], &rhs[column], prime);
+    }
+    for (actual, expected) in avx_acc.into_iter().zip(scalar_acc) {
+        assert_eq!(prime.normalize(actual), prime.normalize(expected));
+    }
 }
 
 #[test]
