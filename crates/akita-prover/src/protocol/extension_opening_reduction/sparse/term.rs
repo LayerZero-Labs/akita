@@ -41,7 +41,7 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
     ///
     /// Returns an error if the sparse witness and factor table shapes differ.
     pub fn new_sparse(
-        witness_evals: SparseExtensionOpeningWitness<E>,
+        witness_evals: SparseExtensionOpeningWitness<F, E>,
         factor_evals: Vec<E>,
         coeff: E,
     ) -> Result<Self, AkitaError> {
@@ -70,7 +70,7 @@ impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
     /// Returns an error if the tensor factor shape and sparse witness domain
     /// differ, or if the tensor opening parameters are malformed.
     pub fn new_sparse_tensor_factor(
-        witness_evals: SparseExtensionOpeningWitness<E>,
+        witness_evals: SparseExtensionOpeningWitness<F, E>,
         tail_point: Vec<E>,
         eta: Vec<E>,
         coeff: E,

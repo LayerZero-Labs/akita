@@ -218,7 +218,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialView<'_, F, D, I>,
-    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+    ) -> Result<TensorPackedWitness<F, E>, AkitaError> {
         source.dispatch(
             |poly| {
                 TensorProjectionKernel::<DenseView<'_, F, D>, F, E, D>::packed_witness(
@@ -318,7 +318,7 @@ where
         prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialBatchView<'_, F, D, I>,
         coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError> {
         let Some(first) = source.polys().first() else {
             return Ok(None);
         };

@@ -420,7 +420,7 @@ where
 }
 
 fn extension_opening_term_from_packed_witness<F, E>(
-    witness: TensorPackedWitness<E>,
+    witness: TensorPackedWitness<F, E>,
     tail_point: &[E],
     eta: &[E],
     coeff: E,

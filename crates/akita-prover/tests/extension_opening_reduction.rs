@@ -86,10 +86,9 @@ fn sparse_witness_sorted_constructor_combines_without_sorting() {
         ],
     )
     .unwrap();
-    assert_eq!(
-        witness.entries(),
-        &[(1, F::from_u64(8)), (4, F::from_u64(7))]
-    );
+    assert_eq!(witness.indices(), &[1, 4]);
+    assert_eq!(witness.value(0), F::from_u64(8));
+    assert_eq!(witness.value(1), F::from_u64(7));
 
     assert!(SparseExtensionOpeningWitness::from_sorted_entries(
         8,
@@ -102,10 +101,9 @@ fn sparse_witness_sorted_constructor_combines_without_sorting() {
         vec![(1, F::from_u64(3)), (4, F::from_u64(7))],
     )
     .unwrap();
-    assert_eq!(
-        unique.entries(),
-        &[(1, F::from_u64(3)), (4, F::from_u64(7))]
-    );
+    assert_eq!(unique.indices(), &[1, 4]);
+    assert_eq!(unique.value(0), F::from_u64(3));
+    assert_eq!(unique.value(1), F::from_u64(7));
     assert!(SparseExtensionOpeningWitness::from_sorted_unique_entries(
         8,
         vec![(1, F::one()), (1, F::one())],

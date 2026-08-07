@@ -331,6 +331,20 @@ where
         E::from_base_fn(|coefficient| self.coefficients[coefficient * self.stride + row])
     }
 
+    /// Replace the field evaluation at one stored row.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `row >= self.len()`.
+    #[inline]
+    pub fn set_evaluation(&mut self, row: usize, value: E) {
+        assert!(row < self.len, "evaluation row out of range");
+        for coefficient in 0..<E as ExtField<F>>::EXT_DEGREE {
+            self.coefficients[coefficient * self.stride + row] =
+                value.base_coefficient(coefficient);
+        }
+    }
+
     /// Return one coefficient's live stored rows.
     ///
     /// # Panics
@@ -650,6 +664,15 @@ mod tests {
                 F::from_u64((900 + coefficient) as u64)
             );
         }
+    }
+
+    #[test]
+    fn stored_evaluation_can_be_replaced() {
+        let mut table = EvaluationTable::<F, E>::from_evaluation_fn(5, value);
+        table.set_evaluation(2, value(19));
+        assert_eq!(table.evaluation(2), value(19));
+        assert_eq!(table.evaluation(1), value(1));
+        assert_eq!(table.evaluation(3), value(3));
     }
 
     #[test]

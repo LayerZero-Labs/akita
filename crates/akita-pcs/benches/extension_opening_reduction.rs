@@ -50,7 +50,7 @@ where
 fn onehot_sparse_tensor_witness<F, E>(
     num_vars: usize,
     num_polys: usize,
-) -> SparseExtensionOpeningWitness<E>
+) -> SparseExtensionOpeningWitness<F, E>
 where
     F: CanonicalField + CanonicalBytes + TranscriptChallenge,
     E: ExtField<F>,

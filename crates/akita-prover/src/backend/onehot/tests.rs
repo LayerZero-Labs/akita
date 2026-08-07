@@ -497,7 +497,11 @@ fn tensor_packed_sparse_linear_combination_matches_individual_witnesses() {
     .unwrap();
 
     assert_eq!(got.table_len(), expected.table_len());
-    assert_eq!(got.entries(), expected.entries());
+    assert_eq!(got.indices(), expected.indices());
+    assert_eq!(got.num_entries(), expected.num_entries());
+    for row in 0..got.num_entries() {
+        assert_eq!(got.value(row), expected.value(row));
+    }
 }
 
 /// Diagnostic for the EOR `np = 1` plateau: dump the within-chunk hot-position
@@ -545,7 +549,7 @@ fn np1_offset_distribution_and_plateau() {
 
     // (a) offset = raw >> lw, recovered from the real witness as tail % stride
     //     because tail = chunk_idx * stride + (raw >> lw).
-    let tails: Vec<usize> = witness.entries().iter().map(|&(t, _)| t).collect();
+    let tails: Vec<usize> = witness.indices().to_vec();
     assert_eq!(
         tails.len(),
         num_chunks,

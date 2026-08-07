@@ -166,7 +166,7 @@ where
 
     pub(crate) fn tensor_packed_extension_sparse_evals<E>(
         &self,
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError>
     where
         E: ExtField<F>,
     {
@@ -176,7 +176,7 @@ where
     pub(crate) fn tensor_packed_extension_sparse_linear_combination<E>(
         polys: &[&Self],
         coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError>
     where
         E: ExtField<F>,
     {

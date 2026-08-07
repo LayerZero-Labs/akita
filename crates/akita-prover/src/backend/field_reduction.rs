@@ -363,7 +363,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
-    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+    ) -> Result<TensorPackedWitness<F, E>, AkitaError> {
         match source.poly {
             RootTensorProjectionPoly::Dense(poly) => {
                 TensorProjectionKernel::<DenseView<'_, F, D>, F, E, D>::packed_witness(
@@ -444,7 +444,7 @@ where
         prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionBatchView<'_, F, D>,
         coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError> {
         if source.polys.len() != coeffs.len() {
             return Err(AkitaError::InvalidSize {
                 expected: source.polys.len(),

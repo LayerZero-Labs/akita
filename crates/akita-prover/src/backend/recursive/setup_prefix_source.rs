@@ -421,7 +421,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: RecursiveFoldView<'_, F, D>,
-    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+    ) -> Result<TensorPackedWitness<F, E>, AkitaError> {
         match source {
             RecursiveFoldView::SetupPrefix { .. } => Err(AkitaError::InvalidSetup(
                 "setup-prefix grouped suffix does not support extension tensor packing".to_string(),
@@ -484,7 +484,7 @@ where
         prepared: Option<&Self::PreparedSetup>,
         source: RecursiveFoldBatchView<'_, F, D>,
         coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError> {
         let witnesses = recursive_fold_batch_witnesses(source)?;
         let batch = <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&witnesses)?;
         <CpuBackend as TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>>::sparse_linear_combination(

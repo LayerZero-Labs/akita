@@ -265,7 +265,7 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: OneHotView<'_, F, D, I>,
-    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+    ) -> Result<TensorPackedWitness<F, E>, AkitaError> {
         Ok(match source.poly.tensor_packed_extension_sparse_evals()? {
             Some(witness) => TensorPackedWitness::Sparse(witness),
             None => TensorPackedWitness::Dense(source.poly.tensor_packed_extension_evals()?),
@@ -308,7 +308,7 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: OneHotBatchView<'_, F, D, I>,
         coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError> {
         OneHotPoly::tensor_packed_extension_sparse_linear_combination(source.polys, coeffs)
     }
 }
@@ -573,7 +573,7 @@ where
 
     pub(crate) fn tensor_packed_extension_sparse_evals<E>(
         &self,
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError>
     where
         E: ExtField<F>,
     {
@@ -583,7 +583,7 @@ where
     pub(crate) fn tensor_packed_extension_sparse_linear_combination<E>(
         polys: &[&Self],
         coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError>
     where
         E: ExtField<F>,
     {

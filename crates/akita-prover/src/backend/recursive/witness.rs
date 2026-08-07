@@ -273,7 +273,7 @@ where
         polys: &[&Self],
         coeffs: &[E],
     ) -> Result<
-        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>,
+        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<F, E>>,
         AkitaError,
     >
     where
@@ -302,7 +302,7 @@ where
     pub(crate) fn tensor_packed_extension_sparse_evals<E>(
         &self,
     ) -> Result<
-        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>,
+        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<F, E>>,
         AkitaError,
     >
     where
@@ -762,7 +762,7 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
-    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+    ) -> Result<TensorPackedWitness<F, E>, AkitaError> {
         Ok(TensorPackedWitness::Dense(
             source.tensor_packed_extension_evals()?,
         ))
@@ -812,7 +812,7 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessBatchView<'_, F, D>,
         coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError> {
         let polys = source
             .polys
             .iter()

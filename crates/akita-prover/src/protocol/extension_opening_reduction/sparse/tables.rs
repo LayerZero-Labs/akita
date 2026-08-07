@@ -20,7 +20,7 @@ pub(in crate::protocol::extension_opening_reduction) enum ExtensionOpeningTables
         factor: EvaluationTable<F, E>,
     },
     Sparse {
-        witness: SparseExtensionOpeningWitness<E>,
+        witness: SparseExtensionOpeningWitness<F, E>,
         factor: SparseFactor<E>,
     },
     Cylindrical {
@@ -188,13 +188,14 @@ where
 /// merge-free plateau. The factor is folded first so the witness sweep reads the
 /// next round's factor children while folding each entry. Returns the *unscaled*
 /// next-round coefficients; the caller applies the term coefficient.
-pub(in crate::protocol::extension_opening_reduction) fn fused_fold_and_accumulate_sparse<E>(
-    witness: &mut SparseExtensionOpeningWitness<E>,
+pub(in crate::protocol::extension_opening_reduction) fn fused_fold_and_accumulate_sparse<F, E>(
+    witness: &mut SparseExtensionOpeningWitness<F, E>,
     factor: &mut SparseFactor<E>,
     r_round: E,
 ) -> (E, E)
 where
-    E: FieldCore + HasUnreducedOps + HasOptimizedFold,
+    F: FieldCore,
+    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold,
 {
     factor.fold_in_place(r_round);
     match factor {

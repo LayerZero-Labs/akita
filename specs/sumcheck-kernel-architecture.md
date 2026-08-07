@@ -490,7 +490,7 @@ small public API boundaries and must not survive in a production round loop.
   events.
 - [x] Dense EOR uses the canonical table and operation set without round loop
   allocations.
-- [ ] Root sparse EOR stores coefficients once and keeps its index sidecar in
+- [x] Root sparse EOR stores coefficients once and keeps its index sidecar in
   sync through merge free and merging folds.
 - [ ] Stage 2 uses the canonical table for its folded witness, factors, and full
   trace values.

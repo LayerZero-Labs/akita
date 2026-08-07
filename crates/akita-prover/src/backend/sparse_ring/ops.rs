@@ -243,7 +243,7 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: SparseRingView<'_, F, D>,
-    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+    ) -> Result<TensorPackedWitness<F, E>, AkitaError> {
         Ok(match source.poly.tensor_packed_extension_sparse_evals()? {
             Some(witness) => TensorPackedWitness::Sparse(witness),
             None => TensorPackedWitness::Dense(source.poly.tensor_packed_extension_evals()?),
@@ -292,7 +292,7 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: SparseRingBatchView<'_, F, D>,
         coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError> {
         if source.polys.len() != coeffs.len() {
             return Err(AkitaError::InvalidSize {
                 expected: source.polys.len(),
