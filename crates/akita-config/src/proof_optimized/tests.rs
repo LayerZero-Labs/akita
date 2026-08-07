@@ -80,7 +80,6 @@ fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig, const D: usi
             &AkitaScheduleLookupKey::single(key),
             &policy,
             Cfg::ring_challenge_config,
-            Cfg::fold_challenge_shape_at_level,
         )
         .expect("shipped entry should materialize");
         let terminal = &schedule.terminal.params.witness;

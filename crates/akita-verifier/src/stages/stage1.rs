@@ -6,7 +6,7 @@
 //! prover/root path.
 
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_challenges::{witness_fold_challenge_labels, Challenges, FoldDraw, LiveFoldDraw};
+use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
@@ -27,8 +27,7 @@ type DigitRangeVerifyOutput<E> = Vec<E>;
 /// D-block `v = D · concat_g(ê_g)` is absorbed a single time (it spans every
 /// group; the terminal layout drops the D-block so the absorb is skipped on
 /// both sides), then each group samples with its own `num_live_blocks`/`K_g` under
-/// each group's native fold-challenge config and local challenge shape,
-/// and the shared
+/// each group's native fold-challenge config and the shared
 /// accepted grind nonce. A scalar batch (`num_groups == 1`) samples a single
 /// `Challenges` set with `lp.num_live_blocks`/`num_total_polynomials`.
 ///
@@ -54,7 +53,6 @@ where
         v_ring_d,
         transcript,
     )?;
-    let labels = witness_fold_challenge_labels();
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = lp.group_params(opening_batch, group_index)?;
@@ -67,8 +65,6 @@ where
                 group_lp.num_live_blocks(),
                 k_g,
                 &group_lp.fold_challenge_config(),
-                &group_lp.fold_challenge_shape(),
-                labels,
                 grind_nonce,
             )?,
         );

@@ -28,8 +28,8 @@ on field bit-width. See
 
 ## Schedule and LevelParams
 
-What a schedule fixes per level (fold shape, decomposition depth, ring/ext
-degrees), the `LevelParams` representation, and the invariants the verifier
+What a schedule fixes per level (decomposition depth and ring/ext degrees),
+the `LevelParams` representation, and the invariants the verifier
 re-derives rather than trusts.
 
 **Sources to fold in**

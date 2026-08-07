@@ -207,37 +207,21 @@ where
         source: OneHotBatchView<'_, F, D, I>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
-        match plan {
-            DecomposeFoldBatchPlan::Sparse {
-                challenges,
-                num_positions_per_block,
-                num_digits,
-                log_basis,
-            } => match OneHotPoly::decompose_fold_batched::<D>(
-                source.polys,
-                challenges,
-                num_positions_per_block,
-                num_digits,
-                log_basis,
-            ) {
-                Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
-                None => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
-            },
-            DecomposeFoldBatchPlan::Tensor {
-                tensor,
-                num_positions_per_block,
-                num_digits,
-                log_basis,
-            } => match OneHotPoly::decompose_fold_tensor_batched::<D>(
-                source.polys,
-                tensor,
-                num_positions_per_block,
-                num_digits,
-                log_basis,
-            )? {
-                Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
-                None => Ok(BatchDecomposeFoldOutcome::Unsupported),
-            },
+        let DecomposeFoldBatchPlan::Sparse {
+            challenges,
+            num_positions_per_block,
+            num_digits,
+            log_basis,
+        } = plan;
+        match OneHotPoly::decompose_fold_batched::<D>(
+            source.polys,
+            challenges,
+            num_positions_per_block,
+            num_digits,
+            log_basis,
+        ) {
+            Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
+            None => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
         }
     }
 }
@@ -795,22 +779,6 @@ where
                 num_digits,
             ),
         }
-    }
-
-    #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_tensor_batched")]
-    pub(crate) fn decompose_fold_tensor_batched<const D: usize>(
-        polys: &[&Self],
-        tensor: &TensorChallengeSet,
-        num_positions_per_block: usize,
-        num_digits: usize,
-        _log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
-        Self::decompose_fold_batched_tensor_onehot::<D>(
-            polys,
-            tensor,
-            num_positions_per_block,
-            num_digits,
-        )
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
