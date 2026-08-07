@@ -284,6 +284,40 @@ profile. Its 2^20 entries remain live for the first six folds of a 2^26 domain.
 Recursive balanced digit witnesses do not use this sparse form. They use dense
 tables and their work halves each round.
 
+### Sparse tensor rounds
+
+The root one hot witness may keep almost all of its rows for several rounds
+without being globally merge free. When several polynomials are combined, one
+early adjacent collision is enough to make `merge_free_rounds_left` zero even
+though most rows remain isolated. The tensor operation must therefore handle
+ordinary sparse pairs directly. It must not use one global collision flag to
+select the fast path.
+
+Rows are sorted, so consecutive witness pairs also form consecutive tensor
+suffix groups. For each pair, let `w0` and `w1` be its two witness children,
+and let `s0[c]` and `s1[c]` be the low tensor states in coefficient column `c`.
+The grouped operation accumulates:
+
+```text
+constant[c]  += w0 * s0[c]
+quadratic[c] += (w1 - w0) * (s1[c] - s0[c])
+```
+
+It applies the shared tensor suffix only after every pair in that suffix group
+has been accumulated. This computes the same degree two round polynomial as
+constructing both factor children for every pair, but it reduces intermediate
+factor values once per suffix group rather than once per sparse row.
+
+After a challenge, the same operation folds and compacts the current witness
+pairs while feeding each nonzero output into the next grouped round. This is one
+streaming pass. It supports arbitrary pair merges and does not depend on the
+merge free plateau. The existing merge free formula remains the fallback for a
+dense factor or a field without an exact grouped product accumulator.
+
+`ExtensionOpeningTables` owns the choice of fused operation for its active
+representation. A term asks the table to fold and compute the next round, then
+caches the scaled result. The term does not duplicate representation matching.
+
 ### Compact i8 and i16 states
 
 Stage 1 and the compact prefix of Stage 2 keep their existing small integer
@@ -440,6 +474,13 @@ slice experiment was rejected because it measured 4.5623 ms for fp32, 1.2935 ms
 for fp64, and 1.0500 ms for fp128. Field-shaped kernels are required; extension
 degree alone is not a sufficient hot-loop abstraction.
 
+The first grouped sparse tensor measurement used the fp32 D64 one hot EOR at 26
+variables, four polynomials, and one Apple Silicon worker. The last pushed
+coefficient-first sparse path measured 305.00 ms. Grouping arbitrary sparse
+pairs and fusing compaction with the next round measured 223.21 ms on the clean
+final run, which is 26.8 percent faster. A merge-free-only grouped prototype measured 302.52 ms and
+was rejected because the real four-polynomial witness has early collisions.
+
 ### Existing state changes
 
 The cutover evolves current owners rather than adding parallel wrappers:
@@ -492,6 +533,8 @@ small public API boundaries and must not survive in a production round loop.
   allocations.
 - [x] Root sparse EOR stores coefficients once and keeps its index sidecar in
   sync through merge free and merging folds.
+- [x] Sparse tensor EOR groups arbitrary merging pairs by shared suffix and
+  folds, compacts, and computes the next round in one traversal.
 - [ ] Stage 2 uses the canonical table for its folded witness, factors, and full
   trace values.
 - [ ] Stage 1 keeps i8 and i16 values compact and materializes directly into the
@@ -604,6 +647,8 @@ bound experiments.
    the same operation structure.
 5. Move dense EOR to the table and operation set. Measure before continuing.
 6. Move root sparse EOR. Keep values coefficient first and indices separate.
+   Group arbitrary tensor pairs by suffix and fuse compaction with the next
+   round instead of gating the operation on a global merge-free flag.
 7. Move Stage 2 dense witness, factor, and trace tables.
 8. Move Stage 1 materialized state. Add direct i8 and i16 kernels and direct
    materialization.

@@ -1,4 +1,5 @@
 use super::*;
+use core::ops::Range;
 
 #[derive(Debug, Clone)]
 struct TensorFactorTransition<E: FieldCore> {
@@ -271,7 +272,233 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
     }
 }
 
+struct GroupedRoundAccumulator<E: FieldCore + HasUnreducedOps, const N: usize> {
+    suffix_index: Option<usize>,
+    constant: [E::ProductAccum; N],
+    quadratic: [E::ProductAccum; N],
+    round_constant: E::ProductAccum,
+    round_quadratic: E::ProductAccum,
+}
+
+impl<E: FieldCore + HasUnreducedOps, const N: usize> GroupedRoundAccumulator<E, N> {
+    fn new() -> Self {
+        Self {
+            suffix_index: None,
+            constant: [E::ProductAccum::zero(); N],
+            quadratic: [E::ProductAccum::zero(); N],
+            round_constant: E::ProductAccum::zero(),
+            round_quadratic: E::ProductAccum::zero(),
+        }
+    }
+
+    fn add_pair(
+        &mut self,
+        factor: &TensorEqualityFactor<E>,
+        pair: usize,
+        witness_zero: E,
+        witness_one: E,
+    ) {
+        let rest_low_bits = factor.materialize_at - factor.round - 1;
+        let suffix_index = pair >> rest_low_bits;
+        if self.suffix_index != Some(suffix_index) {
+            self.flush(factor);
+            self.suffix_index = Some(suffix_index);
+        }
+
+        let low_mask = (1usize << rest_low_bits).saturating_sub(1);
+        let low_zero = (pair & low_mask) << 1;
+        let low_one = low_zero | 1;
+        let state_zero = factor.low_state(low_zero);
+        let state_one = factor.low_state(low_one);
+        let witness_delta = witness_one - witness_zero;
+        for column in 0..N {
+            if witness_zero != E::zero() {
+                self.constant[column] += witness_zero.mul_to_product_accum(state_zero[column]);
+            }
+            if witness_delta != E::zero() {
+                self.quadratic[column] +=
+                    witness_delta.mul_to_product_accum(state_one[column] - state_zero[column]);
+            }
+        }
+    }
+
+    fn flush(&mut self, factor: &TensorEqualityFactor<E>) {
+        let Some(suffix_index) = self.suffix_index else {
+            return;
+        };
+        for column in 0..N {
+            let suffix = factor.suffix_tables[column][suffix_index];
+            self.round_constant +=
+                E::reduce_product_accum(self.constant[column]).mul_to_product_accum(suffix);
+            self.round_quadratic +=
+                E::reduce_product_accum(self.quadratic[column]).mul_to_product_accum(suffix);
+        }
+        self.constant = [E::ProductAccum::zero(); N];
+        self.quadratic = [E::ProductAccum::zero(); N];
+    }
+
+    fn finish(mut self, factor: &TensorEqualityFactor<E>) -> (E, E) {
+        self.flush(factor);
+        (
+            E::reduce_product_accum(self.round_constant),
+            E::reduce_product_accum(self.round_quadratic),
+        )
+    }
+}
+
 impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
+    pub(super) fn supports_grouped_rounds(&self) -> bool {
+        E::DELAYED_PRODUCT_SUM_IS_EXACT && matches!(self.prefix_state.len(), 1 | 2 | 4 | 8)
+    }
+
+    pub(super) fn supports_grouped_round_after_fold(&self) -> bool {
+        self.supports_grouped_rounds() && self.round + 1 < self.materialize_at
+    }
+
+    /// Compute a sparse round by grouping witness pairs that share one suffix.
+    ///
+    /// The ordinary row loop constructs and reduces both factor children for
+    /// every sparse pair. This operation first sums the witness-weighted low
+    /// states for a shared suffix, then applies that suffix once. The number of
+    /// factor reductions therefore scales with suffix groups instead of sparse
+    /// rows.
+    pub(super) fn compute_grouped_round<F>(
+        &self,
+        witness: &SparseExtensionOpeningWitness<F, E>,
+        rows: Range<usize>,
+    ) -> (E, E)
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        debug_assert!(self.supports_grouped_rounds());
+        match self.prefix_state.len() {
+            1 => self.compute_grouped_round_with_width::<F, 1>(witness, rows),
+            2 => self.compute_grouped_round_with_width::<F, 2>(witness, rows),
+            4 => self.compute_grouped_round_with_width::<F, 4>(witness, rows),
+            8 => self.compute_grouped_round_with_width::<F, 8>(witness, rows),
+            _ => unreachable!("grouped tensor round requires a supported extension width"),
+        }
+    }
+
+    fn compute_grouped_round_with_width<F, const N: usize>(
+        &self,
+        witness: &SparseExtensionOpeningWitness<F, E>,
+        rows: Range<usize>,
+    ) -> (E, E)
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        debug_assert_eq!(self.prefix_state.len(), N);
+        let mut round = GroupedRoundAccumulator::<E, N>::new();
+        let mut row = rows.start;
+        while row < rows.end {
+            let pair = witness.indices[row] >> 1;
+            let mut witness_zero = E::zero();
+            let mut witness_one = E::zero();
+            while row < rows.end && witness.indices[row] >> 1 == pair {
+                let value = witness.values.evaluation(row);
+                if witness.indices[row] & 1 == 0 {
+                    witness_zero += value;
+                } else {
+                    witness_one += value;
+                }
+                row += 1;
+            }
+            round.add_pair(self, pair, witness_zero, witness_one);
+        }
+        round.finish(self)
+    }
+
+    /// Fold and compact a sparse witness while computing its next grouped
+    /// tensor round in the same row pass.
+    pub(super) fn fold_and_compute_grouped_round<F>(
+        &self,
+        witness: &mut SparseExtensionOpeningWitness<F, E>,
+        challenge: E,
+    ) -> (E, E)
+    where
+        F: FieldCore,
+        E: ExtField<F> + HasOptimizedFold,
+    {
+        debug_assert!(self.supports_grouped_rounds());
+        let round = match self.prefix_state.len() {
+            1 => self.fold_and_compute_grouped_round_with_width::<F, 1>(witness, challenge),
+            2 => self.fold_and_compute_grouped_round_with_width::<F, 2>(witness, challenge),
+            4 => self.fold_and_compute_grouped_round_with_width::<F, 4>(witness, challenge),
+            8 => self.fold_and_compute_grouped_round_with_width::<F, 8>(witness, challenge),
+            _ => unreachable!("grouped tensor round requires a supported extension width"),
+        };
+        witness.table_len /= 2;
+        witness.merge_free_rounds_left = witness.merge_free_rounds_left.saturating_sub(1);
+        round
+    }
+
+    fn fold_and_compute_grouped_round_with_width<F, const N: usize>(
+        &self,
+        witness: &mut SparseExtensionOpeningWitness<F, E>,
+        challenge: E,
+    ) -> (E, E)
+    where
+        F: FieldCore,
+        E: ExtField<F> + HasOptimizedFold,
+    {
+        debug_assert_eq!(self.prefix_state.len(), N);
+        let fold = E::precompute_fold(challenge);
+        let mut round = GroupedRoundAccumulator::<E, N>::new();
+        let mut input_row = 0;
+        let mut output_row = 0;
+        let mut next_pair = None;
+        let mut next_zero = E::zero();
+        let mut next_one = E::zero();
+
+        while input_row < witness.indices.len() {
+            let pair = witness.indices[input_row] >> 1;
+            let mut witness_zero = E::zero();
+            let mut witness_one = E::zero();
+            while input_row < witness.indices.len() && witness.indices[input_row] >> 1 == pair {
+                let value = witness.values.evaluation(input_row);
+                if witness.indices[input_row] & 1 == 0 {
+                    witness_zero += value;
+                } else {
+                    witness_one += value;
+                }
+                input_row += 1;
+            }
+
+            let folded = E::fold_one(&fold, witness_zero, witness_one);
+            if folded == E::zero() {
+                continue;
+            }
+            witness.indices[output_row] = pair;
+            witness.values.set_evaluation(output_row, folded);
+            output_row += 1;
+
+            let pair_for_next_round = pair >> 1;
+            if next_pair != Some(pair_for_next_round) {
+                if let Some(previous_pair) = next_pair {
+                    round.add_pair(self, previous_pair, next_zero, next_one);
+                }
+                next_pair = Some(pair_for_next_round);
+                next_zero = E::zero();
+                next_one = E::zero();
+            }
+            if pair & 1 == 0 {
+                next_zero = folded;
+            } else {
+                next_one = folded;
+            }
+        }
+
+        if let Some(previous_pair) = next_pair {
+            round.add_pair(self, previous_pair, next_zero, next_one);
+        }
+        witness.indices.truncate(output_row);
+        witness.values.truncate(output_row);
+        round.finish(self)
+    }
+
     /// Factor inner product `sum_i state[i] * suffix_tables[i][suffix_index]`,
     /// reducing once at the end when the field's product accumulator is exact
     /// w.r.t. `Mul`, and otherwise falling back to the per-term

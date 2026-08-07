@@ -553,6 +553,41 @@ where
         *quadratic += round_quadratic;
     }
 
+    pub(super) fn accumulate_grouped_tensor_round(
+        &self,
+        factor: &TensorEqualityFactor<E>,
+        coeff: E,
+        constant: &mut E,
+        quadratic: &mut E,
+    ) {
+        let _span = tracing::trace_span!(
+            "SparseExtensionOpeningWitness::accumulate_grouped_tensor_round",
+            table_len = self.table_len,
+            entries_len = self.indices.len()
+        )
+        .entered();
+        debug_assert!(factor.supports_grouped_rounds());
+
+        #[cfg(feature = "parallel")]
+        let (round_constant, round_quadratic) =
+            if self.indices.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD {
+                self.pair_aligned_ranges()
+                    .into_par_iter()
+                    .map(|rows| factor.compute_grouped_round(self, rows))
+                    .reduce(
+                        || (E::zero(), E::zero()),
+                        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1),
+                    )
+            } else {
+                factor.compute_grouped_round(self, 0..self.indices.len())
+            };
+        #[cfg(not(feature = "parallel"))]
+        let (round_constant, round_quadratic) =
+            factor.compute_grouped_round(self, 0..self.indices.len());
+        *constant += coeff * round_constant;
+        *quadratic += coeff * round_quadratic;
+    }
+
     /// Fold one merge-free round and accumulate the next round in one sweep.
     pub(super) fn fused_fold_accumulate_merge_free<P>(
         &mut self,

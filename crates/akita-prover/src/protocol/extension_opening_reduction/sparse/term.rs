@@ -178,11 +178,9 @@ where
 
     /// Fold this term's tables by one sumcheck challenge.
     ///
-    /// Two shapes fold and pre-compute the next round's `(constant, quadratic)`
-    /// in a single pass, caching the `coeff`-scaled result:
-    /// - a dense witness/factor with at least four entries, and
-    /// - a sparse witness still inside its merge-free plateau, with at least two
-    ///   merge-free rounds left so the look-ahead accumulation is also merge-free.
+    /// Representations with a fused fold and next-round operation cache the
+    /// `coeff`-scaled result. This includes dense tables, grouped sparse tensor
+    /// factors, and the simpler merge-free sparse path.
     ///
     /// Every other shape folds in place and clears the cache.
     pub(in crate::protocol::extension_opening_reduction) fn ingest_challenge(
@@ -193,17 +191,7 @@ where
         if self.tables.len() <= 1 {
             return;
         }
-        let fused = match &mut self.tables {
-            ExtensionOpeningTables::Dense { witness, factor } if witness.len() >= 4 => Some(
-                E::fold_and_compute_product_round(plan, witness, factor, r_round),
-            ),
-            ExtensionOpeningTables::Sparse { witness, factor }
-                if witness.merge_free_rounds_left >= 2 =>
-            {
-                Some(fused_fold_and_accumulate_sparse(witness, factor, r_round))
-            }
-            _ => None,
-        };
+        let fused = self.tables.fold_and_accumulate(plan, r_round);
         match fused {
             Some((constant, quadratic)) => {
                 self.cached_accumulate = Some((self.coeff * constant, self.coeff * quadratic));

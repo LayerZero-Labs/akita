@@ -100,6 +100,9 @@ where
                 SparseFactor::Dense(factor_evals) => {
                     witness.accumulate_round(factor_evals, coeff, constant, quadratic);
                 }
+                SparseFactor::Tensor(factor) if factor.supports_grouped_rounds() => {
+                    witness.accumulate_grouped_tensor_round(factor, coeff, constant, quadratic);
+                }
                 SparseFactor::Tensor(factor) => {
                     witness.accumulate_round_with_factor(coeff, constant, quadratic, |pair| {
                         factor.factor_pair(pair)
@@ -149,6 +152,41 @@ where
     F: FieldCore,
     E: SumcheckTableOperations<F>,
 {
+    /// Fold the current tables and compute the next round in the same table
+    /// traversal when the active representation has such an operation.
+    pub(in crate::protocol::extension_opening_reduction) fn fold_and_accumulate(
+        &mut self,
+        plan: SumcheckKernelPlan,
+        r_round: E,
+    ) -> Option<(E, E)> {
+        match self {
+            Self::Dense { witness, factor } if witness.len() >= 4 => Some(
+                E::fold_and_compute_product_round(plan, witness, factor, r_round),
+            ),
+            Self::Sparse {
+                witness,
+                factor: SparseFactor::Tensor(tensor_factor),
+            } if tensor_factor.supports_grouped_round_after_fold() => {
+                tensor_factor.fold_in_place(r_round);
+                Some(tensor_factor.fold_and_compute_grouped_round(witness, r_round))
+            }
+            Self::Sparse { witness, factor } if witness.merge_free_rounds_left >= 2 => {
+                factor.fold_in_place(r_round);
+                Some(match factor {
+                    SparseFactor::Dense(factor_evals) => witness
+                        .fused_fold_accumulate_merge_free(r_round, &|pair| {
+                            (factor_evals[2 * pair], factor_evals[2 * pair + 1])
+                        }),
+                    SparseFactor::Tensor(tensor_factor) => witness
+                        .fused_fold_accumulate_merge_free(r_round, &|pair| {
+                            tensor_factor.factor_pair(pair)
+                        }),
+                })
+            }
+            _ => None,
+        }
+    }
+
     pub(in crate::protocol::extension_opening_reduction) fn fold_in_place(
         &mut self,
         plan: SumcheckKernelPlan,
@@ -178,32 +216,5 @@ where
                 }
             }
         }
-    }
-}
-
-/// Fold a sparse term's factor and witness by one challenge AND compute the next
-/// round's `(constant, quadratic)` in a single witness sweep.
-///
-/// Sparse counterpart of [`fold_and_compute_product_round_scalar`], valid only inside the
-/// merge-free plateau. The factor is folded first so the witness sweep reads the
-/// next round's factor children while folding each entry. Returns the *unscaled*
-/// next-round coefficients; the caller applies the term coefficient.
-pub(in crate::protocol::extension_opening_reduction) fn fused_fold_and_accumulate_sparse<F, E>(
-    witness: &mut SparseExtensionOpeningWitness<F, E>,
-    factor: &mut SparseFactor<E>,
-    r_round: E,
-) -> (E, E)
-where
-    F: FieldCore,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold,
-{
-    factor.fold_in_place(r_round);
-    match factor {
-        SparseFactor::Dense(factor_evals) => witness
-            .fused_fold_accumulate_merge_free(r_round, &|pair| {
-                (factor_evals[2 * pair], factor_evals[2 * pair + 1])
-            }),
-        SparseFactor::Tensor(tensor_factor) => witness
-            .fused_fold_accumulate_merge_free(r_round, &|pair| tensor_factor.factor_pair(pair)),
     }
 }
