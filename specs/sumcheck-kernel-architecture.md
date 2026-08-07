@@ -94,8 +94,11 @@ rearranges it within every round.
 7. Safe production code cannot request a CPU plan that the host does not support.
 8. Compact i8 and i16 sources remain compact until the protocol needs a
    materialized table.
-9. Production compact materialization writes directly into the canonical table.
-   It must not build a full `Vec<E>` and then transpose it.
+9. Production compact materialization writes directly into the canonical table
+   when the source can stream the final coefficient slabs. A phase boundary may
+   use one transient row buffer only when a named benchmark shows that source-
+   sequential production plus a stored-row conversion is faster. The buffer is
+   consumed immediately and never survives as parallel protocol state.
 10. Full dense tables use binding order for their entire live lifetime. A fold
     does not change this invariant.
 11. Sparse witness indices keep their current logical meaning except while the
@@ -398,7 +401,8 @@ materializing `E` values:
 1. Load and widen signed i8 or i16 values.
 2. Compute the round polynomial with extension field weights.
 3. Apply one or two early challenges while the exact compact formula permits it.
-4. Build the first required `EvaluationTable` directly in binding order.
+4. Build the first required `EvaluationTable` in binding order, directly when
+   the source traversal can write its coefficient slabs efficiently.
 5. Compute the next round while writing that table when a fused pass saves a
    second read.
 
@@ -425,6 +429,14 @@ lookup. Later sparse low-variable challenges read materialized values directly.
 Both forms write the two folded values and compute the following quadratic or
 quartic round in the same pass. The compact state cannot survive into the
 x-variable phase or the final evaluation.
+
+The low-basis materialized suffix is a measured exception to the general dense
+table rule. It remains one row-oriented `Vec<E>` because its sparse-y and
+prefix-x operations consume rows in that order. A coefficient-first binding-
+order prototype made root Stage 1 108 to 111 ms instead of about 100 ms and
+slowed the later geometrically shrinking folds. This is one live
+representation, not a scalar copy beside a SIMD table. High-basis leaves and
+all dense product sumchecks still use `EvaluationTable` once materialized.
 
 The canonical quartic entry formula is the Taylor expansion at the left child:
 
@@ -789,6 +801,14 @@ handoff from 53.7 to 53.8 ms to 38.7 to 38.8 ms and complete root Stage 2 from
 209 to 210 ms to 194 ms. The second complete proof measured 1.768 seconds and
 verified.
 
+The Stage 2 handoff is the named transient-buffer exception from invariant 9.
+Its lane-parallel scan produces one row-major `Vec<E>`, then consumes it
+immediately into the sole binding-order `EvaluationTable`. Writing the four
+distant coefficient slabs through generic setters removed that buffer but lost
+the lane-parallel traversal; complete root Stage 2 regressed from about 181 ms
+to 223 to 327 ms. The accepted conversion costs about 4.9 ms at the root and no
+row-major state remains after the handoff.
+
 Later Stage 2 coefficient folds preserve those factors as well. Each round
 contracts the folded witness separately against common alpha and each prepared
 trace source, then applies the lane-constant factor to the three relation
@@ -850,9 +870,9 @@ The cutover evolves current owners rather than adding parallel wrappers:
 | `SparseExtensionOpeningWitness` | index sidecar plus one `EvaluationTable<F, E>` for materialized values; bounded private palette while repeated merge-free values remain compact |
 | `SparseFactor::Dense` | `EvaluationTable<F, E>` |
 | `LowBasisRangeImageStorage::FoldedOctets` | one `u16` class code per row plus bounded class value and Taylor tables until the next sparse low-variable fold |
-| `LowBasisRangeImageStorage::Materialized` | `EvaluationTable<F, E>` |
+| `LowBasisRangeImageStorage::Materialized` | one row-oriented `Vec<E>` retained by the measured low-basis exception |
 | Stage 2 `WitnessState::FoldedSuffix` | `EvaluationTable<F, E>` |
-| Materialized Stage 2 factors and trace values | `EvaluationTable<F, E>` where they are full live row tables |
+| Stage 2 factors and trace values | factored vectors while factors remain separable; `EvaluationTable<F, E>` only for a full live row table |
 | Stage 3 product tables | `EvaluationTable<F, E>` where they are folded multilinear tables |
 
 `ExtensionOpeningReductionTerm<F, E>` and
@@ -871,8 +891,9 @@ row indexed materialized evaluation set.
 
 A protocol state changes directly from its current representation to the new
 one. The implementation must not add `PackedTable`, `FieldPlanes`, `LaneStorage`,
-or a scalar and packed enum. Temporary conversion code may exist only in tests or
-small public API boundaries and must not survive in a production round loop.
+or a scalar and packed enum. Temporary conversion code may exist only in tests,
+small public API boundaries, and the measured Stage 2 handoff. It must not
+survive in a production round loop or as parallel protocol state.
 
 ## Evaluation
 
@@ -882,11 +903,11 @@ small public API boundaries and must not survive in a production round loop.
   for the identity field, `FpExt2`, `FpExt4`, and `FpExt8`.
 - [x] `EvaluationTable` enforces its length, stride, coefficient count, and
   bounds invariants through private fields and focused tests.
-- [ ] Dense binding order conversion and every later fold match the current LSB
+- [x] Dense binding order conversion and every later fold match the current LSB
   first scalar evaluation for random tables at 1 to 20 variables.
-- [ ] A production portable x86 release detects AVX2 and AVX512 at runtime.
+- [x] A production portable x86 release detects AVX2 and AVX512 at runtime.
 - [x] A production aarch64 release detects NEON at runtime.
-- [ ] Safe production callers cannot construct or forge a target specific plan.
+- [x] Safe production callers cannot construct or forge a target specific plan.
 - [ ] Scalar and every supported CPU operation produce identical round
   polynomials, folded tables, final evaluations, proof bytes, and transcript
   events.
@@ -899,10 +920,12 @@ small public API boundaries and must not survive in a production round loop.
   folds, compacts, and computes the next round in one traversal.
 - [x] Repeated sparse EOR values remain compact while the tensor suffix
   precontraction is active and materialize once before the ordinary transition.
-- [ ] Stage 2 uses the canonical table for its folded witness, factors, and full
-  trace values.
-- [ ] Stage 1 keeps i8 and i16 values compact and materializes directly into the
-  canonical table.
+- [x] Stage 2 uses the canonical table for its folded witness, retains separable
+  factors without materializing full rows, and confines its measured transient
+  row buffer to the compact handoff.
+- [x] Stage 1 keeps i8 and i16 values compact. High-basis leaves materialize
+  directly into the canonical table; low-basis leaves retain the measured
+  row-oriented exception documented above.
 - [x] Stage 3 materialized multilinear tables use the same representation or a
   benchmark documents why a named small table remains scalar.
 - [ ] fp64 keeps the measured faster operation on each supported architecture.
@@ -912,7 +935,7 @@ small public API boundaries and must not survive in a production round loop.
   changes beyond benchmark noise.
 - [ ] Release assembly for each accepted SIMD operation contains the expected
   vector instructions and has no allocation or per row dispatch.
-- [ ] The pinned fp32 and D128 one hot proof benchmark records baseline and final
+- [x] The pinned fp32 and D128 one hot proof benchmark records baseline and final
   setup, commit, prove, verify, proof byte, and per protocol sumcheck times.
 
 ### Testing strategy

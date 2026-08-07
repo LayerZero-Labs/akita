@@ -853,6 +853,36 @@ mod tests {
     }
 
     #[test]
+    fn scalar_fold_matches_random_logical_tables_through_twenty_variables() {
+        let mut state = 0x8b8b_8b8b_3141_5926u64;
+        let mut random_value = || {
+            E::from_base_fn(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                F::from_u64(state)
+            })
+        };
+
+        for num_vars in 1..=20 {
+            let mut logical: Vec<_> = (0..1usize << num_vars).map(|_| random_value()).collect();
+            let challenges: Vec<_> = (0..num_vars).map(|_| random_value()).collect();
+            let mut table = EvaluationTable::<F, E>::from_multilinear_evaluations(&logical)
+                .expect("valid multilinear length");
+
+            for challenge in challenges {
+                fold_evals_in_place(&mut logical, challenge);
+                fold_first_variable_scalar(&mut table, challenge);
+                assert_eq!(table.len(), logical.len());
+                for stored_row in 0..table.len() {
+                    let logical_row = EvaluationTable::<F, E>::logical_row(stored_row, table.len());
+                    assert_eq!(table.evaluation(stored_row), logical[logical_row]);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn product_round_matches_logical_pairs_with_delayed_reduction() {
         const { assert!(E::DELAYED_PRODUCT_SUM_IS_EXACT) };
         for len in [2, 4, 8, 16, 32] {
