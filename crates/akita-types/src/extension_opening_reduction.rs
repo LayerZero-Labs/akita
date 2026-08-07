@@ -429,18 +429,23 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    let coords = value.to_base_vec();
-    if coords.len() != width {
+    if E::EXT_DEGREE != width {
         return Err(AkitaError::InvalidSize {
             expected: width,
-            actual: coords.len(),
+            actual: E::EXT_DEGREE,
         });
     }
-    Ok(coords
-        .into_iter()
-        .zip(eta_weights.iter().copied())
-        .fold(E::zero(), |acc, (coord, weight)| {
-            acc + weight.mul_base(coord)
+    if eta_weights.len() != width {
+        return Err(AkitaError::InvalidSize {
+            expected: width,
+            actual: eta_weights.len(),
+        });
+    }
+    Ok(eta_weights
+        .iter()
+        .enumerate()
+        .fold(E::zero(), |acc, (coordinate, weight)| {
+            acc + weight.mul_base(value.base_coefficient(coordinate))
         }))
 }
 

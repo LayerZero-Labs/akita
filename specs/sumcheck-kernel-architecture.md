@@ -175,6 +175,13 @@ implementations use these two primitives. Implementations for the identity
 field, `FpExt2`, `FpExt4`, and `FpExt8` define only the primitives. This makes
 coefficient access allocation free and gives it one source of truth.
 
+Production table construction must call `base_coefficient` directly. In
+particular, projecting a tensor equality value against the head equality
+weights must not call `to_base_vec` for each logical row. The convenience vector
+form is reserved for small boundaries and tests; a row loop over it creates one
+heap allocation per evaluation and defeats the coefficient-first ownership
+model before the SIMD sumcheck begins.
+
 ### EvaluationTable
 
 The table has this semantic shape:
@@ -592,6 +599,13 @@ is a four-coefficient widening operation. Two verified one-worker samples
 reduced complete root EOR from 330 ms to 270 to 272 ms on the current branch.
 The four middle plateau rounds fell from 28.5 to 29.2 ms to 16.4 to 17.3 ms,
 and complete proofs measured 1.683 and 1.703 seconds.
+
+The dense recursive EOR factor originally projected every tensor equality value
+through `to_base_vec`, allocating a four-element vector for each row. Reading
+the same canonical coefficients through `base_coefficient` reduced the first
+2^21-row recursive EOR construction from 176 ms to 124 to 125 ms and its total
+EOR from 233 ms to 179 to 181 ms. The two complete proofs measured 1.644 and
+1.648 seconds and verified. The arithmetic and resulting tables are unchanged.
 
 On the same profile, retaining Stage 1 octet classes after the third challenge
 and using the canonical Taylor kernel reduced the root Stage 1 sumcheck from
