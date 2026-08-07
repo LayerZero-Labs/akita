@@ -89,7 +89,7 @@ fn quartic_affine_product<E: FieldCore>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{FromPrimitiveInt, Prime128Offset275};
+    use akita_field::Prime128Offset275;
 
     type F = Prime128Offset275;
 
