@@ -641,10 +641,24 @@ pub trait HasUnreducedOps: FieldCore {
     /// path, so callers that must stay byte-identical to `Mul` are unaffected.
     const DELAYED_PRODUCT_SUM_IS_EXACT: bool = false;
 
+    /// Whether converting one reduced element into `ProductAccum` is a cheap
+    /// coefficient widening operation rather than a field multiplication.
+    const REDUCED_TO_PRODUCT_ACCUM_IS_CHEAP: bool = false;
+
     /// Widening `self × small` with no reduction.
     fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum;
     /// Widening `self × other` with no reduction.
     fn mul_to_product_accum(self, other: Self) -> Self::ProductAccum;
+
+    /// Embed one reduced element into the additive product accumulator.
+    ///
+    /// The default remains correct for accumulator representations without a
+    /// direct embedding. Fields that advertise the cheap capability override
+    /// this with coefficient widening.
+    #[inline]
+    fn reduced_to_product_accum(self) -> Self::ProductAccum {
+        self.mul_to_product_accum(Self::one())
+    }
 
     /// Widening `self × small` into a short-batch accumulator.
     fn mul_u16_to_small_product_accum(self, small: u16) -> Self::SmallProductAccum;

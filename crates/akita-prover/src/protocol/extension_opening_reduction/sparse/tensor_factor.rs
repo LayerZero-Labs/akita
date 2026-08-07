@@ -1,3 +1,4 @@
+use super::witness::{MergeFreeValuePalette, MAX_MERGE_FREE_VALUE_PALETTE};
 use super::*;
 use core::ops::Range;
 
@@ -98,7 +99,13 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
             prefix_state,
             transitions,
             suffix_tables,
-            low_pair_states: Vec::new(),
+            low_pair_states: Vec::with_capacity(
+                if (1..=SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS).contains(&materialize_at) {
+                    (MAX_MERGE_FREE_VALUE_PALETTE + 1) * (1usize << materialize_at) * width
+                } else {
+                    0
+                },
+            ),
         };
         factor.rebuild_low_pairs();
         Ok(factor)
@@ -193,15 +200,14 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
             return;
         }
         let count = 1usize << low_bits;
-        let width = self.prefix_state.len();
-        let mut low_pair_states = Vec::with_capacity(count * width);
+        self.low_pair_states.clear();
         for pair in 0..count / 2 {
             let zero = self.boolean_state(pair << 1, low_bits);
             let one = self.boolean_state((pair << 1) | 1, low_bits);
-            low_pair_states.extend_from_slice(&zero);
-            low_pair_states.extend(one.iter().zip(zero.iter()).map(|(&one, &zero)| one - zero));
+            self.low_pair_states.extend_from_slice(&zero);
+            self.low_pair_states
+                .extend(one.iter().zip(zero.iter()).map(|(&one, &zero)| one - zero));
         }
-        self.low_pair_states = low_pair_states;
     }
 
     fn boolean_state(&self, low: usize, low_bits: usize) -> Vec<E> {
@@ -368,6 +374,40 @@ impl<E: FieldCore + HasUnreducedOps, const N: usize> GroupedRoundAccumulator<E, 
         }
     }
 
+    #[inline(always)]
+    fn add_palette_child(
+        &mut self,
+        factor: &TensorEqualityFactor<E>,
+        index: usize,
+        value_class: usize,
+    ) {
+        let pair = index >> 1;
+        let rest_low_bits = factor.materialize_at - factor.round - 1;
+        let suffix_index = pair >> rest_low_bits;
+        if self.suffix_index != Some(suffix_index) {
+            self.flush(factor);
+            self.suffix_index = Some(suffix_index);
+        }
+
+        let low_mask = (1usize << rest_low_bits).saturating_sub(1);
+        let (constant_products, delta_products) =
+            factor.merge_free_products(value_class, pair & low_mask);
+        if index & 1 == 0 {
+            for (column, (&constant_product, &delta_product)) in constant_products
+                .iter()
+                .zip(delta_products.iter())
+                .enumerate()
+            {
+                self.constant[column] += E::reduced_to_product_accum(constant_product);
+                self.quadratic[column] += E::reduced_to_product_accum(E::zero() - delta_product);
+            }
+        } else {
+            for (column, &delta_product) in delta_products.iter().enumerate() {
+                self.quadratic[column] += E::reduced_to_product_accum(delta_product);
+            }
+        }
+    }
+
     fn flush(&mut self, factor: &TensorEqualityFactor<E>) {
         let Some(suffix_index) = self.suffix_index else {
             return;
@@ -393,6 +433,56 @@ impl<E: FieldCore + HasUnreducedOps, const N: usize> GroupedRoundAccumulator<E, 
 }
 
 impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
+    fn can_prepare_merge_free_products(&self, palette: &MergeFreeValuePalette<E>) -> bool {
+        if !E::REDUCED_TO_PRODUCT_ACCUM_IS_CHEAP || self.round + 1 >= self.materialize_at {
+            return false;
+        }
+        let rest_low_bits = self.materialize_at - self.round - 1;
+        let required =
+            palette.folded_values().len() * (1usize << rest_low_bits) * 2 * self.prefix_state.len();
+        let state_len = (1usize << (self.materialize_at - self.round)) * self.prefix_state.len();
+        state_len + required <= self.low_pair_states.capacity()
+    }
+
+    fn prepare_merge_free_products(&mut self, palette: &MergeFreeValuePalette<E>) {
+        debug_assert!(E::REDUCED_TO_PRODUCT_ACCUM_IS_CHEAP);
+        let rest_low_bits = self.materialize_at - self.round - 1;
+        let low_pair_count = 1usize << rest_low_bits;
+        let width = self.prefix_state.len();
+        let values = palette.folded_values();
+        let product_count = values.len() * low_pair_count * 2 * width;
+        let state_len = (1usize << (self.materialize_at - self.round)) * width;
+        debug_assert_eq!(self.low_pair_states.len(), state_len);
+        self.low_pair_states
+            .resize(state_len + product_count, E::zero());
+
+        for (value_class, &value) in values.iter().enumerate() {
+            for low_pair in 0..low_pair_count {
+                let state_start = low_pair * 2 * width;
+                let output_start =
+                    state_len + (value_class * low_pair_count + low_pair) * 2 * width;
+                for column in 0..width {
+                    self.low_pair_states[output_start + column] =
+                        value * self.low_pair_states[state_start + column];
+                    self.low_pair_states[output_start + width + column] =
+                        value * self.low_pair_states[state_start + width + column];
+                }
+            }
+        }
+    }
+
+    fn merge_free_products(&self, value_class: usize, low_pair: usize) -> (&[E], &[E]) {
+        let rest_low_bits = self.materialize_at - self.round - 1;
+        let low_pair_count = 1usize << rest_low_bits;
+        let width = self.prefix_state.len();
+        let state_len = (1usize << (self.materialize_at - self.round)) * width;
+        let start = state_len + (value_class * low_pair_count + low_pair) * 2 * width;
+        (
+            &self.low_pair_states[start..start + width],
+            &self.low_pair_states[start + width..start + 2 * width],
+        )
+    }
+
     pub(super) fn supports_grouped_rounds(&self) -> bool {
         E::DELAYED_PRODUCT_SUM_IS_EXACT && matches!(self.prefix_state.len(), 1 | 2 | 4 | 8)
     }
@@ -450,7 +540,7 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
     /// Fold and compact a sparse witness while computing its next grouped
     /// tensor round in the same row pass.
     pub(super) fn fold_and_compute_grouped_round<F>(
-        &self,
+        &mut self,
         witness: &mut SparseExtensionOpeningWitness<F, E>,
         challenge: E,
     ) -> (E, E)
@@ -491,7 +581,7 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
     }
 
     fn fold_and_compute_grouped_round_merge_free<F, const N: usize>(
-        &self,
+        &mut self,
         witness: &mut SparseExtensionOpeningWitness<F, E>,
         challenge: E,
     ) -> (E, E)
@@ -502,6 +592,19 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
         debug_assert_eq!(self.prefix_state.len(), N);
         debug_assert!(witness.merge_free_rounds_left >= 2);
         let use_palette = witness.fold_merge_free_value_palette(challenge);
+        let use_precomputed_products = use_palette
+            && self.can_prepare_merge_free_products(
+                witness
+                    .merge_free_value_palette()
+                    .expect("merge-free palette was prepared for this round"),
+            );
+        if use_precomputed_products {
+            self.prepare_merge_free_products(
+                witness
+                    .merge_free_value_palette()
+                    .expect("merge-free palette was prepared for this round"),
+            );
+        }
         let one_minus = E::one() - challenge;
         let mut round = GroupedRoundAccumulator::<E, N>::new();
 
@@ -524,7 +627,15 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
             if !use_palette {
                 witness.values.set_evaluation(row, folded);
             }
-            round.add_single_child(self, folded_index, folded);
+            if use_precomputed_products {
+                let value_class = witness
+                    .merge_free_value_palette()
+                    .expect("merge-free palette was prepared for this round")
+                    .value_class(row);
+                round.add_palette_child(self, folded_index, value_class);
+            } else {
+                round.add_single_child(self, folded_index, folded);
+            }
         }
         round.finish(self)
     }

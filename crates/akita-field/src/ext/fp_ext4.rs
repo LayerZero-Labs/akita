@@ -574,6 +574,7 @@ impl<const P: u32> HasUnreducedOps for FpExt4<Fp32<P>> {
     // batch and reducing once matches per-limb reduce-then-add exactly. Covered
     // by `fp_ext4_fp32_accum_summation`.
     const DELAYED_PRODUCT_SUM_IS_EXACT: bool = true;
+    const REDUCED_TO_PRODUCT_ACCUM_IS_CHEAP: bool = true;
 
     #[inline]
     fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum {
@@ -584,6 +585,14 @@ impl<const P: u32> HasUnreducedOps for FpExt4<Fp32<P>> {
     #[inline]
     fn mul_to_product_accum(self, other: Self) -> Self::ProductAccum {
         fp_ext4_mul_to_accum_fp32(self.coeffs, other.coeffs)
+    }
+
+    #[inline]
+    fn reduced_to_product_accum(self) -> Self::ProductAccum {
+        FpExt4Fp32ProductAccum(
+            self.coeffs
+                .map(|coefficient| u128::from(coefficient.to_limbs())),
+        )
     }
 
     #[inline]

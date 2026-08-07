@@ -1,10 +1,10 @@
 use super::*;
 use core::ops::Range;
 
-const MAX_MERGE_FREE_VALUE_PALETTE: usize = 8;
+pub(super) const MAX_MERGE_FREE_VALUE_PALETTE: usize = 8;
 
 #[derive(Debug, Clone)]
-struct MergeFreeValuePalette<E: FieldCore> {
+pub(super) struct MergeFreeValuePalette<E: FieldCore> {
     palette_len: usize,
     /// Low byte: original merge-free path. High byte: palette tag.
     row_codes: Vec<u16>,
@@ -75,11 +75,20 @@ impl<E: FieldCore> MergeFreeValuePalette<E> {
 
     #[inline(always)]
     fn value(&self, row: usize) -> E {
+        self.folded_values[self.value_class(row)]
+    }
+
+    #[inline(always)]
+    pub(super) fn value_class(&self, row: usize) -> usize {
         let class_mask = (1usize << self.rounds_folded) - 1;
         let code = usize::from(self.row_codes[row]);
         let class = (code & usize::from(u8::MAX)) & class_mask;
         let tag = code >> u8::BITS;
-        self.folded_values[class * self.palette_len + tag]
+        class * self.palette_len + tag
+    }
+
+    pub(super) fn folded_values(&self) -> &[E] {
+        &self.folded_values
     }
 }
 
@@ -277,6 +286,13 @@ impl<F: FieldCore, E: ExtField<F>> SparseExtensionOpeningWitness<F, E> {
     pub(super) fn merge_free_palette_value(&self, row: usize) -> Option<E> {
         match &self.merge_free_values {
             MergeFreeValueState::Palette(palette) => Some(palette.value(row)),
+            MergeFreeValueState::Unchecked | MergeFreeValueState::Unavailable => None,
+        }
+    }
+
+    pub(super) fn merge_free_value_palette(&self) -> Option<&MergeFreeValuePalette<E>> {
+        match &self.merge_free_values {
+            MergeFreeValueState::Palette(palette) => Some(palette),
             MergeFreeValueState::Unchecked | MergeFreeValueState::Unavailable => None,
         }
     }

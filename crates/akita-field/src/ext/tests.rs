@@ -462,6 +462,20 @@ fn fp_ext4_fp32_small_product_accum_promotes_exactly() {
 }
 
 #[test]
+fn fp_ext4_fp32_reduced_value_embeds_in_product_accumulator() {
+    use crate::Prime32Offset99;
+
+    type R4Fp32 = FpExt4<Prime32Offset99>;
+
+    let value = R4Fp32::new([3, 5, 7, 11].map(Prime32Offset99::from_u64));
+    assert!(R4Fp32::REDUCED_TO_PRODUCT_ACCUM_IS_CHEAP);
+    assert_eq!(
+        R4Fp32::reduce_product_accum(value.reduced_to_product_accum()),
+        value
+    );
+}
+
+#[test]
 fn mul_base_to_product_accum_matches_mul_base_sum() {
     use crate::{Fp32, MulBaseUnreduced};
     use num_traits::Zero;

@@ -581,6 +581,18 @@ seconds versus a 1.893-second pushed-head sample while unrelated Stage 1 and
 Stage 2 spans were slower in the new run. The protocol-local 12 percent EOR gain
 is stable; whole-proof attribution requires pinned Ice Lake confirmation.
 
+During that merge-free plateau, the folded witness values and the tensor
+factor's low states are both bounded class tables. The product of their class
+counts remains roughly constant as one grows and the other shrinks. The tensor
+factor therefore precomputes each value-class times low-state product once per
+round, then the million-row traversal only widens and adds those reduced
+products. The reusable allocation is reserved when the factor is constructed.
+For `FpExt4<Fp32>`, embedding a reduced element in the exact product accumulator
+is a four-coefficient widening operation. Two verified one-worker samples
+reduced complete root EOR from 330 ms to 270 to 272 ms on the current branch.
+The four middle plateau rounds fell from 28.5 to 29.2 ms to 16.4 to 17.3 ms,
+and complete proofs measured 1.683 and 1.703 seconds.
+
 On the same profile, retaining Stage 1 octet classes after the third challenge
 and using the canonical Taylor kernel reduced the root Stage 1 sumcheck from
 160 to 161 ms to 138 to 139 ms. Its largest next-round polynomial fell from
