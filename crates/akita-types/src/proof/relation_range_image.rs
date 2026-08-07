@@ -785,4 +785,33 @@ mod tests {
         )
         .is_err());
     }
+
+    #[test]
+    fn limb_gram_reconstruction_handles_signs_and_block_boundaries() {
+        let shape = PhysicalL2NormProofShape::LimbGram {
+            physical_response_len: 5,
+            block_len: 2,
+            limb_count: 2,
+        };
+        // Block-major upper triangles for limbs
+        // l0 = [-2, -1, 0, 1, 2], l1 = [1, -2, 2, 0, -1].
+        let claims = [5, 0, 5, 1, 0, 4, 4, -2, 1];
+        assert_eq!(
+            reconstruct_l2_sq_from_gram(shape, 4, &claims).expect("signed block Gram norm"),
+            154
+        );
+        assert!(reconstruct_l2_sq_from_gram(shape, 4, &claims[..8]).is_err());
+    }
+
+    #[test]
+    fn limb_gram_reconstruction_rejects_integer_overflow() {
+        let shape = PhysicalL2NormProofShape::LimbGram {
+            physical_response_len: 1,
+            block_len: 1,
+            limb_count: 2,
+        };
+        assert!(
+            reconstruct_l2_sq_from_gram(shape, usize::MAX, &[i128::MAX, 0, i128::MAX]).is_err()
+        );
+    }
 }

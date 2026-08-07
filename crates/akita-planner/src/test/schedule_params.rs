@@ -180,6 +180,128 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
+fn complete_suffix_can_select_l2_or_retain_linf() {
+    use akita_config::{
+        policy_of,
+        proof_optimized::{fp128, fp32},
+        CommitmentConfig,
+    };
+    use akita_types::InnerCommitSecurityRoute;
+
+    let fp128_policy = policy_of::<fp128::D64OneHot>();
+    let fp128_domain = RingDimensionSearchDomain::uniform(64).unwrap();
+    let fp128_schedule = find_schedule(
+        PolynomialGroupLayout::singleton(32),
+        &fp128_policy,
+        fp128::D64OneHot::root_honest_fold_policy(),
+        &fp128_domain,
+        fp128::D64OneHot::ring_challenge_config,
+        fp128::D64OneHot::fold_challenge_shape_at_level,
+    )
+    .expect("fp128 selective L2 schedule");
+    assert!(fp128_schedule.schedule.recursive_folds.iter().any(|step| {
+        matches!(
+            step.params.witness.inner_commit_matrix.security_route(),
+            InnerCommitSecurityRoute::L2 { .. }
+        )
+    }));
+
+    // A synthetic measured-cap policy pins the global effect of the retained
+    // lower-rank route: its smaller successor is terminal one fold earlier.
+    let mut fold_reducing_policy = fp128_policy;
+    let fold_reducing_caps = fp128_policy
+        .selective_l2_fold_caps
+        .iter()
+        .copied()
+        .map(|mut cap| {
+            cap.response_l2_sq_cap = 2;
+            cap
+        })
+        .collect::<Vec<_>>();
+    fold_reducing_policy.selective_l2_fold_caps = Box::leak(fold_reducing_caps.into_boxed_slice());
+    let mut linf_policy = fp128_policy;
+    linf_policy.selective_l2_fold_caps = &[];
+    let linf = find_schedule(
+        PolynomialGroupLayout::singleton(31),
+        &linf_policy,
+        fp128::D64OneHot::root_honest_fold_policy(),
+        &fp128_domain,
+        fp128::D64OneHot::ring_challenge_config,
+        fp128::D64OneHot::fold_challenge_shape_at_level,
+    )
+    .expect("Linf comparison schedule");
+    let fold_reducing = find_schedule(
+        PolynomialGroupLayout::singleton(31),
+        &fold_reducing_policy,
+        fp128::D64OneHot::root_honest_fold_policy(),
+        &fp128_domain,
+        fp128::D64OneHot::ring_challenge_config,
+        fp128::D64OneHot::fold_challenge_shape_at_level,
+    )
+    .expect("fold-reducing L2 schedule");
+    assert_eq!(
+        fold_reducing.schedule.recursive_folds.len() + 1,
+        linf.schedule.recursive_folds.len()
+    );
+    assert!(fold_reducing.schedule.recursive_folds.iter().any(|step| {
+        matches!(
+            step.params.witness.inner_commit_matrix.security_route(),
+            InnerCommitSecurityRoute::L2 { .. }
+        )
+    }));
+
+    let fp32_policy = policy_of::<fp32::D128OneHot>();
+    let fp32_challenge = fp32::D128OneHot::ring_challenge_config(128).unwrap();
+    let fp32_frontier = derive_candidate_level_params_frontier(
+        &fp32_policy,
+        akita_types::CommitmentPayloadMode::Compressed,
+        &fp32_challenge,
+        CommitmentRingDims::uniform(128),
+        386_560,
+        4,
+        3,
+        None,
+        TensorChallengeShape::Flat,
+    )
+    .expect("fp32 measured frontier");
+    assert!(fp32_frontier.iter().any(|(params, _)| matches!(
+        params.inner_commit_matrix.security_route(),
+        InnerCommitSecurityRoute::L2 { .. }
+    )));
+
+    let fp32_domain = RingDimensionSearchDomain::uniform(128).unwrap();
+    let fp32_schedule = find_schedule(
+        PolynomialGroupLayout::singleton(28),
+        &fp32_policy,
+        fp32::D128OneHot::root_honest_fold_policy(),
+        &fp32_domain,
+        fp32::D128OneHot::ring_challenge_config,
+        fp32::D128OneHot::fold_challenge_shape_at_level,
+    )
+    .expect("fp32 measured schedule");
+    assert!(matches!(
+        fp32_schedule
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .inner_commit_matrix
+            .security_route(),
+        InnerCommitSecurityRoute::Linf(_)
+    ));
+    assert!(fp32_schedule
+        .schedule
+        .recursive_folds
+        .iter()
+        .all(|step| matches!(
+            step.params.witness.inner_commit_matrix.security_route(),
+            InnerCommitSecurityRoute::Linf(_)
+        )));
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
 fn grouped_scalar_fallback_preserves_mixed_domain() {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
     use akita_types::AkitaScheduleLookupKey;

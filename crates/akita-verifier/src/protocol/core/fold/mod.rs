@@ -123,10 +123,12 @@ where
                 let replay = verify_physical_l2_norm::<F, E, T>(
                     plan,
                     norm_proof,
-                    &leaf.equality_point,
-                    leaf.input_claim,
-                    &leaf.polynomial_coefficients,
-                    proof.range_image_evaluation,
+                    PhysicalL2RangeClaim {
+                        equality_point: &leaf.equality_point,
+                        input_claim: leaf.input_claim,
+                        leaf_coefficients: &leaf.polynomial_coefficients,
+                        image_evaluation: proof.range_image_evaluation,
+                    },
                     lp.inner_commit_matrix.sis_modulus_profile(),
                     response_l2_sq_cap,
                     transcript,

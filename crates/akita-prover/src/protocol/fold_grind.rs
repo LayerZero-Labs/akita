@@ -115,12 +115,9 @@ fn accepts_fold_witness_flat<F: CanonicalField>(
             return None;
         }
         let magnitude = u128::from(coefficient.unsigned_abs());
-        let Some(next) = magnitude
+        let next = magnitude
             .checked_mul(magnitude)
-            .and_then(|square| response_l2_sq.checked_add(square))
-        else {
-            return None;
-        };
+            .and_then(|square| response_l2_sq.checked_add(square))?;
         response_l2_sq = next;
     }
     let _ = witness;

@@ -18,8 +18,8 @@ use akita_config::{
 use akita_planner::find_schedule;
 use akita_schedules::resolve_schedule;
 use akita_schedules::{
-    resolve_generated_schedule_selection, select_generated_schedule_row, PlannerCostModelId,
-    PlannerPolicy, ResolvedScheduleRow,
+    resolve_generated_schedule_selection, select_generated_schedule_row,
+    validate_generated_schedule_entry, PlannerCostModelId, PlannerPolicy, ResolvedScheduleRow,
 };
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
@@ -399,6 +399,66 @@ fn policy_bridge_matches_cfg_hooks() {
     assert_policy_matches_cfg::<fp128::D64OneHot>();
     assert_policy_matches_cfg::<fp128::MixedDimFp128OneHot>();
     assert_policy_matches_cfg::<fp32::D64OneHot>();
+}
+
+#[test]
+fn generated_l2_row_rejects_route_cap_and_shape_drift() {
+    type Cfg = fp128::D64OneHot;
+    let catalog = Cfg::schedule_catalog().expect("D64 one-hot catalog");
+    let entry = catalog
+        .entries
+        .iter()
+        .find(|entry| {
+            entry
+                .recursive_folds
+                .iter()
+                .any(|fold| fold.response_l2_sq_cap.is_some())
+        })
+        .expect("catalog must contain a selected L2 row");
+    let key = entry.to_runtime_lookup_key();
+    let policy = policy_of::<Cfg>();
+    let validate = |candidate, candidate_policy| {
+        validate_generated_schedule_entry(
+            candidate,
+            &key,
+            candidate_policy,
+            &Cfg::ring_challenge_config,
+            &Cfg::fold_challenge_shape_at_level,
+        )
+    };
+    validate(entry, &policy).expect("valid generated L2 row");
+
+    let l2_index = entry
+        .recursive_folds
+        .iter()
+        .position(|fold| fold.response_l2_sq_cap.is_some())
+        .expect("selected L2 fold");
+    let mut route_folds = entry.recursive_folds.to_vec();
+    route_folds[l2_index].response_l2_sq_cap = None;
+    let mut route_entry = *entry;
+    route_entry.recursive_folds = Box::leak(route_folds.into_boxed_slice());
+    assert!(validate(&route_entry, &policy).is_err());
+
+    let selected_cap = entry.recursive_folds[l2_index]
+        .response_l2_sq_cap
+        .expect("selected cap");
+    let cap_index = policy
+        .selective_l2_fold_caps
+        .iter()
+        .position(|cap| cap.response_l2_sq_cap == selected_cap)
+        .expect("policy cap");
+
+    let mut cap_policy = policy;
+    let mut caps = policy.selective_l2_fold_caps.to_vec();
+    caps[cap_index].response_l2_sq_cap += 1;
+    cap_policy.selective_l2_fold_caps = Box::leak(caps.into_boxed_slice());
+    assert!(validate(entry, &cap_policy).is_err());
+
+    let mut shape_policy = policy;
+    let mut caps = policy.selective_l2_fold_caps.to_vec();
+    caps[cap_index].physical_response_len += 1;
+    shape_policy.selective_l2_fold_caps = Box::leak(caps.into_boxed_slice());
+    assert!(validate(entry, &shape_policy).is_err());
 }
 
 #[test]

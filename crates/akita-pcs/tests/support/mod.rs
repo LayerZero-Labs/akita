@@ -143,6 +143,10 @@ where
         Envelope::sis_modulus_profile()
     }
 
+    fn selective_l2_fold_caps() -> &'static [akita_schedules::SelectiveL2FoldCap] {
+        Envelope::selective_l2_fold_caps()
+    }
+
     fn ring_subfield_embedding_norm_bound() -> u32 {
         Envelope::ring_subfield_embedding_norm_bound()
             .max(Final::ring_subfield_embedding_norm_bound())

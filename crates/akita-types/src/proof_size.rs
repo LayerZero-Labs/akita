@@ -184,7 +184,10 @@ mod tests {
 
     use akita_challenges::SparseChallengeConfig;
     use akita_field::AkitaError;
-    use akita_field::{CanonicalField, FieldCore, Prime128OffsetA7F7};
+    use akita_field::{
+        CanonicalField, Ext2, FieldCore, FpExt4, Prime128OffsetA7F7, Prime32Offset99,
+        Prime64Offset59,
+    };
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::EqFactoredUniPoly;
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
@@ -324,7 +327,10 @@ mod tests {
         }
     }
 
-    fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
+    fn exact_level_proof_bytes<
+        B: FieldCore + CanonicalField + AkitaSerialize,
+        E: FieldCore + AkitaSerialize,
+    >(
         lp: &CommittedGroupParams,
         next_lp: &CommittedGroupParams,
         output_witness_len: usize,
@@ -338,15 +344,15 @@ mod tests {
 
         let proof = FoldLevelProof {
             extension_opening_reduction: None,
-            opening_payload: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
+            opening_payload: RingVec::from_coeffs(vec![B::zero(); current_coeffs]),
             fold_grind_nonce: 0,
-            stage1: dummy_stage1_proof(rounds, b, lp.inner_commit_matrix.security_route()),
+            stage1: dummy_stage1_proof::<E>(rounds, b, lp.inner_commit_matrix.security_route()),
             stage2: AkitaStage2Proof {
-                sumcheck_proof: dummy_sumcheck(rounds, 3),
+                sumcheck_proof: dummy_sumcheck::<E>(rounds, 3),
                 next_witness_binding: match next_witness_binding {
                     crate::NextWitnessBindingPolicy::OuterPayload => {
                         crate::NextWitnessBinding::OuterPayload(RingVec::from_coeffs(vec![
-                            F::zero();
+                            B::zero();
                             next_commit_coeffs
                         ]))
                     }
@@ -354,12 +360,75 @@ mod tests {
                         crate::NextWitnessBinding::TerminalInnerState
                     }
                 },
-                next_w_eval: F::zero(),
+                next_w_eval: E::zero(),
             },
             stage3_sumcheck_proof: stage3_setup_ring_len
-                .map(|setup_ring_len| dummy_stage3_proof::<F>(lp.d_a(), setup_ring_len)),
+                .map(|setup_ring_len| dummy_stage3_proof::<E>(lp.d_a(), setup_ring_len)),
         };
         Ok(proof.serialized_size(Compress::No))
+    }
+
+    fn assert_l2_bytes_match_for_profile<B, E>(
+        profile: SisModulusProfileId,
+        field_bits: u32,
+        log_basis: u32,
+        fold_digit_count: usize,
+    ) where
+        B: FieldCore + CanonicalField + AkitaSerialize,
+        E: FieldCore + AkitaSerialize,
+    {
+        const D: usize = 128;
+        let challenge = SparseChallengeConfig::pm1_only(3);
+        let mut lp = CommittedGroupParams::params_only(profile, D, log_basis, 4, 2, 2, challenge)
+            .with_decomp(256, 8, 1, 1, 1)
+            .unwrap();
+        lp.num_digits_fold = fold_digit_count;
+        let shape = PhysicalL2NormProofShape::derive(
+            profile,
+            lp.inner_commit_matrix.input_width() * D,
+            1usize << log_basis,
+            fold_digit_count,
+        )
+        .expect("profile norm shape");
+        let table_key = sis_l2_table_key_for_collision_sq(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisL2TableDigest::CURRENT,
+            profile,
+            D as u32,
+            1u128 << 50,
+        )
+        .expect("profile L2 key");
+        lp.inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_l2_with_min_rank(
+            table_key,
+            lp.inner_commit_matrix.input_width(),
+            1u128 << 32,
+            shape,
+        )
+        .expect("profile L2 matrix");
+        let next_lp = CommittedGroupParams::params_only(profile, D, 3, 2, 2, 2, challenge)
+            .with_decomp(8, 8, 1, 1, 1)
+            .unwrap();
+        let output_witness_len = D * 8;
+        assert_eq!(
+            level_proof_bytes(
+                field_bits,
+                128,
+                &lp,
+                Some(&next_lp),
+                output_witness_len,
+                Some(crate::NextWitnessBindingPolicy::OuterPayload),
+            )
+            .unwrap(),
+            exact_level_proof_bytes::<B, E>(
+                &lp,
+                &next_lp,
+                output_witness_len,
+                None,
+                crate::NextWitnessBindingPolicy::OuterPayload,
+            )
+            .unwrap(),
+            "planned L2 bytes must match {profile:?} serialization for {shape:?}"
+        );
     }
 
     #[test]
@@ -399,7 +468,7 @@ mod tests {
                     Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
-                exact_level_proof_bytes::<F>(
+                exact_level_proof_bytes::<F, F>(
                     &lp,
                     &next_lp,
                     output_witness_len,
@@ -474,7 +543,7 @@ mod tests {
                     Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
-                exact_level_proof_bytes::<F>(
+                exact_level_proof_bytes::<F, F>(
                     &lp,
                     &next_lp,
                     output_witness_len,
@@ -485,6 +554,22 @@ mod tests {
                 "planned L2 bytes should match serialized body for {shape:?}"
             );
         }
+    }
+
+    #[test]
+    fn planned_l2_bytes_match_small_field_extension_serialization() {
+        assert_l2_bytes_match_for_profile::<Prime32Offset99, FpExt4<Prime32Offset99>>(
+            SisModulusProfileId::Q32Offset99,
+            32,
+            4,
+            3,
+        );
+        assert_l2_bytes_match_for_profile::<Prime64Offset59, Ext2<Prime64Offset59>>(
+            SisModulusProfileId::Q64Offset59,
+            64,
+            6,
+            2,
+        );
     }
 
     #[test]
@@ -559,7 +644,7 @@ mod tests {
             Some(crate::NextWitnessBindingPolicy::OuterPayload),
         )
         .unwrap();
-        let serialized = exact_level_proof_bytes::<F>(
+        let serialized = exact_level_proof_bytes::<F, F>(
             &lp,
             &next_lp,
             output_witness_len,
@@ -617,7 +702,7 @@ mod tests {
         assert_eq!(outer - terminal_inner, crate::COMPRESSION_TARGET_BYTES);
         assert_eq!(
             terminal_inner,
-            exact_level_proof_bytes::<F>(
+            exact_level_proof_bytes::<F, F>(
                 &lp,
                 &next_lp,
                 output_witness_len,
@@ -717,7 +802,7 @@ mod tests {
             .with_decomp(1, 1, 1, 1, 1)
             .unwrap();
 
-            let terminal_bytes = exact_level_proof_bytes::<F>(
+            let terminal_bytes = exact_level_proof_bytes::<F, F>(
                 &lp,
                 &next_lp,
                 output_witness_len,
@@ -725,7 +810,7 @@ mod tests {
                 crate::NextWitnessBindingPolicy::OuterPayload,
             )
             .unwrap();
-            let recursive_bytes = exact_level_proof_bytes::<F>(
+            let recursive_bytes = exact_level_proof_bytes::<F, F>(
                 &lp,
                 &next_lp,
                 output_witness_len,

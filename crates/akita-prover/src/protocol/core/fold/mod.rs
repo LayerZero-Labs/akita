@@ -24,6 +24,13 @@ pub(in crate::protocol::core) struct PhysicalL2ProverReplay<E: FieldCore> {
     claim: E,
 }
 
+type Stage1ProveOutput<E> = (
+    AkitaStage1Proof<E>,
+    Vec<E>,
+    E,
+    Option<PhysicalL2ProverReplay<E>>,
+);
+
 pub(in crate::protocol::core) use extension_claim::{
     prepare_extension_claim_fold, ExtensionOpeningSource,
 };
@@ -610,15 +617,7 @@ pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
     rs: &mut RingSwitchOutput<E>,
     lp: &CommittedGroupParams,
     plan: &RelationRangeImagePlan,
-) -> Result<
-    (
-        AkitaStage1Proof<E>,
-        Vec<E>,
-        E,
-        Option<PhysicalL2ProverReplay<E>>,
-    ),
-    AkitaError,
->
+) -> Result<Stage1ProveOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,

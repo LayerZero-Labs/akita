@@ -82,6 +82,82 @@ where
     ))
 }
 
+struct ProductPrefix<E: FieldCore> {
+    digit_source: CompactDigitSource,
+    plan: DigitRangePlan,
+    leaf_coeffs: Vec<Vec<E>>,
+    stage_proofs: Vec<AkitaStage1StageProof<E>>,
+    equality_point: Vec<E>,
+    claim: E,
+    weights: Vec<E>,
+}
+
+fn prove_product_prefix<F, E, T>(
+    digit_source: CompactDigitSource,
+    plan: DigitRangePlan,
+    equality_point: Vec<E>,
+    transcript: &mut T,
+) -> Result<ProductPrefix<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F> + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps + AkitaSerialize,
+    T: Transcript<F>,
+{
+    let leaf_coeffs = plan.leaf_coeffs::<E>();
+    let mut stage_proofs = Vec::with_capacity(plan.product_stage_arities().len());
+    let mut current_equality_point = equality_point;
+    let mut current_claim = E::zero();
+    let mut current_weights = vec![E::one()];
+    for (stage_index, &arity) in plan.product_stage_arities().iter().enumerate() {
+        let lane_count = plan
+            .product_stage_lane_count(stage_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        let _stage_span = tracing::info_span!(
+            "digit_range_product_substage",
+            basis = plan.basis(),
+            stage_index,
+            arity,
+            lane_count,
+            live_len = digit_source.live_len(),
+            domain_len = digit_source.domain_len(),
+        )
+        .entered();
+        let product_input = ProductSubcheckInput {
+            source: digit_source.clone(),
+            plan,
+            leaf_polynomials: &leaf_coeffs,
+            stage_index,
+            parent_weights: current_weights,
+            equality_point: &current_equality_point,
+            input_claim: current_claim,
+        };
+        let (stage_proof, next_equality_point) = match lane_count {
+            2 => prove_class_indexed_product_subcheck::<F, E, T, 2>(product_input, transcript)?,
+            4 => prove_class_indexed_product_subcheck::<F, E, T, 4>(product_input, transcript)?,
+            8 => prove_class_indexed_product_subcheck::<F, E, T, 8>(product_input, transcript)?,
+            _ => return Err(AkitaError::InvalidProof),
+        };
+        append_digit_range_child_claims::<F, E, T>(&stage_proof.child_claims, transcript);
+        let gamma = sample_ext_challenge::<F, E, T>(
+            transcript,
+            labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
+        );
+        current_weights = plan.interstage_batch_weights(gamma, stage_proof.child_claims.len());
+        current_claim = plan.batch_claims(&current_weights, &stage_proof.child_claims)?;
+        current_equality_point = next_equality_point;
+        stage_proofs.push(stage_proof);
+    }
+    Ok(ProductPrefix {
+        digit_source,
+        plan,
+        leaf_coeffs,
+        stage_proofs,
+        equality_point: current_equality_point,
+        claim: current_claim,
+        weights: current_weights,
+    })
+}
+
 fn compose_small_poly_with_affine<E: FieldCore>(coeffs: &[E], offset: E, slope: E) -> [E; 5] {
     debug_assert!(coeffs.len() <= MAX_TREE_STAGE_Q_DEGREE + 1);
     let [constant, linear, quadratic, cubic, quartic] = match coeffs {
@@ -202,55 +278,24 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
             ));
         }
 
-        let leaf_coeffs = plan.leaf_coeffs::<E>();
-        let mut stage_proofs = Vec::with_capacity(plan.product_stage_arities().len());
-        let mut current_equality_point = equality_point;
-        let mut current_claim = E::zero();
-        let mut current_weights = vec![E::one()];
-        for stage_index in 0..plan.product_stage_arities().len() {
-            let lane_count = plan
-                .product_stage_lane_count(stage_index)
-                .ok_or(AkitaError::InvalidProof)?;
-            let product_input = ProductSubcheckInput {
-                source: digit_source.clone(),
-                plan,
-                leaf_polynomials: &leaf_coeffs,
-                stage_index,
-                parent_weights: current_weights,
-                equality_point: &current_equality_point,
-                input_claim: current_claim,
-            };
-            let (stage_proof, next_equality_point) = match lane_count {
-                2 => prove_class_indexed_product_subcheck::<F, E, T, 2>(product_input, transcript)?,
-                4 => prove_class_indexed_product_subcheck::<F, E, T, 4>(product_input, transcript)?,
-                8 => prove_class_indexed_product_subcheck::<F, E, T, 8>(product_input, transcript)?,
-                _ => return Err(AkitaError::InvalidProof),
-            };
-            append_digit_range_child_claims::<F, E, T>(&stage_proof.child_claims, transcript);
-            let gamma = sample_ext_challenge::<F, E, T>(
-                transcript,
-                labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
-            );
-            current_weights = plan.interstage_batch_weights(gamma, stage_proof.child_claims.len());
-            current_claim = plan.batch_claims(&current_weights, &stage_proof.child_claims)?;
-            current_equality_point = next_equality_point;
-            stage_proofs.push(stage_proof);
-        }
-
-        let batched_leaf_coeffs = plan.batch_leaf_polynomials(&current_weights, &leaf_coeffs)?;
-        let compact_witness = digit_source.digits();
+        let prefix =
+            prove_product_prefix::<F, E, T>(digit_source, plan, equality_point, transcript)?;
+        let batched_leaf_coeffs = prefix
+            .plan
+            .batch_leaf_polynomials(&prefix.weights, &prefix.leaf_coeffs)?;
+        let compact_witness = prefix.digit_source.digits();
         let (norm_proof, stage1_point, range_image_evaluation) =
             super::prove_physical_l2_norm::<F, E, T>(
                 physical_plan,
                 compact_witness.as_ref(),
-                &current_equality_point,
-                current_claim,
+                &prefix.equality_point,
+                prefix.claim,
                 batched_leaf_coeffs,
                 transcript,
             )?;
         Ok((
             AkitaStage1Proof {
-                stages: stage_proofs,
+                stages: prefix.stage_proofs,
                 range_image_evaluation,
                 norm_proof: Some(norm_proof),
             },
@@ -310,65 +355,23 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
             return Ok((proof, stage1_point));
         }
 
-        let leaf_coeffs = plan.leaf_coeffs::<E>();
-        let mut stage_proofs = Vec::with_capacity(plan.stage_count());
-        let mut current_equality_point = equality_point;
-        let mut current_claim = E::zero();
-        let mut current_weights = vec![E::one()];
-
-        for (stage_index, &arity) in plan.product_stage_arities().iter().enumerate() {
-            let lane_count = plan
-                .product_stage_lane_count(stage_index)
-                .ok_or(AkitaError::InvalidProof)?;
-            let _stage_span = tracing::info_span!(
-                "digit_range_product_substage",
-                basis = plan.basis(),
-                stage_index,
-                arity,
-                lane_count,
-                live_len = digit_source.live_len(),
-                domain_len = digit_source.domain_len(),
-            )
-            .entered();
-            let product_input = ProductSubcheckInput {
-                source: digit_source.clone(),
-                plan,
-                leaf_polynomials: &leaf_coeffs,
-                stage_index,
-                parent_weights: current_weights,
-                equality_point: &current_equality_point,
-                input_claim: current_claim,
-            };
-            let (stage_proof, next_equality_point) = match lane_count {
-                2 => prove_class_indexed_product_subcheck::<F, E, T, 2>(product_input, transcript)?,
-                4 => prove_class_indexed_product_subcheck::<F, E, T, 4>(product_input, transcript)?,
-                8 => prove_class_indexed_product_subcheck::<F, E, T, 8>(product_input, transcript)?,
-                _ => return Err(AkitaError::InvalidProof),
-            };
-            let child_claims = &stage_proof.child_claims;
-            append_digit_range_child_claims::<F, E, T>(child_claims, transcript);
-            let gamma = sample_ext_challenge::<F, E, T>(
-                transcript,
-                labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
-            );
-            current_weights = plan.interstage_batch_weights(gamma, child_claims.len());
-            current_claim = plan.batch_claims(&current_weights, child_claims)?;
-            current_equality_point = next_equality_point;
-            stage_proofs.push(stage_proof);
-        }
-
-        let batched_leaf_coeffs = plan.batch_leaf_polynomials(&current_weights, &leaf_coeffs)?;
+        let prefix =
+            prove_product_prefix::<F, E, T>(digit_source, plan, equality_point, transcript)?;
+        let batched_leaf_coeffs = prefix
+            .plan
+            .batch_leaf_polynomials(&prefix.weights, &prefix.leaf_coeffs)?;
         let _leaf_span = tracing::info_span!("digit_range_polynomial_leaf").entered();
         let mut leaf_stage = ClassIndexedRangeLeafProver::new(
-            digit_source,
-            &current_equality_point,
-            current_claim,
+            prefix.digit_source,
+            &prefix.equality_point,
+            prefix.claim,
             batched_leaf_coeffs,
         )?;
         let (leaf_sumcheck, stage1_point, _leaf_final_claim) = leaf_stage
             .prove::<F, T, _>(transcript, |tr| {
                 sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)
             })?;
+        let mut stage_proofs = prefix.stage_proofs;
         stage_proofs.push(AkitaStage1StageProof {
             sumcheck_proof: leaf_sumcheck,
             child_claims: Vec::new(),

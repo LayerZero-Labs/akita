@@ -796,3 +796,118 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     )
     .expect("batched onehot verify");
 }
+
+#[test]
+fn selective_l2_proof_rejects_transcript_mutations() {
+    const NV: usize = 30;
+    const BATCH_SIZE: usize = 4;
+    const TRANSCRIPT_LABEL: &[u8] = b"test/selective-l2-mutations";
+
+    let layout = akita_batched_root_layout::<OneHotCfg>(NV, BATCH_SIZE).expect("L2 root layout");
+    let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..BATCH_SIZE)
+        .map(|index| debug_make_onehot_poly(&layout, 0x0bee_fcaf_1200_0000 + index as u64))
+        .collect();
+    let poly_refs: Vec<&OneHotPoly<OneHotF, u8>> = polys.iter().collect();
+    let point = debug_random_point(NV);
+    let openings: Vec<OneHotF> = polys
+        .iter()
+        .map(|poly| opening_from_poly(poly, &point, &layout))
+        .collect();
+
+    let setup = OneHotScheme::setup_prover(NV, BATCH_SIZE).expect("L2 setup");
+    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared L2 setup");
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("L2 stack");
+    let verifier_setup = OneHotScheme::setup_verifier(&setup).expect("L2 verifier setup");
+    let (commitment, hint) =
+        OneHotScheme::commit::<_, _>(&setup, &polys, &stack).expect("L2 commitment");
+    let commitments = [commitment];
+    let prover_group = PolynomialGroupClaims::new(
+        point.clone(),
+        vec![OneHotF::zero(); BATCH_SIZE],
+        commitments[0].clone(),
+    )
+    .expect("L2 prover group");
+    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
+    let proof = OneHotScheme::batched_prove::<_, _, _>(
+        &setup,
+        selected_prover_data::<OneHotCfg, _>(
+            OpeningClaims::from_groups(vec![prover_group]).expect("L2 prover claims"),
+            vec![hint],
+            vec![&poly_refs],
+        )
+        .expect("L2 opening data"),
+        &stack,
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .expect("L2 proof");
+
+    let verify = |candidate: &AkitaBatchedProof<OneHotF, OneHotF>| {
+        let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+            point.clone(),
+            openings.clone(),
+            &commitments[0],
+        )
+        .expect("L2 verifier group")])
+        .expect("L2 verifier claims");
+        let mut transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
+        OneHotScheme::batched_verify(
+            candidate,
+            &verifier_setup,
+            &mut transcript,
+            selected_statement::<OneHotCfg>(claims).expect("L2 verifier statement"),
+            BasisMode::Lagrange,
+        )
+    };
+    verify(&proof).expect("valid L2 proof");
+
+    let l2_index = proof
+        .recursive_folds
+        .iter()
+        .position(|fold| fold.stage1.norm_proof.is_some())
+        .expect("generated schedule must select one L2 fold");
+
+    let mut bad_norm = proof.clone();
+    bad_norm.recursive_folds[l2_index]
+        .stage1
+        .norm_proof
+        .as_mut()
+        .expect("L2 norm")
+        .response_l2_sq += 1;
+    assert!(verify(&bad_norm).is_err());
+
+    let mut over_cap = proof.clone();
+    over_cap.recursive_folds[l2_index]
+        .stage1
+        .norm_proof
+        .as_mut()
+        .expect("L2 norm")
+        .response_l2_sq = u128::MAX;
+    assert!(verify(&over_cap).is_err());
+
+    let mut bad_virtual = proof.clone();
+    bad_virtual.recursive_folds[l2_index]
+        .stage1
+        .norm_proof
+        .as_mut()
+        .expect("L2 norm")
+        .virtual_evaluations[0] += OneHotF::one();
+    assert!(verify(&bad_virtual).is_err());
+
+    let mut bad_sumcheck = proof.clone();
+    bad_sumcheck.recursive_folds[l2_index]
+        .stage1
+        .norm_proof
+        .as_mut()
+        .expect("L2 norm")
+        .sumcheck
+        .round_polys[0]
+        .coeffs_except_linear_term[0] += OneHotF::one();
+    assert!(verify(&bad_sumcheck).is_err());
+
+    let mut bad_nonce = proof;
+    bad_nonce.recursive_folds[l2_index].fold_grind_nonce += 1;
+    assert!(verify(&bad_nonce).is_err());
+}

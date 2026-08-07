@@ -19,6 +19,13 @@ pub(crate) struct PhysicalL2VerifierReplay<E: FieldCore> {
     pub(crate) virtual_evaluations: Vec<E>,
 }
 
+pub(crate) struct PhysicalL2RangeClaim<'a, E> {
+    pub(crate) equality_point: &'a [E],
+    pub(crate) input_claim: E,
+    pub(crate) leaf_coefficients: &'a [E],
+    pub(crate) image_evaluation: E,
+}
+
 struct PhysicalL2NormVerifier<'a, E: FieldCore> {
     plan: &'a PhysicalResponsePlan,
     proof: &'a PhysicalL2NormProof<E>,
@@ -233,10 +240,7 @@ where
 pub(crate) fn verify_physical_l2_norm<F, E, T>(
     plan: &PhysicalResponsePlan,
     proof: &PhysicalL2NormProof<E>,
-    range_equality_point: &[E],
-    range_input_claim: E,
-    range_leaf_coefficients: &[E],
-    range_image_evaluation: E,
+    range: PhysicalL2RangeClaim<'_, E>,
     profile: SisModulusProfileId,
     cap: u128,
     transcript: &mut T,
@@ -246,7 +250,7 @@ where
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    if range_equality_point.len() != plan.domain().num_vars() || range_leaf_coefficients.len() < 3 {
+    if range.equality_point.len() != plan.domain().num_vars() || range.leaf_coefficients.len() < 3 {
         return Err(AkitaError::InvalidSetup(
             "fused Stage-1 leaf has inconsistent range geometry".into(),
         ));
@@ -277,11 +281,11 @@ where
     let verifier = PhysicalL2NormVerifier {
         plan,
         proof,
-        range_equality_point,
-        range_leaf_coefficients,
-        range_image_evaluation,
+        range_equality_point: range.equality_point,
+        range_leaf_coefficients: range.leaf_coefficients,
+        range_image_evaluation: range.image_evaluation,
         subclaim_weights,
-        input_claim: range_input_claim + norm_merge * norm_input_claim,
+        input_claim: range.input_claim + norm_merge * norm_input_claim,
         norm_merge,
     };
     let point = verifier.verify::<F, T, _>(&proof.sumcheck, transcript, |tr| {
@@ -294,4 +298,29 @@ where
         point,
         virtual_evaluations: proof.virtual_evaluations.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Prime32Offset99;
+
+    #[test]
+    fn centered_lift_accepts_both_boundary_representatives() {
+        type F = Prime32Offset99;
+        let profile = SisModulusProfileId::Q32Offset99;
+        let modulus = profile.modulus();
+        let half = modulus / 2;
+        let positive = F::from_canonical_u128_checked(half).expect("positive boundary");
+        let negative = F::from_canonical_u128_checked(half + 1).expect("negative boundary");
+
+        assert_eq!(
+            centered_lift::<F, F>(positive, profile).unwrap(),
+            half as i128
+        );
+        assert_eq!(
+            centered_lift::<F, F>(negative, profile).unwrap(),
+            -(half as i128)
+        );
+    }
 }
