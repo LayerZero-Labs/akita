@@ -4,9 +4,13 @@ use super::*;
 pub(crate) const FP64_WIDTH: usize = 8;
 
 /// AVX-512 packed arithmetic for `Fp64<P>`, processing 8 lanes.
+#[cfg_attr(
+    not(all(target_feature = "avx512f", target_feature = "avx512dq")),
+    allow(unreachable_pub)
+)]
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub(crate) struct PackedFp64Avx512<const P: u64>(pub [Fp64<P>; FP64_WIDTH]);
+pub struct PackedFp64Avx512<const P: u64>(pub [Fp64<P>; FP64_WIDTH]);
 
 impl<const P: u64> PackedFp64Avx512<P> {
     const BITS: u32 = 64 - P.leading_zeros();
