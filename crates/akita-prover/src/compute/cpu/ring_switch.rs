@@ -28,22 +28,18 @@ where
                 .shared_matrix()
                 .ring_view::<D>(1, stream_extent)?;
             let source = StreamedASource::new(view.as_slice());
-            let params_key = NttCacheKey::from_matrix_shape(D, 1, 1, NttTransformDomain::Cyclic)?;
-            let streamed = prepared.with_shared_ntt::<D, _>(params_key, |ntt| {
-                fused_split_eq_quotients_streamed_prover_bounds(
-                    ntt,
-                    &source,
-                    plan.n_d,
-                    plan.n_b,
-                    plan.n_a,
-                    plan.e_hat,
-                    plan.t_hat,
-                    plan.z_segment,
-                    plan.z_folded_centered_inf_norm,
-                    plan.log_basis_open,
-                    plan.log_basis_outer,
-                )
-            })?;
+            let streamed = fused_split_eq_quotients_streamed_prover_bounds(
+                &source,
+                plan.n_d,
+                plan.n_b,
+                plan.n_a,
+                plan.e_hat,
+                plan.t_hat,
+                plan.z_segment,
+                plan.z_folded_centered_inf_norm,
+                plan.log_basis_open,
+                plan.log_basis_outer,
+            )?;
             if let Some((d_cyclic, b_cyclic, a_quotients)) = streamed {
                 return Ok(RingSwitchRelationRows {
                     d_cyclic,
@@ -136,22 +132,18 @@ where
                 .shared_matrix()
                 .ring_view::<D>(1, stream_extent)?;
             let source = StreamedASource::new(view.as_slice());
-            let params_key = NttCacheKey::from_matrix_shape(D, 1, 1, NttTransformDomain::Cyclic)?;
-            let streamed = prepared.with_shared_ntt::<D, _>(params_key, |ntt| {
-                fused_split_eq_quotients_streamed_prover_bounds(
-                    ntt,
-                    &source,
-                    0,
-                    0,
-                    plan.n_a,
-                    &[][..],
-                    &[][..],
-                    plan.z_segment,
-                    plan.z_folded_centered_inf_norm,
-                    1,
-                    1,
-                )
-            })?;
+            let streamed = fused_split_eq_quotients_streamed_prover_bounds(
+                &source,
+                0,
+                0,
+                plan.n_a,
+                &[][..],
+                &[][..],
+                plan.z_segment,
+                plan.z_folded_centered_inf_norm,
+                1,
+                1,
+            )?;
             if let Some((_d_cyclic, _b_cyclic, a_quotients)) = streamed {
                 return Ok(a_quotients);
             }

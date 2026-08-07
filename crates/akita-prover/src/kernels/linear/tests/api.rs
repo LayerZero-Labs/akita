@@ -9,6 +9,14 @@ fn aligned_i8_tile_width_keeps_full_tiles_on_digit_boundaries() {
 }
 
 #[test]
+fn base_tile_width_accounts_for_every_matrix_row() {
+    let single_row = base_tile_width::<i32, 2, 128>(1);
+    let eleven_rows = base_tile_width::<i32, 2, 128>(11);
+
+    assert_eq!(eleven_rows, single_row / 11);
+}
+
+#[test]
 fn predecomposed_digit_api_rejects_digits_outside_log_basis_range() {
     type F = Fp64<4294967197>;
     const D: usize = 64;

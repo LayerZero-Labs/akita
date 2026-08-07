@@ -21,10 +21,6 @@ fn prepared() -> CpuPreparedSetup<F> {
     CpuBackend.prepare_setup(&setup).unwrap()
 }
 
-fn params_key() -> NttCacheKey {
-    NttCacheKey::from_matrix_shape(D, 1, 1, NttTransformDomain::Cyclic).unwrap()
-}
-
 fn cyclic_key(extent: usize) -> NttCacheKey {
     NttCacheKey::from_matrix_shape(D, 1, extent, NttTransformDomain::Cyclic).unwrap()
 }
@@ -49,14 +45,11 @@ fn streamed_relation_rows_match_cached_kernel() {
         .ring_view::<D>(1, extent)
         .expect("field view");
     let source = StreamedASource::new(view.as_slice());
-    let streamed = prepared
-        .with_shared_ntt::<D, _>(params_key(), |ntt| {
-            fused_split_eq_quotients_streamed_prover_bounds(
-                ntt, &source, 2, 2, 1, &e_hat, &t_hat, &z_segment, 5, 2, 3,
-            )
-        })
-        .expect("streamed rows")
-        .expect("shape is one-shot safe");
+    let streamed = fused_split_eq_quotients_streamed_prover_bounds(
+        &source, 2, 2, 1, &e_hat, &t_hat, &z_segment, 5, 2, 3,
+    )
+    .expect("streamed rows")
+    .expect("shape is one-shot safe");
     let cached = prepared
         .with_shared_ntt::<D, _>(cyclic_key(extent), |cyclic_ntt| {
             prepared.with_shared_ntt::<D, _>(negacyclic_key(extent), |negacyclic_ntt| {
@@ -97,14 +90,11 @@ fn streamed_relation_rows_match_cached_q32_kernel() {
         .ring_view::<D>(1, extent)
         .expect("field view");
     let source = StreamedASource::new(view.as_slice());
-    let streamed = prepared
-        .with_shared_ntt::<D, _>(params_key(), |ntt| {
-            fused_split_eq_quotients_streamed_prover_bounds(
-                ntt, &source, 2, 2, 1, &e_hat, &t_hat, &z_segment, 5, 2, 3,
-            )
-        })
-        .expect("streamed rows")
-        .expect("shape is one-shot safe");
+    let streamed = fused_split_eq_quotients_streamed_prover_bounds(
+        &source, 2, 2, 1, &e_hat, &t_hat, &z_segment, 5, 2, 3,
+    )
+    .expect("streamed rows")
+    .expect("shape is one-shot safe");
     let cached = prepared
         .with_shared_ntt::<D, _>(cyclic_key(extent), |cyclic_ntt| {
             prepared.with_shared_ntt::<D, _>(negacyclic_key(extent), |negacyclic_ntt| {
@@ -142,24 +132,20 @@ fn streamed_chunked_z_quotient_matches_cached_kernel() {
         .ring_view::<D>(1, extent)
         .expect("field view");
     let source = StreamedASource::new(view.as_slice());
-    let streamed = prepared
-        .with_shared_ntt::<D, _>(params_key(), |ntt| {
-            fused_split_eq_quotients_streamed_prover_bounds(
-                ntt,
-                &source,
-                0,
-                0,
-                1,
-                &[][..],
-                &[][..],
-                &z_segment,
-                z_bound,
-                1,
-                1,
-            )
-        })
-        .expect("streamed rows")
-        .expect("chunked z path streams");
+    let streamed = fused_split_eq_quotients_streamed_prover_bounds(
+        &source,
+        0,
+        0,
+        1,
+        &[][..],
+        &[][..],
+        &z_segment,
+        z_bound,
+        1,
+        1,
+    )
+    .expect("streamed rows")
+    .expect("chunked z path streams");
     let cached = prepared
         .with_shared_ntt::<D, _>(cyclic_key(extent), |cyclic_ntt| {
             prepared.with_shared_ntt::<D, _>(negacyclic_key(extent), |negacyclic_ntt| {
@@ -204,27 +190,20 @@ fn streamed_chunked_t_rows_match_cached_kernel() {
         .ring_view::<D128>(1, T_LEN)
         .expect("field view");
     let flat_source = StreamedASource::new(view.as_slice());
-    let streamed = prepared
-        .with_shared_ntt::<D128, _>(
-            NttCacheKey::from_matrix_shape(D128, 1, 1, NttTransformDomain::Cyclic).unwrap(),
-            |ntt| {
-                fused_split_eq_quotients_streamed_prover_bounds(
-                    ntt,
-                    &flat_source,
-                    1,
-                    1,
-                    1,
-                    &e_hat,
-                    &t_hat,
-                    &z_segment,
-                    3,
-                    2,
-                    8,
-                )
-            },
-        )
-        .expect("streamed rows")
-        .expect("chunked t path streams");
+    let streamed = fused_split_eq_quotients_streamed_prover_bounds(
+        &flat_source,
+        1,
+        1,
+        1,
+        &e_hat,
+        &t_hat,
+        &z_segment,
+        3,
+        2,
+        8,
+    )
+    .expect("streamed rows")
+    .expect("chunked t path streams");
     let cached = prepared
         .with_shared_ntt::<D128, _>(
             NttCacheKey::from_matrix_shape(D128, 1, T_LEN, NttTransformDomain::Cyclic).unwrap(),

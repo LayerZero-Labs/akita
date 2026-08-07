@@ -344,7 +344,7 @@ fn fused_split_eq_quotients_one_shot<
         .into_iter()
         .zip(a_cyc_accs)
         .map(|(neg_acc, cyc_acc)| {
-            let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring_with_params(params);
+            let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring(params);
             let cyc_ring: CyclotomicRing<F, D> = cyc_acc.to_ring_cyclic(params);
             quotient_from_cyclic_and_negacyclic(&cyc_ring, &neg_ring)
         })
@@ -442,7 +442,7 @@ fn fused_split_eq_quotients_one_shot_streamed<
                     let ntt_w = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&e_hat[j], params, lut);
                     for (i, acc_d) in accs.0.iter_mut().enumerate() {
                         let a_ring = source.ring_at(i * d_width + j);
-                        let a_cyc = CyclotomicCrtNtt::from_ring_cyclic_with_params(&a_ring, params);
+                        let a_cyc = CyclotomicCrtNtt::from_ring_cyclic(&a_ring, params);
                         accumulate_pointwise_product_into(acc_d, &a_cyc, &ntt_w, params);
                     }
                 }
@@ -452,7 +452,7 @@ fn fused_split_eq_quotients_one_shot_streamed<
                     let ntt_t = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, lut);
                     for (i, acc_b) in accs.1.iter_mut().enumerate() {
                         let a_ring = source.ring_at(i * b_width + j);
-                        let a_cyc = CyclotomicCrtNtt::from_ring_cyclic_with_params(&a_ring, params);
+                        let a_cyc = CyclotomicCrtNtt::from_ring_cyclic(&a_ring, params);
                         accumulate_pointwise_product_into(acc_b, &a_cyc, &ntt_t, params);
                     }
                 }
@@ -518,7 +518,7 @@ fn fused_split_eq_quotients_one_shot_streamed<
         .into_iter()
         .zip(a_cyc_accs)
         .map(|(neg_acc, cyc_acc)| {
-            let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring_with_params(params);
+            let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring(params);
             let cyc_ring: CyclotomicRing<F, D> = cyc_acc.to_ring_cyclic(params);
             quotient_from_cyclic_and_negacyclic(&cyc_ring, &neg_ring)
         })
@@ -566,7 +566,7 @@ fn streamed_cyclic_i8_rows_chunked<
                 let ntt_rhs = CyclotomicCrtNtt::from_i8_cyclic_with_lut(rhs_row, params, &lut);
                 for (i, acc) in accs.iter_mut().enumerate() {
                     let a_ring = source.ring_at(i * row_width + j);
-                    let a_cyc = CyclotomicCrtNtt::from_ring_cyclic_with_params(&a_ring, params);
+                    let a_cyc = CyclotomicCrtNtt::from_ring_cyclic(&a_ring, params);
                     accumulate_pointwise_product_into(acc, &a_cyc, &ntt_rhs, params);
                 }
             }
@@ -652,7 +652,7 @@ fn streamed_centered_quotient_rows_chunked<
             }
 
             for ((dst, neg_acc), cyc_acc) in out.iter_mut().zip(neg_accs).zip(cyc_accs) {
-                let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring_with_params(params);
+                let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring(params);
                 let cyc_ring: CyclotomicRing<F, D> = cyc_acc.to_ring_cyclic(params);
                 *dst += quotient_from_cyclic_and_negacyclic(&cyc_ring, &neg_ring);
             }
@@ -669,18 +669,16 @@ fn streamed_centered_quotient_rows_chunked<
 
 /// Streamed counterpart of [`fused_split_eq_quotients_prover_bounds`].
 ///
-/// `slot` supplies only the CRT parameter set (any built extent works — the
-/// caller passes a minimal slot); entries stream from `flat`, A's field-form
-/// prefix covering every product's `rows x width` extent. Roles that exceed
-/// one CRT accumulator are reduced in capacity-safe chunks. Returns `Ok(None)`
-/// only when the selected CRT profile cannot represent one term, in which
-/// case the caller must take the cached path.
+/// Entries stream from `flat`, A's field-form prefix covering every product's
+/// `rows x width` extent. Roles that exceed one CRT accumulator are reduced in
+/// capacity-safe chunks. Returns `Ok(None)` only when the selected protocol CRT
+/// profile cannot represent one term, in which case the caller takes the
+/// cached path.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
-    slot: &PreparedNttCache<D>,
     source: &StreamedASource<'_, F, D>,
     n_d: usize,
     n_b: usize,
@@ -793,10 +791,10 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
             Ok(Some((d_rows, b_rows, a_rows)))
         }};
     }
-    match slot {
-        PreparedNttCache::Q32 { params, .. } => run!(params.clone()),
-        PreparedNttCache::Q64 { params, .. } => run!(params.clone()),
-        PreparedNttCache::Q128 { params, .. } => run!(params.clone()),
+    match select_crt_ntt_params::<F, D>()? {
+        ProtocolCrtNttParams::Q32(params) => run!(params),
+        ProtocolCrtNttParams::Q64(params) => run!(params),
+        ProtocolCrtNttParams::Q128(params) => run!(params),
     }
 }
 
@@ -949,7 +947,7 @@ fn accumulate_centered_quotient_rows<
             }
 
             for ((dst, neg_acc), cyc_acc) in out.iter_mut().zip(neg_accs).zip(cyc_accs) {
-                let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring_with_params(params);
+                let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring(params);
                 let cyc_ring: CyclotomicRing<F, D> = cyc_acc.to_ring_cyclic(params);
                 *dst += quotient_from_cyclic_and_negacyclic(&cyc_ring, &neg_ring);
             }
@@ -985,8 +983,7 @@ fn accumulate_centered_quotient_rows_field<
                     continue;
                 }
                 let z = centered_i32_ring::<F, D>(&z_folded_rings[j]);
-                let neg_lhs: CyclotomicRing<F, D> =
-                    neg_rows[row_idx][j].to_ring_with_params(params);
+                let neg_lhs: CyclotomicRing<F, D> = neg_rows[row_idx][j].to_ring(params);
                 let cyc_lhs: CyclotomicRing<F, D> = cyc_rows[row_idx][j].to_ring_cyclic(params);
                 let neg_product = neg_lhs * z;
                 let mut cyc_product = CyclotomicRing::<F, D>::zero();
@@ -1113,144 +1110,154 @@ fn fused_split_eq_quotients_with_digit_bound<
     let d_width = e_hat.len();
     let b_width = t_hat.len();
     let a_width = z_folded_rings.len();
-    match (negacyclic_slot, cyclic_slot) {
-        (
-            PreparedNttCache::Q32 { neg, params: p, .. },
-            PreparedNttCache::Q32 { cyc, params: q, .. },
-        ) if p == q => {
-            let neg = match neg.as_deref() {
-                Some(neg) => neg,
-                None if n_a == 0 => &[],
-                None => {
-                    return Err(AkitaError::InvalidSetup(
-                        "negacyclic NTT domain not prepared".into(),
-                    ));
-                }
-            };
-            let cyc = cyc
-                .as_deref()
-                .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
-            let neg_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &neg[i * a_width..(i + 1) * a_width])
-                .collect();
-            let d_rows: Vec<&[_]> = (0..n_d)
-                .map(|i| &cyc[i * d_width..(i + 1) * d_width])
-                .collect();
-            let b_rows: Vec<&[_]> = (0..n_b)
-                .map(|i| &cyc[i * b_width..(i + 1) * b_width])
-                .collect();
-            let a_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &cyc[i * a_width..(i + 1) * a_width])
-                .collect();
-            fused_split_eq_quotients_with_params(
-                &d_rows,
-                &b_rows,
-                &a_rows,
-                &neg_rows,
-                n_d,
-                n_b,
-                n_a,
-                e_hat,
-                t_hat,
-                z_folded_rings,
-                z_folded_max_abs,
-                w_digit_abs_bound,
-                t_digit_abs_bound,
-                p,
-            )
+    if let (Some(neg_base), Some(cyc_base)) = (negacyclic_slot.q32_base(), cyclic_slot.q32_base()) {
+        let (p, q) = (neg_base.params(), cyc_base.params());
+        if p != q {
+            return Err(AkitaError::InvalidSetup(
+                "cyclic and negacyclic NTT profiles do not match".into(),
+            ));
         }
-        (
-            PreparedNttCache::Q64 { neg, params: p, .. },
-            PreparedNttCache::Q64 { cyc, params: q, .. },
-        ) if p == q => {
-            let neg = match neg.as_deref() {
-                Some(neg) => neg,
-                None if n_a == 0 => &[],
-                None => {
-                    return Err(AkitaError::InvalidSetup(
-                        "negacyclic NTT domain not prepared".into(),
-                    ));
-                }
-            };
-            let cyc = cyc
-                .as_deref()
-                .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
-            let neg_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &neg[i * a_width..(i + 1) * a_width])
-                .collect();
-            let d_rows: Vec<&[_]> = (0..n_d)
-                .map(|i| &cyc[i * d_width..(i + 1) * d_width])
-                .collect();
-            let b_rows: Vec<&[_]> = (0..n_b)
-                .map(|i| &cyc[i * b_width..(i + 1) * b_width])
-                .collect();
-            let a_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &cyc[i * a_width..(i + 1) * a_width])
-                .collect();
-            fused_split_eq_quotients_with_params(
-                &d_rows,
-                &b_rows,
-                &a_rows,
-                &neg_rows,
-                n_d,
-                n_b,
-                n_a,
-                e_hat,
-                t_hat,
-                z_folded_rings,
-                z_folded_max_abs,
-                w_digit_abs_bound,
-                t_digit_abs_bound,
-                p,
-            )
+        let neg = match neg_base.negacyclic() {
+            Some(neg) => neg,
+            None if n_a == 0 => &[],
+            None => {
+                return Err(AkitaError::InvalidSetup(
+                    "negacyclic NTT domain not prepared".into(),
+                ));
+            }
+        };
+        let cyc = cyc_base
+            .cyclic()
+            .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
+        let neg_rows: Vec<&[_]> = (0..n_a)
+            .map(|i| &neg[i * a_width..(i + 1) * a_width])
+            .collect();
+        let d_rows: Vec<&[_]> = (0..n_d)
+            .map(|i| &cyc[i * d_width..(i + 1) * d_width])
+            .collect();
+        let b_rows: Vec<&[_]> = (0..n_b)
+            .map(|i| &cyc[i * b_width..(i + 1) * b_width])
+            .collect();
+        let a_rows: Vec<&[_]> = (0..n_a)
+            .map(|i| &cyc[i * a_width..(i + 1) * a_width])
+            .collect();
+        fused_split_eq_quotients_with_params(
+            &d_rows,
+            &b_rows,
+            &a_rows,
+            &neg_rows,
+            n_d,
+            n_b,
+            n_a,
+            e_hat,
+            t_hat,
+            z_folded_rings,
+            z_folded_max_abs,
+            w_digit_abs_bound,
+            t_digit_abs_bound,
+            p,
+        )
+    } else if let (Some(neg_base), Some(cyc_base)) =
+        (negacyclic_slot.q64_base(), cyclic_slot.q64_base())
+    {
+        let (p, q) = (neg_base.params(), cyc_base.params());
+        if p != q {
+            return Err(AkitaError::InvalidSetup(
+                "cyclic and negacyclic NTT profiles do not match".into(),
+            ));
         }
-        (
-            PreparedNttCache::Q128 { neg, params: p, .. },
-            PreparedNttCache::Q128 { cyc, params: q, .. },
-        ) if p == q => {
-            let neg = match neg.as_deref() {
-                Some(neg) => neg,
-                None if n_a == 0 => &[],
-                None => {
-                    return Err(AkitaError::InvalidSetup(
-                        "negacyclic NTT domain not prepared".into(),
-                    ));
-                }
-            };
-            let cyc = cyc
-                .as_deref()
-                .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
-            let neg_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &neg[i * a_width..(i + 1) * a_width])
-                .collect();
-            let d_rows: Vec<&[_]> = (0..n_d)
-                .map(|i| &cyc[i * d_width..(i + 1) * d_width])
-                .collect();
-            let b_rows: Vec<&[_]> = (0..n_b)
-                .map(|i| &cyc[i * b_width..(i + 1) * b_width])
-                .collect();
-            let a_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &cyc[i * a_width..(i + 1) * a_width])
-                .collect();
-            fused_split_eq_quotients_with_params(
-                &d_rows,
-                &b_rows,
-                &a_rows,
-                &neg_rows,
-                n_d,
-                n_b,
-                n_a,
-                e_hat,
-                t_hat,
-                z_folded_rings,
-                z_folded_max_abs,
-                w_digit_abs_bound,
-                t_digit_abs_bound,
-                p,
-            )
+        let neg = match neg_base.negacyclic() {
+            Some(neg) => neg,
+            None if n_a == 0 => &[],
+            None => {
+                return Err(AkitaError::InvalidSetup(
+                    "negacyclic NTT domain not prepared".into(),
+                ));
+            }
+        };
+        let cyc = cyc_base
+            .cyclic()
+            .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
+        let neg_rows: Vec<&[_]> = (0..n_a)
+            .map(|i| &neg[i * a_width..(i + 1) * a_width])
+            .collect();
+        let d_rows: Vec<&[_]> = (0..n_d)
+            .map(|i| &cyc[i * d_width..(i + 1) * d_width])
+            .collect();
+        let b_rows: Vec<&[_]> = (0..n_b)
+            .map(|i| &cyc[i * b_width..(i + 1) * b_width])
+            .collect();
+        let a_rows: Vec<&[_]> = (0..n_a)
+            .map(|i| &cyc[i * a_width..(i + 1) * a_width])
+            .collect();
+        fused_split_eq_quotients_with_params(
+            &d_rows,
+            &b_rows,
+            &a_rows,
+            &neg_rows,
+            n_d,
+            n_b,
+            n_a,
+            e_hat,
+            t_hat,
+            z_folded_rings,
+            z_folded_max_abs,
+            w_digit_abs_bound,
+            t_digit_abs_bound,
+            p,
+        )
+    } else if let (Some(neg_base), Some(cyc_base)) =
+        (negacyclic_slot.q128_base(), cyclic_slot.q128_base())
+    {
+        let (p, q) = (neg_base.params(), cyc_base.params());
+        if p != q {
+            return Err(AkitaError::InvalidSetup(
+                "cyclic and negacyclic NTT profiles do not match".into(),
+            ));
         }
-        _ => Err(AkitaError::InvalidSetup(
+        let neg = match neg_base.negacyclic() {
+            Some(neg) => neg,
+            None if n_a == 0 => &[],
+            None => {
+                return Err(AkitaError::InvalidSetup(
+                    "negacyclic NTT domain not prepared".into(),
+                ));
+            }
+        };
+        let cyc = cyc_base
+            .cyclic()
+            .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
+        let neg_rows: Vec<&[_]> = (0..n_a)
+            .map(|i| &neg[i * a_width..(i + 1) * a_width])
+            .collect();
+        let d_rows: Vec<&[_]> = (0..n_d)
+            .map(|i| &cyc[i * d_width..(i + 1) * d_width])
+            .collect();
+        let b_rows: Vec<&[_]> = (0..n_b)
+            .map(|i| &cyc[i * b_width..(i + 1) * b_width])
+            .collect();
+        let a_rows: Vec<&[_]> = (0..n_a)
+            .map(|i| &cyc[i * a_width..(i + 1) * a_width])
+            .collect();
+        fused_split_eq_quotients_with_params(
+            &d_rows,
+            &b_rows,
+            &a_rows,
+            &neg_rows,
+            n_d,
+            n_b,
+            n_a,
+            e_hat,
+            t_hat,
+            z_folded_rings,
+            z_folded_max_abs,
+            w_digit_abs_bound,
+            t_digit_abs_bound,
+            p,
+        )
+    } else {
+        Err(AkitaError::InvalidSetup(
             "cyclic and negacyclic NTT profiles do not match".into(),
-        )),
+        ))
     }
 }

@@ -1,9 +1,5 @@
 //! Linear algebra helpers for ring commitment.
 
-#[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "parallel"))]
-use akita_algebra::ntt::avx::{self, AvxNttMode};
-#[cfg(all(target_arch = "aarch64", feature = "parallel"))]
-use akita_algebra::ntt::neon;
 use akita_algebra::ntt::MontCoeff;
 use akita_algebra::ntt::PrimeWidth;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
@@ -15,9 +11,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use std::array::from_fn;
 use std::mem::size_of;
 
-use akita_types::PreparedNttCache;
-#[cfg(test)]
-use akita_types::{select_crt_ntt_params, ProtocolCrtNttParams};
+use akita_types::{select_crt_ntt_params, PreparedNttCache, ProtocolCrtNttParams};
 
 mod block_parallel;
 mod capacity;
