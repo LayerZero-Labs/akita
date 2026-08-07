@@ -36,7 +36,7 @@ REPLACEMENTS: list[tuple[str, str]] = [
     ("shard_chunks_override", "chunk_count_override"),
     ("root_num_shards", "root_num_chunks"),
     ("shard_index", "chunk_index"),
-    # Opening geometry only (not fold_high/fold_low).
+    # Opening geometry only.
     ("fold_weights", "live_block_weights"),
     ("fold_capacity", "block_index_domain_size"),
     ("fold_bits", "block_index_bits"),

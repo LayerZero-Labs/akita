@@ -9,33 +9,25 @@
 //!   to `akita-config`, `akita-types`, and `akita-planner`.
 //! - [`sample_sparse_challenges`] — the transcript-driven sampler that turns
 //!   a config plus a Fiat-Shamir transcript into sparse challenges.
-//! - [`FoldDraw`] / [`LiveFoldDraw`] / [`PreviewFoldDraw`] — tensor-aware
-//!   fold-challenge drawing over live or preview transcript state.
-//! - [`ChallengeShape`] / [`Challenges`] — tensor-aware folding
-//!   challenge selection and sampled challenge containers.
-//! - [`TensorChallenges`] — the tensor-only factored representation used when
-//!   a folding round samples fold-high/fold-low challenge vectors instead of
-//!   one flat vector.
+//! - [`FoldDraw`] / [`LiveFoldDraw`] / [`PreviewFoldDraw`] — fold-challenge
+//!   drawing over live or preview transcript state.
+//! - [`Challenges`] — sampled folding challenges in claim-major block order.
 //!
 //! Sampling uses the signed-sparse path in a private `sampler` submodule. The
 //! SHAKE256-backed XOF cursor is crate-internal and not part of the public API.
 
 mod challenge;
+mod challenges;
 mod config;
 mod fold_draw;
 mod sampler;
-mod tensor;
 
 pub use akita_transcript::FoldChallengeSeedPreview;
 pub use challenge::SparseChallenge;
+pub use challenges::Challenges;
 pub use config::{
     SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
     MIN_FOLD_CHALLENGE_ENTROPY_BITS, PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
 pub use fold_draw::{fold_challenge_sample_label, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
 pub use sampler::sample_sparse_challenges;
-pub use tensor::{
-    fold_high_digest, fold_sparse_challenge_sample_count, witness_fold_challenge_labels,
-    ChallengeLabels, ChallengeShape, ChallengeShape as TensorChallengeShape, Challenges,
-    TensorChallenges,
-};

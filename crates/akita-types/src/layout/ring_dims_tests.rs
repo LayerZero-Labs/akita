@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, FoldSchedule, RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge,
+    CommittedGroupParams, FoldSchedule, RecursiveFoldParams, RecursiveFoldStep,
     RootFinalGroupParams, RootFoldParams, RootFoldStep, TailSegmentGroupLayout, TailSegmentLayout,
     TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
     WitnessPartition,
@@ -28,7 +28,6 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    challenge: RootFinalChallenge::Flat,
                     commitment: root.clone(),
                 },
                 precommitted_groups: Vec::new(),
@@ -82,7 +81,6 @@ fn rejects_recursive_shared_d_matrix_mismatch() {
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    challenge: RootFinalChallenge::Flat,
                     commitment: root_params.clone(),
                 },
                 precommitted_groups: Vec::new(),

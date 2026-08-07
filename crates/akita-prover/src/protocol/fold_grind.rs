@@ -3,9 +3,7 @@
 use crate::compute::{
     OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource, RuntimeOpeningProveBackendFor,
 };
-use akita_challenges::{
-    witness_fold_challenge_labels, Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw,
-};
+use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
@@ -175,7 +173,6 @@ where
         ));
     }
     let binding = FoldLinfProtocolBinding::CURRENT;
-    let labels = witness_fold_challenge_labels();
     let polys = [poly];
     let point_indices = [0usize];
     let (nonce, (witness, challenges)) =
@@ -187,8 +184,6 @@ where
                 params.num_live_blocks,
                 1,
                 sparse,
-                &akita_challenges::TensorChallengeShape::Flat,
-                labels,
                 nonce,
             )?;
             let witness = dispatch_for_field!(
@@ -228,16 +223,8 @@ where
             Ok(Some((witness, challenges)))
         })?;
     let mut live = LiveFoldDraw::<F, T>::new(transcript);
-    let live_challenges = live.draw_folding_challenges(
-        params.d_a(),
-        0,
-        params.num_live_blocks,
-        1,
-        sparse,
-        &akita_challenges::TensorChallengeShape::Flat,
-        labels,
-        nonce,
-    )?;
+    let live_challenges =
+        live.draw_folding_challenges(params.d_a(), 0, params.num_live_blocks, 1, sparse, nonce)?;
     if live_challenges != challenges {
         return Err(AkitaError::InvalidInput(
             "terminal grind preview did not match live transcript replay".into(),
@@ -361,7 +348,6 @@ where
             "fold grind batch has no groups".to_string(),
         ));
     }
-    let labels = witness_fold_challenge_labels();
     let (nonce, mut candidate_outputs) =
         first_jointly_accepted_nonce(max_grind_attempts, |nonce| {
             let mut candidate_outputs = Vec::with_capacity(groups.len());
@@ -376,8 +362,6 @@ where
                         group.params.num_live_blocks(),
                         group.group.num_polynomials(),
                         &group.params.fold_challenge_config(),
-                        &group.params.fold_challenge_shape(),
-                        labels,
                         nonce,
                     )?;
                     let output =
@@ -409,8 +393,6 @@ where
             group.params.num_live_blocks(),
             group.group.num_polynomials(),
             &group.params.fold_challenge_config(),
-            &group.params.fold_challenge_shape(),
-            labels,
             nonce,
         )?;
         if challenges != output.challenges {

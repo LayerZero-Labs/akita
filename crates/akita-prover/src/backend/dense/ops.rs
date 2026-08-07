@@ -4,7 +4,6 @@
 //! a method const generic and views the flat coefficients at kernel entry.
 
 use super::poly::{DenseColumnSource, DensePoly};
-use super::tensor_fold;
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
     cached_digit_decompose_fold_partitioned, decompose_ring_single_digit, sparse_mul_acc,
@@ -16,7 +15,7 @@ use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::{CyclotomicRing, SplitEqEvals};
-use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
+use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
@@ -341,23 +340,6 @@ where
 
         let _span = tracing::info_span!("dense_multi_digit_convert").entered();
         build_decompose_fold_witness::<F, D>(centered_coeffs, params.q)
-    }
-
-    #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold_tensor_batched")]
-    pub(crate) fn decompose_fold_tensor_batched<const D: usize>(
-        polys: &[&Self],
-        tensor: &TensorChallengeSet,
-        num_positions_per_block: usize,
-        num_digits: usize,
-        log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
-        tensor_fold::decompose_fold_batched_tensor_dense::<F, D>(
-            polys,
-            tensor,
-            num_positions_per_block,
-            num_digits,
-            log_basis,
-        )
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::commit_inner")]

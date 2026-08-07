@@ -286,11 +286,9 @@ where
     .entered();
     {
         let _span = tracing::info_span!("fold_validate_inputs").entered();
-        prepared.lp.validate_fold_grind_nonce(
-            &opening_shape,
-            FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
-            prepared.fold_grind_nonce,
-        )?;
+        prepared
+            .lp
+            .validate_fold_grind_nonce(&opening_shape, prepared.fold_grind_nonce)?;
         if prefix.prepared_points.len() != num_groups {
             return Err(AkitaError::InvalidProof);
         }

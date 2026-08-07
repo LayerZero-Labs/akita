@@ -332,8 +332,6 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) default_ring_challenge_cfg: &'a akita_challenges::SparseChallengeConfig,
     pub(crate) ring_challenge_config:
         &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    pub(crate) fold_challenge_shape_at_level:
-        &'a dyn Fn(akita_types::AkitaScheduleInputs) -> akita_challenges::TensorChallengeShape,
     pub(crate) num_vars: usize,
     pub(crate) key: PolynomialGroupLayout,
     pub(crate) setup_field_budget: Option<usize>,
@@ -505,7 +503,6 @@ pub(crate) fn derive_optimal_suffix_schedule(
         policy,
         default_ring_challenge_cfg,
         ring_challenge_config,
-        fold_challenge_shape_at_level,
         num_vars,
         key,
         setup_field_budget: _,
@@ -593,11 +590,6 @@ pub(crate) fn derive_optimal_suffix_schedule(
             incoming_setup_prefix,
         )?)
     };
-    let requested_fold_shape = fold_challenge_shape_at_level(akita_types::AkitaScheduleInputs {
-        num_vars,
-        level,
-        input_witness_len: current_witness_len,
-    });
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(level);
     for lb in min_log_basis..=max_log_basis {
         if lb < current_lb {
@@ -625,7 +617,6 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 dimensions,
                 default_ring_challenge_cfg,
                 ring_challenge_config,
-                requested_fold_shape,
                 current_witness_len,
                 lb,
                 true,
@@ -651,7 +642,6 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     lb,
                     level,
                     incoming_setup_prefix,
-                    requested_fold_shape,
                 )? {
                     candidates.push(candidate);
                 }

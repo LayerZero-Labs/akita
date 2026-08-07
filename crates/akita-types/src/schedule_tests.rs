@@ -139,7 +139,6 @@ fn recursive_schedule(
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    challenge: RootFinalChallenge::Flat,
                     commitment: predecessor.clone(),
                 },
                 precommitted_groups: Vec::new(),

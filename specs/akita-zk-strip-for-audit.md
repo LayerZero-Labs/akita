@@ -190,7 +190,7 @@ cargo test -p akita-config --no-default-features --test schedule_catalog_feature
 
 **Tests deleted** (zk-only): `crates/akita-pcs/tests/zk.rs` (9 fns),
 `crates/akita-pcs/tests/fold_linf_zk.rs` (3 fns), the two `zk_*` fns in
-`single_poly_tensor_e2e.rs`, and the ~24 inline `#[cfg(feature="zk")]` test
+the single-poly integration suite, and the ~24 inline `#[cfg(feature="zk")]` test
 modules. **Tests kept** (transparent): the 7 core e2e files (`akita_e2e.rs`,
 `batched_aggregated_e2e.rs`, `heterogeneous_prove_e2e.rs`,
 `recursive_setup_e2e.rs`, `single_poly_e2e.rs`) and ~44
@@ -321,7 +321,7 @@ landed in #218).
 
 **Slice 2 — Delete zk-only tests + reconcile generated schedules.** ✅ *Landed #218*
 - Delete `crates/akita-pcs/tests/{zk.rs,fold_linf_zk.rs}`, the `zk_*` fns in
-  `single_poly_tensor_e2e.rs`, the ~24 inline `#[cfg(feature="zk")]` test modules.
+  the single-poly integration suite, and the ~24 inline `#[cfg(feature="zk")]` test modules.
 - Delete the `*_zk.rs` files under `crates/akita-schedules/src/generated/` and
   reconcile each `*_table()` in `generated/mod.rs` (drop the `#[cfg(zk)]` arm,
   un-gate the `not(zk)` arm, drop `pub mod *_zk;`).
