@@ -158,7 +158,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     }
 
     /// Drop the cached per-block storage. The blocks are rebuilt from the
-    /// retained hot indices on the next [`Self::blocks_for`] call, so this is
+    /// retained hot indices on the next `blocks_for` call, so this is
     /// purely a memory/lifetime knob: the cache is trace-scale (~8 bytes per
     /// hot entry across every committed column) and otherwise lives from
     /// commit time until the opening fold consumes it.

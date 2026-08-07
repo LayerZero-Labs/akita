@@ -68,7 +68,7 @@ pub const NTT_STREAM_THRESHOLD_RING_ELEMENTS: usize = 1 << 21;
 /// NTT caches are keyed by [`NttCacheKey`]. [`ComputeBackendSetup::prepare_setup`]
 /// reserves the envelope slot on the setup contract without building it; slots
 /// build lazily at the extent consumers actually request (see
-/// [`CpuPreparedSetup::with_shared_ntt`]), or eagerly via
+/// `CpuPreparedSetup::with_shared_ntt`), or eagerly via
 /// [`ComputeBackendSetup::ensure_ntt_slot`]. A built slot serves all requests
 /// within its extent at its ring dimension, and its cell makes concurrent
 /// first use single-flight. Diagnostic compression caches use a separate
@@ -314,7 +314,7 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
 
     /// Drop every built NTT slot back to its reserved (empty) state and
     /// return the bytes freed. Keys and the setup contract are kept, so the
-    /// next [`Self::with_shared_ntt`] use rebuilds single-flight — callers
+    /// next `with_shared_ntt` use rebuilds single-flight — callers
     /// may drop between pipeline windows that don't touch A's transformed
     /// form (e.g. after the commit's terminal product, before the fold) to
     /// keep the transform out of the intervening standing footprint. A user

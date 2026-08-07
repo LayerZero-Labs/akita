@@ -454,7 +454,12 @@ where
 ))]
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + FromPrimitiveInt + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: FieldCore
+        + FromPrimitiveInt
+        + RandomSampling
+        + AkitaSerialize
+        + AkitaDeserialize<Context = ()>
+        + Valid,
 {
     fn deserialize_trusted_host_setup(
         rest: &mut &[u8],
