@@ -3,8 +3,9 @@
 //! This adapter is for staggered workflows that need ordinary commit calls to
 //! freeze the A/source and B/outer commitment layout before the final multi-group
 //! root is known. The root basis is deterministic from the base config's runtime
-//! catalog policy, so precommitments use the exact root layout rather than a
-//! worst-case envelope over every supported basis.
+//! catalog policy. Adaptive base configurations use their uniform suffix
+//! dimension so a precommit recipe does not depend on a hypothetical future
+//! final-group schedule.
 
 use crate::{policy_of, CommitmentConfig};
 use akita_challenges::SparseChallengeConfig;
@@ -196,6 +197,8 @@ mod tests {
     fn dense_precommit_profile_uses_dense_config() {
         let key = PolynomialGroupLayout::new(15, 2);
         let params = committed_group_params::<fp128::Dense>(&key).expect("dense params");
+        assert_eq!(params.inner_commit_matrix.ring_dimension(), 64);
+        assert_eq!(params.outer_commit_matrix.ring_dimension(), 64);
         assert_eq!(params.log_basis_inner, 3);
         assert_eq!(params.log_basis_outer, 3);
         assert_eq!(params.num_digits_inner, 43);

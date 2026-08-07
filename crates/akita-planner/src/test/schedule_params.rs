@@ -702,8 +702,8 @@ fn adaptive_root_domain_is_independent_of_uniform_config_dimension() {
         CommitmentRingDims::uniform(64),
         CommitmentRingDims {
             inner: 256,
-            outer: 128,
-            opening: 128,
+            outer: 64,
+            opening: 64,
         },
     ])
     .expect("supported fp128 adaptive domain");
@@ -801,29 +801,19 @@ fn recursive_exact_cutover_proof_size_is_documented() {
     use akita_config::{
         policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
-    use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile};
+    use akita_types::AkitaScheduleLookupKey;
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
     let precommit_layout = PolynomialGroupLayout::singleton(16);
-    let precommit_policy = policy_of::<OneHot>();
-    let precommit_domain = RingDimensionSearchDomain::new([
-        CommitmentRingDims::uniform(64),
-        CommitmentRingDims::uniform(128),
-        CommitmentRingDims::uniform(256),
-    ])
-    .unwrap();
-    let precommit = find_schedule(
+    let descriptor = derive_standalone_precommit_profile(
         precommit_layout,
-        &precommit_policy,
+        &policy_of::<OneHot>(),
         OneHot::root_honest_fold_policy(),
-        &precommit_domain,
         OneHot::ring_challenge_config,
     )
     .unwrap();
-    let descriptor = CommittedGroupProfile::from_params(
-        precommit_layout,
-        &precommit.schedule.root.params.final_group.commitment,
-    );
+    assert_eq!(descriptor.inner_commit_matrix.ring_dimension(), 64);
+    assert_eq!(descriptor.outer_commit_matrix.ring_dimension(), 64);
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],
@@ -842,7 +832,7 @@ fn recursive_exact_cutover_proof_size_is_documented() {
 
     assert_eq!(
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
-        96_984
+        96_876
     );
 }
 
@@ -852,28 +842,18 @@ fn recursive_adaptive_search_selects_schedule_dimensions_and_setup_prefixes() {
     use akita_config::{
         policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
-    use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile};
+    use akita_types::AkitaScheduleLookupKey;
 
     let precommit_layout = PolynomialGroupLayout::singleton(16);
-    let precommit_policy = policy_of::<OneHot>();
-    let precommit_domain = RingDimensionSearchDomain::new([
-        CommitmentRingDims::uniform(64),
-        CommitmentRingDims::uniform(128),
-        CommitmentRingDims::uniform(256),
-    ])
-    .unwrap();
-    let precommit = find_schedule(
+    let descriptor = derive_standalone_precommit_profile(
         precommit_layout,
-        &precommit_policy,
+        &policy_of::<OneHot>(),
         OneHot::root_honest_fold_policy(),
-        &precommit_domain,
         OneHot::ring_challenge_config,
     )
     .unwrap();
-    let descriptor = CommittedGroupProfile::from_params(
-        precommit_layout,
-        &precommit.schedule.root.params.final_group.commitment,
-    );
+    assert_eq!(descriptor.inner_commit_matrix.ring_dimension(), 64);
+    assert_eq!(descriptor.outer_commit_matrix.ring_dimension(), 64);
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],
@@ -902,8 +882,8 @@ fn recursive_adaptive_search_selects_schedule_dimensions_and_setup_prefixes() {
             .role_dims(),
         CommitmentRingDims {
             inner: 256,
-            outer: 128,
-            opening: 128,
+            outer: 64,
+            opening: 64,
         }
     );
     assert_eq!(
@@ -915,7 +895,7 @@ fn recursive_adaptive_search_selects_schedule_dimensions_and_setup_prefixes() {
             .commitment
             .open_commit_matrix
             .input_width(),
-        88_408,
+        176_472,
         "root D width projects the main group once and then adds both frozen precommit segments"
     );
     assert_eq!(
@@ -925,8 +905,8 @@ fn recursive_adaptive_search_selects_schedule_dimensions_and_setup_prefixes() {
             .role_dims(),
         CommitmentRingDims {
             inner: 256,
-            outer: 128,
-            opening: 128,
+            outer: 64,
+            opening: 64,
         }
     );
     assert_eq!(

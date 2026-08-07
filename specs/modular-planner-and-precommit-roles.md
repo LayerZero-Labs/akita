@@ -52,16 +52,14 @@ search, and one canonical complete schedule selector for every current search
 path.
 
 The shipped root `log_basis` is 3 for all field widths. Recursive levels remain
-planner-selected. The remaining root precommit implementation still runs a
-hypothetical complete schedule under singleton basis range `(3, 3)` and
-extracts the root commitment parameters. That probe is a temporary bridge. A
-hypothetical suffix can influence root geometry even though the suffix will
-never be used.
+planner-selected. Root precommit generation directly selects a local recipe
+under singleton basis range `(3, 3)`. Adaptive final-group policies use their
+uniform suffix dimension for both precommit A and B, so a hypothetical suffix
+cannot influence the frozen precommit geometry.
 
-The stacked planner unification PR will remove that bridge and make the modules
-in this specification the only search path. It must preserve the strict
-selection policies documented below before introducing any proof byte slack or
-fold count preference.
+The stacked planner unification PR will make the modules in this specification
+the only search path. It must preserve the strict selection policies documented
+below before introducing any proof byte slack or fold count preference.
 
 ## Terminology
 
@@ -553,9 +551,9 @@ materialization or runtime validation.
 
 #### Root precommit
 
-- [ ] The full-schedule precommit probe is removed.
-- [ ] Root-precommit recipes are selected directly at root basis 3.
-- [ ] The selector uses exact materialized \(WZ+E+T\) widths.
+- [x] The full-schedule precommit probe is removed.
+- [x] Root-precommit recipes are selected directly at root basis 3.
+- [x] The selector uses exact materialized \(WZ+E+T\) widths.
 - [ ] One recipe is deterministic across its declared compatibility domain.
 - [ ] Conservative basis-envelope rank widening is absent.
 - [ ] Commitments bind the complete selected descriptor.

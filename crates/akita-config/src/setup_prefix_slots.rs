@@ -266,10 +266,14 @@ mod tests {
         .expect("slot ids");
         assert!(!ids.is_empty());
         for slot_id in &ids {
-            assert_eq!(slot_id.d_setup(), 256);
             assert!(slot_id.natural_len > 0);
             assert!(slot_id.n_prefix().expect("n_prefix") >= slot_id.natural_len);
         }
+        let dimensions = ids
+            .iter()
+            .map(SetupPrefixSlotId::d_setup)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(dimensions, BTreeSet::from([64, 256]));
         let unique: BTreeSet<_> = ids.iter().cloned().collect();
         assert_eq!(unique.len(), ids.len());
     }

@@ -77,8 +77,8 @@ precommitted groups. The selected schedules are:
 
 ```text
 single chunk:
-  root  256/128/128
-  L1    256/128/128  (consumes setup prefix committed at 256/128)
+  root  256/64/64
+  L1    256/64/64  (consumes setup prefix committed at 256/64)
   L2+    64/64/64
 
 W8R2:
@@ -88,8 +88,9 @@ W8R2:
   L3+    64/64/64
 ```
 
-The frozen precommit descriptors remain part of the root lookup key. The
-single-chunk precommits use A/B `256/64`; W8R2 precommits use `64/64`. At every
+The frozen precommit descriptors remain part of the root lookup key. Root
+precommits are selected independently at the uniform suffix A/B dimensions
+`64/64`; their dimensions do not follow the adaptive final-group root. At every
 offloaded edge the setup-prefix commitment inherits the consuming fold's exact
 A/B dimensions; it does not use a global fixed prefix dimension.
 

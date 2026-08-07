@@ -145,3 +145,21 @@ fn setup_envelope_scan_includes_multi_polynomial_precommitted_groups() {
             ]
     }));
 }
+
+#[cfg(feature = "schedules-default")]
+#[test]
+fn setup_capacity_includes_standalone_precommit_recipes() {
+    let profile =
+        crate::committed_group_profile::<fp128::Dense>(&PolynomialGroupLayout::new(16, 1))
+            .expect("dense precommit profile");
+    let capacity = fp128::Dense::setup_matrix_capacity(16, 1).expect("dense setup capacity");
+    let a_fields = profile.inner_commit_matrix.output_rank()
+        * profile.inner_commit_matrix.input_width()
+        * profile.inner_commit_matrix.ring_dimension();
+    let b_fields = profile.outer_commit_matrix.output_rank()
+        * profile.outer_commit_matrix.input_width()
+        * profile.outer_commit_matrix.ring_dimension();
+
+    assert!(capacity.num_field_elements >= a_fields);
+    assert!(capacity.num_field_elements >= b_fields);
+}

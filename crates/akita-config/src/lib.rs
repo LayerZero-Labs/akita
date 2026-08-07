@@ -746,14 +746,16 @@ mod precommit_tests {
             )
             .expect("precommitted group params");
         let precommitted = akita_types::CommittedGroupProfile::from_params(group, &params);
-        let scalar_schedule =
-            fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(group))
-                .expect("generated scalar schedule");
-        let scalar_root = akita_types::CommittedGroupProfile::from_params(
-            group,
-            &scalar_schedule.root.params.final_group.commitment,
+        assert_eq!(
+            precommitted.inner_commit_matrix.ring_dimension(),
+            64,
+            "adaptive precommits use the uniform suffix dimension for A"
         );
-        assert_eq!(precommitted, scalar_root);
+        assert_eq!(
+            precommitted.outer_commit_matrix.ring_dimension(),
+            64,
+            "adaptive precommits use the uniform suffix dimension for B"
+        );
         let root_basis = fp128::OneHot::basis_range().0;
         assert_eq!(precommitted.log_basis_inner, root_basis);
         assert_eq!(precommitted.log_basis_outer, root_basis);
