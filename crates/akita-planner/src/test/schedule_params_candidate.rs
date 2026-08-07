@@ -119,24 +119,24 @@ fn recursive_frontier_retains_every_split_and_smaller_l2_rank() {
     .expect("late-fold rank frontier");
     let linf_rank = candidates
         .iter()
-        .filter_map(|(params, _)| {
+        .filter(|(params, _)| {
             matches!(
                 params.inner_commit_matrix.security_route(),
                 InnerCommitSecurityRoute::Linf(_)
             )
-            .then(|| params.inner_commit_matrix.output_rank())
         })
+        .map(|(params, _)| params.inner_commit_matrix.output_rank())
         .max()
         .expect("L-infinity fallback");
     let l2_rank = candidates
         .iter()
-        .filter_map(|(params, _)| {
+        .filter(|(params, _)| {
             matches!(
                 params.inner_commit_matrix.security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
-            .then(|| params.inner_commit_matrix.output_rank())
         })
+        .map(|(params, _)| params.inner_commit_matrix.output_rank())
         .min()
         .expect("measured L2 candidate");
     assert!(l2_rank < linf_rank);

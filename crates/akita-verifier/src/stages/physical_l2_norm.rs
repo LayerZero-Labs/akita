@@ -95,8 +95,7 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceVerifier<E>
                     }
                 }
                 let mut sum = E::zero();
-                for ((left, right), selector) in layout.limb_pairs().zip(pair_selectors.into_iter())
-                {
+                for ((left, right), selector) in layout.limb_pairs().zip(pair_selectors) {
                     let left = *self
                         .proof
                         .virtual_evaluations
