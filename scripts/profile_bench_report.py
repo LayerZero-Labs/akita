@@ -88,28 +88,29 @@ class CaseMetadata:
 # (`akita_config::generated_families::ALL_GENERATED_FAMILIES`). Modes outside
 # this map still render via the `case_metadata` fallback below.
 CASE_METADATA: dict[str, CaseMetadata] = {
-    # fp128 ships dense + one-hot at D128 and one-hot at D64.
-    "dense_fp128_d128": CaseMetadata("fp128", "dense", "dense", "D128"),
-    "onehot_fp128_d64": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
-    "onehot_fp128_mixed_dim": CaseMetadata(
+    # Direct fp128 one-hot and dense use adaptive generated schedules.
+    "onehot_fp128": CaseMetadata(
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "mixed D256 to D64"
     ),
-    "onehot_fp128_d64_multi_group_recursive": CaseMetadata(
-        "fp128", "onehot", "multi-group one-hot", "D64 recursive multi-group"
+    "dense_fp128": CaseMetadata("fp128", "dense", "dense", "mixed D256 to D64"),
+    "onehot_fp128_multi_group": CaseMetadata(
+        "fp128", "onehot", "multi-group one-hot", "multi-group"
     ),
-    "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2": CaseMetadata(
-        "fp128", "onehot", "multi-group one-hot", "D64 recursive multi-group W8R2"
+    "onehot_fp128_multi_group_recursive": CaseMetadata(
+        "fp128", "onehot", "multi-group one-hot", "adaptive recursive multi-group"
     ),
-    "onehot_fp128_d64_multi_chunk_w8r2": CaseMetadata(
-        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 multi-chunk W8R2"
+    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": CaseMetadata(
+        "fp128", "onehot", "multi-group one-hot", "adaptive recursive multi-group W8R2"
     ),
-    "onehot_fp128_d64_multi_chunk_w2r2": CaseMetadata(
-        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 multi-chunk W2R2"
+    "onehot_fp128_multi_chunk_w8r2": CaseMetadata(
+        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "multi-chunk W8R2"
     ),
-    "onehot_fp128_d64_multi_chunk_w4r2": CaseMetadata(
-        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 multi-chunk W4R2"
+    "onehot_fp128_multi_chunk_w2r2": CaseMetadata(
+        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "multi-chunk W2R2"
     ),
-    "onehot_fp128_d128": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
+    "onehot_fp128_multi_chunk_w4r2": CaseMetadata(
+        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "multi-chunk W4R2"
+    ),
     # Small fields fold securely only at D128/D256 under honest pricing; fp32
     # ships no dense family.
     "onehot_fp32_d128": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
@@ -156,7 +157,7 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument(
         "--output-dir", required=True, help="Directory where logs and summary.json are written."
     )
-    run_parser.add_argument("--mode", default="onehot_fp128_d64", help="Benchmark mode.")
+    run_parser.add_argument("--mode", default="onehot_fp128", help="Benchmark mode.")
     run_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
     run_parser.add_argument(
         "--num-polys",
@@ -245,7 +246,7 @@ def parse_args() -> argparse.Namespace:
     failure_parser.add_argument(
         "--output-dir", required=True, help="Directory where summary files are written."
     )
-    failure_parser.add_argument("--mode", default="onehot_fp128_d64", help="Benchmark mode.")
+    failure_parser.add_argument("--mode", default="onehot_fp128", help="Benchmark mode.")
     failure_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
     failure_parser.add_argument(
         "--num-polys",
@@ -1704,10 +1705,10 @@ def field_family_sort_key(case: dict[str, object]) -> int:
 
 
 def config_variant_token(config: object) -> str:
-    """Camel-case variant tag from the config string, dropping the leading ring
-    dimension and any `recursive` word. The setup-contribution mode has its own
-    report column, so recursion is not encoded in the workload name."""
+    """Render non-dimension topology tags while hiding dimension policy names."""
     remainder = re.sub(r"^\s*D\d+\s*", "", str(config), flags=re.IGNORECASE)
+    if re.fullmatch(r"mixed\s+D\d+\s+to\s+D\d+", remainder, flags=re.IGNORECASE):
+        return ""
     tokens: list[str] = []
     for word in remainder.split():
         if word.lower() == "recursive":
@@ -1719,24 +1720,8 @@ def config_variant_token(config: object) -> str:
     return "".join(tokens)
 
 
-def ring_dim_segment(summary: dict[str, object]) -> str | None:
-    """Render the ring-dimension segment. A/B/D are equal in every current
-    schedule, so collapse to `D=<n>`; keep a defensive per-role form so a future
-    mismatch is never silently hidden."""
-    planned_levels = summary.get("planned_levels")
-    if isinstance(planned_levels, list) and planned_levels:
-        first = planned_levels[0]
-        d_a, d_b, d_d = int(first["d_a"]), int(first["d_b"]), int(first["d_d"])
-        if d_a == d_b == d_d:
-            return f"D={d_a}"
-        return f"D_a={d_a}D_b={d_b}D_d={d_d}"
-    match = re.match(r"D(\d+)", str(summary.get("config", "")), flags=re.IGNORECASE)
-    if match:
-        return f"D={match.group(1)}"
-    return None
-
-
 def human_case_label(summary: dict[str, object]) -> str:
+    """Render a stable workload label without planner-selected dimensions."""
     field_family = str(summary.get("field_family", "field"))
     bits = field_family_bits(field_family)
     field_segment = f"Fp{bits}" if bits is not None else field_family
@@ -1746,9 +1731,6 @@ def human_case_label(summary: dict[str, object]) -> str:
     num_polys = int(summary.get("num_polys", 1))
     if num_polys > 1:
         segments.append(f"Batched{num_polys}")
-    ring_segment = ring_dim_segment(summary)
-    if ring_segment is not None:
-        segments.append(ring_segment)
     variant = config_variant_token(summary.get("config", ""))
     if variant:
         segments.append(variant)
@@ -2129,7 +2111,7 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
         # Intentionally no per-level `level_bytes` vs `total_bytes` comparison.
         # The header-stripped planner estimate is only a conservative upper bound
         # in *aggregate*: it can over- or under-attribute bytes to any individual
-        # level (e.g. dense_fp128_d128 nv24 has levels where the runtime proof
+        # level (e.g. dense_fp128_d64 nv24 has levels where the runtime proof
         # exceeds the per-level estimate while the total stays under it). The
         # total-overcount invariant is asserted in the profile binary itself
         # (`ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES` in

@@ -227,9 +227,9 @@ of precommitted groups:
 ```bash
 cargo run --release -p akita-planner --features catalog-gen \
   --bin gen_schedule_tables -- crates/akita-schedules/src/generated \
-  --final-group fp128_d64_onehot:32:2 \
-  --precommitted-group fp128_d64_onehot:16:1 \
-  --precommitted-group fp128_d64_dense:15:2
+  --final-group fp128_onehot:32:2 \
+  --precommitted-group fp128_onehot:16:1 \
+  --precommitted-group fp128_dense:15:2
 ```
 
 The explicit flags are:
@@ -245,9 +245,9 @@ Each numeric slot accepts either a single value or an inclusive range written as
 ```bash
 cargo run --release -p akita-planner --features catalog-gen \
   --bin gen_schedule_tables -- crates/akita-schedules/src/generated \
-  --final-group fp128_d64_onehot:30..=32:2..=4 \
-  --precommitted-group fp128_d64_onehot:14..=16:1 \
-  --precommitted-group fp128_d64_dense:15:1..=2
+  --final-group fp128_onehot:30..=32:2..=4 \
+  --precommitted-group fp128_onehot:14..=16:1 \
+  --precommitted-group fp128_dense:15:1..=2
 ```
 
 The generator expands the cartesian product of the final-group range and every

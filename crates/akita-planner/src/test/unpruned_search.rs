@@ -1,4 +1,5 @@
 use super::*;
+use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
 struct UnprunedCtx<'a> {
     policy: &'a PlannerPolicy,
@@ -43,8 +44,8 @@ fn enumerate_suffixes(
 
     for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
         for candidate_dimensions in dimensions.candidates() {
-            let suffix_dimensions = CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
-            if level >= MIXED_SEARCH_FOLD_LEVELS {
+            let suffix_dimensions = CommitmentRingDims::uniform(ADAPTIVE_SUFFIX_RING_DIMENSION);
+            if level >= akita_schedules::ADAPTIVE_SEARCH_LEVELS {
                 if *candidate_dimensions != suffix_dimensions {
                     continue;
                 }
@@ -66,12 +67,14 @@ fn enumerate_suffixes(
                 continue;
             };
             for &payload_mode in payload_phase.candidate_modes(level, false) {
-                let candidates = if level < MIXED_SEARCH_FOLD_LEVELS {
+                let candidates = if level < akita_schedules::ADAPTIVE_SEARCH_LEVELS {
                     derive_candidate_level_params_all_splits(
                         policy,
                         payload_mode,
                         &ring_challenge,
-                        *candidate_dimensions,
+                        akita_schedules::planner_support::RingDimensionCandidate::Fixed(
+                            *candidate_dimensions,
+                        ),
                         input_witness_len,
                         log_basis,
                         level,
@@ -82,7 +85,9 @@ fn enumerate_suffixes(
                         policy,
                         payload_mode,
                         &ring_challenge,
-                        *candidate_dimensions,
+                        akita_schedules::planner_support::RingDimensionCandidate::Fixed(
+                            *candidate_dimensions,
+                        ),
                         input_witness_len,
                         log_basis,
                         level,
@@ -94,7 +99,7 @@ fn enumerate_suffixes(
 
                 for (params, output_witness_len) in candidates {
                     let terminal_candidate = if dimensions.candidates().len() == 1
-                        || level >= MIXED_SEARCH_FOLD_LEVELS
+                        || level >= akita_schedules::ADAPTIVE_SEARCH_LEVELS
                     {
                         suffix_dp::try_terminal_direct_suffix_cost(
                             input_witness_len,
@@ -136,8 +141,8 @@ fn enumerate_suffixes(
                         });
                     }
 
-                    let child_ceiling = if level + 1 >= MIXED_SEARCH_FOLD_LEVELS {
-                        CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION)
+                    let child_ceiling = if level + 1 >= akita_schedules::ADAPTIVE_SEARCH_LEVELS {
+                        CommitmentRingDims::uniform(ADAPTIVE_SUFFIX_RING_DIMENSION)
                     } else {
                         params.role_dims()
                     };
@@ -214,7 +219,7 @@ pub(super) fn find_schedule(
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
-    validate_policy(policy)?;
+    akita_schedules::planner_support::validate_policy(policy)?;
 
     let field_bits = policy.decomposition.field_bits();
     let input_witness_len = 1usize.checked_shl(key.num_vars() as u32).ok_or_else(|| {
@@ -246,7 +251,9 @@ pub(super) fn find_schedule(
                     honest_fold_policy,
                     &[],
                     policy,
-                    *root_dimensions,
+                    akita_schedules::planner_support::RingDimensionCandidate::Fixed(
+                        *root_dimensions,
+                    ),
                     &ring_challenge,
                     &ring_challenge_config,
                     input_witness_len,

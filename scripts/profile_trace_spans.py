@@ -13,8 +13,7 @@ from typing import Any
 
 DEFAULT_PATTERN = (
     r"eor|root_extension|extension_opening|SparseExtensionOpening|"
-    r"dense_extension_reduction|fused_fold|tensor_packed_sparse|"
-    r"onehot_tensor_extension"
+    r"dense_extension_reduction|fused_fold"
 )
 
 

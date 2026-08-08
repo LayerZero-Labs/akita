@@ -50,6 +50,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 policy,
                 ring_challenge_config,
                 entry.root.open_commit_matrix.log_basis,
+                entry.root.open_commit_matrix.ring_dimension as usize,
             )?;
         validate_expanded_precommitted_groups(key, &precommitted_groups)?;
         entry
@@ -102,6 +103,11 @@ pub(crate) fn walk_generated_schedule_entry(
             key.final_group.num_polynomials(),
             root_params.witness_chunk.num_chunks,
         )?
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "generated root uses unsupported compression-source geometry".to_string(),
+            )
+        })?
     };
 
     let mut expanded = vec![(root_params, expected_root_w_len, root_output_len)];
@@ -121,7 +127,12 @@ pub(crate) fn walk_generated_schedule_entry(
         )?;
         params.witness_chunk = partition_to_chunk(fold.witness_partition, distributed_levels)?;
         let output_witness_len =
-            planned_next_witness_len(field_bits, &params, 1, params.witness_chunk.num_chunks)?;
+            planned_next_witness_len(field_bits, &params, 1, params.witness_chunk.num_chunks)?
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(format!(
+                "generated recursive fold {index} uses unsupported compression-source geometry"
+            ))
+                })?;
         expanded.push((params, input_witness_len, output_witness_len));
         input_witness_len = output_witness_len;
     }

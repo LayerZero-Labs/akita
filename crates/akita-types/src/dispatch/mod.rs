@@ -9,6 +9,7 @@
 mod policy;
 
 use crate::layout::{CommitmentRingDims, RingRole};
+use crate::sis::SisModulusProfileId;
 use akita_algebra::ntt::tables::{Q32_MODULUS, Q64_MODULUS};
 use akita_field::{AkitaError, CanonicalField};
 
@@ -41,6 +42,23 @@ pub enum ProtocolDispatchSlot {
     Ntt,
     /// Compression-only F/H matrices under the modulus-profile ladder.
     Compression,
+}
+
+/// Dispatch tier selected by one exact SIS modulus profile.
+///
+/// Planner/runtime policies carry the modulus profile rather than a concrete
+/// field type, so policy validation uses this mapping to audit candidate ring
+/// dimensions against the same role tables used by prover/verifier dispatch.
+#[inline]
+#[must_use]
+pub const fn protocol_dispatch_tier_for_sis_profile(
+    profile: SisModulusProfileId,
+) -> ProtocolRingDispatchTierId {
+    match profile {
+        SisModulusProfileId::Q128OffsetA7F7 => ProtocolRingDispatchTierId::Fp128,
+        SisModulusProfileId::Q64Offset59 => ProtocolRingDispatchTierId::Fp64,
+        SisModulusProfileId::Q32Offset99 => ProtocolRingDispatchTierId::Fp32,
+    }
 }
 
 /// Canonical field modulus from the canonical representation of `-1`.

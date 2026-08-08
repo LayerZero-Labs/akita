@@ -41,12 +41,12 @@ fn batched_selection_preserves_typed_schedule_topology() {
 
 #[test]
 fn role_dispatch_rejects_wrong_inner_dimension() {
-    let schedule = fp128::D128Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(16),
     ))
     .expect("runtime schedule");
     let dims = schedule.root.params.final_group.commitment.role_dims();
-    assert!(validate_role_dispatch::<64>(dims, RingRole::Inner).is_err());
+    assert!(validate_role_dispatch::<128>(dims, RingRole::Inner).is_err());
 }
 
 #[test]
@@ -57,9 +57,9 @@ fn real_presets_validate_against_setup_ring_dimension() {
     .expect("fp64 schedule");
     validate_schedule_ring_dims(&fp64_schedule).expect("D128 schedule envelope");
 
-    let fp128_schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+    let fp128_schedule = fp128::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(14),
     ))
     .expect("fp128 schedule");
-    validate_schedule_ring_dims(&fp128_schedule).expect("D64 schedule envelope");
+    validate_schedule_ring_dims(&fp128_schedule).expect("adaptive schedule envelope");
 }

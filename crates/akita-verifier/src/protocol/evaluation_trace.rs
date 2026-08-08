@@ -338,11 +338,11 @@ mod tests {
 
     #[test]
     fn compact_trace_matches_dense_definition_across_coefficient_blocks() {
-        type Cfg = fp128::D128Dense;
+        type Cfg = fp128::Dense;
         type F = fp128::Field;
         type E = F;
         const D: usize = Cfg::D;
-        const NUM_VARIABLES: usize = 20;
+        const NUM_VARIABLES: usize = 16;
 
         let opening_batch =
             OpeningClaimsLayout::new(NUM_VARIABLES, 2).expect("two-claim opening group");

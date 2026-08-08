@@ -19,7 +19,7 @@ use crate::generated::{
     GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix, GeneratedScheduleCatalogIdentity,
     GeneratedScheduleTable, GeneratedWitnessPartition,
 };
-use crate::PlannerPolicy;
+use crate::{PlannerPolicy, RingDimensionScheduleMode};
 
 static VALIDATED_CATALOGS: LazyLock<Mutex<HashSet<CatalogValidationCacheKey>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
@@ -48,7 +48,7 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_bytes(&policy.sis_table_digest.0);
     h.write_u64(policy.uniform_ring_dimension as u64);
     h.write_u64(policy.setup_prefix_inner_ring_dimension as u64);
-    write_ring_dimension_candidates(&mut h, policy.ring_dimension_candidates);
+    write_ring_dimension_schedule_mode(&mut h, policy.ring_dimension_schedule_mode);
     write_decomposition(&mut h, policy.decomposition);
     h.write_u64(u64::from(policy.ring_subfield_norm_bound));
     h.write_u64(policy.claim_ext_degree as u64);
@@ -96,7 +96,7 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     for &d in identity.ring_dimensions {
         h.write_u64(d as u64);
     }
-    write_ring_dimension_candidates(&mut h, identity.ring_dimension_candidates);
+    write_ring_dimension_schedule_mode(&mut h, identity.ring_dimension_schedule_mode);
     h.write_u64(identity.ring_challenge_config_digest);
     h.write_u64(identity.key_count as u64);
     h.write_u64(identity.key_digest);
@@ -140,7 +140,7 @@ struct CatalogIdentityExpectation {
     witness_chunk: akita_types::ChunkedWitnessCfg,
     recursive_setup_planning: bool,
 
-    ring_dimension_candidates: Vec<CommitmentRingDims>,
+    ring_dimension_schedule_mode: RingDimensionScheduleMode,
     ring_dimensions: Vec<usize>,
     ring_challenge_config_digest: u64,
     key_count: usize,
@@ -170,7 +170,7 @@ impl CatalogIdentityExpectation {
             witness_chunk: identity.witness_chunk,
             recursive_setup_planning: identity.recursive_setup_planning,
 
-            ring_dimension_candidates: identity.ring_dimension_candidates.to_vec(),
+            ring_dimension_schedule_mode: identity.ring_dimension_schedule_mode,
             ring_dimensions: identity.ring_dimensions.to_vec(),
             ring_challenge_config_digest: identity.ring_challenge_config_digest,
             key_count: identity.key_count,
@@ -183,22 +183,15 @@ fn intern_ring_dimensions(dimensions: Vec<usize>) -> &'static [usize] {
     Box::leak(dimensions.into_boxed_slice())
 }
 
-fn intern_ring_dimension_candidates(
-    candidates: Vec<CommitmentRingDims>,
-) -> &'static [CommitmentRingDims] {
-    Box::leak(candidates.into_boxed_slice())
-}
-
 fn catalog_identity_expectation(
     family_name: &'static str,
     policy: &PlannerPolicy,
     entries: &[GeneratedFoldScheduleEntry],
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
 ) -> Result<CatalogIdentityExpectation, AkitaError> {
-    validate_entry_candidate_dimensions(entries, policy.ring_dimension_candidates)?;
-    let ring_dimension_candidates = policy.ring_dimension_candidates.to_vec();
+    validate_entry_dimensions(entries, policy.ring_dimension_schedule_mode)?;
     let ring_dimensions = collect_ring_dimensions(entries);
-    let challenge_ring_dimensions = candidate_a_dimensions(policy.ring_dimension_candidates);
+    let challenge_ring_dimensions = challenge_a_dimensions(policy.ring_dimension_schedule_mode);
     let ring_challenge_config_digest =
         ring_challenge_config_digest(&challenge_ring_dimensions, &ring_challenge_config)?;
     Ok(CatalogIdentityExpectation {
@@ -221,7 +214,7 @@ fn catalog_identity_expectation(
         witness_chunk: policy.witness_chunk,
         recursive_setup_planning: policy.recursive_setup_planning,
 
-        ring_dimension_candidates,
+        ring_dimension_schedule_mode: policy.ring_dimension_schedule_mode,
         ring_dimensions,
         ring_challenge_config_digest,
         key_count: entries.len(),
@@ -259,9 +252,7 @@ pub fn expected_catalog_identity(
         witness_chunk: expected.witness_chunk,
         recursive_setup_planning: expected.recursive_setup_planning,
 
-        ring_dimension_candidates: intern_ring_dimension_candidates(
-            expected.ring_dimension_candidates,
-        ),
+        ring_dimension_schedule_mode: expected.ring_dimension_schedule_mode,
         ring_dimensions: intern_ring_dimensions(expected.ring_dimensions),
         ring_challenge_config_digest: expected.ring_challenge_config_digest,
         key_count: expected.key_count,
@@ -325,7 +316,7 @@ fn verify_ring_challenge_config_digest_on_cache_hit(
     identity: &GeneratedScheduleCatalogIdentity,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
 ) -> Result<(), AkitaError> {
-    let challenge_ring_dimensions = candidate_a_dimensions(identity.ring_dimension_candidates);
+    let challenge_ring_dimensions = challenge_a_dimensions(identity.ring_dimension_schedule_mode);
     let recomputed =
         ring_challenge_config_digest(&challenge_ring_dimensions, ring_challenge_config)?;
     if recomputed != identity.ring_challenge_config_digest {
@@ -387,51 +378,97 @@ fn collect_ring_dimensions(entries: &[GeneratedFoldScheduleEntry]) -> Vec<usize>
     dims
 }
 
-fn candidate_a_dimensions(candidates: &[CommitmentRingDims]) -> Vec<usize> {
-    let mut dimensions = candidates.iter().map(|dims| dims.d_a()).collect::<Vec<_>>();
-    dimensions.sort_unstable();
-    dimensions.dedup();
-    dimensions
+fn challenge_a_dimensions(mode: RingDimensionScheduleMode) -> Vec<usize> {
+    match mode {
+        RingDimensionScheduleMode::UniformDimension { ring_dimension } => vec![ring_dimension],
+        RingDimensionScheduleMode::AdaptiveDimension {
+            potential_a_dimensions,
+            ..
+        } => potential_a_dimensions.to_vec(),
+    }
 }
 
-fn validate_entry_candidate_dimensions(
+fn validate_entry_dimensions(
     entries: &[GeneratedFoldScheduleEntry],
-    candidates: &[CommitmentRingDims],
+    mode: RingDimensionScheduleMode,
 ) -> Result<(), AkitaError> {
-    let admitted = |group: GeneratedCommittedGroup, opening: u32| {
-        let dims = CommitmentRingDims {
-            inner: group.inner_commit_matrix.ring_dimension as usize,
-            outer: group.outer_commit_matrix.ring_dimension as usize,
-            opening: opening as usize,
-        };
-        candidates.contains(&dims).then_some(dims)
+    let dimensions = |group: GeneratedCommittedGroup, opening: u32| CommitmentRingDims {
+        inner: group.inner_commit_matrix.ring_dimension as usize,
+        outer: group.outer_commit_matrix.ring_dimension as usize,
+        opening: opening as usize,
     };
     for entry in entries {
-        admitted(
+        let root = dimensions(
             entry.root.final_group.commitment,
             entry.root.open_commit_matrix.ring_dimension,
-        )
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "generated root dimensions are outside the catalog candidate domain for key {:?}",
-                entry.root.final_group.layout
-            ))
-        })?;
-        for fold in entry.recursive_folds {
-            admitted(fold.witness, fold.open_commit_matrix.ring_dimension).ok_or_else(|| {
-                AkitaError::InvalidSetup(format!(
-                    "generated recursive dimensions are outside the catalog candidate domain for key {:?}",
-                    entry.root.final_group.layout
-                ))
-            })?;
+        );
+        validate_level_dimensions(mode, 0, root, None, entry.root.final_group.layout)?;
+        let mut previous = root;
+        for (index, fold) in entry.recursive_folds.iter().enumerate() {
+            let current = dimensions(fold.witness, fold.open_commit_matrix.ring_dimension);
+            validate_level_dimensions(
+                mode,
+                index + 1,
+                current,
+                Some(previous),
+                entry.root.final_group.layout,
+            )?;
+            previous = current;
         }
         let terminal_d = entry.terminal.inner_commit_matrix.ring_dimension as usize;
-        if !candidates.iter().any(|dims| dims.d_a() == terminal_d) {
+        let expected_terminal = match mode {
+            RingDimensionScheduleMode::UniformDimension { ring_dimension } => ring_dimension,
+            RingDimensionScheduleMode::AdaptiveDimension {
+                uniform_suffix_dimension,
+                ..
+            } => uniform_suffix_dimension,
+        };
+        if terminal_d != expected_terminal {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated terminal dimension D{terminal_d} is outside the catalog candidate domain for key {:?}",
+                "generated terminal D{terminal_d} is not policy suffix D{expected_terminal} for key {:?}",
                 entry.root.final_group.layout
             )));
         }
+    }
+    Ok(())
+}
+
+fn validate_level_dimensions(
+    mode: RingDimensionScheduleMode,
+    level: usize,
+    dimensions: CommitmentRingDims,
+    previous: Option<CommitmentRingDims>,
+    key: PolynomialGroupLayout,
+) -> Result<(), AkitaError> {
+    let admitted = match mode {
+        RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+            dimensions == CommitmentRingDims::uniform(ring_dimension)
+        }
+        RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels,
+            uniform_suffix_dimension,
+            potential_a_dimensions,
+            potential_b_dimensions,
+            potential_d_dimensions,
+        } => {
+            if level < num_search_levels {
+                potential_a_dimensions.contains(&dimensions.d_a())
+                    && potential_b_dimensions.contains(&dimensions.d_b())
+                    && potential_d_dimensions.contains(&dimensions.d_d())
+                    && previous.is_none_or(|ceiling| {
+                        dimensions.d_a() <= ceiling.d_a()
+                            && dimensions.d_b() <= ceiling.d_b()
+                            && dimensions.d_d() <= ceiling.d_d()
+                    })
+            } else {
+                dimensions == CommitmentRingDims::uniform(uniform_suffix_dimension)
+            }
+        }
+    };
+    if !admitted {
+        return Err(AkitaError::InvalidSetup(format!(
+            "generated dimensions {dimensions:?} at level {level} are outside policy for key {key:?}"
+        )));
     }
     Ok(())
 }
@@ -546,12 +583,33 @@ pub fn ring_challenge_config_digest(
     Ok(h.finish())
 }
 
-fn write_ring_dimension_candidates(h: &mut Fnv64, candidates: &[CommitmentRingDims]) {
-    h.write_u64(candidates.len() as u64);
-    for dims in candidates {
-        h.write_u64(dims.d_a() as u64);
-        h.write_u64(dims.d_b() as u64);
-        h.write_u64(dims.d_d() as u64);
+fn write_ring_dimension_schedule_mode(h: &mut Fnv64, mode: RingDimensionScheduleMode) {
+    match mode {
+        RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+            h.write_u64(0);
+            h.write_u64(ring_dimension as u64);
+        }
+        RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels,
+            uniform_suffix_dimension,
+            potential_a_dimensions,
+            potential_b_dimensions,
+            potential_d_dimensions,
+        } => {
+            h.write_u64(1);
+            h.write_u64(num_search_levels as u64);
+            h.write_u64(uniform_suffix_dimension as u64);
+            for dimensions in [
+                potential_a_dimensions,
+                potential_b_dimensions,
+                potential_d_dimensions,
+            ] {
+                h.write_u64(dimensions.len() as u64);
+                for &dimension in dimensions {
+                    h.write_u64(dimension as u64);
+                }
+            }
+        }
     }
 }
 

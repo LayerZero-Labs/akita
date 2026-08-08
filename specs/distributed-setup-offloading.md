@@ -18,31 +18,34 @@
 
 ## Summary
 
-Akita already ships two independent verifier/prover-cost techniques for `D = 64`
-one-hot presets:
+Akita ships two independent verifier/prover-cost techniques for fp128 one-hot
+presets:
 
 - **Recursive setup offloading** (`RecursiveCommitmentConfig<Cfg>`,
   `SetupContributionMode::Recursive`, Stage-3 setup-product sum-check, carried
-  setup-prefix opening). Generated table: `fp128_d64_onehot_recursive`.
+  setup-prefix opening). Production generated table:
+  `fp128_onehot_recursive`.
 - **Multi-chunk (distributed-prover) witness layout** (`ChunkedWitnessCfg`,
   `LevelParams::witness_chunk`, per-chunk folded responses `zⱼ`, shared `r̂`
-  tail). Generated tables: `fp128_d64_onehot_multi_chunk_w2r2`,
-  `fp128_d64_onehot_multi_chunk_w4r2`, etc.
+  tail). Direct generated tables now inherit the ordinary fp128 adaptive policy:
+  `fp128_onehot_multi_chunk`, `fp128_onehot_multi_chunk_w2r2`, and
+  `fp128_onehot_multi_chunk_w4r2`.
 
-They have never been combined. The setup-offloading design record
-(`specs/setup-offloading-planner.md`) explicitly lists *"Distributed or
-multi-chunk setup offloading"* as a non-goal.
+They are combined in the production W8R2 recursive catalog. The earlier
+setup-offloading design record (`specs/setup-offloading-planner.md`) listed
+*"Distributed or multi-chunk setup offloading"* as a non-goal for its original
+slice; this follow-up closes that gap.
 
 This spec covers the **mix**: `8` witness chunks over `2` activated fold levels
-(`W8R2`) **and** recursive setup offloading, for the `fp128 D=64` one-hot preset
-only. `W8R2` is the single production slice shipped here; other chunk widths
+(`W8R2`) **and** recursive setup offloading, for the adaptive fp128 one-hot
+preset. `W8R2` is the single production recursive slice shipped here; other chunk widths
 (`W2R2`, `W4R2`, …) follow the same recipe but are out of scope. It is split into
 two parts:
 
 - **Part 1: the planner + generated schedule table.** A new generated family
-  `fp128_d64_onehot_recursive_multi_chunk_w8r2` is emitted by the config
-  `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>`. The planner DP already
-  prices both techniques together; one latent gap was fixed (the chunked
+  `fp128_onehot_recursive_multi_chunk_w8r2` is emitted by the config
+  `RecursiveCommitmentConfig<fp128::OneHotMultiChunk>`. The planner DP searches
+  role dimensions and prices both techniques together; one latent gap was fixed (the chunked
   multi-group **root** fold did not skip candidates whose *main* group had fewer
   live blocks than `num_chunks`). See [Part 1: what landed](#part-1-what-landed).
 - **Part 2: the end-to-end prover / verifier / setup path.** The runtime
@@ -56,22 +59,23 @@ two parts:
 ### Goal
 
 Make an evaluation opening prove and verify under
-`AkitaCommitmentScheme<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>>`
+`AkitaCommitmentScheme<RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>`
 for the shipped recursive profiling key
 (`final_group = (32, 2)`, `precommitteds = [(16, 1), (16, 1)]`), so that the
 leading two fold levels are **both** chunked (`num_chunks = 8`) **and** run the
 Stage-3 setup-product sum-check (`SetupContributionMode::Recursive`), with the
 carried setup-prefix opening discharged into the next fold's grouped opening
 batch — exactly as the generated table
-`fp128_d64_onehot_recursive_multi_chunk_w8r2` prescribes.
+`fp128_onehot_recursive_multi_chunk_w8r2` prescribes.
 
 ### Invariants
 
-- **Config selects the family.** Only
-  `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>` activates the mix:
+- **Config selects the family.** The production config
+  `RecursiveCommitmentConfig<fp128::OneHotMultiChunk>` activates the mix:
   `recursive_setup_planning() == true` (from the adapter) and
   `chunked_witness_cfg() == W8R2` (delegated from the base
-  `D64OneHotMultiChunk`). `D == SETUP_OFFLOAD_D_SETUP == 64`.
+  `OneHotMultiChunk`). Its compile-time `D = 256` is the policy ceiling/default;
+  each generated fold carries exact A/B/D role dimensions.
 - **Chunk activation and offload depth are independent.**
   `num_activated_levels = R = 2` chunks fold levels `0, 1`. The setup-offloading
   planner independently compares direct and offloaded successors at every
@@ -82,9 +86,16 @@ batch — exactly as the generated table
   `make_terminal_direct_step` reject `num_chunks > 1`). The former rule that
   both leading levels were unconditionally recursive is archival rollout
   context, not a current schedule invariant.
-- **Uniform ring dimension.** Every role dimension is `D = 64`, so
-  `reject_mixed_d_multi_chunk` (the one hard multi-chunk/roles guard) always
-  passes. The mix is defined only for the uniform-D64 one-hot shape.
+- **Adaptive role dimensions.** The first two levels search A in
+  `{64,128,256}` and B/D in `{64,128}`, componentwise nonincreasing from one
+  fold to the next; later levels use uniform D64. The shipped W8R2 key selects
+  `256/128/64` at root and L1, followed by `64/64/64`. The multi-chunk protocol
+  consumes the selected role geometry directly.
+- **Prefix geometry follows its consumer.** A prefix produced by one edge is
+  committed using the exact A/B dimensions of the next fold that consumes it.
+  The shipped key therefore carries a `256/128` prefix into L1 and a `64/64`
+  prefix into L2. A catalog-wide default prefix dimension is identity metadata,
+  not the actual dimension of every adaptive prefix.
 - **Setup-prefix size is chunk-independent; its block split is not.**
   `active_setup_field_len` computes the setup-matrix footprint from role
   dimensions, so `natural_len` (hence `n_prefix`) is identical to the
@@ -106,7 +117,7 @@ batch — exactly as the generated table
 
 ### Non-Goals
 
-- Ring dimensions other than uniform `D = 64`.
+- Recursive adaptive search beyond the configured two-level search window.
 - Chunk profiles other than `W8R2` (`num_chunks = 8`, `num_activated_levels = 2`).
   Other profiles (`W2R2`, `W4R2`, …) follow the same recipe but are out of scope
   for this rollout.
@@ -141,7 +152,7 @@ the same planner, walker, prover, and verifier, and are mostly orthogonal:
   the plain recursive or plain multi-chunk tables.
 - **Multi-group + multi-chunk already round-trips** at runtime
   (`crates/akita-pcs/src/scheme/tests/onehot.rs::multi_group_multi_chunk_fold_round_trips`,
-  `fp128::D64OneHotMultiChunkW2R2`).
+  `fp128::OneHotMultiChunkW2R2`).
 - **Recursive setup offloading + multi-group already round-trips**
   (`crates/akita-pcs/tests/recursive_setup_e2e.rs`,
   `RecursiveCommitmentConfig<OneHotCfg>`).
@@ -164,9 +175,10 @@ the same planner, walker, prover, and verifier, and are mostly orthogonal:
   matching verifier check in
   `crates/akita-verifier/src/protocol/ring_switch.rs`.
 
-The only hard incompatibility guard is `reject_mixed_d_multi_chunk`
-(`crates/akita-verifier/src/protocol/ring_switch.rs`): multi-chunk requires
-uniform role ring dimensions. The mix is uniform `D = 64`, so it passes.
+The direct ring-relation path supports mixed A/B/D role dimensions together
+with multi-chunk witness partitions. This recursive-setup-offloading family is
+still deliberately uniform `D = 64`; adaptive direct multi-chunk catalogs are
+a separate family and do not enable recursive setup planning.
 
 ## Part 1: what landed
 
