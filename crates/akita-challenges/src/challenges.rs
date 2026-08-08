@@ -1,8 +1,61 @@
 //! Sampled sparse challenges for one folding round.
 
 use crate::SparseChallenge;
+#[cfg(feature = "parallel")]
 use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
+
+#[cfg(feature = "parallel")]
+fn evals_at_pows_parallel<F, E>(
+    challenges: &[SparseChallenge],
+    evaluations: &mut [E],
+    alpha_pows: &[E],
+    sparse_terms: usize,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: FieldCore + MulBase<F>,
+{
+    if evaluations.len() != challenges.len() {
+        return Err(AkitaError::InvalidInput(
+            "parallel challenge evaluation length mismatch".into(),
+        ));
+    }
+    const PARALLEL_LEAF_TERMS: usize = 1 << 15;
+    if sparse_terms <= PARALLEL_LEAF_TERMS || challenges.len() < 2 {
+        for (evaluation, challenge) in evaluations.iter_mut().zip(challenges) {
+            *evaluation = challenge.eval_at_pows::<F, E>(alpha_pows)?;
+        }
+        return Ok(());
+    }
+
+    let midpoint = challenges.len() / 2;
+    let (left_challenges, right_challenges) = challenges.split_at(midpoint);
+    let (left_evaluations, right_evaluations) = evaluations.split_at_mut(midpoint);
+    let left_terms = left_challenges.iter().try_fold(0usize, |sum, challenge| {
+        sum.checked_add(challenge.positions.len())
+            .ok_or(AkitaError::InvalidProof)
+    })?;
+    let right_terms = sparse_terms
+        .checked_sub(left_terms)
+        .ok_or(AkitaError::InvalidProof)?;
+    let (left_result, right_result) = cfg_join!(
+        || evals_at_pows_parallel::<F, E>(
+            left_challenges,
+            left_evaluations,
+            alpha_pows,
+            left_terms,
+        ),
+        || evals_at_pows_parallel::<F, E>(
+            right_challenges,
+            right_evaluations,
+            alpha_pows,
+            right_terms,
+        )
+    );
+    left_result?;
+    right_result
+}
 
 /// Stage-1 fold challenges in claim-major block order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,17 +162,42 @@ impl Challenges {
         E: FieldCore + MulBase<F>,
     {
         let evaluate = |challenge: &SparseChallenge| challenge.eval_at_pows::<F, E>(alpha_pows);
-        const PARALLEL_TERM_THRESHOLD: usize = 1 << 17;
-        let sparse_terms = self.challenges.iter().try_fold(0usize, |sum, challenge| {
-            sum.checked_add(challenge.positions.len()).ok_or_else(|| {
-                AkitaError::InvalidInput("sparse challenge term count overflow".into())
-            })
-        })?;
-        if sparse_terms >= PARALLEL_TERM_THRESHOLD {
-            cfg_iter!(&self.challenges).map(evaluate).collect()
-        } else {
-            self.challenges.iter().map(evaluate).collect()
+        #[cfg(feature = "parallel")]
+        let parallel_candidate = {
+            const MIN_PARALLEL_CHALLENGES: usize = 1 << 11;
+            const MIN_LIGHTWEIGHT_CHALLENGES: usize = 1 << 12;
+            let challenge_count = self.challenges.len();
+            challenge_count >= MIN_LIGHTWEIGHT_CHALLENGES
+                || (challenge_count >= MIN_PARALLEL_CHALLENGES && alpha_pows.len() <= 128)
+        };
+        #[cfg(feature = "parallel")]
+        if parallel_candidate {
+            const MIN_PARALLEL_TERMS: usize = 1 << 15;
+            let sparse_terms = self.challenges.iter().try_fold(0usize, |sum, challenge| {
+                sum.checked_add(challenge.positions.len()).ok_or_else(|| {
+                    AkitaError::InvalidInput("sparse challenge term count overflow".into())
+                })
+            })?;
+            if sparse_terms < MIN_PARALLEL_TERMS {
+                return self.challenges.iter().map(evaluate).collect();
+            }
+            let mut evaluations = Vec::new();
+            evaluations
+                .try_reserve_exact(self.challenges.len())
+                .map_err(|_| {
+                    AkitaError::InvalidInput("challenge evaluation allocation failed".into())
+                })?;
+            evaluations.resize(self.challenges.len(), E::zero());
+            evals_at_pows_parallel::<F, E>(
+                &self.challenges,
+                &mut evaluations,
+                alpha_pows,
+                sparse_terms,
+            )?;
+            return Ok(evaluations);
         }
+
+        self.challenges.iter().map(evaluate).collect()
     }
 
     /// Select complete claims in the requested order.

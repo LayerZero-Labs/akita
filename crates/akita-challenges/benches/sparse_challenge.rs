@@ -118,7 +118,7 @@ fn bench_sparse_evaluation(c: &mut Criterion) {
         .collect::<Vec<_>>();
 
     let mut group = c.benchmark_group("sparse_challenge_evaluation");
-    for batch in [64usize, 256, 1024, 2048, 4096] {
+    for batch in [64usize, 256, 512, 1024, 2048, 4096, 1 << 16] {
         let mut transcript = fresh_transcript();
         let sampled = sample_sparse_challenges::<F, _>(
             &mut transcript,
@@ -144,7 +144,7 @@ fn bench_sparse_evaluation(c: &mut Criterion) {
                 });
             },
         );
-        if batch >= 4096 {
+        if batch >= 512 {
             group.bench_with_input(
                 BenchmarkId::new("sequential", batch),
                 &challenges,
@@ -163,48 +163,51 @@ fn bench_sparse_evaluation(c: &mut Criterion) {
             );
         }
     }
-    let ring_d = 2048;
-    let batch = 4096;
-    let cfg = SparseChallengeConfig::production_for_ring_dim(ring_d)
-        .expect("production challenge configuration");
-    let mut transcript = fresh_transcript();
-    let sampled = sample_sparse_challenges::<F, _>(
-        &mut transcript,
-        b"bench/evaluation-d2048",
-        ring_d,
-        batch,
-        &cfg,
-        0,
-    )
-    .expect("batch sparse challenges");
-    let challenges = Challenges::from_sparse(sampled, batch, 1).expect("valid batch layout");
-    let mut power = F::one();
-    let alpha_powers_d2048 = (0..ring_d)
-        .map(|_| {
-            let current = power;
-            power *= alpha;
-            current
-        })
-        .collect::<Vec<_>>();
-    for mode in ["hybrid", "sequential"] {
-        group.bench_with_input(
-            BenchmarkId::new(format!("d2048_{mode}"), batch),
-            &challenges,
-            |b, challenges| {
-                b.iter(|| {
-                    let evaluations = if mode == "hybrid" {
-                        challenges.evals_at_pows::<F, F>(&alpha_powers_d2048)
-                    } else {
-                        challenges
-                            .as_slice()
-                            .iter()
-                            .map(|challenge| challenge.eval_at_pows::<F, F>(&alpha_powers_d2048))
-                            .collect()
-                    };
-                    black_box(evaluations.expect("valid challenge evaluations"));
-                });
-            },
-        );
+    for batch in [1024, 2048, 4096] {
+        for ring_d in [128usize, 256, 512, 1024, 2048] {
+            let cfg = SparseChallengeConfig::production_for_ring_dim(ring_d)
+                .expect("production challenge configuration");
+            let mut transcript = fresh_transcript();
+            let sampled = sample_sparse_challenges::<F, _>(
+                &mut transcript,
+                b"bench/evaluation-ladder",
+                ring_d,
+                batch,
+                &cfg,
+                0,
+            )
+            .expect("batch sparse challenges");
+            let challenges =
+                Challenges::from_sparse(sampled, batch, 1).expect("valid batch layout");
+            let mut power = F::one();
+            let alpha_powers = (0..ring_d)
+                .map(|_| {
+                    let current = power;
+                    power *= alpha;
+                    current
+                })
+                .collect::<Vec<_>>();
+            for mode in ["hybrid", "sequential"] {
+                group.bench_with_input(
+                    BenchmarkId::new(format!("d{ring_d}_{mode}"), batch),
+                    &challenges,
+                    |b, challenges| {
+                        b.iter(|| {
+                            let evaluations = if mode == "hybrid" {
+                                challenges.evals_at_pows::<F, F>(&alpha_powers)
+                            } else {
+                                challenges
+                                    .as_slice()
+                                    .iter()
+                                    .map(|challenge| challenge.eval_at_pows::<F, F>(&alpha_powers))
+                                    .collect()
+                            };
+                            black_box(evaluations.expect("valid challenge evaluations"));
+                        });
+                    },
+                );
+            }
+        }
     }
     group.finish();
 }
