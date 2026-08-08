@@ -1,8 +1,8 @@
 //! Generate an Akita verifier-input blob to be consumed by the Jolt guest
 //! program in `profile/akita-recursion/guest`.
 //!
-//! Mirrors `run_profile_onehot_fp128_d64` from `crates/akita-pcs/examples/profile.rs`:
-//! single-poly OneHot polynomial commitment in `D=64` mode at the canonical
+//! Mirrors the fp128 adaptive one-hot profile from `crates/akita-pcs/examples/profile.rs`:
+//! single-poly OneHot polynomial commitment at the canonical
 //! `q=2^128-2^32+22537` prime, opened at one random point. After running the
 //! prover end-to-end we re-run the host verifier as a sanity check, then
 //! serialize all verifier-side state into one contiguous blob via
@@ -10,8 +10,9 @@
 //!
 //! Output paths are controlled via `AKITA_RECURSION_BLOB` (defaults to
 //! `target/akita_recursion_inputs.bin`). Set `AKITA_NUM_VARS` (default 20)
-//! to regenerate at a different polynomial arity. Stick with `D=64 OneHot`
-//! so the guest's hard-coded monomorphization can read the blob.
+//! to regenerate at a different polynomial arity. The Jolt monomorphization
+//! uses the adaptive preset's D256 root envelope; the selected catalog row must
+//! use that A dimension.
 
 #![allow(missing_docs)]
 
@@ -48,13 +49,13 @@ use tracing_subscriber::EnvFilter;
 struct Args {}
 
 type F = fp128::Field;
-const D: usize = 64;
-type Cfg = fp128::D64OneHot;
+type Cfg = fp128::OneHot;
+const D: usize = <Cfg as CommitmentConfig>::D;
 type Claim = <Cfg as CommitmentConfig>::ExtField;
 type Challenge = <Cfg as CommitmentConfig>::ExtField;
 const ONEHOT_K: usize = akita_config::proof_optimized::STANDARD_ONEHOT_CHUNK_SIZE;
 
-const TRANSCRIPT_DOMAIN: &[u8] = b"akita-recursion/onehot-d64";
+const TRANSCRIPT_DOMAIN: &[u8] = b"akita-recursion/onehot";
 
 fn onehot_k_for_num_vars(nv: usize) -> usize {
     let max_supported_log_k = ONEHOT_K.trailing_zeros() as usize;
@@ -238,7 +239,7 @@ fn run() -> Result<(), String> {
         d = D,
         onehot_k,
         prime = %prime,
-        "generating Akita verifier-input artifact (single-poly OneHot, D=64)"
+        "generating Akita verifier-input artifact (single-poly adaptive OneHot)"
     );
 
     let opening_layout = OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
@@ -313,13 +314,12 @@ fn run() -> Result<(), String> {
 
     let poly_refs: [&OneHotPoly<F, u8>; 1] = [&onehot_poly];
     let openings = [opening];
-    let schedule_selection =
-        Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
-            final_group: *commitment.profile(),
-            precommitteds: Vec::new(),
-        })
-        .map_err(|err| format!("schedule selection failed: {err}"))?
-        .selection();
+    let schedule_selection = Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+        final_group: *commitment.profile(),
+        precommitteds: Vec::new(),
+    })
+    .map_err(|err| format!("schedule selection failed: {err}"))?
+    .selection();
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);

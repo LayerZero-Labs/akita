@@ -201,6 +201,9 @@ where
             .group_role_dims(inputs.opening_batch, parameters.group_index())?;
         let mut prepared_units = Vec::with_capacity(units.clone().count());
         for unit in units {
+            if unit.num_live_blocks() == 0 {
+                continue;
+            }
             let first_claim_coefficient = unit.e_coefficient_index(
                 group_dims.d_a(),
                 group_dims.d_d(),
@@ -335,11 +338,11 @@ mod tests {
 
     #[test]
     fn compact_trace_matches_dense_definition_across_coefficient_blocks() {
-        type Cfg = fp128::D128Dense;
+        type Cfg = fp128::Dense;
         type F = fp128::Field;
         type E = F;
         const D: usize = Cfg::D;
-        const NUM_VARIABLES: usize = 20;
+        const NUM_VARIABLES: usize = 16;
 
         let opening_batch =
             OpeningClaimsLayout::new(NUM_VARIABLES, 2).expect("two-claim opening group");

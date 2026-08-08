@@ -92,6 +92,9 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
         let mut weights = vec![E::zero(); e_cols];
         for claim in 0..num_claims {
             for unit in units.clone() {
+                if unit.num_live_blocks() == 0 {
+                    continue;
+                }
                 let unit_width =
                     unit.num_live_blocks()
                         .checked_mul(depth_open)
@@ -220,6 +223,9 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
         let mut weights = vec![E::zero(); num_t_columns];
         for claim in 0..num_claims {
             for unit in units.clone() {
+                if unit.num_live_blocks() == 0 {
+                    continue;
+                }
                 let unit_width = unit
                     .num_live_blocks()
                     .checked_mul(n_a)

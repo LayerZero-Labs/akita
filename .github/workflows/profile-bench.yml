@@ -24,12 +24,9 @@ env:
   # - Small prime fields (fp32/fp64): their D32/D64 schedules are non-securable
   #   under the reprice (they degrade to a cleartext root-direct proof), so the
   #   smallest secure ring degree is D128. Those cells use D128 one-hot.
-  # - fp128: D64 is the actual proof-size optimum for both dense and one-hot
-  #   (~20% smaller than D128 while still folding through 8-9 secure levels;
-  #   confirmed by `current_d64_onehot_schedule_stays_within_audited_sis_widths`
-  #   and the `best_dense_schedule`/`best_onehot_schedule` selectors, which pick
-  #   D64 over D128). The fp128 cells therefore track D64, not D128.
-  AKITA_BENCH_MODE: onehot_fp128_d64
+  # - fp128: `onehot_fp128` is the canonical direct one-hot profile. Recursive
+  #   and distributed profiles use the corresponding adaptive catalogs.
+  AKITA_BENCH_MODE: onehot_fp128
   AKITA_BENCH_RUNS: "3"
   # One warm-up run per case is discarded before the measured runs to
   # prime caches and lazily-initialized statics; cache misses on the
@@ -64,32 +61,29 @@ jobs:
         # is the largest validated size that both fits that budget and still folds
         # through multiple recursive levels. The fp128 cells fold aggressively enough
         # to stay at nv=32.
-        #
         group:
           - name: 1-fp128-dense
             cases: |
-              dense_fp128_d64:24:1
+              dense_fp128:24:1
           - name: 3-flat-onehot-suite
             cases: |
               onehot_fp32_d128:28:1
               onehot_fp64_d128:28:1
-              onehot_fp128_d64:32:1
-              onehot_fp128_mixed_dim:32:1
-              onehot_fp128_d64:30:4
-          - name: 4-multi-group-recursive-direct
+              onehot_fp128:32:1
+          - name: 4-multi-group-direct
             cases: |
-              onehot_fp128_d64_multi_group_recursive:32:4:direct
+              onehot_fp128_multi_group:32:4:direct
           - name: 5-multi-group-recursive
             cases: |
-              onehot_fp128_d64_multi_group_recursive:32:4:recursive
+              onehot_fp128_multi_group_recursive:32:4:recursive
           - name: 6-multi-group-recursive-w8r2
             cases: |
-              onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2:32:4:recursive
+              onehot_fp128_multi_group_recursive_multi_chunk_w8r2:32:4:recursive
           - name: 7-distributed
             cases: |
-              onehot_fp128_d64_multi_chunk_w2r2:32:1
-              onehot_fp128_d64_multi_chunk_w4r2:32:1
-              onehot_fp128_d64_multi_chunk_w8r2:32:1
+              onehot_fp128_multi_chunk_w2r2:32:1
+              onehot_fp128_multi_chunk_w4r2:32:1
+              onehot_fp128_multi_chunk_w8r2:32:1
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

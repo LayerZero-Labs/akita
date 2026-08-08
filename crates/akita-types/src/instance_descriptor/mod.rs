@@ -7,9 +7,10 @@
 //!
 //! ## Descriptor version policy
 //!
-//! Akita is under active development. The version changes whenever a cutover
-//! intentionally changes descriptor-bound protocol semantics; integrators must
-//! pin an exact revision because no backward compatibility is guaranteed.
+//! Akita is under active development. The version remains `1` until the
+//! protocol is frozen for audit. Integrators must pin an exact revision because
+//! no backward compatibility is guaranteed. After audit freeze, incompatible
+//! descriptor-bound protocol changes increment the version.
 
 mod fold_linf_binding;
 #[cfg(test)]
@@ -33,7 +34,7 @@ use blake2::{Blake2b, Digest};
 use std::io::{Read, Write};
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 3;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 1;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
