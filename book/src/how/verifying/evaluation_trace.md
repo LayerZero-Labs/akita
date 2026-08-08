@@ -31,7 +31,7 @@ public trace polynomial `T` used by Stage 2.
 - the common coefficient block length;
 - shared opening digit weights;
 - the source ring inner trace;
-- one coefficient per claim; and
+- one coefficient per claim;
 - one exact descriptor per nonempty witness unit; and
 - a prepared contraction plan.
 

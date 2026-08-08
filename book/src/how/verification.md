@@ -9,7 +9,7 @@ The verifier has several checks because one recursive fold must bind a public
 opening claim, a digit witness, a ring relation, and the public setup at the
 same time. Read the chapters in this order:
 
-1. [Relation matrix and witness layout](./verifying/matrix_evaluation.md)
+1. [Matrix evaluation at a point](./verifying/matrix_evaluation.md)
    defines the physical rows and columns.
 2. [The Stage 2 fused check](./verifying/stage2.md) shows how the relation,
    range image, and opening trace share one final witness evaluation.
@@ -17,10 +17,16 @@ same time. Read the chapters in this order:
    claims bind to the `E` digits without a prover-sized verifier table.
 4. [Setup contribution and Stage 3](./verifying/setup_contribution.md) explains
    direct setup evaluation and recursive setup offloading.
-5. [Multi-chunk relation verification](./verifying/distributed-relation-verifier.md)
+5. [The distributed relation verifier](./verifying/distributed-relation-verifier.md)
    explains exact dyadic ownership and unequal chunks.
 6. [Terminal verification](./verifying/terminal.md) explains the final direct
    checks after recursion stops.
+
+The proving section owns the derivation of the ring relations and the logical
+multi-group layout. These verifier chapters start from those relations and
+explain how one verifier replays them at sampled points. This separation keeps
+the mathematical definition and the optimized verifier implementation from
+becoming competing sources of truth.
 
 The book describes shipped behavior. The files under `specs/` record design
 history and pending changes, so they may describe alternatives that are not

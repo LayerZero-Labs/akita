@@ -1,14 +1,13 @@
-# Relation matrix and witness layout
+# Matrix evaluation at a point
+
+The verifier evaluates the relation matrix multilinear extension without
+materializing the matrix. Its column geometry comes from the same
+`WitnessLayout` that emitted the witness.
 
 Every nonterminal fold proves that one flat witness satisfies a public system
-of ring relations. The prover handles the full witness. The verifier sees only
-the public setup, the proof, and one random evaluation of that witness. It must
-therefore evaluate the relation matrix at one random row and column point
-without constructing the matrix.
-
-This chapter explains the matrix, its rows, its columns, and the compact
-evaluation used by the verifier. The next chapters explain how Stage 2 combines
-this value with the range and opening checks.
+of ring relations. The verifier sees the public setup, the proof, and one
+random evaluation of that witness. This chapter explains the rows, columns,
+and compact evaluation used to check that system at one point.
 
 ## The semantic relations
 
@@ -59,10 +58,10 @@ physical row at that row's native ring dimension.
 `RelationRhsLayout::row_families` is the row-order authority. The code does not
 maintain a second verifier-specific row list.
 
-## The flat witness
+## Canonical walk
 
-`WitnessLayout` is the only owner of witness coefficient ranges. The outer
-physical order is chunk first, then group:
+`WitnessLayout` is the only owner of witness coefficient ranges. It orders
+chunk and group units as follows:
 
 ```text
 chunk 0:
@@ -97,6 +96,18 @@ The three ordinary segments have different ownership rules:
 
 The ordinary quotient rows and the compression suffix are shared once after
 all chunk and group units.
+
+Each unit carries an exact global block range. Relation, setup, and trace
+evaluators consume these checked ranges. They do not reconstruct offsets from
+a second chunk layout description. Multi-group and multi-chunk layouts are the
+ordinary product of the same two indices.
+
+## Exact block weights
+
+For a group with exact live block count `F`, the fold challenge supplies `F`
+independent sparse coefficients. The exact count is transcript bound and is
+validated before any indexing. Sparse challenge values use the ring add,
+subtract, and double fast paths where applicable.
 
 ## What the verifier evaluates
 
@@ -164,7 +175,30 @@ ring dimension. The verifier evaluates those explicit digits and multiplies by
 the row weight and the evaluated denominator. Compression quotient rows are
 handled by the separate compression evaluator and are not counted twice.
 
-## Mixed ring dimensions
+## Setup roles and mixed rings
+
+The A, B, and D setup contributions use the same group and chunk ranges. D
+group offsets follow checked relation-group prefix sums.
+`SetupProjectionGeometry` owns mixed-ring projection, so verifier evaluation
+does not maintain a parallel setup-column layout.
+
+The active
+[`role-native-projected-digit-layout`](../../../specs/role-native-projected-digit-layout.md)
+spec defines the E and T verifier cutover. Its target physical order is:
+
+```text
+[semantic value][role subcolumn][role digit][native coefficient]
+```
+
+The setup matrix and relation witness use the same subcolumn and digit axes.
+At the ring evaluation point `alpha`, a role subcolumn `s` of dimension `r`
+has weight `alpha^(s * r)`. The verifier includes this power in the projected
+equality tensor and applies the role gadget power on the digit axis.
+
+When the projection ratio is one, the verifier does not allocate projection
+powers or multiply by one. It uses the unprojected contiguous equality window
+directly. Mixed groups use exact coefficient ranges and the shared minimum
+relation block. There are no carrier spans or per-role padding to scan.
 
 The A, B, and D roles may use different ring dimensions. The verifier chooses
 their greatest common coefficient block as the low coefficient boundary. A
@@ -193,11 +227,15 @@ factor.
 
 The dense matrix and dense relation weights exist only as test oracles.
 
-## Safety and cost
+## Safety contract
 
-All row counts, native dimensions, unit ranges, address products, and work
-bounds are checked before allocation or indexing. Malformed proof or setup data
-returns `AkitaError`.
+Before evaluation, the verifier checks the opening dimensions, group-local
+layout, unit ranges, setup geometry, and work bounds. Malformed proof data
+returns `AkitaError`. Verifier-reachable evaluation does not panic or allocate
+from an unchecked proof-controlled dimension.
+
+All row counts, native dimensions, address products, and allocation sizes are
+also checked before use.
 
 Direct setup evaluation is linear in the public setup prefix because those
 coefficients are arbitrary and must be read. Structured terms are linear in
