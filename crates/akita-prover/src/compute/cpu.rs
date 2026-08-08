@@ -1,4 +1,4 @@
-use crate::backend::onehot::{column_sweep_ajtai_onehot_multi, MultiChunkEntry, SingleChunkEntry};
+use crate::backend::onehot::column_sweep_ajtai_onehot_multi;
 use crate::backend::sparse_ring::column_sweep_sparse;
 use crate::compute::backend::{
     CommitmentComputeBackend, CompressionComputeBackend, CompressionRowsProducts,
@@ -6,9 +6,9 @@ use crate::compute::backend::{
     RingSwitchComputeBackend,
 };
 use crate::compute::plans::{
-    DenseCommitInput, DenseCommitRowsPlan, OneHotCommitBlocks, OneHotCommitRowsPlan,
-    RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
-    RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
+    DenseCommitInput, DenseCommitRowsPlan, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
+    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
+    SparseRingCommitRowsPlan,
 };
 use crate::compute::requirements::NttOperationCluster;
 use crate::kernels::linear::validate_compression_batch_shape;
@@ -611,30 +611,15 @@ where
             .expanded
             .shared_matrix
             .ring_view::<D>(plan.n_a, active_a_cols)?;
-        Ok(match plan.blocks {
-            OneHotCommitBlocks::SingleChunk(source) => {
-                column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
-                    &a_view,
-                    &[&source],
-                    plan.n_a,
-                    active_a_cols,
-                    plan.num_digits_inner,
-                )?
-                .pop()
-                .unwrap_or_default()
-            }
-            OneHotCommitBlocks::MultiChunk(source) => {
-                column_sweep_ajtai_onehot_multi::<MultiChunkEntry, F, D>(
-                    &a_view,
-                    &[&source],
-                    plan.n_a,
-                    active_a_cols,
-                    plan.num_digits_inner,
-                )?
-                .pop()
-                .unwrap_or_default()
-            }
-        })
+        Ok(column_sweep_ajtai_onehot_multi::<F, D>(
+            &a_view,
+            &[&plan.blocks],
+            plan.n_a,
+            active_a_cols,
+            plan.num_digits_inner,
+        )?
+        .pop()
+        .unwrap_or_default())
     }
 
     fn onehot_commit_rows_multi<const D: usize>(
@@ -654,13 +639,7 @@ where
                 && plan.num_positions_per_block == first.num_positions_per_block
                 && plan.num_digits_inner == first.num_digits_inner
         });
-        let all_single = plans
-            .iter()
-            .all(|plan| matches!(plan.blocks, OneHotCommitBlocks::SingleChunk(_)));
-        let all_multi = plans
-            .iter()
-            .all(|plan| matches!(plan.blocks, OneHotCommitBlocks::MultiChunk(_)));
-        if !uniform_shape || !(all_single || all_multi) {
+        if !uniform_shape {
             return plans
                 .into_iter()
                 .map(|plan| self.onehot_commit_rows::<D>(prepared, plan))
@@ -678,39 +657,14 @@ where
         let n_a = first.n_a;
         let num_digits_inner = first.num_digits_inner;
 
-        if all_single {
-            let sources = plans
-                .iter()
-                .map(|plan| match &plan.blocks {
-                    OneHotCommitBlocks::SingleChunk(source) => Some(source),
-                    OneHotCommitBlocks::MultiChunk(_) => None,
-                })
-                .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| AkitaError::InvalidSetup("mixed one-hot geometry".to_string()))?;
-            column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
-                &a_view,
-                &sources,
-                n_a,
-                active_a_cols,
-                num_digits_inner,
-            )
-        } else {
-            let sources = plans
-                .iter()
-                .map(|plan| match &plan.blocks {
-                    OneHotCommitBlocks::MultiChunk(source) => Some(source),
-                    OneHotCommitBlocks::SingleChunk(_) => None,
-                })
-                .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| AkitaError::InvalidSetup("mixed one-hot geometry".to_string()))?;
-            column_sweep_ajtai_onehot_multi::<MultiChunkEntry, F, D>(
-                &a_view,
-                &sources,
-                n_a,
-                active_a_cols,
-                num_digits_inner,
-            )
-        }
+        let sources = plans.iter().map(|plan| &plan.blocks).collect::<Vec<_>>();
+        column_sweep_ajtai_onehot_multi::<F, D>(
+            &a_view,
+            &sources,
+            n_a,
+            active_a_cols,
+            num_digits_inner,
+        )
     }
 
     fn sparse_ring_commit_rows<const D: usize>(

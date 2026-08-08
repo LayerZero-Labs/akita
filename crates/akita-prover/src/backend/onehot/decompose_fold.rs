@@ -1,6 +1,8 @@
 use super::accumulate::onehot_accumulate;
 use super::*;
 
+const BATCH_BLOCK_TILE: usize = 64;
+
 fn expand_onehot_accum<const D: usize>(
     compressed: Vec<[i32; D]>,
     num_digits: usize,
@@ -32,20 +34,19 @@ fn finish_decompose_fold<F: CanonicalField, const D: usize>(
     build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
 }
 
-fn decompose_fold_from_views<E, F, const D: usize>(
-    block_views: &[&[E]],
+fn decompose_fold_from_views<F, const D: usize>(
+    block_views: &[&[SparseRingBlockEntry]],
     challenges: &[SparseChallenge],
     num_live_blocks: usize,
     num_positions_per_block: usize,
     num_digits: usize,
 ) -> DecomposeFoldWitness<F>
 where
-    E: OneHotEntry,
     F: CanonicalField,
 {
     let compressed_accum = {
         let _span = tracing::info_span!("onehot_accumulate").entered();
-        onehot_accumulate::<E, D>(
+        onehot_accumulate::<D>(
             block_views,
             challenges,
             num_live_blocks,
@@ -56,22 +57,20 @@ where
 }
 
 impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
-    pub(super) fn decompose_fold_onehot<E, const D: usize>(
+    pub(super) fn decompose_fold_onehot<const D: usize>(
         &self,
-        blocks: &FlatBlocks<E>,
+        blocks: &FlatBlocks<SparseRingBlockEntry>,
         challenges: &[SparseChallenge],
         num_positions_per_block: usize,
         num_digits: usize,
     ) -> DecomposeFoldWitness<F>
     where
-        E: OneHotEntry,
         F: CanonicalField,
     {
         let num_live_blocks = challenges.len().min(blocks.num_live_blocks());
-        let block_views: Vec<&[E]> = (0..blocks.num_live_blocks())
-            .map(|i| blocks.block(i))
-            .collect();
-        decompose_fold_from_views::<E, F, D>(
+        let block_views: Vec<&[SparseRingBlockEntry]> =
+            (0..num_live_blocks).map(|i| blocks.block(i)).collect();
+        decompose_fold_from_views::<F, D>(
             &block_views,
             challenges,
             num_live_blocks,
@@ -80,7 +79,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         )
     }
 
-    pub(super) fn decompose_fold_batched_single_chunk_onehot<const D: usize>(
+    pub(super) fn decompose_fold_batched_onehot<const D: usize>(
         polys: &[&Self],
         challenges: &[SparseChallenge],
         num_positions_per_block: usize,
@@ -89,66 +88,49 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     where
         F: CanonicalField,
     {
-        let total_blocks = challenges.len();
-        let operation_blocks = polys
-            .iter()
-            .map(|poly| poly.blocks_for_operation(D, num_positions_per_block).ok())
-            .collect::<Option<Vec<_>>>()?;
-        let mut flat_blocks: Vec<&[SingleChunkEntry]> = Vec::with_capacity(total_blocks);
-        for operation in &operation_blocks {
-            let OneHotBlocks::SingleChunk(blocks) = operation.as_ref() else {
-                return None;
-            };
-            for i in 0..blocks.num_live_blocks() {
-                flat_blocks.push(blocks.block(i));
+        let mut challenge_start = 0usize;
+        let mut compressed = vec![[0i32; D]; num_positions_per_block];
+        for poly in polys {
+            if challenge_start == challenges.len() {
+                break;
             }
+            let (ring_elems, num_blocks) = poly.view_layout(D, num_positions_per_block).ok()?;
+            let active_blocks = num_blocks.min(challenges.len() - challenge_start);
+            if active_blocks == 0 {
+                continue;
+            }
+            for block_start in (0..active_blocks).step_by(BATCH_BLOCK_TILE) {
+                let block_end = (block_start + BATCH_BLOCK_TILE).min(active_blocks);
+                let blocks = poly
+                    .materialize_block_range(
+                        D,
+                        num_positions_per_block,
+                        ring_elems,
+                        block_start..block_end,
+                    )
+                    .ok()?;
+                let tile_len = block_end - block_start;
+                let views = (0..tile_len)
+                    .map(|block| blocks.block(block))
+                    .collect::<Vec<_>>();
+                let challenge_tile_start = challenge_start + block_start;
+                let part = onehot_accumulate::<D>(
+                    &views,
+                    &challenges[challenge_tile_start..challenge_tile_start + tile_len],
+                    tile_len,
+                    num_positions_per_block,
+                );
+                for (dst, src) in compressed.iter_mut().zip(part) {
+                    for (dst_coeff, src_coeff) in dst.iter_mut().zip(src) {
+                        *dst_coeff += src_coeff;
+                    }
+                }
+            }
+            challenge_start += active_blocks;
         }
-        if flat_blocks.is_empty() {
+        if challenge_start == 0 {
             return None;
         }
-        let active_blocks = flat_blocks.len().min(total_blocks);
-        Some(decompose_fold_from_views::<SingleChunkEntry, F, D>(
-            &flat_blocks,
-            challenges,
-            active_blocks,
-            num_positions_per_block,
-            num_digits,
-        ))
-    }
-
-    pub(super) fn decompose_fold_batched_multi_chunk_onehot<const D: usize>(
-        polys: &[&Self],
-        challenges: &[SparseChallenge],
-        num_positions_per_block: usize,
-        num_digits: usize,
-    ) -> Option<DecomposeFoldWitness<F>>
-    where
-        F: CanonicalField,
-    {
-        let total_blocks = challenges.len();
-        let operation_blocks = polys
-            .iter()
-            .map(|poly| poly.blocks_for_operation(D, num_positions_per_block).ok())
-            .collect::<Option<Vec<_>>>()?;
-        let mut flat_blocks: Vec<&[MultiChunkEntry]> = Vec::with_capacity(total_blocks);
-        for operation in &operation_blocks {
-            let OneHotBlocks::MultiChunk(blocks) = operation.as_ref() else {
-                return None;
-            };
-            for i in 0..blocks.num_live_blocks() {
-                flat_blocks.push(blocks.block(i));
-            }
-        }
-        if flat_blocks.is_empty() {
-            return None;
-        }
-        let active_blocks = flat_blocks.len().min(total_blocks);
-        Some(decompose_fold_from_views::<MultiChunkEntry, F, D>(
-            &flat_blocks,
-            challenges,
-            active_blocks,
-            num_positions_per_block,
-            num_digits,
-        ))
+        Some(finish_decompose_fold(compressed, num_digits))
     }
 }

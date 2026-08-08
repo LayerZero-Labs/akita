@@ -24,7 +24,7 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
 
     // Three "polys" with varying block counts, sparse sorted entries, and
     // some empty blocks — the shapes the fused sweep must round-trip.
-    let mut polys_buckets: Vec<Vec<Vec<SingleChunkEntry>>> = Vec::new();
+    let mut polys_buckets: Vec<Vec<Vec<SparseRingBlockEntry>>> = Vec::new();
     for poly in 0..3usize {
         let num_blocks = 40 + poly * 17;
         let buckets = (0..num_blocks)
@@ -34,17 +34,17 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
                 }
                 (0..num_positions_per_block)
                     .filter(|pos| (pos + block + poly) % 3 != 0)
-                    .map(|pos| SingleChunkEntry::new(pos as u32, ((pos * 11 + block) % D) as u16))
+                    .map(|pos| block_entry(pos, (pos * 11 + block) % D))
                     .collect()
             })
             .collect::<Vec<_>>();
         polys_buckets.push(buckets);
     }
-    let polys_blocks: Vec<FlatBlocks<SingleChunkEntry>> = polys_buckets
+    let polys_blocks: Vec<FlatBlocks<SparseRingBlockEntry>> = polys_buckets
         .iter()
         .map(|buckets| super::super::test_helpers::from_buckets(buckets.clone()))
         .collect();
-    let polys_views: Vec<Vec<&[SingleChunkEntry]>> = polys_blocks
+    let polys_views: Vec<Vec<&[SparseRingBlockEntry]>> = polys_blocks
         .iter()
         .map(|blocks| {
             (0..blocks.num_live_blocks())
@@ -54,8 +54,8 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
         .collect();
 
     // Direct core-vs-core equality over the concatenated batch.
-    let flat: Vec<&[SingleChunkEntry]> = polys_views.iter().flatten().copied().collect();
-    let merge = column_sweep_core_merge::<SingleChunkEntry, F, D>(
+    let flat: Vec<&[SparseRingBlockEntry]> = polys_views.iter().flatten().copied().collect();
+    let merge = column_sweep_core_merge::<F, D>(
         &a_view,
         &flat,
         n_a,
@@ -64,13 +64,7 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
         L2_TILE_BUDGET,
         MERGE_COL_CHUNK,
     );
-    let bucketed = column_sweep_core::<SingleChunkEntry, F, D>(
-        &a_view,
-        &flat,
-        n_a,
-        active_a_cols,
-        num_digits_inner,
-    );
+    let bucketed = column_sweep_core::<F, D>(&a_view, &flat, n_a, active_a_cols, num_digits_inner);
     assert_eq!(merge, bucketed, "merge sweep must match the bucketed core");
 
     // Wrapper equality: fused multi output must equal per-poly sweeps.
@@ -79,7 +73,7 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
         .map(|blocks| OneHotBlockSource::Eager(blocks.table()))
         .collect();
     let source_refs: Vec<_> = sources.iter().collect();
-    let multi = column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
+    let multi = column_sweep_ajtai_onehot_multi::<F, D>(
         &a_view,
         &source_refs,
         n_a,
@@ -90,19 +84,13 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
     let per_poly: Vec<Vec<Vec<CyclotomicRing<F, D>>>> = polys_views
         .iter()
         .map(|views| {
-            column_sweep_ajtai_onehot::<SingleChunkEntry, F, D>(
-                &a_view,
-                views,
-                n_a,
-                active_a_cols,
-                num_digits_inner,
-            )
+            column_sweep_ajtai_onehot::<F, D>(&a_view, views, n_a, active_a_cols, num_digits_inner)
         })
         .collect();
     assert_eq!(multi, per_poly, "fused multi must match per-poly sweeps");
 
     // Tiny tiles force multi-tile merge paths and cursor resets.
-    let merge_tiny_tiles = column_sweep_core_merge::<SingleChunkEntry, F, D>(
+    let merge_tiny_tiles = column_sweep_core_merge::<F, D>(
         &a_view,
         &flat,
         n_a,
@@ -120,7 +108,7 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
 #[test]
 fn lazy_multi_sweep_matches_eager_multi_sweep() {
     use super::super::column_sweep::column_sweep_ajtai_onehot_multi;
-    use crate::compute::{OneHotBlockSource, OneHotCommitBlocks};
+    use crate::compute::OneHotBlockSource;
     use rand::Rng;
 
     type F = Prime128Offset275;
@@ -162,20 +150,12 @@ fn lazy_multi_sweep_matches_eager_multi_sweep() {
         .collect();
     let eager_sources: Vec<_> = eager_blocks
         .iter()
-        .map(|blocks| match blocks.as_ref() {
-            OneHotBlocks::SingleChunk(blocks) => OneHotBlockSource::Eager(blocks.table()),
-            OneHotBlocks::MultiChunk(_) => panic!("K=256 D=64 is single-chunk"),
-        })
+        .map(|blocks| OneHotBlockSource::Eager(blocks.table()))
         .collect();
     let eager_refs: Vec<_> = eager_sources.iter().collect();
-    let eager = column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
-        &a_view,
-        &eager_refs,
-        n_a,
-        active_a_cols,
-        1,
-    )
-    .unwrap();
+    let eager =
+        column_sweep_ajtai_onehot_multi::<F, D>(&a_view, &eager_refs, n_a, active_a_cols, 1)
+            .unwrap();
 
     let lazy_plans: Vec<_> = polys
         .iter()
@@ -184,21 +164,9 @@ fn lazy_multi_sweep_matches_eager_multi_sweep() {
                 .unwrap()
         })
         .collect();
-    let sources: Vec<_> = lazy_plans
-        .iter()
-        .map(|blocks| match blocks {
-            OneHotCommitBlocks::SingleChunk(source @ OneHotBlockSource::Lazy(_)) => source,
-            _ => panic!("K=256 D=64 is single-chunk lazy"),
-        })
-        .collect();
-    let lazy = column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
-        &a_view,
-        &sources,
-        n_a,
-        active_a_cols,
-        1,
-    )
-    .unwrap();
+    let sources: Vec<_> = lazy_plans.iter().collect();
+    let lazy =
+        column_sweep_ajtai_onehot_multi::<F, D>(&a_view, &sources, n_a, active_a_cols, 1).unwrap();
 
     assert_eq!(eager, lazy);
 }
@@ -224,18 +192,17 @@ fn merge_sweep_self_reduces_oversized_blocks() {
     // One oversized dense block (exceeds the wide-accumulator cap) plus a
     // small one; the merge kernel must self-reduce mid-row instead of
     // relying on the block-splitting wrapper.
-    let big: Vec<SingleChunkEntry> = (0..num_positions_per_block)
-        .map(|pos| SingleChunkEntry::new(pos as u32, ((pos * 7) % D) as u16))
+    let big: Vec<SparseRingBlockEntry> = (0..num_positions_per_block)
+        .map(|pos| block_entry(pos, (pos * 7) % D))
         .collect();
-    let small: Vec<SingleChunkEntry> = (0..97)
-        .map(|pos| SingleChunkEntry::new((pos * 11) as u32, (pos % D) as u16))
-        .collect();
+    let small: Vec<SparseRingBlockEntry> =
+        (0..97).map(|pos| block_entry(pos * 11, pos % D)).collect();
     let blocks = super::super::test_helpers::from_buckets(vec![big, small]);
-    let views: Vec<&[SingleChunkEntry]> = (0..blocks.num_live_blocks())
+    let views: Vec<&[SparseRingBlockEntry]> = (0..blocks.num_live_blocks())
         .map(|i| blocks.block(i))
         .collect();
 
-    let merge = column_sweep_core_merge::<SingleChunkEntry, F, D>(
+    let merge = column_sweep_core_merge::<F, D>(
         &a_view,
         &views,
         n_a,
@@ -245,8 +212,7 @@ fn merge_sweep_self_reduces_oversized_blocks() {
         MERGE_COL_CHUNK,
     );
     // Reference: the splitting wrapper (overflow-safe by segmentation).
-    let wrapper =
-        column_sweep_ajtai_onehot::<SingleChunkEntry, F, D>(&a_view, &views, n_a, active_a_cols, 1);
+    let wrapper = column_sweep_ajtai_onehot::<F, D>(&a_view, &views, n_a, active_a_cols, 1);
     assert_eq!(
         merge, wrapper,
         "self-reducing merge must match the splitting wrapper"

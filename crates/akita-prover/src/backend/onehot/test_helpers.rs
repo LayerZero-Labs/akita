@@ -4,7 +4,7 @@
 ///
 /// Gated on `#[cfg(test)]` so the production binary never sees them.
 #[cfg(test)]
-use super::{CyclotomicRing, FlatBlocks, MultiChunkEntry, OneHotEntry, OneHotIndex, OneHotPoly};
+use super::{CyclotomicRing, FlatBlocks, OneHotIndex, OneHotPoly, SparseRingBlockEntry};
 use akita_field::parallel::*;
 use akita_field::{CanonicalField, FieldCore};
 
@@ -43,28 +43,8 @@ where
     )
 }
 
-/// Build a flat block layout from a pre-bucketed `Vec<Vec<E>>`.
-///
-/// The production paths (`FlatBlocks::<SingleChunkEntry>::from_indices`,
-/// `FlatBlocks::<MultiChunkEntry>::from_indices`) stream entries directly
-/// into the flat form without ever materialising per-block `Vec`s.
-/// This constructor exists only so tests that hand-assemble
-/// block-bucketed storage can still feed it into kernels that
-/// consume `FlatBlocks`.
 pub(crate) fn from_buckets<E>(buckets: Vec<Vec<E>>) -> FlatBlocks<E> {
-    let num_live_blocks = buckets.len();
-    let mut offsets = Vec::with_capacity(num_live_blocks + 1);
-    let total: usize = buckets.iter().map(Vec::len).sum();
-    let mut entries = Vec::with_capacity(total);
-    offsets.push(0);
-    for mut bucket in buckets {
-        entries.append(&mut bucket);
-        // `entries.len()` is bounded by `total = sum(Vec::len)` which
-        // was accepted as `usize`; it is always safe to downcast to
-        // `u32` on all supported layouts used by tests.
-        offsets.push(u32::try_from(entries.len()).expect("flat block offset overflows u32"));
-    }
-    FlatBlocks { entries, offsets }
+    FlatBlocks::from_buckets(buckets).expect("test block offsets fit in u32")
 }
 
 /// Reference (non-wide) multi-chunk inner Ajtai used to cross-check
@@ -73,19 +53,17 @@ pub(crate) fn from_buckets<E>(buckets: Vec<Vec<E>>) -> FlatBlocks<E> {
 /// Production code always uses the wide accumulator; this simpler
 /// variant only exists so tests can assert the two paths agree.
 #[allow(non_snake_case)]
-pub(crate) fn inner_ajtai_multi_chunk_t_only<F: FieldCore + CanonicalField, const D: usize>(
+pub(crate) fn inner_ajtai_reference<F: FieldCore + CanonicalField, const D: usize>(
     A: &[Vec<CyclotomicRing<F, D>>],
-    multi_chunk_entries: &[MultiChunkEntry],
+    entries: &[SparseRingBlockEntry],
     num_digits: usize,
 ) -> Vec<CyclotomicRing<F, D>> {
     let n_a = A.len();
     let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
-    for entry in multi_chunk_entries {
-        let col = entry.commit_col(num_digits);
+    for entry in entries {
+        let col = entry.pos_in_block() * num_digits;
         for a in 0..n_a {
-            for &ci in entry.coeffs() {
-                A[a][col].shift_accumulate_into(&mut t[a], ci as usize);
-            }
+            A[a][col].shift_accumulate_into(&mut t[a], entry.coeff_idx());
         }
     }
     t

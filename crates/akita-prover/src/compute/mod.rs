@@ -53,9 +53,9 @@ pub use operation_plans::{
     RingSwitchQuotientPlan, RingSwitchRelationPlan,
 };
 pub use plans::{
-    DenseCommitInput, DenseCommitRowsPlan, FlatBlockTable, OneHotBlockSource, OneHotCommitBlocks,
-    OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,
-    RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
+    DenseCommitInput, DenseCommitRowsPlan, FlatBlockTable, OneHotBlockSource, OneHotCommitRowsPlan,
+    RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
+    RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
 pub use requirements::{NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement};
 

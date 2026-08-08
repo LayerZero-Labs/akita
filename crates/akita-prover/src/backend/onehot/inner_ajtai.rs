@@ -14,13 +14,12 @@ use super::*;
 /// Using the wide accumulator avoids per-addition modular reduction versus
 /// a direct field-ring accumulator.
 #[allow(non_snake_case)]
-pub(crate) fn inner_ajtai_wide_onehot<E, F, const D: usize>(
+pub(crate) fn inner_ajtai_wide_onehot<F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
-    entries: &[E],
+    entries: &[SparseRingBlockEntry],
     num_digits: usize,
 ) -> Vec<CyclotomicRing<F, D>>
 where
-    E: OneHotEntry,
     F: FieldCore + CanonicalField + HasCommitAccum,
     F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
 {
@@ -28,12 +27,10 @@ where
     let mut t_wide = vec![WideCyclotomicRing::<F::CommitAccum, D>::zero(); n_a];
 
     for entry in entries {
-        let col = entry.commit_col(num_digits);
+        let col = entry.pos_in_block() * num_digits;
         for (a_row, t_w) in a_view.rows().zip(t_wide.iter_mut()) {
             let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
-            for &ci in entry.coeffs() {
-                a_wide.shift_accumulate_into(t_w, ci as usize);
-            }
+            a_wide.shift_accumulate_into(t_w, entry.coeff_idx());
         }
     }
 
@@ -44,7 +41,7 @@ where
 #[allow(non_snake_case)]
 pub(crate) fn inner_ajtai_wide_single_chunk_tiled<F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
-    entries: &[SingleChunkEntry],
+    entries: &[SparseRingBlockEntry],
     num_digits: usize,
 ) -> Vec<CyclotomicRing<F, D>>
 where
@@ -55,7 +52,7 @@ where
     let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
 
     for tile in entries.chunks(MAX_WIDE_SHIFT_ACCUMULATIONS) {
-        let partial = inner_ajtai_wide_onehot::<SingleChunkEntry, F, D>(a_view, tile, num_digits);
+        let partial = inner_ajtai_wide_onehot::<F, D>(a_view, tile, num_digits);
         for (dst, src) in t.iter_mut().zip(partial.iter()) {
             *dst += *src;
         }

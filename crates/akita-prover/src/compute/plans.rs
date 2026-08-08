@@ -1,4 +1,5 @@
-use crate::backend::onehot::{FlatBlocks, LazyOneHotBlocks, MultiChunkEntry, SingleChunkEntry};
+use crate::backend::flat_blocks::FlatBlocks;
+use crate::backend::onehot::LazyOneHotBlocks;
 use crate::backend::sparse_ring::SparseRingBlockEntry;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, FieldCore};
@@ -92,24 +93,24 @@ pub struct DenseCommitRowsPlan<'a, F: FieldCore, const D: usize> {
     pub input: DenseCommitInput<'a, F, D>,
 }
 
-/// Storage for one typed family of one-hot blocks.
-pub enum OneHotBlockSource<'a, E> {
+/// Eager or range materialized storage for unified one hot block entries.
+pub enum OneHotBlockSource<'a> {
     /// Already materialized flat block storage.
-    Eager(FlatBlockTable<'a, E>),
+    Eager(FlatBlockTable<'a, SparseRingBlockEntry>),
     /// Blocks built only for the requested tile.
-    Lazy(LazyOneHotBlocks<'a, E>),
+    Lazy(LazyOneHotBlocks<'a>),
 }
 
-pub(crate) enum OneHotBlockRange<'a, E> {
+pub(crate) enum OneHotBlockRange<'a> {
     Eager {
-        table: FlatBlockTable<'a, E>,
+        table: FlatBlockTable<'a, SparseRingBlockEntry>,
         range: std::ops::Range<usize>,
     },
-    Lazy(FlatBlocks<E>),
+    Lazy(FlatBlocks<SparseRingBlockEntry>),
 }
 
-impl<E> OneHotBlockRange<'_, E> {
-    pub(crate) fn block_slices(&self) -> Result<Vec<&[E]>, AkitaError> {
+impl OneHotBlockRange<'_> {
+    pub(crate) fn block_slices(&self) -> Result<Vec<&[SparseRingBlockEntry]>, AkitaError> {
         match self {
             Self::Eager { table, range } => range.clone().map(|idx| table.block(idx)).collect(),
             Self::Lazy(blocks) => Ok((0..blocks.num_live_blocks())
@@ -119,7 +120,7 @@ impl<E> OneHotBlockRange<'_, E> {
     }
 }
 
-impl<'a, E> OneHotBlockSource<'a, E> {
+impl<'a> OneHotBlockSource<'a> {
     /// Number of blocks available from this source.
     pub fn num_live_blocks(&self) -> usize {
         match self {
@@ -131,7 +132,7 @@ impl<'a, E> OneHotBlockSource<'a, E> {
     pub(crate) fn materialize_range(
         &'a self,
         range: std::ops::Range<usize>,
-    ) -> Result<OneHotBlockRange<'a, E>, AkitaError> {
+    ) -> Result<OneHotBlockRange<'a>, AkitaError> {
         if range.start > range.end || range.end > self.num_live_blocks() {
             return Err(AkitaError::InvalidSetup(format!(
                 "one-hot block range {:?} exceeds {} blocks",
@@ -149,18 +150,6 @@ impl<'a, E> OneHotBlockSource<'a, E> {
     }
 }
 
-/// One-hot commit input representation.
-///
-/// Entry geometry is selected once. Storage policy stays behind the typed
-/// block source so commit and opening kernels do not duplicate the geometry
-/// and storage cross-product.
-pub enum OneHotCommitBlocks<'a> {
-    /// One ring has at most one hot coefficient.
-    SingleChunk(OneHotBlockSource<'a, SingleChunkEntry>),
-    /// One ring may contain several hot coefficients.
-    MultiChunk(OneHotBlockSource<'a, MultiChunkEntry>),
-}
-
 /// One-hot commit operation plan.
 pub struct OneHotCommitRowsPlan<'a> {
     /// Number of A rows to produce.
@@ -170,13 +159,13 @@ pub struct OneHotCommitRowsPlan<'a> {
     /// Number of balanced digits used for the A-side commit.
     pub num_digits_inner: usize,
     /// Per-block one-hot entries.
-    pub(crate) blocks: OneHotCommitBlocks<'a>,
+    pub(crate) blocks: OneHotBlockSource<'a>,
 }
 
 impl<'a> OneHotCommitRowsPlan<'a> {
     /// Per-block one-hot entries.
     #[inline]
-    pub fn blocks(&self) -> &OneHotCommitBlocks<'a> {
+    pub fn blocks(&self) -> &OneHotBlockSource<'a> {
         &self.blocks
     }
 }

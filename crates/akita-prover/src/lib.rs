@@ -24,20 +24,19 @@ pub use api::{
 };
 
 pub use backend::{
-    tensor_pack_recursive_witness, DensePoly, MultiChunkEntry, MultilinearPolynomial, OneHotIndex,
-    OneHotPoly, RecursiveFoldSource, RecursiveWitnessFlat, RootTensorProjectionPoly,
-    SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly, SuffixWitnessBatchView,
-    SuffixWitnessView,
+    tensor_pack_recursive_witness, DensePoly, MultilinearPolynomial, OneHotIndex, OneHotPoly,
+    RecursiveFoldSource, RecursiveWitnessFlat, RootTensorProjectionPoly, SparseRingBlockEntry,
+    SparseRingPoly, SuffixWitnessBatchView, SuffixWitnessView,
 };
 pub use compute::{
     planned_ntt_cache_metrics, prewarm_ntt_requirements, BatchDecomposeFoldOutcome,
     CommitBackendFor, CommitCluster, CommitmentComputeBackend, ComputeBackendSetup, CpuBackend,
     CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan,
     DigitRowsComputeBackend, FlatBlockTable, LazyOneHotBlocks, LevelProveStacks, NttCacheOwnerId,
-    NttExecutionRequirements, NttOperationCluster, OneHotCommitBlocks, OneHotCommitRowsPlan,
-    OpeningCluster, OpeningProveBackendFor, OperationCtx, PlannedNttCacheOwnerMetric,
-    PreparedCrtNttProfile, PreparedNttCacheMetric, ProveBackendFor, ProveFlowBackendFor,
-    ProveStackFor, ProverComputeStack, RecursiveProveBackend, RecursiveWitnessCommitRowsPlan,
+    NttExecutionRequirements, NttOperationCluster, OneHotCommitRowsPlan, OpeningCluster,
+    OpeningProveBackendFor, OperationCtx, PlannedNttCacheOwnerMetric, PreparedCrtNttProfile,
+    PreparedNttCacheMetric, ProveBackendFor, ProveFlowBackendFor, ProveStackFor,
+    ProverComputeStack, RecursiveProveBackend, RecursiveWitnessCommitRowsPlan,
     ReleaseRootNttAfterFold, RingSwitchCluster, RingSwitchComputeBackend, RingSwitchProveBackend,
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
     RootCommitBackend, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,

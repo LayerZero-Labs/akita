@@ -39,19 +39,18 @@ fn unpack_col_entry(entry: PackedColEntry) -> (usize, usize) {
 /// `(local_block, coefficient)` entries by their bounded A-column key, then
 /// drives one sweep per A row.
 #[inline]
-pub(super) fn column_sweep_core<E, F, const D: usize>(
+pub(super) fn column_sweep_core<F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
-    blocks: &[&[E]],
+    blocks: &[&[SparseRingBlockEntry]],
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    E: OneHotEntry,
     F: FieldCore + CanonicalField + HasCommitAccum,
     F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    column_sweep_core_budgeted::<E, F, D>(
+    column_sweep_core_budgeted::<F, D>(
         a_view,
         blocks,
         n_a,
@@ -63,16 +62,15 @@ where
 
 /// [`column_sweep_core`] with an explicit accumulator-tile budget; split out
 /// so the (test-only) sweep benchmarks can compare tile sizes.
-fn column_sweep_core_budgeted<E, F, const D: usize>(
+fn column_sweep_core_budgeted<F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
-    blocks: &[&[E]],
+    blocks: &[&[SparseRingBlockEntry]],
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
     tile_budget: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    E: OneHotEntry,
     F: FieldCore + CanonicalField + HasCommitAccum,
     F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
 {
@@ -127,11 +125,10 @@ where
                     for local_b in 0..tile_len {
                         let block_entries = blocks[block_start + tile_start + local_b];
                         for entry in block_entries {
-                            let col = entry.commit_col(num_digits_inner);
+                            let col = entry.pos_in_block() * num_digits_inner;
                             debug_assert!(col < active_a_cols);
-                            let count = entry.coeffs().len();
-                            col_counts[col] += count;
-                            entry_count += count;
+                            col_counts[col] += 1;
+                            entry_count += 1;
                         }
                     }
                     entry_count
@@ -147,12 +144,10 @@ where
                     for local_b in 0..tile_len {
                         let block_entries = blocks[block_start + tile_start + local_b];
                         for entry in block_entries {
-                            let col = entry.commit_col(num_digits_inner);
-                            for &coefficient in entry.coeffs() {
-                                let dst = write_offsets[col];
-                                packed_entries[dst] = pack_col_entry(local_b, coefficient);
-                                write_offsets[col] += 1;
-                            }
+                            let col = entry.pos_in_block() * num_digits_inner;
+                            let dst = write_offsets[col];
+                            packed_entries[dst] = pack_col_entry(local_b, entry.coeff_idx() as u16);
+                            write_offsets[col] += 1;
                         }
                     }
                 }
@@ -209,32 +204,16 @@ pub(super) const MERGE_COL_CHUNK: usize = 32;
 
 /// Split blocks whose shift-accumulation count exceeds `cap` into segments
 /// that each respect it, tracking each segment's parent block.
-fn split_oversized_blocks<'a, E: OneHotEntry>(
-    blocks: &[&'a [E]],
+fn split_oversized_blocks<'a>(
+    blocks: &[&'a [SparseRingBlockEntry]],
     cap: usize,
-) -> (Vec<&'a [E]>, Vec<usize>) {
-    let mut sub_blocks: Vec<&[E]> = Vec::new();
+) -> (Vec<&'a [SparseRingBlockEntry]>, Vec<usize>) {
+    let mut sub_blocks: Vec<&[SparseRingBlockEntry]> = Vec::new();
     let mut parents: Vec<usize> = Vec::new();
     for (parent, entries) in blocks.iter().enumerate() {
-        let mut rest: &[E] = entries;
-        loop {
-            let mut take = 0usize;
-            let mut accumulations = 0usize;
-            for entry in rest {
-                let count = entry.coeffs().len();
-                if take > 0 && accumulations + count > cap {
-                    break;
-                }
-                accumulations += count;
-                take += 1;
-            }
-            let (segment, tail) = rest.split_at(take.max(1).min(rest.len()));
+        for segment in entries.chunks(cap) {
             sub_blocks.push(segment);
             parents.push(parent);
-            if tail.is_empty() {
-                break;
-            }
-            rest = tail;
         }
     }
     (sub_blocks, parents)
@@ -253,9 +232,9 @@ fn split_oversized_blocks<'a, E: OneHotEntry>(
 /// over a multi-polynomial batch — re-streams A once per (thread, tile, row)
 /// instead of once per polynomial.
 #[cfg(test)]
-pub(super) fn column_sweep_core_merge<E, F, const D: usize>(
+pub(super) fn column_sweep_core_merge<F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
-    blocks: &[&[E]],
+    blocks: &[&[SparseRingBlockEntry]],
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
@@ -263,7 +242,6 @@ pub(super) fn column_sweep_core_merge<E, F, const D: usize>(
     col_chunk: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    E: OneHotEntry,
     F: FieldCore + CanonicalField + HasCommitAccum,
     F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
 {
@@ -297,7 +275,7 @@ where
             for tile_start in (0..my_count).step_by(block_tile) {
                 let tile_end = (tile_start + block_tile).min(my_count);
                 let tile_blocks = &blocks[block_start + tile_start..block_start + tile_end];
-                let tile_rows = merge_sweep_tile::<E, F, D>(
+                let tile_rows = merge_sweep_tile::<F, D>(
                     a_view,
                     tile_blocks,
                     n_a,
@@ -324,16 +302,15 @@ where
 /// One L1-resident tile pass of the merge sweep: returns `n_a` commit rows
 /// per tile block. Extracted so eager (pre-built slices) and lazy
 /// (per-tile-materialized) drivers share the exact accumulation order.
-fn merge_sweep_tile<E, F, const D: usize>(
+fn merge_sweep_tile<F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
-    tile_blocks: &[&[E]],
+    tile_blocks: &[&[SparseRingBlockEntry]],
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
     chunk_buf: &mut [WideCyclotomicRing<F::CommitAccum, D>],
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    E: OneHotEntry,
     F: FieldCore + CanonicalField + HasCommitAccum,
     F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
 {
@@ -369,7 +346,7 @@ where
                 let live = tile_blocks.iter().zip(&cursors).any(|(entries, &cur)| {
                     entries
                         .get(cur)
-                        .is_some_and(|e| e.commit_col(num_digits_inner) < chunk_end)
+                        .is_some_and(|e| e.pos_in_block() * num_digits_inner < chunk_end)
                 });
                 if !live {
                     continue;
@@ -381,7 +358,7 @@ where
                 for (local_b, entries) in tile_blocks.iter().enumerate() {
                     let cur = &mut cursors[local_b];
                     while let Some(entry) = entries.get(*cur) {
-                        let col = entry.commit_col(num_digits_inner);
+                        let col = entry.pos_in_block() * num_digits_inner;
                         if col >= chunk_end {
                             break;
                         }
@@ -390,19 +367,13 @@ where
                             "one-hot entries must be sorted by position within a block"
                         );
                         let a_wide = &chunk_buf[col - chunk_start];
-                        let coeffs = entry.coeffs();
-                        if accum_counts[local_b] + coeffs.len() > F::MAX_COMMIT_ACCUMULATIONS {
+                        if accum_counts[local_b] + 1 > F::MAX_COMMIT_ACCUMULATIONS {
                             partials[local_b] += row_accums[local_b].reduce();
                             row_accums[local_b] = WideCyclotomicRing::zero();
                             accum_counts[local_b] = 0;
                         }
-                        accum_counts[local_b] += coeffs.len();
-                        for &coefficient in coeffs {
-                            a_wide.shift_accumulate_into(
-                                &mut row_accums[local_b],
-                                usize::from(coefficient),
-                            );
-                        }
+                        accum_counts[local_b] += 1;
+                        a_wide.shift_accumulate_into(&mut row_accums[local_b], entry.coeff_idx());
                         *cur += 1;
                     }
                 }
@@ -421,15 +392,14 @@ where
 /// Fused multi-polynomial column sweep over eager or lazy block sources.
 /// Entry geometry is already fixed by `E`; each source decides whether a tile
 /// is borrowed from existing storage or built for the duration of the sweep.
-pub(crate) fn column_sweep_ajtai_onehot_multi<E, F, const D: usize>(
+pub(crate) fn column_sweep_ajtai_onehot_multi<F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
-    sources: &[&OneHotBlockSource<'_, E>],
+    sources: &[&OneHotBlockSource<'_>],
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
 ) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
 where
-    E: OneHotEntry,
     F: FieldCore + CanonicalField + HasCommitAccum,
     F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
 {
@@ -456,7 +426,7 @@ where
             .map(|source| {
                 let materialized = source.materialize_range(0..source.num_live_blocks())?;
                 let blocks = materialized.block_slices()?;
-                Ok(column_sweep_ajtai_onehot::<E, F, D>(
+                Ok(column_sweep_ajtai_onehot::<F, D>(
                     a_view,
                     &blocks,
                     n_a,
@@ -508,8 +478,9 @@ where
                         .iter()
                         .map(|blocks| blocks.block_slices())
                         .collect::<Result<Vec<_>, _>>()?;
-                    let tile_blocks: Vec<&[E]> = block_groups.iter().flatten().copied().collect();
-                    let tile_rows = merge_sweep_tile::<E, F, D>(
+                    let tile_blocks: Vec<&[SparseRingBlockEntry]> =
+                        block_groups.iter().flatten().copied().collect();
+                    let tile_rows = merge_sweep_tile::<F, D>(
                         a_view,
                         &tile_blocks,
                         n_a,
@@ -540,15 +511,14 @@ where
 ///
 /// Uses [`column_sweep_core`] for the tiled sweep plus sub-block chunking when
 /// a block would exceed the commitment accumulator's addition cap.
-pub(crate) fn column_sweep_ajtai_onehot<E, F, const D: usize>(
+pub(crate) fn column_sweep_ajtai_onehot<F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
-    blocks: &[&[E]],
+    blocks: &[&[SparseRingBlockEntry]],
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    E: OneHotEntry,
     F: FieldCore + CanonicalField + HasCommitAccum,
     F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
 {
@@ -560,7 +530,7 @@ where
 
     if blocks
         .iter()
-        .any(|entries| shift_accumulation_count(entries) > F::MAX_COMMIT_ACCUMULATIONS)
+        .any(|entries| entries.len() > F::MAX_COMMIT_ACCUMULATIONS)
     {
         // Oversized blocks are split into segments that each respect the wide
         // accumulators' headroom, swept through the tiled kernel as
@@ -571,7 +541,7 @@ where
         // commits (~2^18 hot coefficients per block at 2^26 cycles).
         let (sub_blocks, parents) = split_oversized_blocks(blocks, F::MAX_COMMIT_ACCUMULATIONS);
         let sub_out =
-            column_sweep_core::<E, F, D>(a_view, &sub_blocks, n_a, active_a_cols, num_digits_inner);
+            column_sweep_core::<F, D>(a_view, &sub_blocks, n_a, active_a_cols, num_digits_inner);
         let mut out: Vec<Vec<CyclotomicRing<F, D>>> = vec![Vec::new(); num_live_blocks];
         for (parent, rows) in parents.into_iter().zip(sub_out) {
             if out[parent].is_empty() {
@@ -597,5 +567,5 @@ where
             .collect();
     }
 
-    column_sweep_core::<E, F, D>(a_view, blocks, n_a, active_a_cols, num_digits_inner)
+    column_sweep_core::<F, D>(a_view, blocks, n_a, active_a_cols, num_digits_inner)
 }

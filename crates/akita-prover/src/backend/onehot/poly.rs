@@ -1,7 +1,7 @@
 use super::*;
 
 type LayoutCacheKey = (usize, usize);
-type OneHotBlockCache = Arc<Mutex<HashMap<LayoutCacheKey, Arc<OneHotBlocks>>>>;
+type OneHotBlockCache = Arc<Mutex<HashMap<LayoutCacheKey, Arc<FlatBlocks<SparseRingBlockEntry>>>>>;
 type TensorRootCache<F> = Arc<Mutex<HashMap<LayoutCacheKey, Arc<SparseRingPoly<F>>>>>;
 
 /// One-hot polynomial: sparse witness with at most one nonzero field element
@@ -277,7 +277,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         &self,
         ring_d: usize,
         num_positions_per_block: usize,
-    ) -> Result<Arc<OneHotBlocks>, AkitaError> {
+    ) -> Result<Arc<FlatBlocks<SparseRingBlockEntry>>, AkitaError> {
         let key = (ring_d, num_positions_per_block);
         if let Some(blocks) = self
             .block_cache
@@ -297,21 +297,52 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         &self,
         ring_d: usize,
         num_positions_per_block: usize,
-    ) -> Result<OneHotBlocks, AkitaError> {
-        let (ring_elems_at_d, _num_live_blocks) =
+    ) -> Result<FlatBlocks<SparseRingBlockEntry>, AkitaError> {
+        let (ring_elems_at_d, num_live_blocks) =
             self.view_layout(ring_d, num_positions_per_block)?;
         let _span =
             tracing::debug_span!("OneHotPoly::build_blocks", ring_d, num_positions_per_block)
                 .entered();
-        self.build_blocks_inner(ring_d, num_positions_per_block, ring_elems_at_d)
+        self.materialize_block_range(
+            ring_d,
+            num_positions_per_block,
+            ring_elems_at_d,
+            0..num_live_blocks,
+        )
+    }
+
+    pub(super) fn materialize_block_range(
+        &self,
+        ring_d: usize,
+        num_positions_per_block: usize,
+        ring_elems_at_d: usize,
+        block_range: std::ops::Range<usize>,
+    ) -> Result<FlatBlocks<SparseRingBlockEntry>, AkitaError> {
+        let ring_start = block_range
+            .start
+            .checked_mul(num_positions_per_block)
+            .ok_or_else(|| AkitaError::InvalidInput("one hot block range overflow".into()))?;
+        let ring_end = block_range
+            .end
+            .checked_mul(num_positions_per_block)
+            .ok_or_else(|| AkitaError::InvalidInput("one hot block range overflow".into()))?
+            .min(ring_elems_at_d);
+        FlatBlocks::<SparseRingBlockEntry>::from_onehot_ring_range(
+            self.onehot_k,
+            &self.indices,
+            num_positions_per_block,
+            ring_d,
+            ring_start..ring_end,
+            block_range.start,
+        )
     }
 
     /// Validate a `(ring_d, num_positions_per_block)` view against this
     /// polynomial's layout and return `(ring_elems_at_d, num_live_blocks)`.
     /// Single home for the checks shared by [`Self::prepare_block_cache`],
-    /// [`Self::blocks_for_operation`], [`Self::num_live_blocks_for`], and
+    /// [`Self::num_live_blocks_for`] and
     /// [`Self::commit_plan_blocks_lazy`].
-    fn view_layout(
+    pub(super) fn view_layout(
         &self,
         ring_d: usize,
         num_positions_per_block: usize,
@@ -365,51 +396,30 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     /// Lazily buildable commit blocks over this polynomial's retained index
     /// columns: the sweep materializes one block tile at a time instead of
     /// holding the full entry cache. Performs the same layout validation as
-    /// [`Self::blocks_for_operation`] but never builds or caches anything.
+    /// cached block preparation but never builds or caches anything.
     pub(super) fn commit_plan_blocks_lazy(
         &self,
         ring_d: usize,
         num_positions_per_block: usize,
-    ) -> Result<OneHotCommitBlocks<'_>, AkitaError> {
+    ) -> Result<OneHotBlockSource<'_>, AkitaError> {
         let (_ring_elems_at_d, num_live_blocks) =
             self.view_layout(ring_d, num_positions_per_block)?;
         let onehot_k = self.onehot_k;
         let indices = &self.indices;
-        if onehot_k >= ring_d && onehot_k.is_multiple_of(ring_d) {
-            Ok(OneHotCommitBlocks::SingleChunk(OneHotBlockSource::Lazy(
-                LazyOneHotBlocks::new(
-                    num_live_blocks,
+        Ok(OneHotBlockSource::Lazy(LazyOneHotBlocks::new(
+            num_live_blocks,
+            num_positions_per_block,
+            move |ring_range, first_block| {
+                FlatBlocks::<SparseRingBlockEntry>::from_onehot_ring_range(
+                    onehot_k,
+                    indices,
                     num_positions_per_block,
-                    move |ring_range, first_block| {
-                        FlatBlocks::<SingleChunkEntry>::from_indices_ring_range(
-                            onehot_k,
-                            indices,
-                            num_positions_per_block,
-                            ring_d,
-                            ring_range,
-                            first_block,
-                        )
-                    },
-                ),
-            )))
-        } else {
-            Ok(OneHotCommitBlocks::MultiChunk(OneHotBlockSource::Lazy(
-                LazyOneHotBlocks::new(
-                    num_live_blocks,
-                    num_positions_per_block,
-                    move |ring_range, first_block| {
-                        FlatBlocks::<MultiChunkEntry>::from_indices_ring_range(
-                            onehot_k,
-                            indices,
-                            num_positions_per_block,
-                            ring_d,
-                            ring_range,
-                            first_block,
-                        )
-                    },
-                ),
-            )))
-        }
+                    ring_d,
+                    ring_range,
+                    first_block,
+                )
+            },
+        )))
     }
 
     /// Sparse fast path for `tensor_extension_column_partials_batch`.
@@ -735,59 +745,5 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             return Ok(Some((field_pos / width, field_pos % width)));
         }
         Ok(None)
-    }
-
-    pub(super) fn build_blocks_inner(
-        &self,
-        ring_d: usize,
-        num_positions_per_block: usize,
-        ring_elems_at_d: usize,
-    ) -> Result<OneHotBlocks, AkitaError> {
-        // `blocks_for` has already validated that `num_positions_per_block` is a nonzero
-        // power of two and that
-        // K and `ring_d` are nicely matched; `OneHotPoly::new` has validated
-        // that every per-chunk index is in range. Here we only need to
-        // compute `num_live_blocks` for the flat-layout offsets array and check
-        // that `num_positions_per_block` and `ring_d` fit in the packed entry field widths.
-        if u32::try_from(num_positions_per_block).is_err() {
-            return Err(AkitaError::InvalidInput(format!(
-                "num_positions_per_block={num_positions_per_block} exceeds u32::MAX and cannot be packed into an entry"
-            )));
-        }
-        // Coefficient indices inside a ring element are `< ring_d` and get
-        // packed as `u16` in the entry types below (see
-        // `SingleChunkEntry::coeff_idx` and `MultiChunkEntry::nonzero_coeffs`).
-        // Reject out-of-range `ring_d` here rather than silently truncating below.
-        if ring_d > usize::from(u16::MAX) + 1 {
-            return Err(AkitaError::InvalidInput(format!(
-                "D={ring_d} exceeds 65536 and cannot be packed into SingleChunkEntry::coeff_idx / MultiChunkEntry::nonzero_coeffs (both `u16`)"
-            )));
-        }
-        let num_live_blocks = ring_elems_at_d.div_ceil(num_positions_per_block);
-
-        // The single-chunk (one-hot-chunk-per-ring-element) layout
-        // applies when K >= D && D | K; otherwise fall back to the
-        // multi-chunk layout.
-        if self.onehot_k >= ring_d && self.onehot_k.is_multiple_of(ring_d) {
-            Ok(OneHotBlocks::SingleChunk(
-                FlatBlocks::<SingleChunkEntry>::from_indices(
-                    self.onehot_k,
-                    &self.indices,
-                    num_positions_per_block,
-                    ring_d,
-                    num_live_blocks,
-                )?,
-            ))
-        } else {
-            Ok(OneHotBlocks::MultiChunk(
-                FlatBlocks::<MultiChunkEntry>::from_indices(
-                    self.onehot_k,
-                    &self.indices,
-                    num_positions_per_block,
-                    ring_d,
-                    num_live_blocks,
-                )?,
-            ))
-        }
     }
 }

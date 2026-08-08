@@ -1,7 +1,6 @@
 use super::fold::{fold_onehot_block, fold_onehot_block_ring};
 use super::*;
 use crate::backend::RootTensorProjectionPoly;
-use crate::compute::OneHotCommitBlocks;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
@@ -11,35 +10,20 @@ use crate::compute::{
 use akita_field::MulBaseUnreduced;
 
 /// Build or borrow each block once and map its entry slice through the body.
-/// The geometry match monomorphizes the opening fold per entry type.
 macro_rules! for_each_block_source {
     ($blocks:expr, |$entries:ident| $body:expr) => {
-        match &$blocks {
-            OneHotCommitBlocks::SingleChunk(source) => cfg_into_iter!(0..source.num_live_blocks())
-                .map(|i| {
-                    let materialized = source
-                        .materialize_range(i..i + 1)
-                        .expect("in-range single block build");
-                    let slices = materialized
-                        .block_slices()
-                        .expect("materialized single block");
-                    let $entries = slices[0];
-                    $body
-                })
-                .collect(),
-            OneHotCommitBlocks::MultiChunk(source) => cfg_into_iter!(0..source.num_live_blocks())
-                .map(|i| {
-                    let materialized = source
-                        .materialize_range(i..i + 1)
-                        .expect("in-range single block build");
-                    let slices = materialized
-                        .block_slices()
-                        .expect("materialized single block");
-                    let $entries = slices[0];
-                    $body
-                })
-                .collect(),
-        }
+        cfg_into_iter!(0..$blocks.num_live_blocks())
+            .map(|i| {
+                let materialized = $blocks
+                    .materialize_range(i..i + 1)
+                    .expect("in-range single block build");
+                let slices = materialized
+                    .block_slices()
+                    .expect("materialized single block");
+                let $entries = slices[0];
+                $body
+            })
+            .collect()
     };
 }
 
@@ -783,25 +767,25 @@ where
         num_digits: usize,
         _log_basis: u32,
     ) -> DecomposeFoldWitness<F> {
-        let blocks = self
-            .blocks_for_operation(D, num_positions_per_block)
-            .expect(
-                "OneHotPoly::decompose_fold: invalid num_positions_per_block for this polynomial",
+        let (ring_elems, num_blocks) = self
+            .view_layout(D, num_positions_per_block)
+            .expect("OneHotPoly::decompose_fold: invalid block layout");
+        let active_blocks = challenges.len().min(num_blocks);
+        if active_blocks == num_blocks {
+            let blocks = self
+                .blocks_for_operation(D, num_positions_per_block)
+                .expect("OneHotPoly::decompose_fold: valid full block layout");
+            return self.decompose_fold_onehot::<D>(
+                &blocks,
+                challenges,
+                num_positions_per_block,
+                num_digits,
             );
-        match blocks.as_ref() {
-            OneHotBlocks::SingleChunk(blocks) => self.decompose_fold_onehot::<SingleChunkEntry, D>(
-                blocks,
-                challenges,
-                num_positions_per_block,
-                num_digits,
-            ),
-            OneHotBlocks::MultiChunk(blocks) => self.decompose_fold_onehot::<MultiChunkEntry, D>(
-                blocks,
-                challenges,
-                num_positions_per_block,
-                num_digits,
-            ),
         }
+        let blocks = self
+            .materialize_block_range(D, num_positions_per_block, ring_elems, 0..active_blocks)
+            .expect("OneHotPoly::decompose_fold: valid active block range");
+        self.decompose_fold_onehot::<D>(&blocks, challenges, num_positions_per_block, num_digits)
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_batched")]
@@ -818,21 +802,12 @@ where
             .expect(
             "OneHotPoly::decompose_fold_batched: invalid num_positions_per_block for first polynomial",
         );
-        if first.onehot_k >= D && first.onehot_k.is_multiple_of(D) {
-            Self::decompose_fold_batched_single_chunk_onehot::<D>(
-                polys,
-                challenges,
-                num_positions_per_block,
-                num_digits,
-            )
-        } else {
-            Self::decompose_fold_batched_multi_chunk_onehot::<D>(
-                polys,
-                challenges,
-                num_positions_per_block,
-                num_digits,
-            )
-        }
+        Self::decompose_fold_batched_onehot::<D>(
+            polys,
+            challenges,
+            num_positions_per_block,
+            num_digits,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
