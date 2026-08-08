@@ -1,7 +1,8 @@
 use super::*;
 use akita_algebra::{
     offset_eq::{
-        eval_affine_digit_intervals, EqPairTensorAxis, EqPairTensorFamily, EqPairTensorWeights,
+        eval_affine_digit_intervals, AffineWeightProduct, EqPairTensorAxis, EqPairTensorFamily,
+        EqPairTensorWeights,
     },
     ring::scalar_powers_with_stride,
 };
@@ -325,26 +326,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             ));
         }
 
-        let t_high_weights = (0..group.num_claims)
-            .map(|claim| {
-                let block_start = claim
-                    .checked_mul(group.num_live_blocks)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let challenges = checked_slice(
-                    block_challenges,
-                    block_start,
-                    group.num_live_blocks,
-                    "structured T block factors",
-                )?;
-                Ok(challenges
-                    .iter()
-                    .flat_map(|&challenge| {
-                        group.a_row_weights.iter().map(move |&row| challenge * row)
-                    })
-                    .collect::<Vec<_>>())
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-
         let fold_family = |acc: Result<E, AkitaError>, family_index: usize| {
             let (key, d_tensor, b_tensor) = unit_families
                 .get(family_index)
@@ -380,6 +361,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 )?;
 
             if let Some(b_tensor) = b_tensor {
+                let t_high_weights =
+                    AffineWeightProduct::new(claim_challenges, &group.a_row_weights)?;
                 let t_outer_start = global_block_start
                     .checked_mul(group.n_a)
                     .and_then(|start| start.checked_mul(outer_subcolumns))
@@ -396,7 +379,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     commitment_digits.len(),
                     1,
                     commitment_digits,
-                    t_high_weights.get(claim).ok_or(AkitaError::InvalidProof)?,
+                    &t_high_weights,
                     outer_low,
                     &[],
                 )?;

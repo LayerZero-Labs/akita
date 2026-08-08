@@ -703,6 +703,39 @@ fn affine_digit_interval_matches_dense_subwindows_and_partial_rows() {
 }
 
 #[test]
+fn affine_digit_interval_factored_high_weights_match_dense_product() {
+    let mut rng = StdRng::seed_from_u64(0xFAC7_0EED);
+    let challenges = random_vec(&mut rng, 12);
+    let digits = random_vec(&mut rng, 3);
+    let outer = random_vec(&mut rng, 4);
+    let inner = random_vec(&mut rng, 3);
+    let low = random_vec(&mut rng, 4);
+    let dense = outer
+        .iter()
+        .flat_map(|&outer| inner.iter().map(move |&inner| outer * inner))
+        .collect::<Vec<_>>();
+    let factored = AffineWeightProduct::new(&outer, &inner).unwrap();
+
+    let expected =
+        eval_affine_digit_intervals(&challenges, &[7], 1, 43, 7, 1, &digits, &dense, &low, &[])
+            .unwrap();
+    let actual = eval_affine_digit_intervals(
+        &challenges,
+        &[7],
+        1,
+        43,
+        7,
+        1,
+        &digits,
+        &factored,
+        &low,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn affine_digit_interval_empty_low_factor_is_structural_identity() {
     let mut rng = StdRng::seed_from_u64(0x1d_e0_1d_e0);
     let challenges = random_vec(&mut rng, 12);
