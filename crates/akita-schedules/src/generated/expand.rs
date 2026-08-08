@@ -386,22 +386,22 @@ impl GeneratedCommittedGroup {
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
 
-        // Digit-innermost geometry keeps `M = 2^position_index_bits` at every level
-        // and carries exact live `B = ceil(N / M)` separately from its Boolean domain.
+        // Digit-innermost geometry keeps `M = 2^position_index_bits` at every level.
+        // Generated `B` is the physical block envelope after chunk padding.
         let num_positions_per_block =
             generated_count(self.geometry.positions_per_block, "positions per block")?;
-        let exact_num_live_blocks = generated_count(self.geometry.live_blocks, "live block count")?;
-        let block_index_bits = exact_num_live_blocks
+        let num_live_blocks = generated_count(self.geometry.live_blocks, "live block count")?;
+        let block_index_bits = num_live_blocks
             .checked_next_power_of_two()
             .map_or(0, |domain| domain.trailing_zeros() as usize);
-        if exact_num_live_blocks == 0
-            || exact_num_live_blocks
+        if num_live_blocks == 0
+            || num_live_blocks
                 .checked_next_power_of_two()
                 .map(|domain| domain.trailing_zeros() as usize)
                 != Some(block_index_bits)
         {
             return Err(AkitaError::InvalidSetup(
-                "generated schedule exact live block count disagrees with block_index_bits"
+                "generated schedule physical live block count disagrees with block_index_bits"
                     .to_string(),
             ));
         }
@@ -413,21 +413,29 @@ impl GeneratedCommittedGroup {
         // Every exact live prefix may end in a partial ring. The commitment
         // view supplies the one implicit-zero suffix.
         let exact_num_live_ring_elements_per_claim = input_witness_len.div_ceil(ring_d);
-        let derived_num_live_blocks =
+        let exact_num_live_blocks =
             exact_num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
-        if derived_num_live_blocks != exact_num_live_blocks {
+        let expected_num_live_blocks =
+            akita_types::pad_live_blocks_for_chunks(exact_num_live_blocks, num_chunks)?;
+        if num_live_blocks != expected_num_live_blocks {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated schedule num_live_blocks={} does not match ceil(N={exact_num_live_ring_elements_per_claim} / M={num_positions_per_block})={derived_num_live_blocks}",
-                exact_num_live_blocks,
+                "generated schedule num_live_blocks={num_live_blocks} does not match chunk-padded ceil(N={exact_num_live_ring_elements_per_claim} / M={num_positions_per_block})={expected_num_live_blocks}",
             )));
         }
-        let num_live_blocks =
-            akita_types::pad_live_blocks_for_chunks(exact_num_live_blocks, num_chunks)?;
         let num_live_ring_elements_per_claim = num_live_blocks
             .checked_mul(num_positions_per_block)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("generated padded source length overflow".to_string())
             })?;
+        let generated_live_ring_elements = generated_count(
+            self.geometry.live_ring_elements_per_claim,
+            "live ring-element count",
+        )?;
+        if generated_live_ring_elements != num_live_ring_elements_per_claim {
+            return Err(AkitaError::InvalidSetup(format!(
+                "generated schedule live_ring_elements_per_claim={generated_live_ring_elements} does not match physical block envelope {num_live_ring_elements_per_claim}",
+            )));
+        }
 
         // Per-role rounded-up collision buckets + committed widths, via the
         // `akita_types::sis` primitives. The B/D widths carry the `num_claims`

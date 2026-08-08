@@ -177,26 +177,45 @@ pub struct CommitInnerWitness<F: FieldCore> {
 }
 
 impl<F: FieldCore> CommitInnerWitness<F> {
-    /// Construct from typed kernel output at a commit boundary.
+    /// Construct from typed kernel output at a commit boundary, padding any
+    /// schedule-owned physical suffix blocks with zero rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the output has more rows than the physical schedule
+    /// permits or if the requested shape overflows `usize`.
     pub fn from_rows<const D: usize>(
         recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
-    ) -> Self {
-        let coefficient_count = recomposed_inner_rows
+        num_live_blocks: usize,
+        rows_per_block: usize,
+    ) -> Result<Self, AkitaError> {
+        let expected_ring_count = num_live_blocks.checked_mul(rows_per_block).ok_or_else(|| {
+            AkitaError::InvalidSetup("inner commitment row count overflow".into())
+        })?;
+        let actual_ring_count = recomposed_inner_rows
             .iter()
-            .map(Vec::len)
-            .sum::<usize>()
-            .checked_mul(D)
-            .expect("trusted inner commitment output length must fit usize");
+            .try_fold(0usize, |count, rows| count.checked_add(rows.len()))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("inner commitment row count overflow".into())
+            })?;
+        if actual_ring_count > expected_ring_count {
+            return Err(AkitaError::InvalidSetup(format!(
+                "backend returned {actual_ring_count} inner commitment rows, physical schedule permits {expected_ring_count}"
+            )));
+        }
+        let coefficient_count = expected_ring_count.checked_mul(D).ok_or_else(|| {
+            AkitaError::InvalidSetup("inner commitment coefficient count overflow".into())
+        })?;
         let mut coefficients = Vec::with_capacity(coefficient_count);
         for block in recomposed_inner_rows {
             for row in block {
                 coefficients.extend_from_slice(row.coefficients());
             }
         }
-        Self {
-            inner_rows: RingVec::from_coeffs_with_ring_dim(coefficients, D)
-                .expect("typed inner commitment rows have valid ring storage"),
-        }
+        coefficients.resize(coefficient_count, F::zero());
+        Ok(Self {
+            inner_rows: RingVec::from_coeffs_with_ring_dim(coefficients, D)?,
+        })
     }
 
     /// Stored ring dimension (coefficients per ring element).

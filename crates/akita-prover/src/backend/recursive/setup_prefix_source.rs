@@ -283,7 +283,7 @@ fn setup_prefix_decompose_fold<F: CanonicalField, const D: usize>(
     let (num_positions_per_block, num_live_blocks) =
         setup_prefix_fold_geometry::<D>(slot, coeffs.len())?;
     if plan.num_positions_per_block != num_positions_per_block
-        || plan.challenges.len() != num_live_blocks
+        || plan.challenges.len() < num_live_blocks
     {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix decompose plan disagrees with frozen block geometry".into(),
@@ -302,7 +302,7 @@ fn setup_prefix_decompose_fold<F: CanonicalField, const D: usize>(
     };
     let centered = balanced_ring_decompose_fold_partitioned::<F, D>(
         &coeffs,
-        plan.challenges,
+        &plan.challenges[..num_live_blocks],
         plan.num_positions_per_block,
         plan.num_digits,
         &params,

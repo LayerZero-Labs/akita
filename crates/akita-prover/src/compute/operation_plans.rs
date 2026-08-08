@@ -36,6 +36,8 @@ use akita_types::{CommittedGroupParams, CommittedGroupProfile};
 /// plan carries only the shape parameters the kernel needs to size its work.
 #[derive(Debug, Clone, Copy)]
 pub struct CommitInnerPlan {
+    /// Physical number of root blocks, including schedule-owned zero padding.
+    pub num_live_blocks: usize,
     /// Number of A rows to produce.
     pub n_a: usize,
     /// Number of ring-element positions in each root block.
@@ -50,6 +52,7 @@ impl CommitInnerPlan {
     /// Build inner-commit parameters from a validated commitment layout.
     pub fn from_level(params: &CommittedGroupParams) -> Self {
         Self {
+            num_live_blocks: params.num_live_blocks,
             n_a: params.inner_commit_matrix.output_rank(),
             num_positions_per_block: params.num_positions_per_block,
             num_digits_inner: params.num_digits_inner,
@@ -60,6 +63,7 @@ impl CommitInnerPlan {
     /// Build inner-commit parameters from a frozen standalone precommit profile.
     pub fn from_profile(profile: &CommittedGroupProfile) -> Self {
         Self {
+            num_live_blocks: profile.num_live_blocks,
             n_a: profile.inner_commit_matrix.output_rank(),
             num_positions_per_block: profile.num_positions_per_block,
             num_digits_inner: profile.num_digits_inner,
@@ -109,8 +113,9 @@ impl<F: FieldCore, const D: usize> OpeningFoldPlan<'_, F, D> {
         }
     }
 
-    /// Validate exact position and live-fold weight lengths at a kernel boundary.
-    pub(crate) fn validate(self, num_live_blocks: usize) -> Result<(), AkitaError> {
+    /// Validate position weights and ensure the physical fold domain covers
+    /// every logical source block at a kernel boundary.
+    pub(crate) fn validate(self, logical_num_live_blocks: usize) -> Result<(), AkitaError> {
         let (fold_len, position_len, num_positions_per_block) = match self {
             Self::Base {
                 live_block_weights,
@@ -132,12 +137,12 @@ impl<F: FieldCore, const D: usize> OpeningFoldPlan<'_, F, D> {
             ),
         };
         if !num_positions_per_block.is_power_of_two()
-            || num_live_blocks == 0
+            || logical_num_live_blocks == 0
             || position_len != num_positions_per_block
-            || fold_len != num_live_blocks
+            || fold_len < logical_num_live_blocks
         {
             return Err(AkitaError::InvalidInput(
-                "opening fold weights do not match exact L/F geometry".to_string(),
+                "opening fold weights do not cover the logical L/F geometry".to_string(),
             ));
         }
         Ok(())

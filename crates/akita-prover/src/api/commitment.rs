@@ -1030,10 +1030,31 @@ mod tests {
     const D: usize = 64;
 
     fn inner_witness(recomposed_blocks: usize, rows_per_block: usize) -> CommitInnerWitness<F> {
-        CommitInnerWitness::from_rows(vec![
-            vec![CyclotomicRing::<F, D>::zero(); rows_per_block];
-            recomposed_blocks
-        ])
+        CommitInnerWitness::from_rows(
+            vec![vec![CyclotomicRing::<F, D>::zero(); rows_per_block]; recomposed_blocks],
+            recomposed_blocks,
+            rows_per_block,
+        )
+        .expect("test inner witness shape")
+    }
+
+    #[test]
+    fn commit_inner_witness_zero_pads_physical_suffix_blocks() {
+        let inner =
+            CommitInnerWitness::from_rows(vec![vec![CyclotomicRing::<F, D>::one(); 3]], 2, 3)
+                .expect("underfilled logical rows should be padded");
+        assert_eq!(inner.inner_rows.count(), 6);
+        assert_eq!(
+            inner.block_rows::<D>(1, 3).expect("padded block"),
+            &[CyclotomicRing::zero(); 3]
+        );
+    }
+
+    #[test]
+    fn commit_inner_witness_rejects_rows_beyond_physical_schedule() {
+        let result =
+            CommitInnerWitness::from_rows(vec![vec![CyclotomicRing::<F, D>::zero(); 3]; 3], 2, 3);
+        assert!(result.is_err());
     }
 
     #[test]

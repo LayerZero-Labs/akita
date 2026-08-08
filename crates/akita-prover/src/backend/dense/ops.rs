@@ -360,6 +360,6 @@ where
             plan.num_digits_inner,
             plan.log_basis_inner,
         )?;
-        Ok(CommitInnerWitness::from_rows(t))
+        CommitInnerWitness::from_rows(t, plan.num_live_blocks, plan.n_a)
     }
 }

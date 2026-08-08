@@ -72,6 +72,7 @@ where
     B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
     let _span = tracing::info_span!("fold_evaluate_claims", num_claims = polys.len()).entered();
+    let physical_num_live_blocks = prepared_point.ring_multiplier_point.fold_len();
     let mut folded_rings = Vec::with_capacity(polys.len());
     let mut folded_blocks = Vec::with_capacity(polys.len());
     for poly in polys {
@@ -82,8 +83,16 @@ where
             &prepared_point.ring_multiplier_point,
             num_positions_per_block,
         )?;
+        if folded_block.len() > physical_num_live_blocks {
+            return Err(AkitaError::InvalidSetup(format!(
+                "opening backend returned {} folded blocks, physical schedule permits {physical_num_live_blocks}",
+                folded_block.len()
+            )));
+        }
+        let mut physical_folded_block = folded_block;
+        physical_folded_block.resize(physical_num_live_blocks, CyclotomicRing::zero());
         folded_rings.push(folded_ring);
-        folded_blocks.push(folded_block);
+        folded_blocks.push(physical_folded_block);
     }
     Ok((folded_rings, folded_blocks))
 }

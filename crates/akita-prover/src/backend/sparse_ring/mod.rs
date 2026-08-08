@@ -539,7 +539,7 @@ where
             plan.num_positions_per_block,
             plan.num_digits_inner,
         )?;
-        Ok(CommitInnerWitness::from_rows(t))
+        CommitInnerWitness::from_rows(t, plan.num_live_blocks, plan.n_a)
     }
 
     pub(crate) fn tensor_extension_column_partials<E>(

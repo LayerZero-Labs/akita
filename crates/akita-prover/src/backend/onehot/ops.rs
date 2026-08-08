@@ -802,6 +802,6 @@ where
             },
         )?;
 
-        Ok(CommitInnerWitness::from_rows(t))
+        CommitInnerWitness::from_rows(t, plan.num_live_blocks, plan.n_a)
     }
 }

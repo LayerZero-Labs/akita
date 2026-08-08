@@ -443,10 +443,10 @@ where
         num_digits: usize,
         _log_basis: u32,
     ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
-        let num_live_blocks = self.num_live_blocks(num_positions_per_block)?;
-        if challenges.len() != num_live_blocks {
+        let logical_num_live_blocks = self.num_live_blocks(num_positions_per_block)?;
+        if challenges.len() < logical_num_live_blocks {
             return Err(AkitaError::InvalidSize {
-                expected: num_live_blocks,
+                expected: logical_num_live_blocks,
                 actual: challenges.len(),
             });
         }
@@ -458,8 +458,11 @@ where
 
         let q = (-F::one()).to_canonical_u128() + 1;
         let coeffs = self.coeffs;
-        let coeff_accum =
-            balanced_tight_digit_fold_partitioned::<D>(coeffs, challenges, num_positions_per_block);
+        let coeff_accum = balanced_tight_digit_fold_partitioned::<D>(
+            coeffs,
+            &challenges[..logical_num_live_blocks],
+            num_positions_per_block,
+        );
         Ok(build_decompose_fold_witness::<F, D>(coeff_accum, q))
     }
 
@@ -482,7 +485,7 @@ where
             plan.log_basis_inner,
         )?;
 
-        Ok(CommitInnerWitness::from_rows(t))
+        CommitInnerWitness::from_rows(t, plan.num_live_blocks, plan.n_a)
     }
 
     /// Compute the canonical inner commitment rows. Ordinary commitment
