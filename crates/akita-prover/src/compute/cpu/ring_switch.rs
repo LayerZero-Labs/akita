@@ -22,7 +22,7 @@ where
             .saturating_mul(plan.e_hat.len())
             .max(plan.n_b.saturating_mul(plan.t_hat.len()))
             .max(plan.n_a.saturating_mul(plan.z_segment.len()));
-        if stream_extent > NTT_STREAM_THRESHOLD_RING_ELEMENTS {
+        if !ntt_operation_uses_cache(NttOperationCluster::RingSwitch, stream_extent) {
             let view = prepared
                 .expanded
                 .shared_matrix()
@@ -126,7 +126,7 @@ where
         F: HalvingField,
     {
         let stream_extent = plan.n_a.saturating_mul(plan.z_segment.len());
-        if stream_extent > NTT_STREAM_THRESHOLD_RING_ELEMENTS {
+        if !ntt_operation_uses_cache(NttOperationCluster::RingSwitch, stream_extent) {
             let view = prepared
                 .expanded
                 .shared_matrix()

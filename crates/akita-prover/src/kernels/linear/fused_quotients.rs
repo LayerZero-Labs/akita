@@ -285,6 +285,10 @@ fn fused_split_eq_quotients_one_shot<
 
                 if j < plan.z_len && !is_zero_centered_row(&z_folded_rings[j]) {
                     let (ntt_z_neg, ntt_z_cyc) = if let Some(ref lut) = centered_lut {
+                        // SAFETY: `plan_fused_quotients` computed
+                        // `z_bounds.lut` from these `plan.z_len` rows. This
+                        // loop keeps `j < plan.z_len`, and `lut` was built for
+                        // that inclusive centered coefficient bound.
                         unsafe {
                             CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
                                 &z_folded_rings[j],
@@ -459,6 +463,10 @@ fn fused_split_eq_quotients_one_shot_streamed<
 
                 if j < plan.z_len && !is_zero_centered_row(&z_folded_rings[j]) {
                     let (ntt_z_neg, ntt_z_cyc) = if let Some(ref lut) = centered_lut {
+                        // SAFETY: `plan_fused_quotients` computed
+                        // `z_bounds.lut` from these `plan.z_len` rows. This
+                        // loop keeps `j < plan.z_len`, and `lut` was built for
+                        // that inclusive centered coefficient bound.
                         unsafe {
                             CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
                                 &z_folded_rings[j],
@@ -630,6 +638,9 @@ fn streamed_centered_quotient_rows_chunked<
                     continue;
                 }
                 let (ntt_z_neg, ntt_z_cyc) = if let Some(ref lut) = centered_lut {
+                    // SAFETY: `z_lut_abs_bound` is the actual centered bound
+                    // for the first `z_len` rows. This loop keeps `j < z_len`,
+                    // and `lut` was built for that inclusive bound.
                     unsafe {
                         CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
                             &z_folded_rings[j],
@@ -926,6 +937,10 @@ fn accumulate_centered_quotient_rows<
                     continue;
                 }
                 let (ntt_z_neg, ntt_z_cyc) = if let Some(ref lut) = centered_lut {
+                    // SAFETY: `plan_fused_quotients` computed
+                    // `z_bounds.lut` from these `plan.z_len` rows. This loop
+                    // keeps `j < plan.z_len`, and `lut` was built for that
+                    // inclusive centered coefficient bound.
                     unsafe {
                         CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
                             &z_folded_rings[j],

@@ -3,6 +3,7 @@ use crate::compute::plans::{
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
     SparseRingCommitRowsPlan,
 };
+use crate::compute::requirements::NttOperationCluster;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
@@ -57,6 +58,21 @@ where
         key: NttCacheKey,
     ) -> Result<(), AkitaError>;
 
+    /// Whether `key` remains resident for this operation cluster.
+    ///
+    /// Prewarming and planned memory reporting both use this decision. The
+    /// default retains every requirement. A backend that streams an operation
+    /// must override this method with the same policy used by its runtime
+    /// kernel.
+    fn ntt_requirement_is_cached(
+        &self,
+        _prepared: &Self::PreparedSetup,
+        _cluster: NttOperationCluster,
+        _key: NttCacheKey,
+    ) -> Result<bool, AkitaError> {
+        Ok(true)
+    }
+
     /// Process-local identity used to deduplicate physically shared cache state.
     ///
     /// The default treats the prepared value itself as the cache owner. A
@@ -86,11 +102,12 @@ where
         prepared: &'a Self::PreparedSetup,
     ) -> &'a AkitaExpandedSetup<F>;
 
-    /// Drop any built NTT slots back to their reserved state (freed bytes
-    /// returned). Slots rebuild on next use, so callers may drop between
-    /// pipeline windows whose extents differ by orders of magnitude — e.g.
-    /// after the root fold level, whose slots dwarf every deeper level's.
-    /// Backends without droppable caches return `Ok(0)`.
+    /// Drop any built NTT slots and return the freed bytes. Slots rebuild on
+    /// next use. Backends without droppable caches return `Ok(0)`.
+    ///
+    /// Release must not invalidate active readers. A backend may require the
+    /// caller to prevent concurrent cache construction if release must leave
+    /// the cache empty.
     ///
     /// # Errors
     ///

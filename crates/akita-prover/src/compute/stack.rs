@@ -75,19 +75,36 @@ where
         self.prepared
     }
 
-    fn prewarm_ntt(&self, key: akita_types::NttCacheKey) -> Result<(), AkitaError> {
-        self.backend.ensure_ntt_slot(self.prepared, key)
+    fn prewarm_ntt(
+        &self,
+        cluster: NttOperationCluster,
+        key: akita_types::NttCacheKey,
+    ) -> Result<(), AkitaError> {
+        if self
+            .backend
+            .ntt_requirement_is_cached(self.prepared, cluster, key)?
+        {
+            self.backend.ensure_ntt_slot(self.prepared, key)?;
+        }
+        Ok(())
     }
 
     fn planned_ntt(
         &self,
+        cluster: NttOperationCluster,
         key: akita_types::NttCacheKey,
-    ) -> Result<(NttCacheOwnerId, usize), AkitaError> {
-        Ok((
+    ) -> Result<Option<(NttCacheOwnerId, usize)>, AkitaError> {
+        if !self
+            .backend
+            .ntt_requirement_is_cached(self.prepared, cluster, key)?
+        {
+            return Ok(None);
+        }
+        Ok(Some((
             self.backend.ntt_cache_owner_id(self.prepared),
             self.backend
                 .planned_ntt_cache_entry_bytes(self.prepared, key)?,
-        ))
+        )))
     }
 
     fn release_ntt_if_new(
@@ -138,7 +155,9 @@ where
     ///
     /// Slots rebuild on next use. Callers should release only at a lifecycle
     /// boundary they own; proof execution retains shared prepared state by
-    /// default.
+    /// default. Active readers remain valid. Release does not cancel cache
+    /// construction already in progress, so callers that require an empty
+    /// cache must prevent concurrent construction at this boundary.
     ///
     /// # Errors
     ///
@@ -203,22 +222,38 @@ where
 
     fn prewarm_requirement(&self, requirement: RoutedNttRequirement) -> Result<(), AkitaError> {
         match requirement.cluster {
-            NttOperationCluster::Commit => self.commit.prewarm_ntt(requirement.key),
-            NttOperationCluster::Opening => self.opening.prewarm_ntt(requirement.key),
-            NttOperationCluster::Tensor => self.tensor.prewarm_ntt(requirement.key),
-            NttOperationCluster::RingSwitch => self.ring_switch.prewarm_ntt(requirement.key),
+            NttOperationCluster::Commit => self
+                .commit
+                .prewarm_ntt(requirement.cluster, requirement.key),
+            NttOperationCluster::Opening => self
+                .opening
+                .prewarm_ntt(requirement.cluster, requirement.key),
+            NttOperationCluster::Tensor => self
+                .tensor
+                .prewarm_ntt(requirement.cluster, requirement.key),
+            NttOperationCluster::RingSwitch => self
+                .ring_switch
+                .prewarm_ntt(requirement.cluster, requirement.key),
         }
     }
 
     fn planned_requirement(
         &self,
         requirement: RoutedNttRequirement,
-    ) -> Result<(NttCacheOwnerId, usize), AkitaError> {
+    ) -> Result<Option<(NttCacheOwnerId, usize)>, AkitaError> {
         match requirement.cluster {
-            NttOperationCluster::Commit => self.commit.planned_ntt(requirement.key),
-            NttOperationCluster::Opening => self.opening.planned_ntt(requirement.key),
-            NttOperationCluster::Tensor => self.tensor.planned_ntt(requirement.key),
-            NttOperationCluster::RingSwitch => self.ring_switch.planned_ntt(requirement.key),
+            NttOperationCluster::Commit => self
+                .commit
+                .planned_ntt(requirement.cluster, requirement.key),
+            NttOperationCluster::Opening => self
+                .opening
+                .planned_ntt(requirement.cluster, requirement.key),
+            NttOperationCluster::Tensor => self
+                .tensor
+                .planned_ntt(requirement.cluster, requirement.key),
+            NttOperationCluster::RingSwitch => self
+                .ring_switch
+                .planned_ntt(requirement.cluster, requirement.key),
         }
     }
 }
@@ -284,7 +319,9 @@ where
 ///
 /// This restores the memory-minimizing root/suffix boundary for applications
 /// that choose it. Do not use it when the root stack shares prepared cache
-/// owners with concurrent work whose warm state must be retained.
+/// owners with concurrent work whose warm state must be retained. It is also
+/// the caller's responsibility to prevent concurrent cache construction if the
+/// suffix must begin with an empty cache.
 pub struct ReleaseRootNttAfterFold<S> {
     stacks: S,
 }
@@ -331,7 +368,11 @@ where
     }
 }
 
-/// Prewarm an exact cache plan on the cluster and level that will execute it.
+/// Prewarm the retained part of an exact execution plan.
+///
+/// Each routed backend applies the same cache-retention policy as its runtime
+/// kernel. Streamed operations remain in the logical requirement plan but do
+/// not allocate a prepared slot.
 pub fn prewarm_ntt_requirements<'a, F, S>(
     stacks: &S,
     requirements: &NttExecutionRequirements,
@@ -372,7 +413,9 @@ where
     let mut entry_bytes = Vec::<Vec<usize>>::new();
     for requirement in requirements.entries() {
         let stack = stacks.prove_stack_at_level(requirement.fold_level);
-        let (owner_id, bytes) = stack.planned_requirement(*requirement)?;
+        let Some((owner_id, bytes)) = stack.planned_requirement(*requirement)? else {
+            continue;
+        };
         let owner_index = owners
             .iter()
             .position(|owner| owner.owner_id == owner_id)
@@ -589,6 +632,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::cpu::NTT_STREAM_THRESHOLD_RING_ELEMENTS;
     use crate::AkitaProverSetup;
     use crate::CpuBackend;
     use akita_field::{AkitaError, Fp64};
@@ -779,6 +823,38 @@ mod tests {
                 .sum::<usize>(),
             commit_prepared.shared_ntt_cache_bytes() + ring_prepared.shared_ntt_cache_bytes()
         );
+    }
+
+    #[test]
+    fn prewarm_and_metrics_skip_streamed_cpu_ring_switch_slots() {
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
+            .expect("setup");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let stack = TestUniformStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("uniform stack");
+        let mut requirements = NttExecutionRequirements::default();
+        for domain in [
+            akita_types::NttTransformDomain::Negacyclic,
+            akita_types::NttTransformDomain::Cyclic,
+        ] {
+            requirements
+                .add_matrix(
+                    0,
+                    NttOperationCluster::RingSwitch,
+                    64,
+                    1,
+                    NTT_STREAM_THRESHOLD_RING_ELEMENTS + 1,
+                    domain,
+                )
+                .unwrap();
+        }
+
+        prewarm_ntt_requirements::<F, _>(&stack, &requirements).expect("prewarm streamed plan");
+
+        assert!(prepared.shared_ntt_cache_metrics().unwrap().is_empty());
+        assert!(planned_ntt_cache_metrics::<F, _>(&stack, &requirements)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

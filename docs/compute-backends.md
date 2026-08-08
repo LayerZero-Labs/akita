@@ -34,6 +34,36 @@ let (commitment, hint) =
 Ring dimension enters only at kernel boundaries through schedule-derived dispatch,
 not as a type parameter on the PCS API.
 
+## NTT lifecycle
+
+`NttExecutionRequirements` describes the matrix work for one proof. It does not
+choose a cache policy. `prewarm_ntt_requirements` routes each requirement to the
+backend that will run it. That backend uses the same retention decision for
+prewarming, memory reporting, and runtime execution. The CPU backend skips full
+slots for large ring switch operations because those kernels stream transform
+chunks from the public matrix.
+
+Prepared caches remain resident across proofs by default. This is the normal
+choice for shared prepared state. `ReleaseRootNttAfterFold` is an explicit
+memory policy for a caller that owns an isolated root cache. It releases each
+physical owner once after the root fold.
+
+Release removes built cache keys. A later request therefore creates its exact
+extent unless another populated covering slot exists. Readers that already hold
+an `Arc` remain valid. Release does not stop construction already in progress.
+A caller that needs the cache to be empty after release must prevent concurrent
+construction at that boundary.
+
+The lifecycle sequence is:
+
+```text
+prepare empty state
+prewarm retained requirements
+stream nonretained operations during the proof
+retain slots for another proof, or release at an exclusive boundary
+rebuild released slots at the next exact request
+```
+
 ## Boundary Rules
 
 - Protocol code owns transcript order, challenge squeezes, batching order, and

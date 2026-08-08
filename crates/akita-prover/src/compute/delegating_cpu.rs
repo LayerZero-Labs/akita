@@ -23,6 +23,7 @@ use super::plans::{
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
     SparseRingCommitRowsPlan,
 };
+use super::requirements::NttOperationCluster;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
@@ -53,6 +54,15 @@ macro_rules! delegate_compute_backend_setup {
                 key: NttCacheKey,
             ) -> Result<(), AkitaError> {
                 CpuBackend.ensure_ntt_slot(prepared, key)
+            }
+
+            fn ntt_requirement_is_cached(
+                &self,
+                prepared: &Self::PreparedSetup,
+                cluster: NttOperationCluster,
+                key: NttCacheKey,
+            ) -> Result<bool, AkitaError> {
+                CpuBackend.ntt_requirement_is_cached(prepared, cluster, key)
             }
 
             fn planned_ntt_cache_entry_bytes(

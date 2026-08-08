@@ -374,19 +374,19 @@ acceptance test.
 - [ ] Cached and streamed quotient modes consume the same typed chunk and
       matrix slice plan. The `q32`, `q64`, and `q128` branches contain only the
       arithmetic that must differ by width.
-- [ ] NTT retention remains the default. Explicit root release reports errors,
+- [x] NTT retention remains the default. Explicit root release reports errors,
       deduplicates owner identities, and preserves active readers.
-- [ ] Releasing a large NTT slot and then requesting a smaller compatible
+- [x] Releasing a large NTT slot and then requesting a smaller compatible
       extent does not rebuild the large allocation.
-- [ ] The requirements compiler marks an operation retained or streamed using
-      the same policy as runtime. Prewarming a streamed operation leaves no
-      complete relation or quotient slot resident.
+- [x] The routed backend applies the same retained or streamed policy during
+      runtime, prewarming, and memory reporting. Prewarming a streamed
+      operation leaves no complete relation or quotient slot resident.
 - [ ] Exact prefix parallel folding has dense differential tests that cross
       every sequential and parallel wave boundary.
 - [ ] Wide shift accumulation tests cover negacyclic wrap and addition limits.
 - [ ] Every new public `WideCyclotomicRing` helper is used by production code
       and documents its invariant, or is removed.
-- [ ] Every changed NEON `unsafe` block has one adjacent complete safety
+- [x] Every changed NEON `unsafe` block has one adjacent complete safety
       argument. Repeated unchecked access is centralized when that reduces the
       audited surface.
 - [ ] `FlatBlocks` uses checked offset conversion and returns a typed error
@@ -678,9 +678,10 @@ Prepared owners build exact prefixes lazily. Shared owners retain their slots
 by default. Explicit release operates on owner identity, reports failures, and
 deduplicates aliases across operation clusters.
 
-The requirements compiler records whether each operation is retained or
-streamed. Prewarm consumes that same decision and skips streamed slots. Runtime
-must not make a second independent retention choice.
+The logical requirements remain backend neutral. During prewarm and memory
+reporting, the routed backend applies the same retained or streamed decision as
+its runtime kernel. CPU prewarm and runtime share one extent policy. A schedule
+does not encode CPU cache policy.
 
 Release removes the released key or otherwise makes an empty key ineligible
 for compatible reuse. A later request may reuse a populated compatible slot.

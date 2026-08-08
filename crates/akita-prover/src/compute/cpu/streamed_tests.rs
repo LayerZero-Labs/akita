@@ -251,6 +251,29 @@ fn drop_built_ntt_slots_frees_and_rebuilds() {
 }
 
 #[test]
+fn released_large_prefix_does_not_cover_smaller_rebuild() {
+    let prepared = prepared();
+    let large = cyclic_key(32);
+    let small = cyclic_key(3);
+
+    CpuBackend
+        .ensure_ntt_slot(&prepared, large)
+        .expect("warm large prefix");
+    let large_bytes = prepared.shared_ntt_cache_bytes();
+    assert_eq!(prepared.drop_built_ntt_slots().unwrap(), large_bytes);
+    assert!(prepared.shared_ntt.lock().unwrap().is_empty());
+
+    CpuBackend
+        .ensure_ntt_slot(&prepared, small)
+        .expect("rebuild exact smaller prefix");
+
+    let metrics = prepared.shared_ntt_cache_metrics().unwrap();
+    assert_eq!(metrics.len(), 1);
+    assert_eq!(metrics[0].key, small);
+    assert!(metrics[0].cache_bytes < large_bytes);
+}
+
+#[test]
 fn dropping_built_slots_does_not_invalidate_active_reader() {
     let prepared = prepared();
     let key = cyclic_key(D);

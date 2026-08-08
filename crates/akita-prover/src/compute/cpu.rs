@@ -10,6 +10,7 @@ use crate::compute::plans::{
     RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
     RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
+use crate::compute::requirements::NttOperationCluster;
 use crate::kernels::linear::validate_compression_batch_shape;
 use crate::kernels::linear::{
     digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
@@ -51,6 +52,12 @@ type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
 /// keeping) a matrix-scale NTT cache. Deeper fold levels stay below this and
 /// share the cached path with the per-level digit-row products.
 pub(crate) const NTT_STREAM_THRESHOLD_RING_ELEMENTS: usize = 1 << 21;
+
+#[inline]
+fn ntt_operation_uses_cache(cluster: NttOperationCluster, num_ring_elements: usize) -> bool {
+    cluster != NttOperationCluster::RingSwitch
+        || num_ring_elements <= NTT_STREAM_THRESHOLD_RING_ELEMENTS
+}
 
 /// CPU-prepared setup keyed by runtime ring dimension.
 ///
@@ -180,28 +187,34 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
             .sum()
     }
 
-    /// Drop every built NTT slot back to its reserved (empty) state and
-    /// return the bytes freed. Keys are kept, so the next `with_shared_ntt`
-    /// use rebuilds single-flight — callers may drop between pipeline
-    /// windows whose extents differ by orders of magnitude, e.g. after the
-    /// root fold level, whose slots dwarf every deeper level's.
+    /// Drop every built NTT slot and return the bytes freed.
+    ///
+    /// Removing each released key ensures that a later smaller request creates
+    /// its exact extent instead of rebuilding the released larger prefix.
+    /// Active readers keep the released slot alive through their `Arc`.
+    /// Construction already in progress is not cancelled, so callers that need
+    /// an empty cache after this call must use a quiescent lifecycle boundary.
     pub fn drop_built_ntt_slots(&self) -> Result<usize, AkitaError> {
         let mut freed = 0usize;
         let mut cache = self
             .shared_ntt
             .lock()
             .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
-        for cell in cache.values_mut() {
-            let built = cell
+        let mut released_keys = Vec::new();
+        for (key, cell) in cache.iter() {
+            let built_bytes = cell
                 .get()
                 .and_then(|result| result.as_ref().ok())
                 .map(|slot| slot.cache_bytes);
-            if let Some(bytes) = built {
+            if let Some(bytes) = built_bytes {
                 freed = freed.checked_add(bytes).ok_or_else(|| {
                     AkitaError::InvalidSetup("released NTT cache bytes overflow".into())
                 })?;
-                *cell = Arc::new(OnceLock::new());
+                released_keys.push(*key);
             }
+        }
+        for key in released_keys {
+            cache.remove(&key);
         }
         drop(cache);
         if freed > 0 {
@@ -462,6 +475,15 @@ where
         key: NttCacheKey,
     ) -> Result<(), AkitaError> {
         ensure_ntt_slot_on_prepared(prepared, key)
+    }
+
+    fn ntt_requirement_is_cached(
+        &self,
+        _prepared: &Self::PreparedSetup,
+        cluster: NttOperationCluster,
+        key: NttCacheKey,
+    ) -> Result<bool, AkitaError> {
+        Ok(ntt_operation_uses_cache(cluster, key.num_ring_elements))
     }
 
     fn release_built_ntt_slots(&self, prepared: &Self::PreparedSetup) -> Result<usize, AkitaError> {

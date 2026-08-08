@@ -424,6 +424,11 @@ impl AddAssign for Fp128x8i32 {
     fn add_assign(&mut self, rhs: Self) {
         // In-place NEON: no value round-trip through a stack temporary (the
         // accumulate kernels call this in their innermost loop).
+        // SAFETY: both arrays contain exactly eight i32 lanes. Each intrinsic
+        // reads or writes four lanes at offset 0 or 4, so every access stays
+        // within its array. NEON vld1q/vst1q allow unaligned pointers. `&mut
+        // self` is exclusive, `rhs` is owned, and the two output halves do not
+        // overlap.
         unsafe {
             use std::arch::aarch64::*;
             let p = self.0.as_mut_ptr();
@@ -459,7 +464,12 @@ impl Sub for Fp128x8i32 {
 impl SubAssign for Fp128x8i32 {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
-        // In-place NEON; see `AddAssign`.
+        // In-place NEON; see `AddAssign` for the performance reason.
+        // SAFETY: both arrays contain exactly eight i32 lanes. Each intrinsic
+        // reads or writes four lanes at offset 0 or 4, so every access stays
+        // within its array. NEON vld1q/vst1q allow unaligned pointers. `&mut
+        // self` is exclusive, `rhs` is owned, and the two output halves do not
+        // overlap.
         unsafe {
             use std::arch::aarch64::*;
             let p = self.0.as_mut_ptr();
