@@ -32,6 +32,7 @@ fn eq_pair_tensor_matches_dense_mixed_axes() {
     .unwrap();
 
     let mut expected = F::zero();
+    let mut monomial_expected = F::zero();
     for (row, &row_weight) in row_weights.iter().enumerate() {
         for (fold, &fold_weight) in fold_weights.iter().enumerate() {
             for outer in 0..4 {
@@ -44,14 +45,37 @@ fn eq_pair_tensor_matches_dense_mixed_axes() {
                             * fold_weight
                             * eq_eval_at_index(&left, left_index)
                             * eq_eval_at_index(&right, right_index);
+                        monomial_expected += F::from_u64(9)
+                            * row_weight
+                            * fold_weight
+                            * left
+                                .iter()
+                                .enumerate()
+                                .filter(|(bit, _)| left_index & (1usize << bit) != 0)
+                                .fold(F::one(), |weight, (_, &challenge)| weight * challenge)
+                            * eq_eval_at_index(&right, right_index);
                     }
                 }
             }
         }
     }
     assert_eq!(
-        eval_eq_pair_tensor_families(&left, &right, &[family]).unwrap(),
+        eval_boolean_pair_tensor_families::<_, false, false>(
+            &left,
+            &right,
+            std::slice::from_ref(&family),
+        )
+        .unwrap(),
         expected
+    );
+    assert_eq!(
+        eval_boolean_pair_tensor_families::<_, true, false>(
+            &left,
+            &right,
+            std::slice::from_ref(&family),
+        )
+        .unwrap(),
+        monomial_expected
     );
 }
 
@@ -90,7 +114,7 @@ fn eq_pair_tensor_matches_dense_affine_chunk_axis() {
         })
         .sum::<F>();
     assert_eq!(
-        eval_eq_pair_tensor_families(&left, &right, &[family]).unwrap(),
+        eval_boolean_pair_tensor_families::<_, false, false>(&left, &right, &[family],).unwrap(),
         expected
     );
 }

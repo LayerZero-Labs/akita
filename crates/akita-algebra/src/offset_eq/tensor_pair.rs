@@ -161,7 +161,7 @@ impl<F: FieldCore> EqPairTensorFamily<F> {
     }
 }
 
-/// Evaluate tensor-native paired equality families.
+/// Evaluate tensor-native paired Boolean-basis families.
 ///
 /// Multiple power-of-two unit axes are contracted together by an exact binary
 /// carry recurrence. Otherwise, a largest unit-weight axis is kept as an
@@ -173,7 +173,11 @@ impl<F: FieldCore> EqPairTensorFamily<F> {
 ///
 /// Returns an error for malformed geometry, address overflow, unsupported
 /// equality arity, or recurrence work above [`MAX_COMPACT_STRIDE_TERMS`].
-pub fn eval_eq_pair_tensor_families<F: FieldCore>(
+pub fn eval_boolean_pair_tensor_families<
+    F: FieldCore,
+    const LEFT_MONOMIAL: bool,
+    const RIGHT_MONOMIAL: bool,
+>(
     left_challenges: &[F],
     right_challenges: &[F],
     families: &[EqPairTensorFamily<F>],
@@ -206,7 +210,7 @@ pub fn eval_eq_pair_tensor_families<F: FieldCore>(
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
         if recurrence_axes.len() >= 2 {
-            acc += eval_multi_axis_unit_family(
+            acc += eval_multi_axis_unit_family::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
                 left_challenges,
                 right_challenges,
                 family,
@@ -240,11 +244,11 @@ pub fn eval_eq_pair_tensor_families<F: FieldCore>(
     }
     acc += scalar_seeds.into_iter().fold(F::zero(), |sum, seed| {
         sum + seed.weight
-            * eq_eval_checked(left_challenges, seed.left_offset)
-            * eq_eval_checked(right_challenges, seed.right_offset)
+            * basis_eval_checked::<F, LEFT_MONOMIAL>(left_challenges, seed.left_offset)
+            * basis_eval_checked::<F, RIGHT_MONOMIAL>(right_challenges, seed.right_offset)
     });
     for ((left_stride, right_stride, len), seeds) in batches {
-        acc += eval_tensor_seed_batch(
+        acc += eval_tensor_seed_batch::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
             left_challenges,
             right_challenges,
             left_stride,
@@ -257,7 +261,11 @@ pub fn eval_eq_pair_tensor_families<F: FieldCore>(
     Ok(acc)
 }
 
-fn eval_multi_axis_unit_family<F: FieldCore>(
+fn eval_multi_axis_unit_family<
+    F: FieldCore,
+    const LEFT_MONOMIAL: bool,
+    const RIGHT_MONOMIAL: bool,
+>(
     left_challenges: &[F],
     right_challenges: &[F],
     family: &EqPairTensorFamily<F>,
@@ -339,14 +347,16 @@ fn eval_multi_axis_unit_family<F: FieldCore>(
                 let right = right_carry.checked_add(right_add).ok_or_else(|| {
                     AkitaError::InvalidInput("paired tensor right carry overflow".into())
                 })?;
-                let Some(left_factor) =
-                    equality_bit_factor(left_challenges.get(bit).copied(), left & 1)
-                else {
+                let Some(left_factor) = basis_bit_factor::<F, LEFT_MONOMIAL>(
+                    left_challenges.get(bit).copied(),
+                    left & 1,
+                ) else {
                     continue;
                 };
-                let Some(right_factor) =
-                    equality_bit_factor(right_challenges.get(bit).copied(), right & 1)
-                else {
+                let Some(right_factor) = basis_bit_factor::<F, RIGHT_MONOMIAL>(
+                    right_challenges.get(bit).copied(),
+                    right & 1,
+                ) else {
                     continue;
                 };
                 next.push((
@@ -481,8 +491,12 @@ fn unit_axis_choices<F: FieldCore>(
         .collect())
 }
 
-fn equality_bit_factor<F: FieldCore>(challenge: Option<F>, bit: usize) -> Option<F> {
+fn basis_bit_factor<F: FieldCore, const MONOMIAL: bool>(
+    challenge: Option<F>,
+    bit: usize,
+) -> Option<F> {
     match (challenge, bit) {
+        (Some(_), 0) if MONOMIAL => Some(F::one()),
         (Some(challenge), 0) => Some(F::one() - challenge),
         (Some(challenge), 1) => Some(challenge),
         (Some(_), _) => None,
@@ -888,7 +902,7 @@ struct EqPairSeed<F> {
     weight: F,
 }
 
-fn eval_tensor_seed_batch<F: FieldCore>(
+fn eval_tensor_seed_batch<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
     left_challenges: &[F],
     right_challenges: &[F],
     left_stride: usize,
@@ -977,16 +991,12 @@ fn eval_tensor_seed_batch<F: FieldCore>(
                             AkitaError::InvalidInput("paired tensor right carry overflow".into())
                         })?
                     };
-                    let left_factor = if left_sum & 1 == 1 {
-                        left_challenge
-                    } else {
-                        F::one() - left_challenge
-                    };
-                    let right_factor = if right_sum & 1 == 1 {
-                        right_challenge
-                    } else {
-                        F::one() - right_challenge
-                    };
+                    let left_factor =
+                        basis_bit_factor::<F, LEFT_MONOMIAL>(Some(left_challenge), left_sum & 1)
+                            .ok_or(AkitaError::InvalidProof)?;
+                    let right_factor =
+                        basis_bit_factor::<F, RIGHT_MONOMIAL>(Some(right_challenge), right_sum & 1)
+                            .ok_or(AkitaError::InvalidProof)?;
                     *next
                         .entry((left_sum >> 1, right_sum >> 1))
                         .or_insert(F::zero()) += state_weight * left_factor * right_factor;
@@ -995,7 +1005,7 @@ fn eval_tensor_seed_batch<F: FieldCore>(
             next.retain(|_, state_weight| !state_weight.is_zero());
             states = next;
         }
-        acc += finish_seed_states(
+        acc += finish_seed_states::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
             left_challenges,
             right_challenges,
             block_index_bits,
@@ -1006,7 +1016,7 @@ fn eval_tensor_seed_batch<F: FieldCore>(
     Ok(acc)
 }
 
-fn finish_seed_states<F: FieldCore>(
+fn finish_seed_states<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
     left_challenges: &[F],
     right_challenges: &[F],
     mut bit: usize,
@@ -1019,13 +1029,14 @@ fn finish_seed_states<F: FieldCore>(
         let mut next = BTreeMap::new();
         for ((left_carry, right_carry), state_weight) in states {
             let Some((left_high, left_factor)) =
-                equality_carry_step(left_challenges.get(bit).copied(), left_carry)
+                basis_carry_step::<F, LEFT_MONOMIAL>(left_challenges.get(bit).copied(), left_carry)
             else {
                 continue;
             };
-            let Some((right_high, right_factor)) =
-                equality_carry_step(right_challenges.get(bit).copied(), right_carry)
-            else {
+            let Some((right_high, right_factor)) = basis_carry_step::<F, RIGHT_MONOMIAL>(
+                right_challenges.get(bit).copied(),
+                right_carry,
+            ) else {
                 continue;
             };
             *next.entry((left_high, right_high)).or_insert(F::zero()) +=
@@ -1047,7 +1058,7 @@ fn finish_seed_states<F: FieldCore>(
                         F::zero()
                     }
                 },
-                |challenges| eq_eval_at_index(challenges, left_high),
+                |challenges| basis_eval_at_index::<F, LEFT_MONOMIAL>(challenges, left_high),
             );
             let right_equality = right_challenges.get(bit..).map_or_else(
                 || {
@@ -1057,23 +1068,20 @@ fn finish_seed_states<F: FieldCore>(
                         F::zero()
                     }
                 },
-                |challenges| eq_eval_at_index(challenges, right_high),
+                |challenges| basis_eval_at_index::<F, RIGHT_MONOMIAL>(challenges, right_high),
             );
             state_weight * left_equality * right_equality
         })
         .sum())
 }
 
-fn equality_carry_step<F: FieldCore>(challenge: Option<F>, carry: usize) -> Option<(usize, F)> {
+fn basis_carry_step<F: FieldCore, const MONOMIAL: bool>(
+    challenge: Option<F>,
+    carry: usize,
+) -> Option<(usize, F)> {
     if let Some(challenge) = challenge {
-        Some((
-            carry >> 1,
-            if carry & 1 == 1 {
-                challenge
-            } else {
-                F::one() - challenge
-            },
-        ))
+        basis_bit_factor::<F, MONOMIAL>(Some(challenge), carry & 1)
+            .map(|factor| (carry >> 1, factor))
     } else if carry == 0 {
         Some((0, F::one()))
     } else {
@@ -1081,9 +1089,21 @@ fn equality_carry_step<F: FieldCore>(challenge: Option<F>, carry: usize) -> Opti
     }
 }
 
-fn eq_eval_checked<F: FieldCore>(challenges: &[F], index: usize) -> F {
+fn basis_eval_checked<F: FieldCore, const MONOMIAL: bool>(challenges: &[F], index: usize) -> F {
     if challenges.len() < usize::BITS as usize && index >= 1usize << challenges.len() {
         F::zero()
+    } else {
+        basis_eval_at_index::<F, MONOMIAL>(challenges, index)
+    }
+}
+
+fn basis_eval_at_index<F: FieldCore, const MONOMIAL: bool>(challenges: &[F], index: usize) -> F {
+    if MONOMIAL {
+        challenges
+            .iter()
+            .enumerate()
+            .filter(|(bit, _)| index & (1usize << bit) != 0)
+            .fold(F::one(), |weight, (_, &challenge)| weight * challenge)
     } else {
         eq_eval_at_index(challenges, index)
     }

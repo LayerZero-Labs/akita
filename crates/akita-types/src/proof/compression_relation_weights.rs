@@ -2,7 +2,7 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{
-    eval_eq_pair_tensor_families, EqPairTensorAxis, EqPairTensorFamily, OffsetEqWindow,
+    eval_boolean_pair_tensor_families, EqPairTensorAxis, EqPairTensorFamily, OffsetEqWindow,
 };
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
@@ -126,7 +126,7 @@ impl NegativeBinarySupport {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        eval_eq_pair_tensor_families(equality_point, point, &families)
+        eval_boolean_pair_tensor_families::<_, false, false>(equality_point, point, &families)
     }
 }
 

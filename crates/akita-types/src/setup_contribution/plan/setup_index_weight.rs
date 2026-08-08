@@ -2,7 +2,7 @@ use super::types::ProjectedEqPairTensor;
 use super::*;
 use akita_algebra::{
     offset_eq::{
-        eval_eq_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
+        eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
         EqPairTensorFamily, OffsetEqWindow,
     },
     ring::{evaluate_power_sequence_mle, scalar_powers_with_stride},
@@ -135,7 +135,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .try_fold(E::zero(), |evaluation, batch| {
                 if batch.ratio == 1 {
                     return Ok(evaluation
-                        + eval_eq_pair_tensor_families(
+                        + eval_boolean_pair_tensor_families::<_, false, false>(
                             rho_setup_idx,
                             self.relation_address.point(),
                             &batch.families,
@@ -175,7 +175,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         relation_low_point,
                     )?;
                     relation_projection
-                        * eval_eq_pair_tensor_families(
+                        * eval_boolean_pair_tensor_families::<_, false, false>(
                             setup_high_point,
                             relation_high_point,
                             &batch.families,
@@ -187,7 +187,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         alpha,
                         self.projection_geometry.base_ring_dim(),
                     )?;
-                    eval_eq_pair_tensor_families(setup_high_point, relation_point, &projected)?
+                    eval_boolean_pair_tensor_families::<_, false, false>(
+                        setup_high_point,
+                        relation_point,
+                        &projected,
+                    )?
                 };
                 Ok(evaluation + setup_projection * contraction)
             })
@@ -830,7 +834,7 @@ mod projection_tests {
             &setup_point[..ratio.trailing_zeros() as usize],
         );
         let got = setup_projection
-            * eval_eq_pair_tensor_families(
+            * eval_boolean_pair_tensor_families::<_, false, false>(
                 &setup_point[ratio.trailing_zeros() as usize..],
                 &relation_point,
                 &projected,

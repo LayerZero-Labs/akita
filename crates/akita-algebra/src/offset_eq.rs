@@ -10,8 +10,8 @@ use akita_field::parallel::*;
 
 mod tensor_pair;
 pub use tensor_pair::{
-    eval_eq_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis, EqPairTensorFamily,
-    EqPairTensorWeights,
+    eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
+    EqPairTensorFamily, EqPairTensorWeights,
 };
 
 /// Verifier work cap for one compact-stride equality contraction.

@@ -6,7 +6,10 @@
 
 use std::sync::Arc;
 
-use akita_algebra::offset_eq::eval_affine_digit_intervals;
+use akita_algebra::offset_eq::{
+    eval_affine_digit_intervals, eval_boolean_pair_tensor_families, EqPairTensorAxis,
+    EqPairTensorFamily, MAX_COMPACT_STRIDE_TERMS,
+};
 use akita_algebra::poly::multilinear_eval;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use akita_types::{
@@ -36,6 +39,10 @@ struct PreparedEvaluationTraceGroup<E: FieldCore> {
     claim_coefficients: Vec<E>,
     units: Vec<PreparedEvaluationTraceUnit>,
 }
+
+/// Below this per-unit block count the affine scan wins despite its linear
+/// term; at and above it the logarithmic paired recurrence wins decisively.
+const TRACE_TENSOR_MIN_BLOCKS_PER_UNIT: usize = 64;
 
 /// Succinct verifier representation of the complete evaluation-trace weight.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -81,12 +88,26 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                 .split_at_checked(coefficient_variables)
                 .ok_or(AkitaError::InvalidProof)?;
             let block_point = &group.block_opening_point;
-            let low_variables = block_point.len() / 2;
-            let (low_block_point, high_block_point) = block_point
-                .split_at_checked(low_variables)
+            let max_unit_blocks = group
+                .units
+                .iter()
+                .map(|unit| unit.block_count)
+                .max()
                 .ok_or(AkitaError::InvalidProof)?;
-            let low_block_weights = basis_weights(low_block_point, group.basis)?;
-            let high_block_weights = basis_weights(high_block_point, group.basis)?;
+            let use_tensor_recurrence =
+                max_unit_blocks == 1 || max_unit_blocks >= TRACE_TENSOR_MIN_BLOCKS_PER_UNIT;
+            let linear_block_weights = if use_tensor_recurrence {
+                None
+            } else {
+                let low_variables = block_point.len() / 2;
+                let (low_block_point, high_block_point) = block_point
+                    .split_at_checked(low_variables)
+                    .ok_or(AkitaError::InvalidProof)?;
+                Some((
+                    basis_weights(low_block_point, group.basis)?,
+                    basis_weights(high_block_point, group.basis)?,
+                ))
+            };
             let digit_weights = &group.opening_digit_weights;
             let source_lane_count = source_ring_dimension / coefficient_block_len;
             let role_lane_count = group.opening_ring_dimension / coefficient_block_len;
@@ -111,6 +132,30 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                 .len()
                 .checked_mul(source_lane_count)
                 .ok_or_else(|| AkitaError::InvalidSetup("trace block stride overflow".into()))?;
+            let mut families = Vec::new();
+            if use_tensor_recurrence {
+                let family_count = group
+                    .claim_coefficients
+                    .len()
+                    .checked_mul(group.units.len())
+                    .and_then(|count| count.checked_mul(role_subcolumns))
+                    .and_then(|count| count.checked_mul(role_lane_count))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("trace family count overflow".into())
+                    })?;
+                let family_work = family_count
+                    .checked_mul(digit_weights.len())
+                    .ok_or_else(|| AkitaError::InvalidSetup("trace family work overflow".into()))?;
+                if family_work > MAX_COMPACT_STRIDE_TERMS {
+                    return Err(AkitaError::InvalidSize {
+                        expected: MAX_COMPACT_STRIDE_TERMS,
+                        actual: family_work,
+                    });
+                }
+                families.try_reserve_exact(family_count).map_err(|_| {
+                    AkitaError::InvalidSetup("trace tensor families are too large".into())
+                })?;
+            }
             for (claim, &claim_coefficient) in group.claim_coefficients.iter().enumerate() {
                 for unit in &group.units {
                     let claim_start = claim
@@ -150,23 +195,55 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                             let inner_trace_evaluation = *inner_trace_evaluations
                                 .get(source_lane)
                                 .ok_or(AkitaError::InvalidProof)?;
-                            evaluation += claim_coefficient
-                                * inner_trace_evaluation
-                                * eval_affine_digit_intervals(
-                                    column_point,
-                                    &[base],
-                                    unit.global_block_start,
-                                    unit.block_count,
-                                    block_stride,
-                                    role_lane_count,
-                                    digit_weights,
-                                    &high_block_weights,
-                                    &low_block_weights,
-                                    &[],
-                                )?;
+                            if let Some((low_block_weights, high_block_weights)) =
+                                &linear_block_weights
+                            {
+                                evaluation += claim_coefficient
+                                    * inner_trace_evaluation
+                                    * eval_affine_digit_intervals(
+                                        column_point,
+                                        &[base],
+                                        unit.global_block_start,
+                                        unit.block_count,
+                                        block_stride,
+                                        role_lane_count,
+                                        digit_weights,
+                                        high_block_weights,
+                                        low_block_weights,
+                                        &[],
+                                    )?;
+                                continue;
+                            }
+                            families.push(EqPairTensorFamily::new(
+                                unit.global_block_start,
+                                base,
+                                claim_coefficient * inner_trace_evaluation,
+                                vec![
+                                    EqPairTensorAxis::dense(
+                                        0,
+                                        role_lane_count,
+                                        digit_weights.to_vec(),
+                                    ),
+                                    EqPairTensorAxis::unit(unit.block_count, 1, block_stride),
+                                ],
+                            )?);
                         }
                     }
                 }
+            }
+            if linear_block_weights.is_none() {
+                evaluation += match group.basis {
+                    BasisMode::Lagrange => eval_boolean_pair_tensor_families::<_, false, false>(
+                        block_point,
+                        column_point,
+                        &families,
+                    )?,
+                    BasisMode::Monomial => eval_boolean_pair_tensor_families::<_, true, false>(
+                        block_point,
+                        column_point,
+                        &families,
+                    )?,
+                };
             }
         }
         Ok(evaluation)
@@ -260,6 +337,102 @@ where
     })
 }
 
+/// Exact synthetic trace fixture for production-kernel benchmarks.
+#[cfg(feature = "benchmark-support")]
+pub struct EvaluationTraceBenchmarkCase {
+    trace: PreparedEvaluationTrace<akita_field::Prime128OffsetA7F7>,
+    point: Vec<akita_field::Prime128OffsetA7F7>,
+}
+
+#[cfg(feature = "benchmark-support")]
+impl EvaluationTraceBenchmarkCase {
+    /// Evaluate the prepared trace at its fixed benchmark point.
+    pub fn evaluate(&self) -> Result<akita_field::Prime128OffsetA7F7, AkitaError> {
+        self.trace.evaluate_at_point(&self.point)
+    }
+}
+
+/// Build a checked trace benchmark with two claims, two opening digits, and a
+/// D128 source split into D64 coefficient blocks.
+#[cfg(feature = "benchmark-support")]
+pub fn evaluation_trace_benchmark_case(
+    num_live_blocks: usize,
+    witness_chunks: usize,
+    basis: BasisMode,
+) -> Result<EvaluationTraceBenchmarkCase, AkitaError> {
+    use akita_field::Prime128OffsetA7F7 as F;
+
+    const SOURCE_RING_DIMENSION: usize = 128;
+    const OPENING_RING_DIMENSION: usize = 128;
+    const COEFFICIENT_BLOCK_LEN: usize = 64;
+    const NUM_CLAIMS: usize = 2;
+    const DIGIT_COUNT: usize = 2;
+
+    if !num_live_blocks.is_power_of_two()
+        || !witness_chunks.is_power_of_two()
+        || witness_chunks > num_live_blocks
+    {
+        return Err(AkitaError::InvalidInput(
+            "trace benchmark requires dyadic nonempty block and chunk counts".into(),
+        ));
+    }
+    let blocks_per_chunk = num_live_blocks / witness_chunks;
+    let claim_stride_coefficients = blocks_per_chunk
+        .checked_mul(DIGIT_COUNT)
+        .and_then(|count| count.checked_mul(SOURCE_RING_DIMENSION))
+        .ok_or_else(|| AkitaError::InvalidSetup("trace benchmark claim stride overflow".into()))?;
+    let unit_stride_coefficients = claim_stride_coefficients
+        .checked_mul(NUM_CLAIMS)
+        .ok_or_else(|| AkitaError::InvalidSetup("trace benchmark unit stride overflow".into()))?;
+    let units = (0..witness_chunks)
+        .map(|chunk| {
+            Ok(PreparedEvaluationTraceUnit {
+                first_claim_coefficient: chunk.checked_mul(unit_stride_coefficients).ok_or_else(
+                    || AkitaError::InvalidSetup("trace benchmark unit offset overflow".into()),
+                )?,
+                claim_stride_coefficients,
+                global_block_start: chunk.checked_mul(blocks_per_chunk).ok_or_else(|| {
+                    AkitaError::InvalidSetup("trace benchmark block offset overflow".into())
+                })?,
+                block_count: blocks_per_chunk,
+            })
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    let block_variables = num_live_blocks.trailing_zeros() as usize;
+    let column_len = num_live_blocks
+        .checked_mul(NUM_CLAIMS * DIGIT_COUNT * (SOURCE_RING_DIMENSION / COEFFICIENT_BLOCK_LEN))
+        .ok_or_else(|| AkitaError::InvalidSetup("trace benchmark column span overflow".into()))?;
+    let column_variables = column_len.trailing_zeros() as usize;
+    let coefficient_variables = COEFFICIENT_BLOCK_LEN.trailing_zeros() as usize;
+    let num_variables = coefficient_variables
+        .checked_add(column_variables)
+        .ok_or_else(|| AkitaError::InvalidSetup("trace benchmark point width overflow".into()))?;
+    let trace = PreparedEvaluationTrace {
+        groups: vec![PreparedEvaluationTraceGroup {
+            block_opening_point: (0..block_variables)
+                .map(|index| F::from_u64(101 + index as u64))
+                .collect::<Vec<_>>()
+                .into(),
+            basis,
+            source_ring_dimension: SOURCE_RING_DIMENSION,
+            opening_ring_dimension: OPENING_RING_DIMENSION,
+            coefficient_block_len: COEFFICIENT_BLOCK_LEN,
+            opening_digit_weights: vec![F::from_u64(211), F::from_u64(223)].into(),
+            inner_trace: (0..SOURCE_RING_DIMENSION)
+                .map(|index| F::from_u64(307 + index as u64))
+                .collect::<Vec<_>>()
+                .into(),
+            claim_coefficients: vec![F::from_u64(401), F::from_u64(409)],
+            units,
+        }],
+        num_variables,
+    };
+    let point = (0..num_variables)
+        .map(|index| F::from_u64(503 + index as u64))
+        .collect();
+    Ok(EvaluationTraceBenchmarkCase { trace, point })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,48 +462,51 @@ mod tests {
             global_block_start: 1,
             block_count: 2,
         };
-        let trace = PreparedEvaluationTrace {
-            groups: vec![PreparedEvaluationTraceGroup {
-                block_opening_point: Arc::clone(&block_point),
-                basis: BasisMode::Lagrange,
-                source_ring_dimension: 8,
-                opening_ring_dimension: 4,
-                coefficient_block_len: 2,
-                opening_digit_weights: Arc::clone(&digit_weights),
-                inner_trace: Arc::clone(&inner_trace),
-                claim_coefficients: vec![claim_coefficient],
-                units: vec![unit.clone()],
-            }],
-            num_variables: 6,
-        };
-        let block_weights = basis_weights(&block_point, BasisMode::Lagrange).unwrap();
-        let mut dense = vec![F::zero(); 1 << trace.num_variables];
-        for local_block in 0..unit.block_count {
-            let global_block = unit.global_block_start + local_block;
-            for role_subcolumn in 0..2 {
-                for (digit, &digit_weight) in digit_weights.iter().enumerate() {
-                    for role_coefficient in 0..4 {
-                        let address = unit.first_claim_coefficient
-                            + local_block * digit_weights.len() * 8
-                            + role_subcolumn * digit_weights.len() * 4
-                            + digit * 4
-                            + role_coefficient;
-                        dense[address] += claim_coefficient
-                            * block_weights[global_block]
-                            * digit_weight
-                            * inner_trace[role_subcolumn * 4 + role_coefficient];
+        for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
+            let trace = PreparedEvaluationTrace {
+                groups: vec![PreparedEvaluationTraceGroup {
+                    block_opening_point: Arc::clone(&block_point),
+                    basis,
+                    source_ring_dimension: 8,
+                    opening_ring_dimension: 4,
+                    coefficient_block_len: 2,
+                    opening_digit_weights: Arc::clone(&digit_weights),
+                    inner_trace: Arc::clone(&inner_trace),
+                    claim_coefficients: vec![claim_coefficient],
+                    units: vec![unit.clone()],
+                }],
+                num_variables: 6,
+            };
+            let block_weights = basis_weights(&block_point, basis).unwrap();
+            let mut dense = vec![F::zero(); 1 << trace.num_variables];
+            for local_block in 0..unit.block_count {
+                let global_block = unit.global_block_start + local_block;
+                for role_subcolumn in 0..2 {
+                    for (digit, &digit_weight) in digit_weights.iter().enumerate() {
+                        for role_coefficient in 0..4 {
+                            let address = unit.first_claim_coefficient
+                                + local_block * digit_weights.len() * 8
+                                + role_subcolumn * digit_weights.len() * 4
+                                + digit * 4
+                                + role_coefficient;
+                            dense[address] += claim_coefficient
+                                * block_weights[global_block]
+                                * digit_weight
+                                * inner_trace[role_subcolumn * 4 + role_coefficient];
+                        }
                     }
                 }
             }
-        }
-        let point = (0..trace.num_variables)
-            .map(|index| F::from_u64(29 + index as u64))
-            .collect::<Vec<_>>();
+            let point = (0..trace.num_variables)
+                .map(|index| F::from_u64(29 + index as u64))
+                .collect::<Vec<_>>();
 
-        assert_eq!(
-            trace.evaluate_at_point(&point).unwrap(),
-            multilinear_eval(&dense, &point).unwrap()
-        );
+            assert_eq!(
+                trace.evaluate_at_point(&point).unwrap(),
+                multilinear_eval(&dense, &point).unwrap(),
+                "basis={basis:?}"
+            );
+        }
     }
 
     #[test]

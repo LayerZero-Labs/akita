@@ -32,7 +32,8 @@ pub use protocol::{
 };
 #[cfg(feature = "benchmark-support")]
 pub use protocol::{
-    relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
+    evaluation_trace_benchmark_case, relation_evaluator_benchmark_case,
+    relation_evaluator_benchmark_case_with_chunks, EvaluationTraceBenchmarkCase,
     RelationEvaluatorBenchmarkCase,
 };
 pub use stages::stage1::AkitaStage1Verifier;
