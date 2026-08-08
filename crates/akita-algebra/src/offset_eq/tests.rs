@@ -244,6 +244,24 @@ fn offset_eq_window_crosses_adaptive_split_boundary() {
 }
 
 #[test]
+fn offset_eq_window_fills_unaligned_bounded_high_intervals() {
+    let mut rng = StdRng::seed_from_u64(0xF111_1A7E);
+    let challenges = random_vec(&mut rng, 20);
+    let window = OffsetEqWindow::new(&challenges).unwrap();
+    let low_boundary = 1usize << window.low_bits;
+    let domain = 1usize << challenges.len();
+
+    for (start, len) in [(low_boundary - 7, (1 << 14) + 31), (domain - 11, 29)] {
+        let mut actual = vec![F::zero(); len];
+        window.fill_interval(start, &mut actual).unwrap();
+        let expected = (start..start + len)
+            .map(|index| eq_eval_at_index(&challenges, index))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected, "start={start}, len={len}");
+    }
+}
+
+#[test]
 fn offset_eq_window_precomputed_high_table_matches_scalar_eq() {
     let mut rng = StdRng::seed_from_u64(0x11165);
     // Widths in (16, 32] exercise the bounded high table: low is capped at 16

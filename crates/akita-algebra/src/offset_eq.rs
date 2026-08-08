@@ -1140,6 +1140,24 @@ impl<F: FieldCore> OffsetEqWindow<F> {
             .checked_add(output.len())
             .ok_or_else(|| AkitaError::InvalidInput("equality interval overflow".into()))?;
         const PARALLEL_THRESHOLD: usize = 1 << 14;
+        if let Some(eq_high) = &self.eq_high {
+            if output.len() >= PARALLEL_THRESHOLD {
+                cfg_chunks_mut!(output, PARALLEL_THRESHOLD)
+                    .enumerate()
+                    .try_for_each(|(chunk_index, chunk)| {
+                        let chunk_start = chunk_index
+                            .checked_mul(PARALLEL_THRESHOLD)
+                            .and_then(|offset| start.checked_add(offset))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidInput("equality interval overflow".into())
+                            })?;
+                        self.fill_bounded_high_interval(chunk_start, chunk, eq_high)
+                    })?;
+            } else {
+                self.fill_bounded_high_interval(start, output, eq_high)?;
+            }
+            return Ok(());
+        }
         if output.len() >= PARALLEL_THRESHOLD {
             cfg_iter_mut!(output)
                 .enumerate()
@@ -1149,6 +1167,52 @@ impl<F: FieldCore> OffsetEqWindow<F> {
                 .iter_mut()
                 .enumerate()
                 .for_each(|(offset, value)| *value = self.eval(start + offset));
+        }
+        Ok(())
+    }
+
+    fn fill_bounded_high_interval(
+        &self,
+        mut start: usize,
+        mut output: &mut [F],
+        eq_high: &[F],
+    ) -> Result<(), AkitaError> {
+        while !output.is_empty() {
+            let low = start & self.low_mask;
+            let available_low = self
+                .eq_low
+                .len()
+                .checked_sub(low)
+                .ok_or(AkitaError::InvalidProof)?;
+            let take = available_low.min(output.len());
+            let low_end = low.checked_add(take).ok_or(AkitaError::InvalidProof)?;
+            let low_values = self
+                .eq_low
+                .get(low..low_end)
+                .ok_or(AkitaError::InvalidProof)?;
+            let (destination, tail) = output
+                .split_at_mut_checked(take)
+                .ok_or(AkitaError::InvalidProof)?;
+            let high = start >> self.low_bits;
+            let Some(scale) = eq_high.get(high).copied() else {
+                destination.fill(F::zero());
+                tail.fill(F::zero());
+                return Ok(());
+            };
+            if scale.is_zero() {
+                destination.fill(F::zero());
+            } else if scale == F::one() {
+                destination.copy_from_slice(low_values);
+            } else {
+                destination
+                    .iter_mut()
+                    .zip(low_values)
+                    .for_each(|(value, &low_value)| *value = low_value * scale);
+            }
+            start = start
+                .checked_add(take)
+                .ok_or_else(|| AkitaError::InvalidInput("equality interval overflow".into()))?;
+            output = tail;
         }
         Ok(())
     }
