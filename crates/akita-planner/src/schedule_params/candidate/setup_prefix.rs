@@ -13,65 +13,6 @@ fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<
 }
 
 #[allow(clippy::too_many_arguments)]
-fn grouped_segment_rings(
-    num_polys: usize,
-    num_live_blocks: usize,
-    num_chunks: usize,
-    num_positions_per_block: usize,
-    n_a: usize,
-    num_digits_inner: usize,
-    num_digits_outer: usize,
-    num_digits_open: usize,
-    num_digits_fold: usize,
-) -> Result<usize, AkitaError> {
-    let e_hat = num_polys
-        .checked_mul(num_live_blocks)
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("group e-hat witness overflow".to_string()))?;
-    let t_hat = num_polys
-        .checked_mul(num_live_blocks)
-        .and_then(|n| n.checked_mul(n_a))
-        .and_then(|n| n.checked_mul(num_digits_outer))
-        .ok_or_else(|| AkitaError::InvalidSetup("group t-hat witness overflow".to_string()))?;
-    let z_hat = num_positions_per_block
-        .checked_mul(num_digits_inner)
-        .and_then(|n| n.checked_mul(num_digits_fold))
-        .and_then(|n| n.checked_mul(num_chunks))
-        .ok_or_else(|| AkitaError::InvalidSetup("group z-hat witness overflow".to_string()))?;
-
-    e_hat
-        .checked_add(t_hat)
-        .and_then(|n| n.checked_add(z_hat))
-        .ok_or_else(|| AkitaError::InvalidSetup("group witness overflow".to_string()))
-}
-
-pub(crate) fn planned_next_witness_len(
-    field_bits: u32,
-    params: &CommittedGroupParams,
-    final_num_polys: usize,
-    num_chunks: usize,
-) -> Result<Option<usize>, AkitaError> {
-    if !params.precommitted_groups.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "multi-group root witness sizing must use CommittedGroupParams::output_witness_len"
-                .to_string(),
-        ));
-    }
-    if !params.compression_sources_supported()? {
-        return Ok(None);
-    }
-    let opening_batch =
-        params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
-    let layout = WitnessLayout::new(
-        params,
-        &opening_batch,
-        num_chunks,
-        akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open),
-    )?;
-    Ok(Some(layout.live_coeff_len()))
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(in crate::schedule_params) fn derive_setup_prefix_group(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,
@@ -79,13 +20,12 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
     log_basis_open: u32,
     n_prefix: usize,
     num_chunks: usize,
+    inner_ring_dimension: usize,
     outer_ring_dimension: usize,
 ) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
     if outer_ring_dimension == 0
         || !outer_ring_dimension.is_power_of_two()
-        || !policy
-            .setup_prefix_inner_ring_dimension
-            .is_multiple_of(outer_ring_dimension)
+        || !inner_ring_dimension.is_multiple_of(outer_ring_dimension)
     {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix B dimension must be a power-of-two divisor of its A dimension"
@@ -97,7 +37,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
             "setup prefix length must be a nonzero power of two".to_string(),
         ));
     }
-    if !n_prefix.is_multiple_of(policy.setup_prefix_inner_ring_dimension) {
+    if !n_prefix.is_multiple_of(inner_ring_dimension) {
         return Err(AkitaError::InvalidSetup(
             "setup prefix length must be a multiple of the ring dimension".to_string(),
         ));
@@ -107,11 +47,11 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
             "setup-prefix checkpoint requires one consuming inner/outer/open basis".to_string(),
         ));
     }
-    let ring_slots = n_prefix / policy.setup_prefix_inner_ring_dimension;
+    let ring_slots = n_prefix / inner_ring_dimension;
     let reduced_vars = checked_power_of_two_vars(ring_slots, "setup prefix ring slots")?;
     let prefix_num_vars = checked_power_of_two_vars(n_prefix, "setup prefix field length")?;
     let family = policy.sis_modulus_profile;
-    let d = policy.setup_prefix_inner_ring_dimension;
+    let d = inner_ring_dimension;
     let outer_decomp = DecompositionParams {
         log_basis: log_basis_outer,
         ..policy.decomposition
@@ -183,7 +123,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
             sis_key_at_dimension(
                 policy,
                 akita_types::SisMatrixRole::Inner,
-                policy.setup_prefix_inner_ring_dimension,
+                inner_ring_dimension,
                 norm_s,
             ),
             width_s,

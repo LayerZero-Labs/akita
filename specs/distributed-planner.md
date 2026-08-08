@@ -676,33 +676,56 @@ For each new multi-chunk family:
    // keys: AkitaScheduleLookupKey::new(num_vars, num_polys) — identical to D64OneHot
    ```
 
-4. **`EmitSpec.policy`**: full `PlannerPolicy` including
-   `witness_chunk: ChunkedWitnessCfg::d64_production()` (via `policy_of`).
+4. **`EmitSpec.policy`**: full `PlannerPolicy` including the selected
+   `MultiChunkProfileId` and inherited ring-dimension schedule (via `policy_of`).
 5. Run the same DP regen hook: `find_schedule(key, &policy, …)`.
 
-#### Step 10 — New `Cfg` types and `ALL_GENERATED_FAMILIES` rows (`akita-config`)
+#### Step 10 — Current `Cfg` types and generated-family rows (`akita-config`)
 
-Add **D = 64 multi-chunk companions** for the existing non-zk D64 families:
+Direct fp128 multi-chunk configs are companions of the canonical adaptive
+families, so they copy `RingDimensionScheduleMode::AdaptiveDimension` as well as
+the field, decomposition, and security policy:
 
-| Base module | Multi-chunk module | Base `Cfg` (pattern) |
-|-------------|-------------------|----------------------|
-| `fp128_d64_onehot` | `fp128_d64_onehot_multi_chunk` | `fp128::D64OneHotMultiChunk` |
-| `fp128_d64_dense` | `fp128_d64_dense_multi_chunk` | `fp128::D64DenseMultiChunk` |
+| Base module | Multi-chunk module | `Cfg` |
+|-------------|-------------------|-------|
+| `fp128_onehot` | `fp128_onehot_multi_chunk` | `fp128::OneHotMultiChunk` (W8R2) |
+| `fp128_onehot` | `fp128_onehot_multi_chunk_w2r2` | `fp128::OneHotMultiChunkW2R2` |
+| `fp128_onehot` | `fp128_onehot_multi_chunk_w4r2` | `fp128::OneHotMultiChunkW4R2` |
+| `fp128_dense` | `fp128_dense_multi_chunk` | `fp128::DenseMultiChunk` (W8R2) |
 
-The companions delegate every layout parameter to their base `Cfg` via the
-`impl_multi_chunk_companion!` helper and override only `chunked_witness_cfg()`
-(→ `ChunkedWitnessCfg::d64_production()`) and `schedule_catalog()`.
+`impl_multi_chunk_companion!` overrides only the chunk profile and catalog
+function. `policy_of::<Cfg>()` therefore combines the base adaptive search
+domain (`A ∈ {64,128,256}`, `B,D ∈ {64,128}`, two searched levels, then
+uniform D64) with the selected W/R chunk profile. Candidate geometry, witness
+contraction, setup footprint, and proof bytes are all priced with
+`chunks_at_level(level)`.
 
-Each multi-chunk `Cfg`:
+The production recursive W8R2 family uses
+`RecursiveCommitmentConfig<OneHotMultiChunk>`. The recursive suffix DP searches
+the same bounded adaptive role-dimension domain while jointly pricing direct
+and setup-offloaded successors. The legacy
+`RecursiveCommitmentConfig<D64OneHotMultiChunk>` family remains available only
+as an explicit fixed-D64 comparison catalog.
 
-- `D = 64`, same field / decomposition / one-hot settings as its base.
-- `chunked_witness_cfg()` returns e.g.
-  `ChunkedWitnessCfg::d64_production()` (`MultiChunkProfileId::W8R2`: 8 chunks, 2
-  production constants — document on the preset).
-- `policy_of::<Cfg>()` picks up the config via the trait method (no override).
-- `schedule_catalog()` points at the `_multi_chunk.rs` table.
-- `runtime_schedule(key)` calls `resolve_schedule(key, &policy_of::<Self>(), …)`;
-  no key mutation — multi-chunk behavior comes entirely from policy + catalog.
+The regenerated scalar rows demonstrate that chunking participates in the
+search instead of being stamped on afterward:
+
+| Family/key | Root A/B/D | Level-1 A/B/D | Partition at root/L1 |
+|------------|------------|----------------|----------------------|
+| one-hot W2R2, nv=14 | 64/64/64 | 64/64/64 | 2 / 2 chunks |
+| one-hot W2R2, nv=32 | 256/64/64 | 256/64/64 | 2 / 2 chunks |
+| one-hot W4R2, nv=32 | 256/64/64 | 256/64/64 | 4 / 4 chunks |
+| one-hot W8R2, nv=32 | 256/64/64 | 256/64/64 | 8 / 8 chunks |
+| dense W8R2, nv=16 | 64/64/64 | 64/64/64 | 8 / 8 chunks |
+
+Level 2 and later use the configured uniform-D64 suffix and a single witness
+chunk. Standalone precommit profiles are generated from the same adaptive
+config, so their selected A dimension can vary with group shape (for example,
+the W2R2 profile grid contains D64, D128, and D256 A commitments while B stays
+D64). Adaptive search is currently scalar-root only: a request containing
+precommitted groups preserves their frozen profiles and uses the existing
+uniform-D64 grouped-root fallback. Recursive setup planning remains out of
+scope.
 
 Wire modules in [`crates/akita-schedules/src/generated/mod.rs`](../crates/akita-schedules/src/generated/mod.rs)
 behind the new feature flags.
@@ -726,14 +749,18 @@ behind the new feature flags.
 #### Step 12 — Regenerate tables
 
 ```bash
-cargo run --release -p akita-config --bin gen_schedule_tables -- \
+cargo run --release -p akita-planner --features catalog-gen \
+  --bin gen_schedule_tables -- \
   crates/akita-schedules/src/generated
 ```
 
-Commit new files:
+Commit the direct adaptive tables and their standalone-precommit companions:
 
-- `crates/akita-schedules/src/generated/fp128_d64_onehot_multi_chunk.rs`
-- `crates/akita-schedules/src/generated/fp128_d64_dense_multi_chunk.rs`
+- `crates/akita-schedules/src/generated/fp128_onehot_multi_chunk.rs`
+- `crates/akita-schedules/src/generated/fp128_onehot_multi_chunk_precommitted.rs`
+- the corresponding W2R2 and W4R2 one-hot pairs
+- `crates/akita-schedules/src/generated/fp128_dense_multi_chunk.rs`
+- `crates/akita-schedules/src/generated/fp128_dense_multi_chunk_precommitted.rs`
 
 Non-zk only in this spec phase.
 

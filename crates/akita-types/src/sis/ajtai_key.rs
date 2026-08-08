@@ -261,6 +261,22 @@ pub const SIS_MATRIX_ROLES: &[SisMatrixRole] = &[
     SisMatrixRole::Open,
 ];
 
+/// Whether generated SIS security floors cover one role/profile/dimension.
+#[must_use]
+pub fn sis_role_dimension_supported(
+    role: SisMatrixRole,
+    modulus_profile: SisModulusProfileId,
+    ring_dimension: u32,
+) -> bool {
+    match role {
+        SisMatrixRole::Inner => {
+            A_ROLE_RING_DIMS.contains(&ring_dimension)
+                || (modulus_profile == SisModulusProfileId::Q128OffsetA7F7 && ring_dimension == 512)
+        }
+        SisMatrixRole::Outer | SisMatrixRole::Open => BD_ROLE_RING_DIMS.contains(&ring_dimension),
+    }
+}
+
 /// Return whether the exact role cell is part of the canonical coverage.
 ///
 /// The function is deliberately role aware. It does not form a product of
@@ -272,19 +288,13 @@ pub fn sis_role_cell(
     ring_dimension: u32,
     coeff_linf_bound: u128,
 ) -> Option<SisRoleCell> {
-    let (dimension_supported, bounds) = match role {
-        SisMatrixRole::Inner => (
-            A_ROLE_RING_DIMS.contains(&ring_dimension)
-                || (modulus_profile == SisModulusProfileId::Q128OffsetA7F7
-                    && ring_dimension == 512),
-            COEFF_LINF_BUCKETS,
-        ),
-        SisMatrixRole::Outer | SisMatrixRole::Open => (
-            BD_ROLE_RING_DIMS.contains(&ring_dimension),
-            GADGET_COEFF_LINF_ANCHORS,
-        ),
+    let bounds = match role {
+        SisMatrixRole::Inner => COEFF_LINF_BUCKETS,
+        SisMatrixRole::Outer | SisMatrixRole::Open => GADGET_COEFF_LINF_ANCHORS,
     };
-    if !dimension_supported || !bounds.contains(&coeff_linf_bound) {
+    if !sis_role_dimension_supported(role, modulus_profile, ring_dimension)
+        || !bounds.contains(&coeff_linf_bound)
+    {
         return None;
     }
     Some(SisRoleCell {
