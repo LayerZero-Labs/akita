@@ -6,6 +6,7 @@ pub use materialize::materialize_eq_tensor_left;
 
 use super::MAX_COMPACT_STRIDE_TERMS;
 use crate::{AkitaError, FieldCore};
+use std::sync::Arc;
 
 /// Weights carried by one affine tensor axis.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -13,7 +14,7 @@ pub enum EqPairTensorWeights<F: FieldCore> {
     /// Every coordinate has coefficient one.
     Unit,
     /// Coordinate weights in increasing axis order.
-    Dense(Vec<F>),
+    Dense(Arc<[F]>),
 }
 
 /// One axis in a tensor product of paired equality addresses.
@@ -47,7 +48,8 @@ impl<F: FieldCore> EqPairTensorAxis<F> {
 
     /// Construct an axis with explicit coordinate coefficients.
     #[must_use]
-    pub fn dense(left_stride: usize, right_stride: usize, weights: Vec<F>) -> Self {
+    pub fn dense(left_stride: usize, right_stride: usize, weights: impl Into<Arc<[F]>>) -> Self {
+        let weights = weights.into();
         Self {
             len: weights.len(),
             left_stride,
@@ -118,7 +120,7 @@ impl<F: FieldCore> EqPairTensorFamily<F> {
 
             if axis.len == 1 {
                 if let EqPairTensorWeights::Dense(weights) = axis.weights {
-                    let weight = weights[0];
+                    let weight = *weights.first().ok_or(AkitaError::InvalidProof)?;
                     if weight.is_zero() {
                         return Ok(Self {
                             left_offset,

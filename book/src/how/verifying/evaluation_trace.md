@@ -32,12 +32,18 @@ public trace polynomial `T` used by Stage 2.
 - shared opening digit weights;
 - the source ring inner trace;
 - one coefficient per claim; and
-- one exact descriptor per nonempty witness unit.
+- one exact descriptor per nonempty witness unit; and
+- a prepared contraction plan.
 
 A unit descriptor contains the physical start of its first claim, the stride
 between claims, the first global block, and its exact block count. The verifier
 derives these values from `WitnessLayout`. It does not recompute chunk
 boundaries.
+
+Preparation also chooses the concrete contraction kernel. For a short affine
+range, it stores the two small block-weight tables. For a long range, it stores
+the exact dyadic unit segments used by the paired recurrence. Evaluation does
+not rebuild either plan.
 
 ## Coefficient and address factors
 
@@ -111,7 +117,8 @@ The verifier stores no witness-sized trace table and no dense block basis table.
 - Shared checked trace geometry:
   `crates/akita-types/src/trace_weight/`.
 - Exact `E` addresses: `crates/akita-types/src/witness.rs`.
-- Paired tensor recurrence: `crates/akita-algebra/src/offset_eq/tensor_pair.rs`.
+- Paired tensor model and kernels:
+  `crates/akita-algebra/src/offset_eq/tensor_pair/`.
 - Ring and subfield trace primitives:
   `crates/akita-types/src/field_reduction.rs`.
 

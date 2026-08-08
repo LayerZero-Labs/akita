@@ -11,7 +11,7 @@ fn bench_evaluation_trace(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(5));
 
-    for num_live_blocks in [64usize, 256, 1024, 4096, 16384] {
+    for num_live_blocks in [32usize, 64, 256, 1024, 4096, 16384] {
         for (layout, witness_chunks) in [
             ("single_chunk", 1),
             ("up_to_64_chunks", num_live_blocks.min(64)),

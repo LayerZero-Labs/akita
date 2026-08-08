@@ -38,23 +38,38 @@ struct PreparedEvaluationTraceGroup<E: FieldCore> {
     inner_trace: Arc<[E]>,
     claim_coefficients: Vec<E>,
     units: Vec<PreparedEvaluationTraceUnit>,
+    contraction: PreparedTraceContraction<E>,
 }
 
 /// Below this per-unit block count the affine scan wins despite its linear
 /// term; at and above it the logarithmic paired recurrence wins decisively.
 const TRACE_TENSOR_MIN_BLOCKS_PER_UNIT: usize = 64;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct TraceUnitTensorAxis {
     len: usize,
     block_stride: usize,
     lane_stride: usize,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct TraceUnitTensorSegment {
     first_unit: usize,
     axis: Option<TraceUnitTensorAxis>,
+}
+
+/// Block-axis work selected and constructed once during trace preparation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PreparedTraceContraction<E: FieldCore> {
+    /// Concrete affine weights for the small-block crossover region.
+    Affine {
+        low_block_weights: Arc<[E]>,
+        high_block_weights: Arc<[E]>,
+    },
+    /// Dyadic unit segments for the logarithmic paired recurrence.
+    Tensor {
+        segments: Vec<TraceUnitTensorSegment>,
+    },
 }
 
 fn trace_unit_tensor_axis(
@@ -165,6 +180,32 @@ fn trace_unit_tensor_segments(
     Ok(segments)
 }
 
+fn prepare_trace_contraction<E: FieldCore>(
+    block_opening_point: &[E],
+    basis: BasisMode,
+    units: &[PreparedEvaluationTraceUnit],
+    coefficient_block_len: usize,
+) -> Result<PreparedTraceContraction<E>, AkitaError> {
+    let max_unit_blocks = units
+        .iter()
+        .map(|unit| unit.block_count)
+        .max()
+        .ok_or(AkitaError::InvalidProof)?;
+    if max_unit_blocks == 1 || max_unit_blocks >= TRACE_TENSOR_MIN_BLOCKS_PER_UNIT {
+        return Ok(PreparedTraceContraction::Tensor {
+            segments: trace_unit_tensor_segments(units, coefficient_block_len)?,
+        });
+    }
+
+    let (low_block_point, high_block_point) = block_opening_point
+        .split_at_checked(block_opening_point.len() / 2)
+        .ok_or(AkitaError::InvalidProof)?;
+    Ok(PreparedTraceContraction::Affine {
+        low_block_weights: basis_weights(low_block_point, basis)?.into(),
+        high_block_weights: basis_weights(high_block_point, basis)?.into(),
+    })
+}
+
 /// Succinct verifier representation of the complete evaluation-trace weight.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PreparedEvaluationTrace<E: FieldCore> {
@@ -209,26 +250,6 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                 .split_at_checked(coefficient_variables)
                 .ok_or(AkitaError::InvalidProof)?;
             let block_point = &group.block_opening_point;
-            let max_unit_blocks = group
-                .units
-                .iter()
-                .map(|unit| unit.block_count)
-                .max()
-                .ok_or(AkitaError::InvalidProof)?;
-            let use_tensor_recurrence =
-                max_unit_blocks == 1 || max_unit_blocks >= TRACE_TENSOR_MIN_BLOCKS_PER_UNIT;
-            let linear_block_weights = if use_tensor_recurrence {
-                None
-            } else {
-                let low_variables = block_point.len() / 2;
-                let (low_block_point, high_block_point) = block_point
-                    .split_at_checked(low_variables)
-                    .ok_or(AkitaError::InvalidProof)?;
-                Some((
-                    basis_weights(low_block_point, group.basis)?,
-                    basis_weights(high_block_point, group.basis)?,
-                ))
-            };
             let digit_weights = &group.opening_digit_weights;
             let source_lane_count = source_ring_dimension / coefficient_block_len;
             let role_lane_count = group.opening_ring_dimension / coefficient_block_len;
@@ -253,14 +274,9 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                 .len()
                 .checked_mul(source_lane_count)
                 .ok_or_else(|| AkitaError::InvalidSetup("trace block stride overflow".into()))?;
-            let unit_tensor_segments = if use_tensor_recurrence {
-                trace_unit_tensor_segments(&group.units, coefficient_block_len)?
-            } else {
-                Vec::new()
-            };
             let mut families = Vec::new();
-            if use_tensor_recurrence {
-                let unit_family_count = unit_tensor_segments.len();
+            if let PreparedTraceContraction::Tensor { segments } = &group.contraction {
+                let unit_family_count = segments.len();
                 let family_count = group
                     .claim_coefficients
                     .len()
@@ -324,8 +340,10 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                             let inner_trace_evaluation = *inner_trace_evaluations
                                 .get(source_lane)
                                 .ok_or(AkitaError::InvalidProof)?;
-                            if let Some((low_block_weights, high_block_weights)) =
-                                &linear_block_weights
+                            if let PreparedTraceContraction::Affine {
+                                low_block_weights,
+                                high_block_weights,
+                            } = &group.contraction
                             {
                                 evaluation += claim_coefficient
                                     * inner_trace_evaluation
@@ -337,14 +355,18 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                                         block_stride,
                                         role_lane_count,
                                         digit_weights,
-                                        high_block_weights,
-                                        low_block_weights,
+                                        high_block_weights.as_ref(),
+                                        low_block_weights.as_ref(),
                                         &[],
                                     )?;
                                 continue;
                             }
                             let mut axes = vec![
-                                EqPairTensorAxis::dense(0, role_lane_count, digit_weights.to_vec()),
+                                EqPairTensorAxis::dense(
+                                    0,
+                                    role_lane_count,
+                                    Arc::clone(digit_weights),
+                                ),
                                 EqPairTensorAxis::unit(unit.block_count, 1, block_stride),
                             ];
                             if let Some(axis) = tensor_axis {
@@ -365,8 +387,8 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                 }
                 Ok(())
             };
-            if use_tensor_recurrence {
-                for segment in unit_tensor_segments {
+            if let PreparedTraceContraction::Tensor { segments } = &group.contraction {
+                for segment in segments {
                     let first_unit = group
                         .units
                         .get(segment.first_unit)
@@ -378,7 +400,7 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                     contract_unit(unit, None)?;
                 }
             }
-            if linear_block_weights.is_none() {
+            if matches!(group.contraction, PreparedTraceContraction::Tensor { .. }) {
                 evaluation += match group.basis {
                     BasisMode::Lagrange => eval_boolean_pair_tensor_families::<_, false, false>(
                         block_point,
@@ -466,9 +488,17 @@ where
             .get(parameters.claim_range())
             .ok_or(AkitaError::InvalidProof)?
             .to_vec();
+        let block_opening_point = parameters.shared_block_opening_point();
+        let basis = parameters.basis();
+        let contraction = prepare_trace_contraction(
+            &block_opening_point,
+            basis,
+            &prepared_units,
+            inputs.relation_coefficient_block_len,
+        )?;
         groups.push(PreparedEvaluationTraceGroup {
-            block_opening_point: parameters.shared_block_opening_point(),
-            basis: parameters.basis(),
+            block_opening_point,
+            basis,
             source_ring_dimension: parameters.source_ring_dimension(),
             opening_ring_dimension: group_dims.d_d(),
             coefficient_block_len: inputs.relation_coefficient_block_len,
@@ -476,6 +506,7 @@ where
             inner_trace: parameters.shared_inner_trace(),
             claim_coefficients,
             units: prepared_units,
+            contraction,
         });
     }
     if groups.is_empty() {
@@ -565,12 +596,15 @@ pub fn evaluation_trace_benchmark_case(
     let num_variables = coefficient_variables
         .checked_add(column_variables)
         .ok_or_else(|| AkitaError::InvalidSetup("trace benchmark point width overflow".into()))?;
+    let block_opening_point: Arc<[F]> = (0..block_variables)
+        .map(|index| F::from_u64(101 + index as u64))
+        .collect::<Vec<_>>()
+        .into();
+    let contraction =
+        prepare_trace_contraction(&block_opening_point, basis, &units, COEFFICIENT_BLOCK_LEN)?;
     let trace = PreparedEvaluationTrace {
         groups: vec![PreparedEvaluationTraceGroup {
-            block_opening_point: (0..block_variables)
-                .map(|index| F::from_u64(101 + index as u64))
-                .collect::<Vec<_>>()
-                .into(),
+            block_opening_point,
             basis,
             source_ring_dimension: SOURCE_RING_DIMENSION,
             opening_ring_dimension: OPENING_RING_DIMENSION,
@@ -582,6 +616,7 @@ pub fn evaluation_trace_benchmark_case(
                 .into(),
             claim_coefficients: vec![F::from_u64(401), F::from_u64(409)],
             units,
+            contraction,
         }],
         num_variables,
     };
@@ -616,6 +651,13 @@ mod tests {
                     .map(|unit| {
                         let mut separate = group.clone();
                         separate.units = vec![unit.clone()];
+                        separate.contraction = prepare_trace_contraction(
+                            &separate.block_opening_point,
+                            separate.basis,
+                            &separate.units,
+                            separate.coefficient_block_len,
+                        )
+                        .unwrap();
                         separate
                     })
                     .collect();
@@ -647,6 +689,8 @@ mod tests {
             block_count: 2,
         };
         for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
+            let units = vec![unit.clone()];
+            let contraction = prepare_trace_contraction(&block_point, basis, &units, 2).unwrap();
             let trace = PreparedEvaluationTrace {
                 groups: vec![PreparedEvaluationTraceGroup {
                     block_opening_point: Arc::clone(&block_point),
@@ -657,7 +701,8 @@ mod tests {
                     opening_digit_weights: Arc::clone(&digit_weights),
                     inner_trace: Arc::clone(&inner_trace),
                     claim_coefficients: vec![claim_coefficient],
-                    units: vec![unit.clone()],
+                    units,
+                    contraction,
                 }],
                 num_variables: 6,
             };
