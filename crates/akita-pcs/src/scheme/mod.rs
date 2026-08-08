@@ -258,6 +258,7 @@ where
     where
         T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
+        Cfg::ExtField: akita_prover::kernels::sumcheck::SumcheckTableOperations<Cfg::Field>,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
         P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, B, B>,
         B: ComputeBackendSetup<Cfg::Field>

@@ -199,7 +199,7 @@ macro_rules! delegate_tensor_kernels {
                 &self,
                 prepared: Option<&Self::PreparedSetup>,
                 source: S,
-            ) -> Result<super::kernels::TensorPackedWitness<E>, AkitaError> {
+            ) -> Result<super::kernels::TensorPackedWitness<F, E>, AkitaError> {
                 CpuBackend.packed_witness(prepared, source)
             }
 
@@ -241,7 +241,10 @@ macro_rules! delegate_tensor_kernels {
                 coeffs: &[E],
             ) -> Result<
                 Option<
-                    crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>,
+                    crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<
+                        F,
+                        E,
+                    >,
                 >,
                 AkitaError,
             > {

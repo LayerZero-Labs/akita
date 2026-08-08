@@ -1,22 +1,30 @@
 //! Packed field abstractions and architecture-specific SIMD backends.
 
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "avx2",
-    not(all(target_feature = "avx512f", target_feature = "avx512dq"))
-))]
+#[cfg(target_arch = "x86_64")]
 pub(crate) mod avx2;
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "avx512f",
-    target_feature = "avx512dq"
-))]
+#[cfg(target_arch = "x86_64")]
 pub(crate) mod avx512;
 pub(crate) mod ext;
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub(crate) mod neon;
+#[cfg(any(
+    target_arch = "x86_64",
+    all(target_arch = "aarch64", target_feature = "neon")
+))]
+mod runtime_common;
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+pub mod runtime_neon;
+#[cfg(target_arch = "x86_64")]
+pub mod runtime_x86;
 
 pub use ext::{PackedFpExt2, PackedFpExt4, PackedFpExt8};
+
+/// Coefficient storage and first-round coefficients produced while
+/// materializing an fp32 quartic tensor factor.
+pub type Fp32TensorFactorRoundOutput<const P: u32> = (
+    Box<[Fp32<P>]>,
+    (crate::FpExt4<Fp32<P>>, crate::FpExt4<Fp32<P>>),
+);
 
 use crate::ext::{fp_ext8_mul_schedule, fp_ext8_square_schedule, FpExt2Config};
 use crate::{FieldCore, Fp128, Fp32, Fp64, Invertible};
@@ -87,6 +95,13 @@ pub trait PackedField:
 
     /// Broadcast one scalar across all lanes.
     fn broadcast(value: Self::Scalar) -> Self;
+
+    /// Sum four lane-wise products with one final field reduction when the
+    /// backend supports delayed reduction.
+    #[inline(always)]
+    fn sum_four_products(left: [Self; 4], right: [Self; 4]) -> Self {
+        left[0] * right[0] + left[1] * right[1] + left[2] * right[2] + left[3] * right[3]
+    }
 
     /// Square one packed value.
     #[inline(always)]

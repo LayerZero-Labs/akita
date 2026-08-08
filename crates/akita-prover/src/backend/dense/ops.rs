@@ -163,9 +163,29 @@ where
         Ok(evals)
     }
 
+    pub(crate) fn tensor_packed_extension_table<E, const D: usize>(
+        &self,
+    ) -> Result<akita_sumcheck::EvaluationTable<F, E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let (_split_bits, width) = self.tensor_shape::<E, D>(None)?;
+        let live_len = self.live_coeff_len()?;
+        let flat = &self.field_coeffs()[..live_len];
+        let table_len = live_len / width;
+        let [table] = akita_sumcheck::EvaluationTable::from_multilinear_evaluation_array_fn(
+            table_len,
+            |_, logical_row| {
+                let base = logical_row * width;
+                E::from_base_slice(&flat[base..base + width])
+            },
+        )?;
+        Ok(table)
+    }
+
     pub(crate) fn tensor_packed_extension_sparse_evals<E>(
         &self,
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError>
     where
         E: ExtField<F>,
     {
@@ -175,7 +195,7 @@ where
     pub(crate) fn tensor_packed_extension_sparse_linear_combination<E>(
         polys: &[&Self],
         coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError>
     where
         E: ExtField<F>,
     {

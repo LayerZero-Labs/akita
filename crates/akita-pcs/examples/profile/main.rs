@@ -6,6 +6,7 @@ mod parallel;
 mod report;
 #[cfg_attr(feature = "profile-onehot-fp128", allow(dead_code))]
 mod workload;
+mod workload_params;
 
 use std::env;
 use std::fs;

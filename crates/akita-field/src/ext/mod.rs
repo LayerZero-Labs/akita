@@ -16,7 +16,7 @@ mod tests;
 use super::prime::{Fp128, Fp32, Fp64};
 use super::unreduced::{
     AccumPair, FoldMatrixFp32, FoldMatrixFp64, FpExt2Fp64ProductAccum, FpExt4Fp32ProductAccum,
-    HasOptimizedFold, HasUnreducedOps,
+    FpExt4Fp32SmallProductAccum, HasOptimizedFold, HasUnreducedOps,
 };
 use crate::{
     BalancedDigitLookup, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, Invertible,

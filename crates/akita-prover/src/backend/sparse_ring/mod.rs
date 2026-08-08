@@ -576,7 +576,7 @@ where
     pub(crate) fn tensor_packed_extension_sparse_evals<E>(
         &self,
     ) -> Result<
-        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>,
+        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<F, E>>,
         AkitaError,
     >
     where

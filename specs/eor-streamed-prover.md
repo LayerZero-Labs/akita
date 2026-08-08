@@ -505,29 +505,22 @@ folded-away table. Recommended: **stream the transform too**
 Fallback (state in worklog if chosen): pack once before the EOR and hold the full
 table across the sum-check (higher peak RSS, removes the redundant pack only).
 
-### Packing readiness (coordinate with `specs/packed-sumcheck.md`)
+### Evaluation table contract
 
-This spec is written in **scalar** terms (`Vec<E>`, `E::fold_one`,
-`add_constant_product`), but the loops it touches — the `EorWitnessSource` round-0
-fold, `fused_fold_and_accumulate`, and the budget-driven factor fold — are **exactly
-the loops the packed-SIMD workstream rewrites** (`specs/packed-sumcheck.md`). Packing
-is a field-exact representation change orthogonal to the streaming algorithm here, but
-to avoid building scalar loops that get rewritten immediately after, implement the new
-abstractions in **packing-ready shape**:
+The current scalar names in this spec do not define the final stored shape. The
+EOR witness, a materialized factor, and every folded dense residual must use the
+coefficient first `EvaluationTable` from
+[`sumcheck-kernel-architecture.md`](sumcheck-kernel-architecture.md).
 
-- Define `EorWitnessSource` and the fold/accumulate helpers over a **slice/word view**
-  that admits a packed backing (`&[E]` ↔ `&[E::Packing]` with a scalar tail), not a
-  hard-coded scalar `Vec<E>` element-at-a-time loop. The default impl can be the scalar
-  (`NoPacking`, `WIDTH = 1`) path, so this is a *shape* constraint, not extra work now.
-- Keep the round-0 streamed fold expressed as the linear interpolation
-  `even + r₀·(odd − even)` over contiguous lanes — that maps directly onto the packed
-  fold primitive (`packed-sumcheck.md`, Slice 1) with no `ProductAccum` involvement.
-- The delayed-reduction primitive used here (`mul_base_to_product_accum`) is the one the
-  packing spec must reconcile with SIMD (`packed-sumcheck.md` D1); do not assume the
-  scalar `ProductAccum` is the final shape on the packed path.
+`EorWitnessSource` must emit directly into that table or stream directly into the
+same canonical fold operation. It must not build a full scalar `Vec<E>` and then
+rearrange it. The round zero interpolation remains
+`left + r * (right - left)`, but dense rows use binding order so `left` and
+`right` are two contiguous halves.
 
-Net: the streaming algorithm lands first (scalar, byte-identical), and packing slots in
-as a representation swap on the same abstractions rather than a second rewrite.
+The canonical sumcheck operation also owns delayed reduction. This streaming
+design must not add a separate EOR accumulator or assume that the scalar
+`ProductAccum` is the final CPU kernel shape.
 
 ### Alternatives considered (and rejected)
 

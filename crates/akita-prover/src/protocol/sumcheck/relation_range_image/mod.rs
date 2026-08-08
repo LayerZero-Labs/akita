@@ -76,26 +76,29 @@
 //! the virtual, relation, and EvaluationTrace terms around the same local `w0` /
 //! `dw` scan so the witness-side work is shared.
 
-use super::fold_prefix_pair_with_zero_padding as fold_folded_lane_pair;
 use super::two_round_prefix::{
     build_stage2_bivariate_skip_proof_from_m_compact, can_use_stage2_two_round_prefix,
     Stage2BivariateSkipState,
 };
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
+use crate::kernels::sumcheck::{
+    stage2_equality_block as stage2_eq_block, SumcheckKernelPlan, SumcheckTableOperations,
+};
 use akita_algebra::poly::trim_trailing_zeros;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
+use akita_field::{AkitaError, ExtField, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
-    fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver, UniPoly,
+    fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, DelayedProductSum,
+    DirectProductSum, EvaluationTable, ProductSumAccumulator, SumcheckInstanceProver, UniPoly,
 };
 use std::mem;
 use std::time::Instant;
 
-enum WitnessState<E: FieldCore> {
+enum WitnessState<F: FieldCore, E: ExtField<F>> {
     CompactPrefix(std::sync::Arc<[i8]>),
-    FoldedSuffix(Vec<E>),
+    FoldedSuffix(EvaluationTable<F, E>),
 }
 
 struct TwoRoundCompactPrefix<E: FieldCore> {
@@ -125,6 +128,59 @@ fn fold_two_round_quad<E: FieldCore>(v00: E, v10: E, v01: E, v11: E, r0: E, r1: 
     let x0 = v00 + r0 * (v10 - v00);
     let x1 = v01 + r0 * (v11 - v01);
     x0 + r1 * (x1 - x0)
+}
+
+#[inline]
+fn reverse_power_of_two_index(index: usize, len: usize) -> usize {
+    debug_assert!(len.is_power_of_two());
+    if len <= 1 {
+        0
+    } else {
+        index.reverse_bits() >> (usize::BITS - len.trailing_zeros())
+    }
+}
+
+fn reorder_power_of_two_values<E: FieldCore>(values: &[E]) -> Vec<E> {
+    debug_assert!(!values.is_empty() && values.len().is_power_of_two());
+    (0..values.len())
+        .map(|stored| values[reverse_power_of_two_index(stored, values.len())])
+        .collect()
+}
+
+fn fold_binding_order_values<E: FieldCore>(values: &mut Vec<E>, challenge: E) {
+    debug_assert!(values.len().is_power_of_two() && values.len() >= 2);
+    let half = values.len() / 2;
+    for row in 0..half {
+        let left = values[row];
+        values[row] = left + challenge * (values[row + half] - left);
+    }
+    values.truncate(half);
+}
+
+fn stage2_evaluation_table<F, E>(
+    logical_lane_rows: &[E],
+    live_lane_count: usize,
+    lane_capacity: usize,
+    coefficient_count: usize,
+) -> EvaluationTable<F, E>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    debug_assert!(coefficient_count.is_power_of_two());
+    debug_assert_eq!(logical_lane_rows.len(), live_lane_count * coefficient_count);
+    let lanes_use_binding_order = live_lane_count == lane_capacity;
+    EvaluationTable::from_evaluation_fn(logical_lane_rows.len(), |stored_row| {
+        let stored_coefficient = stored_row / live_lane_count;
+        let stored_lane = stored_row % live_lane_count;
+        let logical_coefficient = reverse_power_of_two_index(stored_coefficient, coefficient_count);
+        let logical_lane = if lanes_use_binding_order {
+            reverse_power_of_two_index(stored_lane, live_lane_count)
+        } else {
+            stored_lane
+        };
+        logical_lane_rows[logical_lane * coefficient_count + logical_coefficient]
+    })
 }
 
 #[inline]
@@ -174,23 +230,6 @@ fn reduce_compact_rel<E: FieldCore + HasUnreducedOps>(rel: CompactRelAccum<E>) -
 }
 
 #[inline]
-fn stage2_eq_block(
-    j_base: usize,
-    blk: usize,
-    num_first: usize,
-    first_bits: usize,
-    block_size: usize,
-    live_pairs: usize,
-) -> (usize, usize) {
-    debug_assert!(num_first.is_power_of_two());
-    let j = j_base + blk;
-    let j_high = j >> first_bits;
-    let bucket_remaining = num_first - (j & (num_first - 1));
-    let blk_end = (blk + block_size.min(bucket_remaining)).min(live_pairs);
-    (j_high, blk_end)
-}
-
-#[inline]
 pub(crate) fn accumulate_relation_coeffs<E: FieldCore>(
     rel: &mut [E; 3],
     w0: E,
@@ -202,6 +241,18 @@ pub(crate) fn accumulate_relation_coeffs<E: FieldCore>(
     rel[0] += w0 * p0;
     rel[1] += w0 * dp + dw * p0;
     rel[2] += dw * dp;
+}
+
+#[inline]
+fn accumulate_relation_products<E, A>(rel: &mut [A; 3], w0: E, dw: E, p0: E, dp: E)
+where
+    E: FieldCore + HasUnreducedOps,
+    A: ProductSumAccumulator<E>,
+{
+    rel[0].add_product(w0, p0);
+    rel[1].add_product(w0, dp);
+    rel[1].add_product(dw, p0);
+    rel[2].add_product(dw, dp);
 }
 
 #[inline]
@@ -226,8 +277,9 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
 /// The range-image term is pre-weighted by `batching_coeff` through `split_eq`, so
 /// the round polynomial is:
 /// `batching_coeff * virtual_round(t) + relation_round(t)`.
-pub struct RelationRangeImageProver<E: FieldCore> {
-    witness_state: WitnessState<E>,
+pub struct RelationRangeImageProver<F: FieldCore, E: ExtField<F>> {
+    witness_state: WitnessState<F, E>,
+    kernel_plan: SumcheckKernelPlan,
     b: usize,
     batching_coeff: E,
     range_image_evaluation: E,
@@ -239,6 +291,7 @@ pub struct RelationRangeImageProver<E: FieldCore> {
     additional_relation_terms: Option<AdditionalRelationTerms<E>>,
     evaluation_trace: PreparedProverEvaluationTrace<E>,
     live_lane_count: usize,
+    lanes_in_binding_order: bool,
     lane_bits: usize,
     num_vars: usize,
     relation_trace_claim: E,
@@ -266,7 +319,11 @@ mod round_flow;
 pub(crate) use additional_terms::AdditionalRelationTerms;
 pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProverEvaluationTrace};
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
+impl<F, E> RelationRangeImageProver<F, E>
+where
+    F: FieldCore,
+    E: ExtField<F> + FromPrimitiveInt + HasUnreducedOps,
+{
     // Fused relation (`alpha * m`) + trace-weight addend for one witness
     // corner. `witness_idx0` is the first flat index of an adjacent pair in
     // the Boolean `w` table (`lane * coeff_count + coefficient`).

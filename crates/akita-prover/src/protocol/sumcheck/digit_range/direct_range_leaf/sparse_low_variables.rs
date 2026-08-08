@@ -1,6 +1,13 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
+impl<F, E> LowBasisRangeCheckProver<E, F>
+where
+    F: FieldCore,
+    E: ExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
+{
     #[inline]
     pub(super) fn use_sparse_x_y_round(&self) -> bool {
         !self.in_x_phase() && self.live_x_cols < (1usize << self.col_bits)
@@ -35,45 +42,45 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         )
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "LowBasisRangeCheckProver::compute_round_materialized_sparse_x_y"
-    )]
-    pub(super) fn compute_round_materialized_sparse_x_y(
+    #[tracing::instrument(skip_all, name = "LowBasisRangeCheckProver::compute_round_sparse_x_y")]
+    pub(super) fn compute_round_sparse_x_y(
         &self,
-        range_image: &[E],
+        range_image_len: usize,
+        entry_coefficients: impl Fn(&mut [E], usize) + Sync,
     ) -> EqFactoredUniPoly<E> {
         debug_assert!(self.use_sparse_x_y_round());
-        let y_len = range_image.len() / self.live_x_cols;
+        let y_len = range_image_len / self.live_x_cols;
         let y_pairs = y_len / 2;
-        compute_range_round_polynomial_from_range_image(
+        compute_range_round_polynomial_from_entry_coefficients(
             &self.split_eq,
             &self.polynomial_precomputation,
-            |j| {
+            |out, j| {
                 let x = j / y_pairs;
                 if x >= self.live_x_cols {
-                    return (E::zero(), E::zero());
+                    out.fill(E::zero());
+                    return;
                 }
                 let y_pair = j % y_pairs;
                 let top = x * y_len + 2 * y_pair;
-                (range_image[top], range_image[top + 1])
+                entry_coefficients(out, top);
             },
         )
     }
 
     #[tracing::instrument(
         skip_all,
-        name = "LowBasisRangeCheckProver::fuse_materialized_sparse_x_y_and_compute_round"
+        name = "LowBasisRangeCheckProver::fuse_sparse_x_y_fold_and_compute_round"
     )]
-    pub(super) fn fuse_materialized_sparse_x_y_and_compute_round(
+    pub(super) fn fuse_sparse_x_y_fold_and_compute_round(
         &self,
-        range_image: &[E],
+        range_image: SparseRangeImageValues<'_, E>,
         r: E,
     ) -> (Vec<E>, EqFactoredUniPoly<E>) {
         debug_assert!(self.use_sparse_x_y_round());
         debug_assert!(self.next_use_sparse_x_y_round_after_current());
+        let range_image_len = range_image.len();
         let live_x_cols = self.live_x_cols;
-        let y_len = range_image.len() / live_x_cols;
+        let y_len = range_image_len / live_x_cols;
         debug_assert_eq!(y_len % 4, 0);
         let next_y_len = y_len / 2;
         let live_pairs = next_y_len / 2;
@@ -87,9 +94,38 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         let num_coeffs_q = full_num_coeffs_q;
         let mut out = vec![E::zero(); live_x_cols * next_y_len];
 
+        let packed_coefficients = match range_image {
+            SparseRangeImageValues::ClassCoded(values) => {
+                E::try_fold_class_coded_and_compute_sparse_affine_polynomial_round(
+                    self.kernel_plan,
+                    &values.class_codes,
+                    &values.class_values,
+                    &mut out,
+                    (e_first, e_second),
+                    r,
+                    polynomial_precomputation.degree_q,
+                )
+            }
+            SparseRangeImageValues::Materialized(values) => {
+                E::try_fold_and_compute_sparse_affine_polynomial_round(
+                    self.kernel_plan,
+                    values,
+                    &mut out,
+                    e_first,
+                    e_second,
+                    r,
+                    polynomial_precomputation.degree_q,
+                )
+            }
+        };
+        if let Some(coefficients) = packed_coefficients {
+            let poly = EqFactoredUniPoly::from_q_coeffs(coefficients[..full_num_coeffs_q].to_vec());
+            return (out, poly);
+        }
+
         let process_column = |(x, col_out): (usize, &mut [E])| {
             debug_assert!(full_num_coeffs_q <= MAX_DIRECT_RANGE_COEFFICIENTS);
-            let col = &range_image[x * y_len..(x + 1) * y_len];
+            let column_base = x * y_len;
             let j_base = x * current_y_half;
             let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
             let mut batch_out = [[E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS]; 4];
@@ -109,8 +145,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                     for (slot, pair_y) in (pair_base..pair_base + 4).enumerate() {
                         let top_y = 2 * pair_y;
                         let top = 4 * pair_y;
-                        let left_range_image = col[top] + r * (col[top + 1] - col[top]);
-                        let right_range_image = col[top + 2] + r * (col[top + 3] - col[top + 2]);
+                        let source = column_base + top;
+                        let left = range_image.value(source);
+                        let right = range_image.value(source + 1);
+                        let next_left = range_image.value(source + 2);
+                        let next_right = range_image.value(source + 3);
+                        let left_range_image = left + r * (right - left);
+                        let right_range_image = next_left + r * (next_right - next_left);
                         col_out[top_y] = left_range_image;
                         col_out[top_y + 1] = right_range_image;
                         pairs[slot] = (left_range_image, right_range_image);
@@ -143,8 +184,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 for pair_y in blk + full_chunks * 4..blk_end {
                     let top_y = 2 * pair_y;
                     let top = 4 * pair_y;
-                    let left_range_image = col[top] + r * (col[top + 1] - col[top]);
-                    let right_range_image = col[top + 2] + r * (col[top + 3] - col[top + 2]);
+                    let source = column_base + top;
+                    let left = range_image.value(source);
+                    let right = range_image.value(source + 1);
+                    let next_left = range_image.value(source + 2);
+                    let next_right = range_image.value(source + 3);
+                    let left_range_image = left + r * (right - left);
+                    let right_range_image = next_left + r * (next_right - next_left);
                     col_out[top_y] = left_range_image;
                     col_out[top_y + 1] = right_range_image;
                     compute_entry_coefficients(
@@ -209,11 +255,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         name = "LowBasisRangeCheckProver::fold_range_image_sparse_x_y"
     )]
     pub(super) fn fold_range_image_sparse_x_y(
-        range_image: &[E],
+        range_image_len: usize,
+        range_image_at: impl Fn(usize) -> E + Sync,
         live_x_cols: usize,
         y_len: usize,
         r: E,
     ) -> Vec<E> {
+        debug_assert_eq!(range_image_len, live_x_cols * y_len);
         debug_assert_eq!(y_len % 2, 0);
         let next_y_len = y_len / 2;
         let mut out = vec![E::zero(); live_x_cols * next_y_len];
@@ -221,11 +269,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         cfg_chunks_mut!(out, next_y_len)
             .enumerate()
             .for_each(|(x, col_out)| {
-                let col = &range_image[x * y_len..(x + 1) * y_len];
+                let column_base = x * y_len;
                 for (pair_y, dst) in col_out.iter_mut().enumerate() {
-                    let top = 2 * pair_y;
-                    let left_range_image = col[top];
-                    let right_range_image = col[top + 1];
+                    let top = column_base + 2 * pair_y;
+                    let left_range_image = range_image_at(top);
+                    let right_range_image = range_image_at(top + 1);
                     *dst = left_range_image + r * (right_range_image - left_range_image);
                 }
             });

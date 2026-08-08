@@ -1,18 +1,21 @@
-//! Setup-product sumcheck for a dense table against two disjoint factors.
+//! Setup-product sumcheck over two canonical coefficient-first table phases.
 //!
-//! The table is laid out as `left * right_len + right`. The right factor is
-//! bound first, then the left factor. This matches setup products of the form
+//! Coefficient variables are bound first, followed by setup-index variables.
+//! This matches setup products of the form
 //! `S(i, y) * setup_index_weight(i) * alpha(y)` without materializing the full
-//! `setup_index_weight(i) * alpha(y)` table.
+//! `setup_index_weight(i) * alpha(y)` table or a combined factor table.
 
 mod product_table;
+#[cfg(test)]
 mod utils;
 
+use crate::kernels::sumcheck::SumcheckTableOperations;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::uni_poly::UniPoly;
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, LiftBase, MulBase,
+    MulBaseUnreduced,
 };
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
@@ -47,7 +50,7 @@ pub struct AkitaStage3Prover<'a, F: FieldCore, E: FieldCore> {
 impl<'a, F, E> AkitaStage3Prover<'a, F, E>
 where
     F: FieldCore,
-    E: FieldCore + FromPrimitiveInt + MulBaseUnreduced<F>,
+    E: ExtField<F> + FromPrimitiveInt + MulBaseUnreduced<F> + SumcheckTableOperations<F>,
 {
     /// Construct a recursive setup-product sumcheck prover.
     #[allow(clippy::too_many_arguments)]
@@ -124,7 +127,7 @@ where
 impl<F, E> SumcheckInstanceProver<E> for AkitaStage3Prover<'_, F, E>
 where
     F: FieldCore,
-    E: FieldCore + FromPrimitiveInt + MulBaseUnreduced<F>,
+    E: ExtField<F> + FromPrimitiveInt + MulBaseUnreduced<F> + SumcheckTableOperations<F>,
 {
     fn num_rounds(&self) -> usize {
         self.setup.num_rounds()
@@ -138,8 +141,8 @@ where
         self.setup.input_claim()
     }
 
-    fn compute_round_univariate(&mut self, round: usize, _previous_claim: E) -> UniPoly<E> {
-        self.setup.compute_round_univariate(round)
+    fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UniPoly<E> {
+        self.setup.compute_round_univariate(round, previous_claim)
     }
 
     fn ingest_challenge(&mut self, round: usize, r_round: E) {
@@ -162,7 +165,12 @@ fn build_setup_product_term<'a, F, E, T>(
 ) -> Result<RectangularSetupProductTerm<'a, F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBaseUnreduced<F> + AkitaSerialize,
+    E: FpExtEncoding<F>
+        + FromPrimitiveInt
+        + LiftBase<F>
+        + MulBaseUnreduced<F>
+        + AkitaSerialize
+        + SumcheckTableOperations<F>,
     T: Transcript<F>,
 {
     let (geometry, mut setup_index_weight, alpha_pows) = {

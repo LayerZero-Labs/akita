@@ -619,6 +619,16 @@ pub trait HasUnreducedOps: FieldCore {
     type MulU64Accum: AdditiveGroup;
     /// Accumulator for `self × self` products.
     type ProductAccum: AdditiveGroup;
+    /// Accumulator for a bounded batch of `self × u16` products.
+    ///
+    /// The caller must promote this accumulator before the field-specific
+    /// non-wrapping batch bound is exceeded. Implementations without a
+    /// narrower representation use `ProductAccum` directly.
+    type SmallProductAccum: AdditiveGroup;
+
+    /// Maximum number of maximal `u16` products that may be added to one
+    /// `SmallProductAccum` without overflow.
+    const SMALL_PRODUCT_ACCUM_MAX_TERMS: usize = usize::MAX;
 
     /// Whether delayed reduction over `ProductAccum` is exact relative to
     /// per-term `Mul` for the small product batches used by inner products.
@@ -631,10 +641,30 @@ pub trait HasUnreducedOps: FieldCore {
     /// path, so callers that must stay byte-identical to `Mul` are unaffected.
     const DELAYED_PRODUCT_SUM_IS_EXACT: bool = false;
 
+    /// Whether converting one reduced element into `ProductAccum` is a cheap
+    /// coefficient widening operation rather than a field multiplication.
+    const REDUCED_TO_PRODUCT_ACCUM_IS_CHEAP: bool = false;
+
     /// Widening `self × small` with no reduction.
     fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum;
     /// Widening `self × other` with no reduction.
     fn mul_to_product_accum(self, other: Self) -> Self::ProductAccum;
+
+    /// Embed one reduced element into the additive product accumulator.
+    ///
+    /// The default remains correct for accumulator representations without a
+    /// direct embedding. Fields that advertise the cheap capability override
+    /// this with coefficient widening.
+    #[inline]
+    fn reduced_to_product_accum(self) -> Self::ProductAccum {
+        self.mul_to_product_accum(Self::one())
+    }
+
+    /// Widening `self × small` into a short-batch accumulator.
+    fn mul_u16_to_small_product_accum(self, small: u16) -> Self::SmallProductAccum;
+
+    /// Promote a short-batch accumulator into the full product accumulator.
+    fn promote_small_product_accum(accum: Self::SmallProductAccum) -> Self::ProductAccum;
 
     /// Reduce a narrow-mul accumulator to a canonical field element.
     fn reduce_mul_u64_accum(accum: Self::MulU64Accum) -> Self;
@@ -665,6 +695,7 @@ impl_default_optimized_fold!(Fp128<P: u128>);
 impl<const P: u64> HasUnreducedOps for Fp64<P> {
     type MulU64Accum = Fp64ProductAccum;
     type ProductAccum = Fp64ProductAccum;
+    type SmallProductAccum = Fp64ProductAccum;
 
     #[inline]
     fn mul_u64_unreduced(self, small: u64) -> Fp64ProductAccum {
@@ -676,6 +707,16 @@ impl<const P: u64> HasUnreducedOps for Fp64<P> {
     fn mul_to_product_accum(self, other: Self) -> Fp64ProductAccum {
         let wide = self.mul_wide(other);
         Fp64ProductAccum([wide & u64::MAX as u128, wide >> 64])
+    }
+
+    #[inline]
+    fn mul_u16_to_small_product_accum(self, small: u16) -> Self::SmallProductAccum {
+        self.mul_u64_unreduced(u64::from(small))
+    }
+
+    #[inline]
+    fn promote_small_product_accum(accum: Self::SmallProductAccum) -> Self::ProductAccum {
+        accum
     }
 
     #[inline]
@@ -692,6 +733,7 @@ impl<const P: u64> HasUnreducedOps for Fp64<P> {
 impl<const P: u32> HasUnreducedOps for Fp32<P> {
     type MulU64Accum = Fp32ProductAccum;
     type ProductAccum = Fp32ProductAccum;
+    type SmallProductAccum = Fp32ProductAccum;
 
     #[inline]
     fn mul_u64_unreduced(self, small: u64) -> Fp32ProductAccum {
@@ -702,6 +744,16 @@ impl<const P: u32> HasUnreducedOps for Fp32<P> {
     #[inline]
     fn mul_to_product_accum(self, other: Self) -> Fp32ProductAccum {
         Fp32ProductAccum([self.mul_wide(other) as u128, 0])
+    }
+
+    #[inline]
+    fn mul_u16_to_small_product_accum(self, small: u16) -> Self::SmallProductAccum {
+        self.mul_u64_unreduced(u64::from(small))
+    }
+
+    #[inline]
+    fn promote_small_product_accum(accum: Self::SmallProductAccum) -> Self::ProductAccum {
+        accum
     }
 
     #[inline]
@@ -718,6 +770,7 @@ impl<const P: u32> HasUnreducedOps for Fp32<P> {
 impl<const P: u128> HasUnreducedOps for Fp128<P> {
     type MulU64Accum = Fp128MulU64Accum;
     type ProductAccum = Fp128ProductAccum;
+    type SmallProductAccum = Fp128ProductAccum;
 
     #[inline]
     fn mul_u64_unreduced(self, small: u64) -> Fp128MulU64Accum {
@@ -729,6 +782,16 @@ impl<const P: u128> HasUnreducedOps for Fp128<P> {
     fn mul_to_product_accum(self, other: Self) -> Fp128ProductAccum {
         let [r0, r1, r2, r3] = self.mul_wide(other);
         Fp128ProductAccum([r0 as u128, r1 as u128, r2 as u128, r3 as u128])
+    }
+
+    #[inline]
+    fn mul_u16_to_small_product_accum(self, small: u16) -> Self::SmallProductAccum {
+        self.mul_to_product_accum(Self::from_u64(u64::from(small)))
+    }
+
+    #[inline]
+    fn promote_small_product_accum(accum: Self::SmallProductAccum) -> Self::ProductAccum {
+        accum
     }
 
     #[inline]

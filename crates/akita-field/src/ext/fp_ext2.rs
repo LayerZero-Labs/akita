@@ -377,6 +377,7 @@ macro_rules! impl_fp_ext2_unreduced_identity {
         impl<const $p: $pty, C: FpExt2Config<$base<$p>>> HasUnreducedOps for FpExt2<$base<$p>, C> {
             type MulU64Accum = Self;
             type ProductAccum = Self;
+            type SmallProductAccum = Self;
 
             #[inline]
             fn mul_u64_unreduced(self, small: u64) -> Self {
@@ -385,6 +386,14 @@ macro_rules! impl_fp_ext2_unreduced_identity {
             #[inline]
             fn mul_to_product_accum(self, other: Self) -> Self {
                 self * other
+            }
+            #[inline]
+            fn mul_u16_to_small_product_accum(self, small: u16) -> Self {
+                self * Self::from_u64(u64::from(small))
+            }
+            #[inline]
+            fn promote_small_product_accum(accum: Self) -> Self {
+                accum
             }
             #[inline]
             fn reduce_mul_u64_accum(accum: Self) -> Self {
@@ -530,6 +539,7 @@ pub(crate) fn fp_ext2_mul_to_accum_fp64<const P: u64, C: FpExt2Config<Fp64<P>>>(
 impl<const P: u64, C: FpExt2Config<Fp64<P>>> HasUnreducedOps for FpExt2<Fp64<P>, C> {
     type MulU64Accum = AccumPair<<Fp64<P> as HasUnreducedOps>::MulU64Accum>;
     type ProductAccum = FpExt2Fp64ProductAccum;
+    type SmallProductAccum = FpExt2Fp64ProductAccum;
 
     // `fp_ext2_mul_to_accum_fp64` keeps the full >128-bit coefficient via carry-aware
     // base-2^64 limbs, so summing a batch and reducing once equals per-term `Mul`.
@@ -548,6 +558,16 @@ impl<const P: u64, C: FpExt2Config<Fp64<P>>> HasUnreducedOps for FpExt2<Fp64<P>,
     #[inline]
     fn mul_to_product_accum(self, other: Self) -> FpExt2Fp64ProductAccum {
         fp_ext2_mul_to_accum_fp64::<P, C>(self.coeffs, other.coeffs)
+    }
+
+    #[inline]
+    fn mul_u16_to_small_product_accum(self, small: u16) -> Self::SmallProductAccum {
+        self.mul_to_product_accum(Self::from_u64(u64::from(small)))
+    }
+
+    #[inline]
+    fn promote_small_product_accum(accum: Self::SmallProductAccum) -> Self::ProductAccum {
+        accum
     }
 
     #[inline]

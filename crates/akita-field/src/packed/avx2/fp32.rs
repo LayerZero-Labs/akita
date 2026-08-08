@@ -4,6 +4,13 @@ use super::*;
 pub(crate) const FP32_WIDTH: usize = 8;
 
 /// AVX2 packed arithmetic for `Fp32<P>`, processing 8 lanes.
+#[cfg_attr(
+    not(all(
+        target_feature = "avx2",
+        not(all(target_feature = "avx512f", target_feature = "avx512dq"))
+    )),
+    allow(unreachable_pub)
+)]
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct PackedFp32Avx2<const P: u32>(pub [Fp32<P>; FP32_WIDTH]);
@@ -522,6 +529,16 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
     #[inline]
     fn broadcast(value: Self::Scalar) -> Self {
         Self([value; FP32_WIDTH])
+    }
+
+    #[inline(always)]
+    fn sum_four_products(left: [Self; 4], right: [Self; 4]) -> Self {
+        unsafe {
+            Self::from_vec(Self::dot_product_4_vec(
+                left.map(Self::to_vec),
+                right.map(Self::to_vec),
+            ))
+        }
     }
 
     #[inline(always)]

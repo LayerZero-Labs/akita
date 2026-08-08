@@ -177,7 +177,7 @@ for a stacked follow-up.
 `flat-public-matrix-and-exact-ntt-cache.md`,
 `role-native-projected-digit-layout.md`, `setup-layout-repack.md`,
 `setup-offloading-planner.md`,
-`eor-streamed-prover.md`, `packed-sumcheck.md`,
+`eor-streamed-prover.md`, `sumcheck-kernel-architecture.md`,
 `planner-incidence-generalization.md`, `akita-field-refactor.md`,
 `akita-compute-backend-metal.md`, `crt-ntt-prime-profiles.md`,
 `large-digit-ntt-infrastructure.md`,

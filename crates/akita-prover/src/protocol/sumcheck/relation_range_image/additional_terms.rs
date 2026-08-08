@@ -2,8 +2,8 @@
 
 use akita_algebra::{offset_eq::OffsetEqWindow, poly::trim_trailing_zeros, UniPoly};
 use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
-use akita_sumcheck::reduce_signed_accum;
+use akita_field::{AkitaError, ExtField, FieldCore, FromPrimitiveInt, Zero};
+use akita_sumcheck::{reduce_signed_accum, EvaluationTable};
 use std::cmp::Ordering;
 use std::ops::Range;
 
@@ -323,9 +323,31 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
         UniPoly::from_coeffs(coefficients)
     }
 
-    pub(crate) fn round_polynomial_folded(&self, folded_witness: &[E]) -> UniPoly<E> {
-        self.round_polynomial_with(|index| {
-            folded_witness.get(index).copied().unwrap_or_else(E::zero)
+    pub(crate) fn round_polynomial_folded<F>(
+        &self,
+        folded_witness: &EvaluationTable<F, E>,
+        live_lane_count: usize,
+        lanes_in_binding_order: bool,
+        coefficient_count: usize,
+    ) -> UniPoly<E>
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        self.round_polynomial_with(|logical_index| {
+            let logical_lane = logical_index / coefficient_count;
+            if logical_lane >= live_lane_count {
+                return E::zero();
+            }
+            let logical_coefficient = logical_index % coefficient_count;
+            let stored_coefficient =
+                super::reverse_power_of_two_index(logical_coefficient, coefficient_count);
+            let stored_lane = if lanes_in_binding_order {
+                super::reverse_power_of_two_index(logical_lane, live_lane_count)
+            } else {
+                logical_lane
+            };
+            folded_witness.evaluation(stored_coefficient * live_lane_count + stored_lane)
         })
     }
 

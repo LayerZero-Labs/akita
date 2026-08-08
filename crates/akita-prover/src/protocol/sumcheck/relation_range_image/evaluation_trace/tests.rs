@@ -147,6 +147,18 @@ where
         let prepared =
             PreparedProverEvaluationTrace::new(&semantic_trace, coeff_count, output_scale).unwrap();
         assert_eq!(prepared.materialize_dense(), expected_table,);
+        for lane in 0..live_len / coeff_count {
+            let mut reconstructed = vec![E::zero(); coeff_count];
+            prepared.for_each_source_in_lane(lane, |factor, source_values| {
+                for (value, source) in reconstructed.iter_mut().zip(source_values) {
+                    *value += factor * *source;
+                }
+            });
+            assert_eq!(
+                reconstructed,
+                expected_table[lane * coeff_count..(lane + 1) * coeff_count]
+            );
+        }
         let folded = fold_prepared_trace_at_point(prepared, live_len, coeff_count, &point);
         assert_eq!(
             folded,

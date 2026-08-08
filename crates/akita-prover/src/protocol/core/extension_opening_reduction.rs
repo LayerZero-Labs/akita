@@ -3,6 +3,7 @@ use crate::compute::{
     ComputeBackendSetup, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
     TensorProjectionKernel,
 };
+use crate::kernels::sumcheck::SumcheckTableOperations;
 use akita_field::unreduced::ReduceTo;
 use std::ops::Range;
 
@@ -91,7 +92,12 @@ pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, G, B
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + MulBaseUnreduced<F> + AkitaSerialize,
+    E: ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + MulBaseUnreduced<F>
+        + AkitaSerialize
+        + SumcheckTableOperations<F>,
     T: Transcript<F>,
     G: RootProverGroupTensor<F, E, B>,
     B: ComputeBackendSetup<F>,
@@ -225,13 +231,7 @@ where
         term_ranges.push(start..terms.len());
     }
 
-    let prover_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms)?;
-    if prover_claim != true_input_claim {
-        return Err(AkitaError::InvalidInput(
-            "extension-opening reduction input claim mismatch".to_string(),
-        ));
-    }
-    let mut prover = ExtensionOpeningReductionProver::new(terms, prover_claim)?;
+    let mut prover = ExtensionOpeningReductionProver::new(terms, true_input_claim)?;
     let (sumcheck, rho, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
         sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
     })?;
@@ -319,10 +319,10 @@ pub(in crate::protocol::core) fn build_extension_opening_reduction_terms<
     row_coefficients: &[E],
     tail_point: &[E],
     eta: &[E],
-) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>
+) -> Result<Vec<ExtensionOpeningReductionTerm<F, E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F> + MulBaseUnreduced<F>,
+    E: ExtField<F> + MulBaseUnreduced<F> + SumcheckTableOperations<F>,
     P: RootTensorSource<F, D>,
     B: ComputeBackendSetup<F>
         + for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>
@@ -365,10 +365,10 @@ fn try_sparse_extension_opening_reduction_terms<F, E, P, B, const D: usize>(
     row_coefficients: &[E],
     tail_point: &[E],
     eta: &[E],
-) -> Result<Option<Vec<ExtensionOpeningReductionTerm<E>>>, AkitaError>
+) -> Result<Option<Vec<ExtensionOpeningReductionTerm<F, E>>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F>,
+    E: MulBaseUnreduced<F>,
     P: RootTensorSource<F, D>,
     B: ComputeBackendSetup<F>
         + for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>,
@@ -402,7 +402,7 @@ where
             lazy_rounds
         )
         .entered();
-        ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<F>(
+        ExtensionOpeningReductionTerm::new_sparse_tensor_factor(
             witness_evals,
             tail_point.to_vec(),
             eta.to_vec(),
@@ -414,23 +414,24 @@ where
 }
 
 fn extension_opening_term_from_packed_witness<F, E>(
-    witness: TensorPackedWitness<E>,
+    witness: TensorPackedWitness<F, E>,
     tail_point: &[E],
     eta: &[E],
     coeff: E,
-) -> Result<ExtensionOpeningReductionTerm<E>, AkitaError>
+) -> Result<ExtensionOpeningReductionTerm<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F>,
+    E: MulBaseUnreduced<F> + SumcheckTableOperations<F>,
 {
-    let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
     match witness {
-        TensorPackedWitness::Dense(witness_evals) => {
-            ExtensionOpeningReductionTerm::new(witness_evals, factor_evals, coeff)
+        TensorPackedWitness::Dense(witness) => {
+            ExtensionOpeningReductionTerm::new_tensor(witness, tail_point, eta, coeff)
         }
-        TensorPackedWitness::Sparse(witness) => {
-            ExtensionOpeningReductionTerm::new_sparse(witness, factor_evals, coeff)
-        }
+        TensorPackedWitness::Sparse(witness) => ExtensionOpeningReductionTerm::new_sparse(
+            witness,
+            tensor_equality_factor_evals::<F, E>(tail_point, eta)?,
+            coeff,
+        ),
     }
 }
 
@@ -441,10 +442,10 @@ fn build_dense_extension_opening_reduction_terms<F, E, P, B, const D: usize>(
     row_coefficients: &[E],
     tail_point: &[E],
     eta: &[E],
-) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>
+) -> Result<Vec<ExtensionOpeningReductionTerm<F, E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F> + MulBaseUnreduced<F>,
+    E: ExtField<F> + MulBaseUnreduced<F> + SumcheckTableOperations<F>,
     P: RootTensorSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
 {

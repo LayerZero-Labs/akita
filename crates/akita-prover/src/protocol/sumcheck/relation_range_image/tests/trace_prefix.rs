@@ -196,15 +196,22 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(107);
 
-    let expected_w_full = RelationRangeImageProver::<F>::materialize_two_round_compact_prefix(
+    let expected_w_rows = RelationRangeImageProver::<F, F>::materialize_two_round_compact_prefix(
         &w_prefix,
         live_lane_count,
         coeff_count,
         r0,
         r1,
     );
-    let expected_alpha_round2 =
-        RelationRangeImageProver::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
+    let expected_w_full = stage2_evaluation_table(
+        &expected_w_rows,
+        live_lane_count,
+        1usize << lane_bits,
+        coeff_count / 4,
+    );
+    let expected_alpha_round2 = reorder_power_of_two_values(
+        &RelationRangeImageProver::<F, F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1),
+    );
     let mut expected_trace = PreparedProverEvaluationTrace::from_dense(
         trace_compact.clone(),
         live_lane_count,

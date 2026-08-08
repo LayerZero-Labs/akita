@@ -1,6 +1,7 @@
 use super::*;
 use akita_field::RandomSampling;
-use akita_field::{FpExt4, Prime24Offset3};
+use akita_field::{FpExt4, MulBase, Prime24Offset3};
+use akita_types::tensor_equality_factor_evals;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
@@ -9,11 +10,15 @@ type E = FpExt4<F>;
 
 /// One entry per stride-window at a random within-window offset — the real
 /// `np = 1` EOR witness shape (`stride = onehot_k / width = 2^s`).
-fn build_np1_witness<G: FieldCore + RandomSampling>(
+fn build_np1_witness<B, G>(
     log_chunks: usize,
     s: usize,
     rng: &mut StdRng,
-) -> SparseExtensionOpeningWitness<G> {
+) -> SparseExtensionOpeningWitness<B, G>
+where
+    B: FieldCore,
+    G: ExtField<B> + RandomSampling,
+{
     let stride = 1usize << s;
     let num_chunks = 1usize << log_chunks;
     let table_len = num_chunks * stride;
@@ -46,7 +51,7 @@ fn merge_free_matches_general_round_by_round() {
         let mut rng = StdRng::seed_from_u64(0x1234_5678 ^ ((log_chunks as u64) << 8));
         let coeff = E::random(&mut rng);
 
-        let mut fast = build_np1_witness::<E>(log_chunks, s, &mut rng);
+        let mut fast = build_np1_witness::<F, E>(log_chunks, s, &mut rng);
         // Reference: the identical witness with the fast path disabled.
         let mut reference = fast.clone();
         reference.merge_free_rounds_left = 0;
@@ -83,11 +88,14 @@ fn merge_free_matches_general_round_by_round() {
             fast.fold_in_place(r);
             reference.fold_in_place(r);
             assert_eq!(fast.table_len(), reference.table_len());
-            assert_eq!(
-                fast.entries(),
-                reference.entries(),
-                "folded entries mismatch (log_chunks={log_chunks}, round={round})"
-            );
+            assert_eq!(fast.indices(), reference.indices());
+            for row in 0..fast.num_entries() {
+                assert_eq!(
+                    fast.value(row),
+                    reference.value(row),
+                    "folded value mismatch (log_chunks={log_chunks}, round={round}, row={row})"
+                );
+            }
             fold_dense(&mut factor, r);
         }
         assert_eq!(fast.table_len(), 1);
@@ -109,12 +117,13 @@ fn merge_free_matches_general_round_by_round() {
 fn fused_term_matches_unfused_reference() {
     use akita_field::{FpExt4, Prime32Offset99};
     type TE = FpExt4<Prime32Offset99>;
+    let plan = SumcheckKernelPlan::detect();
 
     for (log_chunks, s) in [(6usize, 4usize), (14usize, 4usize)] {
         let mut rng = StdRng::seed_from_u64(0xfeed_1234 ^ ((log_chunks as u64) << 8));
         let coeff = TE::random(&mut rng);
 
-        let witness = build_np1_witness::<TE>(log_chunks, s, &mut rng);
+        let witness = build_np1_witness::<Prime32Offset99, TE>(log_chunks, s, &mut rng);
         let table_len = witness.table_len();
         assert_eq!(
             witness.merge_free_rounds_left, s,
@@ -123,9 +132,12 @@ fn fused_term_matches_unfused_reference() {
         let factor: Vec<TE> = (0..table_len).map(|_| TE::random(&mut rng)).collect();
 
         // Fused: the production term path engages the sparse fused fold.
-        let mut fused_term =
-            ExtensionOpeningReductionTerm::new_sparse(witness.clone(), factor.clone(), coeff)
-                .unwrap();
+        let mut fused_term = ExtensionOpeningReductionTerm::<Prime32Offset99, TE>::new_sparse(
+            witness.clone(),
+            factor.clone(),
+            coeff,
+        )
+        .unwrap();
 
         // Reference: identical inputs, but merge-free disabled so every round
         // takes the original general accumulate + general fold (no fusion).
@@ -138,7 +150,7 @@ fn fused_term_matches_unfused_reference() {
 
         for (round, &r) in challenges.iter().enumerate() {
             let (mut c_fused, mut q_fused) = (TE::zero(), TE::zero());
-            fused_term.accumulate_into(&mut c_fused, &mut q_fused);
+            fused_term.accumulate_into(plan, &mut c_fused, &mut q_fused);
 
             let (mut c_ref, mut q_ref) = (TE::zero(), TE::zero());
             ref_witness.accumulate_round(&ref_factor, coeff, &mut c_ref, &mut q_ref);
@@ -152,7 +164,7 @@ fn fused_term_matches_unfused_reference() {
                 "quadratic mismatch (log_chunks={log_chunks}, round={round})"
             );
 
-            fused_term.ingest_challenge(r);
+            fused_term.ingest_challenge(plan, r);
             ref_witness.fold_in_place(r);
             fold_dense(&mut ref_factor, r);
         }
@@ -173,20 +185,138 @@ fn fused_term_matches_unfused_reference() {
 }
 
 #[test]
+fn direct_dense_tensor_term_matches_materialized_factor() {
+    use akita_field::{FpExt4, Prime32Offset99};
+    type B = Prime32Offset99;
+    type G = FpExt4<B>;
+
+    let mut rng = StdRng::seed_from_u64(0xd1ec_7e05);
+    let tail_point = (0..10).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
+    let eta = (0..2).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
+    let witness = (0..1 << tail_point.len())
+        .map(|_| G::random(&mut rng))
+        .collect::<Vec<_>>();
+    let factor = tensor_equality_factor_evals::<B, G>(&tail_point, &eta).unwrap();
+    let coeff = G::random(&mut rng);
+    let direct_witness = EvaluationTable::from_multilinear_evaluations(&witness).unwrap();
+    let mut direct =
+        ExtensionOpeningReductionTerm::new_tensor(direct_witness, &tail_point, &eta, coeff)
+            .unwrap();
+    let mut materialized = ExtensionOpeningReductionTerm::new(witness, factor, coeff).unwrap();
+    let plan = SumcheckKernelPlan::detect();
+    for round in 0..tail_point.len() {
+        let mut direct_round = (G::zero(), G::zero());
+        direct.accumulate_into(plan, &mut direct_round.0, &mut direct_round.1);
+        let mut materialized_round = (G::zero(), G::zero());
+        materialized.accumulate_into(plan, &mut materialized_round.0, &mut materialized_round.1);
+        assert_eq!(direct_round, materialized_round, "round {round}");
+        let challenge = G::random(&mut rng);
+        direct.ingest_challenge(plan, challenge);
+        materialized.ingest_challenge(plan, challenge);
+    }
+    assert_eq!(
+        direct.final_witness_and_factor_evals(),
+        materialized.final_witness_and_factor_evals()
+    );
+}
+
+#[test]
+fn delayed_tensor_projection_matches_direct_products() {
+    use akita_field::{FpExt4, Prime32Offset99};
+    type B = Prime32Offset99;
+    type G = FpExt4<B>;
+
+    let mut rng = StdRng::seed_from_u64(0x7e05_4acc);
+    let eta = (0..2).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
+    let weights = EqPolynomial::evals(&eta).unwrap();
+    let projection = TensorFactorProjection::<B, G>::new(&eta).unwrap();
+    for _ in 0..256 {
+        let value = G::random(&mut rng);
+        let direct = weights
+            .iter()
+            .enumerate()
+            .fold(G::zero(), |acc, (coordinate, weight)| {
+                acc + <G as MulBase<B>>::mul_base(
+                    *weight,
+                    <G as ExtField<B>>::base_coefficient(&value, coordinate),
+                )
+            });
+        assert_eq!(projection.project(value), direct);
+    }
+}
+
+#[test]
+fn grouped_tensor_fold_respects_merge_free_boundary() {
+    use akita_field::{FpExt4, Prime32Offset99};
+    type B = Prime32Offset99;
+    type G = FpExt4<B>;
+
+    let mut rng = StdRng::seed_from_u64(0x7e11_50a7);
+    let palette = (0..2).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
+    let witness = SparseExtensionOpeningWitness::new(
+        1 << 14,
+        (0..2048)
+            .map(|chunk| {
+                let offset = (rng.next_u32() as usize) & 7;
+                (chunk * 8 + offset, palette[chunk & 1])
+            })
+            .collect(),
+    )
+    .unwrap();
+    assert_eq!(witness.merge_free_rounds_left, 3);
+    let tail_point = (0..14).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
+    let eta = (0..2).map(|_| G::random(&mut rng)).collect::<Vec<_>>();
+    let factor = tensor_equality_factor_evals::<B, G>(&tail_point, &eta).unwrap();
+    let coeff = G::random(&mut rng);
+
+    let mut grouped = ExtensionOpeningReductionTerm::new_sparse_tensor_factor(
+        witness.clone(),
+        tail_point,
+        eta,
+        coeff,
+        6,
+    )
+    .unwrap();
+    let mut dense =
+        ExtensionOpeningReductionTerm::new_sparse(witness.clone(), factor, coeff).unwrap();
+    let plan = SumcheckKernelPlan::detect();
+
+    for round in 0..14 {
+        let mut grouped_round = (G::zero(), G::zero());
+        grouped.accumulate_into(plan, &mut grouped_round.0, &mut grouped_round.1);
+        let mut dense_round = (G::zero(), G::zero());
+        dense.accumulate_into(plan, &mut dense_round.0, &mut dense_round.1);
+        assert_eq!(grouped_round, dense_round, "round {round}");
+
+        let challenge = G::random(&mut rng);
+        grouped.ingest_challenge(plan, challenge);
+        dense.ingest_challenge(plan, challenge);
+    }
+    assert_eq!(
+        grouped.final_witness_and_factor_evals(),
+        dense.final_witness_and_factor_evals()
+    );
+}
+
+#[test]
 fn cylindrical_term_matches_materialized_high_variable_extension() {
     use akita_field::{FpExt4, Prime32Offset99};
     type TE = FpExt4<Prime32Offset99>;
+    let plan = SumcheckKernelPlan::detect();
 
     let mut rng = StdRng::seed_from_u64(0xc711_1d3a);
     let native_witness = (0..8).map(|_| TE::random(&mut rng)).collect::<Vec<_>>();
     let native_factor = (0..8).map(|_| TE::random(&mut rng)).collect::<Vec<_>>();
     let coeff = TE::random(&mut rng);
 
-    let mut cylindrical =
-        ExtensionOpeningReductionTerm::new(native_witness.clone(), native_factor.clone(), coeff)
-            .expect("native term")
-            .extend_cylindrically(vec![TE::zero(), TE::zero()])
-            .expect("virtual extension");
+    let mut cylindrical = ExtensionOpeningReductionTerm::<Prime32Offset99, TE>::new(
+        native_witness.clone(),
+        native_factor.clone(),
+        coeff,
+    )
+    .expect("native term")
+    .extend_cylindrically(vec![TE::zero(), TE::zero()])
+    .expect("virtual extension");
 
     let mut materialized_witness = Vec::with_capacity(32);
     for _ in 0..4 {
@@ -194,23 +324,30 @@ fn cylindrical_term_matches_materialized_high_variable_extension() {
     }
     let mut materialized_factor = native_factor;
     materialized_factor.resize(32, TE::zero());
-    let mut materialized =
-        ExtensionOpeningReductionTerm::new(materialized_witness, materialized_factor, coeff)
-            .expect("materialized extension");
+    let mut materialized = ExtensionOpeningReductionTerm::<Prime32Offset99, TE>::new(
+        materialized_witness,
+        materialized_factor,
+        coeff,
+    )
+    .expect("materialized extension");
 
     for round in 0..5 {
         let (mut cylindrical_constant, mut cylindrical_quadratic) = (TE::zero(), TE::zero());
-        cylindrical.accumulate_into(&mut cylindrical_constant, &mut cylindrical_quadratic);
+        cylindrical.accumulate_into(plan, &mut cylindrical_constant, &mut cylindrical_quadratic);
         let (mut materialized_constant, mut materialized_quadratic) = (TE::zero(), TE::zero());
-        materialized.accumulate_into(&mut materialized_constant, &mut materialized_quadratic);
+        materialized.accumulate_into(
+            plan,
+            &mut materialized_constant,
+            &mut materialized_quadratic,
+        );
         assert_eq!(
             (cylindrical_constant, cylindrical_quadratic),
             (materialized_constant, materialized_quadratic),
             "round {round}"
         );
         let challenge = TE::random(&mut rng);
-        cylindrical.ingest_challenge(challenge);
-        materialized.ingest_challenge(challenge);
+        cylindrical.ingest_challenge(plan, challenge);
+        materialized.ingest_challenge(plan, challenge);
     }
     assert_eq!(
         cylindrical.final_witness_and_factor_evals(),

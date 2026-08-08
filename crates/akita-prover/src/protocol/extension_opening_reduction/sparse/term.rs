@@ -5,15 +5,15 @@ use super::*;
 /// A single dense term is the degenerate `1`-term case; the prover treats the
 /// dense and batched paths uniformly.
 #[derive(Debug, Clone)]
-pub struct ExtensionOpeningReductionTerm<E: FieldCore> {
-    pub(in crate::protocol::extension_opening_reduction) tables: ExtensionOpeningTables<E>,
+pub struct ExtensionOpeningReductionTerm<F: FieldCore, E: ExtField<F>> {
+    pub(in crate::protocol::extension_opening_reduction) tables: ExtensionOpeningTables<F, E>,
     pub(in crate::protocol::extension_opening_reduction) coeff: E,
     /// `coeff`-scaled `(constant, quadratic)` for the next round, pre-computed
     /// by the fused fold in [`Self::ingest_challenge`] for the dense path.
     pub(in crate::protocol::extension_opening_reduction) cached_accumulate: Option<(E, E)>,
 }
 
-impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
+impl<F: FieldCore, E: ExtField<F>> ExtensionOpeningReductionTerm<F, E> {
     /// Construct one term `coeff * sum_x witness(x) * factor(x)`.
     ///
     /// # Errors
@@ -23,11 +23,55 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
         validate_reduction_tables(&witness_evals, &factor_evals)?;
         Ok(Self {
             tables: ExtensionOpeningTables::Dense {
-                witness: witness_evals,
-                factor: factor_evals,
+                witness: EvaluationTable::from_multilinear_evaluations(&witness_evals)?,
+                factor: EvaluationTable::from_multilinear_evaluations(&factor_evals)?,
             },
             coeff,
             cached_accumulate: None,
+        })
+    }
+
+    /// Construct one dense term with the transparent tensor equality factor.
+    ///
+    /// The factor is written directly into its coefficient-first multilinear
+    /// table, so this ownership boundary never materializes a temporary factor
+    /// vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the witness length, tail point, or packed head point
+    /// does not describe one valid tensor factor table.
+    pub(crate) fn new_tensor(
+        witness: EvaluationTable<F, E>,
+        tail_point: &[E],
+        eta: &[E],
+        coeff: E,
+    ) -> Result<Self, AkitaError>
+    where
+        E: MulBaseUnreduced<F> + SumcheckTableOperations<F>,
+    {
+        let expected = checked_table_len(tail_point.len())?;
+        if witness.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: witness.len(),
+            });
+        }
+        let projection = TensorFactorProjection::<F, E>::new(eta)?;
+        let (factor, first_round) = {
+            let _span = tracing::debug_span!("extension_opening_factor_table", expected).entered();
+            E::materialize_tensor_factor_and_compute_product_round(
+                SumcheckKernelPlan::detect(),
+                &witness,
+                tail_point,
+                &projection,
+            )?
+        };
+        Ok(Self {
+            tables: ExtensionOpeningTables::Dense { witness, factor },
+            coeff,
+            cached_accumulate: first_round
+                .map(|(constant, quadratic)| (coeff * constant, coeff * quadratic)),
         })
     }
 
@@ -37,7 +81,7 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
     ///
     /// Returns an error if the sparse witness and factor table shapes differ.
     pub fn new_sparse(
-        witness_evals: SparseExtensionOpeningWitness<E>,
+        witness_evals: SparseExtensionOpeningWitness<F, E>,
         factor_evals: Vec<E>,
         coeff: E,
     ) -> Result<Self, AkitaError> {
@@ -63,16 +107,15 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
     ///
     /// Returns an error if the tensor factor shape and sparse witness domain
     /// differ, or if the tensor opening parameters are malformed.
-    pub fn new_sparse_tensor_factor<F>(
-        witness_evals: SparseExtensionOpeningWitness<E>,
+    pub fn new_sparse_tensor_factor(
+        witness_evals: SparseExtensionOpeningWitness<F, E>,
         tail_point: Vec<E>,
         eta: Vec<E>,
         coeff: E,
         materialize_at: usize,
     ) -> Result<Self, AkitaError>
     where
-        F: FieldCore,
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         let factor = TensorEqualityFactor::new::<F>(tail_point, eta, materialize_at)?;
         if witness_evals.table_len() != factor.len() {
@@ -143,7 +186,11 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningReductionTerm<E> {
+impl<F, E> ExtensionOpeningReductionTerm<F, E>
+where
+    F: FieldCore,
+    E: SumcheckTableOperations<F>,
+{
     /// Add this term's `coeff`-scaled `(constant, quadratic)` round
     /// contribution into the shared accumulators.
     ///
@@ -152,6 +199,7 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningReductio
     /// first round, and every round of the sparse/tensor paths).
     pub(in crate::protocol::extension_opening_reduction) fn accumulate_into(
         &mut self,
+        plan: SumcheckKernelPlan,
         constant: &mut E,
         quadratic: &mut E,
     ) {
@@ -162,44 +210,33 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningReductio
             }
             None => {
                 self.tables
-                    .accumulate_round(self.coeff, constant, quadratic);
+                    .accumulate_round(plan, self.coeff, constant, quadratic);
             }
         }
     }
 
     /// Fold this term's tables by one sumcheck challenge.
     ///
-    /// Two shapes fold and pre-compute the next round's `(constant, quadratic)`
-    /// in a single pass, caching the `coeff`-scaled result:
-    /// - a dense witness/factor with at least four entries, and
-    /// - a sparse witness still inside its merge-free plateau, with at least two
-    ///   merge-free rounds left so the look-ahead accumulation is also merge-free.
+    /// Representations with a fused fold and next-round operation cache the
+    /// `coeff`-scaled result. This includes dense tables, grouped sparse tensor
+    /// factors, and the simpler merge-free sparse path.
     ///
     /// Every other shape folds in place and clears the cache.
     pub(in crate::protocol::extension_opening_reduction) fn ingest_challenge(
         &mut self,
+        plan: SumcheckKernelPlan,
         r_round: E,
     ) {
         if self.tables.len() <= 1 {
             return;
         }
-        let fused = match &mut self.tables {
-            ExtensionOpeningTables::Dense { witness, factor } if witness.len() >= 4 => {
-                Some(fused_fold_and_accumulate(witness, factor, r_round))
-            }
-            ExtensionOpeningTables::Sparse { witness, factor }
-                if witness.merge_free_rounds_left >= 2 =>
-            {
-                Some(fused_fold_and_accumulate_sparse(witness, factor, r_round))
-            }
-            _ => None,
-        };
+        let fused = self.tables.fold_and_accumulate(plan, r_round);
         match fused {
             Some((constant, quadratic)) => {
                 self.cached_accumulate = Some((self.coeff * constant, self.coeff * quadratic));
             }
             None => {
-                self.tables.fold_in_place(r_round);
+                self.tables.fold_in_place(plan, r_round);
                 self.cached_accumulate = None;
             }
         }

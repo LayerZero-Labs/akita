@@ -4,8 +4,13 @@
 
 use super::{PackedField, PackedValue};
 use crate::ext::FpExt2Config;
+#[cfg(all(
+    target_feature = "avx2",
+    not(all(target_feature = "avx512f", target_feature = "avx512dq"))
+))]
+use crate::Fp128;
 use crate::Invertible;
-use crate::{Fp128, Fp32, Fp64};
+use crate::{Fp32, Fp64};
 use core::arch::x86_64::*;
 use core::fmt;
 use core::mem::transmute;
@@ -52,9 +57,17 @@ unsafe fn mul64_64_256(x: __m256i, y: __m256i) -> (__m256i, __m256i) {
     (res_hi, res_lo)
 }
 
+#[cfg(all(
+    target_feature = "avx2",
+    not(all(target_feature = "avx512f", target_feature = "avx512dq"))
+))]
 mod fp128;
 mod fp32;
 mod fp64;
+#[cfg(all(
+    target_feature = "avx2",
+    not(all(target_feature = "avx512f", target_feature = "avx512dq"))
+))]
 pub(crate) use fp128::*;
 pub(crate) use fp32::*;
 pub(crate) use fp64::*;

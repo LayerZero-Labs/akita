@@ -12,6 +12,7 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced,
 };
+use akita_sumcheck::EvaluationTable;
 use akita_types::FpExtEncoding;
 
 /// Tensor-packed root witness alternatives produced by a tensor kernel.
@@ -20,11 +21,11 @@ use akita_types::FpExtEncoding;
 /// alternatives is fixed, so an enum is the right model here. It is not a
 /// closed *input-source* enum, which is the pattern the open boundary forbids.
 #[derive(Debug, Clone)]
-pub enum TensorPackedWitness<E: FieldCore> {
-    /// Dense tensor-packed evaluations (universal fallback).
-    Dense(Vec<E>),
+pub enum TensorPackedWitness<F: FieldCore, E: ExtField<F>> {
+    /// Dense tensor-packed evaluations in canonical sumcheck storage.
+    Dense(EvaluationTable<F, E>),
     /// Sparse tensor-packed witness preserved when the source/backend can.
-    Sparse(SparseExtensionOpeningWitness<E>),
+    Sparse(SparseExtensionOpeningWitness<F, E>),
 }
 
 /// Outcome of a batched decompose-fold kernel invocation.
@@ -150,7 +151,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: S,
-    ) -> Result<TensorPackedWitness<E>, AkitaError>;
+    ) -> Result<TensorPackedWitness<F, E>, AkitaError>;
 
     /// Committed tensor-projected root polynomial.
     fn root_projection(
@@ -188,5 +189,5 @@ where
         prepared: Option<&Self::PreparedSetup>,
         source: S,
         coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>;
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError>;
 }

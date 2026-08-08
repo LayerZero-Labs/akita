@@ -4,6 +4,13 @@ use super::*;
 pub(crate) const FP64_WIDTH: usize = 4;
 
 /// AVX2 packed arithmetic for `Fp64<P>`, processing 4 lanes.
+#[cfg_attr(
+    not(all(
+        target_feature = "avx2",
+        not(all(target_feature = "avx512f", target_feature = "avx512dq"))
+    )),
+    allow(unreachable_pub)
+)]
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct PackedFp64Avx2<const P: u64>(pub [Fp64<P>; FP64_WIDTH]);

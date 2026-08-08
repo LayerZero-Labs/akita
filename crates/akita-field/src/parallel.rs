@@ -11,6 +11,10 @@ pub use rayon::prelude::*;
 #[cfg(feature = "parallel")]
 pub use rayon::join as __rayon_join;
 
+#[doc(hidden)]
+#[cfg(feature = "parallel")]
+pub use rayon::current_num_threads as __rayon_current_num_threads;
+
 /// Returns `.par_iter()` when `parallel` is enabled, `.iter()` otherwise.
 #[macro_export]
 macro_rules! cfg_iter {

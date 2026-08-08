@@ -5,6 +5,7 @@ use crate::compute::{
     tensor_root_projection, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx,
     RuntimeOpeningProveBackendFor, RuntimeRootProvePoly, RuntimeTensorBackendFor,
 };
+use crate::kernels::sumcheck::SumcheckTableOperations;
 use crate::{PreparedProverGroup, RootTensorProjectionPoly};
 use akita_challenges::Challenges;
 use akita_field::unreduced::ReduceTo;
@@ -80,7 +81,7 @@ where
         row_coefficients: &[E],
         tail_point: &[E],
         eta: &[E],
-    ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>;
+    ) -> Result<Vec<ExtensionOpeningReductionTerm<F, E>>, AkitaError>;
 }
 
 impl<F, P> RootProverGroupMeta<F> for PreparedProverGroup<'_, P>
@@ -209,7 +210,7 @@ impl<F, E, P, B> RootProverGroupTensor<F, E, B> for PreparedProverGroup<'_, P>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F>,
+    E: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F> + SumcheckTableOperations<F>,
     P: RuntimeRootProvePoly<F>,
     B: ComputeBackendSetup<F> + RuntimeTensorBackendFor<F, P, E>,
 {
@@ -260,7 +261,7 @@ where
         row_coefficients: &[E],
         tail_point: &[E],
         eta: &[E],
-    ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError> {
+    ) -> Result<Vec<ExtensionOpeningReductionTerm<F, E>>, AkitaError> {
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,

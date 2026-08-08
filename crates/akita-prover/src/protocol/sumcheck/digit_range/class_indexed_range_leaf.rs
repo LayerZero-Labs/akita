@@ -2,19 +2,17 @@
 
 use super::class_indexed_state::ClassIndexedTableState;
 use super::compact_digit_source::CompactDigitSource;
-use super::exact_prefix::ExactPrefixTable;
+use super::equality_tables::materialize_remaining_equality;
 use super::range_class_tables::{
     FoldedRangeImagePairTable, OrderedRangePairCoefficients, SecondRoundRangeQuartetCoefficients,
 };
 use super::round_accumulation::accumulate_equality_weighted_round;
-use super::{
-    compose_small_poly_with_affine, MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE,
-};
+use super::{MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE};
+use crate::kernels::sumcheck::{SumcheckKernelPlan, SumcheckTableOperations};
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
-use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
+use akita_field::{AkitaError, ExtField, FieldCore, FromPrimitiveInt};
+use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly, EvaluationTable};
 
 struct CompactRangeLeafState<E: FieldCore> {
     source: CompactDigitSource,
@@ -27,42 +25,29 @@ struct FirstChallengeFoldedRangeLeafState<E: FieldCore> {
     cached_second_round_coefficients: [E; MAX_TREE_STAGE_Q_DEGREE + 1],
 }
 
-type RangeImageTableState<E> =
-    ClassIndexedTableState<CompactRangeLeafState<E>, FirstChallengeFoldedRangeLeafState<E>, E>;
-
-fn accumulate_round<E: FieldCore + HasUnreducedOps>(
-    equality_prefix_weights: &[E],
-    equality_suffix_weights: &[E],
-    explicit_pair_count: usize,
-    padding_range_image: E,
-    pair_at: impl Fn(usize) -> (E, E) + Sync,
-    polynomial_coefficients: &[E],
-) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
-    let padding_coefficients =
-        compose_small_poly_with_affine(polynomial_coefficients, padding_range_image, E::zero());
-    accumulate_equality_weighted_round(
-        equality_prefix_weights,
-        equality_suffix_weights,
-        explicit_pair_count,
-        |pair_index| {
-            let (left, right) = pair_at(pair_index);
-            compose_small_poly_with_affine(polynomial_coefficients, left, right - left)
-        },
-        padding_coefficients,
-    )
+struct MaterializedRangeLeafState<F: FieldCore, E: ExtField<F>> {
+    range_image: EvaluationTable<F, E>,
+    equality: EvaluationTable<F, E>,
 }
 
+type RangeImageTableState<F, E> = ClassIndexedTableState<
+    CompactRangeLeafState<E>,
+    FirstChallengeFoldedRangeLeafState<E>,
+    MaterializedRangeLeafState<F, E>,
+>;
+
 /// Final equality-factored quartic over the virtual range-image table.
-pub(super) struct ClassIndexedRangeLeafProver<E: FieldCore> {
-    range_image: RangeImageTableState<E>,
+pub(super) struct ClassIndexedRangeLeafProver<F: FieldCore, E: ExtField<F>> {
+    range_image: RangeImageTableState<F, E>,
     split_eq: GruenSplitEq<E>,
     input_claim: E,
     polynomial_coefficients: Vec<E>,
     num_rounds: usize,
     rounds_completed: usize,
+    kernel_plan: SumcheckKernelPlan,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> ClassIndexedRangeLeafProver<E> {
+impl<F: FieldCore, E: ExtField<F> + FromPrimitiveInt> ClassIndexedRangeLeafProver<F, E> {
     pub(super) fn new(
         source: CompactDigitSource,
         equality_point: &[E],
@@ -95,18 +80,35 @@ impl<E: FieldCore + FromPrimitiveInt> ClassIndexedRangeLeafProver<E> {
             polynomial_coefficients,
             num_rounds: equality_point.len(),
             rounds_completed: 0,
+            kernel_plan: SumcheckKernelPlan::detect(),
         })
     }
 
     pub(super) fn final_range_image_eval(&self) -> E {
-        self.range_image
-            .final_value()
-            .expect("range-image leaf was not fully folded")
+        match &self.range_image {
+            RangeImageTableState::Materialized(table) => {
+                assert_eq!(
+                    table.range_image.len(),
+                    1,
+                    "range-image leaf was not fully folded"
+                );
+                table.range_image.evaluation(0)
+            }
+            RangeImageTableState::Compact(_) | RangeImageTableState::FirstChallengeFolded(_) => {
+                panic!("range-image leaf was not fully folded")
+            }
+        }
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
-    EqFactoredSumcheckInstanceProver<E> for ClassIndexedRangeLeafProver<E>
+impl<
+        F: FieldCore,
+        E: ExtField<F>
+            + FromPrimitiveInt
+            + HasOptimizedFold
+            + HasUnreducedOps
+            + SumcheckTableOperations<F>,
+    > EqFactoredSumcheckInstanceProver<E> for ClassIndexedRangeLeafProver<F, E>
 {
     fn num_rounds(&self) -> usize {
         self.num_rounds
@@ -168,21 +170,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
                 let _span = tracing::info_span!(
                     "digit_range_leaf_materialized_round",
                     round = self.rounds_completed,
-                    materialized_rows = table.explicit_len(),
-                    domain_len = table.domain_len(),
+                    materialized_rows = table.range_image.len(),
+                    domain_len = table.range_image.len(),
+                    kernel_strategy = "coefficient-first-polynomial",
                 )
                 .entered();
-                accumulate_round(
-                    equality_prefix_weights,
-                    equality_suffix_weights,
-                    table.explicit_len().div_ceil(2),
-                    table.default_value(),
-                    |pair_index| {
-                        (
-                            table.value_or_default(2 * pair_index),
-                            table.value_or_default(2 * pair_index + 1),
-                        )
-                    },
+                E::compute_weighted_affine_polynomial_round(
+                    self.kernel_plan,
+                    &table.range_image,
+                    &table.equality,
                     &self.polynomial_coefficients,
                 )
             }
@@ -263,25 +259,33 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
                         live_digits = source.live_len(),
                         explicit_quartets = source.quartet_count(),
                         lane_count = 1,
-                        kernel_strategy = "factorized-pair-rescan",
+                        kernel_strategy = "coefficient-first-range-image",
                     )
                     .entered();
                     let fold_context = E::precompute_fold(challenge);
-                    let explicit = cfg_into_iter!(0..source.quartet_count())
-                        .map(|quartet_index| {
+                    let table_len = source.domain_len() / 4;
+                    let explicit_len = source.quartet_count();
+                    let padding_pair = folded_pairs.value_by_pair_index(0);
+                    let padding = E::fold_one(&fold_context, padding_pair, padding_pair);
+                    let range_image =
+                        EvaluationTable::from_multilinear_evaluation_fn(table_len, |logical_row| {
+                            if logical_row >= explicit_len {
+                                return padding;
+                            }
                             let (left_pair, right_pair) =
-                                source.ordered_pair_indices_for_quartet(quartet_index);
+                                source.ordered_pair_indices_for_quartet(logical_row);
                             let left = folded_pairs.value_by_pair_index(left_pair);
                             let right = folded_pairs.value_by_pair_index(right_pair);
                             E::fold_one(&fold_context, left, right)
                         })
-                        .collect();
-                    let padding_pair = folded_pairs.value_by_pair_index(0);
-                    let padding = E::fold_one(&fold_context, padding_pair, padding_pair);
-                    Some(
-                        ExactPrefixTable::new(source.domain_len() / 4, explicit, padding)
-                            .expect("compact source and Boolean domain were validated"),
-                    )
+                        .expect("compact source and Boolean domain were validated");
+                    let (first, second) = self.split_eq.remaining_eq_tables();
+                    let equality = materialize_remaining_equality(first, second)
+                        .expect("split equality tables were validated");
+                    Some(MaterializedRangeLeafState {
+                        range_image,
+                        equality,
+                    })
                 }
                 RangeImageTableState::Compact(_) | RangeImageTableState::Materialized(_) => None,
             };
@@ -299,6 +303,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
                     round = self.rounds_completed,
                     live_digits = source.live_len(),
                     explicit_pairs = source.pair_count(),
+                    kernel_strategy = "coefficient-first-range-image",
                 )
                 .entered();
                 let folded_pairs = {
@@ -311,19 +316,25 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
                     .entered();
                     FoldedRangeImagePairTable::new(source.class_count(), challenge)
                 };
-                let explicit = cfg_into_iter!(0..source.pair_count())
-                    .map(|pair_index| {
-                        folded_pairs.value_by_pair_index(source.ordered_pair_index(pair_index))
+                let table_len = source.domain_len() / 2;
+                let explicit_len = source.pair_count();
+                let padding = folded_pairs.value_by_pair_index(0);
+                let range_image =
+                    EvaluationTable::from_multilinear_evaluation_fn(table_len, |logical_row| {
+                        if logical_row < explicit_len {
+                            folded_pairs.value_by_pair_index(source.ordered_pair_index(logical_row))
+                        } else {
+                            padding
+                        }
                     })
-                    .collect();
-                Some(
-                    ExactPrefixTable::new(
-                        source.domain_len() / 2,
-                        explicit,
-                        folded_pairs.value_by_pair_index(0),
-                    )
-                    .expect("compact source and Boolean domain were validated"),
-                )
+                    .expect("compact source and Boolean domain were validated");
+                let (first, second) = self.split_eq.remaining_eq_tables();
+                let equality = materialize_remaining_equality(first, second)
+                    .expect("split equality tables were validated");
+                Some(MaterializedRangeLeafState {
+                    range_image,
+                    equality,
+                })
             }
             RangeImageTableState::FirstChallengeFolded(_)
             | RangeImageTableState::Materialized(_) => None,
@@ -331,17 +342,19 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
         if let Some(table) = folded_from_compact {
             self.range_image = RangeImageTableState::Materialized(table);
         } else if let RangeImageTableState::Materialized(table) = &mut self.range_image {
+            let materialized_rows = table.range_image.len();
             let _span = tracing::info_span!(
                 "digit_range_fold_range_image",
                 round = self.rounds_completed,
-                materialized_rows = table.explicit_len(),
-                domain_len = table.domain_len(),
+                materialized_rows,
+                domain_len = materialized_rows,
+                kernel_strategy = "coefficient-first-fold",
             )
             .entered();
-            let fold_context = E::precompute_fold(challenge);
-            table
-                .fold_in_place(|left, right| E::fold_one(&fold_context, left, right))
-                .expect("validated exact-prefix range-image state can fold");
+            E::fold_first_variable(self.kernel_plan, &mut table.range_image, challenge);
+            if table.equality.len() >= 2 {
+                table.equality.sum_first_variable_halves();
+            }
         }
         self.rounds_completed += 1;
     }

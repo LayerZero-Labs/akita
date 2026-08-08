@@ -10,7 +10,7 @@ chapter it feeds. Keep this in sync with `specs/PRUNING.md` and the archive inde
 The active design frontier (keep as live specs):
 `flat-public-matrix-and-exact-ntt-cache`, `role-native-projected-digit-layout`,
 `setup-layout-repack`,
-`setup-offloading-planner`, `eor-streamed-prover`, `packed-sumcheck`,
+`setup-offloading-planner`, `eor-streamed-prover`, `sumcheck-kernel-architecture`,
 `planner-incidence-generalization`, `single-point-opening-batch`,
 `akita-field-refactor`, `akita-compute-backend-metal` (Metal tail),
 `crt-ntt-prime-profiles`, `large-digit-ntt-infrastructure`,

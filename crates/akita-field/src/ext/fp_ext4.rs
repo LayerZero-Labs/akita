@@ -564,12 +564,17 @@ impl<F: FieldCore + BalancedDigitLookup + Valid> BalancedDigitLookup for FpExt4<
 impl<const P: u32> HasUnreducedOps for FpExt4<Fp32<P>> {
     type MulU64Accum = Self;
     type ProductAccum = FpExt4Fp32ProductAccum;
+    type SmallProductAccum = FpExt4Fp32SmallProductAccum;
+
+    const SMALL_PRODUCT_ACCUM_MAX_TERMS: usize =
+        (u64::MAX / ((u32::MAX as u64) * (u16::MAX as u64))) as usize;
 
     // `fp_ext4_mul_to_accum_fp32` widens each Fp32 limb product
     // (< 7·p² ≈ 2^65) into a u128 slot with no `mod 2^128` wrap, so summing a
     // batch and reducing once matches per-limb reduce-then-add exactly. Covered
     // by `fp_ext4_fp32_accum_summation`.
     const DELAYED_PRODUCT_SUM_IS_EXACT: bool = true;
+    const REDUCED_TO_PRODUCT_ACCUM_IS_CHEAP: bool = true;
 
     #[inline]
     fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum {
@@ -580,6 +585,28 @@ impl<const P: u32> HasUnreducedOps for FpExt4<Fp32<P>> {
     #[inline]
     fn mul_to_product_accum(self, other: Self) -> Self::ProductAccum {
         fp_ext4_mul_to_accum_fp32(self.coeffs, other.coeffs)
+    }
+
+    #[inline]
+    fn reduced_to_product_accum(self) -> Self::ProductAccum {
+        FpExt4Fp32ProductAccum(
+            self.coeffs
+                .map(|coefficient| u128::from(coefficient.to_limbs())),
+        )
+    }
+
+    #[inline]
+    fn mul_u16_to_small_product_accum(self, small: u16) -> Self::SmallProductAccum {
+        let small = u64::from(small);
+        FpExt4Fp32SmallProductAccum(
+            self.coeffs
+                .map(|coefficient| u64::from(coefficient.to_limbs()) * small),
+        )
+    }
+
+    #[inline]
+    fn promote_small_product_accum(accum: Self::SmallProductAccum) -> Self::ProductAccum {
+        FpExt4Fp32ProductAccum(accum.0.map(u128::from))
     }
 
     #[inline]
@@ -676,6 +703,7 @@ macro_rules! impl_fp_ext4_unreduced_identity {
         impl<const $p: $pty> HasUnreducedOps for FpExt4<$base<$p>> {
             type MulU64Accum = Self;
             type ProductAccum = Self;
+            type SmallProductAccum = Self;
 
             #[inline]
             fn mul_u64_unreduced(self, small: u64) -> Self {
@@ -685,6 +713,15 @@ macro_rules! impl_fp_ext4_unreduced_identity {
             #[inline]
             fn mul_to_product_accum(self, other: Self) -> Self {
                 self * other
+            }
+            #[inline]
+            fn mul_u16_to_small_product_accum(self, small: u16) -> Self {
+                let small = $base::<$p>::from_u64(u64::from(small));
+                Self::new(self.coeffs.map(|coefficient| coefficient * small))
+            }
+            #[inline]
+            fn promote_small_product_accum(accum: Self) -> Self {
+                accum
             }
             #[inline]
             fn reduce_mul_u64_accum(accum: Self) -> Self {

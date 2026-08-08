@@ -324,7 +324,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
 
     pub(super) fn tensor_packed_sparse_witness<E>(
         &self,
-    ) -> Result<SparseExtensionOpeningWitness<E>, AkitaError>
+    ) -> Result<SparseExtensionOpeningWitness<F, E>, AkitaError>
     where
         E: ExtField<F>,
     {

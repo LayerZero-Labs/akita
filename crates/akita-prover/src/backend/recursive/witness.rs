@@ -17,9 +17,9 @@ use crate::backend::poly_helpers::{
     balanced_tight_digit_fold_partitioned, build_decompose_fold_witness,
 };
 use crate::compute::{CommitInnerPlan, CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
+use akita_sumcheck::EvaluationTable;
 use akita_types::{
-    tensor_column_partials_from_base_evals, tensor_packed_witness_evals, FpExtEncoding,
-    WitnessLayout,
+    tensor_column_partials_from_base_evals, tensor_opening_split, FpExtEncoding, WitnessLayout,
 };
 use std::{marker::PhantomData, sync::Arc};
 
@@ -229,13 +229,42 @@ where
         Ok(base_evals)
     }
 
-    pub(crate) fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    pub(crate) fn tensor_packed_extension_table<E>(
+        &self,
+    ) -> Result<EvaluationTable<F, E>, AkitaError>
     where
         E: ExtField<F>,
     {
+        let (split_bits, width) = tensor_opening_split::<F, E>()?;
         let num_vars = self.num_vars();
-        let base_evals = self.base_evals()?;
-        tensor_packed_witness_evals::<F, E>(num_vars, &base_evals)
+        if split_bits > num_vars {
+            return Err(AkitaError::InvalidInput(
+                "extension-opening tensor split exceeds recursive witness arity".to_string(),
+            ));
+        }
+        let table_len = 1usize
+            .checked_shl(u32::try_from(num_vars - split_bits).map_err(|_| {
+                AkitaError::InvalidInput("recursive tensor table dimension overflow".to_string())
+            })?)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("recursive tensor table length overflow".to_string())
+            })?;
+        let live_base_len = self.coeffs.len().checked_mul(D).ok_or_else(|| {
+            AkitaError::InvalidInput("recursive witness base length overflow".to_string())
+        })?;
+        let [table] =
+            EvaluationTable::from_multilinear_evaluation_array_fn(table_len, |_, logical_row| {
+                let base = logical_row * width;
+                E::from_base_fn(|coordinate| {
+                    let index = base + coordinate;
+                    if index < live_base_len {
+                        F::from_i8(self.coeffs[index / D][index % D])
+                    } else {
+                        F::zero()
+                    }
+                })
+            })?;
+        Ok(table)
     }
 
     pub(crate) fn tensor_extension_column_partials<E>(
@@ -273,7 +302,7 @@ where
         polys: &[&Self],
         coeffs: &[E],
     ) -> Result<
-        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>,
+        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<F, E>>,
         AkitaError,
     >
     where
@@ -302,7 +331,7 @@ where
     pub(crate) fn tensor_packed_extension_sparse_evals<E>(
         &self,
     ) -> Result<
-        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>,
+        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<F, E>>,
         AkitaError,
     >
     where
@@ -729,9 +758,9 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
-    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+    ) -> Result<TensorPackedWitness<F, E>, AkitaError> {
         Ok(TensorPackedWitness::Dense(
-            source.tensor_packed_extension_evals()?,
+            source.tensor_packed_extension_table()?,
         ))
     }
 
@@ -779,7 +808,7 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessBatchView<'_, F, D>,
         coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError> {
         let polys = source
             .polys
             .iter()

@@ -126,9 +126,9 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: DenseView<'_, F, D>,
-    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+    ) -> Result<TensorPackedWitness<F, E>, AkitaError> {
         Ok(TensorPackedWitness::Dense(
-            source.poly.tensor_packed_extension_evals::<E, D>()?,
+            source.poly.tensor_packed_extension_table::<E, D>()?,
         ))
     }
 
@@ -167,7 +167,7 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: DenseBatchView<'_, F, D>,
         coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
+    ) -> Result<Option<SparseExtensionOpeningWitness<F, E>>, AkitaError> {
         DensePoly::tensor_packed_extension_sparse_linear_combination(source.polys, coeffs)
     }
 }

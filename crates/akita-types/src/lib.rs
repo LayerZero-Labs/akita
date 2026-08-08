@@ -45,13 +45,13 @@ pub use extension_opening_reduction::{
     check_extension_opening_reduction_output, checked_table_len,
     derive_tensor_extension_opening_claim, derive_tensor_extension_opening_claim_from_partials,
     extension_opening_reduction_claim, extension_opening_reduction_eval_at_point,
-    num_rounds_from_table_len, project_tensor_factor_value, tensor_column_partials_from_base_evals,
+    num_rounds_from_table_len, tensor_column_partials_from_base_evals,
     tensor_column_partials_split_fold, tensor_equality_factor_eval_at_point,
     tensor_equality_factor_evals, tensor_opening_split, tensor_packed_witness_evals,
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, validate_reduction_tables,
     ExtensionOpeningFactorTerm, ExtensionOpeningReductionFactor,
     ExtensionOpeningReductionRoundResult, ExtensionOpeningTensorPartials, FlatColumnSource,
-    TensorColumnSource, EXTENSION_OPENING_REDUCTION_DEGREE,
+    TensorColumnSource, TensorFactorProjection, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,

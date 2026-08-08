@@ -1,6 +1,13 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
+impl<F, E> LowBasisRangeCheckProver<E, F>
+where
+    F: FieldCore,
+    E: ExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
+{
     #[tracing::instrument(
         skip_all,
         name = "LowBasisRangeCheckProver::fuse_materialized_prefix_x_and_compute_round"
@@ -165,7 +172,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         &self,
         compact_range_image: &[V],
     ) -> EqFactoredUniPoly<E> {
-        debug_assert!(self.rounds_completed < self.col_bits);
+        debug_assert!(self.use_prefix_x_round());
         debug_assert_eq!(
             compact_range_image.len(),
             self.live_x_cols * (1usize << (self.num_vars - self.col_bits))
@@ -249,7 +256,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         &self,
         range_image: &[E],
     ) -> EqFactoredUniPoly<E> {
-        debug_assert!(self.rounds_completed < self.col_bits);
+        debug_assert!(self.use_prefix_x_round());
         let y_len = range_image.len() / self.live_x_cols;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();

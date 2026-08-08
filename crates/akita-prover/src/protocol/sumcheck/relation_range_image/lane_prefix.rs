@@ -1,6 +1,26 @@
 use super::*;
 
 #[inline]
+fn fold_table_pair_with_zero_padding<F, E>(
+    table: &EvaluationTable<F, E>,
+    left: usize,
+    row_end: usize,
+    challenge: E,
+) -> E
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let value_0 = table.evaluation(left);
+    let value_1 = if left + 1 < row_end {
+        table.evaluation(left + 1)
+    } else {
+        E::zero()
+    };
+    value_0 + challenge * (value_1 - value_0)
+}
+
+#[inline]
 #[allow(clippy::too_many_arguments)]
 fn accumulate_fused_partial_lane_relation<E: FieldCore>(
     evaluation_trace: &PreparedProverEvaluationTrace<E>,
@@ -55,14 +75,18 @@ fn accumulate_fused_partial_lane_relation_signed<E: FieldCore + HasUnreducedOps>
     accumulate_relation_coeffs_signed(rel, w0, dw, p0 + t0, p1 + t1);
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
+impl<F, E> RelationRangeImageProver<F, E>
+where
+    F: FieldCore,
+    E: ExtField<F> + FromPrimitiveInt + HasUnreducedOps,
+{
     #[tracing::instrument(
         skip_all,
         name = "RelationRangeImageProver::fuse_folded_partial_lane_and_compute_next_round"
     )]
     pub(super) fn fuse_folded_partial_lane_and_compute_next_round(
         &self,
-        folded_witness: &[E],
+        folded_witness: &EvaluationTable<F, E>,
         r: E,
     ) -> (Vec<E>, Vec<E>, NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.next_uses_partial_lane_round());
@@ -89,8 +113,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 .par_chunks_mut(next_live_lane_count)
                 .enumerate()
                 .map(|(coefficient, coefficient_out)| {
-                    let coefficient_values = &folded_witness[coefficient * old_live_lane_count
-                        ..(coefficient + 1) * old_live_lane_count];
+                    let coefficient_start = coefficient * old_live_lane_count;
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * next_current_lane_half;
                     let mut virt = [E::zero(); 2];
@@ -111,11 +134,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         for lane_pair in blk..blk_end {
                             let next_left_lane = 2 * lane_pair;
                             let old_left_lane = 4 * lane_pair;
-                            let w0 = fold_folded_lane_pair(coefficient_values, old_left_lane, r);
+                            let w0 = fold_table_pair_with_zero_padding(
+                                folded_witness,
+                                coefficient_start + old_left_lane,
+                                coefficient_start + old_live_lane_count,
+                                r,
+                            );
                             coefficient_out[next_left_lane] = w0;
                             let w1 = if next_left_lane + 1 < next_live_lane_count {
-                                let w1 =
-                                    fold_folded_lane_pair(coefficient_values, old_left_lane + 2, r);
+                                let w1 = fold_table_pair_with_zero_padding(
+                                    folded_witness,
+                                    coefficient_start + old_left_lane + 2,
+                                    coefficient_start + old_live_lane_count,
+                                    r,
+                                );
                                 coefficient_out[next_left_lane + 1] = w1;
                                 w1
                             } else {
@@ -174,8 +206,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 for (coefficient, coefficient_out) in
                     out.chunks_mut(next_live_lane_count).enumerate()
                 {
-                    let coefficient_values = &folded_witness[coefficient * old_live_lane_count
-                        ..(coefficient + 1) * old_live_lane_count];
+                    let coefficient_start = coefficient * old_live_lane_count;
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * next_current_lane_half;
                     let mut blk = 0usize;
@@ -193,11 +224,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         for lane_pair in blk..blk_end {
                             let next_left_lane = 2 * lane_pair;
                             let old_left_lane = 4 * lane_pair;
-                            let w0 = fold_folded_lane_pair(coefficient_values, old_left_lane, r);
+                            let w0 = fold_table_pair_with_zero_padding(
+                                folded_witness,
+                                coefficient_start + old_left_lane,
+                                coefficient_start + old_live_lane_count,
+                                r,
+                            );
                             coefficient_out[next_left_lane] = w0;
                             let w1 = if next_left_lane + 1 < next_live_lane_count {
-                                let w1 =
-                                    fold_folded_lane_pair(coefficient_values, old_left_lane + 2, r);
+                                let w1 = fold_table_pair_with_zero_padding(
+                                    folded_witness,
+                                    coefficient_start + old_left_lane + 2,
+                                    coefficient_start + old_live_lane_count,
+                                    r,
+                                );
                                 coefficient_out[next_left_lane + 1] = w1;
                                 w1
                             } else {
@@ -249,8 +289,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 .par_chunks_mut(next_live_lane_count)
                 .enumerate()
                 .map(|(coefficient, coefficient_out)| {
-                    let coefficient_values = &folded_witness[coefficient * old_live_lane_count
-                        ..(coefficient + 1) * old_live_lane_count];
+                    let coefficient_start = coefficient * old_live_lane_count;
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * next_current_lane_half;
                     let mut virt = [E::zero(); 3];
@@ -271,11 +310,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         for lane_pair in blk..blk_end {
                             let next_left_lane = 2 * lane_pair;
                             let old_left_lane = 4 * lane_pair;
-                            let w0 = fold_folded_lane_pair(coefficient_values, old_left_lane, r);
+                            let w0 = fold_table_pair_with_zero_padding(
+                                folded_witness,
+                                coefficient_start + old_left_lane,
+                                coefficient_start + old_live_lane_count,
+                                r,
+                            );
                             coefficient_out[next_left_lane] = w0;
                             let w1 = if next_left_lane + 1 < next_live_lane_count {
-                                let w1 =
-                                    fold_folded_lane_pair(coefficient_values, old_left_lane + 2, r);
+                                let w1 = fold_table_pair_with_zero_padding(
+                                    folded_witness,
+                                    coefficient_start + old_left_lane + 2,
+                                    coefficient_start + old_live_lane_count,
+                                    r,
+                                );
                                 coefficient_out[next_left_lane + 1] = w1;
                                 w1
                             } else {
@@ -337,8 +385,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 for (coefficient, coefficient_out) in
                     out.chunks_mut(next_live_lane_count).enumerate()
                 {
-                    let coefficient_values = &folded_witness[coefficient * old_live_lane_count
-                        ..(coefficient + 1) * old_live_lane_count];
+                    let coefficient_start = coefficient * old_live_lane_count;
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * next_current_lane_half;
                     let mut blk = 0usize;
@@ -356,11 +403,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         for lane_pair in blk..blk_end {
                             let next_left_lane = 2 * lane_pair;
                             let old_left_lane = 4 * lane_pair;
-                            let w0 = fold_folded_lane_pair(coefficient_values, old_left_lane, r);
+                            let w0 = fold_table_pair_with_zero_padding(
+                                folded_witness,
+                                coefficient_start + old_left_lane,
+                                coefficient_start + old_live_lane_count,
+                                r,
+                            );
                             coefficient_out[next_left_lane] = w0;
                             let w1 = if next_left_lane + 1 < next_live_lane_count {
-                                let w1 =
-                                    fold_folded_lane_pair(coefficient_values, old_left_lane + 2, r);
+                                let w1 = fold_table_pair_with_zero_padding(
+                                    folded_witness,
+                                    coefficient_start + old_left_lane + 2,
+                                    coefficient_start + old_live_lane_count,
+                                    r,
+                                );
                                 coefficient_out[next_left_lane + 1] = w1;
                                 w1
                             } else {
@@ -627,7 +683,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     )]
     pub(super) fn compute_folded_partial_lane_round_terms(
         &self,
-        folded_witness: &[E],
+        folded_witness: &EvaluationTable<F, E>,
     ) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.rounds_completed >= self.coefficient_bits());
         debug_assert!(self.lane_rounds_completed() < self.lane_bits);
@@ -654,8 +710,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 || ([E::zero(); 2], [E::zero(); 3]),
                 |(mut virt, mut rel), coefficient| {
                     let coefficient_start = coefficient * self.live_lane_count;
-                    let coefficient_values = &folded_witness
-                        [coefficient_start..coefficient_start + self.live_lane_count];
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * current_lane_half;
 
@@ -675,9 +729,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             let j_low = (equality_address_base + lane_pair) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * lane_pair;
-                            let w0 = coefficient_values[left];
+                            let w0 = folded_witness.evaluation(coefficient_start + left);
                             let w1 = if left + 1 < self.live_lane_count {
-                                coefficient_values[left + 1]
+                                folded_witness.evaluation(coefficient_start + left + 1)
                             } else {
                                 E::zero()
                             };
@@ -729,8 +783,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 || ([E::zero(); 3], [E::zero(); 3]),
                 |(mut virt, mut rel), coefficient| {
                     let coefficient_start = coefficient * self.live_lane_count;
-                    let coefficient_values = &folded_witness
-                        [coefficient_start..coefficient_start + self.live_lane_count];
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * current_lane_half;
 
@@ -750,9 +802,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             let j_low = (equality_address_base + lane_pair) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * lane_pair;
-                            let w0 = coefficient_values[left];
+                            let w0 = folded_witness.evaluation(coefficient_start + left);
                             let w1 = if left + 1 < self.live_lane_count {
-                                coefficient_values[left + 1]
+                                folded_witness.evaluation(coefficient_start + left + 1)
                             } else {
                                 E::zero()
                             };
@@ -834,7 +886,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     }
 
     pub(super) fn fold_folded_partial_lanes(
-        folded_witness: &[E],
+        folded_witness: &EvaluationTable<F, E>,
         live_lane_count: usize,
         coeff_count: usize,
         r: E,
@@ -846,13 +898,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             .enumerate()
             .for_each(|(coefficient, coefficient_out)| {
                 let coefficient_start = coefficient * live_lane_count;
-                let coefficient_values =
-                    &folded_witness[coefficient_start..coefficient_start + live_lane_count];
                 for (lane_pair, dst) in coefficient_out.iter_mut().enumerate() {
                     let left = 2 * lane_pair;
-                    let w_0 = coefficient_values[left];
+                    let w_0 = folded_witness.evaluation(coefficient_start + left);
                     let w_1 = if left + 1 < live_lane_count {
-                        coefficient_values[left + 1]
+                        folded_witness.evaluation(coefficient_start + left + 1)
                     } else {
                         E::zero()
                     };

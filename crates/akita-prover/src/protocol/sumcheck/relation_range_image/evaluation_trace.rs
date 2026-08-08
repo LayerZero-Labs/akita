@@ -155,6 +155,33 @@ pub(crate) struct PreparedProverEvaluationTrace<E: FieldCore> {
 }
 
 impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
+    /// Visit the still-factored source rows that contribute to one output lane.
+    ///
+    /// The callback receives the source factor and its complete current
+    /// coefficient row. Hot prefix kernels can accumulate a source row before
+    /// applying its lane-constant factor, instead of multiplying that factor
+    /// into every coefficient first.
+    pub(crate) fn for_each_source_in_lane(&self, lane: usize, mut visit: impl FnMut(E, &[E])) {
+        let Some(terms) = self.lane_terms.get(lane) else {
+            return;
+        };
+        for term in terms {
+            let Some(source) = self.sources.get(term.source_index) else {
+                continue;
+            };
+            let Some(start) = term.lane.checked_mul(self.coeff_count) else {
+                continue;
+            };
+            let Some(end) = start.checked_add(self.coeff_count) else {
+                continue;
+            };
+            let Some(values) = source.values.get(start..end) else {
+                continue;
+            };
+            visit(term.factor, values);
+        }
+    }
+
     pub(crate) fn final_value(&self) -> Result<E, AkitaError> {
         if self.live_lane_count != 1 || self.coeff_count != 1 {
             return Err(AkitaError::InvalidProof);
@@ -455,11 +482,6 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
                 self.get(lane0 + 1, 0, coeff_count),
             )
         }
-    }
-
-    pub(crate) fn quad_at(&self, lane: usize, base: usize, coeff_count: usize) -> [E; 4] {
-        debug_assert_eq!(self.coeff_count, coeff_count);
-        self.values_in_lane(lane, [base, base + 1, base + 2, base + 3])
     }
 
     pub(crate) fn validate_len(&self, witness_len: usize) -> Result<(), AkitaError> {

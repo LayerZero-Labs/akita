@@ -325,6 +325,9 @@ fn stage1_fused_round2_transition_matches_two_pass_reference() {
             LowBasisRangeImageStorage::Compact(_) => {
                 panic!("expected fused stage1 transition to materialize full table")
             }
+            LowBasisRangeImageStorage::FoldedOctets(_) => {
+                panic!("two-round transition must not produce folded octets")
+            }
         }
         assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
     }
@@ -346,6 +349,7 @@ fn stage1_low_basis_range_image_third_round_deferral_matches_materialized_refere
     let r0 = F::from_u64(223);
     let r1 = F::from_u64(227);
     let r2 = F::from_u64(229);
+    let r3 = F::from_u64(233);
     for basis in [4usize, 8] {
         let half = (basis / 2) as i8;
         let digit_witness: Vec<i8> = (0..live_x_cols * y_len)
@@ -391,23 +395,58 @@ fn stage1_low_basis_range_image_third_round_deferral_matches_materialized_refere
         reference.split_eq.bind(r0);
         reference.split_eq.bind(r1);
         reference.rounds_completed = 2;
-        let reference_round2 = reference.compute_round_materialized_sparse_x_y(&round2_range_image);
+        let reference_round2 =
+            reference.compute_round_sparse_x_y(round2_range_image.len(), |out, index| {
+                let left = round2_range_image[index];
+                compute_entry_coefficients(
+                    out,
+                    &reference.polynomial_precomputation,
+                    left,
+                    round2_range_image[index + 1] - left,
+                );
+            });
         assert_eq!(deferred_round2, reference_round2);
 
         let expected_round3_range_image =
             LowBasisRangeCheckProver::<F>::fold_range_image_sparse_x_y(
-                &round2_range_image,
+                round2_range_image.len(),
+                |index| round2_range_image[index],
                 live_x_cols,
                 y_len / 4,
                 r2,
             );
         deferred.ingest_challenge(2, r2);
         match &deferred.range_image {
-            LowBasisRangeImageStorage::Materialized(actual) => {
-                assert_eq!(actual, &expected_round3_range_image)
-            }
+            LowBasisRangeImageStorage::FoldedOctets(actual) => assert_eq!(
+                (0..actual.len())
+                    .map(|index| actual.value(index))
+                    .collect::<Vec<_>>(),
+                expected_round3_range_image
+            ),
             LowBasisRangeImageStorage::Compact(_) => {
-                panic!("low-basis range image must materialize after round three")
+                panic!("low-basis range image must fold after round three")
+            }
+            LowBasisRangeImageStorage::Materialized(_) => {
+                panic!("low-basis range image materialized before it was necessary")
+            }
+        }
+
+        let expected_round4_range_image =
+            LowBasisRangeCheckProver::<F>::fold_range_image_sparse_x_y(
+                expected_round3_range_image.len(),
+                |index| expected_round3_range_image[index],
+                live_x_cols,
+                y_len / 8,
+                r3,
+            );
+        deferred.compute_round_eq_factored(3);
+        deferred.ingest_challenge(3, r3);
+        match &deferred.range_image {
+            LowBasisRangeImageStorage::Materialized(actual) => {
+                assert_eq!(actual, &expected_round4_range_image)
+            }
+            LowBasisRangeImageStorage::Compact(_) | LowBasisRangeImageStorage::FoldedOctets(_) => {
+                panic!("the last sparse fold must materialize its output")
             }
         }
     }
@@ -487,6 +526,9 @@ fn stage1_later_materialized_prefix_fusion_matches_two_pass_reference() {
             LowBasisRangeImageStorage::Compact(_) => {
                 panic!("expected later prefix state to be full")
             }
+            LowBasisRangeImageStorage::FoldedOctets(_) => {
+                panic!("x-prefix state cannot contain folded octets")
+            }
         };
         let current_y_len = current_range_image.len() / expected.live_x_cols;
         let expected_next_range_image = LowBasisRangeCheckProver::<F>::fold_range_image_prefix_x(
@@ -510,6 +552,9 @@ fn stage1_later_materialized_prefix_fusion_matches_two_pass_reference() {
             }
             LowBasisRangeImageStorage::Compact(_) => {
                 panic!("expected fused later prefix stage to stay full")
+            }
+            LowBasisRangeImageStorage::FoldedOctets(_) => {
+                panic!("x-prefix state cannot contain folded octets")
             }
         }
         assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
@@ -597,10 +642,14 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
                     r1,
                 )
             }
+            LowBasisRangeImageStorage::FoldedOctets(_) => {
+                panic!("reference has not ingested the third challenge")
+            }
         };
         let current_y_len = current_range_image.len() / expected.live_x_cols;
         let expected_next_range_image = LowBasisRangeCheckProver::<F>::fold_range_image_sparse_x_y(
-            &current_range_image,
+            current_range_image.len(),
+            |index| current_range_image[index],
             expected.live_x_cols,
             current_y_len,
             r2,
@@ -608,16 +657,30 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
         expected.split_eq.bind(r2);
         expected.rounds_completed += 1;
         let expected_round3 =
-            expected.compute_round_materialized_sparse_x_y(&expected_next_range_image);
+            expected.compute_round_sparse_x_y(expected_next_range_image.len(), |out, index| {
+                let left = expected_next_range_image[index];
+                compute_entry_coefficients(
+                    out,
+                    &expected.polynomial_precomputation,
+                    left,
+                    expected_next_range_image[index + 1] - left,
+                );
+            });
 
         prover.ingest_challenge(2, r2);
 
         match &prover.range_image {
-            LowBasisRangeImageStorage::Materialized(range_image) => {
-                assert_eq!(range_image, &expected_next_range_image)
-            }
+            LowBasisRangeImageStorage::FoldedOctets(range_image) => assert_eq!(
+                (0..range_image.len())
+                    .map(|index| range_image.value(index))
+                    .collect::<Vec<_>>(),
+                expected_next_range_image
+            ),
             LowBasisRangeImageStorage::Compact(_) => {
-                panic!("expected sparse-x/y fusion to stay full")
+                panic!("expected sparse-x/y transition to fold octets")
+            }
+            LowBasisRangeImageStorage::Materialized(_) => {
+                panic!("sparse-x/y transition materialized before it was necessary")
             }
         }
         assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));

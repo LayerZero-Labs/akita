@@ -337,7 +337,8 @@ where
         + HasOptimizedFold
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
-        + AkitaSerialize,
+        + AkitaSerialize
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
     O: ComputeBackendSetup<F>,
@@ -588,7 +589,12 @@ pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
 ) -> Result<(AkitaStage1Proof<E>, Vec<E>, E), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
+    E: ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -635,10 +641,15 @@ fn prove_stage2<F, E, T>(
     evaluation_trace: PreparedProverEvaluationTrace<E>,
     trace_opening_claim: E,
     plan: RelationRangeImagePlan,
-) -> Result<RelationRangeImageProveResult<E>, AkitaError>
+) -> Result<RelationRangeImageProveResult<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
+    E: ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
@@ -740,7 +751,8 @@ where
         + LiftBase<F>
         + AkitaSerialize
         + akita_field::unreduced::HasUnreducedOps
-        + akita_field::MulBaseUnreduced<F>,
+        + akita_field::MulBaseUnreduced<F>
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F>,
 {
     match setup_contribution_mode {

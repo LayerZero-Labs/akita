@@ -345,6 +345,26 @@ fn ext_field_from_base_slice() {
 }
 
 #[test]
+fn ext_field_coefficient_primitives_round_trip() {
+    fn check<E: ExtField<F>>() {
+        let value = E::from_base_fn(|index| F::from_u64((index + 3) as u64));
+        let expected: Vec<_> = (0..E::EXT_DEGREE)
+            .map(|index| F::from_u64((index + 3) as u64))
+            .collect();
+
+        assert_eq!(value.to_base_vec(), expected);
+        for (index, expected) in expected.into_iter().enumerate() {
+            assert_eq!(value.base_coefficient(index), expected);
+        }
+    }
+
+    check::<F>();
+    check::<E2>();
+    check::<E4>();
+    check::<R8>();
+}
+
+#[test]
 fn extension_fields_are_array_layouts() {
     assert_eq!(core::mem::size_of::<E2>(), core::mem::size_of::<[F; 2]>());
     assert_eq!(core::mem::align_of::<E2>(), core::mem::align_of::<[F; 2]>());
@@ -415,6 +435,43 @@ fn fp_ext4_fp32_accum_summation() {
     assert_eq!(
         direct_sum, reduced,
         "accumulated sum of {n} products mismatched"
+    );
+}
+
+#[test]
+fn fp_ext4_fp32_small_product_accum_promotes_exactly() {
+    use crate::Prime32Offset99;
+    use num_traits::Zero;
+
+    type R4Fp32 = FpExt4<Prime32Offset99>;
+
+    let mut rng = StdRng::seed_from_u64(0x5A11);
+    let terms: Vec<(R4Fp32, u16)> = (0..512)
+        .map(|_| (R4Fp32::random(&mut rng), rng.next_u32() as u16 % 197))
+        .collect();
+    let direct = terms.iter().fold(R4Fp32::zero(), |sum, &(value, small)| {
+        sum + value * R4Fp32::from_u64(u64::from(small))
+    });
+    let small_accum = terms.iter().fold(
+        <R4Fp32 as HasUnreducedOps>::SmallProductAccum::zero(),
+        |sum, &(value, small)| sum + value.mul_u16_to_small_product_accum(small),
+    );
+    let promoted = R4Fp32::promote_small_product_accum(small_accum);
+
+    assert_eq!(direct, R4Fp32::reduce_product_accum(promoted));
+}
+
+#[test]
+fn fp_ext4_fp32_reduced_value_embeds_in_product_accumulator() {
+    use crate::Prime32Offset99;
+
+    type R4Fp32 = FpExt4<Prime32Offset99>;
+
+    let value = R4Fp32::new([3, 5, 7, 11].map(Prime32Offset99::from_u64));
+    const { assert!(R4Fp32::REDUCED_TO_PRODUCT_ACCUM_IS_CHEAP) };
+    assert_eq!(
+        R4Fp32::reduce_product_accum(value.reduced_to_product_accum()),
+        value
     );
 }
 

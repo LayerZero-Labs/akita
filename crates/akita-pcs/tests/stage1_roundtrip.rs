@@ -5,6 +5,7 @@ use akita_field::{
     CanonicalBytes, CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FromPrimitiveInt,
     Prime128Offset275, Prime32Offset99, Prime64Offset59, TranscriptChallenge,
 };
+use akita_prover::kernels::sumcheck::SumcheckTableOperations;
 use akita_prover::DigitRangeProver;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::multilinear_eval;
@@ -126,7 +127,8 @@ where
         + FromPrimitiveInt
         + HasOptimizedFold
         + HasUnreducedOps
-        + AkitaSerialize,
+        + AkitaSerialize
+        + SumcheckTableOperations<Base>,
 {
     let raw_challenges = [3, 5, 7, 9].map(E::from_u64);
     for basis in [16, 32, 64] {

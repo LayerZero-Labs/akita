@@ -108,6 +108,34 @@ where
     }
 }
 
+fn check_packed_fp32_sum_four_products<const P: u32, PF>()
+where
+    PF: PackedField<Scalar = Fp32<P>> + PackedValue<Value = Fp32<P>>,
+{
+    let values = [
+        Fp32::<P>::zero(),
+        Fp32::<P>::one(),
+        Fp32::<P>::from_canonical_u32(P - 2),
+        Fp32::<P>::from_canonical_u32(P - 1),
+    ];
+    let left: [PF; 4] =
+        std::array::from_fn(|product| PF::from_fn(|lane| values[(lane + product) % 4]));
+    let right: [PF; 4] =
+        std::array::from_fn(|product| PF::from_fn(|lane| values[(lane + 2 * product + 1) % 4]));
+    let sum = PF::sum_four_products(left, right);
+
+    for lane in 0..PF::WIDTH {
+        let expected = (0..4).fold(Fp32::<P>::zero(), |acc, product| {
+            acc + left[product].extract(lane) * right[product].extract(lane)
+        });
+        assert_eq!(
+            sum.extract(lane),
+            expected,
+            "packed four-product sum mismatch at lane {lane}"
+        );
+    }
+}
+
 #[test]
 fn packed_fp128_add_sub_mul_match_scalar() {
     type F = Prime128Offset275;
@@ -277,6 +305,23 @@ fn packed_fp32_32b_add_sub_mul() {
     type F = Prime32Offset99;
     type PF = <F as HasPacking>::Packing;
     check_packed_add_sub_mul::<F, PF>(0xaa32_bb32_cc32_dd32);
+}
+
+#[test]
+fn packed_fp32_sum_four_products_matches_scalar() {
+    type F31 = Prime31Offset19;
+    type PF31 = <F31 as HasPacking>::Packing;
+    check_packed_fp32_sum_four_products::<
+        { crate::prime::pseudo_mersenne::PRIME31_OFFSET19_MODULUS },
+        PF31,
+    >();
+
+    type F32 = Prime32Offset99;
+    type PF32 = <F32 as HasPacking>::Packing;
+    check_packed_fp32_sum_four_products::<
+        { crate::prime::pseudo_mersenne::PRIME32_OFFSET99_MODULUS },
+        PF32,
+    >();
 }
 
 /// Regression guard for the 32-bit (`BITS == 32`) packed base multiply.

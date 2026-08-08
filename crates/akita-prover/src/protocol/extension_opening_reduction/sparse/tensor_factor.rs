@@ -1,4 +1,7 @@
+use super::suffix_sums::SparseSuffixSums;
+use super::witness::{MergeFreeValuePalette, MAX_MERGE_FREE_VALUE_PALETTE};
 use super::*;
+use core::ops::Range;
 
 #[derive(Debug, Clone)]
 struct TensorFactorTransition<E: FieldCore> {
@@ -21,7 +24,8 @@ pub(in crate::protocol::extension_opening_reduction) struct TensorEqualityFactor
     prefix_state: Vec<E>,
     transitions: Vec<TensorFactorTransition<E>>,
     suffix_tables: Vec<Vec<E>>,
-    low_states: Vec<Vec<E>>,
+    low_pair_states: Vec<E>,
+    sparse_suffix_sums: Option<Box<SparseSuffixSums<E>>>,
 }
 
 impl<E: FieldCore> TensorEqualityFactor<E> {
@@ -32,7 +36,7 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
     ) -> Result<Self, AkitaError>
     where
         F: FieldCore,
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         let (split_bits, width) = tensor_opening_split::<F, E>()?;
         if eta.len() != split_bits {
@@ -50,7 +54,7 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
         checked_table_len(tail_point.len())?;
         checked_table_len(tail_point.len() - materialize_at)?;
 
-        let eta_weights = EqPolynomial::evals(&eta)?;
+        let projection = TensorFactorProjection::<F, E>::new(&eta)?;
         let basis = (0..width)
             .map(|idx| {
                 let mut coords = vec![F::zero(); width];
@@ -79,16 +83,10 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
                 suffix_eq
                     .iter()
                     .copied()
-                    .map(|suffix| {
-                        project_tensor_factor_value::<F, E>(
-                            basis_elem * suffix,
-                            &eta_weights,
-                            width,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()
+                    .map(|suffix| projection.project(basis_elem * suffix))
+                    .collect::<Vec<_>>()
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
 
         let mut factor = Self {
             table_vars: tail_point.len(),
@@ -97,9 +95,16 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
             prefix_state,
             transitions,
             suffix_tables,
-            low_states: Vec::new(),
+            low_pair_states: Vec::with_capacity(
+                if (1..=SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS).contains(&materialize_at) {
+                    (MAX_MERGE_FREE_VALUE_PALETTE + 1) * (1usize << materialize_at) * width
+                } else {
+                    0
+                },
+            ),
+            sparse_suffix_sums: None,
         };
-        factor.rebuild_low_states();
+        factor.rebuild_low_pairs();
         Ok(factor)
     }
 
@@ -185,27 +190,42 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
         next
     }
 
-    fn rebuild_low_states(&mut self) {
+    fn rebuild_low_pairs(&mut self) {
         let low_bits = self.materialize_at.saturating_sub(self.round);
         if low_bits == 0 {
-            self.low_states.clear();
+            self.low_pair_states.clear();
             return;
         }
         let count = 1usize << low_bits;
-        let mut low_states = Vec::with_capacity(count);
-        for low in 0..count {
-            let mut state = self.prefix_state.clone();
-            for bit_idx in 0..low_bits {
-                let bit = (low >> bit_idx) & 1;
-                state = Self::apply_boolean_transition(
-                    &state,
-                    &self.transitions[self.round + bit_idx],
-                    bit,
-                );
-            }
-            low_states.push(state);
+        self.low_pair_states.clear();
+        for pair in 0..count / 2 {
+            let zero = self.boolean_state(pair << 1, low_bits);
+            let one = self.boolean_state((pair << 1) | 1, low_bits);
+            self.low_pair_states.extend_from_slice(&zero);
+            self.low_pair_states
+                .extend(one.iter().zip(zero.iter()).map(|(&one, &zero)| one - zero));
         }
-        self.low_states = low_states;
+    }
+
+    fn boolean_state(&self, low: usize, low_bits: usize) -> Vec<E> {
+        let mut state = self.prefix_state.clone();
+        for bit_idx in 0..low_bits {
+            let bit = (low >> bit_idx) & 1;
+            state = Self::apply_boolean_transition(
+                &state,
+                &self.transitions[self.round + bit_idx],
+                bit,
+            );
+        }
+        state
+    }
+
+    fn low_pair(&self, pair: usize) -> (&[E], &[E]) {
+        let width = self.prefix_state.len();
+        let start = pair * 2 * width;
+        let zero = &self.low_pair_states[start..start + width];
+        let delta = &self.low_pair_states[start + width..start + 2 * width];
+        (zero, delta)
     }
 
     fn eval_state_at_suffix(&self, state: &[E], suffix_index: usize) -> E {
@@ -225,7 +245,17 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
         let low_mask = (1usize << low_bits) - 1;
         let low = index & low_mask;
         let suffix_index = index >> low_bits;
-        self.eval_state_at_suffix(&self.low_states[low], suffix_index)
+        let (state_zero, state_delta) = self.low_pair(low >> 1);
+        if low & 1 == 0 {
+            self.eval_state_at_suffix(state_zero, suffix_index)
+        } else {
+            self.suffix_tables
+                .iter()
+                .zip(state_zero.iter().zip(state_delta.iter()))
+                .fold(E::zero(), |acc, (table, (&zero, &delta))| {
+                    acc + (zero + delta) * table[suffix_index]
+                })
+        }
     }
 
     pub(super) fn fold_in_place(&mut self, r_round: E) {
@@ -236,7 +266,7 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
         self.prefix_state =
             Self::apply_transition(&self.prefix_state, &self.transitions[self.round], r_round);
         self.round += 1;
-        self.rebuild_low_states();
+        self.rebuild_low_pairs();
     }
 
     pub(super) fn materialize_dense(&self) -> Vec<E> {
@@ -264,7 +294,519 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
     }
 }
 
+struct GroupedRoundAccumulator<E: FieldCore + HasUnreducedOps, const N: usize> {
+    suffix_index: Option<usize>,
+    constant: [E::ProductAccum; N],
+    quadratic: [E::ProductAccum; N],
+    round_constant: E::ProductAccum,
+    round_quadratic: E::ProductAccum,
+}
+
+impl<E: FieldCore + HasUnreducedOps, const N: usize> GroupedRoundAccumulator<E, N> {
+    fn new() -> Self {
+        Self {
+            suffix_index: None,
+            constant: [E::ProductAccum::zero(); N],
+            quadratic: [E::ProductAccum::zero(); N],
+            round_constant: E::ProductAccum::zero(),
+            round_quadratic: E::ProductAccum::zero(),
+        }
+    }
+
+    fn add_pair(
+        &mut self,
+        factor: &TensorEqualityFactor<E>,
+        pair: usize,
+        witness_zero: E,
+        witness_one: E,
+    ) {
+        let rest_low_bits = factor.materialize_at - factor.round - 1;
+        let suffix_index = pair >> rest_low_bits;
+        if self.suffix_index != Some(suffix_index) {
+            self.flush(factor);
+            self.suffix_index = Some(suffix_index);
+        }
+
+        let low_mask = (1usize << rest_low_bits).saturating_sub(1);
+        let (state_zero, state_delta) = factor.low_pair(pair & low_mask);
+        let witness_delta = witness_one - witness_zero;
+        if witness_zero != E::zero() {
+            for (column, &state_zero) in state_zero.iter().enumerate() {
+                self.constant[column] += witness_zero.mul_to_product_accum(state_zero);
+            }
+        }
+        for (column, &state_delta) in state_delta.iter().enumerate() {
+            self.quadratic[column] += witness_delta.mul_to_product_accum(state_delta);
+        }
+    }
+
+    /// Add one known-nonzero child of a sparse pair.
+    ///
+    /// During a merge-free witness round, construction guarantees that the
+    /// other child is zero. Consuming the stored entry directly avoids
+    /// rebuilding the logical pair only to discard that zero again.
+    #[inline(always)]
+    fn add_single_child(&mut self, factor: &TensorEqualityFactor<E>, index: usize, value: E) {
+        let pair = index >> 1;
+        let rest_low_bits = factor.materialize_at - factor.round - 1;
+        let suffix_index = pair >> rest_low_bits;
+        if self.suffix_index != Some(suffix_index) {
+            self.flush(factor);
+            self.suffix_index = Some(suffix_index);
+        }
+
+        let low_mask = (1usize << rest_low_bits).saturating_sub(1);
+        let (state_zero, state_delta) = factor.low_pair(pair & low_mask);
+        if index & 1 == 0 {
+            for (column, (&state_zero, &state_delta)) in
+                state_zero.iter().zip(state_delta.iter()).enumerate()
+            {
+                self.constant[column] += value.mul_to_product_accum(state_zero);
+                self.quadratic[column] += (E::zero() - value).mul_to_product_accum(state_delta);
+            }
+        } else {
+            for (column, &state_delta) in state_delta.iter().enumerate() {
+                self.quadratic[column] += value.mul_to_product_accum(state_delta);
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn add_palette_child(
+        &mut self,
+        factor: &TensorEqualityFactor<E>,
+        index: usize,
+        value_class: usize,
+    ) {
+        let pair = index >> 1;
+        let rest_low_bits = factor.materialize_at - factor.round - 1;
+        let suffix_index = pair >> rest_low_bits;
+        if self.suffix_index != Some(suffix_index) {
+            self.flush(factor);
+            self.suffix_index = Some(suffix_index);
+        }
+
+        let low_mask = (1usize << rest_low_bits).saturating_sub(1);
+        let (constant_products, delta_products) =
+            factor.merge_free_products(value_class, pair & low_mask);
+        if index & 1 == 0 {
+            for (column, (&constant_product, &delta_product)) in constant_products
+                .iter()
+                .zip(delta_products.iter())
+                .enumerate()
+            {
+                self.constant[column] += E::reduced_to_product_accum(constant_product);
+                self.quadratic[column] += E::reduced_to_product_accum(E::zero() - delta_product);
+            }
+        } else {
+            for (column, &delta_product) in delta_products.iter().enumerate() {
+                self.quadratic[column] += E::reduced_to_product_accum(delta_product);
+            }
+        }
+    }
+
+    fn flush(&mut self, factor: &TensorEqualityFactor<E>) {
+        let Some(suffix_index) = self.suffix_index else {
+            return;
+        };
+        for column in 0..N {
+            let suffix = factor.suffix_tables[column][suffix_index];
+            self.round_constant +=
+                E::reduce_product_accum(self.constant[column]).mul_to_product_accum(suffix);
+            self.round_quadratic +=
+                E::reduce_product_accum(self.quadratic[column]).mul_to_product_accum(suffix);
+        }
+        self.constant = [E::ProductAccum::zero(); N];
+        self.quadratic = [E::ProductAccum::zero(); N];
+    }
+
+    fn finish(mut self, factor: &TensorEqualityFactor<E>) -> (E, E) {
+        self.flush(factor);
+        (
+            E::reduce_product_accum(self.round_constant),
+            E::reduce_product_accum(self.round_quadratic),
+        )
+    }
+}
+
 impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
+    pub(super) fn can_prepare_merge_free_products(
+        &self,
+        palette: &MergeFreeValuePalette<E>,
+    ) -> bool {
+        if !E::REDUCED_TO_PRODUCT_ACCUM_IS_CHEAP || self.round + 1 >= self.materialize_at {
+            return false;
+        }
+        let rest_low_bits = self.materialize_at - self.round - 1;
+        let required =
+            palette.folded_values().len() * (1usize << rest_low_bits) * 2 * self.prefix_state.len();
+        let state_len = (1usize << (self.materialize_at - self.round)) * self.prefix_state.len();
+        state_len + required <= self.low_pair_states.capacity()
+    }
+
+    pub(super) fn prepare_merge_free_products(&mut self, palette: &MergeFreeValuePalette<E>) {
+        debug_assert!(E::REDUCED_TO_PRODUCT_ACCUM_IS_CHEAP);
+        let rest_low_bits = self.materialize_at - self.round - 1;
+        let low_pair_count = 1usize << rest_low_bits;
+        let width = self.prefix_state.len();
+        let values = palette.folded_values();
+        let product_count = values.len() * low_pair_count * 2 * width;
+        let state_len = (1usize << (self.materialize_at - self.round)) * width;
+        debug_assert_eq!(self.low_pair_states.len(), state_len);
+        self.low_pair_states
+            .resize(state_len + product_count, E::zero());
+
+        for (value_class, &value) in values.iter().enumerate() {
+            for low_pair in 0..low_pair_count {
+                let state_start = low_pair * 2 * width;
+                let output_start =
+                    state_len + (value_class * low_pair_count + low_pair) * 2 * width;
+                for column in 0..width {
+                    self.low_pair_states[output_start + column] =
+                        value * self.low_pair_states[state_start + column];
+                    self.low_pair_states[output_start + width + column] =
+                        value * self.low_pair_states[state_start + width + column];
+                }
+            }
+        }
+    }
+
+    pub(super) fn prepare_sparse_suffix_sums<F>(
+        &mut self,
+        witness: &SparseExtensionOpeningWitness<F, E>,
+        palette: &MergeFreeValuePalette<E>,
+    ) where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        if self.sparse_suffix_sums.is_some() || self.round != 0 {
+            return;
+        }
+        let low_count = 1usize << self.materialize_at;
+        if witness.indices.len() <= low_count * palette.palette_len() * 4 {
+            return;
+        }
+        let _span = tracing::trace_span!(
+            "TensorEqualityFactor::prepare_sparse_suffix_sums",
+            entries_len = witness.indices.len(),
+            low_count,
+            palette_len = palette.palette_len(),
+        )
+        .entered();
+        self.sparse_suffix_sums = Some(Box::new(SparseSuffixSums::build(
+            witness
+                .indices
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(row, index)| (index, palette.original_tag(row))),
+            self.materialize_at,
+            &palette.folded_values()[..palette.palette_len()],
+            &self.suffix_tables,
+        )));
+    }
+
+    pub(super) fn compute_sparse_suffix_summed_round(&self) -> Option<(E, E)> {
+        let sums = self.sparse_suffix_sums.as_ref()?;
+        let rest_low_bits = self.materialize_at - self.round - 1;
+        let low_pair_mask = (1usize << rest_low_bits).saturating_sub(1);
+        let mut constant = E::ProductAccum::zero();
+        let mut quadratic = E::ProductAccum::zero();
+
+        for original_low in 0..sums.low_count() {
+            let current_low = original_low >> self.round;
+            let low_pair = (current_low >> 1) & low_pair_mask;
+            let (state_zero, state_delta) = self.low_pair(low_pair);
+            for (column, &suffix_sum) in sums.get(original_low).iter().enumerate() {
+                if suffix_sum == E::zero() {
+                    continue;
+                }
+                if current_low & 1 == 0 {
+                    constant += state_zero[column].mul_to_product_accum(suffix_sum);
+                    quadratic += (E::zero() - state_delta[column]).mul_to_product_accum(suffix_sum);
+                } else {
+                    quadratic += state_delta[column].mul_to_product_accum(suffix_sum);
+                }
+            }
+        }
+        Some((
+            E::reduce_product_accum(constant),
+            E::reduce_product_accum(quadratic),
+        ))
+    }
+
+    fn merge_free_products(&self, value_class: usize, low_pair: usize) -> (&[E], &[E]) {
+        let rest_low_bits = self.materialize_at - self.round - 1;
+        let low_pair_count = 1usize << rest_low_bits;
+        let width = self.prefix_state.len();
+        let state_len = (1usize << (self.materialize_at - self.round)) * width;
+        let start = state_len + (value_class * low_pair_count + low_pair) * 2 * width;
+        (
+            &self.low_pair_states[start..start + width],
+            &self.low_pair_states[start + width..start + 2 * width],
+        )
+    }
+
+    pub(super) fn supports_grouped_rounds(&self) -> bool {
+        E::DELAYED_PRODUCT_SUM_IS_EXACT && matches!(self.prefix_state.len(), 1 | 2 | 4 | 8)
+    }
+
+    pub(super) fn supports_grouped_round_after_fold(&self) -> bool {
+        self.supports_grouped_rounds() && self.round + 1 < self.materialize_at
+    }
+
+    /// Compute a sparse round by grouping witness pairs that share one suffix.
+    ///
+    /// The ordinary row loop constructs and reduces both factor children for
+    /// every sparse pair. This operation first sums the witness-weighted low
+    /// states for a shared suffix, then applies that suffix once. The number of
+    /// factor reductions therefore scales with suffix groups instead of sparse
+    /// rows.
+    pub(super) fn compute_grouped_round<F>(
+        &self,
+        witness: &SparseExtensionOpeningWitness<F, E>,
+        rows: Range<usize>,
+    ) -> (E, E)
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        debug_assert!(self.supports_grouped_rounds());
+        match self.prefix_state.len() {
+            1 => self.compute_grouped_round_with_width::<F, 1>(witness, rows),
+            2 => self.compute_grouped_round_with_width::<F, 2>(witness, rows),
+            4 => self.compute_grouped_round_with_width::<F, 4>(witness, rows),
+            8 => self.compute_grouped_round_with_width::<F, 8>(witness, rows),
+            _ => unreachable!("grouped tensor round requires a supported extension width"),
+        }
+    }
+
+    fn compute_grouped_round_with_width<F, const N: usize>(
+        &self,
+        witness: &SparseExtensionOpeningWitness<F, E>,
+        rows: Range<usize>,
+    ) -> (E, E)
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        debug_assert_eq!(self.prefix_state.len(), N);
+        let mut round = GroupedRoundAccumulator::<E, N>::new();
+        let mut row = rows.start;
+        while row < rows.end {
+            let (pair, witness_zero, witness_one, next_row) = witness.pair_at_row(row, rows.end);
+            row = next_row;
+            round.add_pair(self, pair, witness_zero, witness_one);
+        }
+        round.finish(self)
+    }
+
+    pub(super) fn compute_grouped_round_palette<F>(
+        &self,
+        witness: &SparseExtensionOpeningWitness<F, E>,
+        rows: Range<usize>,
+    ) -> (E, E)
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        debug_assert!(witness.merge_free_rounds_left > 0);
+        match self.prefix_state.len() {
+            1 => self.compute_grouped_round_palette_with_width::<F, 1>(witness, rows),
+            2 => self.compute_grouped_round_palette_with_width::<F, 2>(witness, rows),
+            4 => self.compute_grouped_round_palette_with_width::<F, 4>(witness, rows),
+            8 => self.compute_grouped_round_palette_with_width::<F, 8>(witness, rows),
+            _ => unreachable!("grouped tensor round requires a supported extension width"),
+        }
+    }
+
+    fn compute_grouped_round_palette_with_width<F, const N: usize>(
+        &self,
+        witness: &SparseExtensionOpeningWitness<F, E>,
+        rows: Range<usize>,
+    ) -> (E, E)
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        debug_assert_eq!(self.prefix_state.len(), N);
+        let palette = witness
+            .merge_free_value_palette()
+            .expect("merge-free palette was prepared for the first round");
+        let mut round = GroupedRoundAccumulator::<E, N>::new();
+        for row in rows {
+            round.add_palette_child(self, witness.indices[row], palette.value_class(row));
+        }
+        round.finish(self)
+    }
+
+    /// Fold and compact a sparse witness while computing its next grouped
+    /// tensor round in the same row pass.
+    pub(super) fn fold_and_compute_grouped_round<F>(
+        &mut self,
+        witness: &mut SparseExtensionOpeningWitness<F, E>,
+        challenge: E,
+    ) -> (E, E)
+    where
+        F: FieldCore,
+        E: ExtField<F> + HasOptimizedFold,
+    {
+        debug_assert!(self.supports_grouped_rounds());
+        // This pass computes the round *after* the fold. Two guaranteed
+        // merge-free rounds are therefore required: one for the fold itself
+        // and one for the cached round being accumulated.
+        let merge_free = witness.merge_free_rounds_left >= 2;
+        if let Some(sums) = self.sparse_suffix_sums.as_mut() {
+            sums.bind(self.round - 1, challenge);
+            if self.round + 1 == self.materialize_at {
+                witness.materialize_low_folds(self.round, sums.fold_weights());
+            }
+            return self
+                .compute_sparse_suffix_summed_round()
+                .expect("sparse suffix sums were prepared for this round");
+        }
+        if !merge_free {
+            witness.materialize_merge_free_value_palette();
+        }
+        let round = match self.prefix_state.len() {
+            1 if merge_free => {
+                self.fold_and_compute_grouped_round_merge_free::<F, 1>(witness, challenge)
+            }
+            2 if merge_free => {
+                self.fold_and_compute_grouped_round_merge_free::<F, 2>(witness, challenge)
+            }
+            4 if merge_free => {
+                self.fold_and_compute_grouped_round_merge_free::<F, 4>(witness, challenge)
+            }
+            8 if merge_free => {
+                self.fold_and_compute_grouped_round_merge_free::<F, 8>(witness, challenge)
+            }
+            1 => self.fold_and_compute_grouped_round_with_width::<F, 1>(witness, challenge),
+            2 => self.fold_and_compute_grouped_round_with_width::<F, 2>(witness, challenge),
+            4 => self.fold_and_compute_grouped_round_with_width::<F, 4>(witness, challenge),
+            8 => self.fold_and_compute_grouped_round_with_width::<F, 8>(witness, challenge),
+            _ => unreachable!("grouped tensor round requires a supported extension width"),
+        };
+        witness.table_len /= 2;
+        witness.merge_free_rounds_left = witness.merge_free_rounds_left.saturating_sub(1);
+        round
+    }
+
+    fn fold_and_compute_grouped_round_merge_free<F, const N: usize>(
+        &mut self,
+        witness: &mut SparseExtensionOpeningWitness<F, E>,
+        challenge: E,
+    ) -> (E, E)
+    where
+        F: FieldCore,
+        E: ExtField<F> + HasOptimizedFold,
+    {
+        debug_assert_eq!(self.prefix_state.len(), N);
+        debug_assert!(witness.merge_free_rounds_left >= 2);
+        let use_palette = witness.fold_merge_free_value_palette(challenge);
+        let use_precomputed_products = use_palette
+            && self.can_prepare_merge_free_products(
+                witness
+                    .merge_free_value_palette()
+                    .expect("merge-free palette was prepared for this round"),
+            );
+        if use_precomputed_products {
+            self.prepare_merge_free_products(
+                witness
+                    .merge_free_value_palette()
+                    .expect("merge-free palette was prepared for this round"),
+            );
+        }
+        let one_minus = E::one() - challenge;
+        let mut round = GroupedRoundAccumulator::<E, N>::new();
+
+        for row in 0..witness.indices.len() {
+            let index = witness.indices[row];
+            let folded = if use_palette {
+                witness
+                    .merge_free_palette_value(row)
+                    .expect("merge-free palette was prepared for every sparse row")
+            } else {
+                let value = witness.values.evaluation(row);
+                if index & 1 == 0 {
+                    value * one_minus
+                } else {
+                    value * challenge
+                }
+            };
+            let folded_index = index >> 1;
+            witness.indices[row] = folded_index;
+            if !use_palette {
+                witness.values.set_evaluation(row, folded);
+            }
+            if use_precomputed_products {
+                let value_class = witness
+                    .merge_free_value_palette()
+                    .expect("merge-free palette was prepared for this round")
+                    .value_class(row);
+                round.add_palette_child(self, folded_index, value_class);
+            } else {
+                round.add_single_child(self, folded_index, folded);
+            }
+        }
+        round.finish(self)
+    }
+
+    fn fold_and_compute_grouped_round_with_width<F, const N: usize>(
+        &self,
+        witness: &mut SparseExtensionOpeningWitness<F, E>,
+        challenge: E,
+    ) -> (E, E)
+    where
+        F: FieldCore,
+        E: ExtField<F> + HasOptimizedFold,
+    {
+        debug_assert_eq!(self.prefix_state.len(), N);
+        let fold = E::precompute_fold(challenge);
+        let mut round = GroupedRoundAccumulator::<E, N>::new();
+        let mut input_row = 0;
+        let mut output_row = 0;
+        let mut next_pair = None;
+        let mut next_zero = E::zero();
+        let mut next_one = E::zero();
+
+        while input_row < witness.indices.len() {
+            let (pair, witness_zero, witness_one, next_row) =
+                witness.pair_at_row(input_row, witness.indices.len());
+            input_row = next_row;
+
+            let folded = E::fold_one(&fold, witness_zero, witness_one);
+            if folded == E::zero() {
+                continue;
+            }
+            witness.indices[output_row] = pair;
+            witness.values.set_evaluation(output_row, folded);
+            output_row += 1;
+
+            let pair_for_next_round = pair >> 1;
+            if next_pair != Some(pair_for_next_round) {
+                if let Some(previous_pair) = next_pair {
+                    round.add_pair(self, previous_pair, next_zero, next_one);
+                }
+                next_pair = Some(pair_for_next_round);
+                next_zero = E::zero();
+                next_one = E::zero();
+            }
+            if pair & 1 == 0 {
+                next_zero = folded;
+            } else {
+                next_one = folded;
+            }
+        }
+
+        if let Some(previous_pair) = next_pair {
+            round.add_pair(self, previous_pair, next_zero, next_one);
+        }
+        witness.indices.truncate(output_row);
+        witness.values.truncate(output_row);
+        round.finish(self)
+    }
+
     /// Factor inner product `sum_i state[i] * suffix_tables[i][suffix_index]`,
     /// reducing once at the end when the field's product accumulator is exact
     /// w.r.t. `Mul`, and otherwise falling back to the per-term
@@ -284,13 +826,10 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
     /// the exact path only because its accumulator keeps the carry above bit
     /// 128 explicitly.
     ///
-    /// The two factor values `a0` (state `low_zero`) and `a1` (state `low_one`)
-    /// always share the same `suffix_index`, so both inner products read the
-    /// same `suffix_tables[j][suffix_index]` column. They are fused into one
-    /// pass over `j` that loads each column entry once and feeds it into both
-    /// delayed accumulators, halving the column loads and tightening the loop
-    /// without changing the accumulation order, so the result is byte-identical
-    /// to two independent evaluations.
+    /// The stored low pair is `(state_zero, state_one - state_zero)`. Both
+    /// inner products read the same `suffix_tables[j][suffix_index]` column.
+    /// One pass computes `a0` and `a1 - a0`, then reconstructs `a1`. This is the
+    /// same pair shape consumed by the grouped round polynomial.
     pub(super) fn factor_pair(&self, pair: usize) -> (E, E) {
         let low_bits = self.materialize_at - self.round;
         debug_assert!(low_bits > 0);
@@ -298,34 +837,66 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
         let low_mask = (1usize << rest_low_bits).saturating_sub(1);
         let low_rest = pair & low_mask;
         let suffix_index = pair >> rest_low_bits;
-        let low_zero = low_rest << 1;
-        let low_one = low_zero | 1;
-        let state_zero = &self.low_states[low_zero];
-        let state_one = &self.low_states[low_one];
+        let (state_zero, state_delta) = self.low_pair(low_rest);
 
         if !E::DELAYED_PRODUCT_SUM_IS_EXACT {
-            return (
-                self.eval_state_at_suffix(state_zero, suffix_index),
-                self.eval_state_at_suffix(state_one, suffix_index),
-            );
+            let zero = self.eval_state_at_suffix(state_zero, suffix_index);
+            let delta = self.eval_state_at_suffix(state_delta, suffix_index);
+            return (zero, zero + delta);
         }
 
+        let (accum_zero, accum_delta) = match state_zero.len() {
+            1 => self.factor_pair_product_accumulators::<1>(state_zero, state_delta, suffix_index),
+            2 => self.factor_pair_product_accumulators::<2>(state_zero, state_delta, suffix_index),
+            4 => self.factor_pair_product_accumulators::<4>(state_zero, state_delta, suffix_index),
+            8 => self.factor_pair_product_accumulators::<8>(state_zero, state_delta, suffix_index),
+            _ => {
+                self.factor_pair_product_accumulators_dynamic(state_zero, state_delta, suffix_index)
+            }
+        };
+        let zero = E::reduce_product_accum(accum_zero);
+        let delta = E::reduce_product_accum(accum_delta);
+        (zero, zero + delta)
+    }
+
+    fn factor_pair_product_accumulators<const N: usize>(
+        &self,
+        state_zero: &[E],
+        state_delta: &[E],
+        suffix_index: usize,
+    ) -> (E::ProductAccum, E::ProductAccum) {
+        debug_assert_eq!(state_zero.len(), N);
+        debug_assert_eq!(state_delta.len(), N);
+        debug_assert_eq!(self.suffix_tables.len(), N);
         let mut accum_zero = E::ProductAccum::zero();
-        let mut accum_one = E::ProductAccum::zero();
-        for ((table, &coeff_zero), &coeff_one) in self
+        let mut accum_delta = E::ProductAccum::zero();
+        for index in 0..N {
+            let column = self.suffix_tables[index][suffix_index];
+            accum_zero += state_zero[index].mul_to_product_accum(column);
+            accum_delta += state_delta[index].mul_to_product_accum(column);
+        }
+        (accum_zero, accum_delta)
+    }
+
+    fn factor_pair_product_accumulators_dynamic(
+        &self,
+        state_zero: &[E],
+        state_delta: &[E],
+        suffix_index: usize,
+    ) -> (E::ProductAccum, E::ProductAccum) {
+        let mut accum_zero = E::ProductAccum::zero();
+        let mut accum_delta = E::ProductAccum::zero();
+        for ((table, &coeff_zero), &coeff_delta) in self
             .suffix_tables
             .iter()
             .zip(state_zero.iter())
-            .zip(state_one.iter())
+            .zip(state_delta.iter())
         {
             let column = table[suffix_index];
             accum_zero += coeff_zero.mul_to_product_accum(column);
-            accum_one += coeff_one.mul_to_product_accum(column);
+            accum_delta += coeff_delta.mul_to_product_accum(column);
         }
-        (
-            E::reduce_product_accum(accum_zero),
-            E::reduce_product_accum(accum_one),
-        )
+        (accum_zero, accum_delta)
     }
 }
 

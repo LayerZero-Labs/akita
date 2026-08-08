@@ -1,4 +1,4 @@
-use super::exact_prefix::SplitEqualitySuffixMass;
+use super::equality_tables::SplitEqualitySuffixMass;
 use super::MAX_TREE_STAGE_Q_DEGREE;
 use akita_field::parallel::*;
 use akita_field::unreduced::HasUnreducedOps;

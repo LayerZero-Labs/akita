@@ -5,6 +5,7 @@ use crate::report::{
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
     report_verifier_ntt_cache_size,
 };
+use crate::workload_params::onehot_k_for_num_vars;
 use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
@@ -17,6 +18,7 @@ use akita_prover::compute::{
     OpeningFoldKernel, OpeningFoldPlan, RecursiveProveBackend, RootPolyShape, RootProvePoly,
     RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly,
 };
+use akita_prover::kernels::sumcheck::SumcheckTableOperations;
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend, ComputeBackendSetup,
     CpuBackend,
@@ -36,8 +38,6 @@ use akita_types::{
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Instant;
-
-pub(crate) const ONEHOT_K: usize = 256;
 
 fn planned_payload_bytes<Cfg: CommitmentConfig>(
     schedule: &FoldSchedule,
@@ -181,15 +181,6 @@ where
         .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
     OneHotPoly::<FF, u8>::new(onehot_k, d, indices).expect("profile onehot poly")
-}
-
-pub(crate) fn onehot_k_for_num_vars(nv: usize) -> usize {
-    let max_supported_log_k = ONEHOT_K.trailing_zeros() as usize;
-    if nv >= max_supported_log_k {
-        ONEHOT_K
-    } else {
-        1usize << nv
-    }
 }
 
 fn assert_observed_proof_size<FF, E>(label: &str, proof: &AkitaBatchedProof<FF, E>)
@@ -564,6 +555,7 @@ fn run_prove<
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize
+        + SumcheckTableOperations<FF>
         + Valid,
     CpuBackend: RuntimeRootCommitBackend<FF, P, Cfg::ExtField>
         + RecursiveProveBackend<FF, P, Cfg::ExtField>,
@@ -724,6 +716,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize
+        + SumcheckTableOperations<FF>
         + Valid,
 {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
@@ -826,6 +819,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize
+        + SumcheckTableOperations<FF>
         + Valid,
 {
     let onehot_poly = make_profile_onehot_poly::<FF>(layout, 0xbeef_cafe);
@@ -904,6 +898,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize
+        + SumcheckTableOperations<FF>
         + Valid,
 {
     let polys: Vec<OneHotPoly<FF, u8>> = (0..num_polys)
@@ -1127,6 +1122,7 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize
+        + SumcheckTableOperations<FF>
         + Valid,
 {
     let setup_contribution_mode = profile_setup_contribution_mode();
@@ -1183,6 +1179,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize
+        + SumcheckTableOperations<FF>
         + Valid,
 {
     const PRE_GROUPS: usize = 2;

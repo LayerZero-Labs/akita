@@ -1,6 +1,13 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
+impl<F, E> LowBasisRangeCheckProver<E, F>
+where
+    F: FieldCore,
+    E: ExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + crate::kernels::sumcheck::SumcheckTableOperations<F>,
+{
     /// Build the low-basis prover from the compact witness table.
     pub(crate) fn new(
         digit_witness: std::sync::Arc<[i8]>,
@@ -62,6 +69,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             initial_round_prefix: None,
             cached_round_poly: None,
             rounds_completed: 0,
+            kernel_plan: crate::kernels::sumcheck::SumcheckKernelPlan::detect(),
+            base_field: core::marker::PhantomData,
         })
     }
 
@@ -79,6 +88,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             }
             LowBasisRangeImageStorage::Compact(_) => {
                 panic!("range_image remained compact after final fold")
+            }
+            LowBasisRangeImageStorage::FoldedOctets(_) => {
+                panic!("range_image remained octet-coded after final fold")
             }
         }
     }
@@ -166,6 +178,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 LowBasisRangeImageStorage::Compact(digit_witness) => digit_witness.as_ref(),
                 LowBasisRangeImageStorage::Materialized(_) => {
                     panic!("two-round prefix can only build from compact table")
+                }
+                LowBasisRangeImageStorage::FoldedOctets(_) => {
+                    panic!("two-round prefix cannot build from folded octets")
                 }
             };
             let proof = build_stage1_bivariate_skip_proof_from_compact_range_image(
