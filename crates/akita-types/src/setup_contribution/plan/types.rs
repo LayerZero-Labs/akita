@@ -313,10 +313,29 @@ pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) direct_scan_alpha: Option<E>,
 }
 
-pub(crate) struct ProjectedEqPairTensor<E: FieldCore> {
-    pub(crate) ratio: usize,
-    pub(crate) relation_factored: bool,
-    pub(crate) families: Vec<EqPairTensorFamily<E>>,
+pub(crate) enum ProjectedEqPairTensor<E: FieldCore> {
+    Native {
+        ratio: usize,
+        families: Vec<EqPairTensorFamily<E>>,
+    },
+    RelationFactored {
+        ratio: usize,
+        families: Vec<EqPairTensorFamily<E>>,
+    },
+}
+
+impl<E: FieldCore> ProjectedEqPairTensor<E> {
+    pub(crate) fn ratio(&self) -> usize {
+        match self {
+            Self::Native { ratio, .. } | Self::RelationFactored { ratio, .. } => *ratio,
+        }
+    }
+
+    pub(crate) fn families(&self) -> &[EqPairTensorFamily<E>] {
+        match self {
+            Self::Native { families, .. } | Self::RelationFactored { families, .. } => families,
+        }
+    }
 }
 
 impl<E: FieldCore> SetupContributionPlan<E> {
