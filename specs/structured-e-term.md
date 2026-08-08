@@ -1,191 +1,198 @@
 # Structured E Term
 
-This note spells out the verifier's structured `E` / `e_hat` contribution in the
-relation-matrix evaluation.
+This note defines the verifier's structured `E` contribution to the relation
+matrix evaluation. It uses the canonical dyadic chunk partition from
+[`dyadic-chunk-partition.md`](dyadic-chunk-partition.md).
 
 ## Definitions
 
 For group `g`:
 
-- `K_g` is the number of claims in the group.
-- `B_g` is the total number of live blocks in the group.
-- `d_A(g)` is the source / A ring dimension.
-- `d_D(g)` is the D / opening role ring dimension.
+- `K_g` is the number of claims.
+- `B_g` is the exact number of live blocks.
+- `C` is the witness chunk count.
+- `d_A(g)` is the source ring dimension.
+- `d_D(g)` is the opening role ring dimension.
 - `d_0` is the common coefficient block size used by the verifier point split.
-- `q_D = d_A(g) / d_D(g)` is the number of D-role subcolumns inside one
-  A-sized source ring.
-- `L_D = d_D(g) / d_0` is the number of common-block lanes inside one D ring.
+- `q_D = d_A(g) / d_D(g)` is the number of opening role subcolumns in one
+  source ring.
+- `L_D = d_D(g) / d_0` is the number of common coefficient lanes in one
+  opening role ring.
 - `delta_open,g` is the number of opening decomposition digits.
-- `lambda_cons(g) = eq(tau_1, i_cons(g))` is the row-combination weight for
-  group `g`'s consistency row.
-- `c_{g,k,b}(alpha)` is the challenge ring for claim `k`, block `b`, evaluated
-  with the A/source alpha powers.
+- `lambda_cons(g) = eq(tau_1, i_cons(g))` is the row weight for the consistency
+  row of group `g`.
+- `c_{g,k,b}(alpha)` is the challenge ring for claim `k` and global block `b`,
+  evaluated at the source ring powers of `alpha`.
 - `G_j^open` is the opening digit gadget weight.
-- `x_addr` is the high-address part of the stage-2 evaluation point, after the
-  common low coefficient coordinates have been split off.
+- `x_addr` is the high address part of the stage 2 evaluation point.
 
-The low coefficient factor
+The verifier applies the low coefficient factor outside this term:
 
 ```math
 K_\alpha(x_{\mathrm{coeff}})
 =
-\sum_{c=0}^{d_0-1}
-\alpha^c eq(x_{\mathrm{coeff}}, c)
+\sum_{r=0}^{d_0-1}
+\alpha^r eq(x_{\mathrm{coeff}}, r).
 ```
 
-is applied outside this term. The equation below is the high-address part.
+The equations below describe the remaining high address factor.
+
+## Dyadic Chunk Geometry
+
+The layout does not pad live blocks. Chunk `c`, where `0 <= c < C`, owns the
+exact half open range
+
+```math
+[S_{g,c},S_{g,c+1}),
+\qquad
+S_{g,c}=\left\lfloor\frac{cB_g}{C}\right\rfloor.
+```
+
+Its block count is
+
+```math
+N_{g,c}=S_{g,c+1}-S_{g,c}.
+```
+
+The local block index satisfies
+
+```math
+0\le\beta<N_{g,c},
+```
+
+and its global block is
+
+```math
+b=S_{g,c}+\beta.
+```
+
+Chunk lengths differ by at most one. If `C > B_g`, some ranges are empty.
+Those chunks keep their replicated `Z` segment, while their `E` and `T`
+segments have length zero.
 
 ## E Segment Address
 
-Fix one group `g`. Let `C` be the witness chunk count. The current layout
-requires `B_g` to be a multiple of `C`, so every chunk has the same number of
-live blocks:
+For every group `h` and chunk `c`, define the unit lengths
 
 ```math
-N_g = \frac{B_g}{C}.
-```
-
-The first global block in chunk `c` is therefore:
-
-```math
-S_{g,c}=cN_g.
-```
-
-The local block index inside the chunk is `beta`, with:
-
-```math
-0 \le \beta < N_g.
-```
-
-The corresponding global block is:
-
-```math
-b = cN_g+\beta.
-```
-
-For each group `h`, define the per-chunk unit lengths:
-
-```math
-Z_h = P_h\delta_{\mathrm{wit},h}\delta_{\mathrm{fold},h}d_A(h),
+Z_h
+=
+P_h\delta_{\mathrm{wit},h}\delta_{\mathrm{fold},h}d_A(h),
 ```
 
 ```math
-E_h = K_h N_h\delta_{\mathrm{open},h}d_A(h),
+E_{h,c}
+=
+K_hN_{h,c}\delta_{\mathrm{open},h}d_A(h),
 ```
 
 ```math
-T_h = K_h N_h n_{A,h}\delta_{\mathrm{commit},h}d_A(h).
+T_{h,c}
+=
+K_hN_{h,c}n_{A,h}\delta_{\mathrm{commit},h}d_A(h).
 ```
 
-Let:
+The physical width of chunk `c` across all groups is
 
 ```math
-W_{\mathrm{chunk}} = \sum_h (Z_h+E_h+T_h)
+W_c=\sum_h\left(Z_h+E_{h,c}+T_{h,c}\right).
 ```
 
-be the physical width of one full chunk across all groups. Also define the
-within-chunk E-start offset for group `g`:
+The chunks appear in increasing order. Within a chunk, groups appear in the
+authenticated relation order, and each group unit has the order
+`Z || E || T`. Therefore the start of group `g`'s `E` segment in chunk `c` is
 
 ```math
-O_g =
-\sum_{h \prec g}(Z_h+E_h+T_h)+Z_g,
+\mathcal E_{g,c}
+=
+\sum_{r=0}^{c-1}W_r
++
+\sum_{h\prec g}\left(Z_h+E_{h,c}+T_{h,c}\right)
++Z_g.
 ```
 
-where `h \prec g` means that group `h` appears before group `g` in the relation
-group order. Then the physical coefficient offset where chunk `c` of group `g`
-starts its `E` segment is the affine layout constant:
+Here `h \prec g` means that group `h` appears before group `g` in the relation
+order. Every term is a multiple of `d_0`, so define the relation lane start
 
 ```math
-\mathcal{E}_{g,c}=cW_{\mathrm{chunk}}+O_g.
+\overline{\mathcal E}_{g,c}=\frac{\mathcal E_{g,c}}{d_0}.
 ```
 
-Since every segment length above is a multiple of `d_0`, define the corresponding
-lane-level constants:
-
-```math
-\overline{W}_{\mathrm{chunk}}=\frac{W_{\mathrm{chunk}}}{d_0},
-\qquad
-\overline{O}_g=\frac{O_g}{d_0}.
-```
-
-The physical start of the D-role ring segment for `(g,c,k,beta,s,j)` is:
+The physical coefficient address of the opening role ring for
+`(g,c,k,beta,s,j)` is
 
 ```math
 addr_E^{phys,g}(c,k,\beta,s,j)
 =
-\mathcal{E}_{g,c}
+\mathcal E_{g,c}
 +
 \Big(
-\big((k N_g+\beta)q_D+s\big)\delta_{\mathrm{open},g}
+\big((kN_{g,c}+\beta)q_D+s\big)\delta_{\mathrm{open},g}
 +j
-\Big)d_D(g),
+\Big)d_D(g).
 ```
 
-where:
-
-```math
-q_D=\frac{d_A(g)}{d_D(g)}.
-```
-
-Because `d_0` divides both `\mathcal{E}_{g,c}` and `d_D(g)`, the corresponding
-relation-lane address is:
+The corresponding relation lane address, including lane `ell`, is
 
 ```math
 addr_E^{lane,g}(c,k,\beta,s,j,\ell)
 =
-c\overline{W}_{\mathrm{chunk}}+\overline{O}_g
+\overline{\mathcal E}_{g,c}
 +
 \Big(
-\big((k N_g+\beta)q_D+s\big)\delta_{\mathrm{open},g}
+\big((kN_{g,c}+\beta)q_D+s\big)\delta_{\mathrm{open},g}
 +j
 \Big)L_D
 +\ell,
 ```
 
-where:
+where
 
 ```math
-L_D=\frac{d_D(g)}{d_0},
+0\le s<q_D,
 \qquad
-0 \le \ell < L_D.
-```
-
-### Single-Chunk Simplification
-
-If group `g` has only one witness chunk, then:
-
-```math
-C=1,
+0\le j<\delta_{\mathrm{open},g},
 \qquad
-N_g=B_g.
+0\le\ell<L_D.
 ```
 
-The lane address simplifies to:
+### Single Chunk
+
+For `C = 1`, the only chunk has
 
 ```math
-addr_E^{lane,g}(0,k,\beta,s,j,\ell)
-=
-\overline{O}_g
-+
-\Big(
-\big((k B_g + \beta)q_D+s\big)\delta_{\mathrm{open},g}
-+j
-\Big)L_D
-+\ell.
+S_{g,0}=0,
+\qquad
+N_{g,0}=B_g.
 ```
+
+The general address above then reduces to the original single chunk address.
+
+### Equal Width Special Case
+
+If every `B_h` is divisible by `C`, then `N_{h,c}=B_h/C` is independent of
+`c`. Every `W_c` is equal, and each group has a fixed offset inside every
+chunk. Only in this special case can the segment start be written as
+
+```math
+\mathcal E_{g,c}=cW_{\mathrm{chunk}}+O_g.
+```
+
+The verifier may use this affine shape as an optimization. It is not a layout
+requirement.
 
 ## Structured E Equation
 
-For a fixed group `g`, the verifier's high-address structured E contribution is:
+For one group `g`, the high address contribution is
 
 ```math
 S_E^g
 =
 \sum_{c=0}^{C-1}
 \sum_{k=0}^{K_g-1}
-\sum_{\beta=0}^{N_g-1}
+\sum_{\beta=0}^{N_{g,c}-1}
 \lambda_{\mathrm{cons}(g)}
-c_{g,k,cN_g+\beta}(\alpha)
+c_{g,k,S_{g,c}+\beta}(\alpha)
 \sum_{s=0}^{q_D-1}
 \sum_{j=0}^{\delta_{\mathrm{open},g}-1}
 \sum_{\ell=0}^{L_D-1}
@@ -197,434 +204,118 @@ addr_E^{lane,g}(c,k,\beta,s,j,\ell)
 \right).
 ```
 
-Equivalently, substituting the lane address:
+The complete contribution is
 
 ```math
-S_E^g
-=
-\sum_{c=0}^{C-1}
-\sum_{k=0}^{K_g-1}
-\sum_{\beta=0}^{N_g-1}
-\lambda_{\mathrm{cons}(g)}
-c_{g,k,cN_g+\beta}(\alpha)
-\sum_{s=0}^{q_D-1}
-\sum_{j=0}^{\delta_{\mathrm{open},g}-1}
-\sum_{\ell=0}^{L_D-1}
-G^{open}_j
-\alpha^{\ell d_0}
-eq\!\left(
-x_{\mathrm{addr}},
-c\overline{W}_{\mathrm{chunk}}+\overline{O}_g
-+
-\Big(
-\big((kN_g+\beta)q_D+s\big)
-\delta_{\mathrm{open},g}
-+j
-\Big)L_D
-+\ell
-\right).
+S_E=\sum_g S_E^g.
 ```
 
-The full structured E contribution is then:
-
-```math
-S_E = \sum_g S_E^g.
-```
-
-## Hardened Polynomial Notation
-
-To avoid overloading the chunk index `c` with the challenge value notation, write
-the evaluated challenge as the polynomial/function:
-
-```math
-C(g,k,b,\alpha) = c_{g,k,b}(\alpha).
-```
-
-Also write the fixed opening gadget and alpha lane power as:
-
-```math
-G_{\mathrm{open}}(j)=G^{open}_j,
-\qquad
-A(\ell d_0)=\alpha^{\ell d_0}.
-```
-
-With this notation, and moving the challenge factor into the innermost product,
-the fixed-group equation is:
-
-```math
-S_E^g
-=
-\sum_{c=0}^{C-1}
-\sum_{k=0}^{K_g-1}
-\sum_{\beta=0}^{N_g-1}
-\lambda_{\mathrm{cons}(g)}
-\sum_{s=0}^{q_D-1}
-\sum_{j=0}^{\delta_{\mathrm{open},g}-1}
-\sum_{\ell=0}^{L_D-1}
-C(g,k,cN_g+\beta,\alpha)
-G_{\mathrm{open}}(j)
-A(\ell d_0)
-eq\!\left(
-x_{\mathrm{addr}},
-c\overline{W}_{\mathrm{chunk}}+\overline{O}_g
-+
-\Big(
-\big((kN_g+\beta)q_D+s\big)
-\delta_{\mathrm{open},g}
-+j
-\Big)L_D
-+\ell
-\right).
-```
+Empty chunks contribute no `E` terms because `N_{g,c}=0` makes the local block
+sum empty.
 
 ## Interpretation
 
-The term says: for every group, claim, and live block, multiply the A-native
-challenge evaluation `c_{g,k,b}(alpha)` by the consistency-row weight. Then scan
-the D-role representation of `e_hat` across:
+For each live block, the verifier multiplies the source challenge evaluation by
+the consistency row weight. It then scans the opening role representation of
+`E` over three coordinates:
 
-1. D subcolumns `s` inside the A-sized source ring,
-2. opening digits `j`,
-3. common-block lanes `ell` inside the D ring.
+1. Opening role subcolumns `s` inside the source ring.
+2. Opening digits `j`.
+3. Common coefficient lanes `ell` inside the opening role ring.
 
-The factor `alpha^{ell d_0}` accounts for which common-block lane of the D-role
-ring is being evaluated. The missing low coefficient powers `alpha^c` are shared
-by all relation terms and are applied later through `K_alpha(x_coeff)`.
-
-## Multilinear Shifted-Equality Variation
-
-The hardened equation above contains the shifted address equality
-
-```math
-eq\!\left(
-x_{\mathrm{addr}},
-c\overline{W}_{\mathrm{chunk}}+\overline{O}_g
-+
-\Big(
-\big((kN_g+\beta)q_D+s\big)
-\delta_{\mathrm{open},g}
-+j
-\Big)L_D
-+\ell
-\right).
-```
-
-To use this factor as a multilinear object over the local E coordinates, first
-view it as a table indexed by `(c,k,beta,s,j,ell)`, then take the multilinear
-extension with the equality kernel on those coordinates. Let
-`z_E=(z_c,z_k,z_\beta,z_s,z_j,z_\ell)` be the local multilinear point. Define:
-
-```math
-\widetilde{Eq}_E^g(z_E; x_{\mathrm{addr}})
-:=
-\sum_{c=0}^{C-1}
-\sum_{k=0}^{K_g-1}
-\sum_{\beta=0}^{N_g-1}
-\sum_{s=0}^{q_D-1}
-\sum_{j=0}^{\delta_{\mathrm{open},g}-1}
-\sum_{\ell=0}^{L_D-1}
-eq\!\left(z_E,(c,k,\beta,s,j,\ell)\right)
-eq\!\left(
-x_{\mathrm{addr}},
-c\overline{W}_{\mathrm{chunk}}+\overline{O}_g
-+
-\Big(
-\big((kN_g+\beta)q_D+s\big)
-\delta_{\mathrm{open},g}
-+j
-\Big)L_D
-+\ell
-\right).
-```
-
-Equivalently, if the local tuple point is also denoted by `x_E`, this is the
-compact form:
-
-```math
-\widetilde{Eq}_E^g(x_E; x_{\mathrm{addr}})
-=
-\sum_{c,k,\beta,s,j,\ell}
-eq\!\left(x_E,(c,k,\beta,s,j,\ell)\right)
-eq\!\left(
-x_{\mathrm{addr}},
-c\overline{W}_{\mathrm{chunk}}+\overline{O}_g
-+
-\Big(
-\big((kN_g+\beta)q_D+s\big)
-\delta_{\mathrm{open},g}
-+j
-\Big)L_D
-+\ell
-\right),
-```
-
-where the summation ranges are the live ranges from the previous display. The
-second `eq` factor is the original shifted address table value; the first `eq`
-factor is what performs the multilinear extension over `c`, `k`, `beta`, `s`,
-`j`, and `ell`.
-
-The hardened fixed-group E contribution can then use this multilinear extension
-in place of the raw shifted equality factor:
-
-```math
-S_E^g
-=
-\sum_{c=0}^{C-1}
-\sum_{k=0}^{K_g-1}
-\sum_{\beta=0}^{N_g-1}
-\lambda_{\mathrm{cons}(g)}
-\sum_{s=0}^{q_D-1}
-\sum_{j=0}^{\delta_{\mathrm{open},g}-1}
-\sum_{\ell=0}^{L_D-1}
-C(g,k,cN_g+\beta,\alpha)
-G_{\mathrm{open}}(j)
-A(\ell d_0)
-\widetilde{Eq}_E^g
-\!\left((c,k,\beta,s,j,\ell); x_{\mathrm{addr}}\right).
-```
-
-On Boolean tuple inputs, the extension agrees with the original shifted equality:
-
-```math
-\widetilde{Eq}_E^g((c,k,\beta,s,j,\ell); x_{\mathrm{addr}})
-=
-eq\!\left(
-x_{\mathrm{addr}},
-c\overline{W}_{\mathrm{chunk}}+\overline{O}_g
-+
-\Big(
-\big((kN_g+\beta)q_D+s\big)
-\delta_{\mathrm{open},g}
-+j
-\Big)L_D
-+\ell
-\right).
-```
+The factor `alpha^(ell d_0)` selects the common coefficient lane. The shared
+factor `K_alpha(x_coeff)` supplies the remaining low coefficient powers.
 
 ## Compact Verifier Evaluation
 
-At the end of the sum-check, the verifier must evaluate
-`\widetilde{Eq}_E^g(z_E;x_{\mathrm{addr}})` at the random local point
+The verifier does not build a rectangular `(chunk, local block)` table. Such a
+table would need padding because `N_{g,c}` can depend on `c`. Instead, it builds
+one exact tensor family for each nonempty group and chunk unit.
+
+For a fixed `(g,c,k)`, ignore the low lane `ell` for a moment. The setup column
+address is
 
 ```math
-z_E=(z_c,z_k,z_\beta,z_s,z_j,z_\ell).
-```
-
-There is a two-state, logarithmic-time evaluation analogous to the standard
-shifted-EQ carry algorithm, but it requires a binary-aligned E layout. The
-required conditions are:
-
-```math
-\begin{aligned}
-C&=2^{m_c}, & K_g&=2^{m_k}, & N_g&=2^{m_\beta},\\
-q_D&=2^{m_s}, &
-\delta_{\mathrm{open},g}&=2^{m_j}, &
-L_D&=2^{m_\ell},\\
-\overline W_{\mathrm{chunk}}&=2^w.
-\end{aligned}
-```
-
-Write
-
-```math
-m_E=m_k+m_\beta+m_s+m_j+m_\ell
-```
-
-and require the complete E interval to remain inside the low `w` bits of its
-chunk:
-
-```math
-m_c\le n_{\mathrm{addr}}-w,
-\qquad
-\overline O_g+2^{m_E}-1<2^w.
-```
-
-Under these conditions, the mixed-radix local offset is just bit
-concatenation. For big-endian bit strings,
-
-```math
-y
+A_{g,c,k}(\beta,s,j)
 =
-\Big(
-\big((kN_g+\beta)q_D+s\big)
-\delta_{\mathrm{open},g}+j
-\Big)L_D+\ell
+\Big((kB_g+S_{g,c}+\beta)q_D+s\Big)
+\delta_{\mathrm{open},g}+j.
+```
+
+The high relation address is
+
+```math
+R_{g,c,k}(\beta,s,j)
 =
-(k\,\|\,\beta\,\|\,s\,\|\,j\,\|\,\ell)_2.
+\overline{\mathcal E}_{g,c}
++
+\Big((kN_{g,c}+\beta)q_D+s\Big)
+\delta_{\mathrm{open},g}L_D
++jL_D.
 ```
 
-Consequently, if
+Both addresses are affine in `beta`, `s`, and `j`. The verifier records them as
+one paired equality tensor with these axes:
 
-```math
-z_y=z_k\,\|\,z_\beta\,\|\,z_s\,\|\,z_j\,\|\,z_\ell,
-```
+| Axis | Length | Setup stride | Relation stride |
+|---|---:|---:|---:|
+| `beta` | `N_{g,c}` | `q_D delta_open,g` | `q_D delta_open,g L_D` |
+| `s` | `q_D` | `delta_open,g` | `delta_open,g L_D` |
+| `j` | `delta_open,g` | `1` | `L_D` |
 
-then the local equality kernel factors as
+The row weights add one more tensor axis. The role projection handles `ell` and
+its `alpha^(ell d_0)` weight without expanding the relation equality table.
 
-```math
-eq\!\left(z_E,(c,k,\beta,s,j,\ell)\right)
-=
-eq(z_c,c)\,eq(z_y,y).
-```
+The paired carry recurrence evaluates each family directly against the setup
+point and the relation point. It does not allocate a table whose length is the
+setup size or the relation witness size.
 
-Split the big-endian address point after its high `n_{\mathrm{addr}}-w`
-coordinates:
+### Chunk Compaction
 
-```math
-x_{\mathrm{addr}}=(x_{\mathrm{hi}},x_{\mathrm{lo}}),
-\qquad |x_{\mathrm{lo}}|=w.
-```
+The implementation may combine several chunk families into one tensor only
+when all of these facts match:
 
-Because `\overline W_{\mathrm{chunk}}=2^w` and the low interval does not
-overflow, the address bits also concatenate:
+- Each unit has the same axes, including the same live block count.
+- Consecutive setup offsets have one constant stride.
+- Consecutive relation offsets have one constant stride.
+- All scalar weights match.
 
-```math
-\operatorname{bin}_{n_{\mathrm{addr}}}
-\!\left(c2^w+\overline O_g+y\right)
-=
-\operatorname{bin}_{n_{\mathrm{addr}}-w}(c)
-\,\|\,
-\operatorname{bin}_{w}(\overline O_g+y).
-```
+If any check fails, the verifier keeps the original unit families. Unequal
+dyadic chunks therefore remain exact. They are never extended with zero blocks
+to make the fast path apply.
 
-The desired evaluation therefore separates into two compact factors:
+The evaluation trace contraction follows the same rule. It splits the unit
+list into affine runs, divides each run into power of two segments, and combines
+only segments with equal unit geometry. An irregular unit remains a separate
+segment.
 
-```math
-\boxed{
-\widetilde{Eq}_E^g(z_E;x_{\mathrm{addr}})
-=
-\operatorname{PadEq}(x_{\mathrm{hi}},z_c)
-\cdot
-\operatorname{ShiftEq}_w
-\!\left(x_{\mathrm{lo}},\overline O_g,z_y\right)
-}
-```
+This gives the equal width case a smaller constant factor while preserving the
+canonical exact prefix for every block count. The chunk count is capped at 64,
+so the unmatched unit fallback is bounded by the public layout limit.
 
-Here
+## Correctness Conditions
 
-```math
-\operatorname{PadEq}(x_{\mathrm{hi}},z_c)
-:=
-\sum_{c\in\{0,1\}^{m_c}}
-eq(z_c,c)
-eq\!\left(x_{\mathrm{hi}},
-\operatorname{bin}_{n_{\mathrm{addr}}-w}(c)\right).
-```
+The compact evaluation must preserve these conditions:
 
-If `x_{\mathrm{hi}}=x_{\mathrm{pad}}\,\|\,x_c`, where
-`|x_c|=m_c`, this factor is evaluated directly as
+- The dyadic ranges cover `[0,B_g)` exactly once.
+- The setup challenge uses the global block `S_{g,c}+beta`.
+- The relation address uses the local block `beta` inside the physical unit.
+- Empty units contribute no `E` terms.
+- Chunk compaction runs only after exact addresses and axis shapes match.
+- The dense materialization and compact contraction evaluate the same
+  polynomial.
 
-```math
-\operatorname{PadEq}(x_{\mathrm{hi}},z_c)
-=
-\left(\prod_{r\in x_{\mathrm{pad}}}(1-r)\right)
-eq(x_c,z_c).
-```
+The setup contribution tests compare compact tensors with the dense oracle for
+uneven dyadic ownership. The evaluation trace tests also cover irregular cases,
+including 253 blocks over 64 chunks and 61 blocks over 64 chunks.
 
-The second factor is exactly the shifted-EQ MLE:
+## Implementation Owners
 
-```math
-\operatorname{ShiftEq}_w(x_{\mathrm{lo}},\overline O_g,z_y)
-=
-\sum_{y\in\{0,1\}^{m_E}}
-eq(z_y,y)
-eq\!\left(
-x_{\mathrm{lo}},
-\operatorname{bin}_w(\overline O_g+y)
-\right).
-```
-
-It is evaluated from least significant bit to most significant bit with only
-two field states, indexed by the carry:
-
-```text
-dp[0] <- 1; dp[1] <- 0
-for t = 0 .. w-1:
-    next[0] <- 0; next[1] <- 0
-    a <- bit(O_bar_g, t)
-    rho <- x_lo[w-1-t]
-    choices <- {0,1} if t < m_E, otherwise {0}
-
-    for carry in {0,1}:
-        for b in choices:
-            total <- a + carry + b
-            out_bit <- total mod 2
-            next_carry <- floor(total / 2)
-            addr_weight <- rho if out_bit = 1, otherwise 1-rho
-            y_weight <- 1 if t >= m_E
-                        else z_y[m_E-1-t] if b = 1
-                        else 1-z_y[m_E-1-t]
-            next[next_carry] += dp[carry] * addr_weight * y_weight
-
-    dp <- next
-return PadEq(x_hi, z_c) * (dp[0] + dp[1])
-```
-
-The interval condition makes the final low carry zero. The algorithm performs
-
-```math
-O(n_{\mathrm{addr}}+m_c+m_k+m_\beta+m_s+m_j+m_\ell)
-```
-
-field operations and uses `O(1)` field working memory beyond the input points.
-It never materializes the E equality table.
-
-### Why the alignment conditions matter
-
-The logarithmic formula above is not valid for an arbitrary instance of the
-hardened equation. In particular:
-
-- if `N_g` or `\delta_{\mathrm{open},g}` is not a power of two, the tuple
-  `(k,\beta,s,j,\ell)` is not the binary concatenation of its row-major local
-  offset; and
-- if `\overline W_{\mathrm{chunk}}` is not a power of two, `c` is multiplied by
-  a genuine binary stride instead of being placed in a disjoint high-bit field.
-
-The exact general evaluation can still be written as a carry transducer. Define
-the affine coefficients
-
-```math
-\begin{aligned}
-a_c&=\overline W_{\mathrm{chunk}}, &
-a_k&=N_gq_D\delta_{\mathrm{open},g}L_D, &
-a_\beta&=q_D\delta_{\mathrm{open},g}L_D,\\
-a_s&=\delta_{\mathrm{open},g}L_D, &
-a_j&=L_D, &
-a_\ell&=1.
-\end{aligned}
-```
-
-Initialize an integer carry state with `q_0=\overline O_g`. At address bit `t`,
-branch on the current bit `b_{v,t}` of every live local coordinate and apply
-
-```math
-T_t=q_t+\sum_{v\in\{c,k,\beta,s,j,\ell\}}a_vb_{v,t},
-\qquad
-u_t=T_t\bmod 2,
-\qquad
-q_{t+1}=\left\lfloor\frac{T_t}{2}\right\rfloor.
-```
-
-Each transition is multiplied by the corresponding local multilinear weights
-and by the address factor `(1-x_{\mathrm{addr},t})` or
-`x_{\mathrm{addr},t}` selected by `u_t`. For a non-power-of-two live range, a
-three-state comparison flag for that coordinate excludes bit strings outside
-the range. After all address bits, accept only states with zero final carry and
-with all six coordinates inside their live ranges. This DP is exact.
-
-However, its carry set is no longer `{0,1}`. A constant multiplier such as
-`c\overline W_{\mathrm{chunk}}` can keep a distinct reachable carry for each of
-linearly many prefixes of `c` (and the unrestricted multiplier transducer has
-up to `\overline W_{\mathrm{chunk}}` carry states). If `Q` carry values are
-reachable, the direct six-axis recurrence costs
-
-```math
-O\!\left(n_{\mathrm{addr}}\,2^6\,Q\,3^6\right)
-```
-
-operations in the worst case; the `3^6` factor is only needed when all six
-ranges require live-prefix comparison states. Thus the hardened equation by
-itself does not imply a verifier cost logarithmic in all six range sizes. Such a
-claim needs the binary-alignment conditions above, a binary-padded physical
-layout that enforces them, or a different polynomial coordinate that uses one
-flat contiguous E offset.
+- [`akita_types::dyadic_block_ranges`](../crates/akita-types/src/witness/chunk_partition.rs)
+  owns chunk boundaries.
+- [`WitnessLayout`](../crates/akita-types/src/witness.rs) owns physical unit
+  ranges and `Z || E || T` placement.
+- [`setup_index_weight.rs`](../crates/akita-types/src/setup_contribution/plan/setup_index_weight.rs)
+  builds and conditionally combines setup contribution tensors.
+- [`evaluation_trace.rs`](../crates/akita-verifier/src/protocol/evaluation_trace.rs)
+  contracts evaluation trace units and handles irregular dyadic chunks.
