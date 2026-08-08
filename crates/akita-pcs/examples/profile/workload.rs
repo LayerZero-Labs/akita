@@ -781,7 +781,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     report_crt_profile(
         label,
         prepared
-            .shared_ntt_profile::<D>()
+            .shared_ntt_profile(layout.d_a())
             .expect("prepared setup CRT profile"),
     );
     run_prove::<FF, D, Cfg, DensePoly<FF>>(
@@ -859,7 +859,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     report_crt_profile(
         label,
         prepared
-            .shared_ntt_profile::<D>()
+            .shared_ntt_profile(layout.d_a())
             .expect("prepared setup CRT profile"),
     );
     run_prove::<FF, D, Cfg, OneHotPoly<FF, u8>>(
@@ -952,7 +952,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_crt_profile(
             label,
             prepared
-                .shared_ntt_profile::<D>()
+                .shared_ntt_profile(layout.d_a())
                 .expect("prepared setup CRT profile"),
         );
         let t0 = Instant::now();
@@ -1255,7 +1255,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         report_crt_profile(
             label,
             prepared
-                .shared_ntt_profile::<D>()
+                .shared_ntt_profile(schedule.root.params.final_group.commitment.d_a())
                 .expect("prepared setup CRT profile"),
         );
         let mut pre_keys = Vec::with_capacity(PRE_GROUPS);

@@ -247,7 +247,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     group.finish();
 }
 
-fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
+fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     c: &mut Criterion,
     label: &str,
     nv: usize,
@@ -257,8 +257,10 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     )
     .expect("benchmark layout");
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
+    let root_ring_dimension = layout.inner_commit_matrix.ring_dimension();
     let onehot_k = 256;
-    let total_field = total_ring * D;
+    let total_field = total_ring * root_ring_dimension;
+    assert_eq!(total_field, 1usize << nv);
     assert_eq!(total_field % onehot_k, 0);
     let total_chunks = total_field / onehot_k;
 
@@ -267,7 +269,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
         .map(|_| Some(rng.gen_range(0..onehot_k)))
         .collect();
 
-    let onehot_poly = OneHotPoly::<F>::new(onehot_k, D, indices.clone()).unwrap();
+    let onehot_poly = OneHotPoly::<F>::new(onehot_k, root_ring_dimension, indices.clone()).unwrap();
 
     let dense_evals: Vec<F> = {
         let mut evals = vec![F::from_u64(0); total_field];
@@ -429,13 +431,13 @@ fn bench_dense_nv24(c: &mut Criterion) {
 }
 
 fn bench_onehot_nv15(c: &mut Criterion) {
-    bench_onehot_phases::<{ fp128::OneHot::D }, fp128::OneHot>(c, "onehot-adaptive", 15);
+    bench_onehot_phases::<fp128::OneHot>(c, "onehot-adaptive", 15);
 }
 fn bench_onehot_nv20(c: &mut Criterion) {
-    bench_onehot_phases::<{ fp128::OneHot::D }, fp128::OneHot>(c, "onehot-adaptive", 20);
+    bench_onehot_phases::<fp128::OneHot>(c, "onehot-adaptive", 20);
 }
 fn bench_onehot_nv25(c: &mut Criterion) {
-    bench_onehot_phases::<{ fp128::OneHot::D }, fp128::OneHot>(c, "onehot-adaptive", 25);
+    bench_onehot_phases::<fp128::OneHot>(c, "onehot-adaptive", 25);
 }
 
 criterion_group!(

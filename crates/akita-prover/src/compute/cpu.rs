@@ -236,17 +236,17 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
         self.compression_ntt.cache_bytes()
     }
 
-    /// CRT/NTT profile and universal i8 capacity metadata for ring degree `D`.
-    pub fn shared_ntt_profile<const D: usize>(&self) -> Result<PreparedCrtNttProfile, AkitaError> {
+    /// CRT/NTT profile and universal i8 capacity metadata for `ring_d`.
+    pub fn shared_ntt_profile(&self, ring_d: usize) -> Result<PreparedCrtNttProfile, AkitaError> {
         self.ntt_i8_capacity_by_ring_d
             .lock()
             .map_err(|_| AkitaError::InvalidSetup("NTT profile lock poisoned".into()))?
-            .get(&D)
+            .get(&ring_d)
             .copied()
             .map(Into::into)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(format!(
-                    "prepared setup has no CRT/i8 capacity profile for ring_d={D}"
+                    "prepared setup has no CRT/i8 capacity profile for ring_d={ring_d}"
                 ))
             })
     }
@@ -968,7 +968,7 @@ mod tests {
         CpuBackend
             .digit_rows::<D>(&prepared, 1, &[[1i8; D]], 2)
             .expect("build exact NTT prefix");
-        let profile = prepared.shared_ntt_profile::<D>().expect("profile");
+        let profile = prepared.shared_ntt_profile(D).expect("profile");
 
         assert_eq!(profile.profile_id, "Q64/3xi32");
         assert_eq!(profile.num_primes, 3);
