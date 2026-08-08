@@ -275,15 +275,32 @@ where
     // `eq_y` and the setup-index equality; the scan is `O(required · D)` and is
     // the dominant recursive-mode verifier cost, so evaluate it in parallel.
     let _span = tracing::info_span!("stage3_setup_mle_scan", required).entered();
+    let inner_len = eq_setup_idx.in_len();
+    let required_outer = required.div_ceil(inner_len);
     cfg_fold_reduce!(
-        0..required,
+        0..required_outer,
         || Ok(E::zero()),
-        |acc: Result<E, AkitaError>, setup_idx| {
-            let entry = setup_entries
-                .get(setup_idx)
+        |acc: Result<E, AkitaError>, outer_idx| {
+            let start = outer_idx
+                .checked_mul(inner_len)
                 .ok_or(AkitaError::InvalidProof)?;
-            let ring_eval = eval_ring_at_pows_fast(entry, eq_y);
-            Ok(acc? + eq_setup_idx.eval_at(setup_idx)? * ring_eval)
+            let end = start.saturating_add(inner_len).min(required);
+            let entries = setup_entries
+                .get(start..end)
+                .ok_or(AkitaError::InvalidProof)?;
+            let inner_weights = eq_setup_idx
+                .e_in
+                .get(..entries.len())
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut inner = E::zero();
+            for (entry, &weight) in entries.iter().zip(inner_weights) {
+                inner += eval_ring_at_pows_fast(entry, eq_y) * weight;
+            }
+            let outer_weight = eq_setup_idx
+                .e_out
+                .get(outer_idx)
+                .ok_or(AkitaError::InvalidProof)?;
+            Ok(acc? + *outer_weight * inner)
         },
         |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
     )
