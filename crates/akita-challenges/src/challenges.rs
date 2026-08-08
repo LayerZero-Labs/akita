@@ -6,11 +6,21 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
 
 #[cfg(feature = "parallel")]
+// Near the crossover, two to four coarse leaves amortize Rayon dispatch.
+const PARALLEL_COARSE_LEAF_TERMS: usize = 1 << 15;
+#[cfg(feature = "parallel")]
+// Larger batches expose enough work to keep finer leaves busy.
+const PARALLEL_FINE_LEAF_TERMS: usize = 1 << 13;
+#[cfg(feature = "parallel")]
+// The fine tier starts above the largest measured coarse-leaf sweet spot.
+const PARALLEL_FINE_TOTAL_TERMS: usize = 1 << 17;
+
+#[cfg(feature = "parallel")]
 fn evals_at_pows_parallel<F, E>(
     challenges: &[SparseChallenge],
     evaluations: &mut [E],
     alpha_pows: &[E],
-    sparse_terms: usize,
+    leaf_challenges: usize,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
@@ -21,8 +31,7 @@ where
             "parallel challenge evaluation length mismatch".into(),
         ));
     }
-    const PARALLEL_LEAF_TERMS: usize = 1 << 15;
-    if sparse_terms <= PARALLEL_LEAF_TERMS || challenges.len() < 2 {
+    if challenges.len() <= leaf_challenges || challenges.len() < 2 {
         for (evaluation, challenge) in evaluations.iter_mut().zip(challenges) {
             *evaluation = challenge.eval_at_pows::<F, E>(alpha_pows)?;
         }
@@ -32,25 +41,18 @@ where
     let midpoint = challenges.len() / 2;
     let (left_challenges, right_challenges) = challenges.split_at(midpoint);
     let (left_evaluations, right_evaluations) = evaluations.split_at_mut(midpoint);
-    let left_terms = left_challenges.iter().try_fold(0usize, |sum, challenge| {
-        sum.checked_add(challenge.positions.len())
-            .ok_or(AkitaError::InvalidProof)
-    })?;
-    let right_terms = sparse_terms
-        .checked_sub(left_terms)
-        .ok_or(AkitaError::InvalidProof)?;
     let (left_result, right_result) = cfg_join!(
         || evals_at_pows_parallel::<F, E>(
             left_challenges,
             left_evaluations,
             alpha_pows,
-            left_terms,
+            leaf_challenges,
         ),
         || evals_at_pows_parallel::<F, E>(
             right_challenges,
             right_evaluations,
             alpha_pows,
-            right_terms,
+            leaf_challenges,
         )
     );
     left_result?;
@@ -164,23 +166,29 @@ impl Challenges {
         let evaluate = |challenge: &SparseChallenge| challenge.eval_at_pows::<F, E>(alpha_pows);
         #[cfg(feature = "parallel")]
         let parallel_candidate = {
-            const MIN_PARALLEL_CHALLENGES: usize = 1 << 11;
-            const MIN_LIGHTWEIGHT_CHALLENGES: usize = 1 << 12;
-            let challenge_count = self.challenges.len();
-            challenge_count >= MIN_LIGHTWEIGHT_CHALLENGES
-                || (challenge_count >= MIN_PARALLEL_CHALLENGES && alpha_pows.len() <= 128)
+            const MIN_PARALLEL_CHALLENGES: usize = 1 << 9;
+            self.challenges.len() >= MIN_PARALLEL_CHALLENGES
         };
         #[cfg(feature = "parallel")]
         if parallel_candidate {
-            const MIN_PARALLEL_TERMS: usize = 1 << 15;
             let sparse_terms = self.challenges.iter().try_fold(0usize, |sum, challenge| {
                 sum.checked_add(challenge.positions.len()).ok_or_else(|| {
                     AkitaError::InvalidInput("sparse challenge term count overflow".into())
                 })
             })?;
-            if sparse_terms < MIN_PARALLEL_TERMS {
+            if sparse_terms <= PARALLEL_COARSE_LEAF_TERMS {
                 return self.challenges.iter().map(evaluate).collect();
             }
+            let leaf_terms = if sparse_terms > PARALLEL_FINE_TOTAL_TERMS {
+                PARALLEL_FINE_LEAF_TERMS
+            } else {
+                PARALLEL_COARSE_LEAF_TERMS
+            };
+            // Production batches have a uniform sparse weight. Pricing leaves
+            // from the exact average also keeps arbitrary valid batches linear
+            // without rescanning their terms at every recursive fork.
+            let average_terms = sparse_terms.div_ceil(self.challenges.len());
+            let leaf_challenges = (leaf_terms / average_terms).max(1);
             let mut evaluations = Vec::new();
             evaluations
                 .try_reserve_exact(self.challenges.len())
@@ -192,7 +200,7 @@ impl Challenges {
                 &self.challenges,
                 &mut evaluations,
                 alpha_pows,
-                sparse_terms,
+                leaf_challenges,
             )?;
             return Ok(evaluations);
         }
