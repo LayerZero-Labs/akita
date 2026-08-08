@@ -129,7 +129,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .ok_or(AkitaError::InvalidProof)?;
                 let unit_partition = witness_layout
                     .units_for_group(group.group_id)?
-                    .map(|unit| (unit.global_block_start(), unit.num_live_blocks()))
+                    .map(|unit| SetupUnitRange {
+                        global_block_start: unit.global_block_start(),
+                        num_live_blocks: unit.num_live_blocks(),
+                    })
                     .collect::<Vec<_>>()
                     .into();
                 drop(geometry_span);

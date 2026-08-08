@@ -313,27 +313,26 @@ pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) direct_scan_alpha: Option<E>,
 }
 
+pub(crate) struct ProjectedEqPairTensorBatch<E: FieldCore> {
+    pub(crate) ratio: usize,
+    pub(crate) families: Vec<EqPairTensorFamily<E>>,
+}
+
 pub(crate) enum ProjectedEqPairTensor<E: FieldCore> {
-    Native {
-        ratio: usize,
-        families: Vec<EqPairTensorFamily<E>>,
-    },
-    RelationFactored {
-        ratio: usize,
-        families: Vec<EqPairTensorFamily<E>>,
-    },
+    Native(ProjectedEqPairTensorBatch<E>),
+    RelationFactored(ProjectedEqPairTensorBatch<E>),
 }
 
 impl<E: FieldCore> ProjectedEqPairTensor<E> {
     pub(crate) fn ratio(&self) -> usize {
         match self {
-            Self::Native { ratio, .. } | Self::RelationFactored { ratio, .. } => *ratio,
+            Self::Native(batch) | Self::RelationFactored(batch) => batch.ratio,
         }
     }
 
     pub(crate) fn families(&self) -> &[EqPairTensorFamily<E>] {
         match self {
-            Self::Native { families, .. } | Self::RelationFactored { families, .. } => families,
+            Self::Native(batch) | Self::RelationFactored(batch) => &batch.families,
         }
     }
 }
@@ -398,10 +397,16 @@ pub(crate) struct SetupContributionGroupPlan<E: FieldCore> {
     pub(crate) b_weights: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
     pub(crate) direct_scan_weights: Option<DirectScanWeights<E>>,
-    pub(crate) unit_partition: Arc<[(usize, usize)]>,
+    pub(crate) unit_partition: Arc<[SetupUnitRange]>,
     pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) b_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SetupUnitRange {
+    pub(crate) global_block_start: usize,
+    pub(crate) num_live_blocks: usize,
 }
 
 impl<E: FieldCore> SetupContributionGroupPlan<E> {

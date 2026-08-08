@@ -18,7 +18,14 @@ use smallvec::SmallVec;
 
 use crate::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
 
-const INLINE_SPARSE_WEIGHT: usize = D64_PRODUCTION_PM1_COUNT + D64_PRODUCTION_PM2_COUNT;
+/// Inline capacity chosen for the heaviest production family, D64 `(31, 10)`.
+/// Every other production ring dimension has weight at most 31 and also fits.
+pub const INLINE_SPARSE_WEIGHT: usize = D64_PRODUCTION_PM1_COUNT + D64_PRODUCTION_PM2_COUNT;
+
+/// Public storage type for sparse challenge positions.
+pub type SparseChallengePositions = SmallVec<[u32; INLINE_SPARSE_WEIGHT]>;
+/// Public storage type for sparse challenge coefficients.
+pub type SparseChallengeCoefficients = SmallVec<[i8; INLINE_SPARSE_WEIGHT]>;
 
 #[inline]
 pub(crate) fn accumulate_small_signed<F, E>(acc: &mut E, value: E, coeff: i64)
@@ -52,10 +59,10 @@ where
 pub struct SparseChallenge {
     /// Coefficient indices (powers of `X`) where the polynomial is non-zero.
     /// Production challenges fit inline; custom heavier families spill to the heap.
-    pub positions: SmallVec<[u32; INLINE_SPARSE_WEIGHT]>,
+    pub positions: SparseChallengePositions,
     /// Small integer coefficients at the corresponding positions. Stored
     /// as `i8` since every shipping sampling family caps `|coeff| <= 8`.
-    pub coeffs: SmallVec<[i8; INLINE_SPARSE_WEIGHT]>,
+    pub coeffs: SparseChallengeCoefficients,
 }
 
 impl SparseChallenge {

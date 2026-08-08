@@ -1,4 +1,4 @@
-use super::types::ProjectedEqPairTensor;
+use super::types::{ProjectedEqPairTensor, ProjectedEqPairTensorBatch};
 use super::*;
 use akita_algebra::{
     offset_eq::{
@@ -166,7 +166,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 )?;
                 let relation_point = self.relation_address.point();
                 let contraction = match batch {
-                    ProjectedEqPairTensor::RelationFactored { families, .. } => {
+                    ProjectedEqPairTensor::RelationFactored(batch) => {
                         let relation_low_point = relation_point
                             .get(..low_variable_count)
                             .ok_or(AkitaError::InvalidProof)?;
@@ -182,12 +182,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             * eval_boolean_pair_tensor_families::<_, false, false>(
                                 setup_high_point,
                                 relation_high_point,
-                                families,
+                                &batch.families,
                             )?
                     }
-                    ProjectedEqPairTensor::Native { families, .. } => {
+                    ProjectedEqPairTensor::Native(batch) => {
                         let projected = project_role_tensors(
-                            families,
+                            &batch.families,
                             ratio,
                             alpha,
                             self.projection_geometry.base_ring_dim(),
@@ -224,12 +224,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         batches
             .into_iter()
             .map(|batch| match batch {
-                ProjectedEqPairTensor::Native {
-                    ratio,
-                    mut families,
-                } if ratio > 1 && role_tensors_are_aligned(&families, ratio) => {
-                    factor_aligned_role_tensors(&mut families, ratio)?;
-                    Ok(ProjectedEqPairTensor::RelationFactored { ratio, families })
+                ProjectedEqPairTensor::Native(mut projected)
+                    if projected.ratio > 1
+                        && role_tensors_are_aligned(&projected.families, projected.ratio) =>
+                {
+                    factor_aligned_role_tensors(&mut projected.families, projected.ratio)?;
+                    Ok(ProjectedEqPairTensor::RelationFactored(projected))
                 }
                 batch => Ok(batch),
             })
@@ -353,7 +353,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         for tensor in compact_affine_unit_families(lifted, group.num_claims)? {
-            push_projected_tensor(batches, group.d_ratio, tensor);
+            push_projected_tensor(batches, group.d_ratio, tensor)?;
         }
         Ok(())
     }
@@ -372,7 +372,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .map(|tensor| lift_role_tensor(tensor, 0, group.t_cols, &group.b_weights))
             .collect::<Result<Vec<_>, _>>()?;
         for tensor in compact_affine_unit_families(lifted, group.num_claims)? {
-            push_projected_tensor(batches, group.b_ratio, tensor);
+            push_projected_tensor(batches, group.b_ratio, tensor)?;
         }
         Ok(())
     }
@@ -391,7 +391,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .map(|tensor| lift_role_tensor(tensor, 0, group.z_cols, &group.a_row_weights))
             .collect::<Result<Vec<_>, _>>()?;
         for tensor in compact_affine_unit_families(lifted, 1)? {
-            push_projected_tensor(batches, group.a_ratio, tensor);
+            push_projected_tensor(batches, group.a_ratio, tensor)?;
         }
         Ok(())
     }
@@ -462,6 +462,9 @@ fn build_group_role_tensors<E: FieldCore>(
     let mut d_tensors = Vec::new();
     let mut b_tensors = Vec::new();
     let mut a_tensors = Vec::new();
+    // Emission is unit-major with claim as the inner index. Structured replay
+    // consumes D/B tensors at `unit * num_claims + claim`; changing this order
+    // requires changing that index contract at the same time.
     for unit in witness_layout.units_for_group(group.group_id)? {
         for claim in 0..group.num_claims {
             if unit.num_live_blocks() == 0 {
@@ -751,17 +754,20 @@ fn push_projected_tensor<E: FieldCore>(
     batches: &mut Vec<ProjectedEqPairTensor<E>>,
     ratio: usize,
     family: EqPairTensorFamily<E>,
-) {
-    if let Some(ProjectedEqPairTensor::Native { families, .. }) =
-        batches.iter_mut().find(|batch| batch.ratio() == ratio)
-    {
-        families.push(family);
-    } else {
-        batches.push(ProjectedEqPairTensor::Native {
+) -> Result<(), AkitaError> {
+    match batches.iter_mut().find(|batch| batch.ratio() == ratio) {
+        Some(ProjectedEqPairTensor::Native(batch)) => batch.families.push(family),
+        Some(ProjectedEqPairTensor::RelationFactored(_)) => {
+            return Err(AkitaError::InvalidSetup(
+                "projected tensors pushed after relation factoring".into(),
+            ));
+        }
+        None => batches.push(ProjectedEqPairTensor::Native(ProjectedEqPairTensorBatch {
             ratio,
             families: vec![family],
-        });
+        })),
     }
+    Ok(())
 }
 
 fn checked_mul(lhs: usize, rhs: usize, context: &'static str) -> Result<usize, AkitaError> {

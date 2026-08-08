@@ -23,7 +23,9 @@ mod fold_draw;
 mod sampler;
 
 pub use akita_transcript::FoldChallengeSeedPreview;
-pub use challenge::SparseChallenge;
+pub use challenge::{
+    SparseChallenge, SparseChallengeCoefficients, SparseChallengePositions, INLINE_SPARSE_WEIGHT,
+};
 pub use challenges::Challenges;
 pub use config::{
     SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,

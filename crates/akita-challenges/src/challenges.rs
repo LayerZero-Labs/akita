@@ -6,7 +6,9 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
 
 #[cfg(feature = "parallel")]
-// Near the crossover, two to four coarse leaves amortize Rayon dispatch.
+// Tuned with `benches/sparse_challenge.rs::bench_sparse_evaluation` on an
+// Apple M4 Max (16 cores, 64 GiB). Near the crossover, two to four coarse
+// leaves amortize Rayon dispatch.
 const PARALLEL_COARSE_LEAF_TERMS: usize = 1 << 15;
 #[cfg(feature = "parallel")]
 // Larger batches expose enough work to keep finer leaves busy.
@@ -166,6 +168,8 @@ impl Challenges {
         let evaluate = |challenge: &SparseChallenge| challenge.eval_at_pows::<F, E>(alpha_pows);
         #[cfg(feature = "parallel")]
         let parallel_candidate = {
+            // Same M4 Max benchmark above: smaller batches never amortized
+            // the initial Rayon dispatch, independent of sparse weight.
             const MIN_PARALLEL_CHALLENGES: usize = 1 << 9;
             self.challenges.len() >= MIN_PARALLEL_CHALLENGES
         };

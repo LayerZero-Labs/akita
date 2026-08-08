@@ -646,7 +646,7 @@ fn compact_stride_rejects_overflow_before_clipping() {
     let lanes = [F::one(), F::one()];
     let outer = [F::one(), F::one()];
     let err = eval_compact_stride_eq(
-        &[F::one()],
+        &[F::one()][..],
         usize::MAX,
         lanes.len(),
         &lanes,
@@ -880,8 +880,9 @@ fn affine_digit_interval_handles_boolean_challenges_without_inversion() {
         F::from_u64(23),
         F::from_u64(29),
     ];
-    let got = eval_affine_digit_intervals(&challenges, &[5], 3, 7, 6, 1, &digits, &high, &low, &[])
-        .unwrap();
+    let got =
+        eval_affine_digit_intervals(&challenges, &[5], 3, 7, 6, 1, &digits, &high[..], &low, &[])
+            .unwrap();
     assert_eq!(
         got,
         reference_affine_digit_interval(&challenges, 5, 3, 7, 6, &digits, &high, &low)
@@ -901,7 +902,7 @@ fn affine_digit_interval_rejects_work_above_cap() {
         1 << 14,
         1,
         &digits,
-        &[F::one()],
+        &[F::one()][..],
         &low,
         &[],
     )
@@ -918,8 +919,8 @@ fn affine_digit_interval_rejects_addresses_outside_eq_domain() {
         2,
         2,
         1,
-        &[F::one()],
-        &[F::one()],
+        &[F::one()][..],
+        &[F::one()][..],
         &[F::one(), F::one()],
         &[],
     )

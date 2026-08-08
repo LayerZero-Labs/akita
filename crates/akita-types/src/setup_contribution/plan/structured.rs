@@ -237,6 +237,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             ));
         }
 
+        // `build_group_role_tensors` emits D/B families unit-major with claim
+        // inside each unit. The evaluation fold itself is claim-major, so this
+        // explicit conversion is the single ordering boundary between them.
         let fold_family = |acc: Result<E, AkitaError>, family_index: usize| {
             let claim = family_index / unit_count;
             let unit_index = family_index % unit_count;
@@ -258,10 +261,26 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         .ok_or(AkitaError::InvalidProof)?,
                 )
             };
-            let &(global_block_start, unit_blocks) = group
+            let unit = group
                 .unit_partition
                 .get(unit_index)
                 .ok_or(AkitaError::InvalidProof)?;
+            let global_block_start = unit.global_block_start;
+            let unit_blocks = unit.num_live_blocks;
+            let setup_block = claim
+                .checked_mul(group.num_live_blocks)
+                .and_then(|block| block.checked_add(global_block_start))
+                .ok_or(AkitaError::InvalidProof)?;
+            let expected_d_offset = setup_block
+                .checked_mul(e_stride)
+                .ok_or(AkitaError::InvalidProof)?;
+            debug_assert_eq!(d_tensor.left_offset, expected_d_offset);
+            if let Some(b_tensor) = b_tensor {
+                let expected_b_offset = setup_block
+                    .checked_mul(t_stride)
+                    .ok_or(AkitaError::InvalidProof)?;
+                debug_assert_eq!(b_tensor.left_offset, expected_b_offset);
+            }
             let claim_start = claim
                 .checked_mul(group.num_live_blocks)
                 .ok_or(AkitaError::InvalidProof)?;

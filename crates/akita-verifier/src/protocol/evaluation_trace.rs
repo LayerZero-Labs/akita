@@ -43,6 +43,8 @@ struct PreparedEvaluationTraceGroup<E: FieldCore> {
 
 /// Below this per-unit block count the affine scan wins despite its linear
 /// term; at and above it the logarithmic paired recurrence wins decisively.
+/// Measured by `benches/evaluation_trace.rs::bench_evaluation_trace` on an
+/// Apple M4 Max (16 cores, 64 GiB).
 const TRACE_TENSOR_MIN_BLOCKS_PER_UNIT: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -56,6 +58,38 @@ struct TraceUnitTensorAxis {
 struct TraceUnitTensorSegment {
     first_unit: usize,
     axis: Option<TraceUnitTensorAxis>,
+}
+
+#[derive(Clone, Copy)]
+struct TraceUnitRunStrides {
+    block: usize,
+    coefficient: usize,
+    lane: usize,
+}
+
+fn trace_unit_run_strides(
+    first: &PreparedEvaluationTraceUnit,
+    next: &PreparedEvaluationTraceUnit,
+    coefficient_block_len: usize,
+) -> Option<TraceUnitRunStrides> {
+    if next.block_count != first.block_count
+        || next.claim_stride_coefficients != first.claim_stride_coefficients
+    {
+        return None;
+    }
+    let block = next
+        .global_block_start
+        .checked_sub(first.global_block_start)
+        .filter(|&stride| stride != 0)?;
+    let coefficient = next
+        .first_claim_coefficient
+        .checked_sub(first.first_claim_coefficient)
+        .filter(|&stride| stride != 0 && stride.is_multiple_of(coefficient_block_len))?;
+    Some(TraceUnitRunStrides {
+        block,
+        coefficient,
+        lane: coefficient / coefficient_block_len,
+    })
 }
 
 /// Block-axis work selected and constructed once during trace preparation.
@@ -81,22 +115,14 @@ fn trace_unit_tensor_axis(
     }
     let first = units.first()?;
     let second = units.get(1)?;
-    let block_stride = second
-        .global_block_start
-        .checked_sub(first.global_block_start)
-        .filter(|&stride| stride != 0)?;
-    let coefficient_stride = second
-        .first_claim_coefficient
-        .checked_sub(first.first_claim_coefficient)
-        .filter(|&stride| stride != 0 && stride.is_multiple_of(coefficient_block_len))?;
-    let lane_stride = coefficient_stride / coefficient_block_len;
+    let strides = trace_unit_run_strides(first, second, coefficient_block_len)?;
 
     for (index, unit) in units.iter().enumerate() {
         let expected_block_start = index
-            .checked_mul(block_stride)
+            .checked_mul(strides.block)
             .and_then(|offset| first.global_block_start.checked_add(offset))?;
         let expected_coefficient = index
-            .checked_mul(coefficient_stride)
+            .checked_mul(strides.coefficient)
             .and_then(|offset| first.first_claim_coefficient.checked_add(offset))?;
         if unit.global_block_start != expected_block_start
             || unit.first_claim_coefficient != expected_coefficient
@@ -108,8 +134,8 @@ fn trace_unit_tensor_axis(
     }
     Some(TraceUnitTensorAxis {
         len: units.len(),
-        block_stride,
-        lane_stride,
+        block_stride: strides.block,
+        lane_stride: strides.lane,
     })
 }
 
@@ -125,32 +151,21 @@ fn trace_unit_tensor_segments(
     while run_start < units.len() {
         let first = units.get(run_start).ok_or(AkitaError::InvalidProof)?;
         let mut run_end = run_start + 1;
-        let strides = units.get(run_end).and_then(|second| {
-            let block_stride = second
-                .global_block_start
-                .checked_sub(first.global_block_start)?;
-            let coefficient_stride = second
-                .first_claim_coefficient
-                .checked_sub(first.first_claim_coefficient)?;
-            (block_stride != 0
-                && coefficient_stride != 0
-                && coefficient_stride.is_multiple_of(coefficient_block_len)
-                && second.block_count == first.block_count
-                && second.claim_stride_coefficients == first.claim_stride_coefficients)
-                .then_some((block_stride, coefficient_stride))
-        });
-        if let Some((block_stride, coefficient_stride)) = strides {
+        let strides = units
+            .get(run_end)
+            .and_then(|second| trace_unit_run_strides(first, second, coefficient_block_len));
+        if let Some(strides) = strides {
             run_end += 1;
             while let (Some(previous), Some(next)) = (units.get(run_end - 1), units.get(run_end)) {
                 let matches_run = next.block_count == first.block_count
                     && next.claim_stride_coefficients == first.claim_stride_coefficients
                     && previous
                         .global_block_start
-                        .checked_add(block_stride)
+                        .checked_add(strides.block)
                         .is_some_and(|expected| expected == next.global_block_start)
                     && previous
                         .first_claim_coefficient
-                        .checked_add(coefficient_stride)
+                        .checked_add(strides.coefficient)
                         .is_some_and(|expected| expected == next.first_claim_coefficient);
                 if !matches_run {
                     break;
@@ -190,7 +205,9 @@ fn prepare_trace_contraction<E: FieldCore>(
         .iter()
         .map(|unit| unit.block_count)
         .max()
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("evaluation trace group has no live blocks".into())
+        })?;
     if max_unit_blocks == 1 || max_unit_blocks >= TRACE_TENSOR_MIN_BLOCKS_PER_UNIT {
         return Ok(PreparedTraceContraction::Tensor {
             segments: trace_unit_tensor_segments(units, coefficient_block_len)?,
@@ -270,7 +287,7 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
             if inner_trace_evaluations.len() != source_lane_count {
                 return Err(AkitaError::InvalidProof);
             }
-            let block_stride = digit_weights
+            let lane_stride_per_block = digit_weights
                 .len()
                 .checked_mul(source_lane_count)
                 .ok_or_else(|| AkitaError::InvalidSetup("trace block stride overflow".into()))?;
@@ -352,7 +369,7 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                                         &[base],
                                         unit.global_block_start,
                                         unit.block_count,
-                                        block_stride,
+                                        lane_stride_per_block,
                                         role_lane_count,
                                         digit_weights,
                                         high_block_weights.as_ref(),
@@ -367,7 +384,7 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                                     role_lane_count,
                                     Arc::clone(digit_weights),
                                 ),
-                                EqPairTensorAxis::unit(unit.block_count, 1, block_stride),
+                                EqPairTensorAxis::unit(unit.block_count, 1, lane_stride_per_block),
                             ];
                             if let Some(axis) = tensor_axis {
                                 axes.push(EqPairTensorAxis::unit(
@@ -674,7 +691,6 @@ mod tests {
     #[test]
     fn projected_subcolumn_trace_matches_dense_definition() {
         type F = fp128::Field;
-        let block_point = Arc::<[F]>::from(vec![F::from_u64(3), F::from_u64(5)]);
         let digit_weights = Arc::<[F]>::from(vec![F::from_u64(7), F::from_u64(11)]);
         let inner_trace = Arc::<[F]>::from(
             (0..8)
@@ -682,60 +698,81 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
         let claim_coefficient = F::from_u64(23);
-        let unit = PreparedEvaluationTraceUnit {
-            first_claim_coefficient: 4,
-            claim_stride_coefficients: 48,
-            global_block_start: 1,
-            block_count: 2,
-        };
-        for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
-            let units = vec![unit.clone()];
-            let contraction = prepare_trace_contraction(&block_point, basis, &units, 2).unwrap();
-            let trace = PreparedEvaluationTrace {
-                groups: vec![PreparedEvaluationTraceGroup {
-                    block_opening_point: Arc::clone(&block_point),
-                    basis,
-                    source_ring_dimension: 8,
-                    opening_ring_dimension: 4,
-                    coefficient_block_len: 2,
-                    opening_digit_weights: Arc::clone(&digit_weights),
-                    inner_trace: Arc::clone(&inner_trace),
-                    claim_coefficients: vec![claim_coefficient],
-                    units,
-                    contraction,
-                }],
-                num_variables: 6,
+        for block_count in [1usize, 2, 64] {
+            let block_variables = block_count.trailing_zeros() as usize;
+            let block_point: Arc<[F]> = (0..block_variables)
+                .map(|index| F::from_u64(3 + 2 * index as u64))
+                .collect::<Vec<_>>()
+                .into();
+            let unit = PreparedEvaluationTraceUnit {
+                first_claim_coefficient: 0,
+                claim_stride_coefficients: block_count * digit_weights.len() * 8,
+                global_block_start: 0,
+                block_count,
             };
-            let block_weights = basis_weights(&block_point, basis).unwrap();
-            let mut dense = vec![F::zero(); 1 << trace.num_variables];
-            for local_block in 0..unit.block_count {
-                let global_block = unit.global_block_start + local_block;
-                for role_subcolumn in 0..2 {
-                    for (digit, &digit_weight) in digit_weights.iter().enumerate() {
-                        for role_coefficient in 0..4 {
-                            let address = unit.first_claim_coefficient
-                                + local_block * digit_weights.len() * 8
-                                + role_subcolumn * digit_weights.len() * 4
-                                + digit * 4
-                                + role_coefficient;
-                            dense[address] += claim_coefficient
-                                * block_weights[global_block]
-                                * digit_weight
-                                * inner_trace[role_subcolumn * 4 + role_coefficient];
+            for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
+                let units = vec![unit.clone()];
+                let contraction =
+                    prepare_trace_contraction(&block_point, basis, &units, 2).unwrap();
+                let num_variables = (block_count * digit_weights.len() * 8)
+                    .next_power_of_two()
+                    .trailing_zeros() as usize;
+                let trace = PreparedEvaluationTrace {
+                    groups: vec![PreparedEvaluationTraceGroup {
+                        block_opening_point: Arc::clone(&block_point),
+                        basis,
+                        source_ring_dimension: 8,
+                        opening_ring_dimension: 4,
+                        coefficient_block_len: 2,
+                        opening_digit_weights: Arc::clone(&digit_weights),
+                        inner_trace: Arc::clone(&inner_trace),
+                        claim_coefficients: vec![claim_coefficient],
+                        units,
+                        contraction,
+                    }],
+                    num_variables,
+                };
+                let block_weights = basis_weights(&block_point, basis).unwrap();
+                let mut dense = vec![F::zero(); 1 << trace.num_variables];
+                for (local_block, &block_weight) in
+                    block_weights.iter().take(unit.block_count).enumerate()
+                {
+                    for role_subcolumn in 0..2 {
+                        for (digit, &digit_weight) in digit_weights.iter().enumerate() {
+                            for role_coefficient in 0..4 {
+                                let address = local_block * digit_weights.len() * 8
+                                    + role_subcolumn * digit_weights.len() * 4
+                                    + digit * 4
+                                    + role_coefficient;
+                                dense[address] += claim_coefficient
+                                    * block_weight
+                                    * digit_weight
+                                    * inner_trace[role_subcolumn * 4 + role_coefficient];
+                            }
                         }
                     }
                 }
-            }
-            let point = (0..trace.num_variables)
-                .map(|index| F::from_u64(29 + index as u64))
-                .collect::<Vec<_>>();
+                let point = (0..trace.num_variables)
+                    .map(|index| F::from_u64(29 + index as u64))
+                    .collect::<Vec<_>>();
 
-            assert_eq!(
-                trace.evaluate_at_point(&point).unwrap(),
-                multilinear_eval(&dense, &point).unwrap(),
-                "basis={basis:?}"
-            );
+                assert_eq!(
+                    trace.evaluate_at_point(&point).unwrap(),
+                    multilinear_eval(&dense, &point).unwrap(),
+                    "block_count={block_count} basis={basis:?}"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn empty_trace_group_is_rejected_during_preparation() {
+        type F = fp128::Field;
+        assert!(matches!(
+            prepare_trace_contraction::<F>(&[], BasisMode::Lagrange, &[], 2),
+            Err(AkitaError::InvalidSetup(message))
+                if message == "evaluation trace group has no live blocks"
+        ));
     }
 
     #[test]

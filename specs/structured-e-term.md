@@ -1,8 +1,29 @@
 # Structured E Term
 
+| Field | Value |
+|---|---|
+| Author(s) | Quang Dao |
+| Created | 2026-08-06 |
+| Status | active |
+| PR | [#371](https://github.com/LayerZero-Labs/akita/pull/371) |
+| Supersedes | The rectangular padded-chunk E-term design formerly in PR #371 |
+| Superseded-by | |
+| Book-chapter | book/src/how/verifying/matrix_evaluation.md |
+
 This note defines the verifier's structured `E` contribution to the relation
 matrix evaluation. It uses the canonical dyadic chunk partition from
 [`dyadic-chunk-partition.md`](dyadic-chunk-partition.md).
+
+## Acceptance Criteria
+
+- [x] `WitnessLayout` supplies the exact dyadic unit ranges. The verifier does
+  not derive or pad a second chunk partition.
+- [x] Compact setup and evaluation-trace contractions match independent dense
+  polynomial oracles for equal, unequal, singleton, and long tensor units.
+- [x] The optimization changes no proof bytes, transcript event, row schedule,
+  or protocol claim.
+- [x] The Akita Book explains the production E address, exact chunk ownership,
+  contraction crossover, and code ownership.
 
 ## Definitions
 
@@ -272,8 +293,8 @@ setup size or the relation witness size.
 
 ### Chunk Compaction
 
-The implementation may combine several chunk families into one tensor only
-when all of these facts match:
+Setup-index tensor compaction may combine several chunk families into one
+tensor only when all of these facts match:
 
 - Each unit has the same axes, including the same live block count.
 - Consecutive setup offsets have one constant stride.
@@ -284,10 +305,14 @@ If any check fails, the verifier keeps the original unit families. Unequal
 dyadic chunks therefore remain exact. They are never extended with zero blocks
 to make the fast path apply.
 
-The evaluation trace contraction follows the same rule. It splits the unit
-list into affine runs, divides each run into power of two segments, and combines
-only segments with equal unit geometry. An irregular unit remains a separate
-segment.
+The evaluation trace has a related but narrower compaction boundary. The claim
+coefficient and inner-trace lane are fixed outside unit segmentation, so every
+unit in one candidate segment has the same scalar by construction. Its run
+check therefore compares only the unit block count, claim stride, and affine
+block and coefficient offsets. It divides each valid run into power of two
+segments. An irregular unit remains a separate segment. The setup-index path
+accepts already weighted families, so it must compare scalar weights and axes
+explicitly before combining them.
 
 This gives the equal width case a smaller constant factor while preserving the
 canonical exact prefix for every block count. The chunk count is capped at 64,

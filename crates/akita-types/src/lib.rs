@@ -54,11 +54,10 @@ pub use extension_opening_reduction::{
     TensorColumnSource, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 pub use field_reduction::{
-    check_trace_inner_product, decode_ring_subfield_scalar, dispatch_trace_inner_product_check,
-    embed_ring_subfield_scalar, embed_ring_subfield_scalar_flat, embed_ring_subfield_vector,
-    embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
-    recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role, FpExtEncoding,
-    SubfieldParams,
+    check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
+    embed_ring_subfield_scalar_flat, embed_ring_subfield_vector, embed_subfield,
+    pack_tensor_base_lift_i8_digits, psi_embed, recover_ring_subfield_inner_product, trace_h,
+    validate_ring_subfield_role, FpExtEncoding, SubfieldParams,
 };
 pub use golomb_rice::{
     golomb_rice_flat_admit_terminal_wire, golomb_rice_flat_rows_admit_terminal_wire,

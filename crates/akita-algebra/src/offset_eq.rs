@@ -46,14 +46,10 @@ pub trait AffineWeight<F: FieldCore>: Clone + Send + Sync {
 /// Implementations may expose an existing dense slice or compute a factored
 /// weight only when the contraction reaches its row. The callback keeps dense
 /// values borrowed while allowing computed values to remain stack-local.
+#[allow(clippy::len_without_is_empty)]
 pub trait AffineWeightSource<F: FieldCore, A: AffineWeight<F>>: Sync {
     /// Number of available outer weights.
     fn len(&self) -> usize;
-
-    /// Whether the source contains no outer weights.
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 
     /// Borrow or compute weight `index` for the duration of `consume`.
     fn with_weight<R>(&self, index: usize, consume: impl FnOnce(&A) -> R) -> Option<R>;
@@ -72,16 +68,6 @@ impl<F: FieldCore, A: AffineWeight<F>> AffineWeightSource<F, A> for [A] {
 impl<F: FieldCore, A: AffineWeight<F>> AffineWeightSource<F, A> for Vec<A> {
     fn len(&self) -> usize {
         Vec::len(self)
-    }
-
-    fn with_weight<R>(&self, index: usize, consume: impl FnOnce(&A) -> R) -> Option<R> {
-        self.as_slice().get(index).map(consume)
-    }
-}
-
-impl<F: FieldCore, A: AffineWeight<F>, const N: usize> AffineWeightSource<F, A> for [A; N] {
-    fn len(&self) -> usize {
-        N
     }
 
     fn with_weight<R>(&self, index: usize, consume: impl FnOnce(&A) -> R) -> Option<R> {

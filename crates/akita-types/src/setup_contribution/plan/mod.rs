@@ -29,7 +29,7 @@ mod test_oracle;
 mod types;
 
 pub(crate) use types::validate_setup_inputs;
-pub(crate) use types::{DirectScanWeights, SetupContributionGroupPlan};
+pub(crate) use types::{DirectScanWeights, SetupContributionGroupPlan, SetupUnitRange};
 pub use types::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan};
 
 use super::geometry::SetupProjectionGroupGeometry;

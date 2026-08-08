@@ -213,8 +213,12 @@ fn materialize_dense_left_overlap<F: FieldCore>(
         .len
         .checked_mul(residual_coordinates)
         .ok_or_else(|| AkitaError::InvalidInput("paired tensor work overflow".into()))?;
-    let mut charged = 0usize;
-    charge_work(&mut charged, work)?;
+    if work > crate::offset_eq::MAX_COMPACT_STRIDE_TERMS {
+        return Err(AkitaError::InvalidSize {
+            expected: crate::offset_eq::MAX_COMPACT_STRIDE_TERMS,
+            actual: work,
+        });
+    }
 
     let evaluate_coordinate = |(coordinate, destination): (usize, &mut F)| {
         for view in &views {
@@ -244,6 +248,8 @@ fn materialize_dense_left_overlap<F: FieldCore>(
     let destination = output
         .get_mut(destination_start..destination_end)
         .ok_or(AkitaError::InvalidProof)?;
+    // Tuned with `benches/offset_eq_window.rs::bench_materialize_disjoint_intervals`
+    // on an Apple M4 Max (16 cores, 64 GiB).
     const PARALLEL_THRESHOLD: usize = 1 << 14;
     if work >= PARALLEL_THRESHOLD {
         cfg_iter_mut!(destination)

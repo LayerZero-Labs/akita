@@ -354,50 +354,6 @@ where
     }
 }
 
-/// Decode one canonical ring-subfield scalar from its base-field ring image.
-///
-/// This is the checked inverse of [`embed_ring_subfield_scalar`].
-///
-/// # Errors
-///
-/// Returns `error` if the extension degree is unsupported or the ring is not
-/// the canonical image of exactly one extension scalar.
-pub fn decode_ring_subfield_scalar<F, E, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
-    error: AkitaError,
-) -> Result<E, AkitaError>
-where
-    F: FieldCore + FromPrimitiveInt,
-    E: FpExtEncoding<F>,
-{
-    macro_rules! arm {
-        ($k:expr) => {{
-            let params = SubfieldParams::<D, $k>::new().map_err(|_| error.clone())?;
-            let stride = D / (2 * $k);
-            let mut coordinates = [F::zero(); $k];
-            for (index, coordinate) in coordinates.iter_mut().enumerate() {
-                *coordinate = *ring
-                    .coefficients()
-                    .get(index.checked_mul(stride).ok_or_else(|| error.clone())?)
-                    .ok_or_else(|| error.clone())?;
-            }
-            let value = E::from_base_slice(&coordinates);
-            if embed_subfield::<F, D, $k>(params, &coordinates) != *ring {
-                return Err(error);
-            }
-            Ok(value)
-        }};
-    }
-
-    match E::EXT_DEGREE {
-        1 => arm!(1),
-        2 => arm!(2),
-        4 => arm!(4),
-        8 => arm!(8),
-        _ => Err(error),
-    }
-}
-
 /// Runtime-dimension form of [`embed_ring_subfield_scalar`]: returns the
 /// embedded element as `ring_d` flat coefficients.
 ///
@@ -468,7 +424,7 @@ pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
 
     macro_rules! arm {
         ($k:expr) => {{
-            let _params = SubfieldParams::<D, $k>::new()?;
+            SubfieldParams::<D, $k>::new()?;
             let packed_len = D / $k;
             let half = D / (2 * $k);
             let step = D / (2 * $k);
@@ -615,12 +571,12 @@ where
 {
     macro_rules! arm {
         ($k:expr) => {{
-            let params = SubfieldParams::<D, $k>::new().map_err(|_| {
+            SubfieldParams::<D, $k>::new().map_err(|_| {
                 AkitaError::InvalidInput(
                     "claim-field degree must divide the ring dimension".to_string(),
                 )
             })?;
-            recover_psi_inner_product::<F, E, D, $k>(params, y_ring, packed_inner_point)
+            recover_psi_inner_product::<F, E, D, $k>(y_ring, packed_inner_point)
         }};
     }
 
@@ -636,7 +592,6 @@ where
 }
 
 fn recover_psi_inner_product<F, E, const D: usize, const K: usize>(
-    _params: SubfieldParams<D, K>,
     lhs: &CyclotomicRing<F, D>,
     rhs: &CyclotomicRing<F, D>,
 ) -> Result<E, AkitaError>
@@ -730,7 +685,7 @@ where
         .ok_or_else(|| AkitaError::InvalidInput("two is not invertible".to_string()))?;
     macro_rules! arm {
         ($k:expr) => {{
-            let _params = SubfieldParams::<D, $k>::new().map_err(|_| {
+            SubfieldParams::<D, $k>::new().map_err(|_| {
                 AkitaError::InvalidInput(
                     "claim-field degree must divide the ring dimension".to_string(),
                 )

@@ -107,8 +107,8 @@ pub fn eval_boolean_pair_tensor_families<
     }
     acc += scalar_seeds.into_iter().fold(F::zero(), |sum, seed| {
         sum + seed.weight
-            * basis_eval_checked::<F, LEFT_MONOMIAL>(left_challenges, seed.left_offset)
-            * basis_eval_checked::<F, RIGHT_MONOMIAL>(right_challenges, seed.right_offset)
+            * basis_eval_at_index::<F, LEFT_MONOMIAL>(left_challenges, seed.left_offset)
+            * basis_eval_at_index::<F, RIGHT_MONOMIAL>(right_challenges, seed.right_offset)
     });
     for ((left_stride, right_stride, len), seeds) in batches {
         acc += eval_tensor_seed_batch::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
@@ -175,6 +175,14 @@ fn eval_multi_axis_unit_families<
                 })?;
             if let Some(at_bit) = introductions.get_mut(start_bit) {
                 at_bit.push((left >> start_bit, right >> start_bit));
+            } else {
+                // Both nonzero shifted strides start beyond every equality bit.
+                // The coordinate-one branch is therefore out of domain on both
+                // sides and contributes zero.
+                debug_assert!(
+                    (left == 0 || left >= 1usize << left_challenges.len())
+                        && (right == 0 || right >= 1usize << right_challenges.len())
+                );
             }
         }
     }
@@ -184,7 +192,7 @@ fn eval_multi_axis_unit_families<
             .into_iter()
             .map(|seed| ((seed.left_offset, seed.right_offset), seed.weight))
             .collect(),
-    );
+    )?;
     for bit in 0..bit_count {
         let choices = unit_axis_choices::<F>(
             introductions.get(bit).ok_or(AkitaError::InvalidProof)?,
@@ -230,7 +238,7 @@ fn eval_multi_axis_unit_families<
                 ));
             }
         }
-        states = merge_pair_states(next);
+        states = merge_pair_states(next)?;
     }
     Ok(states
         .into_iter()
@@ -238,11 +246,16 @@ fn eval_multi_axis_unit_families<
         .unwrap_or_else(F::zero))
 }
 
+type PairState<F> = ((usize, usize), F);
+
 fn merge_pair_states<F: FieldCore>(
-    mut states: Vec<((usize, usize), F)>,
-) -> Vec<((usize, usize), F)> {
+    mut states: Vec<PairState<F>>,
+) -> Result<Vec<PairState<F>>, AkitaError> {
     states.sort_unstable_by_key(|(key, _)| *key);
-    let mut merged: Vec<((usize, usize), F)> = Vec::with_capacity(states.len());
+    let mut merged: Vec<PairState<F>> = Vec::new();
+    merged
+        .try_reserve_exact(states.len())
+        .map_err(|_| AkitaError::InvalidInput("paired tensor state allocation failed".into()))?;
     for (key, weight) in states {
         if weight.is_zero() {
             continue;
@@ -256,7 +269,7 @@ fn merge_pair_states<F: FieldCore>(
         merged.push((key, weight));
     }
     merged.retain(|(_, weight)| !weight.is_zero());
-    merged
+    Ok(merged)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -522,7 +535,7 @@ fn eval_tensor_seed_batch<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_M
 
     let mut acc = F::zero();
     for (block_index_bits, seed_states) in blocks.into_iter().enumerate() {
-        let mut states = merge_pair_states(seed_states);
+        let mut states = merge_pair_states(seed_states)?;
         if states.is_empty() {
             continue;
         }
@@ -575,7 +588,7 @@ fn eval_tensor_seed_batch<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_M
                     ));
                 }
             }
-            states = merge_pair_states(next);
+            states = merge_pair_states(next)?;
         }
         acc += finish_seed_states::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
             left_challenges,
@@ -619,7 +632,7 @@ fn finish_seed_states<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_MONOM
                 state_weight * left_factor * right_factor,
             ));
         }
-        states = merge_pair_states(next);
+        states = merge_pair_states(next)?;
         bit += 1;
     }
 
@@ -665,15 +678,10 @@ fn basis_carry_step<F: FieldCore, const MONOMIAL: bool>(
     }
 }
 
-fn basis_eval_checked<F: FieldCore, const MONOMIAL: bool>(challenges: &[F], index: usize) -> F {
-    if challenges.len() < usize::BITS as usize && index >= 1usize << challenges.len() {
-        F::zero()
-    } else {
-        basis_eval_at_index::<F, MONOMIAL>(challenges, index)
-    }
-}
-
 fn basis_eval_at_index<F: FieldCore, const MONOMIAL: bool>(challenges: &[F], index: usize) -> F {
+    if challenges.len() < usize::BITS as usize && index >= 1usize << challenges.len() {
+        return F::zero();
+    }
     if MONOMIAL {
         challenges
             .iter()

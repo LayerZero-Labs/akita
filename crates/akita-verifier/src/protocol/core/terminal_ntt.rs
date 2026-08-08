@@ -5,8 +5,6 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{
     dispatch_for_field, ntt_cache_requires_i16_tail, AkitaVerifierSetup, FoldSchedule,
 };
-#[cfg(test)]
-use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode};
 
 pub(super) const TERMINAL_I16_LOG_BASIS: u32 = 16;
 const TERMINAL_I16_ABS_BOUND: u64 = 1 << (TERMINAL_I16_LOG_BASIS - 1);
@@ -99,39 +97,6 @@ where
     slot.mat_vec_i16(TERMINAL_I16_LOG_BASIS, num_rows, rhs)
 }
 
-/// Compute one dynamic ring inner product through exact negacyclic NTTs.
-#[cfg(test)]
-pub(super) fn centered_inner_product<F, const D: usize>(
-    lhs: &[CyclotomicRing<F, D>],
-    rhs: &[[i16; D]],
-) -> Result<CyclotomicRing<F, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    if lhs.len() != rhs.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    if lhs.is_empty() {
-        return Ok(CyclotomicRing::zero());
-    }
-    let rhs_abs_bound = 1u64
-        .checked_shl(TERMINAL_I16_LOG_BASIS - 1)
-        .ok_or(AkitaError::InvalidProof)?;
-    let flat = FlatMatrix::from_ring_slice(lhs);
-    let matrix = flat.ring_view::<D>(1, lhs.len())?;
-    let prepared = prepare_ntt_cache(
-        matrix,
-        NttCacheMode::ExactNegacyclic {
-            width: lhs.len(),
-            rhs_abs_bound,
-        },
-    )?;
-    prepared
-        .mat_vec_i16::<F>(TERMINAL_I16_LOG_BASIS, 1, rhs)?
-        .pop()
-        .ok_or(AkitaError::InvalidProof)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,12 +105,44 @@ mod tests {
     use akita_config::{proof_optimized::fp128::OneHot, CommitmentConfig};
     use akita_field::{Prime128Offset275 as F, Prime32Offset99 as F32, Prime64Offset59 as F64};
     use akita_types::{
-        select_crt_ntt_params, AkitaExpandedSetup, AkitaScheduleLookupKey, AkitaSetupDescriptor,
-        FlatMatrix, PolynomialGroupLayout, ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
+        prepare_ntt_cache, select_crt_ntt_params, AkitaExpandedSetup, AkitaScheduleLookupKey,
+        AkitaSetupDescriptor, FlatMatrix, NttCacheMode, PolynomialGroupLayout,
+        ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
     };
     use std::sync::Arc;
 
     const D: usize = 64;
+
+    fn centered_inner_product<F, const D: usize>(
+        lhs: &[CyclotomicRing<F, D>],
+        rhs: &[[i16; D]],
+    ) -> Result<CyclotomicRing<F, D>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+    {
+        if lhs.len() != rhs.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        if lhs.is_empty() {
+            return Ok(CyclotomicRing::zero());
+        }
+        let rhs_abs_bound = 1u64
+            .checked_shl(TERMINAL_I16_LOG_BASIS - 1)
+            .ok_or(AkitaError::InvalidProof)?;
+        let flat = FlatMatrix::from_ring_slice(lhs);
+        let matrix = flat.ring_view::<D>(1, lhs.len())?;
+        let prepared = prepare_ntt_cache(
+            matrix,
+            NttCacheMode::ExactNegacyclic {
+                width: lhs.len(),
+                rhs_abs_bound,
+            },
+        )?;
+        prepared
+            .mat_vec_i16::<F>(TERMINAL_I16_LOG_BASIS, 1, rhs)?
+            .pop()
+            .ok_or(AkitaError::InvalidProof)
+    }
 
     fn q128_base_cache_bytes(entries: usize) -> usize {
         let bytes_per_coefficient = if ifma52_enabled() {

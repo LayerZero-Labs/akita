@@ -41,6 +41,67 @@ fn matches_dense_affine_chunk_axis() {
 }
 
 #[test]
+fn single_stream_batch_matches_truncated_dense_oracle() {
+    let mut rng = StdRng::seed_from_u64(0x51A6_1E57);
+    let left = random_vec(&mut rng, 5);
+    let right = random_vec(&mut rng, 6);
+    let dense_weights = random_vec(&mut rng, 3);
+    let scalar = F::from_u64(19);
+    let family = EqPairTensorFamily::new(
+        20,
+        7,
+        scalar,
+        vec![
+            EqPairTensorAxis::dense(3, 1, dense_weights.clone()),
+            EqPairTensorAxis::unit(16, 1, 2),
+        ],
+    )
+    .unwrap();
+    assert!(20 + 15 >= 1usize << left.len());
+
+    let monomial_at = |challenges: &[F], index: usize| {
+        if index >= 1usize << challenges.len() {
+            return F::zero();
+        }
+        challenges
+            .iter()
+            .enumerate()
+            .filter(|(bit, _)| index & (1usize << bit) != 0)
+            .fold(F::one(), |weight, (_, &challenge)| weight * challenge)
+    };
+    let mut lagrange_expected = F::zero();
+    let mut monomial_expected = F::zero();
+    for (dense, &dense_weight) in dense_weights.iter().enumerate() {
+        for stream in 0..16 {
+            let left_index = 20 + 3 * dense + stream;
+            let right_index = 7 + dense + 2 * stream;
+            let common = scalar * dense_weight * eq_eval_at_index(&right, right_index);
+            lagrange_expected += common * eq_eval_at_index(&left, left_index);
+            monomial_expected += common * monomial_at(&left, left_index);
+        }
+    }
+
+    assert_eq!(
+        eval_boolean_pair_tensor_families::<_, false, false>(
+            &left,
+            &right,
+            std::slice::from_ref(&family),
+        )
+        .unwrap(),
+        lagrange_expected
+    );
+    assert_eq!(
+        eval_boolean_pair_tensor_families::<_, true, false>(
+            &left,
+            &right,
+            std::slice::from_ref(&family),
+        )
+        .unwrap(),
+        monomial_expected
+    );
+}
+
+#[test]
 fn batches_matching_multi_axis_recurrences() {
     let mut rng = StdRng::seed_from_u64(0x0BA7_C4E5);
     let left = random_vec(&mut rng, 10);
