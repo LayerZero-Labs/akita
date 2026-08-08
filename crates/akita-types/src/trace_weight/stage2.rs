@@ -277,7 +277,7 @@ where
                 let block_rings = item
                     .prepared
                     .ring_multiplier_point
-                    .fold_rings_trusted::<D>()?
+                    .materialize_fold_rings::<D>()?
                     .ok_or_else(|| {
                         AkitaError::InvalidInput(
                             "extension trace opening point is missing ring block weights"
@@ -286,7 +286,7 @@ where
                     })?;
                 Ok(TraceRingBlockOpening {
                     block_offset: item.block_offset,
-                    block_rings: scaled_ring_weights(block_rings, item.scaled_coefficient)?,
+                    block_rings: scaled_ring_weights(&block_rings, item.scaled_coefficient)?,
                     packed_inner_point: item.prepared.packed_inner_owned::<D>()?,
                 })
             })
@@ -317,7 +317,7 @@ where
     } else {
         let block_rings = prepared
             .ring_multiplier_point
-            .fold_rings_trusted::<D>()?
+            .materialize_fold_rings::<D>()?
             .ok_or_else(|| {
                 AkitaError::InvalidInput(
                     "extension trace opening point is missing ring block weights".to_string(),
@@ -325,7 +325,7 @@ where
             })?;
         trace_public_weights_ring_terms(&[TraceRingBlockOpening {
             block_offset: 0,
-            block_rings: scaled_ring_weights(block_rings, scale)?,
+            block_rings: scaled_ring_weights(&block_rings, scale)?,
             packed_inner_point: prepared.packed_inner_owned::<D>()?,
         }])
     }

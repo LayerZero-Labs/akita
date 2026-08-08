@@ -3,9 +3,10 @@
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{
-    dispatch_for_field, ntt_cache_requires_i16_tail, prepare_ntt_cache, AkitaVerifierSetup,
-    FlatMatrix, FoldSchedule, NttCacheMode,
+    dispatch_for_field, ntt_cache_requires_i16_tail, AkitaVerifierSetup, FoldSchedule,
 };
+#[cfg(test)]
+use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode};
 
 pub(super) const TERMINAL_I16_LOG_BASIS: u32 = 16;
 const TERMINAL_I16_ABS_BOUND: u64 = 1 << (TERMINAL_I16_LOG_BASIS - 1);
@@ -99,6 +100,7 @@ where
 }
 
 /// Compute one dynamic ring inner product through exact negacyclic NTTs.
+#[cfg(test)]
 pub(super) fn centered_inner_product<F, const D: usize>(
     lhs: &[CyclotomicRing<F, D>],
     rhs: &[[i16; D]],

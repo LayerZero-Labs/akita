@@ -209,6 +209,15 @@ where
     let g_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
     let mut cyclic = [F::zero(); D];
     let mut reduced = CyclotomicRing::<F, D>::zero();
+    let position_rings = if ring_multiplier_point.is_constant() {
+        None
+    } else {
+        Some(
+            ring_multiplier_point
+                .materialize_position_rings::<D>()?
+                .ok_or(AkitaError::InvalidProof)?,
+        )
+    };
 
     {
         if ring_multiplier_point.position_len() < num_positions_per_block {
@@ -227,10 +236,10 @@ where
                 add_cyclic_scalar_ring_product::<F, D>(&mut cyclic, scalar, &z_block);
                 reduced += z_block.scale(&scalar);
             } else {
-                let a_rings = ring_multiplier_point
-                    .position_rings_trusted::<D>()?
+                let multiplier = position_rings
+                    .as_ref()
+                    .and_then(|rings| rings.get(block_idx))
                     .ok_or(AkitaError::InvalidProof)?;
-                let multiplier = a_rings.get(block_idx).ok_or(AkitaError::InvalidProof)?;
                 add_cyclic_ring_product::<F, D>(&mut cyclic, multiplier, &z_block);
                 reduced += *multiplier * z_block;
             }

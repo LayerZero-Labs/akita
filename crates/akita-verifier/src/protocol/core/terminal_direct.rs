@@ -7,9 +7,9 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
 };
 use akita_types::{
-    decode_ring_subfield_scalar, decode_terminal_z_golomb_payload, dispatch_for_field,
-    recover_ring_subfield_inner_product, AkitaVerifierSetup, FpExtEncoding, PreparedOpeningPoint,
-    RingMultiplierOpeningPoint, TerminalCommittedGroupParams, TerminalResponse,
+    decode_terminal_z_golomb_payload, dispatch_for_field, recover_ring_subfield_inner_product,
+    AkitaVerifierSetup, FpExtEncoding, PreparedOpeningPoint, RingMultiplierOpeningPoint,
+    TerminalCommittedGroupParams, TerminalResponse,
 };
 
 fn sparse_challenge_mul_accumulate<F, const D: usize>(
@@ -228,13 +228,9 @@ where
             let num_positions = params.num_positions_per_block;
             let num_digits_inner = params.num_digits_inner;
             let log_basis_inner = params.log_basis_inner;
-            let position_rings = multiplier
-                .position_rings_trusted::<D_A>()
-                .map_err(|error| {
-                    AkitaError::InvalidInput(format!(
-                        "terminal multiplier layout failed: {error:?}"
-                    ))
-                })?;
+            multiplier.ensure_ring_dim::<D_A>().map_err(|error| {
+                AkitaError::InvalidInput(format!("terminal multiplier layout failed: {error:?}"))
+            })?;
             let (consistency, a_rows) = cfg_join!(
                 || {
                     let _span = tracing::info_span!(
@@ -260,45 +256,27 @@ where
                         .entered();
                         let gadget =
                             akita_types::gadget_row_scalars::<F>(num_digits_inner, log_basis_inner);
-                        if let Some(position_rings) = position_rings {
-                            let positions = position_rings
-                                .get(..num_positions)
+                        let mut reduced = CyclotomicRing::zero();
+                        for position in 0..num_positions {
+                            let start = position
+                                .checked_mul(num_digits_inner)
                                 .ok_or(AkitaError::InvalidProof)?;
-                            let matrix_storage;
-                            let matrix = if gadget.as_slice() == [F::one()] {
-                                positions
-                            } else {
-                                matrix_storage = positions
-                                    .iter()
-                                    .flat_map(|position| {
-                                        gadget.iter().map(move |scale| position.scale(scale))
-                                    })
-                                    .collect::<Vec<_>>();
-                                &matrix_storage
-                            };
-                            super::terminal_ntt::centered_inner_product(matrix, z_centered)?
-                        } else {
-                            let mut reduced = CyclotomicRing::zero();
-                            for position in 0..num_positions {
-                                let start = position
-                                    .checked_mul(num_digits_inner)
-                                    .ok_or(AkitaError::InvalidProof)?;
-                                let mut z_value = CyclotomicRing::zero();
-                                for digit in 0..num_digits_inner {
-                                    let index =
-                                        start.checked_add(digit).ok_or(AkitaError::InvalidProof)?;
-                                    z_value += centered_ring::<F, D_A>(
-                                        z_centered.get(index).ok_or(AkitaError::InvalidProof)?,
-                                    )
-                                    .scale(gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
-                                }
-                                let scale = multiplier
-                                    .position_constant_coeff(position)
-                                    .ok_or(AkitaError::InvalidProof)?;
-                                reduced += z_value.scale(&scale);
+                            let mut z_value = CyclotomicRing::zero();
+                            for digit in 0..num_digits_inner {
+                                let index =
+                                    start.checked_add(digit).ok_or(AkitaError::InvalidProof)?;
+                                z_value += centered_ring::<F, D_A>(
+                                    z_centered.get(index).ok_or(AkitaError::InvalidProof)?,
+                                )
+                                .scale(gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
                             }
-                            reduced
+                            multiplier.accumulate_position_product(
+                                position,
+                                &z_value,
+                                &mut reduced,
+                            )?;
                         }
+                        reduced
                     };
                     Ok::<_, AkitaError>((folded, reduced))
                 },
@@ -367,18 +345,14 @@ where
             if claim_e.len() != params.num_live_blocks {
                 return Err(AkitaError::InvalidProof);
             }
-            let claim_opening = if let Some(fold_rings) = multiplier.fold_rings_trusted::<D>()? {
-                let fold_rings = fold_rings
-                    .get(..claim_e.len())
-                    .ok_or(AkitaError::InvalidProof)?;
-                fold_rings
+            let claim_opening = if multiplier.as_base().is_none() {
+                claim_e
                     .iter()
-                    .zip(claim_e)
-                    .try_fold(E::zero(), |opening, (weight, value)| {
-                        let weight = decode_ring_subfield_scalar::<F, E, D>(
-                            weight,
-                            AkitaError::InvalidProof,
-                        )?;
+                    .enumerate()
+                    .try_fold(E::zero(), |opening, (block, value)| {
+                        let weight = multiplier
+                            .fold_subfield_value::<E>(block)?
+                            .ok_or(AkitaError::InvalidProof)?;
                         let value =
                             recover_ring_subfield_inner_product::<F, E, D>(value, packed_inner)?;
                         Ok::<_, AkitaError>(opening + weight * value)
