@@ -14,6 +14,10 @@ use crate::{
     RelationRowFamily, COMPRESSION_MAP_COUNT,
 };
 
+mod chunk_partition;
+
+pub use chunk_partition::dyadic_block_ranges;
+
 /// One physical `[z_hat | e_hat | t_hat]` group-and-chunk unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WitnessUnitLayout {
@@ -425,8 +429,7 @@ impl WitnessLayout {
                         "witness group has malformed dimensions".into(),
                     ));
                 }
-                let chunk_block_ranges =
-                    Self::resolve_chunk_block_ranges(params.num_live_blocks(), num_chunks)?;
+                let chunk_block_ranges = dyadic_block_ranges(params.num_live_blocks(), num_chunks)?;
                 Ok((
                     group_index,
                     params,
@@ -703,44 +706,6 @@ impl WitnessLayout {
             r_range: r_start..aligned_witness_end,
             quotient_depth,
         })
-    }
-
-    /// Resolve the exact contiguous block ranges owned by each chunk.
-    pub fn resolve_chunk_block_ranges(
-        num_live_blocks: usize,
-        num_chunks: usize,
-    ) -> Result<Vec<Range<usize>>, AkitaError> {
-        if num_chunks == 0 || num_chunks > MAX_WITNESS_CHUNKS || num_live_blocks == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "witness chunk geometry is malformed".into(),
-            ));
-        }
-        if num_chunks > num_live_blocks {
-            return Err(AkitaError::InvalidSetup(
-                "witness chunks exceed the live blocks".into(),
-            ));
-        }
-        if !num_live_blocks.is_multiple_of(num_chunks) {
-            return Err(AkitaError::InvalidSetup(
-                "witness live blocks must divide evenly across chunks".into(),
-            ));
-        }
-
-        let base_blocks = num_live_blocks / num_chunks;
-        let mut ranges = Vec::with_capacity(num_chunks);
-        let mut start = 0usize;
-        for _ in 0..num_chunks {
-            let count = base_blocks;
-            let range = checked_range(start, count, "witness chunk range overflow")?;
-            start = range.end;
-            ranges.push(range);
-        }
-        if start != num_live_blocks {
-            return Err(AkitaError::InvalidSetup(
-                "witness chunks do not cover the live blocks".into(),
-            ));
-        }
-        Ok(ranges)
     }
 
     pub fn units(&self) -> &[WitnessUnitLayout] {
@@ -1054,30 +1019,6 @@ fn checked_mul3(a: usize, b: usize, c: usize, context: &str) -> Result<usize, Ak
 /// chunk count; this cap closes a DoS vector from arbitrarily large layouts.
 pub const MAX_WITNESS_CHUNKS: usize = 64;
 
-/// Round a positive live-block count up to the next chunk-aligned physical
-/// block count.
-///
-/// `num_chunks == 1` preserves the input exactly. Multi-chunk layouts use the
-/// returned count for physical commitment geometry so every chunk owns the same
-/// number of blocks.
-pub fn pad_live_blocks_for_chunks(
-    num_live_blocks: usize,
-    num_chunks: usize,
-) -> Result<usize, AkitaError> {
-    if num_live_blocks == 0 || num_chunks == 0 || num_chunks > MAX_WITNESS_CHUNKS {
-        return Err(AkitaError::InvalidSetup(
-            "witness chunk geometry is malformed".into(),
-        ));
-    }
-    if num_chunks == 1 || num_live_blocks.is_multiple_of(num_chunks) {
-        return Ok(num_live_blocks);
-    }
-    let padding = num_chunks - (num_live_blocks % num_chunks);
-    num_live_blocks
-        .checked_add(padding)
-        .ok_or_else(|| AkitaError::InvalidSetup("witness chunk block padding overflow".into()))
-}
-
 /// Indexed multi-chunk preset on the shipped `num_chunks × num_activated_levels`
 /// grid (`num_chunks ∈ {2, 4, 8}`, `num_activated_levels ∈ {1, 2}`).
 ///
@@ -1316,8 +1257,6 @@ mod tests {
         )
         .with_decomp(4, 25, 1, 2, 2)
         .expect("test params");
-        lp.num_live_blocks = 8;
-        lp.num_live_ring_elements_per_claim = 8 * lp.num_positions_per_block;
         lp.num_digits_fold = 3;
         let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
         let layout =
@@ -1334,17 +1273,17 @@ mod tests {
             lp.num_digits_inner, lp.num_digits_outer,
             "fixture must distinguish witness and commitment depths"
         );
-        assert_eq!(unit.global_block_range(), 4..8);
+        assert_eq!(unit.global_block_range(), 3..7);
         let dims = lp.role_dims();
         assert_eq!(
-            unit.e_coefficient_index(dims.d_a(), dims.d_d(), 2, 2, 1, 7, 0, 1, 0)
+            unit.e_coefficient_index(dims.d_a(), dims.d_d(), 2, 2, 1, 6, 0, 1, 0)
                 .expect("e"),
             unit.e_range().start + 15 * dims.d_a()
         );
         assert_eq!(
             unit.t_coefficient_index(dims.d_a(), dims.d_b(), 2, 1, 2, 0, 5, 0, 0, 1, 0,)
                 .expect("t"),
-            unit.t_range().start + 3 * dims.d_a()
+            unit.t_range().start + 5 * dims.d_a()
         );
         assert_eq!(
             unit.z_coefficient_index(dims.d_a(), 4, 1, depth_fold, 1, 0, 0, 0)
@@ -1365,8 +1304,8 @@ mod tests {
         let first = units.next().expect("first unit");
         let second = units.next().expect("second unit");
         assert!(units.next().is_none());
-        assert_eq!(first.global_block_range(), 0..4);
-        assert_eq!(second.global_block_range(), 4..8);
+        assert_eq!(first.global_block_range(), 0..3);
+        assert_eq!(second.global_block_range(), 3..7);
         assert_eq!(first.t_range().end, second.z_range().start);
         let support = layout.negative_binary_support_intervals();
         assert_eq!(support.len(), COMPRESSION_MAP_COUNT);
@@ -1402,15 +1341,7 @@ mod tests {
             assert_eq!(f_quotient.range().start, layer.h_span().range().end);
             assert_eq!(h_quotient.range().start, f_quotient.range().end);
         }
-        assert_eq!(layout.group_num_live_blocks(0).expect("fold count"), 8);
-    }
-
-    #[test]
-    fn chunk_padding_rounds_to_equal_block_ranges() {
-        assert_eq!(pad_live_blocks_for_chunks(13, 4).expect("pad"), 16);
-        assert!(WitnessLayout::resolve_chunk_block_ranges(13, 4).is_err());
-        let ranges = WitnessLayout::resolve_chunk_block_ranges(16, 4).expect("chunk ranges");
-        assert_eq!(ranges, vec![0..4, 4..8, 8..12, 12..16]);
+        assert_eq!(layout.group_num_live_blocks(0).expect("fold count"), 7);
     }
 
     #[test]

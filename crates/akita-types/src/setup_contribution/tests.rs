@@ -2,9 +2,9 @@ use super::plan::{DirectScanWeights, SetupContributionGroupPlan};
 use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec};
 use super::*;
 use crate::{
-    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupDescriptor, CommitmentRingDims,
-    CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, RingRole, WitnessLayout,
-    WitnessQuotientRowLayout, WitnessUnitLayout,
+    dyadic_block_ranges, gadget_row_scalars, AkitaExpandedSetup, AkitaSetupDescriptor,
+    CommitmentRingDims, CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, RingRole,
+    WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
@@ -289,12 +289,11 @@ fn test_witness_layout(
     quotient_depth: usize,
 ) -> WitnessLayout {
     let mut cursor = 0usize;
-    let mut global_block_start = 0usize;
-    let base = num_live_blocks / num_chunks;
-    let extra = num_live_blocks % num_chunks;
+    let chunk_ranges =
+        dyadic_block_ranges(num_live_blocks, num_chunks).expect("test chunk partition");
     let mut units = Vec::with_capacity(num_chunks);
-    for chunk_index in 0..num_chunks {
-        let chunk_num_live_blocks = base + usize::from(chunk_index < extra);
+    for (chunk_index, global_block_range) in chunk_ranges.into_iter().enumerate() {
+        let chunk_num_live_blocks = global_block_range.len();
         let z_len = num_positions_per_block * depth_commit * depth_fold * TEST_D;
         let z_range = cursor..cursor + z_len;
         let e_range =
@@ -305,13 +304,12 @@ fn test_witness_layout(
         units.push(WitnessUnitLayout::new_for_test(
             0,
             chunk_index,
-            global_block_start,
+            global_block_range.start,
             chunk_num_live_blocks,
             z_range,
             e_range,
             t_range,
         ));
-        global_block_start += chunk_num_live_blocks;
     }
     let r_rows = (0..relation_rows)
         .map(|_| {
@@ -960,8 +958,8 @@ fn z_setup_weight_oracle_uses_physical_addresses() {
 }
 #[test]
 fn single_group_plan_supports_multi_chunk_weights() {
-    let num_live_blocks = 4;
-    let blocks_per_chunk = 2;
+    let num_live_blocks = 5;
+    let num_chunks = 2;
     let num_claims = 3;
     let depth_open = 2;
     let depth_commit = 2;
@@ -980,10 +978,12 @@ fn single_group_plan_supports_multi_chunk_weights() {
         depth_commit,
         depth_fold,
         n_a,
-        num_live_blocks / blocks_per_chunk,
+        num_chunks,
         n_d,
         depth_fold,
     );
+    assert_eq!(layout.units()[0].global_block_range(), 0..2);
+    assert_eq!(layout.units()[1].global_block_range(), 2..5);
     let opening_source_len = layout.live_coeff_len();
     let group = SetupContributionGroupInputs {
         group_id: 0,

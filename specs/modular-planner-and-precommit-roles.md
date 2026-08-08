@@ -284,24 +284,21 @@ The distributed layout retains exactly \(W\) group/chunk slots even when
 Blocks are partitioned deterministically:
 
 ```text
-q = B / W
-r = B % W
-
-chunk i owns q + 1 blocks when i < r
-chunk i owns q blocks otherwise
+s_i = floor(i * B / W)
+chunk i owns [s_i, s_{i+1})
 ```
 
 For \(B=4\) and \(W=8\):
 
 ```text
-0: 0..1
-1: 1..2
-2: 2..3
-3: 3..4
-4: 4..4
-5: 4..4
-6: 4..4
-7: 4..4
+0: 0..0
+1: 0..1
+2: 1..1
+3: 1..2
+4: 2..2
+5: 2..3
+6: 3..3
+7: 3..4
 ```
 
 Each group/chunk slot remains:
@@ -326,38 +323,29 @@ removes an accidental feasibility restriction; it does not make replicated
 This rule also applies mechanically to a setup-prefix group if its selected
 geometry has fewer live blocks than the consuming transition has chunks.
 
-### Security gate: aggregate versus local relation
+### Aggregate-share relation contract
 
-The current horizontally concatenated relation constrains the aggregate
-\(\sum_i z[g,i]\). It does not appear to prove that each `z[g,i]` is the fold of
-exactly that chunk's block range. In particular, the verified relation may be
-invariant under a bounded redistribution:
+The horizontally concatenated relation constrains the aggregate
+\(\sum_i z[g,i]\). It does not prove that each `z[g,i]` is the fold of exactly
+that chunk's block range. In particular, the verified relation is invariant
+under a bounded redistribution:
 
 \[
   (z_i, z_j) \mapsto (z_i + \delta, z_j - \delta).
 \]
 
-Requiring every chunk to own a block does not remove this freedom.
+Requiring every chunk to own a block does not remove this freedom. The protocol
+therefore uses the **aggregate-share contract**: verification proves bounded
+additive `z` shares with the required aggregate. Every share remains subject to
+the same range and norm checks. The honest prover emits the fold over the
+slot's exact block range and therefore emits canonical zero for an empty range.
+Canonical zero is an honest-prover rule, not a separate verifier constraint.
 
-Before empty ranges are enabled, the implementation **MUST** complete and
-record a focused soundness audit choosing one of two contracts:
-
-1. **Aggregate-share contract.** Verification proves bounded additive shares
-   with the required aggregate. The SIS and fold-norm analysis must cover
-   arbitrary bounded redistributions, while the honest prover still emits
-   machine-local folds and canonical zeroes for empty ranges.
-2. **Strict-local contract.** Verification proves each machine-local fold. The
-   relation must add the constraints required to enforce zero for an empty
-   range and locality for nonempty ranges.
-
-The specification recommends the aggregate-share contract if the existing
-security argument already matches the implemented relation. This is not an
-accepted security claim until the audit identifies the exact theorem and bound
-used by verifier validation.
-
-No code may remove `live_blocks >= witness_chunks` merely on the basis of the
-layout arithmetic. The security gate, prover construction, verifier layout,
-structured evaluators, serialization, and tests must move together.
+Allowing empty ranges does not enlarge the verified redistribution freedom;
+the same freedom exists between nonempty slots. A future strict-local protocol
+would be a different relation and must carry its own protocol discriminator.
+The prover, verifier layout, structured evaluators, serialization, and planner
+must all use the same exact range table.
 
 ## Setup-prefix planning
 
@@ -571,13 +559,13 @@ materialization or runtime validation.
 
 #### Empty ranges
 
-- [ ] Block partitioning permits empty trailing ranges for \(B < W\).
+- [ ] Block partitioning permits empty dyadic ranges for \(B < W\).
 - [ ] Every group retains exactly \(W\) `z` segments.
 - [ ] Empty ranges have zero-width `e` and `t`.
 - [ ] The honest prover writes canonical zero `z` for empty ranges.
 - [ ] Planner costing retains \(WZ+E+T\).
-- [ ] The aggregate-versus-local security audit is completed and referenced.
-- [ ] SIS and norm validation match the chosen security contract.
+- [ ] The aggregate-share security contract is referenced by the SIS and norm
+  validation.
 - [ ] Prover, verifier, transcript, serialization, and structured evaluators
   agree on empty ranges.
 
@@ -605,8 +593,8 @@ Root-precommit tests **MUST** cover:
 
 Empty-range tests **MUST** cover:
 
-- \(B=4, W=8\) yielding four nonempty and four empty ranges;
-- \(B=0\) only at the per-chunk range level, never as an invalid empty group;
+- \(B=4, W=8\) yielding empty slots at indices 0, 2, 4, and 6;
+- \(B=0\) rejecting as an invalid empty group;
 - zero-width `e` and `t` layouts;
 - canonical honest zero `z`;
 - total witness width retaining eight `z` segments;
@@ -631,7 +619,7 @@ domains.
 
 The work should proceed in reviewable slices:
 
-1. Record the empty-range soundness audit and choose the verified contract.
+1. Record the aggregate-share contract for empty ranges.
 2. Make per-group chunk ranges empty-safe across shared types, prover, verifier,
    and structured evaluators.
 3. Add a direct root-precommit recipe selector and parity fixtures.
@@ -664,12 +652,12 @@ A commitment cannot promise compatibility with an undefined future. Catalog
 generation must make the finite compatibility domain explicit and test every
 advertised family.
 
-### Empty ranges expose an existing proof-language ambiguity
+### Empty ranges make the aggregate-share contract visible
 
-The verifier may already prove aggregate bounded shares rather than literal
-machine-local folds. Empty ranges make that distinction visible but do not
-create it. Enabling them without recording the security contract would hide a
-protocol assumption in layout code.
+The verifier proves aggregate bounded shares rather than literal machine-local
+folds. Empty ranges make that distinction visible but do not create it.
+Implementations must not claim that canonical zero for an empty honest share is
+separately enforced by the verifier.
 
 ### Shared helpers recreate coupling
 
@@ -691,11 +679,9 @@ The following choices remain open and must not be encoded accidentally:
    recipes advertise?
 2. Should the first recipe tie-break prefer setup footprint or a simpler
    geometry after equal \(WZ+E+T\)?
-3. Does the existing security proof establish the aggregate-share contract, or
-   are strict machine-local constraints required?
-4. Should a future large-precommit workload introduce a setup-first recipe
+3. Should a future large-precommit workload introduce a setup-first recipe
    policy? No such policy is part of this specification.
-5. Is a repository-wide maximum machine count of eight desirable as a runtime
+4. Is a repository-wide maximum machine count of eight desirable as a runtime
    resource bound? Empty-range compatibility does not depend on that answer.
 
 ## References

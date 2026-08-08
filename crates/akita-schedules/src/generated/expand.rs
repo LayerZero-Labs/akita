@@ -370,7 +370,6 @@ impl GeneratedCommittedGroup {
         num_claims: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
         setup_prefix_group: Option<GeneratedSetupPrefixInput>,
-        num_chunks: usize,
     ) -> Result<CommittedGroupParams, AkitaError> {
         let dimensions = CommitmentRingDims {
             inner: self.inner_commit_matrix.ring_dimension as usize,
@@ -386,8 +385,8 @@ impl GeneratedCommittedGroup {
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
 
-        // Digit-innermost geometry keeps `M = 2^position_index_bits` at every level.
-        // Generated `B` is the physical block envelope after chunk padding.
+        // Digit-innermost geometry keeps `M = 2^position_index_bits` at every level
+        // and carries exact live `B = ceil(N / M)` separately from its Boolean domain.
         let num_positions_per_block =
             generated_count(self.geometry.positions_per_block, "positions per block")?;
         let num_live_blocks = generated_count(self.geometry.live_blocks, "live block count")?;
@@ -401,7 +400,7 @@ impl GeneratedCommittedGroup {
                 != Some(block_index_bits)
         {
             return Err(AkitaError::InvalidSetup(
-                "generated schedule physical live block count disagrees with block_index_bits"
+                "generated schedule exact live block count disagrees with block_index_bits"
                     .to_string(),
             ));
         }
@@ -412,28 +411,13 @@ impl GeneratedCommittedGroup {
         }
         // Every exact live prefix may end in a partial ring. The commitment
         // view supplies the one implicit-zero suffix.
-        let exact_num_live_ring_elements_per_claim = input_witness_len.div_ceil(ring_d);
-        let exact_num_live_blocks =
-            exact_num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
-        let expected_num_live_blocks =
-            akita_types::pad_live_blocks_for_chunks(exact_num_live_blocks, num_chunks)?;
-        if num_live_blocks != expected_num_live_blocks {
+        let num_live_ring_elements_per_claim = input_witness_len.div_ceil(ring_d);
+        let derived_num_live_blocks =
+            num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
+        if derived_num_live_blocks != num_live_blocks {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated schedule num_live_blocks={num_live_blocks} does not match chunk-padded ceil(N={exact_num_live_ring_elements_per_claim} / M={num_positions_per_block})={expected_num_live_blocks}",
-            )));
-        }
-        let num_live_ring_elements_per_claim = num_live_blocks
-            .checked_mul(num_positions_per_block)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("generated padded source length overflow".to_string())
-            })?;
-        let generated_live_ring_elements = generated_count(
-            self.geometry.live_ring_elements_per_claim,
-            "live ring-element count",
-        )?;
-        if generated_live_ring_elements != num_live_ring_elements_per_claim {
-            return Err(AkitaError::InvalidSetup(format!(
-                "generated schedule live_ring_elements_per_claim={generated_live_ring_elements} does not match physical block envelope {num_live_ring_elements_per_claim}",
+                "generated schedule num_live_blocks={} does not match ceil(N={num_live_ring_elements_per_claim} / M={num_positions_per_block})={derived_num_live_blocks}",
+                num_live_blocks,
             )));
         }
 
@@ -873,7 +857,7 @@ impl GeneratedTerminalFold {
                 "terminal witness length must be nonzero".to_string(),
             ));
         }
-        let exact_num_live_ring_elements_per_claim = input_witness_len.div_ceil(ring_dimension);
+        let num_live_ring_elements_per_claim = input_witness_len.div_ceil(ring_dimension);
         let num_positions_per_block =
             generated_count(self.geometry.positions_per_block, "positions per block")?;
         let num_live_blocks = generated_count(self.geometry.live_blocks, "live block count")?;
@@ -881,16 +865,10 @@ impl GeneratedTerminalFold {
             self.geometry.live_ring_elements_per_claim,
             "live ring-element count",
         )?;
-        let physical_live_ring_elements = num_live_blocks
-            .checked_mul(num_positions_per_block)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("generated terminal source length overflow".to_string())
-            })?;
         if num_positions_per_block == 0
             || !num_positions_per_block.is_power_of_two()
-            || generated_live_ring_elements != physical_live_ring_elements
-            || exact_num_live_ring_elements_per_claim.div_ceil(num_positions_per_block)
-                != num_live_blocks
+            || generated_live_ring_elements != num_live_ring_elements_per_claim
+            || num_live_ring_elements_per_claim.div_ceil(num_positions_per_block) != num_live_blocks
         {
             return Err(AkitaError::InvalidSetup(
                 "generated terminal geometry does not match its input witness".to_string(),
@@ -932,7 +910,7 @@ impl GeneratedTerminalFold {
         let terminal = TerminalCommittedGroupParams {
             log_basis_inner,
             inner_commit_matrix,
-            num_live_ring_elements_per_claim: generated_live_ring_elements,
+            num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
             num_digits_inner,

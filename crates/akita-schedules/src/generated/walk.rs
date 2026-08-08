@@ -82,12 +82,6 @@ pub(crate) fn walk_generated_schedule_entry(
                 key.final_group.num_polynomials(),
                 entry.root.open_commit_matrix,
                 None,
-                match entry.root.witness_partition {
-                    crate::generated::GeneratedWitnessPartition::Single => 1,
-                    crate::generated::GeneratedWitnessPartition::Distributed { num_chunks } => {
-                        num_chunks as usize
-                    }
-                },
             )?
     };
     let distributed_levels = distributed_activation_depth(
@@ -124,12 +118,6 @@ pub(crate) fn walk_generated_schedule_entry(
             1,
             fold.open_commit_matrix,
             fold.incoming_setup_prefix,
-            match fold.witness_partition {
-                crate::generated::GeneratedWitnessPartition::Single => 1,
-                crate::generated::GeneratedWitnessPartition::Distributed { num_chunks } => {
-                    num_chunks as usize
-                }
-            },
         )?;
         params.witness_chunk = partition_to_chunk(fold.witness_partition, distributed_levels)?;
         let output_witness_len =

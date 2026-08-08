@@ -124,7 +124,6 @@ impl RelationRangeImagePlan {
                 if unit.group_index() != group_index
                     || unit.chunk_index() != chunk_index
                     || unit.global_block_start() != expected_global_block_starts[group_position]
-                    || unit.num_live_blocks() == 0
                 {
                     return Err(AkitaError::InvalidSetup(
                         "witness chunks do not form one ordered global block partition".into(),
@@ -137,11 +136,11 @@ impl RelationRangeImagePlan {
                     || z_range.end != e_range.start
                     || e_range.end != t_range.start
                     || z_range.is_empty()
-                    || e_range.is_empty()
-                    || t_range.is_empty()
+                    || e_range.is_empty() != (unit.num_live_blocks() == 0)
+                    || t_range.is_empty() != (unit.num_live_blocks() == 0)
                 {
                     return Err(AkitaError::InvalidSetup(
-                        "witness unit ranges are not non-empty and contiguous".into(),
+                        "witness unit ranges disagree with the chunk geometry".into(),
                     ));
                 }
 
@@ -212,8 +211,7 @@ impl RelationRangeImagePlan {
 mod tests {
     use super::*;
     use crate::{
-        pad_live_blocks_for_chunks, PolynomialGroupLayout, WitnessQuotientRowLayout,
-        WitnessUnitLayout,
+        dyadic_block_ranges, PolynomialGroupLayout, WitnessQuotientRowLayout, WitnessUnitLayout,
     };
 
     fn test_layout(
@@ -225,17 +223,7 @@ mod tests {
         let mut cursor = 0usize;
         let order = opening_batch.root_group_order().unwrap();
         let block_ranges = (0..opening_batch.num_groups())
-            .map(|group_index| {
-                WitnessLayout::resolve_chunk_block_ranges(
-                    pad_live_blocks_for_chunks(
-                        2 * chunks_per_group + group_index + 1,
-                        chunks_per_group,
-                    )
-                    .unwrap(),
-                    chunks_per_group,
-                )
-                .unwrap()
-            })
+            .map(|group_index| dyadic_block_ranges(group_index + 1, chunks_per_group).unwrap())
             .collect::<Vec<_>>();
         for chunk_index in 0..chunks_per_group {
             for &group_index in &order {

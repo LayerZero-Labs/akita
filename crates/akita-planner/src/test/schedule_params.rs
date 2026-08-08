@@ -37,10 +37,13 @@ fn policy_for_domain(
 }
 
 #[test]
-fn balanced_chunk_geometry_rejects_residual_and_prices_equal_chunks() {
-    assert!(layout_candidate_score(100, 13, 3).is_err());
+fn dyadic_chunk_geometry_prices_exact_work_and_residual_imbalance() {
     assert_eq!(
-        layout_candidate_score(100, 12, 3).unwrap(),
+        layout_candidate_score(100, 13, 4).unwrap(),
+        (127, 100, 13, 1)
+    );
+    assert_eq!(
+        layout_candidate_score(100, 12, 4).unwrap(),
         (124, 100, 12, 0)
     );
 }

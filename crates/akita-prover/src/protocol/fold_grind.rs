@@ -8,9 +8,9 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
-    golomb_rice_total_wire_bits, golomb_rice_values_within_cap, golomb_rice_zigzag_width,
-    CommittedGroupParams, FoldLinfProtocolBinding, LevelParamsLike, OpeningClaimsLayout,
-    TerminalCommittedGroupParams, TerminalResponseShape,
+    dyadic_block_ranges, golomb_rice_total_wire_bits, golomb_rice_values_within_cap,
+    golomb_rice_zigzag_width, CommittedGroupParams, FoldLinfProtocolBinding, LevelParamsLike,
+    OpeningClaimsLayout, TerminalCommittedGroupParams, TerminalResponseShape,
 };
 
 use super::ring_relation::{
@@ -280,10 +280,7 @@ where
         return Ok((witness, per_chunk));
     }
 
-    let chunk_block_ranges = akita_types::WitnessLayout::resolve_chunk_block_ranges(
-        params.num_live_blocks(),
-        num_chunks,
-    )?;
+    let chunk_block_ranges = dyadic_block_ranges(params.num_live_blocks(), num_chunks)?;
     let windows = chunk_block_ranges
         .into_iter()
         .map(|fold_range| {
@@ -471,8 +468,31 @@ where
 mod tests {
     use super::*;
     use akita_algebra::CyclotomicRing;
+    use akita_challenges::SparseChallenge;
 
     type F = akita_field::Prime128Offset275;
+
+    #[test]
+    fn empty_chunk_window_has_zero_fold_challenges() {
+        let challenges = Challenges::from_sparse(
+            vec![
+                SparseChallenge {
+                    positions: vec![0],
+                    coeffs: vec![1],
+                };
+                4
+            ],
+            4,
+            1,
+        )
+        .expect("challenges");
+        let empty = window_sparse_challenges(&challenges, 2..2).expect("empty window");
+
+        assert!(empty
+            .as_slice()
+            .iter()
+            .all(|challenge| challenge.positions.is_empty() && challenge.coeffs.is_empty()));
+    }
 
     #[test]
     fn joint_grind_skips_different_group_first_nonces() {

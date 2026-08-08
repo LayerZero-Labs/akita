@@ -351,6 +351,9 @@ where
             .group_role_dims(inputs.opening_batch, parameters.group_index())?;
         let mut prepared_units = Vec::with_capacity(units.clone().count());
         for unit in units {
+            if unit.num_live_blocks() == 0 {
+                continue;
+            }
             let first_claim_coefficient = unit.e_coefficient_index(
                 group_dims.d_a(),
                 group_dims.d_d(),

@@ -452,6 +452,9 @@ fn build_group_role_tensors<E: FieldCore>(
     let mut a_tensors = Vec::new();
     for unit in witness_layout.units_for_group(group.group_id)? {
         for claim in 0..group.num_claims {
+            if unit.num_live_blocks() == 0 {
+                continue;
+            }
             let d_setup_column = claim
                 .checked_mul(group.num_live_blocks)
                 .and_then(|base| base.checked_add(unit.global_block_start()))
