@@ -116,6 +116,45 @@ fn ring_dimension_domain_is_canonical_and_rejects_invalid_carriers() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
+fn adaptive_dimension_candidates_enumerate_exact_role_cartesian_product() {
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
+    let policy = policy_of::<OneHot>();
+    let candidates = dimension_candidates(
+        &policy,
+        0,
+        CommitmentRingDims {
+            inner: 128,
+            outer: 128,
+            opening: 128,
+        },
+    )
+    .expect("adaptive dimension candidates");
+    assert_eq!(
+        candidates,
+        vec![
+            CommitmentRingDims::uniform(64),
+            CommitmentRingDims {
+                inner: 128,
+                outer: 64,
+                opening: 64,
+            },
+            CommitmentRingDims {
+                inner: 128,
+                outer: 64,
+                opening: 128,
+            },
+            CommitmentRingDims {
+                inner: 128,
+                outer: 128,
+                opening: 64,
+            },
+            CommitmentRingDims::uniform(128),
+        ]
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
 fn mixed_domain_search_beats_or_ties_uniform_d64() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
@@ -276,46 +315,70 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
 fn adaptive_frontier_matches_unpruned_l0_l1_search() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
-    let domain = RingDimensionSearchDomain::new([
-        CommitmentRingDims::uniform(64),
-        CommitmentRingDims {
-            inner: 128,
-            outer: 64,
-            opening: 64,
-        },
-    ])
-    .expect("representative adaptive domain");
-    let policy = policy_for_domain(policy_of::<OneHot>(), &domain);
-    let key = PolynomialGroupLayout::singleton(16);
-    let selected = find_schedule(
-        key,
-        &policy,
-        OneHot::root_honest_fold_policy(),
-        &domain,
-        OneHot::ring_challenge_config,
-    )
-    .expect("frontier search");
-    let unpruned = unpruned_search::find_schedule(
-        key,
-        &policy,
-        OneHot::root_honest_fold_policy(),
-        &domain,
-        OneHot::ring_challenge_config,
-    )
-    .expect("unpruned adaptive search");
+    let domains = [
+        RingDimensionSearchDomain::new([
+            CommitmentRingDims::uniform(64),
+            CommitmentRingDims {
+                inner: 128,
+                outer: 64,
+                opening: 64,
+            },
+            CommitmentRingDims {
+                inner: 128,
+                outer: 128,
+                opening: 64,
+            },
+        ])
+        .expect("B-varying adaptive domain"),
+        RingDimensionSearchDomain::new([
+            CommitmentRingDims::uniform(64),
+            CommitmentRingDims {
+                inner: 128,
+                outer: 64,
+                opening: 64,
+            },
+            CommitmentRingDims {
+                inner: 128,
+                outer: 64,
+                opening: 128,
+            },
+        ])
+        .expect("D-varying adaptive domain"),
+    ];
 
-    assert_eq!(
-        selected.estimate.estimated_num_setup_field_elements,
-        unpruned.estimate.estimated_num_setup_field_elements
-    );
-    assert_eq!(
-        selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        unpruned.estimate.estimated_proof_payload_bytes().unwrap()
-    );
-    assert_eq!(
-        selected.schedule.canonical_descriptor_bytes(),
-        unpruned.schedule.canonical_descriptor_bytes()
-    );
+    for domain in domains {
+        let policy = policy_for_domain(policy_of::<OneHot>(), &domain);
+        let key = PolynomialGroupLayout::singleton(14);
+        let selected = find_schedule(
+            key,
+            &policy,
+            OneHot::root_honest_fold_policy(),
+            &domain,
+            OneHot::ring_challenge_config,
+        )
+        .expect("frontier search");
+        let unpruned = unpruned_search::find_schedule(
+            key,
+            &policy,
+            OneHot::root_honest_fold_policy(),
+            &domain,
+            OneHot::ring_challenge_config,
+        )
+        .expect("unpruned adaptive search");
+
+        assert_eq!(
+            selected.estimate.estimated_num_setup_field_elements,
+            unpruned.estimate.estimated_num_setup_field_elements
+        );
+        assert_eq!(
+            selected.estimate.estimated_proof_payload_bytes().unwrap(),
+            unpruned.estimate.estimated_proof_payload_bytes().unwrap()
+        );
+        assert_eq!(
+            selected.schedule.canonical_descriptor_bytes(),
+            unpruned.schedule.canonical_descriptor_bytes()
+        );
+    }
 }
 
 #[cfg(feature = "catalog-gen")]

@@ -14,7 +14,7 @@ use akita_types::{
     PrecommittedLevelParams, WitnessLayout,
 };
 
-use akita_schedules::planner_support::{sis_key_at_dimension, RingDimensionCandidate};
+use akita_schedules::planner_support::{projected_collision_role_price, sis_key_at_dimension};
 
 use crate::schedule_params::{
     derive_optimal_suffix_schedule, materialize_candidate_schedule, select_complete_candidate,
@@ -180,7 +180,7 @@ fn materialize_precommitted_group_for_open_basis(
 
 struct MultiGroupRootCandidateCtx<'a> {
     policy: &'a PlannerPolicy,
-    dimensions: RingDimensionCandidate<'a>,
+    dimensions: CommitmentRingDims,
     ring_challenge_cfg: &'a SparseChallengeConfig,
     final_honest_fold_policy: HonestFoldPolicySpec,
 }
@@ -260,16 +260,16 @@ pub(crate) fn root_level_candidates_for_basis(
     final_honest_fold_policy: HonestFoldPolicySpec,
     precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
     policy: &PlannerPolicy,
-    dimensions: RingDimensionCandidate<'_>,
+    dimensions: CommitmentRingDims,
     ring_challenge_cfg: &SparseChallengeConfig,
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     root_input_witness_len: usize,
     candidate_log_basis: u32,
     require_witness_contraction: bool,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
-    dimensions.validate()?;
+    dimensions.validate_role_projection()?;
     let field_bits = policy.decomposition.field_bits();
-    let alpha = dimensions.inner().trailing_zeros() as usize;
+    let alpha = dimensions.d_a().trailing_zeros() as usize;
     let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
     if reduced_vars == 0 {
         return Err(AkitaError::UnsupportedSchedule(format!(
@@ -294,10 +294,7 @@ pub(crate) fn root_level_candidates_for_basis(
     let max_block_index_bits: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
 
     let mut candidates = Vec::new();
-    let shared_opening_ring_dimension = match dimensions {
-        RingDimensionCandidate::Fixed(value) => value.d_d(),
-        RingDimensionCandidate::Adaptive { .. } => dimensions.inner(),
-    };
+    let shared_opening_ring_dimension = dimensions.d_d();
     if precommitted_groups.iter().any(|group| {
         !group
             .layout
@@ -362,7 +359,7 @@ fn root_final_group_level_params_candidate(
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
     let policy = ctx.policy;
     let dimensions = ctx.dimensions;
-    let d_a = dimensions.inner();
+    let d_a = dimensions.d_a();
     let family = policy.sis_modulus_profile;
     let decomp = ctx.policy.decomposition;
     let level_decomp = DecompositionParams {
@@ -438,9 +435,11 @@ fn root_final_group_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Some((outer_key, width_t)) = dimensions.collision_role_price(
+    let Some((outer_key, width_t)) = projected_collision_role_price(
         policy,
         akita_types::SisMatrixRole::Outer,
+        d_a,
+        dimensions.d_b(),
         width_t,
         log_basis,
     ) else {
@@ -457,9 +456,11 @@ fn root_final_group_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Some((open_key, main_d_width)) = dimensions.collision_role_price(
+    let Some((open_key, main_d_width)) = projected_collision_role_price(
         policy,
         akita_types::SisMatrixRole::Open,
+        d_a,
+        dimensions.d_d(),
         main_d_width,
         log_basis,
     ) else {
