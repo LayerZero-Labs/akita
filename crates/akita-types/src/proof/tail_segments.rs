@@ -10,9 +10,8 @@ use akita_serialization::{
 use super::{checked_shape_len, checked_shape_sequence_len, reserve_shape_len};
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
 use crate::golomb_rice::{
-    golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_max_quotient_for_cap,
-    golomb_rice_total_wire_bits, golomb_rice_values_within_cap, golomb_rice_zigzag_width,
-    tail_z_planner_bits_per_coord,
+    golomb_rice_decode_vec_with, golomb_rice_encode_vec, golomb_rice_max_quotient_for_cap,
+    golomb_rice_values_within_cap, golomb_rice_zigzag_width, tail_z_planner_bits_per_coord,
 };
 use crate::layout::field_bytes;
 use crate::proof::{DigitBlocks, RingVec, TerminalWitnessTranscriptParts};
@@ -643,7 +642,7 @@ where
 pub fn decode_terminal_z_golomb_payload(
     payload: &[u8],
     group: &TailSegmentGroupLayout,
-) -> Result<Vec<i64>, AkitaError> {
+) -> Result<Vec<i16>, AkitaError> {
     if payload.len() > group.z_payload_bytes {
         return Err(AkitaError::InvalidProof);
     }
@@ -651,22 +650,23 @@ pub fn decode_terminal_z_golomb_payload(
     let rice_low_bits = group.z_rice_low_bits;
     let zigzag_w = golomb_rice_zigzag_width(cap);
     let max_quotient = golomb_rice_max_quotient_for_cap(cap, rice_low_bits, zigzag_w)?;
-    let values = golomb_rice_decode_vec(
+    let values = golomb_rice_decode_vec_with(
         payload,
         group.z_coords,
         rice_low_bits,
         zigzag_w,
         max_quotient,
+        |value| {
+            if i128::from(value).unsigned_abs() > cap {
+                return Err(AkitaError::InvalidProof);
+            }
+            i16::try_from(value).map_err(|_| AkitaError::InvalidProof)
+        },
     )?;
-    golomb_rice_values_within_cap(&values, cap)?;
-    let budget_bits = group
-        .z_payload_bytes
-        .checked_mul(8)
-        .ok_or(AkitaError::InvalidProof)?;
-    let total_bits = golomb_rice_total_wire_bits(&values, rice_low_bits, zigzag_w)?;
-    if total_bits > budget_bits {
-        return Err(AkitaError::InvalidProof);
-    }
+    // Canonical decoding rejects nonzero padding and trailing bytes. Therefore
+    // the exact wire bit length is at most `payload.len() * 8`, and the byte
+    // bound above enforces the same rounded schedule budget without another
+    // pass that re-encodes every decoded value.
     Ok(values)
 }
 

@@ -173,7 +173,10 @@ fn terminal_response_z_fold_stats<FF: FieldCore>(
             .first()
             .ok_or(akita_field::AkitaError::InvalidProof)?,
         group,
-    )?;
+    )?
+    .into_iter()
+    .map(i64::from)
+    .collect::<Vec<_>>();
     let log_cap = u128::BITS - admission_cap.leading_zeros();
     let hypothetical_digits =
         num_digits_for_bound(log_cap, field_bits, params.log_basis_inner).max(1);
@@ -207,6 +210,7 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
     ) else {
         return;
     };
+    let z_values = z_values.into_iter().map(i64::from).collect::<Vec<_>>();
     let Ok(stats) = terminal_response_z_fold_stats(witness, schedule, field_bits) else {
         return;
     };
