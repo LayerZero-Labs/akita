@@ -51,6 +51,12 @@ struct TraceUnitTensorAxis {
     lane_stride: usize,
 }
 
+#[derive(Clone, Copy)]
+struct TraceUnitTensorSegment {
+    first_unit: usize,
+    axis: Option<TraceUnitTensorAxis>,
+}
+
 fn trace_unit_tensor_axis(
     units: &[PreparedEvaluationTraceUnit],
     coefficient_block_len: usize,
@@ -90,6 +96,73 @@ fn trace_unit_tensor_axis(
         block_stride,
         lane_stride,
     })
+}
+
+fn trace_unit_tensor_segments(
+    units: &[PreparedEvaluationTraceUnit],
+    coefficient_block_len: usize,
+) -> Result<Vec<TraceUnitTensorSegment>, AkitaError> {
+    let mut segments = Vec::new();
+    segments
+        .try_reserve_exact(units.len())
+        .map_err(|_| AkitaError::InvalidSetup("trace unit segments are too large".into()))?;
+    let mut run_start = 0usize;
+    while run_start < units.len() {
+        let first = units.get(run_start).ok_or(AkitaError::InvalidProof)?;
+        let mut run_end = run_start + 1;
+        let strides = units.get(run_end).and_then(|second| {
+            let block_stride = second
+                .global_block_start
+                .checked_sub(first.global_block_start)?;
+            let coefficient_stride = second
+                .first_claim_coefficient
+                .checked_sub(first.first_claim_coefficient)?;
+            (block_stride != 0
+                && coefficient_stride != 0
+                && coefficient_stride.is_multiple_of(coefficient_block_len)
+                && second.block_count == first.block_count
+                && second.claim_stride_coefficients == first.claim_stride_coefficients)
+                .then_some((block_stride, coefficient_stride))
+        });
+        if let Some((block_stride, coefficient_stride)) = strides {
+            run_end += 1;
+            while let (Some(previous), Some(next)) = (units.get(run_end - 1), units.get(run_end)) {
+                let matches_run = next.block_count == first.block_count
+                    && next.claim_stride_coefficients == first.claim_stride_coefficients
+                    && previous
+                        .global_block_start
+                        .checked_add(block_stride)
+                        .is_some_and(|expected| expected == next.global_block_start)
+                    && previous
+                        .first_claim_coefficient
+                        .checked_add(coefficient_stride)
+                        .is_some_and(|expected| expected == next.first_claim_coefficient);
+                if !matches_run {
+                    break;
+                }
+                run_end += 1;
+            }
+        }
+
+        let mut segment_start = run_start;
+        while segment_start < run_end {
+            let remaining = run_end - segment_start;
+            let segment_len = 1usize << (usize::BITS - remaining.leading_zeros() - 1);
+            let segment_end = segment_start.checked_add(segment_len).ok_or_else(|| {
+                AkitaError::InvalidSetup("trace unit segment range overflow".into())
+            })?;
+            let segment_units = units
+                .get(segment_start..segment_end)
+                .ok_or(AkitaError::InvalidProof)?;
+            segments.push(TraceUnitTensorSegment {
+                first_unit: segment_start,
+                axis: trace_unit_tensor_axis(segment_units, coefficient_block_len),
+            });
+            segment_start = segment_end;
+        }
+        run_start = run_end;
+    }
+    Ok(segments)
 }
 
 /// Succinct verifier representation of the complete evaluation-trace weight.
@@ -180,18 +253,14 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                 .len()
                 .checked_mul(source_lane_count)
                 .ok_or_else(|| AkitaError::InvalidSetup("trace block stride overflow".into()))?;
-            let unit_tensor_axis = if use_tensor_recurrence {
-                trace_unit_tensor_axis(&group.units, coefficient_block_len)
+            let unit_tensor_segments = if use_tensor_recurrence {
+                trace_unit_tensor_segments(&group.units, coefficient_block_len)?
             } else {
-                None
+                Vec::new()
             };
             let mut families = Vec::new();
             if use_tensor_recurrence {
-                let unit_family_count = if unit_tensor_axis.is_some() {
-                    1
-                } else {
-                    group.units.len()
-                };
+                let unit_family_count = unit_tensor_segments.len();
                 let family_count = group
                     .claim_coefficients
                     .len()
@@ -296,9 +365,14 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                 }
                 Ok(())
             };
-            if let Some(axis) = unit_tensor_axis {
-                let first_unit = group.units.first().ok_or(AkitaError::InvalidProof)?;
-                contract_unit(first_unit, Some(axis))?;
+            if use_tensor_recurrence {
+                for segment in unit_tensor_segments {
+                    let first_unit = group
+                        .units
+                        .get(segment.first_unit)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    contract_unit(first_unit, segment.axis)?;
+                }
             } else {
                 for unit in &group.units {
                     contract_unit(unit, None)?;
@@ -437,6 +511,7 @@ pub fn evaluation_trace_benchmark_case(
     basis: BasisMode,
 ) -> Result<EvaluationTraceBenchmarkCase, AkitaError> {
     use akita_field::Prime128OffsetA7F7 as F;
+    use akita_types::dyadic_block_ranges;
 
     const SOURCE_RING_DIMENSION: usize = 128;
     const OPENING_RING_DIMENSION: usize = 128;
@@ -444,41 +519,48 @@ pub fn evaluation_trace_benchmark_case(
     const NUM_CLAIMS: usize = 2;
     const DIGIT_COUNT: usize = 2;
 
-    if !num_live_blocks.is_power_of_two()
-        || !witness_chunks.is_power_of_two()
-        || witness_chunks > num_live_blocks
-    {
+    if num_live_blocks == 0 || !witness_chunks.is_power_of_two() {
         return Err(AkitaError::InvalidInput(
-            "trace benchmark requires dyadic nonempty block and chunk counts".into(),
+            "trace benchmark requires nonempty blocks and a dyadic chunk count".into(),
         ));
     }
-    let blocks_per_chunk = num_live_blocks / witness_chunks;
-    let claim_stride_coefficients = blocks_per_chunk
-        .checked_mul(DIGIT_COUNT)
-        .and_then(|count| count.checked_mul(SOURCE_RING_DIMENSION))
-        .ok_or_else(|| AkitaError::InvalidSetup("trace benchmark claim stride overflow".into()))?;
-    let unit_stride_coefficients = claim_stride_coefficients
-        .checked_mul(NUM_CLAIMS)
-        .ok_or_else(|| AkitaError::InvalidSetup("trace benchmark unit stride overflow".into()))?;
-    let units = (0..witness_chunks)
-        .map(|chunk| {
-            Ok(PreparedEvaluationTraceUnit {
-                first_claim_coefficient: chunk.checked_mul(unit_stride_coefficients).ok_or_else(
-                    || AkitaError::InvalidSetup("trace benchmark unit offset overflow".into()),
-                )?,
-                claim_stride_coefficients,
-                global_block_start: chunk.checked_mul(blocks_per_chunk).ok_or_else(|| {
-                    AkitaError::InvalidSetup("trace benchmark block offset overflow".into())
-                })?,
-                block_count: blocks_per_chunk,
-            })
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-    let block_variables = num_live_blocks.trailing_zeros() as usize;
+    let mut coefficient_cursor = 0usize;
+    let mut units = Vec::with_capacity(witness_chunks.min(num_live_blocks));
+    for range in dyadic_block_ranges(num_live_blocks, witness_chunks)? {
+        let block_count = range.len();
+        if block_count == 0 {
+            continue;
+        }
+        let claim_stride_coefficients = block_count
+            .checked_mul(DIGIT_COUNT)
+            .and_then(|count| count.checked_mul(SOURCE_RING_DIMENSION))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("trace benchmark claim stride overflow".into())
+            })?;
+        units.push(PreparedEvaluationTraceUnit {
+            first_claim_coefficient: coefficient_cursor,
+            claim_stride_coefficients,
+            global_block_start: range.start,
+            block_count,
+        });
+        coefficient_cursor = claim_stride_coefficients
+            .checked_mul(NUM_CLAIMS)
+            .and_then(|count| coefficient_cursor.checked_add(count))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("trace benchmark unit offset overflow".into())
+            })?;
+    }
+    let block_variables = num_live_blocks
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("trace benchmark block domain overflow".into()))?
+        .trailing_zeros() as usize;
     let column_len = num_live_blocks
         .checked_mul(NUM_CLAIMS * DIGIT_COUNT * (SOURCE_RING_DIMENSION / COEFFICIENT_BLOCK_LEN))
         .ok_or_else(|| AkitaError::InvalidSetup("trace benchmark column span overflow".into()))?;
-    let column_variables = column_len.trailing_zeros() as usize;
+    let column_variables = column_len
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("trace benchmark column domain overflow".into()))?
+        .trailing_zeros() as usize;
     let coefficient_variables = COEFFICIENT_BLOCK_LEN.trailing_zeros() as usize;
     let num_variables = coefficient_variables
         .checked_add(column_variables)
@@ -522,26 +604,28 @@ mod tests {
     };
 
     #[test]
-    fn affine_unit_tensor_matches_separate_unit_contractions() {
-        for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
-            let case = evaluation_trace_benchmark_case(256, 4, basis).unwrap();
-            let expected = case.evaluate().unwrap();
-            let group = case.trace.groups.first().unwrap();
-            let groups = group
-                .units
-                .iter()
-                .map(|unit| {
-                    let mut separate = group.clone();
-                    separate.units = vec![unit.clone()];
-                    separate
-                })
-                .collect();
-            let separate = PreparedEvaluationTrace {
-                groups,
-                num_variables: case.trace.num_variables,
-            };
+    fn unit_tensor_segments_match_separate_unit_contractions() {
+        for (blocks, chunks) in [(256, 4), (253, 64), (61, 64)] {
+            for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
+                let case = evaluation_trace_benchmark_case(blocks, chunks, basis).unwrap();
+                let expected = case.evaluate().unwrap();
+                let group = case.trace.groups.first().unwrap();
+                let groups = group
+                    .units
+                    .iter()
+                    .map(|unit| {
+                        let mut separate = group.clone();
+                        separate.units = vec![unit.clone()];
+                        separate
+                    })
+                    .collect();
+                let separate = PreparedEvaluationTrace {
+                    groups,
+                    num_variables: case.trace.num_variables,
+                };
 
-            assert_eq!(separate.evaluate_at_point(&case.point).unwrap(), expected);
+                assert_eq!(separate.evaluate_at_point(&case.point).unwrap(), expected);
+            }
         }
     }
 

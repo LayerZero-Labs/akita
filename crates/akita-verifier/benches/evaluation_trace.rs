@@ -26,6 +26,16 @@ fn bench_evaluation_trace(c: &mut Criterion) {
                 );
             }
         }
+        let irregular_blocks = num_live_blocks - 3;
+        for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
+            let case = evaluation_trace_benchmark_case(irregular_blocks, 64, basis)
+                .expect("valid irregular evaluation-trace benchmark case");
+            group.bench_with_input(
+                BenchmarkId::new(format!("{basis:?}/dyadic_64_chunks"), irregular_blocks),
+                &case,
+                |b, case| b.iter(|| black_box(case.evaluate().expect("trace evaluation"))),
+            );
+        }
     }
     group.finish();
 }
