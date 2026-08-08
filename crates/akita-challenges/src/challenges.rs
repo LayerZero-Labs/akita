@@ -1,6 +1,7 @@
 //! Sampled sparse challenges for one folding round.
 
 use crate::SparseChallenge;
+use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
 
 /// Stage-1 fold challenges in claim-major block order.
@@ -107,10 +108,13 @@ impl Challenges {
         F: FieldCore + FromPrimitiveInt,
         E: FieldCore + MulBase<F>,
     {
-        self.challenges
-            .iter()
-            .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
-            .collect()
+        let evaluate = |challenge: &SparseChallenge| challenge.eval_at_pows::<F, E>(alpha_pows);
+        const PARALLEL_THRESHOLD: usize = 1 << 12;
+        if self.challenges.len() >= PARALLEL_THRESHOLD {
+            cfg_iter!(&self.challenges).map(evaluate).collect()
+        } else {
+            self.challenges.iter().map(evaluate).collect()
+        }
     }
 
     /// Select complete claims in the requested order.
@@ -143,5 +147,37 @@ impl Challenges {
             self.num_live_blocks_per_claim,
             claim_indices.len(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Prime128Offset275;
+
+    type F = Prime128Offset275;
+
+    #[test]
+    fn batch_evaluation_preserves_challenge_order() {
+        let challenges = (0..4096)
+            .map(|index| SparseChallenge {
+                positions: vec![(index % 4) as u32].into(),
+                coeffs: vec![if index % 2 == 0 { 1 } else { -1 }].into(),
+            })
+            .collect::<Vec<_>>();
+        let batch = Challenges::from_sparse(challenges, 4096, 1).unwrap();
+        let powers = [
+            F::from_u64(1),
+            F::from_u64(3),
+            F::from_u64(9),
+            F::from_u64(27),
+        ];
+        let actual = batch.evals_at_pows::<F, F>(&powers).unwrap();
+        let expected = batch
+            .as_slice()
+            .iter()
+            .map(|challenge| challenge.eval_at_pows::<F, F>(&powers).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
     }
 }
