@@ -742,7 +742,6 @@ mod tests {
             (0..NUM_VARIABLES)
                 .map(|index| E::from_u64(17 + 2 * index as u64))
                 .collect(),
-            ring_opening_point,
             ring_multiplier_point,
             CyclotomicRing::<F, D>::one(),
         )];

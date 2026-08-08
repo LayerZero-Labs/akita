@@ -7,7 +7,7 @@ use crate::witness::WitnessLayout;
 use crate::FpExtEncoding;
 use crate::{
     embed_ring_subfield_scalar, r_decomp_levels, CommittedGroupParams, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingVec,
+    RingVec,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
@@ -87,7 +87,6 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
 #[derive(Debug, Clone)]
 pub struct RingRelationInstance<F: FieldCore> {
     group_challenges: Vec<Challenges>,
-    group_opening_points: Vec<RingOpeningPoint<F>>,
     group_ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F>>,
     opening_batch: OpeningClaimsLayout,
     gamma: Vec<F>,
@@ -104,7 +103,6 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         group_challenges: Vec<Challenges>,
-        group_opening_points: Vec<RingOpeningPoint<F>>,
         group_ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F>>,
         opening_batch: OpeningClaimsLayout,
         gamma: Vec<F>,
@@ -115,9 +113,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     ) -> Result<Self, AkitaError> {
         opening_batch.check()?;
         let num_groups = opening_batch.num_groups();
-        if group_challenges.len() != num_groups
-            || group_opening_points.len() != num_groups
-            || group_ring_multiplier_points.len() != num_groups
+        if group_challenges.len() != num_groups || group_ring_multiplier_points.len() != num_groups
         {
             return Err(AkitaError::InvalidInput(
                 "ring relation group carrier count does not match opening batch".to_string(),
@@ -134,11 +130,6 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 )));
             }
             let num_live_blocks_g = challenges.num_live_blocks_per_claim();
-            if group_opening_points[g].live_block_weights.len() != num_live_blocks_g {
-                return Err(AkitaError::InvalidInput(format!(
-                    "ring relation group {g} opening point block count does not match challenges"
-                )));
-            }
             if group_ring_multiplier_points[g].fold_len() != num_live_blocks_g {
                 return Err(AkitaError::InvalidInput(format!(
                     "ring relation group {g} ring multiplier block count does not match challenges"
@@ -188,7 +179,6 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         }
         Ok(Self {
             group_challenges,
-            group_opening_points,
             group_ring_multiplier_points,
             opening_batch,
             gamma,
@@ -197,31 +187,6 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
             v,
             role_dims,
         })
-    }
-
-    /// Construct from typed kernel outputs at a ring-relation boundary.
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_parts<const D: usize>(
-        group_challenges: Vec<Challenges>,
-        group_opening_points: Vec<RingOpeningPoint<F>>,
-        group_ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F>>,
-        opening_batch: OpeningClaimsLayout,
-        gamma: Vec<F>,
-        row_coefficient_rings: &[CyclotomicRing<F, D>],
-        rhs: &[CyclotomicRing<F, D>],
-        v: &[CyclotomicRing<F, D>],
-    ) -> Result<Self, AkitaError> {
-        Self::new(
-            group_challenges,
-            group_opening_points,
-            group_ring_multiplier_points,
-            opening_batch,
-            gamma,
-            RingVec::from_ring_elems(row_coefficient_rings),
-            RingVec::from_ring_elems(rhs),
-            RingVec::from_ring_elems(v),
-            CommitmentRingDims::uniform(D),
-        )
     }
 
     /// Per-role ring dimensions for this relation statement.
@@ -240,15 +205,6 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
 
     pub fn group_challenges(&self) -> &[Challenges] {
         &self.group_challenges
-    }
-
-    pub fn group_opening_point(&self, g: usize) -> Result<&RingOpeningPoint<F>, AkitaError> {
-        self.group_opening_points.get(g).ok_or_else(|| {
-            AkitaError::InvalidInput(format!(
-                "ring relation opening point group index {g} out of range ({} groups)",
-                self.group_opening_points.len()
-            ))
-        })
     }
 
     pub fn group_ring_multiplier_point(
@@ -424,7 +380,7 @@ mod tests {
     use crate::{
         emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes,
         relation_rhs_coeff_len, relation_rhs_layout_for, InnerCommitMatrixParams,
-        OuterCommitMatrixParams, PolynomialGroupLayout,
+        OuterCommitMatrixParams, PolynomialGroupLayout, RingOpeningPoint,
     };
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
     use akita_field::Fp32;
@@ -520,7 +476,6 @@ mod tests {
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let err = RingRelationInstance::<F>::new(
             vec![test_challenges(&lp, opening_batch.num_total_polynomials())],
-            vec![opening_point],
             vec![ring_multiplier_point],
             opening_batch,
             vec![F::one()],
@@ -575,7 +530,6 @@ mod tests {
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         RingRelationInstance::<F>::new(
             vec![test_challenges(lp, num_claims)],
-            vec![opening_point],
             vec![ring_multiplier_point],
             opening_batch,
             vec![F::one(); num_claims],
@@ -735,7 +689,6 @@ mod tests {
         let rhs_coeff_len = relation_rhs_coeff_len(&relation_rhs_layout).expect("rhs length");
         let instance = RingRelationInstance::<F>::new(
             vec![test_challenges(&lp, opening_batch.num_total_polynomials())],
-            vec![opening_point],
             vec![ring_multiplier_point],
             opening_batch,
             vec![F::one(); 3],
@@ -818,7 +771,6 @@ mod tests {
         let ring_multiplier_final = RingMultiplierOpeningPoint::from_base(&opening_point_final);
         let instance = RingRelationInstance::<F>::new(
             vec![test_challenges(&lp, 1), test_challenges(&lp, 1)],
-            vec![opening_point_pre, opening_point_final],
             vec![ring_multiplier_pre, ring_multiplier_final],
             opening_batch.clone(),
             vec![F::one(); opening_batch.num_total_polynomials()],
@@ -888,7 +840,6 @@ mod tests {
         let gamma_len = opening_batch.num_total_polynomials();
         let instance = RingRelationInstance::<F>::new(
             vec![test_challenges(&lp, 1), test_challenges(&lp, 1)],
-            vec![opening_point_pre, opening_point_final],
             vec![ring_multiplier_pre, ring_multiplier_final],
             opening_batch,
             vec![F::one(); gamma_len],

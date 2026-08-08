@@ -260,10 +260,15 @@ where
     if E::EXT_DEGREE == 1 {
         let mut terms = Vec::with_capacity(items.len());
         for item in items {
+            let base_point = item
+                .prepared
+                .ring_multiplier_point
+                .as_base()
+                .ok_or(AkitaError::InvalidProof)?;
             terms.push(TraceFieldBlockOpening {
                 block_offset: item.block_offset,
                 live_block_weights: scaled_base_weights(
-                    &item.prepared.ring_opening_point.live_block_weights,
+                    &base_point.live_block_weights,
                     item.scaled_coefficient,
                 )?,
                 inner_opening_ring: item.prepared.packed_inner_owned::<D>()?,
@@ -306,12 +311,13 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     if E::EXT_DEGREE == 1 {
+        let base_point = prepared
+            .ring_multiplier_point
+            .as_base()
+            .ok_or(AkitaError::InvalidProof)?;
         trace_public_weights_field_terms(&[TraceFieldBlockOpening {
             block_offset: 0,
-            live_block_weights: scaled_base_weights(
-                &prepared.ring_opening_point.live_block_weights,
-                scale,
-            )?,
+            live_block_weights: scaled_base_weights(&base_point.live_block_weights, scale)?,
             inner_opening_ring: prepared.packed_inner_owned::<D>()?,
         }])
     } else {
@@ -651,6 +657,10 @@ where
                 let group_id = group_index;
                 let inner = prepared.packed_inner_owned::<D>()?;
                 let inner_coeffs = inner.coefficients();
+                let base_point = prepared
+                    .ring_multiplier_point
+                    .as_base()
+                    .ok_or(AkitaError::InvalidProof)?;
                 let gadget = crate::gadget_row_scalars::<F>(
                     group_lp.num_digits_open(),
                     group_lp.log_basis_open(),
@@ -662,8 +672,7 @@ where
                         .unwrap_or_else(E::one);
                     let coefficient = output_scale * row_coefficients[claim_idx] * scale;
                     for block in 0..group_lp.num_live_blocks() {
-                        let block_weight = prepared
-                            .ring_opening_point
+                        let block_weight = base_point
                             .live_block_weights
                             .get(block)
                             .copied()

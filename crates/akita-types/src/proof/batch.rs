@@ -19,8 +19,6 @@ use akita_transcript::{append_ext_field, Transcript};
 pub struct PreparedOpeningPoint<F: FieldCore, E: FieldCore> {
     /// Opening point padded to the recursive verifier's target variable count.
     pub padded_point: Vec<E>,
-    /// Ring-level outer opening point.
-    pub ring_opening_point: RingOpeningPoint<F>,
     /// Ring-level outer opening point with weights embedded as `R_F` multipliers.
     pub ring_multiplier_point: RingMultiplierOpeningPoint<F>,
     /// The ψ-packed inner block of the opening point (paper `\check{r}_{\mathrm{in}}`).
@@ -35,13 +33,11 @@ impl<F: FieldCore, E: FieldCore> PreparedOpeningPoint<F, E> {
     /// Construct from typed kernel output at an opening-point boundary.
     pub fn from_parts<const D: usize>(
         padded_point: Vec<E>,
-        ring_opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F>,
         packed_inner_point: CyclotomicRing<F, D>,
     ) -> Self {
         Self {
             padded_point,
-            ring_opening_point,
             ring_multiplier_point,
             packed_inner_point: RingVec::from_single(&packed_inner_point),
             ring_dim: D,
@@ -856,7 +852,6 @@ where
         let packed_inner_point = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
         return Ok(PreparedOpeningPoint::from_parts::<D>(
             padded_point,
-            ring_opening_point,
             ring_multiplier_point,
             packed_inner_point,
         ));
@@ -892,16 +887,8 @@ where
         num_live_blocks,
         basis,
     )?;
-    let ring_opening_point = ring_opening_point_from_field::<F>(
-        &vec![F::zero(); outer_point.len()],
-        num_positions_per_block,
-        num_live_blocks,
-        basis,
-    )?;
-
     Ok(PreparedOpeningPoint::from_parts::<D>(
         padded_point,
-        ring_opening_point,
         ring_multiplier_point,
         packed_inner_point,
     ))
