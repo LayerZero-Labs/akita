@@ -44,6 +44,54 @@ struct PreparedEvaluationTraceGroup<E: FieldCore> {
 /// term; at and above it the logarithmic paired recurrence wins decisively.
 const TRACE_TENSOR_MIN_BLOCKS_PER_UNIT: usize = 64;
 
+#[derive(Clone, Copy)]
+struct TraceUnitTensorAxis {
+    len: usize,
+    block_stride: usize,
+    lane_stride: usize,
+}
+
+fn trace_unit_tensor_axis(
+    units: &[PreparedEvaluationTraceUnit],
+    coefficient_block_len: usize,
+) -> Option<TraceUnitTensorAxis> {
+    if units.len() < 2 || !units.len().is_power_of_two() {
+        return None;
+    }
+    let first = units.first()?;
+    let second = units.get(1)?;
+    let block_stride = second
+        .global_block_start
+        .checked_sub(first.global_block_start)
+        .filter(|&stride| stride != 0)?;
+    let coefficient_stride = second
+        .first_claim_coefficient
+        .checked_sub(first.first_claim_coefficient)
+        .filter(|&stride| stride != 0 && stride.is_multiple_of(coefficient_block_len))?;
+    let lane_stride = coefficient_stride / coefficient_block_len;
+
+    for (index, unit) in units.iter().enumerate() {
+        let expected_block_start = index
+            .checked_mul(block_stride)
+            .and_then(|offset| first.global_block_start.checked_add(offset))?;
+        let expected_coefficient = index
+            .checked_mul(coefficient_stride)
+            .and_then(|offset| first.first_claim_coefficient.checked_add(offset))?;
+        if unit.global_block_start != expected_block_start
+            || unit.first_claim_coefficient != expected_coefficient
+            || unit.block_count != first.block_count
+            || unit.claim_stride_coefficients != first.claim_stride_coefficients
+        {
+            return None;
+        }
+    }
+    Some(TraceUnitTensorAxis {
+        len: units.len(),
+        block_stride,
+        lane_stride,
+    })
+}
+
 /// Succinct verifier representation of the complete evaluation-trace weight.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PreparedEvaluationTrace<E: FieldCore> {
@@ -132,12 +180,22 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                 .len()
                 .checked_mul(source_lane_count)
                 .ok_or_else(|| AkitaError::InvalidSetup("trace block stride overflow".into()))?;
+            let unit_tensor_axis = if use_tensor_recurrence {
+                trace_unit_tensor_axis(&group.units, coefficient_block_len)
+            } else {
+                None
+            };
             let mut families = Vec::new();
             if use_tensor_recurrence {
+                let unit_family_count = if unit_tensor_axis.is_some() {
+                    1
+                } else {
+                    group.units.len()
+                };
                 let family_count = group
                     .claim_coefficients
                     .len()
-                    .checked_mul(group.units.len())
+                    .checked_mul(unit_family_count)
                     .and_then(|count| count.checked_mul(role_subcolumns))
                     .and_then(|count| count.checked_mul(role_lane_count))
                     .ok_or_else(|| {
@@ -156,8 +214,10 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                     AkitaError::InvalidSetup("trace tensor families are too large".into())
                 })?;
             }
-            for (claim, &claim_coefficient) in group.claim_coefficients.iter().enumerate() {
-                for unit in &group.units {
+            let mut contract_unit = |unit: &PreparedEvaluationTraceUnit,
+                                     tensor_axis: Option<TraceUnitTensorAxis>|
+             -> Result<(), AkitaError> {
+                for (claim, &claim_coefficient) in group.claim_coefficients.iter().enumerate() {
                     let claim_start = claim
                         .checked_mul(unit.claim_stride_coefficients)
                         .and_then(|offset| unit.first_claim_coefficient.checked_add(offset))
@@ -214,21 +274,34 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                                     )?;
                                 continue;
                             }
+                            let mut axes = vec![
+                                EqPairTensorAxis::dense(0, role_lane_count, digit_weights.to_vec()),
+                                EqPairTensorAxis::unit(unit.block_count, 1, block_stride),
+                            ];
+                            if let Some(axis) = tensor_axis {
+                                axes.push(EqPairTensorAxis::unit(
+                                    axis.len,
+                                    axis.block_stride,
+                                    axis.lane_stride,
+                                ));
+                            }
                             families.push(EqPairTensorFamily::new(
                                 unit.global_block_start,
                                 base,
                                 claim_coefficient * inner_trace_evaluation,
-                                vec![
-                                    EqPairTensorAxis::dense(
-                                        0,
-                                        role_lane_count,
-                                        digit_weights.to_vec(),
-                                    ),
-                                    EqPairTensorAxis::unit(unit.block_count, 1, block_stride),
-                                ],
+                                axes,
                             )?);
                         }
                     }
+                }
+                Ok(())
+            };
+            if let Some(axis) = unit_tensor_axis {
+                let first_unit = group.units.first().ok_or(AkitaError::InvalidProof)?;
+                contract_unit(first_unit, Some(axis))?;
+            } else {
+                for unit in &group.units {
+                    contract_unit(unit, None)?;
                 }
             }
             if linear_block_weights.is_none() {
@@ -338,13 +411,13 @@ where
 }
 
 /// Exact synthetic trace fixture for production-kernel benchmarks.
-#[cfg(feature = "benchmark-support")]
+#[cfg(any(test, feature = "benchmark-support"))]
 pub struct EvaluationTraceBenchmarkCase {
     trace: PreparedEvaluationTrace<akita_field::Prime128OffsetA7F7>,
     point: Vec<akita_field::Prime128OffsetA7F7>,
 }
 
-#[cfg(feature = "benchmark-support")]
+#[cfg(any(test, feature = "benchmark-support"))]
 impl EvaluationTraceBenchmarkCase {
     /// Evaluate the prepared trace at its fixed benchmark point.
     pub fn evaluate(&self) -> Result<akita_field::Prime128OffsetA7F7, AkitaError> {
@@ -354,7 +427,7 @@ impl EvaluationTraceBenchmarkCase {
 
 /// Build a checked trace benchmark with two claims, two opening digits, and a
 /// D128 source split into D64 coefficient blocks.
-#[cfg(feature = "benchmark-support")]
+#[cfg(any(test, feature = "benchmark-support"))]
 pub fn evaluation_trace_benchmark_case(
     num_live_blocks: usize,
     witness_chunks: usize,
@@ -444,6 +517,30 @@ mod tests {
         DigitRangePlan, OpeningClaimsLayout, PreparedOpeningPoint, RelationAddressGeometry,
         RelationRangeImagePlan, RingMultiplierOpeningPoint, WitnessLayout,
     };
+
+    #[test]
+    fn affine_unit_tensor_matches_separate_unit_contractions() {
+        for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
+            let case = evaluation_trace_benchmark_case(256, 4, basis).unwrap();
+            let expected = case.evaluate().unwrap();
+            let group = case.trace.groups.first().unwrap();
+            let groups = group
+                .units
+                .iter()
+                .map(|unit| {
+                    let mut separate = group.clone();
+                    separate.units = vec![unit.clone()];
+                    separate
+                })
+                .collect();
+            let separate = PreparedEvaluationTrace {
+                groups,
+                num_variables: case.trace.num_variables,
+            };
+
+            assert_eq!(separate.evaluate_at_point(&case.point).unwrap(), expected);
+        }
+    }
 
     #[test]
     fn projected_subcolumn_trace_matches_dense_definition() {

@@ -30,10 +30,11 @@ pub use akita_types::CommitmentVerifier;
 pub use protocol::{
     batched_verify, prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
 };
+#[cfg(any(test, feature = "benchmark-support"))]
+pub use protocol::{evaluation_trace_benchmark_case, EvaluationTraceBenchmarkCase};
 #[cfg(feature = "benchmark-support")]
 pub use protocol::{
-    evaluation_trace_benchmark_case, relation_evaluator_benchmark_case,
-    relation_evaluator_benchmark_case_with_chunks, EvaluationTraceBenchmarkCase,
+    relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
     RelationEvaluatorBenchmarkCase,
 };
 pub use stages::stage1::AkitaStage1Verifier;
