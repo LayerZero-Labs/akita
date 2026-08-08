@@ -1,4 +1,4 @@
-//! Microbenchmarks for ring fold challenge sampling at `D=64`.
+//! Microbenchmarks for ring fold challenge sampling.
 //!
 //! Compares production signed-sparse `(31, 10)` against pm1-only `{23, 0}` at
 //! the same ring degree to bracket position-shuffle vs sign-decode cost.
@@ -76,5 +76,35 @@ fn bench_batch(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(sparse_challenge, bench_batch);
+fn bench_sparse_ladder(c: &mut Criterion) {
+    const BATCH: usize = 1 << 12;
+    let mut group = c.benchmark_group("sparse_challenge_ladder_batch_4096");
+    group.throughput(Throughput::Elements(BATCH as u64));
+    for ring_d in [256usize, 512, 1024, 2048] {
+        let cfg = SparseChallengeConfig::production_for_ring_dim(ring_d)
+            .expect("production challenge configuration");
+        group.bench_with_input(
+            BenchmarkId::from_parameter(ring_d),
+            &ring_d,
+            |b, &ring_d| {
+                b.iter(|| {
+                    let mut tr = fresh_transcript();
+                    let challenges = sample_sparse_challenges::<F, _>(
+                        &mut tr,
+                        b"bench/sparse-ladder",
+                        ring_d,
+                        BATCH,
+                        black_box(&cfg),
+                        0,
+                    )
+                    .expect("batch sparse challenges");
+                    black_box(challenges)
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+criterion_group!(sparse_challenge, bench_batch, bench_sparse_ladder);
 criterion_main!(sparse_challenge);
