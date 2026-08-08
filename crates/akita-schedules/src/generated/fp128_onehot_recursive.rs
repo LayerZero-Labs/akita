@@ -48,7 +48,7 @@ pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64, 256];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp128_onehot_recursive",
-    protocol_epoch: 3,
+    protocol_epoch: 1,
     cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
     selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
     setup_field_budget: None,

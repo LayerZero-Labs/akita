@@ -167,6 +167,7 @@ pub use trace_weight::{
 };
 pub use transcript::AppendToTranscript;
 pub use witness::{
-    ChunkedWitnessCfg, CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId,
-    WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout, MAX_WITNESS_CHUNKS,
+    dyadic_block_ranges, ChunkedWitnessCfg, CompressionWitnessLayerLayout, CompressionWitnessSpan,
+    MultiChunkProfileId, WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout,
+    MAX_WITNESS_CHUNKS,
 };

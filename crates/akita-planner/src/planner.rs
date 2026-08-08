@@ -329,18 +329,6 @@ pub(crate) fn root_level_candidates_for_basis(
         else {
             continue;
         };
-        let root_num_chunks = policy.chunks_at_level(0);
-        // A chunked root fold distributes both the main folded witness and
-        // every precommitted group's folded response across `num_chunks`
-        // block windows, so each needs at least one live block per chunk.
-        if candidate_params.num_live_blocks < root_num_chunks
-            || candidate_params
-                .precommitted_groups
-                .iter()
-                .any(|group| group.layout.num_live_blocks < root_num_chunks)
-        {
-            continue;
-        }
         candidate_params.witness_chunk = policy.witness_chunk_for_level(0);
         let Some(output_witness_len) =
             root_batch_next_w_len(field_bits, &candidate_params, &opening_batch)?

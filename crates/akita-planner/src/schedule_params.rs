@@ -15,14 +15,14 @@ use akita_types::sis::{
     FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
 };
+use akita_types::{
+    dyadic_block_ranges, padded_setup_prefix_len, AkitaScheduleLookupKey, CommitmentRingDims,
+    CommittedGroupParams, CommittedGroupProfile, DecompositionParams, PolynomialGroupLayout,
+    PrecommittedLevelParams,
+};
 #[cfg(test)]
 use akita_types::{
     level_proof_bytes, try_extension_opening_reduction_level_bytes, PlannedFoldSchedule,
-};
-use akita_types::{
-    padded_setup_prefix_len, AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams,
-    CommittedGroupProfile, DecompositionParams, PolynomialGroupLayout, PrecommittedLevelParams,
-    WitnessLayout,
 };
 
 use crate::PlannerPolicy;
@@ -238,7 +238,7 @@ pub(crate) fn layout_candidate_score(
     num_chunks: usize,
 ) -> Result<LayoutCandidateScore, AkitaError> {
     let challenge_work = num_live_blocks;
-    let chunk_ranges = WitnessLayout::resolve_chunk_block_ranges(num_live_blocks, num_chunks)?;
+    let chunk_ranges = dyadic_block_ranges(num_live_blocks, num_chunks)?;
     let min_load = chunk_ranges
         .iter()
         .map(|range| range.len())

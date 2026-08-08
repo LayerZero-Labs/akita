@@ -29,9 +29,6 @@ pub(crate) fn recursive_fold_level_params_candidate(
             AkitaError::InvalidSetup("recursive candidate position count overflow".to_string())
         })?;
     let num_live_blocks = num_ring_elems.div_ceil(num_positions_per_block);
-    if num_live_blocks < num_chunks {
-        return Ok(None);
-    }
     let decomp = DecompositionParams {
         log_basis,
         ..policy.decomposition
