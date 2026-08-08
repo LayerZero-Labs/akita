@@ -191,6 +191,8 @@ pub fn eval_boolean_pair_tensor_families<
         });
     }
     let mut batches = BTreeMap::<(usize, usize, usize), Vec<EqPairSeed<F>>>::new();
+    let mut multi_axis_batches =
+        BTreeMap::<Vec<(usize, usize, usize, usize)>, Vec<&EqPairTensorFamily<F>>>::new();
     let mut scalar_seeds = Vec::new();
     let mut work = 0usize;
     let mut acc = F::zero();
@@ -210,13 +212,20 @@ pub fn eval_boolean_pair_tensor_families<
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
         if recurrence_axes.len() >= 2 {
-            acc += eval_multi_axis_unit_family::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-                left_challenges,
-                right_challenges,
-                family,
-                &recurrence_axes,
-                &mut work,
-            )?;
+            let recurrence_geometry = recurrence_axes
+                .iter()
+                .map(|&axis_index| {
+                    let axis = family
+                        .axes
+                        .get(axis_index)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    Ok((axis_index, axis.len, axis.left_stride, axis.right_stride))
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            multi_axis_batches
+                .entry(recurrence_geometry)
+                .or_default()
+                .push(family);
             continue;
         }
         let stream_axis = family
@@ -242,6 +251,15 @@ pub fn eval_boolean_pair_tensor_families<
             &mut work,
         )?;
     }
+    for (recurrence_geometry, families) in multi_axis_batches {
+        acc += eval_multi_axis_unit_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+            left_challenges,
+            right_challenges,
+            &families,
+            &recurrence_geometry,
+            &mut work,
+        )?;
+    }
     acc += scalar_seeds.into_iter().fold(F::zero(), |sum, seed| {
         sum + seed.weight
             * basis_eval_checked::<F, LEFT_MONOMIAL>(left_challenges, seed.left_offset)
@@ -261,43 +279,45 @@ pub fn eval_boolean_pair_tensor_families<
     Ok(acc)
 }
 
-fn eval_multi_axis_unit_family<
+fn eval_multi_axis_unit_families<
     F: FieldCore,
     const LEFT_MONOMIAL: bool,
     const RIGHT_MONOMIAL: bool,
 >(
     left_challenges: &[F],
     right_challenges: &[F],
-    family: &EqPairTensorFamily<F>,
-    recurrence_axes: &[usize],
+    families: &[&EqPairTensorFamily<F>],
+    recurrence_geometry: &[(usize, usize, usize, usize)],
     work: &mut usize,
 ) -> Result<F, AkitaError> {
+    let recurrence_axes = recurrence_geometry
+        .iter()
+        .map(|&(axis_index, _, _, _)| axis_index)
+        .collect::<Vec<_>>();
     let mut seeds = Vec::new();
-    collect_residual_seeds(
-        family,
-        recurrence_axes,
-        0,
-        family.left_offset,
-        family.right_offset,
-        family.scalar,
-        &mut seeds,
-        work,
-    )?;
+    for family in families {
+        collect_residual_seeds(
+            family,
+            &recurrence_axes,
+            0,
+            family.left_offset,
+            family.right_offset,
+            family.scalar,
+            &mut seeds,
+            work,
+        )?;
+    }
     let bit_count = left_challenges.len().max(right_challenges.len());
     let mut introductions = vec![Vec::<(usize, usize)>::new(); bit_count];
-    for &axis_index in recurrence_axes {
-        let axis = family
-            .axes
-            .get(axis_index)
-            .ok_or(AkitaError::InvalidProof)?;
-        for coordinate_bit in 0..axis.len.trailing_zeros() as usize {
+    for &(_, axis_len, left_stride, right_stride) in recurrence_geometry {
+        for coordinate_bit in 0..axis_len.trailing_zeros() as usize {
             let coordinate = 1usize.checked_shl(coordinate_bit as u32).ok_or_else(|| {
                 AkitaError::InvalidInput("paired tensor coordinate bit overflow".into())
             })?;
-            let left = axis.left_stride.checked_mul(coordinate).ok_or_else(|| {
+            let left = left_stride.checked_mul(coordinate).ok_or_else(|| {
                 AkitaError::InvalidInput("paired tensor left stride overflow".into())
             })?;
-            let right = axis.right_stride.checked_mul(coordinate).ok_or_else(|| {
+            let right = right_stride.checked_mul(coordinate).ok_or_else(|| {
                 AkitaError::InvalidInput("paired tensor right stride overflow".into())
             })?;
             let start_bit = [left, right]

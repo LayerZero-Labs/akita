@@ -9,6 +9,7 @@ use rand::SeedableRng;
 type F = Fp64<4294967197>;
 
 mod affine_bases;
+mod tensor_pair_batches;
 
 #[test]
 fn eq_pair_tensor_matches_dense_mixed_axes() {
@@ -76,46 +77,6 @@ fn eq_pair_tensor_matches_dense_mixed_axes() {
         )
         .unwrap(),
         monomial_expected
-    );
-}
-
-#[test]
-fn eq_pair_tensor_matches_dense_affine_chunk_axis() {
-    let mut rng = StdRng::seed_from_u64(0xC4A1_5EED);
-    let left = random_vec(&mut rng, 10);
-    let right = random_vec(&mut rng, 12);
-    let row_weights = random_vec(&mut rng, 2);
-    let family = EqPairTensorFamily::new(
-        3,
-        11,
-        F::from_u64(13),
-        vec![
-            EqPairTensorAxis::unit(16, 1, 1),
-            EqPairTensorAxis::dense(64, 0, row_weights.clone()),
-            EqPairTensorAxis::unit(8, 16, 53),
-        ],
-    )
-    .unwrap();
-
-    let expected = row_weights
-        .iter()
-        .enumerate()
-        .flat_map(|(row, &row_weight)| {
-            let left = &left;
-            let right = &right;
-            (0..8).flat_map(move |chunk| {
-                (0..16).map(move |inner| {
-                    F::from_u64(13)
-                        * row_weight
-                        * eq_eval_at_index(left, 3 + 64 * row + 16 * chunk + inner)
-                        * eq_eval_at_index(right, 11 + 53 * chunk + inner)
-                })
-            })
-        })
-        .sum::<F>();
-    assert_eq!(
-        eval_boolean_pair_tensor_families::<_, false, false>(&left, &right, &[family],).unwrap(),
-        expected
     );
 }
 
