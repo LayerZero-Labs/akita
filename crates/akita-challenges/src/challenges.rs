@@ -109,8 +109,13 @@ impl Challenges {
         E: FieldCore + MulBase<F>,
     {
         let evaluate = |challenge: &SparseChallenge| challenge.eval_at_pows::<F, E>(alpha_pows);
-        const PARALLEL_THRESHOLD: usize = 1 << 12;
-        if self.challenges.len() >= PARALLEL_THRESHOLD {
+        const PARALLEL_TERM_THRESHOLD: usize = 1 << 17;
+        let sparse_terms = self.challenges.iter().try_fold(0usize, |sum, challenge| {
+            sum.checked_add(challenge.positions.len()).ok_or_else(|| {
+                AkitaError::InvalidInput("sparse challenge term count overflow".into())
+            })
+        })?;
+        if sparse_terms >= PARALLEL_TERM_THRESHOLD {
             cfg_iter!(&self.challenges).map(evaluate).collect()
         } else {
             self.challenges.iter().map(evaluate).collect()
@@ -161,17 +166,17 @@ mod tests {
     fn batch_evaluation_preserves_challenge_order() {
         let challenges = (0..4096)
             .map(|index| SparseChallenge {
-                positions: vec![(index % 4) as u32].into(),
-                coeffs: vec![if index % 2 == 0 { 1 } else { -1 }].into(),
+                positions: (0..32).collect::<Vec<_>>().into(),
+                coeffs: (0..32)
+                    .map(|position| if (index + position) % 2 == 0 { 1 } else { -1 })
+                    .collect::<Vec<_>>()
+                    .into(),
             })
             .collect::<Vec<_>>();
         let batch = Challenges::from_sparse(challenges, 4096, 1).unwrap();
-        let powers = [
-            F::from_u64(1),
-            F::from_u64(3),
-            F::from_u64(9),
-            F::from_u64(27),
-        ];
+        let powers = (0..32)
+            .map(|index| F::from_u64(index + 1))
+            .collect::<Vec<_>>();
         let actual = batch.evals_at_pows::<F, F>(&powers).unwrap();
         let expected = batch
             .as_slice()
