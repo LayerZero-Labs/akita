@@ -11,7 +11,8 @@ $$
 The current implementation also supports more elaborate physical layouts —
 commitment groups, witness chunks, and different ring dimensions — but those
 extensions do not change the four core relations developed below. This page
-establishes only the basic case; advanced layouts are outside its scope.
+establishes only the basic case; [Advanced relation
+layouts](./advanced-relation-layouts.md) extends it along those three axes.
 
 The Akita paper presents a more general matrix with additional compression
 relations. Its basic Greyhound relation motivates the four row families here;
@@ -797,6 +798,8 @@ ring_switch_verifier --------------------------------------> Stage 2 verifier
 ```
 
 Only the public instance is reconstructed on the verifier. The
-`RingRelationWitness` remains prover-only. [Opening points and digit-innermost
+`RingRelationWitness` remains prover-only. [Advanced relation
+layouts](./advanced-relation-layouts.md) describes the generalized logical
+layout. [Opening points and digit-innermost
 layout](./opening-points-layout.md#witness-order) specifies the canonical
 physical source and digit order used by the implementation.
