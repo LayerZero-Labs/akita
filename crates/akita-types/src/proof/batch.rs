@@ -1,15 +1,18 @@
 //! Shared batching and root-opening helper types.
 
+mod subfield;
+
 use crate::{
-    basis_weights, basis_weights_prefix, embed_ring_subfield_vector, embed_subfield,
+    basis_weights, basis_weights_prefix, embed_ring_subfield_vector,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
     BasisMode, Commitment, CommittedGroupParams, FpExtEncoding, RingOpeningPoint, RingVec,
-    SubfieldParams,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVAL_OPENINGS_FIELD};
 use akita_transcript::{append_ext_field, Transcript};
+
+pub use subfield::SubfieldMultiplierOpeningPoint;
 
 /// Recursive opening point prepared for ring-level replay.
 ///
@@ -96,17 +99,8 @@ impl<F: FieldCore, E: FieldCore> PreparedOpeningPoint<F, E> {
 pub enum RingMultiplierOpeningPoint<F: FieldCore> {
     /// Degree-one openings, where multipliers are ordinary base scalars.
     Base(RingOpeningPoint<F>),
-    /// Canonical ring-subfield coordinates used by extension-valued openings.
-    Subfield {
-        /// Position weights, with `extension_degree` coordinates per value.
-        position_coordinates: Vec<F>,
-        /// Live block weights, with `extension_degree` coordinates per value.
-        live_block_coordinates: Vec<F>,
-        /// Number of base-field coordinates in each extension value.
-        extension_degree: usize,
-        /// Ring dimension into which these coordinates embed.
-        ring_dim: usize,
-    },
+    /// Validated ring-subfield coordinates used by extension-valued openings.
+    Subfield(SubfieldMultiplierOpeningPoint<F>),
 }
 
 impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
@@ -123,28 +117,15 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     where
         E: FpExtEncoding<F>,
     {
-        validate_subfield_shape::<D>(E::EXT_DEGREE, error.clone())?;
-        Ok(Self::Subfield {
-            position_coordinates: collect_subfield_coordinates(
-                position_weights,
-                E::EXT_DEGREE,
-                error.clone(),
-            )?,
-            live_block_coordinates: collect_subfield_coordinates(
-                live_block_weights,
-                E::EXT_DEGREE,
-                error,
-            )?,
-            extension_degree: E::EXT_DEGREE,
-            ring_dim: D,
-        })
+        SubfieldMultiplierOpeningPoint::new::<E, D>(position_weights, live_block_weights, error)
+            .map(Self::Subfield)
     }
 
     /// Stored ring dimension for the [`Self::Subfield`] variant, or zero for [`Self::Base`].
     pub fn ring_dim(&self) -> usize {
         match self {
             Self::Base(_) => 0,
-            Self::Subfield { ring_dim, .. } => *ring_dim,
+            Self::Subfield(point) => point.ring_dim(),
         }
     }
 
@@ -154,27 +135,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
         match self {
             Self::Base(_) => Ok(()),
-            Self::Subfield {
-                position_coordinates,
-                live_block_coordinates,
-                extension_degree,
-                ring_dim,
-            } => {
-                if *ring_dim != D {
-                    return Err(AkitaError::InvalidInput(format!(
-                        "ring multiplier ring_d={ring_dim} does not match requested D={D}",
-                    )));
-                }
-                validate_subfield_shape::<D>(*extension_degree, AkitaError::InvalidProof)?;
-                if !position_coordinates.len().is_multiple_of(*extension_degree)
-                    || !live_block_coordinates
-                        .len()
-                        .is_multiple_of(*extension_degree)
-                {
-                    return Err(AkitaError::InvalidProof);
-                }
-                Ok(())
-            }
+            Self::Subfield(point) => point.ensure_ring_dim::<D>(),
         }
     }
 
@@ -182,7 +143,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     pub fn as_base(&self) -> Option<&RingOpeningPoint<F>> {
         match self {
             Self::Base(point) => Some(point),
-            Self::Subfield { .. } => None,
+            Self::Subfield(_) => None,
         }
     }
 
@@ -192,15 +153,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     ) -> Result<Option<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         match self {
             Self::Base(_) => Ok(None),
-            Self::Subfield {
-                position_coordinates,
-                extension_degree,
-                ..
-            } => {
-                self.ensure_ring_dim::<D>()?;
-                materialize_subfield_rings::<F, D>(position_coordinates, *extension_degree)
-                    .map(Some)
-            }
+            Self::Subfield(point) => point.materialize_position_rings::<D>().map(Some),
         }
     }
 
@@ -210,15 +163,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     ) -> Result<Option<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         match self {
             Self::Base(_) => Ok(None),
-            Self::Subfield {
-                live_block_coordinates,
-                extension_degree,
-                ..
-            } => {
-                self.ensure_ring_dim::<D>()?;
-                materialize_subfield_rings::<F, D>(live_block_coordinates, *extension_degree)
-                    .map(Some)
-            }
+            Self::Subfield(point) => point.materialize_fold_rings::<D>().map(Some),
         }
     }
 
@@ -226,14 +171,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     pub fn position_len(&self) -> usize {
         match self {
             Self::Base(point) => point.position_weights.len(),
-            Self::Subfield {
-                position_coordinates,
-                extension_degree,
-                ..
-            } => position_coordinates
-                .len()
-                .checked_div(*extension_degree)
-                .unwrap_or(0),
+            Self::Subfield(point) => point.position_len(),
         }
     }
 
@@ -241,14 +179,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     pub fn fold_len(&self) -> usize {
         match self {
             Self::Base(point) => point.live_block_weights.len(),
-            Self::Subfield {
-                live_block_coordinates,
-                extension_degree,
-                ..
-            } => live_block_coordinates
-                .len()
-                .checked_div(*extension_degree)
-                .unwrap_or(0),
+            Self::Subfield(point) => point.fold_len(),
         }
     }
 
@@ -256,15 +187,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     pub fn is_constant(&self) -> bool {
         match self {
             Self::Base(_) => true,
-            Self::Subfield {
-                position_coordinates,
-                live_block_coordinates,
-                extension_degree,
-                ..
-            } => {
-                subfield_values_are_constant(position_coordinates, *extension_degree)
-                    && subfield_values_are_constant(live_block_coordinates, *extension_degree)
-            }
+            Self::Subfield(point) => point.is_constant(),
         }
     }
 
@@ -288,11 +211,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
                 .copied()
                 .map(E::lift_base)
                 .ok_or(AkitaError::InvalidProof),
-            Self::Subfield { .. } => {
-                self.ensure_ring_dim::<D>()?;
-                let coordinates = self.position_coordinates(idx)?;
-                eval_subfield_at_pows::<F, E>(coordinates, D, alpha_pows)
-            }
+            Self::Subfield(point) => point.eval_position_at::<D, E>(idx, alpha_pows),
         }
     }
 
@@ -315,10 +234,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
                 .copied()
                 .map(E::lift_base)
                 .ok_or(AkitaError::InvalidProof),
-            Self::Subfield { ring_dim, .. } => {
-                let coordinates = self.position_coordinates(idx)?;
-                eval_subfield_at_pows::<F, E>(coordinates, *ring_dim, alpha_pows)
-            }
+            Self::Subfield(point) => point.eval_position_at_dyn(idx, alpha_pows),
         }
     }
 
@@ -329,14 +245,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     {
         match self {
             Self::Base(_) => Ok(None),
-            Self::Subfield {
-                extension_degree, ..
-            } => {
-                if E::EXT_DEGREE != *extension_degree {
-                    return Err(AkitaError::InvalidProof);
-                }
-                Ok(Some(E::from_base_slice(self.fold_coordinates(idx)?)))
-            }
+            Self::Subfield(point) => point.fold_subfield_value(idx).map(Some),
         }
     }
 
@@ -356,17 +265,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
                 *output += rhs.scale(scalar);
                 Ok(())
             }
-            Self::Subfield {
-                extension_degree, ..
-            } => {
-                self.ensure_ring_dim::<D>()?;
-                add_subfield_product(
-                    self.position_coordinates(idx)?,
-                    *extension_degree,
-                    rhs,
-                    output,
-                )
-            }
+            Self::Subfield(point) => point.accumulate_position_product(idx, rhs, output),
         }
     }
 
@@ -374,7 +273,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     pub fn position_constant_coeff(&self, idx: usize) -> Option<F> {
         match self {
             Self::Base(point) => point.position_weights.get(idx).copied(),
-            Self::Subfield { .. } => subfield_constant(self.position_coordinates(idx).ok()?),
+            Self::Subfield(point) => point.position_constant_coeff(idx),
         }
     }
 
@@ -382,215 +281,9 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     pub fn fold_constant_coeff(&self, idx: usize) -> Option<F> {
         match self {
             Self::Base(point) => point.live_block_weights.get(idx).copied(),
-            Self::Subfield { .. } => subfield_constant(self.fold_coordinates(idx).ok()?),
+            Self::Subfield(point) => point.fold_constant_coeff(idx),
         }
     }
-
-    fn position_coordinates(&self, idx: usize) -> Result<&[F], AkitaError> {
-        match self {
-            Self::Base(_) => Err(AkitaError::InvalidProof),
-            Self::Subfield {
-                position_coordinates,
-                extension_degree,
-                ..
-            } => coordinate_chunk(position_coordinates, *extension_degree, idx),
-        }
-    }
-
-    fn fold_coordinates(&self, idx: usize) -> Result<&[F], AkitaError> {
-        match self {
-            Self::Base(_) => Err(AkitaError::InvalidProof),
-            Self::Subfield {
-                live_block_coordinates,
-                extension_degree,
-                ..
-            } => coordinate_chunk(live_block_coordinates, *extension_degree, idx),
-        }
-    }
-}
-
-fn coordinate_chunk<F>(coordinates: &[F], degree: usize, idx: usize) -> Result<&[F], AkitaError> {
-    let start = idx.checked_mul(degree).ok_or(AkitaError::InvalidProof)?;
-    let end = start.checked_add(degree).ok_or(AkitaError::InvalidProof)?;
-    coordinates.get(start..end).ok_or(AkitaError::InvalidProof)
-}
-
-fn subfield_constant<F: FieldCore>(coordinates: &[F]) -> Option<F> {
-    let (&constant, rest) = coordinates.split_first()?;
-    rest.iter()
-        .all(|coordinate| coordinate.is_zero())
-        .then_some(constant)
-}
-
-fn subfield_values_are_constant<F: FieldCore>(coordinates: &[F], degree: usize) -> bool {
-    degree > 0
-        && coordinates.len().is_multiple_of(degree)
-        && coordinates
-            .chunks_exact(degree)
-            .all(|value| subfield_constant(value).is_some())
-}
-
-fn validate_subfield_shape<const D: usize>(
-    extension_degree: usize,
-    error: AkitaError,
-) -> Result<(), AkitaError> {
-    let valid = match extension_degree {
-        1 => SubfieldParams::<D, 1>::new().is_ok(),
-        2 => SubfieldParams::<D, 2>::new().is_ok(),
-        4 => SubfieldParams::<D, 4>::new().is_ok(),
-        8 => SubfieldParams::<D, 8>::new().is_ok(),
-        _ => false,
-    };
-    if valid {
-        Ok(())
-    } else {
-        Err(error)
-    }
-}
-
-fn collect_subfield_coordinates<F, E>(
-    values: &[E],
-    extension_degree: usize,
-    error: AkitaError,
-) -> Result<Vec<F>, AkitaError>
-where
-    F: FieldCore,
-    E: FpExtEncoding<F>,
-{
-    let coordinate_len = values
-        .len()
-        .checked_mul(extension_degree)
-        .ok_or_else(|| error.clone())?;
-    let mut coordinates = Vec::new();
-    coordinates
-        .try_reserve_exact(coordinate_len)
-        .map_err(|_| error.clone())?;
-    for value in values {
-        let value_coordinates = value.ext_coords();
-        if value_coordinates.len() != extension_degree {
-            return Err(error);
-        }
-        coordinates.extend_from_slice(value_coordinates);
-    }
-    Ok(coordinates)
-}
-
-fn materialize_subfield_rings<F: FieldCore, const D: usize>(
-    coordinates: &[F],
-    extension_degree: usize,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-    macro_rules! arm {
-        ($k:expr) => {{
-            let params = SubfieldParams::<D, $k>::new()?;
-            coordinates
-                .chunks_exact($k)
-                .map(|value| {
-                    let value: &[F; $k] = value.try_into().map_err(|_| AkitaError::InvalidProof)?;
-                    Ok(embed_subfield(params, value))
-                })
-                .collect()
-        }};
-    }
-    if extension_degree == 0 || !coordinates.len().is_multiple_of(extension_degree) {
-        return Err(AkitaError::InvalidProof);
-    }
-    match extension_degree {
-        1 => arm!(1),
-        2 => arm!(2),
-        4 => arm!(4),
-        8 => arm!(8),
-        _ => Err(AkitaError::InvalidProof),
-    }
-}
-
-fn eval_subfield_at_pows<F, E>(
-    coordinates: &[F],
-    ring_dim: usize,
-    alpha_pows: &[E],
-) -> Result<E, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let extension_degree = coordinates.len();
-    if extension_degree != E::EXT_DEGREE
-        || alpha_pows.len() != ring_dim
-        || ring_dim == 0
-        || extension_degree == 0
-        || extension_degree > ring_dim / 2
-        || !(ring_dim / 2).is_multiple_of(extension_degree)
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    let (&constant, nonconstant) = coordinates.split_first().ok_or(AkitaError::InvalidProof)?;
-    let stride = ring_dim / (2 * extension_degree);
-    let mut value = E::lift_base(constant);
-    for (offset, &coordinate) in nonconstant.iter().enumerate() {
-        let basis_index = offset
-            .checked_add(1)
-            .and_then(|index| index.checked_mul(stride))
-            .ok_or(AkitaError::InvalidProof)?;
-        let inverse_index = ring_dim
-            .checked_sub(basis_index)
-            .ok_or(AkitaError::InvalidProof)?;
-        let positive = alpha_pows
-            .get(basis_index)
-            .ok_or(AkitaError::InvalidProof)?;
-        let negative = alpha_pows
-            .get(inverse_index)
-            .ok_or(AkitaError::InvalidProof)?;
-        value += (*positive - *negative).mul_base(coordinate);
-    }
-    Ok(value)
-}
-
-fn add_subfield_product<F: FieldCore, const D: usize>(
-    coordinates: &[F],
-    extension_degree: usize,
-    rhs: &CyclotomicRing<F, D>,
-    output: &mut CyclotomicRing<F, D>,
-) -> Result<(), AkitaError> {
-    validate_subfield_shape::<D>(extension_degree, AkitaError::InvalidProof)?;
-    if coordinates.len() != extension_degree {
-        return Err(AkitaError::InvalidProof);
-    }
-    let stride = D / (2 * extension_degree);
-    for (index, &coordinate) in coordinates.iter().enumerate() {
-        if coordinate.is_zero() {
-            continue;
-        }
-        let shift = index.checked_mul(stride).ok_or(AkitaError::InvalidProof)?;
-        add_negacyclic_monomial_product(rhs, shift, coordinate, output)?;
-        if shift != 0 {
-            add_negacyclic_monomial_product(rhs, D - shift, -coordinate, output)?;
-        }
-    }
-    Ok(())
-}
-
-fn add_negacyclic_monomial_product<F: FieldCore, const D: usize>(
-    rhs: &CyclotomicRing<F, D>,
-    shift: usize,
-    coefficient: F,
-    output: &mut CyclotomicRing<F, D>,
-) -> Result<(), AkitaError> {
-    if shift >= D {
-        return Err(AkitaError::InvalidProof);
-    }
-    for (index, &value) in rhs.coefficients().iter().enumerate() {
-        let shifted = index.checked_add(shift).ok_or(AkitaError::InvalidProof)?;
-        let (output_index, product) = if shifted < D {
-            (shifted, coefficient * value)
-        } else {
-            (shifted - D, -(coefficient * value))
-        };
-        let slot = output
-            .coefficients_mut()
-            .get_mut(output_index)
-            .ok_or(AkitaError::InvalidProof)?;
-        *slot += product;
-    }
-    Ok(())
 }
 
 fn ring_multiplier_opening_point_from_ext<F, E, const D: usize>(
@@ -1092,16 +785,10 @@ mod tests {
             AkitaError::InvalidProof,
         )
         .expect("valid compact subfield multiplier");
-        let RingMultiplierOpeningPoint::Subfield {
-            position_coordinates,
-            live_block_coordinates,
-            ..
-        } = &point
-        else {
-            panic!("proper extension must use compact subfield storage");
-        };
-        assert_eq!(position_coordinates.len(), L::EXT_DEGREE);
-        assert_eq!(live_block_coordinates.len(), L::EXT_DEGREE);
+        assert!(matches!(point, RingMultiplierOpeningPoint::Subfield(_)));
+        assert_eq!(point.position_len(), 1);
+        assert_eq!(point.fold_len(), 1);
+        assert!(point.ensure_ring_dim::<64>().is_err());
 
         let expected_ring =
             crate::embed_ring_subfield_scalar::<F, L, D>(value, AkitaError::InvalidProof)
