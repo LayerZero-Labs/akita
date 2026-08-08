@@ -7,7 +7,6 @@
 
 use crate::{AkitaError, FieldCore};
 use akita_field::parallel::*;
-use std::collections::BTreeMap;
 
 mod tensor_pair;
 pub use tensor_pair::{
@@ -382,6 +381,12 @@ where
     Ok(out)
 }
 
+#[derive(Clone, Copy)]
+struct AffineAddress<F> {
+    first: usize,
+    scale: Option<F>,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn accumulate_affine_rows<F, A, H>(
     out: &mut A,
@@ -436,8 +441,7 @@ where
         None
     };
     let mut accumulate_group = |address_low: usize,
-                                first_addresses: &[usize],
-                                first_scales: &[F]|
+                                addresses: &[AffineAddress<F>]|
      -> Result<(), AkitaError> {
         let summaries = build_affine_low_summaries(
             &template,
@@ -459,8 +463,7 @@ where
         if accumulate_high_rows_bucketed(
             out,
             high_challenges,
-            first_addresses,
-            first_scales,
+            addresses,
             outer_stride,
             low_challenges.len(),
             high_weights,
@@ -471,8 +474,11 @@ where
             return Ok(());
         }
 
-        for (base_index, &first_address) in first_addresses.iter().enumerate() {
-            let base_scale = first_scales.get(base_index).copied();
+        for &AffineAddress {
+            first: first_address,
+            scale: base_scale,
+        } in addresses
+        {
             for row in 0..rows {
                 let high_index = first_high
                     .checked_add(row)
@@ -519,40 +525,34 @@ where
         let first_address = base_offsets[0]
             .checked_add(address_delta)
             .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?;
-        let first_addresses = [first_address];
-        let first_scales = if base_scales.is_empty() {
-            &[][..]
-        } else {
-            base_scales
-                .get(..1)
-                .ok_or_else(|| AkitaError::InvalidInput("affine base scale missing".into()))?
-        };
-        return accumulate_group(
-            first_address & (low_len - 1),
-            &first_addresses,
-            first_scales,
-        );
+        let addresses = [AffineAddress {
+            first: first_address,
+            scale: base_scales.first().copied(),
+        }];
+        return accumulate_group(first_address & (low_len - 1), &addresses);
     }
 
-    let mut address_groups = BTreeMap::<usize, (Vec<usize>, Vec<F>)>::new();
+    let mut addresses = Vec::with_capacity(base_offsets.len());
     for (base_index, &base_offset) in base_offsets.iter().enumerate() {
         let first_address = base_offset
             .checked_add(address_delta)
             .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?;
-        let group = address_groups
-            .entry(first_address & (low_len - 1))
-            .or_default();
-        group.0.push(first_address);
-        if !base_scales.is_empty() {
-            group.1.push(
-                *base_scales
-                    .get(base_index)
-                    .ok_or_else(|| AkitaError::InvalidInput("affine base scale missing".into()))?,
-            );
-        }
+        addresses.push(AffineAddress {
+            first: first_address,
+            scale: base_scales.get(base_index).copied(),
+        });
     }
-    for (address_low, (first_addresses, first_scales)) in address_groups {
-        accumulate_group(address_low, &first_addresses, &first_scales)?;
+    addresses.sort_unstable_by_key(|address| address.first & (low_len - 1));
+    let mut group_start = 0usize;
+    while group_start < addresses.len() {
+        let address_low = addresses[group_start].first & (low_len - 1);
+        let group_len = addresses[group_start..]
+            .partition_point(|address| address.first & (low_len - 1) == address_low);
+        let group_end = group_start
+            .checked_add(group_len)
+            .ok_or_else(|| AkitaError::InvalidInput("affine address group overflow".into()))?;
+        accumulate_group(address_low, &addresses[group_start..group_end])?;
+        group_start = group_end;
     }
     Ok(())
 }
@@ -872,8 +872,7 @@ fn bucketed_high_rows_plan(
 fn accumulate_high_rows_bucketed<F, A, H>(
     out: &mut A,
     high_challenges: &[F],
-    first_addresses: &[usize],
-    first_scales: &[F],
+    addresses: &[AffineAddress<F>],
     outer_stride: usize,
     low_bits: usize,
     high_weights: &H,
@@ -886,15 +885,9 @@ where
     A: AffineWeight<F>,
     H: AffineWeightSource<F, A> + ?Sized,
 {
-    if !first_scales.is_empty() && first_scales.len() != first_addresses.len() {
-        return Err(AkitaError::InvalidSize {
-            expected: first_addresses.len(),
-            actual: first_scales.len(),
-        });
-    }
     let carry_count = summaries.len();
     let total_rows = rows
-        .checked_mul(first_addresses.len())
+        .checked_mul(addresses.len())
         .ok_or_else(|| AkitaError::InvalidInput("affine high row count overflow".into()))?;
     let Some(window) = bucketed_high_rows_plan(total_rows, carry_count, high_challenges.len())?
     else {
@@ -931,11 +924,11 @@ where
     // task, which is important when this kernel is already under a parallel
     // outer fold.
     let task_count = if total_rows >= PARALLEL_HIGH_ROWS_MIN {
-        first_addresses.len()
+        addresses.len()
     } else {
         1
     };
-    let addresses_per_task = first_addresses.len().div_ceil(task_count);
+    let addresses_per_task = addresses.len().div_ceil(task_count);
     let (bucket0, bucket1) = cfg_fold_reduce!(
         0..task_count,
         || Ok((
@@ -949,16 +942,16 @@ where
                 .ok_or_else(|| AkitaError::InvalidInput("affine task range overflow".into()))?;
             let end = start
                 .checked_add(addresses_per_task)
-                .map(|end| end.min(first_addresses.len()))
+                .map(|end| end.min(addresses.len()))
                 .ok_or_else(|| AkitaError::InvalidInput("affine task range overflow".into()))?;
-            let addresses = first_addresses
+            let addresses = addresses
                 .get(start..end)
                 .ok_or_else(|| AkitaError::InvalidInput("affine task range invalid".into()))?;
-            for (address_index, &first_address) in addresses.iter().enumerate() {
-                let scale_index = start.checked_add(address_index).ok_or_else(|| {
-                    AkitaError::InvalidInput("affine base scale index overflow".into())
-                })?;
-                let base_scale = first_scales.get(scale_index).copied();
+            for &AffineAddress {
+                first: first_address,
+                scale: base_scale,
+            } in addresses
+            {
                 let h0 = first_address >> low_bits;
                 for row in 0..rows {
                     let high_index = first_high.checked_add(row).ok_or_else(|| {
