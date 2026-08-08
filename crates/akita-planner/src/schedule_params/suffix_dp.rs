@@ -701,24 +701,20 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     level,
                     eor_key,
                     current_witness_len,
-                    dimensions.inner(),
+                    dimensions.d_a(),
                 )?
                 else {
                     continue;
                 };
-                let ring_challenge_cfg = match dimensions {
-                    akita_schedules::planner_support::RingDimensionCandidate::Fixed(value)
-                        if value == CommitmentRingDims::uniform(policy.uniform_ring_dimension) =>
-                    {
+                let ring_challenge_cfg =
+                    if dimensions == CommitmentRingDims::uniform(policy.uniform_ring_dimension) {
                         *default_ring_challenge_cfg
-                    }
-                    _ => {
-                        let Ok(config) = ring_challenge_config(dimensions.inner()) else {
+                    } else {
+                        let Ok(config) = ring_challenge_config(dimensions.d_a()) else {
                             continue;
                         };
                         config
-                    }
-                };
+                    };
                 candidates.extend(
                     root_level_candidates_for_basis(
                         root_key,
@@ -761,12 +757,12 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     level,
                     eor_key,
                     current_witness_len,
-                    dimensions.inner(),
+                    dimensions.d_a(),
                 )?
                 else {
                     continue;
                 };
-                let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.inner()) else {
+                let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
                     continue;
                 };
                 for &mode in payload_phase.candidate_modes(level, incoming_setup_prefix.is_some()) {

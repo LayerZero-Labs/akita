@@ -2,7 +2,7 @@ use super::*;
 
 pub(crate) use akita_schedules::planner_support::planned_next_witness_len;
 use akita_schedules::planner_support::{
-    grouped_segment_rings, sis_key_at_dimension, RingDimensionCandidate,
+    grouped_segment_rings, projected_collision_role_price, sis_key_at_dimension,
 };
 
 mod recursive;

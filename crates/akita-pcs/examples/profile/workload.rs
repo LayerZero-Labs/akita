@@ -224,11 +224,9 @@ where
 /// odd-shaped witness) and is tracked for a proper fix in
 /// `specs/planner-refactor.md`.
 ///
-/// The overcount scales with the number of stage-2 rounds, so it is largest
-/// for small-field / many-level schedules: across the profile-bench matrix the
-/// current worst case is `dense_fp32_d64` nv26 (planned vs runtime tail sizing).
-/// The
-/// bound covers those with margin. The `actual <= planned` upper-bound check
+/// The overcount scales with the number of stage-2 rounds, so small-field
+/// schedules with many levels need the most slack. The bound covers the current
+/// generated small-field schedules with margin. The `actual <= planned` upper-bound check
 /// above is the primary guard against a runtime proof that *grew*; a dropped
 /// level (which would inflate the overcount) is independently caught by the
 /// planned/proof level-count guard in `scripts/profile_bench_report.py`, and
