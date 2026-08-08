@@ -33,6 +33,87 @@ pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 /// fallback.
 pub const STANDARD_ONEHOT_CHUNK_SIZE: usize = 256;
 
+const FP128_ONEHOT_L2_CAPS: &[akita_schedules::SelectiveL2FoldCap] = &[
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 3,
+        input_witness_len: 948_672,
+        physical_response_len: 65_536,
+        fold_basis: 16,
+        fold_digit_count: 3,
+        response_l2_sq_cap: 1 << 29,
+    },
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 4,
+        input_witness_len: 419_328,
+        physical_response_len: 65_536,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap: 1 << 29,
+    },
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 5,
+        input_witness_len: 223_040,
+        physical_response_len: 32_768,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap: 1 << 32,
+    },
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 6,
+        input_witness_len: 135_936,
+        physical_response_len: 16_384,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap: 1 << 32,
+    },
+];
+
+const FP32_D128_ONEHOT_L2_CAPS: &[akita_schedules::SelectiveL2FoldCap] = &[
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 3,
+        input_witness_len: 386_560,
+        physical_response_len: 32_768,
+        fold_basis: 16,
+        fold_digit_count: 3,
+        response_l2_sq_cap: 1 << 29,
+    },
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 4,
+        input_witness_len: 252_416,
+        physical_response_len: 32_768,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap: 1 << 29,
+    },
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 5,
+        input_witness_len: 130_816,
+        physical_response_len: 16_384,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap: 1 << 31,
+    },
+];
+
+const FP64_D128_ONEHOT_L2_CAPS: &[akita_schedules::SelectiveL2FoldCap] = &[
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 3,
+        input_witness_len: 282_240,
+        physical_response_len: 32_768,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap: 1 << 32,
+    },
+    akita_schedules::SelectiveL2FoldCap {
+        fold_level: 4,
+        input_witness_len: 160_384,
+        physical_response_len: 32_768,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap: 1 << 31,
+    },
+];
+
 /// Bound setup preprocessing work before schedule resolution.
 ///
 /// This is a verifier-facing allocation/CPU guard for untrusted serialized
@@ -461,19 +542,25 @@ macro_rules! impl_proof_optimized_preset {
         const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode = $mode;
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, none, default);
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, &[], none, default);
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, default);
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, &[], table, $feat, $family_name, $table, default);
+    };
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), selective_l2_caps = $selective_l2_caps:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, $selective_l2_caps, table, $feat, $family_name, $table, default);
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), selection_policy = $selection_policy:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, selection_policy = $selection_policy);
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, &[], table, $feat, $family_name, $table, selection_policy = $selection_policy);
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), ring_dimension_schedule_mode = $mode:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, ring_dimension_schedule_mode = $mode);
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, &[], table, $feat, $family_name, $table, ring_dimension_schedule_mode = $mode);
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), selection_policy = $selection_policy:expr, ring_dimension_schedule_mode = $mode:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, selection_policy = $selection_policy, ring_dimension_schedule_mode = $mode);
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, &[], table, $feat, $family_name, $table, selection_policy = $selection_policy, ring_dimension_schedule_mode = $mode);
+    };
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), ring_dimension_schedule_mode = $mode:expr, selective_l2_caps = $selective_l2_caps:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, $selective_l2_caps, table, $feat, $family_name, $table, ring_dimension_schedule_mode = $mode);
     };
     (@options default) => {
         impl_proof_optimized_preset!(@selection_policy default);
@@ -489,11 +576,13 @@ macro_rules! impl_proof_optimized_preset {
         impl_proof_optimized_preset!(@ring_dimension_schedule_mode $mode);
         impl_proof_optimized_preset!(@selection_policy $selection_policy);
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, none, $($options:tt)*) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, $selective_l2_caps:expr, none, $($options:tt)*) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
             const D: usize = $d;
+            const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
+                $selective_l2_caps;
 
             impl_proof_optimized_preset!(@options $($options)*);
 
@@ -566,11 +655,13 @@ macro_rules! impl_proof_optimized_preset {
             impl_proof_optimized_preset!(@schedule_catalog none);
         }
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, table, $feat:literal, $family_name:literal, $table:ident, $($options:tt)*) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, $selective_l2_caps:expr, table, $feat:literal, $family_name:literal, $table:ident, $($options:tt)*) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
             const D: usize = $d;
+            const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
+                $selective_l2_caps;
 
             impl_proof_optimized_preset!(@options $($options)*);
 

@@ -9,6 +9,8 @@
 use akita_field::AkitaError;
 
 use super::generated_sis_table::sis_max_widths as generated_sis_max_widths;
+use super::l2_table::{min_secure_l2_rank, SisL2TableKey};
+use super::physical_l2::{InnerCommitSecurityRoute, PhysicalL2NormProofShape};
 use crate::descriptor_bytes::{push_u128, push_usize, sis_modulus_profile_tag};
 
 /// Digest of the generated scalar table and its coverage certificate.
@@ -170,18 +172,6 @@ impl SisModulusProfileId {
             Self::Q32Offset99 => "Q32Offset99",
             Self::Q64Offset59 => "Q64Offset59",
             Self::Q128OffsetA7F7 => "Q128OffsetA7F7",
-        }
-    }
-
-    /// Infinity-norm expansion of the current trace-subfield embedding.
-    ///
-    /// The 128-bit profile is the base-field path. The 32- and 64-bit profiles
-    /// use the paired-lane trace embedding and therefore carry the certified
-    /// factor-of-two expansion.
-    pub const fn ring_subfield_embedding_norm_bound(self) -> u32 {
-        match self {
-            Self::Q128OffsetA7F7 => 1,
-            Self::Q32Offset99 | Self::Q64Offset59 => 2,
         }
     }
 
@@ -440,6 +430,302 @@ struct AuditedCommitMatrixFields {
     sis_table_key: SisTableKey,
 }
 
+/// Parameters for the inner commitment matrix (A).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct InnerCommitMatrixParams {
+    pub(crate) output_rank: usize,
+    pub(crate) input_width: usize,
+    pub(crate) security_route: InnerCommitSecurityRoute,
+}
+
+impl InnerCommitMatrixParams {
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_new(
+        policy: SisSecurityPolicyId,
+        table_digest: SisTableDigest,
+        sis_modulus_profile: SisModulusProfileId,
+        output_rank: usize,
+        input_width: usize,
+        coeff_linf_bound: u128,
+        ring_dimension: usize,
+    ) -> Result<Self, AkitaError> {
+        let fields = audit_commit_matrix_fields(
+            SisMatrixRole::Inner,
+            policy,
+            table_digest,
+            sis_modulus_profile,
+            output_rank,
+            input_width,
+            coeff_linf_bound,
+            ring_dimension,
+        )?;
+        Ok(Self {
+            output_rank: fields.output_rank,
+            input_width: fields.input_width,
+            security_route: InnerCommitSecurityRoute::Linf(fields.sis_table_key),
+        })
+    }
+
+    pub fn try_new_with_min_rank(key: SisTableKey, input_width: usize) -> Result<Self, AkitaError> {
+        let fields = min_rank_commit_matrix_fields(SisMatrixRole::Inner, key, input_width)?;
+        Ok(Self {
+            output_rank: fields.output_rank,
+            input_width: fields.input_width,
+            security_route: InnerCommitSecurityRoute::Linf(fields.sis_table_key),
+        })
+    }
+
+    /// Construct the minimum-rank A matrix for one checked Euclidean route.
+    pub fn try_new_l2_with_min_rank(
+        table_key: SisL2TableKey,
+        input_width: usize,
+        response_l2_sq_cap: u128,
+        norm_proof_shape: PhysicalL2NormProofShape,
+    ) -> Result<Self, AkitaError> {
+        if input_width == 0 || response_l2_sq_cap == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "L2 A matrix requires nonzero width and response cap".into(),
+            ));
+        }
+        norm_proof_shape.validate()?;
+        let width = u64::try_from(input_width)
+            .map_err(|_| AkitaError::InvalidSetup("A matrix input width exceeds u64".into()))?;
+        let output_rank = min_secure_l2_rank(table_key, width).ok_or_else(|| {
+            AkitaError::InvalidSetup("A matrix has no audited L2 SIS rank".into())
+        })?;
+        Ok(Self {
+            output_rank,
+            input_width,
+            security_route: InnerCommitSecurityRoute::L2 {
+                table_key,
+                response_l2_sq_cap,
+                norm_proof_shape,
+            },
+        })
+    }
+
+    /// Rebuild this matrix for a layout-derived input width while preserving
+    /// the selected security route and explicit output rank.
+    pub fn try_with_input_width(self, input_width: usize) -> Result<Self, AkitaError> {
+        match self.security_route {
+            InnerCommitSecurityRoute::Linf(key) => {
+                if key.coeff_linf_bound == 0 {
+                    return Ok(Self::new_unchecked(
+                        key.policy,
+                        key.table_digest,
+                        key.modulus_profile,
+                        self.output_rank,
+                        input_width,
+                        key.coeff_linf_bound,
+                        key.ring_dimension as usize,
+                    ));
+                }
+                Self::try_new(
+                    key.policy,
+                    key.table_digest,
+                    key.modulus_profile,
+                    self.output_rank,
+                    input_width,
+                    key.coeff_linf_bound,
+                    key.ring_dimension as usize,
+                )
+            }
+            InnerCommitSecurityRoute::L2 {
+                table_key,
+                response_l2_sq_cap,
+                norm_proof_shape,
+            } => {
+                let width = u64::try_from(input_width).map_err(|_| {
+                    AkitaError::InvalidSetup("A matrix input width exceeds u64".into())
+                })?;
+                let floor = min_secure_l2_rank(table_key, width).ok_or_else(|| {
+                    AkitaError::InvalidSetup("A matrix has no audited L2 SIS rank".into())
+                })?;
+                if self.output_rank < floor {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "A matrix output_rank {} is below L2 SIS floor {floor}",
+                        self.output_rank
+                    )));
+                }
+                let out = Self {
+                    output_rank: self.output_rank,
+                    input_width,
+                    security_route: InnerCommitSecurityRoute::L2 {
+                        table_key,
+                        response_l2_sq_cap,
+                        norm_proof_shape,
+                    },
+                };
+                out.validate()?;
+                Ok(out)
+            }
+        }
+    }
+
+    /// Re-audit the selected route against its generated table and rank floor.
+    pub fn validate(&self) -> Result<(), AkitaError> {
+        match self.security_route {
+            InnerCommitSecurityRoute::Linf(key) => {
+                let fields = audit_commit_matrix_fields(
+                    SisMatrixRole::Inner,
+                    key.policy,
+                    key.table_digest,
+                    key.modulus_profile,
+                    self.output_rank,
+                    self.input_width,
+                    key.coeff_linf_bound,
+                    key.ring_dimension as usize,
+                )?;
+                if fields.sis_table_key != key {
+                    return Err(AkitaError::InvalidSetup(
+                        "A matrix L-infinity table key is not canonical".into(),
+                    ));
+                }
+            }
+            InnerCommitSecurityRoute::L2 {
+                table_key,
+                response_l2_sq_cap,
+                norm_proof_shape,
+            } => {
+                norm_proof_shape.validate()?;
+                let width = u64::try_from(self.input_width).map_err(|_| {
+                    AkitaError::InvalidSetup("A matrix input width exceeds u64".into())
+                })?;
+                if response_l2_sq_cap == 0
+                    || min_secure_l2_rank(table_key, width)
+                        .is_none_or(|rank| rank > self.output_rank)
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "A matrix L2 route is below its audited SIS floor".into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new_unchecked(
+        policy: SisSecurityPolicyId,
+        table_digest: SisTableDigest,
+        sis_modulus_profile: SisModulusProfileId,
+        output_rank: usize,
+        input_width: usize,
+        coeff_linf_bound: u128,
+        ring_dimension: usize,
+    ) -> Self {
+        Self {
+            output_rank,
+            input_width,
+            security_route: InnerCommitSecurityRoute::Linf(SisTableKey {
+                policy,
+                table_digest,
+                modulus_profile: sis_modulus_profile,
+                role: SisMatrixRole::Inner,
+                ring_dimension: ring_dimension as u32,
+                coeff_linf_bound,
+            }),
+        }
+    }
+
+    #[must_use]
+    pub const fn output_rank(&self) -> usize {
+        self.output_rank
+    }
+
+    #[must_use]
+    pub const fn input_width(&self) -> usize {
+        self.input_width
+    }
+
+    #[must_use]
+    pub const fn security_route(&self) -> InnerCommitSecurityRoute {
+        self.security_route
+    }
+
+    #[must_use]
+    pub const fn security_policy(&self) -> SisSecurityPolicyId {
+        self.security_route.policy()
+    }
+
+    #[must_use]
+    pub const fn sis_modulus_profile(&self) -> SisModulusProfileId {
+        self.security_route.modulus_profile()
+    }
+
+    #[must_use]
+    pub const fn ring_dimension(&self) -> usize {
+        self.security_route.ring_dimension() as usize
+    }
+
+    /// Coefficient table key for an L-infinity-selected matrix.
+    #[must_use]
+    pub const fn sis_table_key(&self) -> Option<SisTableKey> {
+        match self.security_route {
+            InnerCommitSecurityRoute::Linf(key) => Some(key),
+            InnerCommitSecurityRoute::L2 { .. } => None,
+        }
+    }
+
+    /// Rounded coefficient bound for an L-infinity-selected matrix.
+    #[must_use]
+    pub const fn coeff_linf_bound(&self) -> Option<u128> {
+        match self.security_route {
+            InnerCommitSecurityRoute::Linf(key) => Some(key.coeff_linf_bound),
+            InnerCommitSecurityRoute::L2 { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn max_secure_collision_linf(&self) -> Option<u128> {
+        let key = self.sis_table_key()?;
+        COEFF_LINF_BUCKETS
+            .iter()
+            .copied()
+            .take_while(|&bound| {
+                min_secure_rank(
+                    SisTableKey {
+                        coeff_linf_bound: bound,
+                        ..key
+                    },
+                    self.input_width as u64,
+                )
+                .is_some_and(|rank| rank <= self.output_rank)
+            })
+            .last()
+    }
+
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        bytes.push(sis_modulus_profile_tag(self.sis_modulus_profile()));
+        bytes.push(self.security_policy().tag());
+        bytes.push(SisMatrixRole::Inner.tag());
+        match self.security_route {
+            InnerCommitSecurityRoute::Linf(key) => {
+                // Preserve the established Linf descriptor byte sequence.
+                bytes.extend_from_slice(&key.table_digest.0);
+                bytes.extend_from_slice(&key.ring_dimension.to_le_bytes());
+                push_usize(bytes, self.output_rank);
+                push_usize(bytes, self.input_width);
+                push_u128(bytes, key.coeff_linf_bound);
+            }
+            InnerCommitSecurityRoute::L2 {
+                table_key,
+                response_l2_sq_cap,
+                norm_proof_shape,
+            } => {
+                bytes.extend_from_slice(b"akita-l2-route-v1");
+                bytes.extend_from_slice(&table_key.table_digest.0);
+                bytes.extend_from_slice(&table_key.ring_dimension.to_le_bytes());
+                push_usize(bytes, self.output_rank);
+                push_usize(bytes, self.input_width);
+                push_u128(bytes, table_key.collision_l2_sq);
+                push_u128(bytes, response_l2_sq_cap);
+                norm_proof_shape.append_descriptor_bytes(bytes);
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn audit_commit_matrix_fields(
     expected_role: SisMatrixRole,
@@ -695,11 +981,6 @@ macro_rules! define_commit_matrix_params {
 }
 
 define_commit_matrix_params!(
-    InnerCommitMatrixParams,
-    SisMatrixRole::Inner,
-    "Parameters for the inner commitment matrix (A)."
-);
-define_commit_matrix_params!(
     OuterCommitMatrixParams,
     SisMatrixRole::Outer,
     "Parameters for the outer commitment matrix (B)."
@@ -711,202 +992,5 @@ define_commit_matrix_params!(
 );
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn key(
-        table_digest: SisTableDigest,
-        modulus_profile: SisModulusProfileId,
-        role: SisMatrixRole,
-        ring_dimension: u32,
-        coeff_linf_bound: u128,
-    ) -> SisTableKey {
-        SisTableKey {
-            policy: DEFAULT_SIS_SECURITY_POLICY,
-            table_digest,
-            modulus_profile,
-            role,
-            ring_dimension,
-            coeff_linf_bound,
-        }
-    }
-
-    #[test]
-    fn unsupported_shape_rejects_linf_bucket() {
-        assert_eq!(
-            ceil_supported_linf_bound(
-                DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q32Offset99,
-                SisMatrixRole::Inner,
-                31,
-                7,
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn fixed_matrix_capacity_inverts_the_checked_sis_table() {
-        let key = SisTableKey {
-            policy: DEFAULT_SIS_SECURITY_POLICY,
-            table_digest: SisTableDigest::CURRENT,
-            modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
-            role: SisMatrixRole::Inner,
-            ring_dimension: 64,
-            coeff_linf_bound: 32_767,
-        };
-        let matrix =
-            InnerCommitMatrixParams::try_new_with_min_rank(key, 64).expect("audited matrix");
-        let capacity = matrix
-            .max_secure_collision_linf()
-            .expect("fixed matrix capacity");
-        assert!(capacity >= key.coeff_linf_bound);
-        for &larger in COEFF_LINF_BUCKETS.iter().filter(|&&bound| bound > capacity) {
-            let larger_key = SisTableKey {
-                coeff_linf_bound: larger,
-                ..key
-            };
-            assert!(
-                min_secure_rank(larger_key, matrix.input_width() as u64)
-                    .is_none_or(|rank| rank > matrix.output_rank()),
-                "capacity must be the largest bucket supported by the fixed matrix"
-            );
-        }
-    }
-
-    #[test]
-    fn floor_slices_have_family_specific_rank_caps() {
-        let bucket = 15;
-        if generated_sis_max_widths(
-            DEFAULT_SIS_SECURITY_POLICY,
-            SisModulusProfileId::Q32Offset99,
-            32,
-            bucket,
-        )
-        .is_some()
-        {
-            assert!(generated_sis_max_widths(
-                DEFAULT_SIS_SECURITY_POLICY,
-                SisModulusProfileId::Q32Offset99,
-                32,
-                bucket,
-            )
-            .is_some());
-        }
-    }
-
-    #[test]
-    fn linf_key_rounds_to_coefficient_bucket() {
-        let linf = 1_048_575u128;
-        let key = sis_table_key_for_linf_bound(
-            DEFAULT_SIS_SECURITY_POLICY,
-            SisTableDigest::CURRENT,
-            SisModulusProfileId::Q32Offset99,
-            SisMatrixRole::Inner,
-            128,
-            linf,
-        );
-        if let Some(key) = key {
-            assert_eq!(key.coeff_linf_bound, linf);
-            assert_eq!(key.policy, DEFAULT_SIS_SECURITY_POLICY);
-        }
-    }
-
-    #[test]
-    fn coeff_linf_bucket_ladder_matches_main_ceiling() {
-        assert_eq!(ceil_coeff_linf_bucket(1_048_574), Some(1_048_575));
-        assert_eq!(ceil_coeff_linf_bucket(1_048_575), Some(1_048_575));
-        assert_eq!(ceil_coeff_linf_bucket(1_048_576), Some(2_097_151));
-    }
-
-    #[test]
-    fn d512_coverage_is_q128_inner_only() {
-        let inner = sis_role_cell(
-            SisMatrixRole::Inner,
-            SisModulusProfileId::Q128OffsetA7F7,
-            512,
-            2,
-        )
-        .expect("q128 Inner/512 cell");
-        assert_eq!(inner.max_module_rank, 20);
-
-        for role in [SisMatrixRole::Outer, SisMatrixRole::Open] {
-            assert!(sis_role_cell(role, SisModulusProfileId::Q128OffsetA7F7, 512, 3).is_none());
-        }
-        for profile in [
-            SisModulusProfileId::Q32Offset99,
-            SisModulusProfileId::Q64Offset59,
-        ] {
-            assert!(sis_role_cell(SisMatrixRole::Inner, profile, 512, 2).is_none());
-        }
-    }
-
-    #[test]
-    fn d512_digest_has_direct_full_rank_rows() {
-        for &bound in COEFF_LINF_BUCKETS {
-            let d512 = sis_max_widths(
-                DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::Q128_INNER_D512,
-                SisModulusProfileId::Q128OffsetA7F7,
-                512,
-                bound,
-            )
-            .expect("direct D512 rows");
-            assert_eq!(d512.len(), 20);
-            assert!(d512.windows(2).all(|pair| pair[0] <= pair[1]));
-        }
-    }
-
-    #[test]
-    fn d512_requires_expanded_digest_and_rejects_unknown_digest() {
-        let old = key(
-            SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
-            SisMatrixRole::Inner,
-            512,
-            2,
-        );
-        assert_eq!(min_secure_rank(old, 1), None);
-
-        let expanded = key(
-            SisTableDigest::Q128_INNER_D512,
-            SisModulusProfileId::Q128OffsetA7F7,
-            SisMatrixRole::Inner,
-            512,
-            2,
-        );
-        assert!(min_secure_rank(expanded, 1).is_some());
-
-        let unknown = key(
-            SisTableDigest([0xFF; 32]),
-            SisModulusProfileId::Q128OffsetA7F7,
-            SisMatrixRole::Inner,
-            64,
-            2,
-        );
-        assert_eq!(min_secure_rank(unknown, 1), None);
-    }
-
-    #[test]
-    fn expanded_digest_preserves_existing_rows() {
-        for &bound in COEFF_LINF_BUCKETS {
-            assert_eq!(
-                sis_max_widths(
-                    DEFAULT_SIS_SECURITY_POLICY,
-                    SisTableDigest::Q128_INNER_D512,
-                    SisModulusProfileId::Q128OffsetA7F7,
-                    256,
-                    bound,
-                ),
-                sis_max_widths(
-                    DEFAULT_SIS_SECURITY_POLICY,
-                    SisTableDigest::CURRENT,
-                    SisModulusProfileId::Q128OffsetA7F7,
-                    256,
-                    bound,
-                ),
-            );
-        }
-    }
-}
+#[path = "ajtai_key_tests.rs"]
+mod tests;

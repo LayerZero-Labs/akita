@@ -13,6 +13,7 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
+use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
 use crate::generated::{
     GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix,
     GeneratedPrecommittedProfile, GeneratedSetupPrefixInput, GeneratedTerminalFold,
@@ -156,7 +157,6 @@ impl GeneratedSetupPrefixInput {
             log_basis_open,
             &ring_challenge_cfg,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(
@@ -366,6 +366,7 @@ impl GeneratedCommittedGroup {
         fold_level: usize,
         exact_num_digits_inner: Option<u32>,
         generated_num_digits_fold: u32,
+        response_l2_sq_cap: Option<u128>,
         input_witness_len: usize,
         num_claims: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
@@ -478,10 +479,9 @@ impl GeneratedCommittedGroup {
             log_basis_open,
             &ring_challenge_cfg,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| no_layout("A"))?;
-        let n_a = secure_rank(
+        let linf_n_a = secure_rank(
             "a",
             sis_key(
                 policy,
@@ -491,6 +491,53 @@ impl GeneratedCommittedGroup {
             ),
             inner_width,
         )?;
+        let inner_commit_matrix = if let Some(response_l2_sq_cap) = response_l2_sq_cap {
+            let fold_basis = 1usize
+                .checked_shl(log_basis_open)
+                .ok_or_else(|| AkitaError::InvalidSetup("generated L2 basis overflow".into()))?;
+            let matrix = selective_l2_inner_matrix(
+                policy,
+                SelectiveL2CandidateGeometry {
+                    fold_level,
+                    input_witness_len,
+                    num_claims,
+                    num_chunks: policy.chunks_at_level(fold_level),
+                    inner_width,
+                    ring_dimension: ring_d,
+                    fold_basis,
+                    fold_digit_count: num_digits_fold,
+                    fold_challenge_config: &ring_challenge_cfg,
+                },
+            )?
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated L2 route is not admitted for this exact measured candidate".into(),
+                )
+            })?;
+            if !matches!(
+                matrix.security_route(),
+                akita_types::InnerCommitSecurityRoute::L2 {
+                    response_l2_sq_cap: canonical_cap,
+                    ..
+                } if canonical_cap == response_l2_sq_cap
+            ) {
+                return Err(AkitaError::InvalidSetup(
+                    "generated L2 cap disagrees with canonical candidate policy".into(),
+                ));
+            }
+            matrix
+        } else {
+            InnerCommitMatrixParams::try_new(
+                sis_policy,
+                policy.sis_table_digest,
+                sis_modulus_profile,
+                linf_n_a,
+                inner_width,
+                a_bucket,
+                ring_d,
+            )?
+        };
+        let n_a = inner_commit_matrix.output_rank();
 
         let b_bucket = rounded_up_collision_inf_norm(
             sis_policy,
@@ -586,15 +633,7 @@ impl GeneratedCommittedGroup {
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
-            inner_commit_matrix: InnerCommitMatrixParams::try_new(
-                sis_policy,
-                policy.sis_table_digest,
-                sis_modulus_profile,
-                n_a,
-                inner_width,
-                a_bucket,
-                ring_d,
-            )?,
+            inner_commit_matrix,
             outer_commit_matrix: OuterCommitMatrixParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,
@@ -722,7 +761,6 @@ impl GeneratedCommittedGroup {
             log_basis_open,
             &ring_challenge_cfg,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(
@@ -984,7 +1022,8 @@ mod tests {
             sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
             sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
             sis_table_digest: SisTableDigest::CURRENT,
-            ring_subfield_norm_bound: 1,
+            sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
+            selective_l2_fold_caps: &[],
             claim_ext_degree: 1,
             chal_ext_degree: 1,
             basis_range: (3, 6),

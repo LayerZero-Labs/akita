@@ -4,7 +4,8 @@ use akita_field::AkitaError;
 use akita_types::sis::{
     decomposed_t_ring_count, decomposed_w_ring_count, num_digits_inner, num_digits_open,
     rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, InnerCommitMatrixParams,
-    OpenCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
+    InnerCommitSecurityRoute, OpenCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole,
+    SisTableKey,
 };
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommittedGroupBatchProfile, CommittedGroupParams,
@@ -12,6 +13,7 @@ use akita_types::{
     TerminalResponseShape,
 };
 
+use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
 use crate::runtime::validate_policy;
 use crate::PlannerPolicy;
 
@@ -44,7 +46,23 @@ fn audit_inner_matrix(
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     matrix.validate()?;
-    audit_sis_key(label, matrix.sis_table_key(), SisMatrixRole::Inner, policy)
+    match matrix.security_route() {
+        InnerCommitSecurityRoute::Linf(key) => {
+            audit_sis_key(label, key, SisMatrixRole::Inner, policy)
+        }
+        InnerCommitSecurityRoute::L2 { table_key, .. } => {
+            if table_key.policy != policy.sis_security_policy
+                || table_key.table_digest != policy.sis_l2_table_digest
+                || table_key.modulus_profile != policy.sis_modulus_profile
+            {
+                return Err(invalid(
+                    label,
+                    "A matrix L2 policy, table, or modulus profile disagrees with catalog policy",
+                ));
+            }
+            Ok(())
+        }
+    }
 }
 
 fn audit_outer_matrix(
@@ -110,9 +128,19 @@ fn audit_precommitted_group(
         ));
     }
 
+    let declared_a_bound = params
+        .layout
+        .inner_commit_matrix
+        .coeff_linf_bound()
+        .ok_or_else(|| {
+            invalid(
+                label,
+                "precommitted groups cannot use an L2 A security route",
+            )
+        })?;
     audit_bound(
         label,
-        params.layout.inner_commit_matrix.coeff_linf_bound(),
+        declared_a_bound,
         rounded_up_role_a_inf_norm(
             policy.sis_security_policy,
             policy.sis_table_digest,
@@ -121,7 +149,6 @@ fn audit_precommitted_group(
             params.log_basis_open,
             &params.fold_challenge_config,
             params.num_digits_fold,
-            policy.ring_subfield_norm_bound,
         ),
     )?;
     audit_bound(
@@ -165,6 +192,8 @@ fn audit_committed_params(
     label: &str,
     params: &CommittedGroupParams,
     num_claims: usize,
+    fold_level: usize,
+    input_witness_len: usize,
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     if num_claims == 0 {
@@ -221,20 +250,55 @@ fn audit_committed_params(
         ));
     }
 
-    audit_bound(
-        label,
-        params.inner_commit_matrix.coeff_linf_bound(),
-        rounded_up_role_a_inf_norm(
-            policy.sis_security_policy,
-            policy.sis_table_digest,
-            policy.sis_modulus_profile,
-            dims.d_a(),
-            params.log_basis_open,
-            &params.fold_challenge_config,
-            params.num_digits_fold,
-            policy.ring_subfield_norm_bound,
-        ),
-    )?;
+    match params.inner_commit_matrix.security_route() {
+        InnerCommitSecurityRoute::Linf(key) => audit_bound(
+            label,
+            key.coeff_linf_bound,
+            rounded_up_role_a_inf_norm(
+                policy.sis_security_policy,
+                policy.sis_table_digest,
+                policy.sis_modulus_profile,
+                dims.d_a(),
+                params.log_basis_open,
+                &params.fold_challenge_config,
+                params.num_digits_fold,
+            ),
+        )?,
+        InnerCommitSecurityRoute::L2 {
+            response_l2_sq_cap: _,
+            ..
+        } => {
+            let fold_basis = 1usize
+                .checked_shl(params.log_basis_open)
+                .ok_or_else(|| invalid(label, "L2 balanced digit basis overflow"))?;
+            let expected = selective_l2_inner_matrix(
+                policy,
+                SelectiveL2CandidateGeometry {
+                    fold_level,
+                    input_witness_len,
+                    num_claims,
+                    num_chunks: params.witness_chunk.num_chunks,
+                    inner_width: expected_a_width,
+                    ring_dimension: dims.d_a(),
+                    fold_basis,
+                    fold_digit_count: params.num_digits_fold,
+                    fold_challenge_config: &params.fold_challenge_config,
+                },
+            )?
+            .ok_or_else(|| {
+                invalid(
+                    label,
+                    "L2 route is not an admitted exact measured later scalar fold",
+                )
+            })?;
+            if params.inner_commit_matrix != expected {
+                return Err(invalid(
+                    label,
+                    "L2 A matrix disagrees with canonical cap, proof shape, table, or rank",
+                ));
+            }
+        }
+    }
     audit_bound(
         label,
         params.outer_commit_matrix.coeff_linf_bound(),
@@ -361,6 +425,15 @@ pub(crate) fn audit_resolved_schedule(
 
     let root = &schedule.root.params;
     let final_params = &root.final_group.commitment;
+    if !matches!(
+        final_params.inner_commit_matrix.security_route(),
+        InnerCommitSecurityRoute::Linf(_)
+    ) {
+        return Err(invalid(
+            "root final group",
+            "root cannot use an L2 A security route",
+        ));
+    }
     if profiles.final_group
         != akita_types::CommittedGroupProfile::from_params(profiles.final_group.group, final_params)
         || profiles.precommitteds.len() != root.precommitted_groups.len()
@@ -400,6 +473,8 @@ pub(crate) fn audit_resolved_schedule(
         "root final group",
         final_params,
         profiles.final_group.group.num_polynomials(),
+        0,
+        schedule.root.input_witness_len,
         policy,
     )?;
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
@@ -407,6 +482,8 @@ pub(crate) fn audit_resolved_schedule(
             &format!("recursive fold {index}"),
             &step.params.witness,
             1,
+            index + 1,
+            step.input_witness_len,
             policy,
         )?;
         if step.params.open_commit_matrix != step.params.witness.open_commit_matrix {

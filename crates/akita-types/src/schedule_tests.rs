@@ -37,6 +37,8 @@ use akita_sumcheck::EqFactoredUniPoly;
 use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 
 type F = Prime128OffsetA7F7;
+// `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
+const TEST_TERMINAL_A_BUCKET: u128 = 4_095;
 
 fn committed_params(ring_dimension: usize) -> CommittedGroupParams {
     committed_params_with_geometry(ring_dimension, 4, 4)
@@ -397,7 +399,10 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     let inner = &group_params.inner_commit_matrix;
     group_params.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
-        inner.sis_table_key().table_digest,
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
@@ -449,11 +454,14 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     let inner = &consumer.inner_commit_matrix;
     consumer.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
-        inner.sis_table_key().table_digest,
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         inner.sis_modulus_profile(),
         inner.output_rank(),
         prefix_ring_slots * consumer.num_digits_inner,
-        inner.coeff_linf_bound(),
+        inner.coeff_linf_bound().expect("L infinity test matrix"),
         inner.ring_dimension(),
     );
     let commitment_params = crate::setup_prefix_precommitted_params(&consumer, n_prefix)
@@ -472,7 +480,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
 #[test]
 fn terminal_projection_preserves_the_fixed_inner_matrix() {
     let sparse = SparseChallengeConfig::pm1_only(3);
-    let committed = CommittedGroupParams::params_only(
+    let mut committed = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
@@ -483,6 +491,19 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
     )
     .with_decomp(4, 32, 2, 2, 2)
     .expect("committed params");
+    let inner = committed.inner_commit_matrix;
+    committed.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        TEST_TERMINAL_A_BUCKET,
+        inner.ring_dimension(),
+    );
     let expected_inner = committed.inner_commit_matrix;
 
     let (terminal, response_cap) = TerminalCommittedGroupParams::try_from_expanded_group(committed)
@@ -641,6 +662,7 @@ fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof
             })
             .collect(),
         range_image_evaluation: F::zero(),
+        norm_proof: None,
     }
 }
 
@@ -752,6 +774,19 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
         lp.num_digits_fold = 2;
+        let inner = lp.inner_commit_matrix;
+        lp.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
+            inner.security_policy(),
+            inner
+                .sis_table_key()
+                .expect("L infinity test matrix")
+                .table_digest,
+            inner.sis_modulus_profile(),
+            inner.output_rank(),
+            inner.input_width(),
+            TEST_TERMINAL_A_BUCKET,
+            inner.ring_dimension(),
+        );
 
         let (terminal_response, witness_shape) = terminal_response_fixture(&lp, num_claims);
         let terminal_response_bytes_runtime = terminal_response.serialized_size(Compress::No);

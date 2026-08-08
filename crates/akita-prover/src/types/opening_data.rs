@@ -410,7 +410,10 @@ mod tests {
         let inner = &pre.inner_commit_matrix;
         pre.inner_commit_matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
-            inner.sis_table_key().table_digest,
+            inner
+                .sis_table_key()
+                .expect("test matrix is L infinity")
+                .table_digest,
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),

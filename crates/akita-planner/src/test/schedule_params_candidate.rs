@@ -95,3 +95,50 @@ fn recursive_candidate_order_preserves_exhaustive_tie_break() {
         "the exact layout score must remain the primary objective"
     );
 }
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn recursive_candidates_add_only_the_exact_smaller_l2_alternative() {
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_types::InnerCommitSecurityRoute;
+
+    let policy = policy_of::<OneHot>();
+    let challenge = OneHot::ring_challenge_config(64).expect("D64 challenge");
+    let candidates = derive_candidate_level_params(
+        &policy,
+        akita_types::CommitmentPayloadMode::Compressed,
+        &challenge,
+        akita_schedules::planner_support::RingDimensionCandidate::Fixed(
+            CommitmentRingDims::uniform(64),
+        ),
+        948_672,
+        4,
+        3,
+        None,
+    )
+    .expect("late-fold candidates");
+    let linf_rank = candidates
+        .iter()
+        .filter(|(params, _)| {
+            matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::Linf(_)
+            )
+        })
+        .map(|(params, _)| params.inner_commit_matrix.output_rank())
+        .max()
+        .expect("L-infinity fallback");
+    let l2_rank = candidates
+        .iter()
+        .filter(|(params, _)| {
+            matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::L2 { .. }
+            )
+        })
+        .map(|(params, _)| params.inner_commit_matrix.output_rank())
+        .min()
+        .expect("measured L2 candidate");
+    assert!(l2_rank < linf_rank);
+    assert_eq!(candidates.len(), 2);
+}

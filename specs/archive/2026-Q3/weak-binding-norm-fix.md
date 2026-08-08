@@ -4,8 +4,10 @@
 |-----------|--------------------------------|
 | Author(s) | Omid Bodaghi, Quang Dao, Cursor agent draft |
 | Created   | 2026-06-01                     |
-| Status    | implemented (the original anchored A-role bound is superseded by the committed-fold reprice below) |
+| Status    | superseded |
 | PR        | https://github.com/LayerZero-Labs/akita/pull/146 |
+| Superseded-by | [`selective-l2-fold-security-sizing.md`](../../selective-l2-fold-security-sizing.md) |
+| Book-chapter | book/src/how/security.md |
 
 > **Status note (2026-06-03).** The A-role weak-binding price that first
 > shipped on this branch (`collision_A = 2·ω̄·β̄·ν` with a single-block `β̄`,
@@ -15,6 +17,14 @@
 > corrected derivation, the new formula, and the schedule / preset fallout are
 > in the two sections immediately below. Everything from "Implementation
 > outcome (2026-06-02)" onward is retained as historical / superseded context.
+
+> **Active correction (2026-08-06).**
+> [`selective-l2-fold-security-sizing.md`](../../selective-l2-fold-security-sizing.md)
+> removes `ring_subfield_norm_bound` from physical A role collision sizing.
+> The challenge and accepted folded response are already physical ring
+> coefficient vectors at this point, so applying the Hachi logical to ring
+> conversion here counts it twice. The active spec owns this correction and
+> the optional L2 route.
 
 ## Correction (2026-06-03): committed-fold A-role reprice
 
@@ -66,7 +76,8 @@ envelope** the stage-1 range check actually certifies:
 z_verifier = balanced_digit_abs_max(log_basis, δ_fold)
 
 collision_A_inf = 8 · ω · z_verifier · ν
-collision_A     = ceil_bucket(d · collision_A_inf²)   (L2 MSIS table)
+collision_A     = ceil_supported_linf_bound(collision_A_inf)
+                  (ADPS16 coefficient-L∞ SIS table)
 ```
 
 `fold_witness_beta` still names the fold-response kernel bound; MSIS pricing uses

@@ -38,6 +38,12 @@ treat the nonce itself as evidence of the norm bound.
 
 There is one sizing and grinding flow for every valid sparse configuration.
 
+This honest coefficient-`L∞` sizing flow is separate from the A-role security
+route. The ordinary A route prices the verifier-enforced balanced-digit
+envelope in the coefficient-`L∞` SIS table. Eligible measured later folds may
+instead carry the exact physical norm proof and Euclidean SIS route defined by
+[`selective-l2-fold-security-sizing.md`](selective-l2-fold-security-sizing.md).
+
 ## Bounds
 
 Let:
@@ -156,4 +162,5 @@ for the current group and terminal ownership model.
 - operator-norm rejection or calibrated empirical thresholds;
 - using the honest tail cap directly for A-role MSIS collision pricing.
 
-A-role pricing continues to use the verifier-enforced balanced-digit envelope.
+The ordinary coefficient-`L∞` A-role route continues to use the
+verifier-enforced balanced-digit envelope.

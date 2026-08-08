@@ -377,7 +377,7 @@ Remaining audit/measurement items:
 - PR #311 / [`terminal-direct-ring-relations-cutover.md`](terminal-direct-ring-relations-cutover.md): terminal r-drop and direct ring relations.
 - PR #174 / `specs/fold-linf-rejection.md` (closed spec PR; implementation #189): the `t*` threshold and fold `‖z‖_inf` cap; Golomb `z` sizing uses the same cap as `num_digits_fold`, not the level variance envelope.
 - `specs/terminal-fold-cutover.md` (PR #88): the D-role drop whose transcript-binding discipline the terminal `t`-state cutover reuses.
-- `specs/weak-binding-norm-fix.md`: the weak-binding object the tail extraction recovers.
+- `specs/archive/2026-Q3/weak-binding-norm-fix.md`: the historical weak-binding object the tail extraction recovers.
 - `crates/akita-types/src/proof/direct_witness.rs` (`TerminalResponse`),
   `crates/akita-types/src/proof/tail_segments.rs` (segment layout and transcript
   slicing), and `crates/akita-types/src/proof/levels.rs` (`TerminalLevelProof`).

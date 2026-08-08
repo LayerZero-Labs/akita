@@ -81,7 +81,8 @@ impl_proof_optimized_preset!(
         potential_a_dimensions: &OneHot::A_RING_DIMENSIONS,
         potential_b_dimensions: &OneHot::B_RING_DIMENSIONS,
         potential_d_dimensions: &OneHot::D_RING_DIMENSIONS,
-    }
+    },
+    selective_l2_caps = super::FP128_ONEHOT_L2_CAPS
 );
 impl_multi_chunk_companion!(
     OneHotMultiChunk,

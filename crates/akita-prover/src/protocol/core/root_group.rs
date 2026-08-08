@@ -47,7 +47,7 @@ where
         challenges: &Challenges,
         root_params: &CommittedGroupParams,
         params: &(impl LevelParamsLike + ?Sized),
-    ) -> Result<crate::protocol::fold_grind::FoldGrindGroupOutput<F>, AkitaError>;
+    ) -> Result<crate::protocol::fold_grind::FoldProbeOutput<F>, AkitaError>;
 }
 
 pub(crate) trait RootProverGroupTensor<F, E, B>: RootProverGroupMeta<F>
@@ -174,7 +174,7 @@ where
         challenges: &Challenges,
         root_params: &CommittedGroupParams,
         params: &(impl LevelParamsLike + ?Sized),
-    ) -> Result<crate::protocol::fold_grind::FoldGrindGroupOutput<F>, AkitaError> {
+    ) -> Result<crate::protocol::fold_grind::FoldProbeOutput<F>, AkitaError> {
         let ring_dimension = params.inner_commit_matrix_params().ring_dimension();
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -192,7 +192,7 @@ where
                         root_params,
                         params,
                     )?;
-                Ok::<_, AkitaError>(crate::protocol::fold_grind::FoldGrindGroupOutput {
+                Ok::<_, AkitaError>(crate::protocol::fold_grind::FoldProbeOutput {
                     witness,
                     centered_per_chunk: centered
                         .into_iter()

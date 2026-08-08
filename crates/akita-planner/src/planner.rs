@@ -148,10 +148,15 @@ fn materialize_precommitted_group_for_open_basis(
         log_basis_open,
         ring_challenge_cfg,
         num_digits_fold,
-        policy.ring_subfield_norm_bound,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("no precommitted A-role norm".to_string()))?;
-    if required_a_bound > group.inner_commit_matrix.coeff_linf_bound() {
+    let declared_a_bound = group
+        .inner_commit_matrix
+        .coeff_linf_bound()
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("precommitted A cannot use an L2 security route".to_string())
+        })?;
+    if required_a_bound > declared_a_bound {
         return Err(AkitaError::InvalidSetup(
             "precommitted A bound does not cover the certified opening basis".to_string(),
         ));
@@ -421,7 +426,6 @@ fn root_final_group_level_params_candidate(
         log_basis,
         ctx.ring_challenge_cfg,
         num_digits_fold,
-        policy.ring_subfield_norm_bound,
     ) else {
         return Ok(None);
     };

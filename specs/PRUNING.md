@@ -143,7 +143,6 @@ for a stacked follow-up.
 | `akita-pcs-crate-decomposition.md` | `how/architecture.md` |
 | `extension-field-opening-batching.md` | `how/proving/extension-opening-reduction.md` |
 | `terminal-fold-cutover.md` | `how/recursion.md` |
-| `weak-binding-norm-fix.md` (committed-fold section) | `how/security.md` |
 | `akita-sis-consolidation.md` | `how/security.md` |
 | `planner-refactor.md`, `planner-owns-schedule-expansion.md` | `how/configuration.md` |
 | `transcript-hardening.md` | `how/transcript.md` |

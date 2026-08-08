@@ -68,7 +68,6 @@ pub(crate) fn recursive_fold_level_params_candidate(
         decomp.log_basis,
         ring_challenge_cfg,
         num_digits_fold,
-        policy.ring_subfield_norm_bound,
     ) else {
         return Ok(None);
     };
@@ -374,8 +373,152 @@ fn recursive_level_candidate_for_split(
     Ok(Some((score, candidate_params, next_witness_len)))
 }
 
+/// Return the established L-infinity candidate plus any exact measured L2
+/// alternative at this state.
+///
+/// A measured cap binds the input length and physical response geometry, which
+/// determines one block split. The suffix DP then prices that alternative
+/// against the ordinary L-infinity candidate.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn derive_candidate_level_params(
+    policy: &PlannerPolicy,
+    payload_mode: akita_types::CommitmentPayloadMode,
+    ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
+    dimensions: RingDimensionCandidate<'_>,
+    current_witness_len: usize,
+    log_basis: u32,
+    fold_level: usize,
+    incoming_setup_prefix: Option<usize>,
+) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
+    let mut candidates = derive_linf_candidate_level_params(
+        policy,
+        payload_mode,
+        ring_challenge_cfg,
+        dimensions,
+        current_witness_len,
+        log_basis,
+        fold_level,
+        incoming_setup_prefix,
+    )?
+    .into_iter()
+    .collect::<Vec<_>>();
+    let Some(cap) = policy
+        .selective_l2_fold_caps
+        .iter()
+        .find(|cap| cap.fold_level == fold_level && cap.input_witness_len == current_witness_len)
+    else {
+        return Ok(candidates);
+    };
+    let Some(search) = prepare_recursive_level_search(
+        policy,
+        ring_challenge_cfg,
+        dimensions,
+        current_witness_len,
+        log_basis,
+        fold_level,
+        incoming_setup_prefix,
+    )?
+    else {
+        return Ok(candidates);
+    };
+    let fold_basis = 1usize
+        .checked_shl(log_basis)
+        .ok_or_else(|| AkitaError::InvalidSetup("L2 fold basis overflow".into()))?;
+    let decomp = DecompositionParams {
+        log_basis,
+        ..policy.decomposition
+    };
+    let delta_commit = num_digits_inner(decomp, false);
+    let d_a = dimensions.inner();
+    if cap.fold_basis != fold_basis || cap.physical_response_len % d_a != 0 || delta_commit == 0 {
+        return Ok(candidates);
+    }
+    let inner_width = cap.physical_response_len / d_a;
+    if !inner_width.is_multiple_of(delta_commit) {
+        return Ok(candidates);
+    }
+    let positions_per_block = inner_width / delta_commit;
+    if !positions_per_block.is_power_of_two() {
+        return Ok(candidates);
+    }
+    let position_bits = positions_per_block.trailing_zeros() as usize;
+    let Some(block_index_bits) = search.reduced_vars.checked_sub(position_bits) else {
+        return Ok(candidates);
+    };
+    let Some((_, mut params, _)) = recursive_level_candidate_for_split(
+        policy,
+        payload_mode,
+        ring_challenge_cfg,
+        dimensions,
+        &search,
+        log_basis,
+        fold_level,
+        block_index_bits,
+    )?
+    else {
+        return Ok(candidates);
+    };
+    let linf_rank = params.inner_commit_matrix.output_rank();
+    let Some(inner_commit_matrix) = selective_l2_inner_matrix(
+        policy,
+        SelectiveL2CandidateGeometry {
+            fold_level,
+            input_witness_len: current_witness_len,
+            num_claims: 1,
+            num_chunks: search.num_chunks,
+            inner_width: params.inner_commit_matrix.input_width(),
+            ring_dimension: d_a,
+            fold_basis,
+            fold_digit_count: params.num_digits_fold,
+            fold_challenge_config: ring_challenge_cfg,
+        },
+    )?
+    else {
+        return Ok(candidates);
+    };
+    if inner_commit_matrix.output_rank() >= linf_rank {
+        return Ok(candidates);
+    }
+    let Some(native_width_t) = decomposed_t_ring_count(
+        inner_commit_matrix.output_rank(),
+        params.num_digits_outer,
+        params.num_live_blocks,
+        1,
+    ) else {
+        return Ok(candidates);
+    };
+    let Some((outer_key, width_t)) = dimensions.collision_role_price(
+        policy,
+        akita_types::SisMatrixRole::Outer,
+        native_width_t,
+        log_basis,
+    ) else {
+        return Ok(candidates);
+    };
+    let Ok(outer_commit_matrix) =
+        OuterCommitMatrixParams::try_new_with_min_rank(outer_key, width_t)
+    else {
+        return Ok(candidates);
+    };
+    params.inner_commit_matrix = inner_commit_matrix;
+    params.outer_commit_matrix = outer_commit_matrix;
+    let Some(next_witness_len) = planned_next_witness_len(
+        policy.decomposition.field_bits(),
+        &params,
+        1,
+        search.num_chunks,
+    )?
+    else {
+        return Ok(candidates);
+    };
+    if next_witness_len < current_witness_len {
+        candidates.push((params, next_witness_len));
+    }
+    Ok(candidates)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn derive_linf_candidate_level_params(
     policy: &PlannerPolicy,
     payload_mode: akita_types::CommitmentPayloadMode,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,

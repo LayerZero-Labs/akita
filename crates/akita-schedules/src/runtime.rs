@@ -10,6 +10,18 @@ use akita_types::{
     DEFAULT_SIS_SECURITY_POLICY,
 };
 
+/// One empirically checked squared-norm cap for an exact later nonterminal
+/// fold candidate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SelectiveL2FoldCap {
+    pub fold_level: usize,
+    pub input_witness_len: usize,
+    pub physical_response_len: usize,
+    pub fold_basis: usize,
+    pub fold_digit_count: usize,
+    pub response_l2_sq_cap: u128,
+}
+
 /// Quantities materialized and checked by the current bounded planner cost model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlannerCostModelId {
@@ -149,7 +161,9 @@ pub struct PlannerPolicy {
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,
-    pub ring_subfield_norm_bound: u32,
+    pub sis_l2_table_digest: akita_types::SisL2TableDigest,
+    /// Measured candidate caps. Empty keeps every level on the Linf route.
+    pub selective_l2_fold_caps: &'static [SelectiveL2FoldCap],
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),
@@ -161,6 +175,34 @@ pub struct PlannerPolicy {
 pub type RuntimeSchedulePolicy = PlannerPolicy;
 
 impl PlannerPolicy {
+    /// Return the measured L2 cap for this exact candidate geometry.
+    pub fn selective_l2_cap_for_candidate(
+        &self,
+        fold_level: usize,
+        input_witness_len: usize,
+        physical_response_len: usize,
+        fold_basis: usize,
+        fold_digit_count: usize,
+    ) -> Option<u128> {
+        self.selective_l2_fold_caps
+            .iter()
+            .find(|entry| {
+                (
+                    entry.fold_level,
+                    entry.input_witness_len,
+                    entry.physical_response_len,
+                    entry.fold_basis,
+                    entry.fold_digit_count,
+                ) == (
+                    fold_level,
+                    input_witness_len,
+                    physical_response_len,
+                    fold_basis,
+                    fold_digit_count,
+                )
+            })
+            .map(|entry| entry.response_l2_sq_cap)
+    }
     /// Whether a candidate fits the optional host setup budget.
     pub fn admits_setup_field_elements(&self, num_field_elements: usize) -> bool {
         self.setup_field_budget
@@ -252,6 +294,29 @@ impl PlannerPolicy {
 
 /// Suffix-DP depth cap shared by planner search and runtime policy validation.
 pub const MAX_RECURSION_DEPTH: usize = 12;
+/// First fold level eligible for a measured L2 candidate.
+const SELECTIVE_L2_CAP_FIRST_LEVEL: usize = 3;
+
+fn validate_selective_l2_caps(caps: &[SelectiveL2FoldCap]) -> Result<(), AkitaError> {
+    for (index, cap) in caps.iter().enumerate() {
+        let invalid_geometry = cap.fold_level < SELECTIVE_L2_CAP_FIRST_LEVEL
+            || cap.fold_level >= MAX_RECURSION_DEPTH
+            || cap.input_witness_len == 0
+            || cap.physical_response_len == 0
+            || cap.fold_basis < 2
+            || !cap.fold_basis.is_power_of_two()
+            || cap.fold_digit_count == 0
+            || cap.response_l2_sq_cap == 0;
+        let invalid_order = index > 0 && caps[index - 1] >= *cap;
+        if invalid_geometry || invalid_order {
+            return Err(AkitaError::InvalidSetup(
+                "selective L2 caps must be valid, later-fold, strictly sorted exact candidates"
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// Validate runtime policy values used by schedule expansion and validation.
 pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
@@ -287,6 +352,14 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
             "minimum offloaded witness contraction must be positive".to_string(),
         ));
     }
+    if !policy.selective_l2_fold_caps.is_empty()
+        && policy.sis_l2_table_digest != akita_types::SisL2TableDigest::CURRENT
+    {
+        return Err(AkitaError::InvalidSetup(
+            "selective L2 caps require the current audited Euclidean table".into(),
+        ));
+    }
+    validate_selective_l2_caps(policy.selective_l2_fold_caps)?;
     policy.witness_chunk.validate()?;
     if policy.witness_chunk.num_activated_levels > MAX_RECURSION_DEPTH {
         return Err(AkitaError::InvalidSetup(format!(
@@ -648,6 +721,17 @@ pub fn default_sis_security_policy() -> SisSecurityPolicyId {
 mod tests {
     use super::*;
 
+    fn cap(fold_level: usize, input_witness_len: usize) -> SelectiveL2FoldCap {
+        SelectiveL2FoldCap {
+            fold_level,
+            input_witness_len,
+            physical_response_len: 64,
+            fold_basis: 2,
+            fold_digit_count: 1,
+            response_l2_sq_cap: 1,
+        }
+    }
+
     const A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER: &[usize] = &[64, 512];
     const SUFFIX_DIMENSIONS: &[usize] = &[64];
 
@@ -676,13 +760,21 @@ mod tests {
             sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
             sis_security_policy: DEFAULT_SIS_SECURITY_POLICY,
             sis_table_digest: akita_types::SisTableDigest::CURRENT,
-            ring_subfield_norm_bound: 1,
+            sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
+            selective_l2_fold_caps: &[],
             claim_ext_degree: 1,
             chal_ext_degree: 1,
             basis_range: (3, 6),
             witness_chunk: ChunkedWitnessCfg::default(),
             recursive_setup_planning: false,
         }
+    }
+
+    #[test]
+    fn selective_l2_caps_allow_sparse_later_exact_candidates() {
+        assert!(validate_selective_l2_caps(&[cap(4, 10), cap(7, 6)]).is_ok());
+        assert!(validate_selective_l2_caps(&[cap(2, 10)]).is_err());
+        assert!(validate_selective_l2_caps(&[cap(4, 10), cap(4, 10)]).is_err());
     }
 
     #[test]

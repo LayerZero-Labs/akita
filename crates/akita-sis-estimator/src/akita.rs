@@ -128,9 +128,13 @@ pub fn scalar_sis_from_ring_wide(
 
 /// Build Euclidean scalar SIS parameters from Akita ring coordinates.
 ///
-/// This is the mapping used by the shipped L2 table:
+/// This is the mapping used by the L2 table:
 /// `n = rank * d`, `m = width * d`, and
-/// `length_bound = sqrt(width * collision_l2_sq)`.
+/// `length_bound = sqrt(collision_l2_sq)`.
+///
+/// `collision_l2_sq` bounds the complete scalar collision vector across all
+/// `width` input ring rows. Multiplying it by `width` here would count those
+/// rows twice.
 ///
 /// # Errors
 ///
@@ -162,12 +166,11 @@ pub fn scalar_sis_from_ring_euclidean(
                 field: "m",
                 reason: "width * ring_dimension overflowed u64".to_string(),
             })?;
-    let radicand = BigUint::from(width) * BigUint::from(collision_l2_sq);
     SisParameters::try_new(
         n,
         family.modulus(),
         Some(m),
-        Bound::sqrt_integer(radicand),
+        Bound::sqrt_integer(BigUint::from(collision_l2_sq)),
         SisNorm::Euclidean,
     )
 }
@@ -194,8 +197,25 @@ mod tests {
         assert_eq!(params.m, Some(64));
         assert_eq!(
             params.length_bound,
-            Bound::sqrt_integer(BigUint::from(256u32))
+            Bound::sqrt_integer(BigUint::from(128u32))
         );
         assert_eq!(params.norm, SisNorm::Euclidean);
+    }
+
+    #[test]
+    fn euclidean_length_bound_is_independent_of_matrix_width() {
+        let narrow =
+            scalar_sis_from_ring_euclidean(AkitaModulusProfileId::Q64Offset59, 64, 2, 3, 1 << 40)
+                .unwrap();
+        let wide = scalar_sis_from_ring_euclidean(
+            AkitaModulusProfileId::Q64Offset59,
+            64,
+            2,
+            3_000,
+            1 << 40,
+        )
+        .unwrap();
+        assert_eq!(narrow.length_bound, wide.length_bound);
+        assert_ne!(narrow.m, wide.m);
     }
 }

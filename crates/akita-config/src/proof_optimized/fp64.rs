@@ -79,7 +79,8 @@ impl_proof_optimized_preset!(
         "schedules-fp64-d128-onehot",
         "fp64_d128_onehot",
         fp64_d128_onehot_table
-    )
+    ),
+    selective_l2_caps = super::FP64_D128_ONEHOT_L2_CAPS
 );
 impl_proof_optimized_preset!(
     D256Dense,

@@ -194,6 +194,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "rayon",
+ "sha2",
  "thiserror",
 ]
 
@@ -245,6 +246,7 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-field",
+ "akita-prover",
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",

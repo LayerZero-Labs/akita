@@ -6,6 +6,7 @@
 
 pub mod akita_stage3;
 pub mod digit_range;
+mod physical_l2_norm;
 pub mod relation_range_image;
 pub mod two_round_prefix;
 

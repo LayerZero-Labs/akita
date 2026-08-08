@@ -163,12 +163,18 @@ fn expected_same_point_batched_shape(
             .expect("commitment payload geometry")
             .transmitted_coefficients()
     };
+    let root_stage1 = DigitRangePlan::new(1usize << root_params.log_basis_open)
+        .expect("scheduled root range basis")
+        .proof_shapes_for_route(
+            root_rounds,
+            root_params.inner_commit_matrix.security_route(),
+        )
+        .expect("scheduled root Stage 1 shape");
     let root_shape = LevelProofShape {
         extension_opening_reduction: None,
         opening_payload_coeffs: opening_payload_coeffs(root_params),
-        stage1_stages: DigitRangePlan::new(1usize << root_params.log_basis_open)
-            .expect("scheduled root range basis")
-            .stage_shapes(root_rounds),
+        stage1_stages: root_stage1.0,
+        stage1_norm: root_stage1.1,
         stage2_sumcheck_proof: vec![3; root_rounds],
         stage3_sumcheck: None,
         next_witness_binding: match root_successor {
@@ -191,12 +197,15 @@ fn expected_same_point_batched_shape(
         let level_params = &step.params.witness;
         let output_witness_len = step.output_witness_len;
         let rounds = batched_shape_rounds(level_params.d_a(), output_witness_len);
+        let stage1 = DigitRangePlan::new(1usize << level_params.log_basis_open)
+            .expect("scheduled range basis")
+            .proof_shapes_for_route(rounds, level_params.inner_commit_matrix.security_route())
+            .expect("scheduled Stage 1 shape");
         recursive_folds.push(LevelProofShape {
             extension_opening_reduction: None,
             opening_payload_coeffs: opening_payload_coeffs(level_params),
-            stage1_stages: DigitRangePlan::new(1usize << level_params.log_basis_open)
-                .expect("scheduled range basis")
-                .stage_shapes(rounds),
+            stage1_stages: stage1.0,
+            stage1_norm: stage1.1,
             stage2_sumcheck_proof: vec![3; rounds],
             stage3_sumcheck: None,
             next_witness_binding: match schedule.recursive_folds.get(index + 1) {

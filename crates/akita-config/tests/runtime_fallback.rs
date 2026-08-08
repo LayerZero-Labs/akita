@@ -232,11 +232,16 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_terminal_a() {
         .witness
         .inner_commit_matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
         matrix.security_policy(),
-        matrix.sis_table_key().table_digest,
+        matrix
+            .sis_table_key()
+            .expect("terminal test matrix is L infinity")
+            .table_digest,
         matrix.sis_modulus_profile(),
         0,
         matrix.input_width(),
-        matrix.coeff_linf_bound(),
+        matrix
+            .coeff_linf_bound()
+            .expect("terminal test matrix is L infinity"),
         matrix.ring_dimension(),
     );
     assert_mutated_row_is_rejected::<Cfg>(profiles, low_rank_terminal);
@@ -344,7 +349,8 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
         sis_table_digest: akita_types::SisTableDigest::CURRENT,
-        ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
+        sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
+        selective_l2_fold_caps: Cfg::SELECTIVE_L2_FOLD_CAPS,
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),

@@ -45,16 +45,15 @@ pub fn rounded_up_collision_inf_norm(
     )
 }
 
-/// Weak-binding lemma `L∞` norm bound:
-/// `2 * challenge_l1_norm * ring_subfield_norm_bound * z_inf_norm`.
-pub fn weak_binding_inf_norm(
-    challenge_l1_norm: u128,
-    ring_subfield_norm_bound: u32,
-    z_inf_norm: u128,
-) -> Option<u128> {
+/// Weak-binding lemma physical coefficient-`L∞` norm bound:
+/// `2 * challenge_l1_norm * z_inf_norm`.
+///
+/// Both inputs are physical ring coefficient vectors at this boundary. A
+/// logical extension-field to physical-ring embedding factor therefore does
+/// not belong in this formula.
+pub fn weak_binding_inf_norm(challenge_l1_norm: u128, z_inf_norm: u128) -> Option<u128> {
     2u128
         .checked_mul(challenge_l1_norm)?
-        .checked_mul(u128::from(ring_subfield_norm_bound))?
         .checked_mul(z_inf_norm)
 }
 
@@ -66,14 +65,32 @@ pub fn weak_binding_inf_norm(
 /// of two.
 pub fn role_a_collision_inf_norm_for_response_bound(
     challenge_l1_norm: u128,
-    ring_subfield_norm_bound: u32,
     response_linf_bound: u128,
 ) -> Option<u128> {
     weak_binding_inf_norm(
         challenge_l1_norm.checked_mul(2)?,
-        ring_subfield_norm_bound,
         response_linf_bound.checked_mul(2)?,
     )
+}
+
+/// Complete physical squared-`L2` A-role collision bound for two accepted
+/// folded responses.
+///
+/// If each response has squared norm at most `response_l2_sq_bound`, the same
+/// extraction factors as [`role_a_collision_inf_norm_for_response_bound`]
+/// bound the collision length by `8 * challenge_l1_norm * ||z||_2`. Squaring
+/// that scale gives `64 * challenge_l1_norm^2 * response_l2_sq_bound`.
+///
+/// The response bound covers the complete physical coefficient vector across
+/// every A-matrix input row. No embedding or matrix-width factor is applied.
+#[must_use]
+pub fn role_a_collision_l2_sq_for_response_bound(
+    challenge_l1_norm: u128,
+    response_l2_sq_bound: u128,
+) -> Option<u128> {
+    64u128
+        .checked_mul(challenge_l1_norm.checked_mul(challenge_l1_norm)?)?
+        .checked_mul(response_l2_sq_bound)
 }
 
 /// Largest raw folded-response `L∞` bound fitting an A-role collision bucket.
@@ -83,13 +100,8 @@ pub fn role_a_collision_inf_norm_for_response_bound(
 pub fn max_response_linf_for_role_a_collision(
     collision_linf_capacity: u128,
     challenge_l1_norm: u128,
-    ring_subfield_norm_bound: u32,
 ) -> Option<u128> {
-    let price_per_unit = role_a_collision_inf_norm_for_response_bound(
-        challenge_l1_norm,
-        ring_subfield_norm_bound,
-        1,
-    )?;
+    let price_per_unit = role_a_collision_inf_norm_for_response_bound(challenge_l1_norm, 1)?;
     collision_linf_capacity.checked_div(price_per_unit)
 }
 
@@ -118,7 +130,6 @@ pub fn rounded_up_role_a_inf_norm(
     log_basis_response: u32,
     fold_challenge_config: &SparseChallengeConfig,
     fold_decomposed_digits: usize,
-    ring_subfield_norm_bound: u32,
 ) -> Option<u128> {
     let challenge = FoldChallengeNorms::new(fold_challenge_config);
     if log_basis_response == 0 || fold_decomposed_digits == 0 {
@@ -126,11 +137,8 @@ pub fn rounded_up_role_a_inf_norm(
     }
     let recomposed_inf_norm_bound =
         balanced_digit_abs_max(log_basis_response, fold_decomposed_digits);
-    let collision_linf = weak_binding_inf_norm(
-        2u128.checked_mul(challenge.l1_norm)?,
-        ring_subfield_norm_bound,
-        2u128.checked_mul(recomposed_inf_norm_bound)?,
-    )?;
+    let collision_linf =
+        role_a_collision_inf_norm_for_response_bound(challenge.l1_norm, recomposed_inf_norm_bound)?;
     ceil_supported_linf_bound(
         policy,
         table_digest,
@@ -355,28 +363,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn raw_terminal_response_bound_uses_the_complete_difference_interval() {
+    fn physical_response_bound_uses_the_complete_difference_interval() {
         let challenge_l1 = 41;
-        let subfield_norm = 2;
         let response_bound = 7;
-        let price = role_a_collision_inf_norm_for_response_bound(
-            challenge_l1,
-            subfield_norm,
-            response_bound,
-        )
-        .expect("collision price");
-        assert_eq!(
-            price,
-            8 * challenge_l1 * u128::from(subfield_norm) * response_bound
-        );
+        let price = role_a_collision_inf_norm_for_response_bound(challenge_l1, response_bound)
+            .expect("collision price");
+        assert_eq!(price, 8 * challenge_l1 * response_bound);
         let unit_price = price / response_bound;
         assert_eq!(
-            max_response_linf_for_role_a_collision(
-                price + unit_price - 1,
-                challenge_l1,
-                subfield_norm,
-            ),
+            max_response_linf_for_role_a_collision(price + unit_price - 1, challenge_l1,),
             Some(response_bound)
+        );
+    }
+
+    #[test]
+    fn l2_collision_scales_the_complete_physical_norm_once() {
+        let challenge_l1 = 51u128;
+        let response_l2_sq = 1u128 << 32;
+        assert_eq!(
+            role_a_collision_l2_sq_for_response_bound(challenge_l1, response_l2_sq),
+            Some(64 * challenge_l1 * challenge_l1 * response_l2_sq),
         );
     }
 
@@ -464,8 +470,7 @@ mod tests {
             log_commit_bound: 1,
             log_open_bound: Some(128),
         };
-        let (d, num_live_blocks, num_claims, subfield, inner_width) =
-            (64usize, 2usize, 1usize, 1u32, 2u64);
+        let (d, num_live_blocks, num_claims, inner_width) = (64usize, 2usize, 1usize, 2u64);
 
         // Recompute the Lemma-7 envelope from the same primitives the function wires.
         let challenge = FoldChallengeNorms::new(&fold_challenge_config);
@@ -486,7 +491,7 @@ mod tests {
         )
         .unwrap();
         let z_bound = balanced_digit_abs_max(decomposition.log_basis, delta_fold);
-        // Weak-binding collision `8 · ω · z` for `subfield = 1`.
+        // Physical weak-binding collision `8 · ω · z`.
         let collision_linf = 8u128 * challenge.l1_norm * z_bound;
         let envelope = ceil_supported_linf_bound(
             DEFAULT_SIS_SECURITY_POLICY,
@@ -506,7 +511,6 @@ mod tests {
                 decomposition.log_basis,
                 &fold_challenge_config,
                 delta_fold,
-                subfield,
             )
             .unwrap(),
             envelope,
@@ -532,8 +536,7 @@ mod tests {
             log_commit_bound: 1,
             log_open_bound: Some(128),
         };
-        let (d, num_live_blocks, num_claims, subfield, inner_width) =
-            (64usize, 4usize, 1usize, 1u32, 2u64);
+        let (d, num_live_blocks, num_claims, inner_width) = (64usize, 4usize, 1usize, 2u64);
 
         let challenge = FoldChallengeNorms::new(&fold_challenge_config);
         let witness = FoldWitnessNorms::sparse_binary(d, 64).unwrap();
@@ -565,7 +568,6 @@ mod tests {
             decomposition.log_basis,
             &fold_challenge_config,
             delta_fold,
-            subfield,
         )
         .unwrap();
         let cap_priced = ceil_supported_linf_bound(
@@ -654,8 +656,7 @@ mod tests {
             log_commit_bound: 128,
             log_open_bound: None,
         };
-        let (d, num_live_blocks, num_claims, subfield, inner_width) =
-            (64usize, 2usize, 1usize, 1u32, 2u64);
+        let (d, num_live_blocks, num_claims, inner_width) = (64usize, 2usize, 1usize, 2u64);
 
         let challenge = FoldChallengeNorms::new(&fold_challenge_config);
         let witness = FoldWitnessNorms::bounded(decomposition.log_basis, d);
@@ -683,7 +684,6 @@ mod tests {
             decomposition.log_basis,
             &fold_challenge_config,
             delta_fold,
-            subfield,
         )
         .unwrap();
         assert_eq!(

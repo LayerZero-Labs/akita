@@ -129,11 +129,14 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
     let inner = &precommitted.layout.inner_commit_matrix;
     precommitted.layout.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
-        inner.sis_table_key().table_digest,
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        inner.coeff_linf_bound(),
+        inner.coeff_linf_bound().expect("L infinity test matrix"),
         128,
     );
     let outer = &precommitted.layout.outer_commit_matrix;

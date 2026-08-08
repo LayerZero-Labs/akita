@@ -39,6 +39,8 @@ pub(crate) use akita_schedules::planner_support::{
     CandidateTerminalResponse,
 };
 pub use akita_types::suffix_opening_layout;
+#[cfg(test)]
+pub(crate) use candidate::derive_linf_candidate_level_params;
 pub(crate) use candidate::{
     derive_candidate_level_params, derive_candidate_level_params_all_splits,
 };

@@ -85,6 +85,7 @@ fn level_shape_validation_checks_extension_opening_reduction() {
         )),
         opening_payload_coeffs: 1,
         stage1_stages: Vec::new(),
+        stage1_norm: None,
         stage2_sumcheck_proof: Vec::new(),
         stage3_sumcheck: None,
         next_witness_binding: NextWitnessBindingShape::OuterPayload { coeffs: 1 },
@@ -125,10 +126,28 @@ fn level_shape_deserialization_rejects_vector_length_before_allocation() {
     ));
 }
 
+#[test]
+fn l2_shape_deserialization_rejects_rounds_before_allocation() {
+    let mut bytes = Vec::new();
+    0usize.serialize_compressed(&mut bytes).unwrap(); // subclaims
+    1usize.serialize_compressed(&mut bytes).unwrap(); // virtual evaluations
+    (MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
+        .serialize_compressed(&mut bytes)
+        .unwrap(); // sumcheck round count
+
+    let err = PhysicalL2NormProofWireShape::deserialize_compressed(&bytes[..], &())
+        .expect_err("oversized L2 round vector must be rejected before allocation");
+    assert!(matches!(
+        err,
+        SerializationError::LengthLimitExceeded { .. }
+    ));
+}
+
 fn tiny_stage1() -> AkitaStage1Proof<F> {
     AkitaStage1Proof {
         stages: Vec::new(),
         range_image_evaluation: F::zero(),
+        norm_proof: None,
     }
 }
 

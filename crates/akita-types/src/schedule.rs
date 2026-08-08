@@ -628,25 +628,23 @@ impl TerminalCommittedGroupParams {
         )
     }
 
-    /// Largest raw response admitted by this fixed inner matrix and the signed
-    /// terminal coefficient representation.
+    /// Largest raw response admitted by this terminal's selected inner-matrix
+    /// SIS bucket and the signed coefficient representation.
+    ///
+    /// The matrix rank can incidentally support a larger collision bucket. The
+    /// terminal wire does not consume that slack because doing so would change
+    /// its admission and encoding bounds when an unrelated rank frontier moves.
     pub fn certified_response_linf_cap(
         &self,
         sparse: &akita_challenges::SparseChallengeConfig,
     ) -> Result<u128, AkitaError> {
         let challenge = crate::sis::FoldChallengeNorms::new(sparse);
-        let collision_capacity = self
-            .inner_commit_matrix
-            .max_secure_collision_linf()
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("terminal A has no collision capacity".into())
-            })?;
+        let collision_capacity = self.inner_commit_matrix.coeff_linf_bound().ok_or_else(|| {
+            AkitaError::InvalidSetup("terminal A cannot use an L2 security route".into())
+        })?;
         let certified_capacity = crate::sis::max_response_linf_for_role_a_collision(
             collision_capacity,
             challenge.l1_norm,
-            self.inner_commit_matrix
-                .sis_modulus_profile()
-                .ring_subfield_embedding_norm_bound(),
         )
         .filter(|value| *value > 0)
         .ok_or_else(|| AkitaError::InvalidSetup("terminal A cannot certify a response".into()))?;

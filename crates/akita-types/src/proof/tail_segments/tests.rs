@@ -21,7 +21,11 @@ fn test_lp() -> CommittedGroupParams {
     .expect("tail segment test params");
     let key = crate::sis::SisTableKey {
         policy: params.inner_commit_matrix.security_policy(),
-        table_digest: params.inner_commit_matrix.sis_table_key().table_digest,
+        table_digest: params
+            .inner_commit_matrix
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         modulus_profile: params.inner_commit_matrix.sis_modulus_profile(),
         role: crate::sis::SisMatrixRole::Inner,
         ring_dimension: 64,

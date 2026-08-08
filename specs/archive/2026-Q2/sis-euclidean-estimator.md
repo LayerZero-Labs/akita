@@ -11,12 +11,12 @@
 
 ## Summary
 
-Akita's L2 MSIS table regen (archived parent:
-[`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md);
-the folded-witness L2 certificate was cancelled and removed in #247 on main)
-needs regenerated `generated_sis_table/` rows: for each representative modulus family,
-ring dimension, squared-Euclidean collision bucket, and module rank, the maximum commitment
-width that still yields at least 128-bit security under a fixed lattice-reduction cost model.
+This archived work regenerated Akita's former L2 MSIS table. The folded-witness
+L2 certificate was cancelled and removed in #247 on main. The work produced
+`generated_sis_table/` rows for representative modulus families, ring
+dimensions, squared-Euclidean collision buckets, and module ranks. Each row
+records the maximum commitment width that still yields at least 128-bit
+security under a fixed lattice-reduction cost model.
 
 Today that table is produced offline by `scripts/gen_sis_table.py`, which calls
 [lattice-estimator](https://github.com/malb/lattice-estimator) through SageMath from an
@@ -368,7 +368,6 @@ Historical baseline before reliability work: `2bfb768`.
 
 ## References
 
-- Parent (archived): [`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md)
 - [`scripts/gen_sis_table.py`](../scripts/gen_sis_table.py)
 - [`crates/akita-types/src/sis/ajtai_key.rs`](../crates/akita-types/src/sis/ajtai_key.rs)
 - lattice-estimator: `malb/lattice-estimator` — `estimator/sis_lattice.py`

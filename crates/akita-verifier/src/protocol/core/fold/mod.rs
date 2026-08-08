@@ -4,6 +4,7 @@ mod extension_claim;
 mod single_field;
 
 use super::*;
+use akita_algebra::offset_eq::EqPairTensorFamily;
 use akita_types::{dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan};
 
 pub(in crate::protocol::core) use extension_claim::{
@@ -65,16 +66,20 @@ struct Stage1Replay<E: FieldCore> {
     binary_batching: Option<E>,
     range_image_evaluation: E,
     stage1_point: Vec<E>,
+    physical_l2_claim: E,
+    physical_l2_families: Vec<EqPairTensorFamily<E>>,
 }
 
 fn verify_stage1<F, E, T>(
     proof: &AkitaStage1Proof<E>,
     rs: &RingSwitchVerifyOutput<E>,
+    lp: &CommittedGroupParams,
+    relation_plan: &RelationRangeImagePlan,
     transcript: &mut T,
 ) -> Result<Stage1Replay<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let num_rounds = rs.relation_address_geometry.relation_point_variable_count();
@@ -96,11 +101,65 @@ where
     )?;
     let plan = DigitRangePlan::new(rs.b)?;
     let stage1_verifier = AkitaStage1Verifier::new(equality_point, plan);
-    let stage1_point = {
-        let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        stage1_verifier.verify::<F, T>(proof, transcript)?
-    };
+    let physical_plan = PhysicalResponsePlan::new(lp, relation_plan)?;
+    let (stage1_point, physical_l2_virtual_evaluations, physical_plan) =
+        match (physical_plan.as_ref(), proof.norm_proof.as_ref()) {
+            (None, None) => {
+                let point = {
+                    let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+                    stage1_verifier.verify::<F, T>(proof, transcript)?
+                };
+                (point, None, None)
+            }
+            (Some(plan), Some(norm_proof)) => {
+                let InnerCommitSecurityRoute::L2 {
+                    response_l2_sq_cap, ..
+                } = lp.inner_commit_matrix.security_route()
+                else {
+                    return Err(AkitaError::InvalidSetup(
+                        "physical response plan exists for a non-L2 route".into(),
+                    ));
+                };
+                let leaf =
+                    stage1_verifier.verify_product_prefix::<F, T>(&proof.stages, transcript)?;
+                let replay = verify_physical_l2_norm::<F, E, T>(
+                    plan,
+                    norm_proof,
+                    PhysicalL2RangeClaim {
+                        equality_point: &leaf.equality_point,
+                        input_claim: leaf.input_claim,
+                        leaf_coefficients: &leaf.polynomial_coefficients,
+                        image_evaluation: proof.range_image_evaluation,
+                    },
+                    lp.inner_commit_matrix.sis_modulus_profile(),
+                    response_l2_sq_cap,
+                    transcript,
+                )?;
+                (replay.point, Some(replay.virtual_evaluations), Some(plan))
+            }
+            _ => return Err(AkitaError::InvalidProof),
+        };
     transcript.append_serde(ABSORB_RANGE_IMAGE_EVALUATION, &proof.range_image_evaluation);
+    let (physical_l2_claim, physical_l2_families) =
+        match (physical_l2_virtual_evaluations, physical_plan) {
+            (Some(evaluations), Some(plan)) => {
+                let eta = sample_ext_challenge::<F, E, T>(
+                    transcript,
+                    akita_transcript::labels::CHALLENGE_L2_VIRTUAL_BATCH,
+                );
+                let mut batching = Vec::with_capacity(evaluations.len());
+                let mut power = E::one();
+                let mut claim = E::zero();
+                for evaluation in evaluations {
+                    batching.push(power);
+                    claim += evaluation * power;
+                    power *= eta;
+                }
+                (claim, plan.virtualization_families(&batching)?)
+            }
+            (None, None) => (E::zero(), Vec::new()),
+            _ => return Err(AkitaError::InvalidProof),
+        };
     let binary_batching = rs
         .compression_relation_weights
         .as_ref()
@@ -111,6 +170,8 @@ where
         binary_batching,
         range_image_evaluation: proof.range_image_evaluation,
         stage1_point,
+        physical_l2_claim,
+        physical_l2_families,
     })
 }
 
@@ -186,6 +247,8 @@ where
         evaluation_trace,
         evaluation_trace_row_weight,
         evaluation_trace_opening_claim,
+        stage1.physical_l2_claim,
+        stage1.physical_l2_families,
     )?;
 
     let sumcheck_challenges = {
@@ -432,12 +495,25 @@ where
     .map_err(|error| {
         AkitaError::InvalidInput(format!("compressed relation claim failed: {error:?}"))
     })?;
-    let stage1_replay = verify_stage1::<F, E, T>(stage1, &rs, transcript).map_err(|error| {
-        AkitaError::InvalidInput(format!("compressed stage-1 replay failed: {error:?}"))
-    })?;
     // EvaluationTrace is the last padded relation row: weight openings by
     // `eq(tau1, EvaluationTrace_row_index)`.
     let opening_batch = relation_instance.opening_batch();
+    let relation_range_image_plan = RelationRangeImagePlan::new(
+        rs.relation_address_geometry,
+        DigitRangePlan::new(rs.b)?,
+        rs.relation_matrix_evaluator.witness_layout()?.clone(),
+        opening_batch,
+    )?;
+    let stage1_replay = verify_stage1::<F, E, T>(
+        stage1,
+        &rs,
+        prepared.lp,
+        &relation_range_image_plan,
+        transcript,
+    )
+    .map_err(|error| {
+        AkitaError::InvalidInput(format!("compressed stage-1 replay failed: {error:?}"))
+    })?;
     let evaluation_trace_row = prepared.lp.evaluation_trace_row_index(opening_batch)?;
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
@@ -448,7 +524,7 @@ where
             actual: prepared.w_len,
         });
     }
-    let trace_witness_layout = rs.relation_matrix_evaluator.witness_layout()?;
+    let trace_witness_layout = relation_range_image_plan.witness_layout();
     let trace_preparation_span = tracing::info_span!(
         "stage2_evaluation_trace_preparation",
         claims = opening_batch.num_total_polynomials(),

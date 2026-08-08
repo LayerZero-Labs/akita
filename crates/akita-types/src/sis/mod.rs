@@ -12,7 +12,7 @@
 //!     num_positions_per_block, decomposition_digits::num_digits_inner(decomp, is_root))?;
 //! let norm_s = norm_bound::rounded_up_role_a_inf_norm(
 //!     policy, table_digest, family, d, log_basis_response, &stage1, shape,
-//!     exact_fold_digit_depth, ring_subfield_norm_bound)?;
+//!     exact_fold_digit_depth)?;
 //! let n_a = ajtai_key::min_secure_rank(
 //!     SisTableKey { policy, family, ring_dimension: d as u32, coeff_linf_bound: norm_s },
 //!     width_s as u64)?;
@@ -26,9 +26,12 @@ pub mod ajtai_key;
 pub mod compression;
 pub mod decomposition_digits;
 pub mod fold_linf_cap;
+mod generated_l2_sis_table;
 mod generated_sis_table;
 pub mod honest_fold_policy;
+mod l2_table;
 pub mod norm_bound;
+mod physical_l2;
 
 pub use ajtai_key::{
     ceil_coeff_linf_bucket, ceil_supported_linf_bound, min_secure_rank,
@@ -48,15 +51,20 @@ pub use honest_fold_policy::{
     BalancedSignedDigitFoldPolicy, DigitSnapCalibration, HonestFoldPolicy, HonestFoldPolicySpec,
     HonestFoldSizingQuery, UnitOneHotFoldPolicy,
 };
+pub use l2_table::{
+    ceil_supported_l2_collision_sq, min_secure_l2_rank, sis_l2_table_key_for_collision_sq,
+    SisL2TableDigest, SisL2TableKey,
+};
 #[cfg(test)]
 pub(crate) use norm_bound::{fold_witness_beta_inf, fold_witness_digit_plan};
 pub use norm_bound::{
     fold_witness_unsnapped_linf_cap, max_response_linf_for_role_a_collision,
     rademacher_proxy_variance, role_a_collision_inf_norm_for_response_bound,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, weak_binding_inf_norm,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
-    FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM,
-    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
-    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
-    MAX_FOLD_GRIND_ATTEMPTS,
+    role_a_collision_l2_sq_for_response_bound, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, weak_binding_inf_norm, FoldChallengeNorms,
+    FoldWitnessLinfCapConfig, FoldWitnessNorms, FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN,
+    FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN,
+    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM, MAX_FOLD_GRIND_ATTEMPTS,
 };
+pub use physical_l2::{InnerCommitSecurityRoute, LimbGramLayout, PhysicalL2NormProofShape};

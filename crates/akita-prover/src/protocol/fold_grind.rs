@@ -9,8 +9,9 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
     dyadic_block_ranges, golomb_rice_total_wire_bits, golomb_rice_values_within_cap,
-    golomb_rice_zigzag_width, CommittedGroupParams, FoldLinfProtocolBinding, LevelParamsLike,
-    OpeningClaimsLayout, TerminalCommittedGroupParams, TerminalResponseShape,
+    golomb_rice_zigzag_width, CommittedGroupParams, FoldLinfProtocolBinding,
+    InnerCommitSecurityRoute, LevelParamsLike, OpeningClaimsLayout, TerminalCommittedGroupParams,
+    TerminalResponseShape,
 };
 
 use super::ring_relation::{
@@ -46,15 +47,18 @@ where
 struct FoldGrindAcceptanceCtx {
     digit_negative_abs_bound: u128,
     digit_positive_bound: u128,
+    response_l2_sq_cap: Option<u128>,
 }
 
 fn fold_grind_acceptance_ctx(
     digit_negative_abs_bound: u128,
     digit_positive_bound: u128,
+    response_l2_sq_cap: Option<u128>,
 ) -> FoldGrindAcceptanceCtx {
     FoldGrindAcceptanceCtx {
         digit_negative_abs_bound,
         digit_positive_bound,
+        response_l2_sq_cap,
     }
 }
 
@@ -72,35 +76,64 @@ fn accepts_fold_witness<F: CanonicalField, const D: usize>(
     witness: &DecomposeFoldWitness<F>,
     z_folded_centered_per_chunk: &[Vec<[i32; D]>],
 ) -> bool {
-    for coeff in z_folded_centered_per_chunk
+    let coefficients = z_folded_centered_per_chunk
         .iter()
         .flat_map(|chunk| chunk.iter())
-        .flat_map(|coeffs| coeffs.iter())
-    {
-        if !coeff_within_digit_bounds(*coeff, ctx) {
+        .flat_map(|coeffs| coeffs.iter());
+    if ctx.response_l2_sq_cap.is_none() {
+        return coefficients
+            .into_iter()
+            .all(|&coeff| coeff_within_digit_bounds(coeff, ctx));
+    }
+    let mut response_l2_sq = 0u128;
+    for &coeff in coefficients {
+        if !coeff_within_digit_bounds(coeff, ctx) {
             return false;
         }
+        let magnitude = u128::from(coeff.unsigned_abs());
+        let Some(next) = magnitude
+            .checked_mul(magnitude)
+            .and_then(|square| response_l2_sq.checked_add(square))
+        else {
+            return false;
+        };
+        response_l2_sq = next;
     }
     let _ = witness;
-    true
+    ctx.response_l2_sq_cap
+        .is_some_and(|cap| response_l2_sq <= cap)
 }
 
 fn accepts_fold_witness_flat<F: CanonicalField>(
     ctx: &FoldGrindAcceptanceCtx,
     witness: &DecomposeFoldWitness<F>,
     centered_per_chunk: &[Vec<Vec<i32>>],
-) -> bool {
+) -> Option<Option<u128>> {
     let coefficients = centered_per_chunk
         .iter()
         .flat_map(|chunk| chunk.iter())
         .flat_map(|row| row.iter());
+    if ctx.response_l2_sq_cap.is_none() {
+        return coefficients
+            .into_iter()
+            .all(|&coefficient| coeff_within_digit_bounds(coefficient, ctx))
+            .then_some(None);
+    }
+    let mut response_l2_sq = 0u128;
     for &coefficient in coefficients {
         if !coeff_within_digit_bounds(coefficient, ctx) {
-            return false;
+            return None;
         }
+        let magnitude = u128::from(coefficient.unsigned_abs());
+        let next = magnitude
+            .checked_mul(magnitude)
+            .and_then(|square| response_l2_sq.checked_add(square))?;
+        response_l2_sq = next;
     }
     let _ = witness;
-    true
+    ctx.response_l2_sq_cap
+        .is_some_and(|cap| response_l2_sq <= cap)
+        .then_some(Some(response_l2_sq))
 }
 
 pub(crate) struct FoldGrindGroup<'params, 'group, G> {
@@ -117,7 +150,7 @@ impl<G> Clone for FoldGrindGroup<'_, '_, G> {
     }
 }
 
-pub(crate) struct FoldGrindGroupOutput<F: FieldCore> {
+pub(crate) struct FoldProbeOutput<F: FieldCore> {
     pub(crate) witness: DecomposeFoldWitness<F>,
     pub(crate) centered_per_chunk: Vec<Vec<Vec<i32>>>,
     pub(crate) challenges: Challenges,
@@ -329,7 +362,7 @@ fn sample_multi_group_fold_decompose_witnesses_native<F, E, G, B, T>(
     root_lp: &CommittedGroupParams,
     groups: &[PreparedFoldGrindGroup<'_, '_, G>],
     max_grind_attempts: u32,
-) -> Result<(Vec<FoldGrindGroupOutput<F>>, u32), AkitaError>
+) -> Result<(Vec<FoldProbeOutput<F>>, u32), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -365,23 +398,24 @@ where
                         group
                             .group
                             .probe_fold(opening_ctx, &challenges, root_lp, group.params)?;
-                    let candidate = accepts_fold_witness_flat(
+                    let observed_l2_sq = accepts_fold_witness_flat(
                         &prepared_group.acceptance,
                         &output.witness,
                         &output.centered_per_chunk,
-                    )
-                    .then_some(output);
-                    let Some(candidate) = candidate else {
+                    );
+                    let Some(observed_l2_sq) = observed_l2_sq else {
                         return Ok(None);
                     };
-                    candidate_outputs.push(candidate);
+                    candidate_outputs.push((output, observed_l2_sq));
                 }
             }
             Ok(Some(candidate_outputs))
         })?;
 
     let mut live = LiveFoldDraw::<F, T>::new(transcript);
-    for (prepared_group, output) in groups.iter().zip(candidate_outputs.iter_mut()) {
+    for (prepared_group, (output, observed_l2_sq)) in
+        groups.iter().zip(candidate_outputs.iter_mut())
+    {
         let group = &prepared_group.input;
         let ring_d = group.params.inner_commit_matrix_params().ring_dimension();
         let challenges = live.draw_folding_challenges(
@@ -397,8 +431,22 @@ where
                 "fold grind preview did not match live transcript replay".to_string(),
             ));
         }
+        tracing::info!(
+            group_index = group.group_index,
+            nonce,
+            attempts = nonce + 1,
+            response_l2_sq = ?observed_l2_sq,
+            response_l2_sq_cap = ?prepared_group.acceptance.response_l2_sq_cap,
+            "selected physical fold response"
+        );
     }
-    Ok((candidate_outputs, nonce))
+    Ok((
+        candidate_outputs
+            .into_iter()
+            .map(|(output, _)| output)
+            .collect(),
+        nonce,
+    ))
 }
 
 /// Probe all root groups off-sponge and commit the first jointly accepted nonce.
@@ -414,7 +462,7 @@ pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, G, B, T>(
     opening_batch: &OpeningClaimsLayout,
     groups: &[FoldGrindGroup<'_, '_, G>],
     _tail_t_vectors: Option<usize>,
-) -> Result<(Vec<FoldGrindGroupOutput<F>>, u32), AkitaError>
+) -> Result<(Vec<FoldProbeOutput<F>>, u32), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -450,9 +498,26 @@ where
                 group.params.log_basis_open(),
                 delta_fold,
             );
+        let response_l2_sq_cap = match group.params.inner_commit_matrix_params().security_route() {
+            InnerCommitSecurityRoute::Linf(_) => None,
+            InnerCommitSecurityRoute::L2 {
+                response_l2_sq_cap, ..
+            } => {
+                if groups.len() != 1 || group.group_index != 0 {
+                    return Err(AkitaError::InvalidSetup(
+                        "L2 fold grinding requires one scalar group".into(),
+                    ));
+                }
+                Some(response_l2_sq_cap)
+            }
+        };
         prepared_groups.push(PreparedFoldGrindGroup {
             input: *group,
-            acceptance: fold_grind_acceptance_ctx(digit_negative_abs_bound, digit_positive_bound),
+            acceptance: fold_grind_acceptance_ctx(
+                digit_negative_abs_bound,
+                digit_positive_bound,
+                response_l2_sq_cap,
+            ),
         });
     }
     sample_multi_group_fold_decompose_witnesses_native::<F, E, G, B, T>(
@@ -521,7 +586,7 @@ mod tests {
         );
         let chunks = vec![vec![[129, 0, 0, 0]], vec![[-12; D]]];
         let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(4, 2);
-        let acceptance = fold_grind_acceptance_ctx(neg_bound, pos_bound);
+        let acceptance = fold_grind_acceptance_ctx(neg_bound, pos_bound, None);
         assert!(!accepts_fold_witness::<F, D>(
             &acceptance,
             &witness,
@@ -541,7 +606,7 @@ mod tests {
         let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(6, 2);
         assert_eq!(neg_bound, 2080);
         assert_eq!(pos_bound, 2015);
-        let acceptance = fold_grind_acceptance_ctx(neg_bound, pos_bound);
+        let acceptance = fold_grind_acceptance_ctx(neg_bound, pos_bound, None);
         assert!(!accepts_fold_witness::<F, D>(
             &acceptance,
             &witness,
@@ -553,7 +618,7 @@ mod tests {
     fn digit_interval_accepts_both_endpoints_and_rejects_neighbors() {
         let (negative_abs, positive) =
             akita_types::sis::fold_witness_representable_linf_bounds(4, 2);
-        let acceptance = fold_grind_acceptance_ctx(negative_abs, positive);
+        let acceptance = fold_grind_acceptance_ctx(negative_abs, positive, None);
         let negative_abs = i32::try_from(negative_abs).unwrap();
         let positive = i32::try_from(positive).unwrap();
 
@@ -561,5 +626,21 @@ mod tests {
         assert!(coeff_within_digit_bounds(positive, &acceptance));
         assert!(!coeff_within_digit_bounds(-negative_abs - 1, &acceptance));
         assert!(!coeff_within_digit_bounds(positive + 1, &acceptance));
+    }
+
+    #[test]
+    fn joint_grind_applies_the_l2_cap_to_the_complete_physical_response() {
+        const D: usize = 4;
+        let witness = DecomposeFoldWitness::from_parts::<D>(
+            vec![CyclotomicRing::<F, D>::zero()],
+            vec![[3, 4, 0, 0]],
+            4,
+        );
+        let chunks = vec![vec![[3, 4, 0, 0]]];
+        let acceptance = fold_grind_acceptance_ctx(8, 7, Some(25));
+        assert!(accepts_fold_witness::<F, D>(&acceptance, &witness, &chunks));
+
+        let too_small = fold_grind_acceptance_ctx(8, 7, Some(24));
+        assert!(!accepts_fold_witness::<F, D>(&too_small, &witness, &chunks));
     }
 }

@@ -116,20 +116,21 @@ pub use proof::{
     DummyProof, ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FoldLevelProof,
     GroupBatchStatement, LevelProofShape, NegativeBinarySupport, NextWitnessBinding,
     NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
-    PolynomialGroupClaims, PolynomialGroupLayout, PreparedOpeningPoint, ProverCommitmentRows,
-    PublicMatrixDerivation, RelationAddressGeometry, RelationGroupRows,
-    RelationRangeImageGroupPlan, RelationRangeImagePlan, RelationRhsLayout, RelationRowFamily,
-    RingCommitment, RingMultiplierOpeningPoint, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLengths, RingVec, RingView, SetupMatrixCapacity, SetupPrefixProverRegistry,
-    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
-    SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentGroupLayout,
-    TailSegmentLayout, TerminalLevelProof, TerminalLevelProofShape, TerminalResponse,
-    TerminalResponseGroupParts, TerminalResponseShape, TerminalWitnessTranscriptParts,
-    MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS,
-    SETUP_SUMCHECK_DEGREE,
+    PhysicalL2NormProof, PhysicalResponsePlan, PolynomialGroupClaims, PolynomialGroupLayout,
+    PreparedOpeningPoint, ProverCommitmentRows, PublicMatrixDerivation, RelationAddressGeometry,
+    RelationGroupRows, RelationRangeImageGroupPlan, RelationRangeImagePlan, RelationRhsLayout,
+    RelationRowFamily, RingCommitment, RingMultiplierOpeningPoint, RingRelationInstance,
+    RingRelationOpeningCounts, RingRelationSegmentLengths, RingVec, RingView, SetupMatrixCapacity,
+    SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
+    SetupSumcheckProof, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
+    TerminalLevelProofShape, TerminalResponse, TerminalResponseGroupParts, TerminalResponseShape,
+    TerminalWitnessTranscriptParts, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+    MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof::{
-    append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
+    append_digit_range_child_claims, reconstruct_l2_sq_from_gram, DigitRangeEqualityPoint,
+    DigitRangePlan, FlatBooleanDomain,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
@@ -149,9 +150,10 @@ pub use setup_contribution::{
     SetupContributionGroupInputs, SetupContributionPlan, SetupProjectionGeometry,
 };
 pub use sis::{
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, ScalarCutoff,
-    SisMatrixRole, SisModulusProfileId, SisRoleCell, SisSecurityPolicyId, SisTableDigest,
-    SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+    InnerCommitMatrixParams, InnerCommitSecurityRoute, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, PhysicalL2NormProofShape, ScalarCutoff, SisL2TableDigest,
+    SisL2TableKey, SisMatrixRole, SisModulusProfileId, SisRoleCell, SisSecurityPolicyId,
+    SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
 pub use tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 pub use trace_weight::{

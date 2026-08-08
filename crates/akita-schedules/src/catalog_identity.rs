@@ -46,11 +46,12 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(sis_modulus_profile_tag(policy.sis_modulus_profile));
     h.write_u64(u64::from(policy.sis_security_policy.tag()));
     h.write_bytes(&policy.sis_table_digest.0);
+    h.write_bytes(&policy.sis_l2_table_digest.0);
+    write_selective_l2_fold_caps(&mut h, policy.selective_l2_fold_caps);
     h.write_u64(policy.uniform_ring_dimension as u64);
     h.write_u64(policy.setup_prefix_inner_ring_dimension as u64);
     write_ring_dimension_schedule_mode(&mut h, policy.ring_dimension_schedule_mode);
     write_decomposition(&mut h, policy.decomposition);
-    h.write_u64(u64::from(policy.ring_subfield_norm_bound));
     h.write_u64(policy.claim_ext_degree as u64);
     h.write_u64(policy.chal_ext_degree as u64);
     h.write_u64(u64::from(policy.basis_range.0));
@@ -76,10 +77,11 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(sis_modulus_profile_tag(identity.sis_modulus_profile));
     h.write_u64(u64::from(identity.sis_security_policy.tag()));
     h.write_bytes(&identity.sis_table_digest.0);
+    h.write_bytes(&identity.sis_l2_table_digest.0);
+    write_selective_l2_fold_caps(&mut h, identity.selective_l2_fold_caps);
     h.write_u64(identity.uniform_ring_dimension as u64);
     h.write_u64(identity.setup_prefix_inner_ring_dimension as u64);
     write_decomposition(&mut h, identity.decomposition);
-    h.write_u64(u64::from(identity.ring_subfield_norm_bound));
     h.write_u64(identity.claim_ext_degree as u64);
     h.write_u64(identity.chal_ext_degree as u64);
     h.write_u64(u64::from(identity.basis_range.0));
@@ -130,10 +132,11 @@ struct CatalogIdentityExpectation {
     sis_modulus_profile: akita_types::SisModulusProfileId,
     sis_security_policy: akita_types::SisSecurityPolicyId,
     sis_table_digest: akita_types::SisTableDigest,
+    sis_l2_table_digest: akita_types::SisL2TableDigest,
+    selective_l2_fold_caps: Vec<crate::SelectiveL2FoldCap>,
     uniform_ring_dimension: usize,
     setup_prefix_inner_ring_dimension: usize,
     decomposition: akita_types::DecompositionParams,
-    ring_subfield_norm_bound: u32,
     claim_ext_degree: usize,
     chal_ext_degree: usize,
     basis_range: (u32, u32),
@@ -160,10 +163,11 @@ impl CatalogIdentityExpectation {
             sis_modulus_profile: identity.sis_modulus_profile,
             sis_security_policy: identity.sis_security_policy,
             sis_table_digest: identity.sis_table_digest,
+            sis_l2_table_digest: identity.sis_l2_table_digest,
+            selective_l2_fold_caps: identity.selective_l2_fold_caps.to_vec(),
             uniform_ring_dimension: identity.uniform_ring_dimension,
             setup_prefix_inner_ring_dimension: identity.setup_prefix_inner_ring_dimension,
             decomposition: identity.decomposition,
-            ring_subfield_norm_bound: identity.ring_subfield_norm_bound,
             claim_ext_degree: identity.claim_ext_degree,
             chal_ext_degree: identity.chal_ext_degree,
             basis_range: identity.basis_range,
@@ -204,10 +208,11 @@ fn catalog_identity_expectation(
         sis_modulus_profile: policy.sis_modulus_profile,
         sis_security_policy: policy.sis_security_policy,
         sis_table_digest: policy.sis_table_digest,
+        sis_l2_table_digest: policy.sis_l2_table_digest,
+        selective_l2_fold_caps: policy.selective_l2_fold_caps.to_vec(),
         uniform_ring_dimension: policy.uniform_ring_dimension,
         setup_prefix_inner_ring_dimension: policy.setup_prefix_inner_ring_dimension,
         decomposition: policy.decomposition,
-        ring_subfield_norm_bound: policy.ring_subfield_norm_bound,
         claim_ext_degree: policy.claim_ext_degree,
         chal_ext_degree: policy.chal_ext_degree,
         basis_range: policy.basis_range,
@@ -242,10 +247,11 @@ pub fn expected_catalog_identity(
         sis_modulus_profile: expected.sis_modulus_profile,
         sis_security_policy: expected.sis_security_policy,
         sis_table_digest: expected.sis_table_digest,
+        sis_l2_table_digest: expected.sis_l2_table_digest,
+        selective_l2_fold_caps: Box::leak(expected.selective_l2_fold_caps.into_boxed_slice()),
         uniform_ring_dimension: expected.uniform_ring_dimension,
         setup_prefix_inner_ring_dimension: expected.setup_prefix_inner_ring_dimension,
         decomposition: expected.decomposition,
-        ring_subfield_norm_bound: expected.ring_subfield_norm_bound,
         claim_ext_degree: expected.claim_ext_degree,
         chal_ext_degree: expected.chal_ext_degree,
         basis_range: expected.basis_range,
@@ -632,6 +638,18 @@ fn write_optional_usize(h: &mut Fnv64, value: Option<usize>) {
             h.write_u64(value as u64);
         }
         None => h.write_u64(0),
+    }
+}
+
+fn write_selective_l2_fold_caps(h: &mut Fnv64, caps: &[crate::SelectiveL2FoldCap]) {
+    h.write_u64(caps.len() as u64);
+    for cap in caps {
+        h.write_u64(cap.fold_level as u64);
+        h.write_u64(cap.input_witness_len as u64);
+        h.write_u64(cap.physical_response_len as u64);
+        h.write_u64(cap.fold_basis as u64);
+        h.write_u64(cap.fold_digit_count as u64);
+        h.write_bytes(&cap.response_l2_sq_cap.to_le_bytes());
     }
 }
 

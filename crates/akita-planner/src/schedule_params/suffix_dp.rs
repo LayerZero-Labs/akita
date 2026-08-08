@@ -792,8 +792,6 @@ pub(crate) fn derive_optimal_suffix_schedule(
                             level,
                             incoming_setup_prefix,
                         )?
-                        .into_iter()
-                        .collect()
                     };
                     candidates.extend(
                         level_candidates

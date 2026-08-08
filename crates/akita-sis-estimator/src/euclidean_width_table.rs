@@ -18,12 +18,6 @@ pub const DEFAULT_EUCLIDEAN_TARGET_BITS: f64 = 128.0;
 pub const MIN_LOG_BUCKET: u32 = 1;
 /// Largest squared-collision power-of-two bucket in the shipped L2 table.
 pub const MAX_LOG_BUCKET: u32 = 84;
-/// Coefficient-L∞ buckets used to derive extra L2 collision keys.
-pub const COEFF_LINF_BUCKETS: &[u64] = &[
-    2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535, 131_071,
-    262_143, 524_287, 1_048_575, 2_097_151, 4_194_303, 8_388_607, 16_777_215, 33_554_431,
-    67_108_863,
-];
 /// Modulus families covered by Akita SIS table generation.
 pub const FAMILIES: &[AkitaModulusProfileId] = &[
     AkitaModulusProfileId::Q32Offset99,
@@ -128,10 +122,7 @@ impl EuclideanWidthRow {
 /// Return the full collision-key set used by the shipped L2 table.
 #[must_use]
 pub fn l2_table_collision_keys() -> Vec<u128> {
-    let mut keys = BTreeSet::new();
-    keys.extend(power_of_two_collision_keys());
-    keys.extend(derived_l2_collision_keys());
-    keys.into_iter().collect()
+    power_of_two_collision_keys()
 }
 
 /// Return `2^MIN_LOG_BUCKET ..= 2^MAX_LOG_BUCKET`.
@@ -140,28 +131,6 @@ pub fn power_of_two_collision_keys() -> Vec<u128> {
     (MIN_LOG_BUCKET..=MAX_LOG_BUCKET)
         .map(|power| 1u128 << power)
         .collect()
-}
-
-/// Return the derived keys `d * B^2` used by the production table.
-#[must_use]
-pub fn derived_l2_collision_keys() -> Vec<u128> {
-    let mut keys = BTreeSet::new();
-    for &d in RING_DIMS {
-        for &bound in COEFF_LINF_BUCKETS {
-            keys.insert(u128::from(d) * coeff_linf_bucket_sq(bound));
-        }
-    }
-    keys.into_iter().collect()
-}
-
-/// Return `B²` for a coefficient-L∞ bucket without float rounding.
-#[must_use]
-pub fn coeff_linf_bucket_sq(bound: u64) -> u128 {
-    if bound <= 3 {
-        return u128::from(bound) * u128::from(bound);
-    }
-    let k = (bound + 1).ilog2();
-    (1u128 << (2 * k)) - (1u128 << (k + 1)) + 1
 }
 
 /// Generate row-oriented Euclidean max-width comparison data.
@@ -504,11 +473,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn derived_collision_keys_match_python_contract() {
-        assert_eq!(coeff_linf_bucket_sq(15), 225);
-        assert_eq!(coeff_linf_bucket_sq(31), 961);
-        assert!(derived_l2_collision_keys().contains(&(32 * 15 * 15)));
+    fn collision_keys_match_power_of_two_contract() {
+        assert!(l2_table_collision_keys().contains(&2));
         assert!(l2_table_collision_keys().contains(&(1u128 << 84)));
+        assert_eq!(l2_table_collision_keys().len(), 84);
     }
 
     #[test]

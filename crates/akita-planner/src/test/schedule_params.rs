@@ -730,6 +730,7 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
     // fixed-D64 domain, where two equal-payload schedules differ in setup size.
     let mut base_policy = policy_of::<OneHotMultiChunkW4R2>();
     base_policy.uniform_ring_dimension = 64;
+    base_policy.selective_l2_fold_caps = &[];
     let policy = policy_for_domain(base_policy, &domain);
     let selected = find_schedule(
         PolynomialGroupLayout::singleton(32),

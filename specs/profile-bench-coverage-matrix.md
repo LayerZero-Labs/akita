@@ -8,7 +8,7 @@
 | PR          | https://github.com/LayerZero-Labs/akita/pull/107      |
 
 > **Status note (2026-06-03, PR #146).** The committed-fold A-role reprice in
-> [`specs/weak-binding-norm-fix.md`](weak-binding-norm-fix.md) made the small-D
+> [`weak-binding-norm-fix.md`](archive/2026-Q3/weak-binding-norm-fix.md) made the small-D
 > families non-securable (fp16 entirely; fp32/fp64 at D32/D64), so the **active**
 > benchmark matrix was re-pointed at securable D128 profiles for the small prime
 > fields. A later follow-up re-pointed the **fp128** cells to D64 after measuring

@@ -159,6 +159,12 @@ fn generated_entry(
             payload_mode: step.params.witness.payload_mode,
             witness: committed_group(&step.params.witness),
             num_digits_fold: step.params.witness.num_digits_fold as u32,
+            response_l2_sq_cap: match step.params.witness.inner_commit_matrix.security_route() {
+                akita_types::InnerCommitSecurityRoute::Linf(_) => None,
+                akita_types::InnerCommitSecurityRoute::L2 {
+                    response_l2_sq_cap, ..
+                } => Some(response_l2_sq_cap),
+            },
             open_commit_matrix: open_matrix_params(
                 &step.params.open_commit_matrix,
                 step.params.witness.log_basis_open,
@@ -231,7 +237,8 @@ fn generated_entry(
                 .params
                 .witness
                 .inner_commit_matrix
-                .coeff_linf_bound(),
+                .coeff_linf_bound()
+                .expect("validated terminal matrix is L infinity"),
             z_admission_linf_cap: terminal_group.z_admission_linf_cap,
             z_rice_low_bits: terminal_group.z_rice_low_bits,
             z_payload_bytes: terminal_group.z_payload_bytes as u64,
@@ -260,7 +267,10 @@ fn emit_precommitted_group_key(layout: &CommittedGroupProfile) -> String {
             "InnerCommitMatrixParams",
             layout.inner_commit_matrix.output_rank(),
             layout.inner_commit_matrix.input_width(),
-            layout.inner_commit_matrix.sis_table_key(),
+            layout
+                .inner_commit_matrix
+                .sis_table_key()
+                .expect("validated precommitted matrix is L infinity"),
         ),
         layout.log_basis_outer,
         layout.num_digits_outer,
@@ -288,7 +298,10 @@ fn emit_generated_precommitted_profile(profile: &CommittedGroupProfile) -> Strin
         emit_generated_committed_profile_group(profile),
         profile.num_digits_inner,
         profile.inner_commit_matrix.output_rank(),
-        profile.inner_commit_matrix.coeff_linf_bound(),
+        profile
+            .inner_commit_matrix
+            .coeff_linf_bound()
+            .expect("validated precommitted matrix is L infinity"),
         profile.num_digits_outer,
         profile.outer_commit_matrix.output_rank(),
         profile.outer_commit_matrix.coeff_linf_bound(),
@@ -438,10 +451,14 @@ fn emit_schedule_entry(
         for fold in entry.recursive_folds {
             writeln!(
                 out,
-                "            GeneratedRecursiveFold {{ payload_mode: {}, witness: {}, num_digits_fold: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
+                "            GeneratedRecursiveFold {{ payload_mode: {}, witness: {}, num_digits_fold: {}, response_l2_sq_cap: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
                 emit_payload_mode(fold.payload_mode),
                 emit_committed_group(fold.witness),
                 fold.num_digits_fold,
+                fold.response_l2_sq_cap.map_or_else(
+                    || "None".to_string(),
+                    |cap| format!("Some({cap})"),
+                ),
                 emit_open_matrix(fold.open_commit_matrix),
                 emit_setup_prefix(fold.incoming_setup_prefix),
                 emit_partition(fold.witness_partition),
@@ -541,11 +558,29 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         .map(|d| d.to_string())
         .collect::<Vec<_>>()
         .join(", ");
+    let selective_l2_fold_caps = identity
+        .selective_l2_fold_caps
+        .iter()
+        .map(|cap| {
+            format!(
+                "SelectiveL2FoldCap {{ fold_level: {}, input_witness_len: {}, physical_response_len: {}, fold_basis: {}, fold_digit_count: {}, response_l2_sq_cap: {} }}",
+                cap.fold_level,
+                cap.input_witness_len,
+                cap.physical_response_len,
+                cap.fold_basis,
+                cap.fold_digit_count,
+                cap.response_l2_sq_cap
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
         concat!(
             "{ring_dimension_policy_statics}",
             "#[rustfmt::skip]\n",
             "pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[{ring_dims}];\n",
+            "#[rustfmt::skip]\n",
+            "pub(crate) static CATALOG_SELECTIVE_L2_FOLD_CAPS: &[SelectiveL2FoldCap] = &[{selective_l2_fold_caps}];\n",
             "#[rustfmt::skip]\n",
             "pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = ",
             "GeneratedScheduleCatalogIdentity {{\n",
@@ -558,10 +593,11 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    sis_modulus_profile: {sis_modulus_profile},\n",
             "    sis_security_policy: SisSecurityPolicyId::{sis_security_policy},\n",
             "    sis_table_digest: SisTableDigest({sis_table_digest}),\n",
+            "    sis_l2_table_digest: SisL2TableDigest({sis_l2_table_digest}),\n",
+            "    selective_l2_fold_caps: CATALOG_SELECTIVE_L2_FOLD_CAPS,\n",
             "    uniform_ring_dimension: {uniform_ring_dimension},\n",
             "    setup_prefix_inner_ring_dimension: {setup_prefix_inner_ring_dimension},\n",
             "    decomposition: {decomposition},\n",
-            "    ring_subfield_norm_bound: {ring_subfield_norm_bound},\n",
             "    claim_ext_degree: {claim_ext_degree},\n",
             "    chal_ext_degree: {chal_ext_degree},\n",
             "    basis_range: ({basis_min}, {basis_max}),\n",
@@ -589,10 +625,11 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         sis_modulus_profile = emit_sis_modulus_profile(identity.sis_modulus_profile),
         sis_security_policy = identity.sis_security_policy.name(),
         sis_table_digest = format_bytes(identity.sis_table_digest.0),
+        sis_l2_table_digest = format_bytes(identity.sis_l2_table_digest.0),
+        selective_l2_fold_caps = selective_l2_fold_caps,
         uniform_ring_dimension = identity.uniform_ring_dimension,
         setup_prefix_inner_ring_dimension = identity.setup_prefix_inner_ring_dimension,
         decomposition = emit_decomposition(identity.decomposition),
-        ring_subfield_norm_bound = identity.ring_subfield_norm_bound,
         claim_ext_degree = identity.claim_ext_degree,
         chal_ext_degree = identity.chal_ext_degree,
         basis_min = identity.basis_range.0,
@@ -725,7 +762,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
          GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
          CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, CommittedGroupProfile, \
          InnerCommitMatrixParams, OuterCommitMatrixParams, \
-         CommitmentPayloadMode, RingDimensionScheduleMode, SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,\n}};"
+         CommitmentPayloadMode, RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2FoldCap, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,\n}};"
     )
     .map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;
