@@ -5,6 +5,7 @@ use crate::report::{
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
     report_verifier_ntt_cache_size,
 };
+use crate::workload_params::onehot_k_for_num_vars;
 use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
@@ -37,8 +38,6 @@ use akita_types::{
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Instant;
-
-pub(crate) const ONEHOT_K: usize = 256;
 
 fn planned_payload_bytes<Cfg: CommitmentConfig>(
     schedule: &FoldSchedule,
@@ -184,15 +183,6 @@ where
     OneHotPoly::<FF, u8>::new(onehot_k, d, indices).expect("profile onehot poly")
 }
 
-pub(crate) fn onehot_k_for_num_vars(nv: usize) -> usize {
-    let max_supported_log_k = ONEHOT_K.trailing_zeros() as usize;
-    if nv >= max_supported_log_k {
-        ONEHOT_K
-    } else {
-        1usize << nv
-    }
-}
-
 fn assert_observed_proof_size<FF, E>(label: &str, proof: &AkitaBatchedProof<FF, E>)
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
@@ -300,9 +290,9 @@ fn assert_runtime_matches_planned_proof_size(
     }
 }
 
-/// Required setup-contribution mode for the config-typed recursive multi-group
-/// profile. Scalar profiles are direct by construction.
-fn profile_setup_contribution_mode() -> SetupContributionMode {
+/// Required setup-contribution mode for config-typed multi-group profiles.
+/// Scalar profiles are direct by construction.
+pub(crate) fn profile_setup_contribution_mode() -> SetupContributionMode {
     match std::env::var("AKITA_SETUP_MODE").ok().as_deref() {
         Some("recursive") => SetupContributionMode::Recursive,
         Some("direct") | None => SetupContributionMode::Direct,
@@ -437,14 +427,44 @@ where
 
     let low_vars = onehot_k.trailing_zeros() as usize;
     let low_weights = lagrange_weights(&point[..low_vars]).expect("valid low opening point");
-    let high_weights = lagrange_weights(&point[low_vars..]).expect("valid high opening point");
-    poly.indices()
+    let high_point = &point[low_vars..];
+    let mut high_weight = high_point
         .iter()
-        .enumerate()
-        .filter_map(|(chunk_idx, hot_idx)| {
-            hot_idx.map(|hot_idx| high_weights[chunk_idx] * low_weights[hot_idx.as_usize()])
+        .copied()
+        .map(|r| E::one() - r)
+        .fold(E::one(), |acc, value| acc * value);
+    let transitions = high_point
+        .iter()
+        .copied()
+        .map(|r| {
+            let one_minus_r = E::one() - r;
+            let to_one = r * one_minus_r
+                .inverse()
+                .expect("non-Boolean random opening point");
+            let to_zero = one_minus_r * r.inverse().expect("non-Boolean random opening point");
+            (to_one, to_zero)
         })
-        .fold(E::zero(), |acc, weight| acc + weight)
+        .collect::<Vec<_>>();
+    let mut opening = E::zero();
+    let mut gray_index = 0usize;
+    for step in 0..poly.indices().len() {
+        if let Some(hot_idx) = poly.indices()[gray_index] {
+            opening += high_weight * low_weights[hot_idx.as_usize()];
+        }
+        let next_step = step + 1;
+        if next_step == poly.indices().len() {
+            break;
+        }
+        let next_gray = next_step ^ (next_step >> 1);
+        let flipped_bit = (gray_index ^ next_gray).trailing_zeros() as usize;
+        high_weight *= if next_gray & (1usize << flipped_bit) == 0 {
+            transitions[flipped_bit].1
+        } else {
+            transitions[flipped_bit].0
+        };
+        gray_index = next_gray;
+    }
+    opening
 }
 
 fn opening_from_poly<'a, FF, const D: usize, P>(
@@ -754,7 +774,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     report_crt_profile(
         label,
         prepared
-            .shared_ntt_profile::<D>()
+            .shared_ntt_profile(layout.d_a())
             .expect("prepared setup CRT profile"),
     );
     run_prove::<FF, D, Cfg, DensePoly<FF>>(
@@ -833,7 +853,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     report_crt_profile(
         label,
         prepared
-            .shared_ntt_profile::<D>()
+            .shared_ntt_profile(layout.d_a())
             .expect("prepared setup CRT profile"),
     );
     run_prove::<FF, D, Cfg, OneHotPoly<FF, u8>>(
@@ -927,7 +947,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_crt_profile(
             label,
             prepared
-                .shared_ntt_profile::<D>()
+                .shared_ntt_profile(layout.d_a())
                 .expect("prepared setup CRT profile"),
         );
         let t0 = Instant::now();
@@ -1232,7 +1252,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         report_crt_profile(
             label,
             prepared
-                .shared_ntt_profile::<D>()
+                .shared_ntt_profile(schedule.root.params.final_group.commitment.d_a())
                 .expect("prepared setup CRT profile"),
         );
         let mut pre_keys = Vec::with_capacity(PRE_GROUPS);

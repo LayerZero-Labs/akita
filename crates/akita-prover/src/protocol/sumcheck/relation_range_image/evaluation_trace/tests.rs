@@ -10,7 +10,7 @@ use akita_types::{
     RingMultiplierOpeningPoint, WitnessLayout,
 };
 
-type Cfg = fp128::D128Dense;
+type Cfg = fp128::Dense;
 type F = fp128::Field;
 const D: usize = Cfg::D;
 const NUM_VARIABLES: usize = 16;
@@ -90,6 +90,7 @@ where
     let live_len = witness_layout.live_coeff_len();
     let relation_address_geometry =
         RelationAddressGeometry::new(level_params.role_dims(), D, live_len).unwrap();
+    let common_coefficient_count = relation_address_geometry.relation_coefficient_block_len();
     let plan = RelationRangeImagePlan::new(
         relation_address_geometry,
         DigitRangePlan::new(1usize << level_params.log_basis_open).unwrap(),
@@ -138,7 +139,11 @@ where
     let mut padded_expected_table = expected_table.clone();
     padded_expected_table.resize(1usize << point.len(), E::zero());
 
-    for coeff_count in [D, D / 2, D / 4] {
+    for coeff_count in [
+        common_coefficient_count,
+        common_coefficient_count / 2,
+        common_coefficient_count / 4,
+    ] {
         let prepared =
             PreparedProverEvaluationTrace::new(&semantic_trace, coeff_count, output_scale).unwrap();
         assert_eq!(prepared.materialize_dense(), expected_table,);
@@ -160,7 +165,7 @@ where
             multilinear_eval(&padded_expected_table, &point).unwrap()
         );
     }
-    for malformed_common_count in [0, 3, D * 2] {
+    for malformed_common_count in [0, 3, common_coefficient_count * 2] {
         assert!(PreparedProverEvaluationTrace::new(
             &semantic_trace,
             malformed_common_count,

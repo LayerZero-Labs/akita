@@ -53,8 +53,9 @@ fn reject_trailing_bytes(rest: &[u8]) -> Result<(), SerializationError> {
 
 /// Bundled verifier inputs that travel from the host to the Jolt guest.
 ///
-/// `D` is the cyclotomic ring dimension picked by the host config. The
-/// guest must use the same `D` to decode `commitment`.
+/// `D` is the cyclotomic root-envelope dimension pinned by the host config.
+/// The guest must use the same value to reject blobs built for a different
+/// verifier monomorphization; per-level dimensions remain schedule-owned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     /// Domain label both prover and verifier transcripts were initialized with.
@@ -75,7 +76,7 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     /// reconstructing a `Schedule` first.
     pub proof_shape: AkitaBatchedProofShape,
     /// The Akita batched proof itself. The extension field collapses to `F`
-    /// for the fp128 D64OneHot profile (`EXT_DEGREE == 1`).
+    /// for the fp128 OneHot profile (`EXT_DEGREE == 1`).
     pub proof: AkitaBatchedProof<F, F>,
 }
 
@@ -303,8 +304,12 @@ where
     fn decode_seed_and_matrix(
         rest: &mut &[u8],
     ) -> Result<(AkitaSetupDescriptor, FlatMatrix<F>), SerializationError> {
-        let seed =
-            AkitaSetupDescriptor::deserialize_with_mode(&mut *rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+        let seed = AkitaSetupDescriptor::deserialize_with_mode(
+            &mut *rest,
+            BLOB_COMPRESS,
+            BLOB_VALIDATE,
+            &(),
+        )?;
         let matrix_fields = seed.num_field_elements;
         if matrix_fields > MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS {
             return Err(SerializationError::LengthLimitExceeded {

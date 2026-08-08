@@ -597,6 +597,9 @@ where
         // The descriptor owns the physical E address for every logical block.
         let mut v = vec![E::zero(); k];
         for unit in layout.witness_layout.units_for_group(layout.group_id)? {
+            if unit.num_live_blocks() == 0 {
+                continue;
+            }
             let block = term
                 .block_offset
                 .checked_add(unit.global_block_start())

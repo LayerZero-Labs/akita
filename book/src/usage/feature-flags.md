@@ -22,5 +22,5 @@ Disable parallel locally: `cargo build --no-default-features` (or add only the f
 | `profile-ci` | Schedule features needed for the CI profile-bench matrix (see [Profiling](./profiling.md)) |
 
 Per-crate feature tables live in each `crates/*/Cargo.toml`.
-Schedule catalog features (`schedules-fp128-d64-onehot`, etc.) are documented in
+Schedule catalog features (`schedules-fp128-onehot`, etc.) are documented in
 [Configuration and planning](../how/configuration.md).

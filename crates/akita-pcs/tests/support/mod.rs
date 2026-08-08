@@ -126,6 +126,8 @@ where
     type ExtField = Envelope::ExtField;
 
     const D: usize = Envelope::D;
+    const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
+        Envelope::RING_DIMENSION_SCHEDULE_MODE;
 
     fn decomposition() -> DecompositionParams {
         Envelope::decomposition()
@@ -135,6 +137,9 @@ where
         Envelope::ring_challenge_config(d).or_else(|_| Final::ring_challenge_config(d))
     }
 
+    fn selection_policy() -> akita_schedules::SelectionPolicyId {
+        Envelope::selection_policy()
+    }
     fn sis_modulus_profile() -> SisModulusProfileId {
         Envelope::sis_modulus_profile()
     }

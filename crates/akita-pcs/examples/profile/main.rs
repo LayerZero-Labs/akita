@@ -4,8 +4,9 @@ mod modes;
 mod ntt_prewarm;
 mod parallel;
 mod report;
-#[cfg_attr(feature = "profile-onehot-fp128-d64", allow(dead_code))]
+#[cfg_attr(feature = "profile-onehot-fp128", allow(dead_code))]
 mod workload;
+mod workload_params;
 
 use std::env;
 use std::fs;
@@ -43,13 +44,10 @@ fn main() {
     let nv: usize = env::var("AKITA_NUM_VARS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(25);
+        .unwrap_or(32);
     let num_polys = env_usize("AKITA_NUM_POLYS", 1);
 
-    // Keep the default explicit: adaptive `dense`/`onehot` selectors are
-    // intentionally not part of the profile surface. D64 is the default fp128
-    // profile preset (`onehot_fp128_d64`); use best_*_schedule to compare D64 vs D128.
-    let mode = env::var("AKITA_MODE").unwrap_or_else(|_| "onehot_fp128_d64".to_string());
+    let mode = env::var("AKITA_MODE").unwrap_or_else(|_| "onehot_fp128".to_string());
     let enable_trace = env_flag("AKITA_PROFILE_TRACE", true);
     let enable_ansi = env_flag("AKITA_PROFILE_ANSI", true);
     let span_events = if env_flag("AKITA_PROFILE_SPAN_CLOSES", true) {
@@ -102,7 +100,7 @@ fn main() {
     tracing::info!(num_vars = nv, num_polys, mode = %mode, "profile config");
     modes::log_active_fp128_prime_probe();
 
-    #[cfg(not(feature = "profile-onehot-fp128-d64"))]
+    #[cfg(not(feature = "profile-onehot-fp128"))]
     {
         if mode == "all" {
             modes::run_all_profile_modes(nv);
@@ -110,7 +108,7 @@ fn main() {
             modes::run_profile_mode(&mode, nv, num_polys);
         }
     }
-    #[cfg(feature = "profile-onehot-fp128-d64")]
+    #[cfg(feature = "profile-onehot-fp128")]
     modes::run_profile_mode(&mode, nv, num_polys);
 
     if enable_trace {

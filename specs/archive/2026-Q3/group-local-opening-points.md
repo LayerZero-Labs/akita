@@ -837,7 +837,7 @@ above and run the representative end-to-end profile:
 
 ```bash
 cargo run -p akita-pcs --release --no-default-features \
-  --features parallel,profile-onehot-fp128-d64 \
+  --features parallel,profile-onehot-fp128 \
   --example profile
 ```
 
