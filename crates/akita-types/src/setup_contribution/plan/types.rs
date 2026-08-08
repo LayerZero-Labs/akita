@@ -315,6 +315,7 @@ pub struct SetupContributionPlan<E: FieldCore> {
 
 pub(crate) struct ProjectedEqPairTensor<E: FieldCore> {
     pub(crate) ratio: usize,
+    pub(crate) relation_factored: bool,
     pub(crate) families: Vec<EqPairTensorFamily<E>>,
 }
 

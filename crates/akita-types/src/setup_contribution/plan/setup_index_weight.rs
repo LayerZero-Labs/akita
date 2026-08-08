@@ -162,14 +162,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     setup_low_point,
                 )?;
                 let relation_point = self.relation_address.point();
-                let contraction = if role_tensors_are_aligned(&batch.families, batch.ratio) {
+                let contraction = if batch.relation_factored {
                     let relation_low_point = relation_point
                         .get(..low_variable_count)
                         .ok_or(AkitaError::InvalidProof)?;
                     let relation_high_point = relation_point
                         .get(low_variable_count..)
                         .ok_or(AkitaError::InvalidProof)?;
-                    let factored = factor_aligned_role_tensors(&batch.families, batch.ratio)?;
                     let relation_projection = role_projection_evaluation(
                         alpha,
                         self.projection_geometry.base_ring_dim(),
@@ -179,7 +178,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         * eval_eq_pair_tensor_families(
                             setup_high_point,
                             relation_high_point,
-                            &factored,
+                            &batch.families,
                         )?
                 } else {
                     let projected = project_role_tensors(
@@ -211,6 +210,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             self.append_d_tensors(group, &mut batches)?;
             self.append_b_tensors(group, &mut batches)?;
             self.append_a_tensors(group, &mut batches)?;
+        }
+        for batch in &mut batches {
+            if batch.ratio > 1 && role_tensors_are_aligned(&batch.families, batch.ratio) {
+                factor_aligned_role_tensors_in_place(&mut batch.families, batch.ratio)?;
+                batch.relation_factored = true;
+            }
         }
         Ok(batches)
     }
@@ -695,6 +700,24 @@ fn factor_aligned_role_tensors<E: FieldCore>(
         .collect()
 }
 
+fn factor_aligned_role_tensors_in_place<E: FieldCore>(
+    tensors: &mut [EqPairTensorFamily<E>],
+    ratio: usize,
+) -> Result<(), AkitaError> {
+    if ratio <= 1 || !role_tensors_are_aligned(tensors, ratio) {
+        return Err(AkitaError::InvalidSetup(
+            "setup role tensors are not aligned to their native lane count".into(),
+        ));
+    }
+    for tensor in tensors {
+        tensor.right_offset /= ratio;
+        for axis in &mut tensor.axes {
+            axis.right_stride /= ratio;
+        }
+    }
+    Ok(())
+}
+
 fn role_projection_evaluation<E: FieldCore>(
     alpha: E,
     base_ring_dim: usize,
@@ -741,6 +764,7 @@ fn push_projected_tensor<E: FieldCore>(
     } else {
         batches.push(ProjectedEqPairTensor {
             ratio,
+            relation_factored: false,
             families: vec![family],
         });
     }
