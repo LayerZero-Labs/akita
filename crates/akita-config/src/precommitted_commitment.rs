@@ -3,16 +3,17 @@
 //! This adapter is for staggered workflows that need ordinary commit calls to
 //! freeze the A/source and B/outer commitment layout before the final multi-group
 //! root is known. The root basis is deterministic from the base config's runtime
-//! catalog policy, so precommitments use the exact root layout rather than a
-//! worst-case envelope over every supported basis.
+//! catalog policy. Adaptive base configurations use their uniform suffix
+//! dimension so a precommit recipe does not depend on a hypothetical future
+//! final-group schedule.
 
 use crate::{policy_of, CommitmentConfig};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    accumulate_matrix_field_elements_for_level, CommitmentRingDims, CommittedGroupParams,
-    CommittedGroupProfile, DecompositionParams, FoldSchedule, OpenCommitMatrixParams,
-    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixCapacity, SisModulusProfileId,
+    accumulate_matrix_field_elements_for_level, CommittedGroupParams, CommittedGroupProfile,
+    DecompositionParams, FoldSchedule, OpenCommitMatrixParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, SetupMatrixCapacity, SisModulusProfileId,
 };
 use std::marker::PhantomData;
 
@@ -26,7 +27,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
     type ExtField = Cfg::ExtField;
 
     const D: usize = Cfg::D;
-    const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] = Cfg::RING_DIMENSION_CANDIDATES;
+    const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
+        Cfg::RING_DIMENSION_SCHEDULE_MODE;
     const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
         Cfg::SELECTIVE_L2_FOLD_CAPS;
 
@@ -180,8 +182,8 @@ mod tests {
     #[test]
     fn same_layout_can_resolve_config_specific_profiles() {
         let key = PolynomialGroupLayout::new(16, 1);
-        let dense = committed_group_params::<fp128::D64Dense>(&key).expect("dense params");
-        let one_hot = committed_group_params::<fp128::D64OneHot>(&key).expect("one-hot params");
+        let dense = committed_group_params::<fp128::Dense>(&key).expect("dense params");
+        let one_hot = committed_group_params::<fp128::OneHot>(&key).expect("one-hot params");
         assert_ne!(
             CommittedGroupProfile::from_params(key, &dense),
             CommittedGroupProfile::from_params(key, &one_hot),
@@ -192,7 +194,9 @@ mod tests {
     #[test]
     fn dense_precommit_profile_uses_dense_config() {
         let key = PolynomialGroupLayout::new(15, 2);
-        let params = committed_group_params::<fp128::D64Dense>(&key).expect("dense params");
+        let params = committed_group_params::<fp128::Dense>(&key).expect("dense params");
+        assert_eq!(params.inner_commit_matrix.ring_dimension(), 64);
+        assert_eq!(params.outer_commit_matrix.ring_dimension(), 64);
         assert_eq!(params.log_basis_inner, 3);
         assert_eq!(params.log_basis_outer, 3);
         assert_eq!(params.num_digits_inner, 43);

@@ -57,12 +57,12 @@ The checked-in workflow currently runs:
 | `dense_fp128_d64` | fp128 | dense | 24 | 1 | D64 | `direct` | fp128 dense smoke at the proof-size-optimal ring dimension (D64 beats D128 by ~18-22%). |
 | `onehot_fp128_d64` | fp128 | 1-of-256 one-hot | 32 | 1 | D64 | `direct` | Explicit fp128 one-hot mode at the proof-size-optimal ring dimension. fp128 folds aggressively enough to stay at nv=32 under the eq-table budget. |
 | `onehot_fp128_d64` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D64 | `direct` | Preserves same-point batched one-hot coverage. |
-| `onehot_fp128_d64_multi_group_recursive` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | D64 recursive multi-group | `direct` | Direct setup-contribution baseline for the recursive setup comparison skill's canonical multi-group profile. |
-| `onehot_fp128_d64_multi_group_recursive` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | D64 recursive multi-group | `recursive` | Same multi-group profile with `SetupContributionMode::Recursive`, so CI tracks recursive setup-product verifier work against the direct baseline. |
-| `onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2` | fp128 | 1-of-256 one-hot batched multi-group W8R2 | 32 | 4 | D64 recursive multi-group W8R2 | `recursive` | Existing distributed recursive setup-offload row: `8` chunks, `2` leading levels. |
-| `onehot_fp128_d64_multi_chunk_w2r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W2R2 | `direct` | `2` chunks, `2` leading levels. |
-| `onehot_fp128_d64_multi_chunk_w4r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W4R2 | `direct` | `4` chunks, `2` leading levels. |
-| `onehot_fp128_d64_multi_chunk_w8r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W8R2 | `direct` | Production distributed preset (`8` chunks, `2` leading levels). |
+| `onehot_fp128_multi_group` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | adaptive | `direct` | Direct multi-group coverage using the canonical adaptive fp128 one-hot catalog. |
+| `onehot_fp128_multi_group_recursive` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | adaptive recursive multi-group | `recursive` | Recursive setup-product coverage using the adaptive recursive companion catalog. |
+| `onehot_fp128_multi_group_recursive_multi_chunk_w8r2` | fp128 | 1-of-256 one-hot batched multi-group W8R2 | 32 | 4 | adaptive recursive multi-group W8R2 | `recursive` | Distributed recursive setup-offload row: `8` chunks, `2` leading levels, with adaptive role dimensions. |
+| `onehot_fp128_multi_chunk_w2r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | adaptive multi-chunk W2R2 | `direct` | `2` chunks, `2` leading levels. |
+| `onehot_fp128_multi_chunk_w4r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | adaptive multi-chunk W4R2 | `direct` | `4` chunks, `2` leading levels. |
+| `onehot_fp128_multi_chunk_w8r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | adaptive multi-chunk W8R2 | `direct` | Production direct distributed preset (`8` chunks, `2` leading levels). |
 
 Every active cell folds securely under honest committed-fold A-role pricing.
 The ring degree differs by field, for two distinct reasons:
@@ -71,17 +71,11 @@ The ring degree differs by field, for two distinct reasons:
   securable under the reprice — they degrade to a cleartext root-direct proof
   and stop exercising a real folding commitment — so the smallest secure ring
   degree is D128. Those cells (and all fp16 cells) use D128 one-hot.
-- **fp128:** D64 is the actual proof-size optimum for both dense and one-hot.
-  Measured against the runtime schedule's `total_bytes`, D64 produces ~18-23%
-  smaller proofs than D128 across the matrix shapes (e.g. one-hot nv=32:
-  133,000 B at D64 vs 163,968 B at D128; dense nv=24: 131,656 B vs 160,080 B),
-  while still folding through 8-9 secure recursive levels. This is confirmed by
-  `current_d64_onehot_schedule_stays_within_audited_sis_widths` (securability)
-  and by the `best_dense_schedule` / `best_onehot_schedule` selectors, which
-  pick D64 (or D32), never D128. The earlier D128 fp128 cells were *not*
-  proof-size optimal; D32/D64 are the planner optima (D32 is marginally
-  smaller for fp128). The benchmark matrix tracks D64; use
-  `best_onehot_schedule` / `best_dense_schedule` to compare D32/D64/D128.
+- **fp128:** the canonical direct dense and one-hot presets use their adaptive
+  generated catalogs. Each scheduled A/B/D dimension is selected offline from
+  the audited domain, and runtime code resolves that single canonical row.
+  Explicit D64 modes remain useful uniform baselines; there is no runtime
+  family selector comparing them with the adaptive presets.
 
 D32/D128 profile modes still exist for direct local comparisons, but neither
 the adaptive `full`/`onehot` selectors nor those comparison modes are part of
@@ -192,7 +186,7 @@ The test-coverage cleanup touches:
       cases.
 - [x] The known long hosted-runner offender `onehot_fp16_d32:32:1` is
       documented as deferred rather than active.
-- [x] `dense_fp128_d128` remains active at `nv=24`, not the earlier `nv=26`
+- [x] `dense_fp128_d64` remains active at `nv=24`, not the earlier `nv=26`
       hosted-runner offender size.
 - [ ] `dense_fp64_d32:25:1` is re-enabled after a separate validation pass
       and completes setup, commit, prove, verify, proof summary, and proof
@@ -282,7 +276,7 @@ This PR reduces per-case samples from 5 to 3 and expands the active matrix from
 3 cases to 7 cases. The first 8-case candidate run was useful for finding
 costly coverage, but `onehot_fp16_d32:32:1` and `dense_fp128_d32:26:1` are too
 expensive for this PR's always-on hosted-runner budget. The active workflow
-therefore keeps dense fp128 coverage at `nv=24` (now `dense_fp128_d128:24:1`)
+therefore keeps dense fp128 coverage at `nv=24` (now `dense_fp128_d64:24:1`)
 and remains a smoke matrix, not an exhaustive benchmark suite.
 
 One PR run completed all 8 candidate benchmark cases with status `ok`, but the job
@@ -431,8 +425,6 @@ cost only.
 ## Follow-Up
 
 - Re-enable `onehot_fp16_d32:32:1` after small-field one-hot prover cost is
-  reduced or the CI runner budget changes.
-- Revisit `dense_fp128_d128` at `nv=26` after dense fp128 commit/prove cost is
   reduced or the CI runner budget changes.
 - Re-enable `dense_fp64_d32:25:1` after a separate dense fp64 validation pass.
 - Record the first fully successful expanded workflow runtime after the

@@ -10,15 +10,14 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
-use akita_schedules::PlannerPolicy;
+use akita_schedules::{PlannerPolicy, RingDimensionScheduleMode};
 use akita_serialization::Valid;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::PolynomialGroupLayout;
 use akita_types::{
-    AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams,
-    DecompositionParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity,
-    SisModulusProfileId,
+    AkitaScheduleLookupKey, ChunkedWitnessCfg, CommittedGroupParams, DecompositionParams,
+    FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity, SisModulusProfileId,
 };
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
@@ -35,8 +34,8 @@ macro_rules! impl_multi_chunk_companion {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
             const D: usize = <$base as $crate::CommitmentConfig>::D;
-            const RING_DIMENSION_CANDIDATES: &'static [akita_types::CommitmentRingDims] =
-                <$base as $crate::CommitmentConfig>::RING_DIMENSION_CANDIDATES;
+            const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
+                <$base as $crate::CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
             const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
                 <$base as $crate::CommitmentConfig>::SELECTIVE_L2_FOLD_CAPS;
@@ -130,7 +129,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         min_offloaded_witness_contraction: 3,
         uniform_ring_dimension: Cfg::D,
         setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),
-        ring_dimension_candidates: Cfg::RING_DIMENSION_CANDIDATES,
+        ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
@@ -199,12 +198,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
 
-    /// Canonically ordered A/B/D tuples admitted by offline schedule search.
-    ///
-    /// Uniform presets use their setup-generation dimension for every role.
-    /// Adaptive presets override this with their full audited search domain.
-    const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] =
-        &[CommitmentRingDims::uniform(Self::D)];
+    /// Uniform or bounded-adaptive ring-dimension schedule policy.
+    const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
+        RingDimensionScheduleMode::UniformDimension {
+            ring_dimension: Self::D,
+        };
 
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;
@@ -256,10 +254,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixCapacity, AkitaError>;
 
-    /// Planner-owned A-matrix ring dimension for setup-prefix commitments.
+    /// Default/ceiling A-matrix dimension for setup-prefix commitments.
     ///
-    /// This controls how the explicitly zero-padded setup-prefix witness is
-    /// chunked for commitment. It is not public-matrix identity or a setup
+    /// Uniform schedules use it directly. Adaptive recursive schedules derive
+    /// the actual A dimension from the consuming fold; this value remains part
+    /// of policy/catalog identity. It is not public-matrix identity or a setup
     /// materialization dimension.
     fn setup_prefix_inner_ring_dimension() -> usize {
         Self::D
@@ -630,47 +629,69 @@ mod fp128_policy_tests {
     const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
 
     #[test]
-    fn current_d64_dense_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Dense>(
-            CI_SIS_WIDTH_NUM_VARS,
-        );
+    fn fp128_onehot_uses_adaptive_schedule_policy() {
+        assert_eq!(<fp128::OneHot as CommitmentConfig>::D, 256);
+        assert!(matches!(
+            <fp128::OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
+            RingDimensionScheduleMode::AdaptiveDimension {
+                num_search_levels: 2,
+                uniform_suffix_dimension: 64,
+                ..
+            }
+        ));
+        assert!(fp128::OneHot::schedule_catalog().is_some());
     }
 
     #[test]
-    fn current_d64_onehot_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(
-            CI_SIS_WIDTH_NUM_VARS,
-        );
+    fn fp128_dense_uses_adaptive_schedule_policy() {
+        assert_eq!(<fp128::Dense as CommitmentConfig>::D, 256);
+        assert!(matches!(
+            <fp128::Dense as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
+            RingDimensionScheduleMode::AdaptiveDimension {
+                num_search_levels: 2,
+                uniform_suffix_dimension: 64,
+                ..
+            }
+        ));
+        assert!(fp128::Dense::schedule_catalog().is_some());
     }
 
     #[test]
-    fn fp128_family_selector_uses_generated_singleton_plans() {
+    fn current_dense_schedule_stays_within_audited_sis_widths() {
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(CI_SIS_WIDTH_NUM_VARS);
+    }
+
+    #[test]
+    fn current_adaptive_dense_schedule_stays_within_audited_sis_widths() {
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(CI_SIS_WIDTH_NUM_VARS);
+    }
+
+    #[test]
+    fn current_onehot_schedule_stays_within_audited_sis_widths() {
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::OneHot>(CI_SIS_WIDTH_NUM_VARS);
+    }
+
+    #[test]
+    fn fp128_generated_singleton_plans_resolve() {
         let key = PolynomialGroupLayout::singleton(32);
 
-        let dense = fp128::best_dense_schedule(key)
-            .expect("selector should resolve dense schedules")
-            .expect("selector should find a generated dense schedule");
-        let onehot = fp128::best_onehot_schedule(key)
-            .expect("selector should resolve onehot schedules")
-            .expect("selector should find a generated onehot schedule");
+        let dense = fp128::Dense::runtime_schedule(AkitaScheduleLookupKey::single(key))
+            .expect("adaptive dense schedule");
+        let onehot = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key))
+            .expect("adaptive onehot schedule");
 
-        for selection in [&dense, &onehot] {
-            assert_eq!(selection.schedule.initial_witness_len(), 1usize << 32);
-        }
-        assert!(!dense.preset.is_onehot());
-        assert!(onehot.preset.is_onehot());
+        assert_eq!(dense.initial_witness_len(), 1usize << 32);
+        assert_eq!(onehot.initial_witness_len(), 1usize << 32);
     }
 
     #[test]
-    fn fp128_family_selector_supports_batched_keys() {
+    fn fp128_adaptive_onehot_supports_batched_keys() {
         let key = PolynomialGroupLayout::new(30, 4);
 
-        let selection = fp128::best_onehot_schedule(key)
-            .expect("selector should resolve batched onehot schedules")
-            .expect("selector should find a generated batched onehot schedule");
+        let schedule = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key))
+            .expect("adaptive batched onehot schedule");
 
-        assert!(selection.preset.is_onehot());
-        assert_eq!(selection.schedule.initial_witness_len(), 1usize << 30);
+        assert_eq!(schedule.initial_witness_len(), 1usize << 30);
     }
 }
 
@@ -686,16 +707,24 @@ mod precommit_tests {
         let singleton =
             OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials()).expect("singleton");
         let params =
-            <PrecommittedCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::get_params_for_batched_commitment(
+            <PrecommittedCommitmentConfig<fp128::OneHot> as CommitmentConfig>::get_params_for_batched_commitment(
                 &singleton,
             )
             .expect("precommitted group params");
         let precommitted = akita_types::CommittedGroupProfile::from_params(group, &params);
-        let root_basis = fp128::D64OneHot::basis_range().0;
+        assert_eq!(
+            precommitted.inner_commit_matrix.ring_dimension(),
+            64,
+            "adaptive precommits use the uniform suffix dimension for A"
+        );
+        assert_eq!(
+            precommitted.outer_commit_matrix.ring_dimension(),
+            64,
+            "adaptive precommits use the uniform suffix dimension for B"
+        );
+        let root_basis = fp128::OneHot::basis_range().0;
         assert_eq!(precommitted.log_basis_inner, root_basis);
         assert_eq!(precommitted.log_basis_outer, root_basis);
-        assert_eq!(precommitted.num_positions_per_block, 256);
-        assert_eq!(precommitted.num_live_blocks, 4);
         assert_ne!(precommitted.inner_commit_matrix.output_rank(), 0);
         assert_ne!(precommitted.outer_commit_matrix.output_rank(), 0);
     }
@@ -704,7 +733,7 @@ mod precommit_tests {
     fn precommit_config_rejects_prove_schedule() {
         let layout = OpeningClaimsLayout::new(2, 1).expect("opening layout");
         let err =
-            <PrecommittedCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::get_params_for_prove(
+            <PrecommittedCommitmentConfig<fp128::OneHot> as CommitmentConfig>::get_params_for_prove(
                 &layout,
             )
             .expect_err("precommit config must not prove");

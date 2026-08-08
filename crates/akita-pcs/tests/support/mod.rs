@@ -137,8 +137,8 @@ impl<Base: CommitmentConfig> CommitmentConfig for ForcedSmallFieldL2Config<Base>
     type ExtField = Base::ExtField;
 
     const D: usize = Base::D;
-    const RING_DIMENSION_CANDIDATES: &'static [akita_types::CommitmentRingDims] =
-        Base::RING_DIMENSION_CANDIDATES;
+    const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
+        Base::RING_DIMENSION_SCHEDULE_MODE;
     const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
         &[akita_schedules::SelectiveL2FoldCap {
             fold_level: 3,
@@ -265,6 +265,8 @@ where
     type ExtField = Envelope::ExtField;
 
     const D: usize = Envelope::D;
+    const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
+        Envelope::RING_DIMENSION_SCHEDULE_MODE;
 
     fn decomposition() -> DecompositionParams {
         Envelope::decomposition()
@@ -274,6 +276,9 @@ where
         Envelope::ring_challenge_config(d).or_else(|_| Final::ring_challenge_config(d))
     }
 
+    fn selection_policy() -> akita_schedules::SelectionPolicyId {
+        Envelope::selection_policy()
+    }
     fn sis_modulus_profile() -> SisModulusProfileId {
         Envelope::sis_modulus_profile()
     }

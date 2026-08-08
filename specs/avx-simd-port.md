@@ -180,11 +180,11 @@ runtime dispatch, no new public API).
   `packed_*_fp4_*_edge_lanes` cases there, all routed through
   `<F as HasPacking>::Packing` — they automatically exercise the AVX
   overrides on x86 builds and the NEON overrides on aarch64 builds.
-- The 12 NEON NTT parity tests live inline in
-  [`crates/akita-algebra/src/ntt/neon.rs`](../crates/akita-algebra/src/ntt/neon.rs)
-  under `mod tests` — same coverage as before this PR (forward /
-  inverse / negacyclic / cyclic for i32 and i16, plus
-  `pointwise_mul_acc_*` and `add_reduce_*` scalar-tail handling),
+- The NEON NTT parity tests live in
+  [`crates/akita-algebra/src/ntt/neon/tests.rs`](../crates/akita-algebra/src/ntt/neon/tests.rs),
+  beside the width-specific `i16_kernels.rs` and `i32_kernels.rs` modules.
+  They cover forward / inverse / negacyclic / cyclic for i32 and i16, plus
+  `pointwise_mul_acc_*` and `add_reduce_*` scalar-tail handling,
   compared against the scalar reference in `ntt::butterfly`.
 - New: `tests::sparse_mul_acc_simd_*` in
   [`crates/akita-prover/src/backend/poly_helpers.rs`](../crates/akita-prover/src/backend/poly_helpers.rs)

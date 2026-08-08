@@ -1,4 +1,4 @@
-//! Planner guard: shipped `fp128::D64OneHot` schedules must stay within the
+//! Planner guard: shipped adaptive fp128 one-hot schedules must stay within the
 //! configured proof-optimized basis search window.
 
 use akita_config::proof_optimized::fp128;
@@ -9,8 +9,8 @@ use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 const BASIS_ENVELOPE_NUM_VARS: &[usize] = &[10, 16, 28, 30, 64, 120];
 
 #[test]
-fn d64_onehot_schedule_stays_within_basis_envelope() {
-    type Cfg = fp128::D64OneHot;
+fn adaptive_onehot_schedule_stays_within_basis_envelope() {
+    type Cfg = fp128::OneHot;
 
     for &nv in BASIS_ENVELOPE_NUM_VARS {
         let schedule = match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(

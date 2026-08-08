@@ -559,7 +559,7 @@ fn chunked_witness_count_matches_chunk_layout_arithmetic() {
 }
 
 #[test]
-fn chunked_witness_count_rejects_invalid_chunk_counts() {
+fn chunked_witness_count_accepts_empty_chunk_ranges() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     // num_live_blocks = 2^3 = 8.
@@ -579,11 +579,12 @@ fn chunked_witness_count_rejects_invalid_chunk_counts() {
         intermediate_w_ring_element_count_for_chunks(128, &lp, 1, 6),
         Err(AkitaError::InvalidSetup(_))
     ));
-    // num_chunks does not divide num_live_blocks (8 % 16 != 0).
-    assert!(matches!(
-        intermediate_w_ring_element_count_for_chunks(128, &lp, 1, 16),
-        Err(AkitaError::InvalidSetup(_))
-    ));
+    let single = intermediate_w_ring_element_count_for_chunks(128, &lp, 1, 1).unwrap();
+    let z_chunk = lp.inner_width() * lp.num_digits_fold();
+    assert_eq!(
+        intermediate_w_ring_element_count_for_chunks(128, &lp, 1, 16).unwrap(),
+        single + 15 * z_chunk
+    );
     // Zero chunks.
     assert!(matches!(
         intermediate_w_ring_element_count_for_chunks(128, &lp, 1, 0),

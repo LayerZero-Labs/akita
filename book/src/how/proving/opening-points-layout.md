@@ -76,10 +76,19 @@ padding is one zero suffix after the complete live prefix.
 
 ## Chunks and fold challenges
 
-Chunks own contiguous ranges of the exact `F` live blocks. Internal allocation
-balances blocks directly: each chunk receives `floor(F / num_chunks)` blocks,
-and the first `F mod num_chunks` chunks receive one additional block. The ranges
-stay exact and contain no padding.
+Chunks own contiguous ranges of the exact `F` live blocks. For chunk `i` of
+`P`, the canonical range is
+
+```text
+[floor(i * F / P), floor((i + 1) * F / P))
+```
+
+The ranges stay exact and contain no padding. Their lengths differ by at most
+one block. If `P > F`, repeated boundaries give empty ranges while preserving
+all `P` machine slots. An empty slot has no E or T coefficients, but it keeps
+the full replicated Z segment and the honest prover fills that segment with
+zero. All supported chunk counts are powers of two. Therefore, every finer
+chunk partition refines every coarser partition.
 
 Each commitment group owns a fold challenge with `F` independent sparse
 coefficients, one for every live block.

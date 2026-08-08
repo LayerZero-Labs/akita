@@ -1,10 +1,8 @@
 //! x86 runtime dispatch helpers for CRT NTT SIMD kernels.
 //!
 //! `AKITA_SCALAR_NTT=1` forces the scalar fallback for all CRT NTT SIMD.
-//! `AKITA_AVX_NTT=0` disables only x86 CRT NTT SIMD. Pointwise kernels use
-//! AVX-512 by default when supported, while transforms default to AVX2 after
-//! winning on Ice Lake. `AKITA_AVX512_NTT=1` opts transforms into AVX-512 and
-//! `AKITA_AVX512_NTT=0` forces every x86 kernel to AVX2.
+//! Production pointwise and transform kernels use AVX2 after it won the
+//! measured Ice Lake workloads.
 
 mod d32;
 mod montgomery;
@@ -27,10 +25,11 @@ pub use pointwise::{
     pointwise_mul_i32, pointwise_mul_i32_avx512, sub_reduce_i32, sub_reduce_i32_avx512,
 };
 pub(crate) use pointwise::{
-    pointwise_mul_acc_i16, pointwise_mul_acc_i32, pointwise_mul_acc_i32_avx512,
+    pointwise_dot_acc_i32, pointwise_mul_acc_i16, pointwise_mul_acc_i32,
+    pointwise_mul_acc_i32_avx512,
 };
 #[cfg(test)]
-use runtime::{select_avx512_transform_ntt, select_avx_ntt_mode, AvxCpuFeatures};
+use runtime::{select_avx_ntt_mode, AvxCpuFeatures};
 pub(crate) use transform_i16::{forward_ntt_i16, inverse_ntt_i16};
 pub(crate) use transform_i32::{
     forward_ntt_cyclic_i32, forward_ntt_i32, inverse_ntt_cyclic_i32, inverse_ntt_i32,

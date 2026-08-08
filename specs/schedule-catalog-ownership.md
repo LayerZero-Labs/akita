@@ -711,8 +711,7 @@ zk = ["akita-planner/zk", "akita-types/zk", "akita-schedules?/zk"]
 schedules-default = [
     "schedules-fp128-d64-onehot",
     "schedules-fp128-d64-dense",
-    "schedules-fp128-d128-onehot",
-    "schedules-fp128-d128-dense",
+    "schedules-fp128-onehot",
     "schedules-fp32-d128-onehot",
     "schedules-fp32-d256-onehot",
     "schedules-fp64-d128-onehot",
@@ -892,8 +891,8 @@ Add `scripts/check_profile_ci_linkage.sh` after the head profile build:
 
 1. Build with `--no-default-features --features parallel,profile-ci`.
 2. Run `nm` (or `llvm-nm` if available) on `target/release/examples/profile`.
-3. Fail if a known non-profile family symbol is present, for example a D128 full or
-   D256 one-hot table that is not in `profile-ci`.
+3. Fail if a known non-profile family symbol is present, for example a full D128
+   table that is not in `profile-ci`.
 
 This check is intentionally conservative. It only needs to catch accidental all-table
 linkage from default features or a stray dependency edge.

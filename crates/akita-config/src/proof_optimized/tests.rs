@@ -14,7 +14,7 @@ use akita_types::{ntt_cache_requires_i16_tail, AkitaScheduleLookupKey, Polynomia
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_levels_are_exactly_root_and_recursive_folds() {
-    let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(30),
     ))
     .expect("generated fp128 schedule");
@@ -29,7 +29,7 @@ fn setup_levels_are_exactly_root_and_recursive_folds() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn generated_schedule_has_explicit_terminal_inner_only_topology() {
-    let schedule = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(32),
     ))
     .expect("generated one-hot schedule");
@@ -48,7 +48,7 @@ fn generated_schedule_has_explicit_terminal_inner_only_topology() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_capacity_includes_terminal_inner_matrix() {
-    let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(28),
     ))
     .expect("generated fp128 schedule");
@@ -88,7 +88,7 @@ fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig, const D: usi
         min_width = min_width.min(width);
         max_width = max_width.max(width);
         assert!(
-            ntt_cache_requires_i16_tail::<Cfg::Field, D>(width, 16)
+            ntt_cache_requires_i16_tail::<Cfg::Field, D>(width, 1 << 15)
                 .expect("generated terminal i16 accumulation should fit"),
             "generated q32 terminal unexpectedly fits the base CRT profile for {} key={key:?}, D={D}, width={width}",
             std::any::type_name::<Cfg>(),
@@ -117,14 +117,14 @@ fn generated_q32_terminals_require_the_i16_tail() {
 
 #[cfg(feature = "schedules-default")]
 #[test]
-fn fp128_d128_onehot_catalog_freezes_root_fold_digits() {
-    let table = fp128::D128OneHot::schedule_catalog().expect("D128 one-hot schedule catalog");
+fn fp128_adaptive_onehot_catalog_freezes_root_fold_digits() {
+    let table = fp128::OneHot::schedule_catalog().expect("fp128 one-hot catalog");
     let first = table
         .entries
         .first()
-        .expect("nonempty D128 one-hot catalog");
-    let schedule = fp128::D128OneHot::runtime_schedule(first.to_runtime_lookup_key())
-        .expect("resolve D128 one-hot row");
+        .expect("nonempty adaptive one-hot catalog");
+    let schedule = fp128::OneHot::runtime_schedule(first.to_runtime_lookup_key())
+        .expect("resolve adaptive one-hot row");
     let root = &schedule.root.params.final_group.commitment;
     assert_eq!(
         root.num_digits_fold,
@@ -135,8 +135,7 @@ fn fp128_d128_onehot_catalog_freezes_root_fold_digits() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_envelope_scan_includes_multi_polynomial_precommitted_groups() {
-    let layouts =
-        setup_capacity_scan_layouts::<fp128::D64OneHot>(14, 3).expect("setup scan layouts");
+    let layouts = setup_capacity_scan_layouts::<fp128::OneHot>(14, 3).expect("setup scan layouts");
 
     assert!(layouts.iter().any(|layout| {
         layout.groups()
@@ -145,4 +144,22 @@ fn setup_envelope_scan_includes_multi_polynomial_precommitted_groups() {
                 PolynomialGroupLayout::new(14, 1),
             ]
     }));
+}
+
+#[cfg(feature = "schedules-default")]
+#[test]
+fn setup_capacity_includes_standalone_precommit_recipes() {
+    let profile =
+        crate::committed_group_profile::<fp128::Dense>(&PolynomialGroupLayout::new(16, 1))
+            .expect("dense precommit profile");
+    let capacity = fp128::Dense::setup_matrix_capacity(16, 1).expect("dense setup capacity");
+    let a_fields = profile.inner_commit_matrix.output_rank()
+        * profile.inner_commit_matrix.input_width()
+        * profile.inner_commit_matrix.ring_dimension();
+    let b_fields = profile.outer_commit_matrix.output_rank()
+        * profile.outer_commit_matrix.input_width()
+        * profile.outer_commit_matrix.ring_dimension();
+
+    assert!(capacity.num_field_elements >= a_fields);
+    assert!(capacity.num_field_elements >= b_fields);
 }

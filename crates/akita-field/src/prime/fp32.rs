@@ -24,6 +24,7 @@ use super::util::sample_uniform_below;
 /// satisfy the prime Solinas conditions is a compile-time error.
 #[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(transparent)]
 pub struct Fp32<const P: u32>(pub(crate) u32);
 
 impl<const P: u32> Fp32<P> {
@@ -497,6 +498,13 @@ impl<const P: u32> CanonicalField for Fp32<P> {
 
     fn from_canonical_u128_reduced(val: u128) -> Self {
         Self(Self::reduce_u128(val))
+    }
+
+    #[inline]
+    fn canonical_u32_slice(values: &[Self]) -> Option<&[u32]> {
+        // SAFETY: `Fp32` is transparent over one `u32`, and every constructor
+        // and arithmetic operation maintains a canonical representative.
+        Some(unsafe { std::slice::from_raw_parts(values.as_ptr().cast(), values.len()) })
     }
 }
 

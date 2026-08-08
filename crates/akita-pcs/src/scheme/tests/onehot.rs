@@ -387,8 +387,9 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             .params
             .precommitted_groups
             .iter()
-            .all(|group| group.descriptor.inner_commit_matrix.ring_dimension() == TestCfg::D),
-        "precommitted groups must retain their native A dimension"
+            .zip(&pre_commitments)
+            .all(|(group, commitment)| group.descriptor == commitment.profile),
+        "precommitted groups must retain their exact native profiles"
     );
     if TestCfg::chunked_witness_cfg().uses_multi_chunk() {
         let root = &multi_group_schedule.root;
@@ -628,55 +629,15 @@ fn multi_group_root_opens_multi_polynomial_precommitted_group() {
 }
 
 #[test]
-fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
-    const PRE_NV: usize = 14;
-    const FINAL_NV: usize = 24;
-    type ProtocolCfg =
-        crate::test_support::EnvelopeFinalGroupConfig<fp128::D128OneHot, fp128::D64OneHot>;
-
-    let pre_layout = OpeningClaimsLayout::new(PRE_NV, 1).expect("precommit layout");
-    let pre_params =
-        <PrecommittedCommitmentConfig<ProtocolCfg> as CommitmentConfig>::
-            get_params_for_batched_commitment(&pre_layout)
-                .expect("precommit params");
-    let test_pre_params =
-        <PrecommittedCommitmentConfig<fp128::D128OneHot> as CommitmentConfig>::
-            get_params_for_batched_commitment(&pre_layout)
-                .expect("test precommit params");
-    assert_eq!(
-        pre_params.outer_commit_matrix.output_rank(),
-        test_pre_params.outer_commit_matrix.output_rank(),
-        "protocol and standalone precommit policies must freeze the same B rank"
-    );
-    let key = akita_types::AkitaScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, 2),
-        precommitteds: vec![akita_types::CommittedGroupProfile::from_params(
-            akita_types::PolynomialGroupLayout::new(PRE_NV, 1),
-            &pre_params,
-        )],
-    };
-    let opening_layout = key.opening_layout().unwrap();
-    let schedule = ProtocolCfg::runtime_schedule(key).expect("descending-A schedule");
-    let root = multi_group_root_params(&schedule);
-    assert_eq!(root.d_a(), 64);
-    assert_eq!(root.group_role_dims(&opening_layout, 0).unwrap().d_a(), 128);
-
-    multi_group_root_round_trip_onehot::<fp128::D128OneHot, ProtocolCfg>(
-        PRE_NV,
-        FINAL_NV,
-        &[1],
-        2,
-        true,
-    );
-}
-
-#[test]
 #[cfg(feature = "profile-ci")]
 fn multi_group_multi_chunk_fold_round_trips() {
-    multi_group_root_round_trip_onehot::<
-        fp128::D64OneHotMultiChunkW2R2,
-        fp128::D64OneHotMultiChunkW2R2,
-    >(14, 14, &[1], 1, false);
+    multi_group_root_round_trip_onehot::<fp128::OneHotMultiChunkW2R2, fp128::OneHotMultiChunkW2R2>(
+        14,
+        14,
+        &[1],
+        1,
+        false,
+    );
 }
 
 #[test]

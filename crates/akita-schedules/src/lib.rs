@@ -25,7 +25,8 @@ pub use resolve::{
 };
 pub use runtime::{
     default_sis_security_policy, validate_policy, PlannerCostModelId, PlannerPolicy,
-    RuntimeSchedulePolicy, SelectionPolicyId, SelectiveL2FoldCap,
+    RingDimensionScheduleMode, RuntimeSchedulePolicy, SelectionPolicyId, SelectiveL2FoldCap,
+    ADAPTIVE_SEARCH_LEVELS,
 };
 
 /// Shared schedule-construction primitives used by offline search and generated-row replay.
@@ -33,11 +34,11 @@ pub use runtime::{
 pub mod planner_support {
     pub use crate::candidate::{
         projected_collision_role_price, selective_l2_inner_matrix, sis_key_at_dimension,
-        SelectiveL2CandidateGeometry,
+        RingDimensionCandidate, SelectiveL2CandidateGeometry,
     };
     pub use crate::runtime::{
         grouped_segment_rings, materialize_candidate_schedule, planned_next_witness_len,
         stage3_payload_bytes_for_successor, validate_policy, CandidateFoldStep,
-        CandidateTerminalResponse,
+        CandidateTerminalResponse, MAX_RECURSION_DEPTH,
     };
 }

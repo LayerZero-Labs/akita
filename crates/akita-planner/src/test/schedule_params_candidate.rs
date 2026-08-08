@@ -99,16 +99,18 @@ fn recursive_candidate_order_preserves_exhaustive_tie_break() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn recursive_candidates_add_only_the_exact_smaller_l2_alternative() {
-    use akita_config::{policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig};
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
     use akita_types::InnerCommitSecurityRoute;
 
-    let policy = policy_of::<D64OneHot>();
-    let challenge = D64OneHot::ring_challenge_config(64).expect("D64 challenge");
+    let policy = policy_of::<OneHot>();
+    let challenge = OneHot::ring_challenge_config(64).expect("D64 challenge");
     let candidates = derive_candidate_level_params(
         &policy,
         akita_types::CommitmentPayloadMode::Compressed,
         &challenge,
-        CommitmentRingDims::uniform(64),
+        akita_schedules::planner_support::RingDimensionCandidate::Fixed(
+            CommitmentRingDims::uniform(64),
+        ),
         948_672,
         4,
         3,

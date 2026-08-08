@@ -1,6 +1,6 @@
 use super::*;
 use crate::schedule::CommittedGroupProfile;
-use crate::WitnessLayout;
+use crate::{dyadic_block_ranges, WitnessLayout};
 
 #[test]
 fn multi_group_m_row_count_matches_canonical_layout() {
@@ -310,11 +310,8 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                         .group_layout(group_index)
                         .expect("group layout")
                         .num_polynomials();
-                    let blocks = WitnessLayout::resolve_chunk_block_ranges(
-                        params.num_live_blocks(),
-                        num_chunks,
-                    )
-                    .expect("chunk ranges")[chunk]
+                    let blocks = dyadic_block_ranges(params.num_live_blocks(), num_chunks)
+                        .expect("chunk ranges")[chunk]
                         .clone();
                     let unit = &layout.units()[unit_position];
                     unit_position += 1;

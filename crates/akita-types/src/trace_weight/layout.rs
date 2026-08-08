@@ -142,6 +142,9 @@ impl TraceWeightLayout {
                 AkitaError::InvalidSetup("trace claim offset overflow".to_string())
             })?;
             for unit in self.witness_layout.units_for_group(self.group_id)? {
+                if unit.num_live_blocks() == 0 {
+                    continue;
+                }
                 let last_global = unit
                     .global_block_start()
                     .checked_add(unit.num_live_blocks().checked_sub(1).ok_or_else(|| {

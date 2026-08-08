@@ -687,13 +687,13 @@ impl GeneratedCommittedGroup {
         precommitted_d_width: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
     ) -> Result<CommittedGroupParams, AkitaError> {
-        let ring_d = self.inner_commit_matrix.ring_dimension as usize;
-        if ring_d == 0 || ring_d != policy.uniform_ring_dimension {
-            return Err(AkitaError::InvalidSetup(format!(
-                "generated multi-group root ring dimension {ring_d} does not match uniform policy D={}",
-                policy.uniform_ring_dimension
-            )));
-        }
+        let dimensions = CommitmentRingDims {
+            inner: self.inner_commit_matrix.ring_dimension as usize,
+            outer: self.outer_commit_matrix.ring_dimension as usize,
+            opening: open_commit_matrix.ring_dimension as usize,
+        };
+        validate_role_dims(dimensions)?;
+        let ring_d = dimensions.d_a();
         if precommitted_groups.is_empty() {
             return Err(AkitaError::InvalidSetup(
                 "generated multi-group root requires precommitted groups".to_string(),
@@ -778,16 +778,22 @@ impl GeneratedCommittedGroup {
             sis_policy,
             sis_modulus_profile,
             akita_types::SisMatrixRole::Outer,
-            ring_d,
+            dimensions.d_b(),
             log_basis_outer,
         )
         .ok_or_else(|| no_layout("B"))?;
-        let outer_width =
+        let native_outer_width =
             decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, main_num_polys)
                 .ok_or_else(|| no_layout("B"))?;
+        let outer_width =
+            projected_role_ring_count(dimensions.d_a(), dimensions.d_b(), native_outer_width)
+                .ok_or_else(|| no_layout("B"))?;
 
-        let main_d_width =
+        let native_main_d_width =
             decomposed_w_ring_count(num_digits_open_val, num_live_blocks, main_num_polys)
+                .ok_or_else(|| no_layout("D"))?;
+        let main_d_width =
+            projected_role_ring_count(dimensions.d_a(), dimensions.d_d(), native_main_d_width)
                 .ok_or_else(|| no_layout("D"))?;
         let d_matrix_width = main_d_width
             .checked_add(precommitted_d_width)
@@ -799,7 +805,7 @@ impl GeneratedCommittedGroup {
             sis_policy,
             sis_modulus_profile,
             akita_types::SisMatrixRole::Open,
-            ring_d,
+            dimensions.d_d(),
             d_log_basis,
         )
         .ok_or_else(|| no_layout("D"))?;
@@ -845,7 +851,7 @@ impl GeneratedCommittedGroup {
                 n_b,
                 outer_width,
                 b_bucket,
-                ring_d,
+                dimensions.d_b(),
             )?,
             open_commit_matrix: OpenCommitMatrixParams::try_new(
                 sis_policy,
@@ -854,7 +860,7 @@ impl GeneratedCommittedGroup {
                 n_d,
                 d_matrix_width,
                 d_bucket,
-                ring_d,
+                dimensions.d_d(),
             )?,
             num_live_ring_elements_per_claim: num_live_blocks
                 .checked_mul(num_positions_per_block)
@@ -992,18 +998,12 @@ mod tests {
     use std::cell::RefCell;
 
     use super::*;
-    use crate::{PlannerCostModelId, SelectionPolicyId};
+    use crate::{PlannerCostModelId, RingDimensionScheduleMode, SelectionPolicyId};
     use akita_types::{
-        ChunkedWitnessCfg, CommitmentRingDims, SisModulusProfileId, SisSecurityPolicyId,
-        SisTableDigest,
+        ChunkedWitnessCfg, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
     };
 
     fn recursive_fp128_policy() -> PlannerPolicy {
-        static CANDIDATES: [CommitmentRingDims; 1] = [CommitmentRingDims {
-            inner: 64,
-            outer: 64,
-            opening: 64,
-        }];
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
@@ -1011,7 +1011,9 @@ mod tests {
             min_offloaded_witness_contraction: 3,
             uniform_ring_dimension: 64,
             setup_prefix_inner_ring_dimension: 128,
-            ring_dimension_candidates: &CANDIDATES,
+            ring_dimension_schedule_mode: RingDimensionScheduleMode::UniformDimension {
+                ring_dimension: 64,
+            },
             decomposition: DecompositionParams {
                 log_basis: 3,
                 log_commit_bound: 1,

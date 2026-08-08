@@ -11,7 +11,7 @@ class ProfileBenchReportTests(unittest.TestCase):
     def test_plan_case_runs_orders_warmups_then_measured(self) -> None:
         from scripts.profile_bench_report import BenchmarkCaseSpec, ScheduledRun, plan_case_runs
 
-        case = BenchmarkCaseSpec(mode="onehot_fp128_d64", num_vars=24, num_polys=1)
+        case = BenchmarkCaseSpec(mode="onehot_fp128", num_vars=24, num_polys=1)
         summary_dir = pathlib.Path("/tmp/bench-root")
         schedule = plan_case_runs("/bin/profile", summary_dir, case, runs=2, warmups=1)
 
@@ -28,7 +28,7 @@ class ProfileBenchReportTests(unittest.TestCase):
     def test_interleaved_schedule_alternates_binaries(self) -> None:
         from scripts.profile_bench_report import BenchmarkCaseSpec, plan_case_runs
 
-        case = BenchmarkCaseSpec(mode="onehot_fp128_d64", num_vars=24, num_polys=1)
+        case = BenchmarkCaseSpec(mode="onehot_fp128", num_vars=24, num_polys=1)
         binaries = [
             ("/bin/pr", pathlib.Path("/tmp/pr")),
             ("/bin/base", pathlib.Path("/tmp/base")),
@@ -59,8 +59,8 @@ class ProfileBenchReportTests(unittest.TestCase):
             "Args",
             (),
             {
-                "case": ["onehot_fp128_d64:24:1", "onehot_fp128_d64:24:1"],
-                "mode": "onehot_fp128_d64",
+                "case": ["onehot_fp128:24:1", "onehot_fp128:24:1"],
+                "mode": "onehot_fp128",
                 "num_vars": 24,
                 "num_polys": 1,
             },
@@ -124,7 +124,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         from scripts.profile_bench_report import render_terminal_response_components
 
         case = {
-            "mode": "onehot_fp128_d64",
+            "mode": "onehot_fp128",
             "num_vars": 32,
             "num_polys": 1,
             "exit_code": 0,
@@ -151,11 +151,11 @@ class ProfileBenchReportTests(unittest.TestCase):
         from scripts.profile_bench_report import extract_summary
 
         log = (
-            'INFO z fold encoding stats label=onehot_fp128_d64 '
+            'INFO z fold encoding stats label=onehot_fp128 '
             'z_coords=100 witness_linf_cap=4096 rice_low_bits_wire=10 rice_low_bits_cap=12 '
             'bits_per_coord_at_wire=12.5 bits_per_coord_packed=15.0 z_payload_bytes=200\n'
         )
-        summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
+        summary = extract_summary(log, mode="onehot_fp128", num_vars=24, num_polys=1)
         self.assertEqual(summary["z_rice_low_bits_wire"], 10)
         self.assertEqual(summary["z_rice_low_bits_cap"], 12)
         self.assertAlmostEqual(summary["z_bits_per_coord_golomb"], 12.5)
@@ -164,12 +164,12 @@ class ProfileBenchReportTests(unittest.TestCase):
         from scripts.profile_bench_report import extract_summary
 
         log = (
-            " INFO setup sizes label=onehot_fp128_d64 "
+            " INFO setup sizes label=onehot_fp128 "
             "num_setup_field_elements=4096 setup_vector_bytes=65536 "
             "setup_ntt_cache_bytes=131072\n"
         )
 
-        summary = extract_summary(log, "onehot_fp128_d64", 24, 1)
+        summary = extract_summary(log, "onehot_fp128", 24, 1)
 
         self.assertEqual(summary["num_setup_field_elements"], 4096)
 
@@ -177,12 +177,12 @@ class ProfileBenchReportTests(unittest.TestCase):
         from scripts.profile_bench_report import extract_summary
 
         log = (
-            " INFO setup sizes label=onehot_fp128_d64 "
+            " INFO setup sizes label=onehot_fp128 "
             "setup_ring_elements=64 setup_vector_bytes=65536 "
             "setup_ntt_cache_bytes=131072\n"
         )
 
-        summary = extract_summary(log, "onehot_fp128_d64", 24, 1)
+        summary = extract_summary(log, "onehot_fp128", 24, 1)
 
         self.assertEqual(summary["num_setup_field_elements"], 4096)
 
@@ -190,7 +190,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         from scripts.profile_bench_report import extract_summary
 
         log = (
-            'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 d_a=64 d_b=32 d_d=16 '
+            'INFO planned fold level label=onehot_fp128 level=0 d=64 d_a=64 d_b=32 d_d=16 '
             'n_a=2 n_b=3 n_d=4 '
             'challenge_l1_mass=8 log_basis=5 position_index_bits=7 block_index_bits=3 '
             'num_live_ring_elements_per_claim=768 num_live_blocks=6 block_index_domain_size=8 '
@@ -198,7 +198,7 @@ class ProfileBenchReportTests(unittest.TestCase):
             'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
         )
 
-        summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
+        summary = extract_summary(log, mode="onehot_fp128", num_vars=24, num_polys=1)
 
         self.assertEqual(
             summary["planned_levels"][0],
@@ -242,7 +242,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         # `input_witness_len`/`output_witness_len`, dropped `level_bytes`, and
         # now emits `current_w_len` as a group breakdown plus setup-prefix sizes.
         log = (
-            'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 d_a=64 d_b=32 d_d=16 '
+            'INFO planned fold level label=onehot_fp128 level=0 d=64 d_a=64 d_b=32 d_d=16 '
             'n_a=2 n_b=3 n_d=4 '
             'challenge_l1_mass=8 log_basis=5 position_index_bits=7 block_index_bits=3 '
             'num_live_ring_elements_per_claim=768 num_live_blocks=6 block_index_domain_size=8 '
@@ -252,7 +252,7 @@ class ProfileBenchReportTests(unittest.TestCase):
             'setup_prefix_natural_field_elements=100 setup_prefix_padded_field_elements=128\n'
         )
 
-        summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
+        summary = extract_summary(log, mode="onehot_fp128", num_vars=24, num_polys=1)
         level = summary["planned_levels"][0]
 
         self.assertEqual(
@@ -272,13 +272,13 @@ class ProfileBenchReportTests(unittest.TestCase):
         from scripts.profile_bench_report import extract_summary
 
         log = (
-            'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 n_a=2 n_b=3 n_d=4 '
+            'INFO planned fold level label=onehot_fp128 level=0 d=64 n_a=2 n_b=3 n_d=4 '
             'challenge_l1_mass=8 log_basis=5 m_vars=7 r_vars=3 '
             'num_blocks=8 block_len=2 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
         )
 
-        summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
+        summary = extract_summary(log, mode="onehot_fp128", num_vars=24, num_polys=1)
         level = summary["planned_levels"][0]
 
         self.assertEqual(level["position_index_bits"], 7)
@@ -293,13 +293,13 @@ class ProfileBenchReportTests(unittest.TestCase):
         from scripts.profile_bench_report import extract_summary
 
         log = (
-            'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 n_a=2 n_b=3 n_d=4 '
+            'INFO planned fold level label=onehot_fp128 level=0 d=64 n_a=2 n_b=3 n_d=4 '
             'challenge_l1_mass=8 log_basis=5 position_bits=7 block_bits=3 '
             'num_blocks=8 block_len=128 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
         )
 
-        summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
+        summary = extract_summary(log, mode="onehot_fp128", num_vars=24, num_polys=1)
         level = summary["planned_levels"][0]
 
         self.assertEqual(level["position_index_bits"], 7)
@@ -311,7 +311,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         from scripts.profile_bench_report import extract_summary, render_planned_levels
 
         current_log = (
-            'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 d_a=64 d_b=32 d_d=16 '
+            'INFO planned fold level label=onehot_fp128 level=0 d=64 d_a=64 d_b=32 d_d=16 '
             'n_a=4 n_b=6 n_d=8 challenge_l1_mass=16 log_basis=6 position_index_bits=7 '
             'block_index_bits=3 num_live_ring_elements_per_claim=768 num_live_blocks=6 '
             'block_index_domain_size=8 num_positions_per_block=128 delta_commit=4 delta_open=5 '
@@ -320,8 +320,8 @@ class ProfileBenchReportTests(unittest.TestCase):
         baseline_log = current_log.replace("n_a=4", "n_a=2").replace(
             "level_bytes=4096", "level_bytes=2048"
         )
-        current = extract_summary(current_log, "onehot_fp128_d64", 24, 1)["planned_levels"]
-        baseline = extract_summary(baseline_log, "onehot_fp128_d64", 24, 1)["planned_levels"]
+        current = extract_summary(current_log, "onehot_fp128", 24, 1)["planned_levels"]
+        baseline = extract_summary(baseline_log, "onehot_fp128", 24, 1)["planned_levels"]
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -343,13 +343,13 @@ class ProfileBenchReportTests(unittest.TestCase):
         )
 
         log = (
-            'INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=28 '
+            'INFO proof fold level label=onehot_fp128 level=0 d=64 total_bytes=28 '
             'fold_grind_nonce_bytes=4 grind_nonce=3 grind_attempts=4 '
             'stage1_range_image_evaluation_bytes=16 '
             'stage1_norm_proof_bytes=8 response_l2_sq=Some(14) '
             'root_variant=terminal\n'
         )
-        levels = extract_summary(log, "onehot_fp128_d64", 24, 1)["proof_levels"]
+        levels = extract_summary(log, "onehot_fp128", 24, 1)["proof_levels"]
         self.assertEqual(proof_level_component_bytes(levels[0]), 28)
         self.assertEqual(levels[0]["response_l2_sq"], 14)
 
@@ -463,7 +463,7 @@ class ProfileBenchReportTests(unittest.TestCase):
 
         current = normalize_case_summary(
             {
-                "mode": "onehot_fp128_d64",
+                "mode": "onehot_fp128",
                 "num_vars": 32,
                 "num_polys": 1,
                 "exit_code": 0,
@@ -503,9 +503,66 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertIn("8.0 MiB", report)
         self.assertIn("4,096 bytes", report)
         self.assertIn("nv32Onehot256", report)
-        self.assertIn("D=64", report)
+        self.assertNotIn("D=64", report)
         self.assertNotIn("Proof B", report)
         self.assertNotIn("Setup Mode", report)
+
+    def test_adaptive_case_label_omits_ring_dimensions_and_mixed_dimension_config(self) -> None:
+        from scripts.profile_bench_report import human_case_label, normalize_case_summary
+
+        summary = normalize_case_summary(
+            {
+                "mode": "onehot_fp128",
+                "num_vars": 32,
+                "num_polys": 1,
+                "exit_code": 0,
+                "planned_levels": [
+                    {"level": 0, "d_a": 256, "d_b": 64, "d_d": 64}
+                ],
+            }
+        )
+
+        self.assertEqual(human_case_label(summary), "Fp128 - nv32Onehot256")
+
+    def test_adaptive_multi_group_case_label_omits_ring_dimensions(self) -> None:
+        from scripts.profile_bench_report import human_case_label, normalize_case_summary
+
+        summary = normalize_case_summary(
+            {
+                "mode": "onehot_fp128_multi_group",
+                "num_vars": 32,
+                "num_polys": 4,
+                "exit_code": 0,
+                "planned_levels": [
+                    {"level": 0, "d_a": 256, "d_b": 64, "d_d": 64}
+                ],
+            }
+        )
+
+        self.assertEqual(
+            human_case_label(summary),
+            "Fp128 - nv32Onehot256 - Batched4 - MultiGroup",
+        )
+
+    def test_case_label_keeps_non_dimension_topology_variant(self) -> None:
+        from scripts.profile_bench_report import human_case_label, normalize_case_summary
+
+        summary = normalize_case_summary(
+            {
+                "mode": "onehot_fp128_multi_chunk_w4r2",
+                "num_vars": 32,
+                "num_polys": 1,
+                "exit_code": 0,
+                "planned_levels": [
+                    {"level": 0, "d_a": 256, "d_b": 64, "d_d": 64}
+                ],
+            }
+        )
+
+        self.assertEqual(
+            human_case_label(summary),
+            "Fp128 - nv32Onehot256 - MultiChunkW4R2",
+        )
 
     def test_full_report_renders_overhauled_tables(self) -> None:
         from scripts.profile_bench_report import render_report
@@ -553,7 +610,7 @@ class ProfileBenchReportTests(unittest.TestCase):
             "root_variant": "terminal",
         }
         case = {
-            "mode": "onehot_fp128_d64",
+            "mode": "onehot_fp128",
             "num_vars": 32,
             "num_polys": 1,
             "setup_contribution_mode": "direct",
@@ -610,10 +667,10 @@ class ProfileBenchReportTests(unittest.TestCase):
             (),
             {
                 "case": [
-                    "onehot_fp128_d64:32:1",
-                    "onehot_fp128_d64:32:1:recursive",
+                    "onehot_fp128:32:1",
+                    "onehot_fp128:32:1:recursive",
                 ],
-                "mode": "onehot_fp128_d64",
+                "mode": "onehot_fp128",
                 "num_vars": 32,
                 "num_polys": 1,
             },
@@ -633,7 +690,7 @@ class ProfileBenchReportTests(unittest.TestCase):
             write_aggregate_summaries,
         )
 
-        case = BenchmarkCaseSpec(mode="onehot_fp128_d64", num_vars=24, num_polys=1)
+        case = BenchmarkCaseSpec(mode="onehot_fp128", num_vars=24, num_polys=1)
         pr_dir = pathlib.Path("pr-root")
         base_dir = pathlib.Path("base-root")
         ok_summary = {

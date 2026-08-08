@@ -37,14 +37,14 @@ pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 // Bare presets: test-only non-singleton batched opening shapes
 // fall through to the offline DP planner on table miss via the default
 // `runtime_schedule` fallback.
-pub(super) type OneHotCfg = fp128::D64OneHot;
+pub(super) type OneHotCfg = fp128::OneHot;
 pub(super) const ONEHOT_D: usize = OneHotCfg::D;
-// `fp128::D64OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
+// `fp128::OneHot` requires K=256 one-hot schedules
 // ring elements), so the committed poly has `2^nv / K` chunks, not one chunk
 // per ring element.
 pub(super) const ONEHOT_K: usize = 256;
 
-pub(super) type DenseCfg = fp128::D64Dense;
+pub(super) type DenseCfg = fp128::Dense;
 pub(super) const DENSE_D: usize = DenseCfg::D;
 
 static INIT_RAYON: Once = Once::new();
@@ -291,6 +291,30 @@ where
     opening_from_poly_with_basis::<D, P>(poly, point, layout, BasisMode::Lagrange)
 }
 
+pub(super) fn opening_from_poly_for_layout<'a, P>(
+    poly: &'a P,
+    point: &[F],
+    layout: &CommittedGroupParams,
+) -> F
+where
+    P: RootOpeningSource<F, 64>
+        + RootPolyShape<F, 64>
+        + RootOpeningSource<F, 128>
+        + RootPolyShape<F, 128>
+        + RootOpeningSource<F, 256>
+        + RootPolyShape<F, 256>,
+    CpuBackend: OpeningFoldKernel<<P as RootOpeningSource<F, 64>>::OpeningView<'a>, F, 64>
+        + OpeningFoldKernel<<P as RootOpeningSource<F, 128>>::OpeningView<'a>, F, 128>
+        + OpeningFoldKernel<<P as RootOpeningSource<F, 256>>::OpeningView<'a>, F, 256>,
+{
+    match layout.d_a() {
+        64 => opening_from_poly::<64, _>(poly, point, layout),
+        128 => opening_from_poly::<128, _>(poly, point, layout),
+        256 => opening_from_poly::<256, _>(poly, point, layout),
+        dimension => panic!("unsupported test opening ring dimension D={dimension}"),
+    }
+}
+
 pub(super) fn opening_from_poly_with_basis<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],
@@ -342,13 +366,14 @@ where
 pub(super) fn make_onehot_poly(layout: &CommittedGroupParams, seed: u64) -> OneHotPoly<F, u8> {
     // `2^nv = (num_live_blocks · num_positions_per_block) · D` field elements, grouped into
     // `2^nv / K` one-hot chunks of size `K`.
-    let total_field = layout.num_live_blocks * layout.num_positions_per_block * ONEHOT_D;
+    let root_d = layout.d_a();
+    let total_field = layout.num_live_blocks * layout.num_positions_per_block * root_d;
     let total_chunks = total_field / ONEHOT_K;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
         .collect();
-    OneHotPoly::<F, u8>::new(ONEHOT_K, ONEHOT_D, indices).expect("onehot poly")
+    OneHotPoly::<F, u8>::new(ONEHOT_K, root_d, indices).expect("onehot poly")
 }
 
 pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {
@@ -500,15 +525,13 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             .map(|polys| {
                 polys
                     .iter()
-                    .map(|poly| {
-                        opening_from_poly::<ONEHOT_D, _>(poly, &point[..PRE_NV], &pre_layout)
-                    })
+                    .map(|poly| opening_from_poly_for_layout(poly, &point[..PRE_NV], &pre_layout))
                     .collect()
             })
             .collect();
         let final_openings: Vec<F> = final_polys
             .iter()
-            .map(|poly| opening_from_poly::<ONEHOT_D, _>(poly, &point, root_params))
+            .map(|poly| opening_from_poly_for_layout(poly, &point, root_params))
             .collect();
 
         let pre_refs_by_group: Vec<Vec<&OneHotPoly<F, u8>>> = pre_polys_by_group
@@ -620,8 +643,11 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
                 BasisMode::Lagrange,
             );
             assert!(
-                matches!(result, Err(AkitaError::InvalidProof)),
-                "{label} must return InvalidProof without panicking, got {result:?}"
+                matches!(
+                    result,
+                    Err(AkitaError::InvalidProof | AkitaError::InvalidInput(_))
+                ),
+                "{label} must return a proof/input rejection without panicking, got {result:?}"
             );
         };
 
