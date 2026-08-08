@@ -255,31 +255,45 @@ where
                         .entered();
                         let gadget =
                             akita_types::gadget_row_scalars::<F>(num_digits_inner, log_basis_inner);
-                        let mut reduced = CyclotomicRing::zero();
-                        for position in 0..num_positions {
-                            let start = position
-                                .checked_mul(num_digits_inner)
+                        if let Some(position_rings) = position_rings {
+                            let positions = position_rings
+                                .get(..num_positions)
                                 .ok_or(AkitaError::InvalidProof)?;
-                            let mut z_value = CyclotomicRing::zero();
-                            for digit in 0..num_digits_inner {
-                                let index =
-                                    start.checked_add(digit).ok_or(AkitaError::InvalidProof)?;
-                                z_value += centered_ring::<F, D_A>(
-                                    z_centered.get(index).ok_or(AkitaError::InvalidProof)?,
-                                )
-                                .scale(gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
-                            }
-                            if let Some(scale) = multiplier.position_constant_coeff(position) {
-                                reduced += z_value.scale(&scale);
+                            let matrix_storage;
+                            let matrix = if gadget.as_slice() == [F::one()] {
+                                positions
                             } else {
-                                reduced += *position_rings
-                                    .ok_or(AkitaError::InvalidProof)?
-                                    .get(position)
-                                    .ok_or(AkitaError::InvalidProof)?
-                                    * z_value;
+                                matrix_storage = positions
+                                    .iter()
+                                    .flat_map(|position| {
+                                        gadget.iter().map(move |scale| position.scale(scale))
+                                    })
+                                    .collect::<Vec<_>>();
+                                &matrix_storage
+                            };
+                            super::terminal_ntt::centered_inner_product(matrix, z_centered)?
+                        } else {
+                            let mut reduced = CyclotomicRing::zero();
+                            for position in 0..num_positions {
+                                let start = position
+                                    .checked_mul(num_digits_inner)
+                                    .ok_or(AkitaError::InvalidProof)?;
+                                let mut z_value = CyclotomicRing::zero();
+                                for digit in 0..num_digits_inner {
+                                    let index =
+                                        start.checked_add(digit).ok_or(AkitaError::InvalidProof)?;
+                                    z_value += centered_ring::<F, D_A>(
+                                        z_centered.get(index).ok_or(AkitaError::InvalidProof)?,
+                                    )
+                                    .scale(gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
+                                }
+                                let scale = multiplier
+                                    .position_constant_coeff(position)
+                                    .ok_or(AkitaError::InvalidProof)?;
+                                reduced += z_value.scale(&scale);
                             }
+                            reduced
                         }
-                        reduced
                     };
                     Ok::<_, AkitaError>((folded, reduced))
                 },
