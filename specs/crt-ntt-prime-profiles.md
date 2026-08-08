@@ -36,8 +36,8 @@ The final implementation keeps the current row-major `NttSlotCache` CPU referenc
 layout and treats physical layout migration as a follow-up.
 The optimization work that landed in this PR is limited to two changes over the
 existing layout: x86 CRT/NTT SIMD kernels enabled by runtime CPU feature
-detection (AVX-512 by default when the host supports it, AVX2 otherwise, scalar
-via env override), and a unification of the block-parallel i8 digit matvec onto a
+detection (AVX2 by default, AVX-512 via explicit env opt-in, and scalar via env
+override), and a unification of the block-parallel i8 digit matvec onto a
 single generic multi-row kernel that replaces the former `n_a in {1, 2, 3}`
 specializations.
 Proof bytes, transcripts, schedules, serialization, and verifier behavior stay
@@ -260,11 +260,9 @@ larger ring degree.
    the Bugbot false positive (tests and optional cosmetic clarity only).
 9. Requiring Metal, AVX, or any accelerator backend for correctness.
    x86 CRT/NTT SIMD is an optimization-only surface: it is enabled by runtime CPU
-   feature detection (AVX-512 by default when the host supports
-   `avx512f`/`avx512dq`/`avx512bw`, AVX2 otherwise) and falls back to scalar.
-   The `AKITA_SCALAR_NTT`, `AKITA_AVX_NTT`, and `AKITA_AVX512_NTT` env overrides
-   drive scalar-equivalence and A/B tests, and correctness never depends on which
-   mode is selected.
+   feature detection, selects the measured AVX2 production backend, and falls
+   back to scalar. `AKITA_SCALAR_NTT=1` is the single emergency SIMD kill switch;
+   correctness never depends on which mode is selected.
 10. Changing canonical setup layout, proof layout, transcript binding, or
     verifier-visible semantics to accommodate a backend cache layout.
 11. Choosing one new physical cache layout without measurements.
@@ -620,7 +618,7 @@ and it removes roughly 800 lines of duplicated kernel code.
    This PR lands AVX2 i32 pointwise/add-reduce, AVX2 i32 D32 and D64+ transforms,
    AVX-512 i32 pointwise/add-reduce, and AVX2 i16 pointwise/add-reduce over the
    existing CRT limb layout, selected at runtime by CPU feature detection
-   (AVX-512 by default when available, AVX2 otherwise).
+   (AVX2 by default, with AVX-512 available through explicit opt-in).
    Q16 full transforms, AVX-512-specific full transforms, IFMA-style arithmetic,
    and any layout-aware transform design remain follow-ups and must beat the
    current production branch on the same host before they are enabled.

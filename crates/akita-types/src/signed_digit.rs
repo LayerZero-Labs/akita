@@ -18,6 +18,14 @@ pub enum SignedDigitKernel {
     I16,
 }
 
+/// Return the absolute bound for balanced base-`2^log_basis` digits.
+pub const fn balanced_signed_digit_abs_bound(log_basis: u32) -> Option<u64> {
+    match SignedDigitKernel::for_log_basis(log_basis) {
+        Some(_) => Some(1u64 << (log_basis - 1)),
+        None => None,
+    }
+}
+
 impl SignedDigitKernel {
     /// Select the canonical storage kernel for `log_basis`.
     pub const fn for_log_basis(log_basis: u32) -> Option<Self> {
@@ -65,5 +73,9 @@ mod tests {
             Some(SignedDigitKernel::I16)
         );
         assert_eq!(SignedDigitKernel::for_log_basis(17), None);
+        assert_eq!(balanced_signed_digit_abs_bound(0), None);
+        assert_eq!(balanced_signed_digit_abs_bound(8), Some(128));
+        assert_eq!(balanced_signed_digit_abs_bound(16), Some(32_768));
+        assert_eq!(balanced_signed_digit_abs_bound(17), None);
     }
 }

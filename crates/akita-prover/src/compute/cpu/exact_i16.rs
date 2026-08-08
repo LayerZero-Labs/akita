@@ -2,7 +2,7 @@ use super::CpuPreparedSetup;
 use crate::compute::plans::RecursiveWitnessCommitRowsPlan;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_types::{NttCacheKey, NttTransformDomain};
+use akita_types::{balanced_signed_digit_abs_bound, NttCacheKey, NttTransformDomain};
 use std::array::from_fn;
 
 pub(super) fn dense_commit_rows<F: FieldCore + CanonicalField, const D: usize>(
@@ -13,6 +13,8 @@ pub(super) fn dense_commit_rows<F: FieldCore + CanonicalField, const D: usize>(
     num_digits_inner: usize,
     log_basis_inner: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    let rhs_abs_bound = balanced_signed_digit_abs_bound(log_basis_inner)
+        .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
     prepared.with_shared_ntt::<D, _>(
         NttCacheKey::from_matrix_shape(
             D,
@@ -20,7 +22,7 @@ pub(super) fn dense_commit_rows<F: FieldCore + CanonicalField, const D: usize>(
             row_width,
             NttTransformDomain::ExactNegacyclicI16 {
                 width: row_width,
-                log_basis: log_basis_inner,
+                rhs_abs_bound,
             },
         )?,
         |ntt| {
@@ -47,6 +49,8 @@ pub(super) fn recursive_witness_commit_rows<F: FieldCore + CanonicalField, const
     plan: &RecursiveWitnessCommitRowsPlan<'_, D>,
     row_width: usize,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    let rhs_abs_bound = balanced_signed_digit_abs_bound(plan.log_basis_inner)
+        .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
     prepared.with_shared_ntt::<D, _>(
         NttCacheKey::from_matrix_shape(
             D,
@@ -54,7 +58,7 @@ pub(super) fn recursive_witness_commit_rows<F: FieldCore + CanonicalField, const
             row_width,
             NttTransformDomain::ExactNegacyclicI16 {
                 width: row_width,
-                log_basis: plan.log_basis_inner,
+                rhs_abs_bound,
             },
         )?,
         |ntt| {

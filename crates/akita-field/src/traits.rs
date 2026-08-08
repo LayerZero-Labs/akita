@@ -378,6 +378,16 @@ pub trait CanonicalField:
 
     /// Construct from canonical value reduced modulo the field modulus.
     fn from_canonical_u128_reduced(val: u128) -> Self;
+
+    /// Borrow canonical `u32` representatives without per-element conversion.
+    ///
+    /// Fields whose in-memory representation is exactly one canonical `u32`
+    /// may override this capability. Wider or encoded fields return `None`.
+    #[inline]
+    fn canonical_u32_slice(values: &[Self]) -> Option<&[u32]> {
+        let _ = values;
+        None
+    }
 }
 
 /// Field types with a cheap halving operation.

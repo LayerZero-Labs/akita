@@ -1,6 +1,5 @@
 use super::*;
 use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q64_NUM_PRIMES};
-use akita_types::max_safe_crt_accumulation_width;
 use akita_types::{select_crt_ntt_params, ProtocolCrtNttParams, MAX_I8_LOG_BASIS};
 
 pub(super) const BALANCED_DIGIT_RHS_MAX_ABS: u64 = 1 << (MAX_I8_LOG_BASIS - 1);
@@ -27,11 +26,14 @@ where
     F: CanonicalField,
     W: PrimeWidth,
 {
-    max_safe_crt_accumulation_width::<F, W, K, D>(params, rhs_abs_bound).ok_or_else(|| {
-        AkitaError::InvalidSetup(format!(
-            "{profile_id} CRT capacity cannot fit a single {role} term for D={D} with rhs_abs_bound={rhs_abs_bound}"
-        ))
-    })
+    params
+        .crt_capacity()
+        .max_safe_width::<F, D>(rhs_abs_bound)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "{profile_id} CRT capacity cannot fit a single {role} term for D={D} with rhs_abs_bound={rhs_abs_bound}"
+            ))
+        })
 }
 
 fn capacity_profile_from_params<F, W, const K: usize, const D: usize>(
@@ -105,7 +107,9 @@ pub(super) fn safe_crt_chunk_width<
     if full_width == 0 {
         return Some(0);
     }
-    max_safe_crt_accumulation_width::<F, W, K, D>(params, rhs_abs_bound)
+    params
+        .crt_capacity()
+        .max_safe_width::<F, D>(rhs_abs_bound)
         .map(|safe_width| safe_width.min(full_width))
         .filter(|&chunk_width| chunk_width > 0)
 }
@@ -122,11 +126,10 @@ mod tests {
     fn q128_digit_capacity_matches_expected_scale() {
         const D: usize = 64;
         let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
-        let width = max_safe_crt_accumulation_width::<Prime128Offset275, i32, Q128_NUM_PRIMES, D>(
-            &params,
-            BALANCED_DIGIT_RHS_MAX_ABS,
-        )
-        .expect("one i8 term should fit");
+        let width = params
+            .crt_capacity()
+            .max_safe_width::<Prime128Offset275, D>(BALANCED_DIGIT_RHS_MAX_ABS)
+            .expect("one i8 term should fit");
 
         assert_eq!(width, 511);
     }
@@ -135,17 +138,13 @@ mod tests {
     fn q128_l8_balanced_digit_bound_matches_raw_i8_width() {
         const D: usize = 64;
         let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
-        let balanced_width =
-            max_safe_crt_accumulation_width::<Prime128Offset275, i32, Q128_NUM_PRIMES, D>(
-                &params,
-                BALANCED_DIGIT_RHS_MAX_ABS,
-            )
+        let balanced_width = params
+            .crt_capacity()
+            .max_safe_width::<Prime128Offset275, D>(BALANCED_DIGIT_RHS_MAX_ABS)
             .expect("one balanced digit term should fit");
-        let full_i8_width =
-            max_safe_crt_accumulation_width::<Prime128Offset275, i32, Q128_NUM_PRIMES, D>(
-                &params,
-                I8_RHS_MAX_ABS,
-            )
+        let full_i8_width = params
+            .crt_capacity()
+            .max_safe_width::<Prime128Offset275, D>(I8_RHS_MAX_ABS)
             .expect("one full i8 term should fit");
 
         assert_eq!(balanced_width, full_i8_width);
@@ -155,9 +154,9 @@ mod tests {
     fn q128_rejects_unsafe_single_centered_term() {
         const D: usize = 128;
         let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
-        let width = max_safe_crt_accumulation_width::<Prime128Offset275, i32, Q128_NUM_PRIMES, D>(
-            &params, 32_768,
-        );
+        let width = params
+            .crt_capacity()
+            .max_safe_width::<Prime128Offset275, D>(32_768);
 
         assert_eq!(width, None);
     }
@@ -166,11 +165,10 @@ mod tests {
     fn q32_digit_capacity_is_not_artificially_small() {
         const D: usize = 64;
         let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, D>::new(Q32_PRIMES);
-        let width = max_safe_crt_accumulation_width::<Fp64<4294967197>, i32, Q32_NUM_PRIMES, D>(
-            &params,
-            BALANCED_DIGIT_RHS_MAX_ABS,
-        )
-        .expect("Q32 i8 path should have headroom");
+        let width = params
+            .crt_capacity()
+            .max_safe_width::<Fp64<4294967197>, D>(BALANCED_DIGIT_RHS_MAX_ABS)
+            .expect("Q32 i8 path should have headroom");
 
         assert_eq!(width, 32_764);
     }
@@ -216,28 +214,25 @@ mod tests {
         const D: usize = 256;
         let q32_params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, D>::new(Q32_PRIMES);
         assert_eq!(
-            max_safe_crt_accumulation_width::<Prime32Offset99, i32, Q32_NUM_PRIMES, D>(
-                &q32_params,
-                32_768
-            ),
+            q32_params
+                .crt_capacity()
+                .max_safe_width::<Prime32Offset99, D>(32_768),
             Some(31)
         );
 
         let q64_params = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES);
         assert_eq!(
-            max_safe_crt_accumulation_width::<Prime64Offset59, i32, Q64_NUM_PRIMES, D>(
-                &q64_params,
-                32_768
-            ),
+            q64_params
+                .crt_capacity()
+                .max_safe_width::<Prime64Offset59, D>(32_768),
             Some(7)
         );
 
         let q128_params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
         assert_eq!(
-            max_safe_crt_accumulation_width::<Prime128Offset275, i32, Q128_NUM_PRIMES, D>(
-                &q128_params,
-                32_768
-            ),
+            q128_params
+                .crt_capacity()
+                .max_safe_width::<Prime128Offset275, D>(32_768),
             None
         );
     }
@@ -280,11 +275,10 @@ mod tests {
         let q64 = selected_crt_i8_capacity_profile::<Prime64Offset59, D>().unwrap();
         assert_eq!(
             q64.balanced_digit_safe_width,
-            max_safe_crt_accumulation_width::<Prime64Offset59, i32, Q64_NUM_PRIMES, D>(
-                &q64_params,
-                BALANCED_DIGIT_RHS_MAX_ABS
-            )
-            .unwrap()
+            q64_params
+                .crt_capacity()
+                .max_safe_width::<Prime64Offset59, D>(BALANCED_DIGIT_RHS_MAX_ABS)
+                .unwrap()
         );
     }
 }

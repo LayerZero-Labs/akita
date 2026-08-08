@@ -202,13 +202,12 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
                     .and_then(|bytes| bytes.checked_mul(core::mem::size_of::<i32>()))
                     .ok_or_else(|| AkitaError::InvalidSetup("planned NTT bytes overflow".into()))?;
                 let tail_bytes = match domain {
-                    NttTransformDomain::ExactNegacyclicI16 { width, log_basis }
-                        if dispatch_for_field!(
-                            ProtocolDispatchSlot::Ntt,
-                            F,
-                            ring_d,
-                            |RING_D| ntt_cache_requires_i16_tail::<F, RING_D>(width, log_basis)
-                        )? =>
+                    NttTransformDomain::ExactNegacyclicI16 {
+                        width,
+                        rhs_abs_bound,
+                    } if dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, ring_d, |RING_D| {
+                        ntt_cache_requires_i16_tail::<F, RING_D>(width, rhs_abs_bound)
+                    })? =>
                     {
                         count
                             .checked_mul(ring_d)
@@ -258,9 +257,13 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
         let mode = match key.domain {
             NttTransformDomain::Negacyclic => NttCacheMode::Negacyclic,
             NttTransformDomain::Cyclic => NttCacheMode::Cyclic,
-            NttTransformDomain::ExactNegacyclicI16 { width, log_basis } => {
-                NttCacheMode::ExactNegacyclic { width, log_basis }
-            }
+            NttTransformDomain::ExactNegacyclicI16 {
+                width,
+                rhs_abs_bound,
+            } => NttCacheMode::ExactNegacyclic {
+                width,
+                rhs_abs_bound,
+            },
         };
         let cache = Arc::new(prepare_ntt_cache(view, mode)?);
         Ok(ErasedCpuNttCache {

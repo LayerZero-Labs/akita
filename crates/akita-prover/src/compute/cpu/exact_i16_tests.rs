@@ -36,7 +36,7 @@ fn recursive_commit_selects_exact_i16_from_inner_basis() {
             2,
             NttTransformDomain::ExactNegacyclicI16 {
                 width: 2,
-                log_basis: 11,
+                rhs_abs_bound: 1 << 10,
             },
         )
         .unwrap()
