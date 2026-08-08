@@ -183,65 +183,20 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
         if index + 1 >= akita_schedules::ADAPTIVE_SEARCH_LEVELS {
             assert_eq!(
                 current,
-                CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION)
+                CommitmentRingDims::uniform(ADAPTIVE_SUFFIX_RING_DIMENSION)
             );
         }
         previous = current;
     }
     assert_eq!(
         schedule.terminal.params.witness.d_a(),
-        MIXED_SEARCH_SUFFIX_RING_DIMENSION
+        ADAPTIVE_SUFFIX_RING_DIMENSION
     );
 }
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn grouped_scalar_fallback_preserves_mixed_domain() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
-    use akita_types::AkitaScheduleLookupKey;
-
-    let base_policy = policy_of::<OneHot>();
-    let dimensions = [
-        CommitmentRingDims::uniform(64),
-        CommitmentRingDims {
-            inner: 128,
-            outer: 64,
-            opening: 64,
-        },
-    ];
-    let domain = RingDimensionSearchDomain::new(dimensions).unwrap();
-    let policy = policy_for_domain(base_policy, &domain);
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
-
-    let grouped = crate::find_schedule(
-        &key,
-        OneHot::root_honest_fold_policy(),
-        &[],
-        &policy,
-        OneHot::ring_challenge_config,
-    )
-    .unwrap();
-    let direct = mixed_search::find_schedule(
-        key.final_group,
-        &policy,
-        OneHot::root_honest_fold_policy(),
-        OneHot::ring_challenge_config,
-    )
-    .unwrap();
-
-    assert_eq!(
-        grouped.schedule.canonical_descriptor_bytes(),
-        direct.schedule.canonical_descriptor_bytes()
-    );
-    assert_eq!(
-        grouped.estimate.estimated_proof_payload_bytes(),
-        direct.estimate.estimated_proof_payload_bytes()
-    );
-}
-
-#[cfg(feature = "catalog-gen")]
-#[test]
-fn adaptive_mixed_search_is_canonical() {
+fn adaptive_dimension_search_is_canonical() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<OneHot>();
@@ -365,7 +320,7 @@ fn adaptive_frontier_matches_unpruned_l0_l1_search() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn mixed_search_parallel_generation_is_descriptor_deterministic() {
+fn adaptive_search_parallel_generation_is_descriptor_deterministic() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
     let handles = (0..8)
@@ -475,7 +430,7 @@ fn mixed_root_prices_eor_at_candidate_a_dimension() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn mixed_search_rejects_an_advertised_unsupported_role_dimension() {
+fn adaptive_search_rejects_an_advertised_unsupported_role_dimension() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
     let mut base_policy = policy_of::<OneHot>();
@@ -566,7 +521,7 @@ fn adaptive_nv36_minimizes_setup_before_proof_bytes() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
+fn adaptive_search_requires_a_monotonic_d64_suffix_domain() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<OneHot>();
@@ -605,7 +560,7 @@ fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn mixed_search_supports_direct_multi_chunk_policy() {
+fn adaptive_search_supports_direct_multi_chunk_policy() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
     let mut policy = policy_of::<OneHot>();
@@ -655,7 +610,7 @@ fn mixed_search_supports_direct_multi_chunk_policy() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn mixed_search_validates_key_and_policy_at_entry() {
+fn adaptive_search_validates_key_and_policy_at_entry() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<OneHot>();
@@ -728,7 +683,7 @@ fn adaptive_root_domain_is_independent_of_uniform_config_dimension() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn mixed_search_applies_setup_budget_in_physical_fields() {
+fn adaptive_search_applies_setup_budget_in_physical_fields() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
     let mut policy = policy_of::<OneHot>();

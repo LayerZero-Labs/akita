@@ -13,16 +13,16 @@ use akita_types::{
 use crate::{planner::root_level_candidates_for_basis, PlannerPolicy};
 
 use super::{
-    derive_candidate_level_params, derive_candidate_level_params_all_splits,
-    exact_dimension_candidates, level_setup_field_elements, stage3_payload_bytes_for_successor,
-    suffix_opening_layout, terminal_setup_field_elements, CandidateFoldStep,
-    CandidateTerminalResponse, ScheduleCandidate,
+    derive_candidate_level_params, derive_candidate_level_params_all_splits, dimension_candidates,
+    level_setup_field_elements, stage3_payload_bytes_for_successor, suffix_opening_layout,
+    terminal_setup_field_elements, CandidateFoldStep, CandidateTerminalResponse, MixedScore,
+    ScheduleCandidate,
 };
 use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
-/// Result of the suffix DP at one state. Both shape options are reported
-/// because the parent's proof-size formula depends on the child's first
-/// step:
+/// Result of the suffix DP at one state. Each selection objective retains the
+/// candidates its parent needs because proof-size and setup-envelope pricing
+/// depend on the child's first step:
 ///
 /// - `best_by_first_direct_setup_per_lb` — lexicographically best fold-first
 ///   schedule by first direct setup scan and then proof payload, per first-fold
@@ -32,10 +32,56 @@ use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 /// - `best_by_payload_per_lb` — smallest-payload fold-first schedule per
 ///   first-fold `log_basis`, used after an earlier direct edge has fixed the
 ///   setup-size objective.
+/// - `mixed_frontier` — nondominated setup-envelope/proof candidates for the
+///   direct adaptive-dimension objective.
 #[derive(Clone)]
 pub(crate) struct SuffixResult {
     pub(crate) best_by_first_direct_setup_per_lb: BTreeMap<FirstFoldKey, ScheduleCandidate>,
     pub(crate) best_by_payload_per_lb: BTreeMap<FirstFoldKey, ScheduleCandidate>,
+    /// Nondominated setup-envelope/proof candidates used by adaptive scalar
+    /// planning. Candidates with different first folds remain distinct because
+    /// the parent proof price and canonical descriptor can distinguish them.
+    pub(crate) mixed_frontier: Vec<ScheduleCandidate>,
+}
+
+fn mixed_score(candidate: &ScheduleCandidate) -> MixedScore {
+    MixedScore {
+        setup_field_elements: candidate.setup_field_elements,
+        proof_bytes: candidate.total_bytes,
+    }
+}
+
+fn dominates_mixed_score(left: MixedScore, right: MixedScore) -> bool {
+    left.setup_field_elements <= right.setup_field_elements
+        // A setup-only improvement cannot prune `right`: a parent can mask
+        // both setup footprints, leaving proof bytes and the descriptor to
+        // decide the complete schedule.
+        && left.proof_bytes < right.proof_bytes
+}
+
+fn insert_mixed_frontier(
+    policy: &PlannerPolicy,
+    frontier: &mut Vec<ScheduleCandidate>,
+    candidate: ScheduleCandidate,
+) {
+    if policy.selection_policy
+        != crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+        || !policy.admits_setup_field_elements(candidate.setup_field_elements)
+    {
+        return;
+    }
+    let same_first_fold =
+        |other: &ScheduleCandidate| other.first_fold_params() == candidate.first_fold_params();
+    if frontier.iter().any(|other| {
+        same_first_fold(other) && dominates_mixed_score(mixed_score(other), mixed_score(&candidate))
+    }) {
+        return;
+    }
+    frontier.retain(|other| {
+        !same_first_fold(other)
+            || !dominates_mixed_score(mixed_score(&candidate), mixed_score(other))
+    });
+    frontier.push(candidate);
 }
 
 /// Parent-visible first-fold class. A parent edge prices the child's outgoing
@@ -333,10 +379,25 @@ fn child_choice(
     }))
 }
 
+fn consider_mixed_child_suffixes(
+    edge: &ChildEdge<'_>,
+    child_candidates: &[ScheduleCandidate],
+    frontier: &mut Vec<ScheduleCandidate>,
+) -> Result<(), AkitaError> {
+    for suffix in child_candidates {
+        let Some(candidate) = child_choice(edge, suffix)? else {
+            continue;
+        };
+        insert_mixed_frontier(edge.policy, frontier, candidate);
+    }
+    Ok(())
+}
+
 fn empty_suffix_result() -> Arc<SuffixResult> {
     Arc::new(SuffixResult {
         best_by_first_direct_setup_per_lb: BTreeMap::new(),
         best_by_payload_per_lb: BTreeMap::new(),
+        mixed_frontier: Vec::new(),
     })
 }
 
@@ -409,13 +470,24 @@ fn price_level_candidate_with_children(
     require_child_fold: bool,
     best_for_this_lb: &mut BTreeMap<ParentPayloadKey, ScheduleCandidate>,
     best_payload_for_this_lb: &mut BTreeMap<ParentPayloadKey, ScheduleCandidate>,
+    mixed_frontier: &mut Vec<ScheduleCandidate>,
 ) -> Result<(), AkitaError> {
     let policy = ctx.policy;
     // Branch A: terminate directly on the witness entering this state.
     // There is no alternative terminal-shaped predecessor output: the
     // predecessor produces one canonical witness, and the terminal inner
     // commitment consumes that exact witness.
-    if !(ctx.level_zero_is_root && state.level == 0)
+    let adaptive_terminal_is_allowed = !matches!(
+        policy.ring_dimension_schedule_mode,
+        crate::RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels,
+            ..
+        } if policy.selection_policy
+            == crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+            && state.level < num_search_levels
+    );
+    if adaptive_terminal_is_allowed
+        && !(ctx.level_zero_is_root && state.level == 0)
         && state.incoming_setup_prefix.is_none()
         && !candidate_params.has_precommitted_groups()
     {
@@ -444,7 +516,7 @@ fn price_level_candidate_with_children(
             };
             update_candidate_frontiers(
                 policy,
-                candidate,
+                candidate.clone(),
                 ChildObjectives {
                     first_direct_setup_then_payload: true,
                     payload: true,
@@ -452,6 +524,7 @@ fn price_level_candidate_with_children(
                 best_for_this_lb,
                 best_payload_for_this_lb,
             )?;
+            insert_mixed_frontier(policy, mixed_frontier, candidate);
         }
     }
 
@@ -478,6 +551,7 @@ fn price_level_candidate_with_children(
         best_for_this_lb,
         best_payload_for_this_lb,
     )?;
+    consider_mixed_child_suffixes(&direct_edge, &direct_child.mixed_frontier, mixed_frontier)?;
     if let Some(offloaded_child) = offloaded_child {
         let offloaded_edge = ChildEdge {
             offloaded: true,
@@ -561,6 +635,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
     let mut best_by_first_direct_setup_per_lb: BTreeMap<FirstFoldKey, ScheduleCandidate> =
         BTreeMap::new();
     let mut best_by_payload_per_lb: BTreeMap<FirstFoldKey, ScheduleCandidate> = BTreeMap::new();
+    let mut mixed_frontier = Vec::new();
     let root_level_key = root_lookup_key.filter(|_| level == 0);
     if root_level_key.is_some() && incoming_setup_prefix.is_some() {
         return Err(AkitaError::InvalidSetup(
@@ -619,27 +694,31 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 AkitaError::InvalidSetup("root batch opening layout is missing".to_string())
             })?;
             let mut candidates = Vec::new();
-            for dimensions in exact_dimension_candidates(policy, level, dimension_ceiling)? {
+            for dimensions in dimension_candidates(policy, level, dimension_ceiling)? {
                 let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
                     policy.challenge_field_bits()?,
                     policy.claim_ext_degree,
                     level,
                     eor_key,
                     current_witness_len,
-                    dimensions.d_a(),
+                    dimensions.inner(),
                 )?
                 else {
                     continue;
                 };
-                let ring_challenge_cfg =
-                    if dimensions == CommitmentRingDims::uniform(policy.uniform_ring_dimension) {
+                let ring_challenge_cfg = match dimensions {
+                    akita_schedules::planner_support::RingDimensionCandidate::Fixed(value)
+                        if value == CommitmentRingDims::uniform(policy.uniform_ring_dimension) =>
+                    {
                         *default_ring_challenge_cfg
-                    } else {
-                        let Ok(config) = ring_challenge_config(dimensions.d_a()) else {
+                    }
+                    _ => {
+                        let Ok(config) = ring_challenge_config(dimensions.inner()) else {
                             continue;
                         };
                         config
-                    };
+                    }
+                };
                 candidates.extend(
                     root_level_candidates_for_basis(
                         root_key,
@@ -650,7 +729,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                         })?,
                         precommitted_honest_fold_policies,
                         policy,
-                        akita_schedules::planner_support::RingDimensionCandidate::Fixed(dimensions),
+                        dimensions,
                         &ring_challenge_cfg,
                         ring_challenge_config,
                         current_witness_len,
@@ -675,19 +754,19 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     ..
                 } if level < num_search_levels
             );
-            for dimensions in exact_dimension_candidates(policy, level, dimension_ceiling)? {
+            for dimensions in dimension_candidates(policy, level, dimension_ceiling)? {
                 let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
                     policy.challenge_field_bits()?,
                     policy.claim_ext_degree,
                     level,
                     eor_key,
                     current_witness_len,
-                    dimensions.d_a(),
+                    dimensions.inner(),
                 )?
                 else {
                     continue;
                 };
-                let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
+                let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.inner()) else {
                     continue;
                 };
                 for &mode in payload_phase.candidate_modes(level, incoming_setup_prefix.is_some()) {
@@ -696,9 +775,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                             policy,
                             mode,
                             &ring_challenge_cfg,
-                            akita_schedules::planner_support::RingDimensionCandidate::Fixed(
-                                dimensions,
-                            ),
+                            dimensions,
                             current_witness_len,
                             lb,
                             level,
@@ -709,9 +786,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                             policy,
                             mode,
                             &ring_challenge_cfg,
-                            akita_schedules::planner_support::RingDimensionCandidate::Fixed(
-                                dimensions,
-                            ),
+                            dimensions,
                             current_witness_len,
                             lb,
                             level,
@@ -801,6 +876,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 require_child_fold,
                 &mut best_for_this_lb,
                 &mut best_payload_for_this_lb,
+                &mut mixed_frontier,
             )?;
         }
 
@@ -855,6 +931,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
     let result = Arc::new(SuffixResult {
         best_by_first_direct_setup_per_lb,
         best_by_payload_per_lb,
+        mixed_frontier,
     });
     memo.insert(memo_key, Arc::clone(&result));
     Ok(result)

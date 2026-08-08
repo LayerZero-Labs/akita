@@ -17,8 +17,8 @@ use akita_types::{
 use akita_schedules::planner_support::{sis_key_at_dimension, RingDimensionCandidate};
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, materialize_candidate_schedule, mixed_search,
-    select_complete_candidate, RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
+    derive_optimal_suffix_schedule, materialize_candidate_schedule, select_complete_candidate,
+    RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -554,15 +554,9 @@ pub fn find_schedule(
     ) {
         if key.precommitteds.is_empty() {
             validate_adaptive_dimension_schedule_request(key, policy)?;
-            return mixed_search::find_schedule(
-                key.final_group,
-                policy,
-                final_honest_fold_policy,
-                ring_challenge_config,
-            );
         }
 
-        if !policy.recursive_setup_planning {
+        if !key.precommitteds.is_empty() && !policy.recursive_setup_planning {
             // Direct grouped roots preserve every frozen A/B profile and use
             // the established uniform suffix domain. Recursive grouped roots
             // continue below into the setup-aware adaptive suffix frontier.
@@ -629,6 +623,20 @@ pub fn find_schedule(
         level_zero_is_root: true,
     };
     let mut memo = ScheduleMemo::new();
+    let dimension_ceiling = match active_policy.ring_dimension_schedule_mode {
+        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+            CommitmentRingDims::uniform(ring_dimension)
+        }
+        crate::RingDimensionScheduleMode::AdaptiveDimension {
+            potential_a_dimensions,
+            ..
+        } => CommitmentRingDims::uniform(
+            potential_a_dimensions
+                .last()
+                .copied()
+                .ok_or_else(|| AkitaError::InvalidSetup("adaptive A domain is empty".into()))?,
+        ),
+    };
     let suffix = derive_optimal_suffix_schedule(
         &suffix_ctx,
         &mut memo,
@@ -637,7 +645,7 @@ pub fn find_schedule(
             current_witness_len: root_input_witness_len,
             current_lb: 0,
             incoming_setup_prefix: None,
-            dimension_ceiling: CommitmentRingDims::uniform(active_policy.uniform_ring_dimension),
+            dimension_ceiling,
             payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
         },
         0,
@@ -647,9 +655,7 @@ pub fn find_schedule(
             select_complete_candidate(active_policy, suffix.best_by_payload_per_lb.values())?
         }
         crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
-            return Err(AkitaError::UnsupportedSchedule(
-                "mixed ring-dimension selection is not supported for multi-group roots".to_string(),
-            ));
+            select_complete_candidate(active_policy, &suffix.mixed_frontier)?
         }
         crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => select_complete_candidate(
             active_policy,
@@ -658,6 +664,18 @@ pub fn find_schedule(
     };
 
     let Some(best) = best.cloned() else {
+        if key.precommitteds.is_empty()
+            && matches!(
+                active_policy.ring_dimension_schedule_mode,
+                crate::RingDimensionScheduleMode::AdaptiveDimension { .. }
+            )
+        {
+            return Err(AkitaError::UnsupportedSchedule(format!(
+                "no mixed-D schedule with at least two folds for num_vars={}, num_polynomials={}",
+                key.final_group.num_vars(),
+                key.final_group.num_polynomials()
+            )));
+        }
         return Err(AkitaError::UnsupportedSchedule(format!(
             "no multi-group schedule with at least two folds for num_vars={}",
             key.final_group.num_vars()

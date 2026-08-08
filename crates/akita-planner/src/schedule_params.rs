@@ -15,17 +15,19 @@ use akita_types::sis::{
     FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
 };
+#[cfg(test)]
 use akita_types::{
-    level_proof_bytes, padded_setup_prefix_len, try_extension_opening_reduction_level_bytes,
-    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile,
-    DecompositionParams, PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams,
+    level_proof_bytes, try_extension_opening_reduction_level_bytes, PlannedFoldSchedule,
+};
+use akita_types::{
+    padded_setup_prefix_len, AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams,
+    CommittedGroupProfile, DecompositionParams, PolynomialGroupLayout, PrecommittedLevelParams,
     WitnessLayout,
 };
 
 use crate::PlannerPolicy;
 
 mod candidate;
-pub(crate) mod mixed_search;
 mod objective;
 mod setup_score;
 mod suffix_dp;
@@ -46,15 +48,19 @@ pub(crate) use setup_score::{
 };
 pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
 
-fn exact_dimension_candidates(
+fn dimension_candidates(
     policy: &PlannerPolicy,
     level: usize,
     ceiling: CommitmentRingDims,
-) -> Result<Vec<CommitmentRingDims>, AkitaError> {
+) -> Result<Vec<akita_schedules::planner_support::RingDimensionCandidate<'_>>, AkitaError> {
+    use akita_schedules::planner_support::RingDimensionCandidate;
+
     ceiling.validate_role_projection()?;
     let candidates = match policy.ring_dimension_schedule_mode {
         crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-            vec![CommitmentRingDims::uniform(ring_dimension)]
+            vec![RingDimensionCandidate::Fixed(CommitmentRingDims::uniform(
+                ring_dimension,
+            ))]
         }
         crate::RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels,
@@ -64,7 +70,23 @@ fn exact_dimension_candidates(
             potential_d_dimensions,
         } => {
             if level >= num_search_levels {
-                vec![CommitmentRingDims::uniform(uniform_suffix_dimension)]
+                vec![RingDimensionCandidate::Fixed(CommitmentRingDims::uniform(
+                    uniform_suffix_dimension,
+                ))]
+            } else if policy.selection_policy
+                == crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+            {
+                potential_a_dimensions
+                    .iter()
+                    .copied()
+                    .filter(|&inner| inner <= ceiling.d_a())
+                    .map(|inner| RingDimensionCandidate::Adaptive {
+                        inner,
+                        outer_dimensions: potential_b_dimensions,
+                        opening_dimensions: potential_d_dimensions,
+                        ceiling,
+                    })
+                    .collect()
             } else {
                 let mut candidates = Vec::new();
                 for &inner in potential_a_dimensions {
@@ -79,11 +101,11 @@ fn exact_dimension_candidates(
                             if opening > ceiling.d_d() || !inner.is_multiple_of(opening) {
                                 continue;
                             }
-                            candidates.push(CommitmentRingDims {
+                            candidates.push(RingDimensionCandidate::Fixed(CommitmentRingDims {
                                 inner,
                                 outer,
                                 opening,
-                            });
+                            }));
                         }
                     }
                 }
@@ -95,7 +117,7 @@ fn exact_dimension_candidates(
 }
 
 #[cfg(test)]
-pub(crate) const MIXED_SEARCH_SUFFIX_RING_DIMENSION: usize = 64;
+pub(crate) const ADAPTIVE_SUFFIX_RING_DIMENSION: usize = 64;
 
 /// Explicit A/B/D dimensions admitted by mixed-D planner search.
 ///

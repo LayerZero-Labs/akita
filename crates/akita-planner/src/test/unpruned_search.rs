@@ -44,7 +44,7 @@ fn enumerate_suffixes(
 
     for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
         for candidate_dimensions in dimensions.candidates() {
-            let suffix_dimensions = CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
+            let suffix_dimensions = CommitmentRingDims::uniform(ADAPTIVE_SUFFIX_RING_DIMENSION);
             if level >= akita_schedules::ADAPTIVE_SEARCH_LEVELS {
                 if *candidate_dimensions != suffix_dimensions {
                     continue;
@@ -142,7 +142,7 @@ fn enumerate_suffixes(
                     }
 
                     let child_ceiling = if level + 1 >= akita_schedules::ADAPTIVE_SEARCH_LEVELS {
-                        CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION)
+                        CommitmentRingDims::uniform(ADAPTIVE_SUFFIX_RING_DIMENSION)
                     } else {
                         params.role_dims()
                     };
