@@ -942,7 +942,8 @@ fn eval_tensor_seed_batch<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_M
 
     let left_domain = 1usize << left_challenges.len();
     let right_domain = 1usize << right_challenges.len();
-    let mut blocks = BTreeMap::<usize, BTreeMap<(usize, usize), F>>::new();
+    let block_bucket_count = usize::BITS as usize - len.leading_zeros() as usize;
+    let mut blocks = vec![Vec::<((usize, usize), F)>::new(); block_bucket_count];
     for seed in seeds {
         checked_axis_offset(seed.left_offset, left_stride, len - 1, "left")?;
         checked_axis_offset(seed.right_offset, right_stride, len - 1, "right")?;
@@ -966,11 +967,10 @@ fn eval_tensor_seed_batch<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_M
                 checked_axis_offset(seed.left_offset, left_stride, block_base, "left")?;
             let right_carry =
                 checked_axis_offset(seed.right_offset, right_stride, block_base, "right")?;
-            *blocks
-                .entry(block_index_bits)
-                .or_default()
-                .entry((left_carry, right_carry))
-                .or_insert(F::zero()) += seed.weight;
+            blocks
+                .get_mut(block_index_bits)
+                .ok_or(AkitaError::InvalidProof)?
+                .push(((left_carry, right_carry), seed.weight));
             block_base = block_base.checked_add(block_size).ok_or_else(|| {
                 AkitaError::InvalidInput("paired tensor block coverage overflow".into())
             })?;
@@ -978,8 +978,11 @@ fn eval_tensor_seed_batch<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_M
     }
 
     let mut acc = F::zero();
-    for (block_index_bits, mut states) in blocks {
-        states.retain(|_, state_weight| !state_weight.is_zero());
+    for (block_index_bits, seed_states) in blocks.into_iter().enumerate() {
+        let mut states = merge_pair_states(seed_states);
+        if states.is_empty() {
+            continue;
+        }
         if block_index_bits > left_challenges.len() || block_index_bits > right_challenges.len() {
             return Err(AkitaError::InvalidInput(
                 "paired tensor block exceeds equality arity".into(),
@@ -992,9 +995,15 @@ fn eval_tensor_seed_batch<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_M
                     AkitaError::InvalidInput("paired tensor work overflow".into())
                 })?,
             )?;
-            let left_challenge = left_challenges[bit];
-            let right_challenge = right_challenges[bit];
-            let mut next = BTreeMap::new();
+            let left_challenge = *left_challenges.get(bit).ok_or(AkitaError::InvalidProof)?;
+            let right_challenge = *right_challenges.get(bit).ok_or(AkitaError::InvalidProof)?;
+            let next_capacity = states.len().checked_mul(2).ok_or_else(|| {
+                AkitaError::InvalidInput("paired tensor state count overflow".into())
+            })?;
+            let mut next = Vec::new();
+            next.try_reserve_exact(next_capacity).map_err(|_| {
+                AkitaError::InvalidInput("paired tensor state allocation failed".into())
+            })?;
             for ((left_carry, right_carry), state_weight) in states {
                 for index_bit in 0..=1usize {
                     let left_sum = if index_bit == 0 {
@@ -1017,13 +1026,13 @@ fn eval_tensor_seed_batch<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_M
                     let right_factor =
                         basis_bit_factor::<F, RIGHT_MONOMIAL>(Some(right_challenge), right_sum & 1)
                             .ok_or(AkitaError::InvalidProof)?;
-                    *next
-                        .entry((left_sum >> 1, right_sum >> 1))
-                        .or_insert(F::zero()) += state_weight * left_factor * right_factor;
+                    next.push((
+                        (left_sum >> 1, right_sum >> 1),
+                        state_weight * left_factor * right_factor,
+                    ));
                 }
             }
-            next.retain(|_, state_weight| !state_weight.is_zero());
-            states = next;
+            states = merge_pair_states(next);
         }
         acc += finish_seed_states::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
             left_challenges,
@@ -1040,13 +1049,16 @@ fn finish_seed_states<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_MONOM
     left_challenges: &[F],
     right_challenges: &[F],
     mut bit: usize,
-    mut states: BTreeMap<(usize, usize), F>,
+    mut states: Vec<((usize, usize), F)>,
     work: &mut usize,
 ) -> Result<F, AkitaError> {
     let max_bits = left_challenges.len().max(right_challenges.len());
     while states.len() > 1 && bit < max_bits {
         charge_work(work, states.len())?;
-        let mut next = BTreeMap::new();
+        let mut next = Vec::new();
+        next.try_reserve_exact(states.len()).map_err(|_| {
+            AkitaError::InvalidInput("paired tensor carry allocation failed".into())
+        })?;
         for ((left_carry, right_carry), state_weight) in states {
             let Some((left_high, left_factor)) =
                 basis_carry_step::<F, LEFT_MONOMIAL>(left_challenges.get(bit).copied(), left_carry)
@@ -1059,11 +1071,12 @@ fn finish_seed_states<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_MONOM
             ) else {
                 continue;
             };
-            *next.entry((left_high, right_high)).or_insert(F::zero()) +=
-                state_weight * left_factor * right_factor;
+            next.push((
+                (left_high, right_high),
+                state_weight * left_factor * right_factor,
+            ));
         }
-        next.retain(|_, state_weight| !state_weight.is_zero());
-        states = next;
+        states = merge_pair_states(next);
         bit += 1;
     }
 
