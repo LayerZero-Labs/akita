@@ -117,6 +117,26 @@ fn eq_pair_tensor_materialization_fills_contiguous_families() {
 }
 
 #[test]
+fn eq_pair_tensor_materialization_preserves_unit_interval_overlaps() {
+    let mut rng = StdRng::seed_from_u64(0xA11C_E55E);
+    let challenges = random_vec(&mut rng, 8);
+    let equality = OffsetEqWindow::new(&challenges).unwrap();
+    let families = [
+        EqPairTensorFamily::new(2, 7, F::one(), vec![EqPairTensorAxis::unit(8, 1, 1)]).unwrap(),
+        EqPairTensorFamily::new(5, 41, F::one(), vec![EqPairTensorAxis::unit(4, 1, 1)]).unwrap(),
+    ];
+    let got = materialize_eq_tensor_left(&equality, &families, 12).unwrap();
+    let mut expected = vec![F::zero(); 12];
+    for (offset, value) in expected[2..10].iter_mut().enumerate() {
+        *value += eq_eval_at_index(&challenges, 7 + offset);
+    }
+    for (offset, value) in expected[5..9].iter_mut().enumerate() {
+        *value += eq_eval_at_index(&challenges, 41 + offset);
+    }
+    assert_eq!(got, expected);
+}
+
+#[test]
 fn eq_pair_tensor_materialization_contracts_dense_overlaps_per_destination() {
     let mut rng = StdRng::seed_from_u64(0xA0F0_1D00);
     let challenges = random_vec(&mut rng, 10);

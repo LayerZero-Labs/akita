@@ -537,6 +537,9 @@ pub fn materialize_eq_tensor_left<F: FieldCore>(
     families: &[EqPairTensorFamily<F>],
     output_len: usize,
 ) -> Result<Vec<F>, AkitaError> {
+    if let Some(output) = materialize_disjoint_unit_intervals(equality, families, output_len)? {
+        return Ok(output);
+    }
     if let Some(output) = materialize_dense_left_overlap(equality, families, output_len)? {
         return Ok(output);
     }
@@ -585,6 +588,82 @@ pub fn materialize_eq_tensor_left<F: FieldCore>(
         )?;
     }
     Ok(output)
+}
+
+fn materialize_disjoint_unit_intervals<F: FieldCore>(
+    equality: &OffsetEqWindow<F>,
+    families: &[EqPairTensorFamily<F>],
+    output_len: usize,
+) -> Result<Option<Vec<F>>, AkitaError> {
+    let mut intervals = Vec::new();
+    intervals
+        .try_reserve(families.len())
+        .map_err(|_| AkitaError::InvalidInput("paired tensor interval allocation failed".into()))?;
+    let mut work = 0usize;
+    for family in families {
+        if family.scalar.is_zero() {
+            continue;
+        }
+        let [axis] = family.axes.as_slice() else {
+            return Ok(None);
+        };
+        if family.scalar != F::one()
+            || !matches!(axis.weights, EqPairTensorWeights::Unit)
+            || axis.left_stride != 1
+            || axis.right_stride != 1
+        {
+            return Ok(None);
+        }
+        let left_end = family
+            .left_offset
+            .checked_add(axis.len)
+            .ok_or_else(|| AkitaError::InvalidInput("paired tensor left span overflow".into()))?;
+        if left_end > output_len {
+            return Err(AkitaError::InvalidInput(
+                "paired tensor left address out of range".into(),
+            ));
+        }
+        charge_work(&mut work, axis.len)?;
+        intervals.push((family.left_offset, left_end, family.right_offset));
+    }
+    intervals.sort_unstable_by_key(|&(left_start, _, _)| left_start);
+
+    let mut merged_len = 0usize;
+    for read in 0..intervals.len() {
+        let (left_start, left_end, right_start) = intervals[read];
+        if merged_len != 0 {
+            let (previous_left_start, previous_left_end, previous_right_start) =
+                &mut intervals[merged_len - 1];
+            if left_start < *previous_left_end {
+                return Ok(None);
+            }
+            let previous_len = previous_left_end
+                .checked_sub(*previous_left_start)
+                .ok_or(AkitaError::InvalidProof)?;
+            let previous_right_end =
+                previous_right_start
+                    .checked_add(previous_len)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput("paired tensor right span overflow".into())
+                    })?;
+            if left_start == *previous_left_end && right_start == previous_right_end {
+                *previous_left_end = left_end;
+                continue;
+            }
+        }
+        intervals[merged_len] = (left_start, left_end, right_start);
+        merged_len += 1;
+    }
+    intervals.truncate(merged_len);
+
+    let mut output = vec![F::zero(); output_len];
+    for (left_start, left_end, right_start) in intervals {
+        let destination = output
+            .get_mut(left_start..left_end)
+            .ok_or(AkitaError::InvalidProof)?;
+        equality.fill_interval(right_start, destination)?;
+    }
+    Ok(Some(output))
 }
 
 struct DenseLeftTensorView<'a, F: FieldCore> {
