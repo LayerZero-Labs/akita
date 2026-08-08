@@ -816,20 +816,20 @@ mod tests {
         const D: usize = 8;
         let sparse = vec![
             SparseChallenge {
-                positions: vec![0, 7],
-                coeffs: vec![1, -1],
+                positions: vec![0, 7].into(),
+                coeffs: vec![1, -1].into(),
             },
             SparseChallenge {
-                positions: vec![2, 4],
-                coeffs: vec![1, 2],
+                positions: vec![2, 4].into(),
+                coeffs: vec![1, 2].into(),
             },
             SparseChallenge {
-                positions: vec![1],
-                coeffs: vec![-1],
+                positions: vec![1].into(),
+                coeffs: vec![-1].into(),
             },
             SparseChallenge {
-                positions: vec![3, 6],
-                coeffs: vec![1, 1],
+                positions: vec![3, 6].into(),
+                coeffs: vec![1, 1].into(),
             },
         ];
         let rings = (0..sparse.len())

@@ -73,12 +73,12 @@ impl SignedSparseScratch {
         Ok(())
     }
 
-    /// Move the accepted draw into an owned [`SparseChallenge`] and reset scratch
-    /// storage for the next slot.
-    pub(crate) fn take_challenge(&mut self) -> SparseChallenge {
+    /// Copy the accepted draw into inline challenge storage. The scratch
+    /// vectors retain their allocation for the next slot.
+    pub(crate) fn take_challenge(&self) -> SparseChallenge {
         SparseChallenge {
-            positions: std::mem::replace(&mut self.positions, vec![0u32; self.total]),
-            coeffs: std::mem::replace(&mut self.coeffs, Vec::with_capacity(self.total)),
+            positions: self.positions.iter().copied().collect(),
+            coeffs: self.coeffs.iter().copied().collect(),
         }
     }
 }

@@ -501,8 +501,8 @@ mod tests {
         Challenges::from_sparse(
             vec![
                 SparseChallenge {
-                    positions: vec![0],
-                    coeffs: vec![1],
+                    positions: vec![0].into(),
+                    coeffs: vec![1].into(),
                 };
                 total
             ],

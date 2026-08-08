@@ -307,8 +307,8 @@ pub(super) fn window_sparse_challenges(
                 challenge.clone()
             } else {
                 SparseChallenge {
-                    positions: Vec::new(),
-                    coeffs: Vec::new(),
+                    positions: Vec::new().into(),
+                    coeffs: Vec::new().into(),
                 }
             }
         })

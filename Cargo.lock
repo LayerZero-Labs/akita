@@ -55,6 +55,7 @@ dependencies = [
  "akita-transcript",
  "criterion",
  "sha3 0.10.9",
+ "smallvec",
  "tracing",
 ]
 
