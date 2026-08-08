@@ -557,16 +557,8 @@ where
         let group_id = group_index;
         let units = witness_layout.units_for_group(group_id)?;
         let k_g = group_layout.num_polynomials();
-        let opening_point = instance.group_opening_point(group_index)?;
         let ring_multiplier_point = instance.group_ring_multiplier_point(group_index)?;
         let challenges = &instance.group_challenges()[group_index];
-        if opening_point.position_weights.len() != group_lp.num_positions_per_block()
-            || opening_point.live_block_weights.len() != group_lp.num_live_blocks()
-        {
-            return Err(AkitaError::InvalidInput(
-                "relation matrix col eval opening-point layout mismatch".to_string(),
-            ));
-        }
         if ring_multiplier_point.position_len() != group_lp.num_positions_per_block()
             || ring_multiplier_point.fold_len() != group_lp.num_live_blocks()
         {

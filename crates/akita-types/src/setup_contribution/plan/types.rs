@@ -313,9 +313,29 @@ pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) direct_scan_alpha: Option<E>,
 }
 
-pub(crate) struct ProjectedEqPairTensor<E: FieldCore> {
-    pub(crate) ratio: usize,
-    pub(crate) families: Vec<EqPairTensorFamily<E>>,
+pub(crate) enum ProjectedEqPairTensor<E: FieldCore> {
+    Native {
+        ratio: usize,
+        families: Vec<EqPairTensorFamily<E>>,
+    },
+    RelationFactored {
+        ratio: usize,
+        families: Vec<EqPairTensorFamily<E>>,
+    },
+}
+
+impl<E: FieldCore> ProjectedEqPairTensor<E> {
+    pub(crate) fn ratio(&self) -> usize {
+        match self {
+            Self::Native { ratio, .. } | Self::RelationFactored { ratio, .. } => *ratio,
+        }
+    }
+
+    pub(crate) fn families(&self) -> &[EqPairTensorFamily<E>] {
+        match self {
+            Self::Native { families, .. } | Self::RelationFactored { families, .. } => families,
+        }
+    }
 }
 
 impl<E: FieldCore> SetupContributionPlan<E> {
@@ -378,6 +398,7 @@ pub(crate) struct SetupContributionGroupPlan<E: FieldCore> {
     pub(crate) b_weights: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
     pub(crate) direct_scan_weights: Option<DirectScanWeights<E>>,
+    pub(crate) unit_partition: Arc<[(usize, usize)]>,
     pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) b_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,

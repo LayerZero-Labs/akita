@@ -102,12 +102,14 @@ where
         )?
     };
     let quotient_evaluation =
-        evaluate_quotient_tail::<F, E>(evaluator, &prepared_point).map_err(|error| {
-            AkitaError::InvalidInput(format!("relation quotient failed: {error:?}"))
-        })?;
+        evaluate_quotient_tail::<F, E>(evaluator, &prepared_point, &row_families).map_err(
+            |error| AkitaError::InvalidInput(format!("relation quotient failed: {error:?}")),
+        )?;
 
     let relation_evaluation = structured_evaluation + setup_evaluation + quotient_evaluation;
-    evaluator.cache_setup_contribution_plan(prepared_point.address_point(), plan)?;
+    if deferred_setup_claim.is_some() {
+        evaluator.cache_setup_contribution_plan(prepared_point.address_point(), plan)?;
+    }
     Ok(prepared_point.common_alpha_evaluation() * relation_evaluation)
 }
 
@@ -115,6 +117,7 @@ where
 fn evaluate_quotient_tail<F, E>(
     evaluator: &RelationMatrixEvaluator<E>,
     prepared_point: &PreparedRelationPoint<E>,
+    row_families: &[RelationRowFamily],
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -124,8 +127,6 @@ where
         .flat_context
         .as_ref()
         .ok_or(AkitaError::InvalidProof)?;
-    let row_families =
-        relation_rhs_layout_for(&context.level_params, &context.opening_batch)?.row_families()?;
     let rows = row_families.len();
     if rows
         != context
@@ -160,6 +161,7 @@ where
             .get(row)
             .copied()
             .ok_or(AkitaError::InvalidProof)?;
+        let mut row_evaluation = E::zero();
         for (digit, &gadget) in quotient_gadget.iter().enumerate() {
             let physical_coefficient = context.witness_layout.r_coefficient_index(row, digit, 0)?;
             let lane_start = canonical_relation_lane_index(
@@ -171,8 +173,9 @@ where
                 lane_start,
                 &role_factors.lane_powers,
             )?;
-            evaluation -= lane_evaluation * row_weight * denominator * E::lift_base(gadget);
+            row_evaluation += lane_evaluation.mul_base(gadget);
         }
+        evaluation -= row_evaluation * row_weight * denominator;
     }
     Ok(evaluation)
 }

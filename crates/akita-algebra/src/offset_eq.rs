@@ -7,12 +7,11 @@
 
 use crate::{AkitaError, FieldCore};
 use akita_field::parallel::*;
-use std::collections::BTreeMap;
 
 mod tensor_pair;
 pub use tensor_pair::{
-    eval_eq_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis, EqPairTensorFamily,
-    EqPairTensorWeights,
+    eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
+    EqPairTensorFamily, EqPairTensorWeights,
 };
 
 /// Verifier work cap for one compact-stride equality contraction.
@@ -40,6 +39,92 @@ pub trait AffineWeight<F: FieldCore>: Clone + Send + Sync {
 
     /// Multiply two outer factors.
     fn multiply(&self, rhs: &Self) -> Self;
+}
+
+/// Random-access outer weights consumed by [`eval_affine_digit_intervals`].
+///
+/// Implementations may expose an existing dense slice or compute a factored
+/// weight only when the contraction reaches its row. The callback keeps dense
+/// values borrowed while allowing computed values to remain stack-local.
+pub trait AffineWeightSource<F: FieldCore, A: AffineWeight<F>>: Sync {
+    /// Number of available outer weights.
+    fn len(&self) -> usize;
+
+    /// Whether the source contains no outer weights.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Borrow or compute weight `index` for the duration of `consume`.
+    fn with_weight<R>(&self, index: usize, consume: impl FnOnce(&A) -> R) -> Option<R>;
+}
+
+impl<F: FieldCore, A: AffineWeight<F>> AffineWeightSource<F, A> for [A] {
+    fn len(&self) -> usize {
+        <[A]>::len(self)
+    }
+
+    fn with_weight<R>(&self, index: usize, consume: impl FnOnce(&A) -> R) -> Option<R> {
+        self.get(index).map(consume)
+    }
+}
+
+impl<F: FieldCore, A: AffineWeight<F>> AffineWeightSource<F, A> for Vec<A> {
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+
+    fn with_weight<R>(&self, index: usize, consume: impl FnOnce(&A) -> R) -> Option<R> {
+        self.as_slice().get(index).map(consume)
+    }
+}
+
+impl<F: FieldCore, A: AffineWeight<F>, const N: usize> AffineWeightSource<F, A> for [A; N] {
+    fn len(&self) -> usize {
+        N
+    }
+
+    fn with_weight<R>(&self, index: usize, consume: impl FnOnce(&A) -> R) -> Option<R> {
+        self.as_slice().get(index).map(consume)
+    }
+}
+
+/// Cartesian product of two affine weight slices in outer-major order.
+///
+/// Weight `i` is `outer[i / inner.len()] * inner[i % inner.len()]`. This is the
+/// native representation for block-by-row factors and avoids materializing the
+/// full product before a single contraction.
+pub struct AffineWeightProduct<'a, A> {
+    outer: &'a [A],
+    inner: &'a [A],
+    len: usize,
+}
+
+impl<'a, A> AffineWeightProduct<'a, A> {
+    /// Construct a checked outer-major Cartesian product.
+    pub fn new(outer: &'a [A], inner: &'a [A]) -> Result<Self, AkitaError> {
+        let len = outer
+            .len()
+            .checked_mul(inner.len())
+            .ok_or_else(|| AkitaError::InvalidInput("affine weight product overflow".into()))?;
+        Ok(Self { outer, inner, len })
+    }
+}
+
+impl<F: FieldCore, A: AffineWeight<F>> AffineWeightSource<F, A> for AffineWeightProduct<'_, A> {
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn with_weight<R>(&self, index: usize, consume: impl FnOnce(&A) -> R) -> Option<R> {
+        if self.inner.is_empty() {
+            return None;
+        }
+        let outer = self.outer.get(index / self.inner.len())?;
+        let inner = self.inner.get(index % self.inner.len())?;
+        let product = outer.multiply(inner);
+        Some(consume(&product))
+    }
 }
 
 impl<F: FieldCore> AffineWeight<F> for F {
@@ -98,7 +183,7 @@ impl<F: FieldCore> AffineWeight<F> for F {
 /// [`MAX_COMPACT_STRIDE_TERMS`]. The work bound is checked before allocating
 /// carry summaries.
 #[allow(clippy::too_many_arguments)]
-pub fn eval_affine_digit_intervals<F, A>(
+pub fn eval_affine_digit_intervals<F, A, H>(
     challenges: &[F],
     base_offsets: &[usize],
     outer_start: usize,
@@ -106,17 +191,18 @@ pub fn eval_affine_digit_intervals<F, A>(
     outer_stride: usize,
     digit_stride: usize,
     digit_weights: &[F],
-    high_weights: &[A],
+    high_weights: &H,
     low_weights: &[A],
     base_scales: &[F],
 ) -> Result<A, AkitaError>
 where
     F: FieldCore,
     A: AffineWeight<F>,
+    H: AffineWeightSource<F, A> + ?Sized,
 {
     let template = high_weights
-        .first()
-        .or_else(|| low_weights.first())
+        .with_weight(0, |weight| weight.zero_like())
+        .or_else(|| low_weights.first().map(AffineWeight::zero_like))
         .ok_or_else(|| AkitaError::InvalidInput("affine factors must be non-empty".into()))?;
     if live_len == 0 || base_offsets.is_empty() {
         return Ok(template.zero_like());
@@ -295,8 +381,14 @@ where
     Ok(out)
 }
 
+#[derive(Clone, Copy)]
+struct AffineAddress<F> {
+    first: usize,
+    scale: Option<F>,
+}
+
 #[allow(clippy::too_many_arguments)]
-fn accumulate_affine_rows<F, A>(
+fn accumulate_affine_rows<F, A, H>(
     out: &mut A,
     low_challenges: &[F],
     high_challenges: &[F],
@@ -305,7 +397,7 @@ fn accumulate_affine_rows<F, A>(
     outer_stride: usize,
     digit_stride: usize,
     digit_weights: &[F],
-    high_weights: &[A],
+    high_weights: &H,
     low_weights: &[A],
     base_scales: &[F],
     first_high: usize,
@@ -316,6 +408,7 @@ fn accumulate_affine_rows<F, A>(
 where
     F: FieldCore,
     A: AffineWeight<F>,
+    H: AffineWeightSource<F, A> + ?Sized,
 {
     let low_len = low_weights.len().max(1);
     let carry_count = outer_stride
@@ -331,25 +424,8 @@ where
     let address_delta = outer_stride
         .checked_mul(local_outer)
         .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?;
-    let mut address_groups = BTreeMap::<usize, (Vec<usize>, Vec<F>)>::new();
-    for (base_index, &base_offset) in base_offsets.iter().enumerate() {
-        let first_address = base_offset
-            .checked_add(address_delta)
-            .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?;
-        let group = address_groups
-            .entry(first_address & (low_len - 1))
-            .or_default();
-        group.0.push(first_address);
-        if !base_scales.is_empty() {
-            group.1.push(
-                *base_scales
-                    .get(base_index)
-                    .ok_or_else(|| AkitaError::InvalidInput("affine base scale missing".into()))?,
-            );
-        }
-    }
     let template = high_weights
-        .get(first_high)
+        .with_weight(first_high, |weight| weight.zero_like())
         .ok_or_else(|| AkitaError::InvalidInput("affine high factor out of range".into()))?;
     // Precompute the low equality table once and share it across every
     // (low, digit) term instead of recomputing `eq(low_challenges, ·)` from
@@ -364,9 +440,11 @@ where
     } else {
         None
     };
-    for (address_low, (first_addresses, first_scales)) in address_groups {
+    let mut accumulate_group = |address_low: usize,
+                                addresses: &[AffineAddress<F>]|
+     -> Result<(), AkitaError> {
         let summaries = build_affine_low_summaries(
-            template,
+            &template,
             low_challenges,
             eq_low_table.as_deref(),
             address_low,
@@ -385,8 +463,7 @@ where
         if accumulate_high_rows_bucketed(
             out,
             high_challenges,
-            &first_addresses,
-            &first_scales,
+            addresses,
             outer_stride,
             low_challenges.len(),
             high_weights,
@@ -394,18 +471,18 @@ where
             rows,
             &summaries,
         )? {
-            continue;
+            return Ok(());
         }
 
-        for (base_index, first_address) in first_addresses.into_iter().enumerate() {
-            let base_scale = first_scales.get(base_index).copied();
+        for &AffineAddress {
+            first: first_address,
+            scale: base_scale,
+        } in addresses
+        {
             for row in 0..rows {
                 let high_index = first_high
                     .checked_add(row)
                     .ok_or_else(|| AkitaError::InvalidInput("affine high index overflow".into()))?;
-                let high_factor = high_weights.get(high_index).ok_or_else(|| {
-                    AkitaError::InvalidInput("affine high factor out of range".into())
-                })?;
                 let row_address = first_address
                     .checked_add(
                         outer_stride
@@ -419,20 +496,63 @@ where
                         AkitaError::InvalidInput("affine high address overflow".into())
                     })?;
                 let address_high = row_address >> low_challenges.len();
-                for (carry, summary) in summaries.iter().enumerate() {
-                    let eq_high = eq_eval_at_index(
-                        high_challenges,
-                        address_high.checked_add(carry).ok_or_else(|| {
-                            AkitaError::InvalidInput("affine high address overflow".into())
-                        })?,
-                    );
-                    if !eq_high.is_zero() {
-                        let scale = base_scale.map_or(eq_high, |base_scale| eq_high * base_scale);
-                        out.add_scaled(&high_factor.multiply(summary), scale);
-                    }
-                }
+                high_weights
+                    .with_weight(high_index, |high_factor| {
+                        for (carry, summary) in summaries.iter().enumerate() {
+                            let eq_high = eq_eval_at_index(
+                                high_challenges,
+                                address_high.checked_add(carry).ok_or_else(|| {
+                                    AkitaError::InvalidInput("affine high address overflow".into())
+                                })?,
+                            );
+                            if !eq_high.is_zero() {
+                                let scale =
+                                    base_scale.map_or(eq_high, |base_scale| eq_high * base_scale);
+                                out.add_scaled(&high_factor.multiply(summary), scale);
+                            }
+                        }
+                        Ok::<_, AkitaError>(())
+                    })
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput("affine high factor out of range".into())
+                    })??;
             }
         }
+        Ok(())
+    };
+
+    if base_offsets.len() == 1 {
+        let first_address = base_offsets[0]
+            .checked_add(address_delta)
+            .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?;
+        let addresses = [AffineAddress {
+            first: first_address,
+            scale: base_scales.first().copied(),
+        }];
+        return accumulate_group(first_address & (low_len - 1), &addresses);
+    }
+
+    let mut addresses = Vec::with_capacity(base_offsets.len());
+    for (base_index, &base_offset) in base_offsets.iter().enumerate() {
+        let first_address = base_offset
+            .checked_add(address_delta)
+            .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?;
+        addresses.push(AffineAddress {
+            first: first_address,
+            scale: base_scales.get(base_index).copied(),
+        });
+    }
+    addresses.sort_unstable_by_key(|address| address.first & (low_len - 1));
+    let mut group_start = 0usize;
+    while group_start < addresses.len() {
+        let address_low = addresses[group_start].first & (low_len - 1);
+        let group_len = addresses[group_start..]
+            .partition_point(|address| address.first & (low_len - 1) == address_low);
+        let group_end = group_start
+            .checked_add(group_len)
+            .ok_or_else(|| AkitaError::InvalidInput("affine address group overflow".into()))?;
+        accumulate_group(address_low, &addresses[group_start..group_end])?;
+        group_start = group_end;
     }
     Ok(())
 }
@@ -749,14 +869,13 @@ fn bucketed_high_rows_plan(
 /// amortize setup) and the caller should use the base loop. The result is
 /// bit-identical to the base loop for every eligible input.
 #[allow(clippy::too_many_arguments)]
-fn accumulate_high_rows_bucketed<F, A>(
+fn accumulate_high_rows_bucketed<F, A, H>(
     out: &mut A,
     high_challenges: &[F],
-    first_addresses: &[usize],
-    first_scales: &[F],
+    addresses: &[AffineAddress<F>],
     outer_stride: usize,
     low_bits: usize,
-    high_weights: &[A],
+    high_weights: &H,
     first_high: usize,
     rows: usize,
     summaries: &[A],
@@ -764,16 +883,11 @@ fn accumulate_high_rows_bucketed<F, A>(
 where
     F: FieldCore,
     A: AffineWeight<F>,
+    H: AffineWeightSource<F, A> + ?Sized,
 {
-    if !first_scales.is_empty() && first_scales.len() != first_addresses.len() {
-        return Err(AkitaError::InvalidSize {
-            expected: first_addresses.len(),
-            actual: first_scales.len(),
-        });
-    }
     let carry_count = summaries.len();
     let total_rows = rows
-        .checked_mul(first_addresses.len())
+        .checked_mul(addresses.len())
         .ok_or_else(|| AkitaError::InvalidInput("affine high row count overflow".into()))?;
     let Some(window) = bucketed_high_rows_plan(total_rows, carry_count, high_challenges.len())?
     else {
@@ -810,11 +924,11 @@ where
     // task, which is important when this kernel is already under a parallel
     // outer fold.
     let task_count = if total_rows >= PARALLEL_HIGH_ROWS_MIN {
-        first_addresses.len()
+        addresses.len()
     } else {
         1
     };
-    let addresses_per_task = first_addresses.len().div_ceil(task_count);
+    let addresses_per_task = addresses.len().div_ceil(task_count);
     let (bucket0, bucket1) = cfg_fold_reduce!(
         0..task_count,
         || Ok((
@@ -828,23 +942,20 @@ where
                 .ok_or_else(|| AkitaError::InvalidInput("affine task range overflow".into()))?;
             let end = start
                 .checked_add(addresses_per_task)
-                .map(|end| end.min(first_addresses.len()))
+                .map(|end| end.min(addresses.len()))
                 .ok_or_else(|| AkitaError::InvalidInput("affine task range overflow".into()))?;
-            let addresses = first_addresses
+            let addresses = addresses
                 .get(start..end)
                 .ok_or_else(|| AkitaError::InvalidInput("affine task range invalid".into()))?;
-            for (address_index, &first_address) in addresses.iter().enumerate() {
-                let scale_index = start.checked_add(address_index).ok_or_else(|| {
-                    AkitaError::InvalidInput("affine base scale index overflow".into())
-                })?;
-                let base_scale = first_scales.get(scale_index).copied();
+            for &AffineAddress {
+                first: first_address,
+                scale: base_scale,
+            } in addresses
+            {
                 let h0 = first_address >> low_bits;
                 for row in 0..rows {
                     let high_index = first_high.checked_add(row).ok_or_else(|| {
                         AkitaError::InvalidInput("affine high index overflow".into())
-                    })?;
-                    let high_factor = high_weights.get(high_index).ok_or_else(|| {
-                        AkitaError::InvalidInput("affine high factor out of range".into())
                     })?;
                     let address_high = h0
                         .checked_add(outer_stride.checked_mul(row).ok_or_else(|| {
@@ -863,8 +974,14 @@ where
                         base_scale.map_or(eq_block0, |base_scale| eq_block0 * base_scale);
                     let eq_block1 =
                         base_scale.map_or(eq_block1, |base_scale| eq_block1 * base_scale);
-                    bucket0[low_pos].add_scaled(high_factor, eq_block0);
-                    bucket1[low_pos].add_scaled(high_factor, eq_block1);
+                    high_weights
+                        .with_weight(high_index, |high_factor| {
+                            bucket0[low_pos].add_scaled(high_factor, eq_block0);
+                            bucket1[low_pos].add_scaled(high_factor, eq_block1);
+                        })
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput("affine high factor out of range".into())
+                        })?;
                 }
             }
             Ok((bucket0, bucket1))
@@ -900,9 +1017,9 @@ where
 
 /// Hard cap on the number of low bits materialized by [`OffsetEqWindow`].
 ///
-/// A 16-bit low table holds at most `2^16 = 65_536` field elements
-/// (about 1 MiB for 16-byte elements), which bounds the allocation regardless
-/// of the full point width.
+/// A 16-bit low table holds at most `2^16 = 65_536` field elements. When the
+/// high side can also be materialized, construction balances the split to
+/// minimize the sum of both table sizes.
 pub const OFFSET_EQ_LOW_BITS_CAP: usize = 16;
 
 /// Hard cap on the number of high bits materialized by [`OffsetEqWindow`].
@@ -947,16 +1064,25 @@ impl<F: FieldCore> OffsetEqWindow<F> {
         Self::with_low_bits(challenges, OFFSET_EQ_LOW_BITS_CAP)
     }
 
-    /// Build a window over `challenges` choosing `min(len, cap, CAP)` low bits.
+    /// Build a window over `challenges` with at most `min(cap, CAP)` low bits.
+    /// When both sides fit their caps, the split is balanced to minimize total
+    /// materialization. Wider high remainders stay on demand.
     ///
     /// # Errors
     ///
     /// Returns an error if the low equality table cannot be constructed.
     pub fn with_low_bits(challenges: &[F], low_bits_cap: usize) -> Result<Self, AkitaError> {
-        let low_bits = challenges
-            .len()
-            .min(low_bits_cap)
-            .min(OFFSET_EQ_LOW_BITS_CAP);
+        let low_cap = low_bits_cap.min(OFFSET_EQ_LOW_BITS_CAP);
+        let low_bits = if challenges.len() <= low_cap + OFFSET_EQ_HIGH_BITS_CAP {
+            let minimum_for_bounded_high = challenges.len().saturating_sub(OFFSET_EQ_HIGH_BITS_CAP);
+            challenges
+                .len()
+                .div_ceil(2)
+                .max(minimum_for_bounded_high)
+                .min(low_cap)
+        } else {
+            challenges.len().min(low_cap)
+        };
         let eq_low = crate::eq_poly::EqPolynomial::evals(&challenges[..low_bits])?;
         let low_mask = if low_bits == 0 {
             0
@@ -1014,6 +1140,24 @@ impl<F: FieldCore> OffsetEqWindow<F> {
             .checked_add(output.len())
             .ok_or_else(|| AkitaError::InvalidInput("equality interval overflow".into()))?;
         const PARALLEL_THRESHOLD: usize = 1 << 14;
+        if let Some(eq_high) = &self.eq_high {
+            if output.len() >= PARALLEL_THRESHOLD {
+                cfg_chunks_mut!(output, PARALLEL_THRESHOLD)
+                    .enumerate()
+                    .try_for_each(|(chunk_index, chunk)| {
+                        let chunk_start = chunk_index
+                            .checked_mul(PARALLEL_THRESHOLD)
+                            .and_then(|offset| start.checked_add(offset))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidInput("equality interval overflow".into())
+                            })?;
+                        self.fill_bounded_high_interval(chunk_start, chunk, eq_high)
+                    })?;
+            } else {
+                self.fill_bounded_high_interval(start, output, eq_high)?;
+            }
+            return Ok(());
+        }
         if output.len() >= PARALLEL_THRESHOLD {
             cfg_iter_mut!(output)
                 .enumerate()
@@ -1023,6 +1167,52 @@ impl<F: FieldCore> OffsetEqWindow<F> {
                 .iter_mut()
                 .enumerate()
                 .for_each(|(offset, value)| *value = self.eval(start + offset));
+        }
+        Ok(())
+    }
+
+    fn fill_bounded_high_interval(
+        &self,
+        mut start: usize,
+        mut output: &mut [F],
+        eq_high: &[F],
+    ) -> Result<(), AkitaError> {
+        while !output.is_empty() {
+            let low = start & self.low_mask;
+            let available_low = self
+                .eq_low
+                .len()
+                .checked_sub(low)
+                .ok_or(AkitaError::InvalidProof)?;
+            let take = available_low.min(output.len());
+            let low_end = low.checked_add(take).ok_or(AkitaError::InvalidProof)?;
+            let low_values = self
+                .eq_low
+                .get(low..low_end)
+                .ok_or(AkitaError::InvalidProof)?;
+            let (destination, tail) = output
+                .split_at_mut_checked(take)
+                .ok_or(AkitaError::InvalidProof)?;
+            let high = start >> self.low_bits;
+            let Some(scale) = eq_high.get(high).copied() else {
+                destination.fill(F::zero());
+                tail.fill(F::zero());
+                return Ok(());
+            };
+            if scale.is_zero() {
+                destination.fill(F::zero());
+            } else if scale == F::one() {
+                destination.copy_from_slice(low_values);
+            } else {
+                destination
+                    .iter_mut()
+                    .zip(low_values)
+                    .for_each(|(value, &low_value)| *value = low_value * scale);
+            }
+            start = start
+                .checked_add(take)
+                .ok_or_else(|| AkitaError::InvalidInput("equality interval overflow".into()))?;
+            output = tail;
         }
         Ok(())
     }

@@ -166,12 +166,6 @@ where
     // single group at `lp`'s geometry, byte-identical to the historical check.
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = lp.group_params(opening_batch, group_index)?;
-        let opening_point = relation.group_opening_point(group_index)?;
-        if opening_point.position_weights.len() != group_lp.num_positions_per_block()
-            || opening_point.live_block_weights.len() != group_lp.num_live_blocks()
-        {
-            return Err(AkitaError::InvalidProof);
-        }
         let multiplier_point = relation.group_ring_multiplier_point(group_index)?;
         if multiplier_point.position_len() != group_lp.num_positions_per_block()
             || multiplier_point.fold_len() != group_lp.num_live_blocks()
@@ -398,12 +392,6 @@ where
             ));
         }
 
-        let opening_point = relation.group_opening_point(group_index)?;
-        if opening_point.position_weights.len() != num_positions_per_block
-            || opening_point.live_block_weights.len() != num_live_blocks
-        {
-            return Err(AkitaError::InvalidProof);
-        }
         let ring_multiplier_point = relation.group_ring_multiplier_point(group_index)?;
         if ring_multiplier_point.position_len() != num_positions_per_block
             || ring_multiplier_point.fold_len() != num_live_blocks

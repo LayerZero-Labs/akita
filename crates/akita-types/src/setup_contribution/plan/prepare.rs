@@ -127,6 +127,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let consistency_weight = *eq_tau1
                     .get(level_params.consistency_row_index(opening_batch, group.group_id)?)
                     .ok_or(AkitaError::InvalidProof)?;
+                let unit_partition = witness_layout
+                    .units_for_group(group.group_id)?
+                    .map(|unit| (unit.global_block_start(), unit.num_live_blocks()))
+                    .collect::<Vec<_>>()
+                    .into();
                 drop(geometry_span);
                 let fold_gadget_storage;
                 let group_fold_gadget = if let Some(fold_gadget) = fold_gadget {
@@ -178,6 +183,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     b_weights,
                     fold_gadget,
                     direct_scan_weights: None,
+                    unit_partition,
                     d_tensors: Vec::new(),
                     b_tensors: Vec::new(),
                     a_tensors: Vec::new(),

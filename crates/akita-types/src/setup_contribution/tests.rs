@@ -450,6 +450,7 @@ fn test_group_plan(
             t: t_eq_slice,
             z: z_eq_slice,
         }),
+        unit_partition: Vec::new().into(),
         d_tensors: Vec::new(),
         b_tensors: Vec::new(),
         a_tensors: Vec::new(),

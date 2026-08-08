@@ -215,10 +215,6 @@ where
         stack.ring_switch(),
         prepared_points
             .iter()
-            .map(|prepared| prepared.ring_opening_point.clone())
-            .collect::<Vec<_>>(),
-        prepared_points
-            .iter()
             .map(|prepared| prepared.ring_multiplier_point.clone())
             .collect::<Vec<_>>(),
         block_claims,

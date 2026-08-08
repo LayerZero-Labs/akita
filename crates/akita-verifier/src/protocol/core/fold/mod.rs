@@ -342,11 +342,6 @@ where
                 &commitment_rows,
             )?
         };
-        let group_ring_opening_points = prefix
-            .prepared_points
-            .iter()
-            .map(|prepared| prepared.ring_opening_point.clone())
-            .collect::<Vec<_>>();
         let group_ring_multiplier_points = prefix
             .prepared_points
             .iter()
@@ -354,7 +349,6 @@ where
             .collect::<Vec<_>>();
         let relation_instance = RingRelationInstance::new(
             group_challenges,
-            group_ring_opening_points,
             group_ring_multiplier_points,
             opening_shape.clone(),
             gamma,

@@ -3,6 +3,62 @@
 How the verifier replays the proof level by level, and the no-panic contract
 that governs every verifier-reachable line.
 
+## Reading this section
+
+The verifier has several checks because one recursive fold must bind a public
+opening claim, a digit witness, a ring relation, and the public setup at the
+same time. Read the chapters in this order:
+
+1. [Relation matrix and witness layout](./verifying/matrix_evaluation.md)
+   defines the physical rows and columns.
+2. [The Stage 2 fused check](./verifying/stage2.md) shows how the relation,
+   range image, and opening trace share one final witness evaluation.
+3. [Evaluation trace](./verifying/evaluation_trace.md) explains how opening
+   claims bind to the `E` digits without a prover-sized verifier table.
+4. [Setup contribution and Stage 3](./verifying/setup_contribution.md) explains
+   direct setup evaluation and recursive setup offloading.
+5. [Multi-chunk relation verification](./verifying/distributed-relation-verifier.md)
+   explains exact dyadic ownership and unequal chunks.
+6. [Terminal verification](./verifying/terminal.md) explains the final direct
+   checks after recursion stops.
+
+The book describes shipped behavior. The files under `specs/` record design
+history and pending changes, so they may describe alternatives that are not
+active in the verifier.
+
+## Verifier data flow
+
+For each nonterminal level, the verifier follows this order:
+
+```text
+validated schedule and setup
+        |
+        v
+fold replay and outgoing witness binding
+        |
+        v
+ring switch: sample alpha, tau0, and tau1
+        |
+        +--> prepare relation matrix evaluator
+        +--> prepare compression weights
+        +--> prepare evaluation trace
+        |
+        v
+Stage 1: digit range product
+        |
+        v
+Stage 2: range image + relation + evaluation trace
+        |
+        v
+Stage 3: setup product when the setup claim is deferred
+        |
+        v
+next recursive level or terminal direct checks
+```
+
+Preparation validates public geometry once. The final point kernels then use
+typed prepared state and return errors for any remaining mismatch.
+
 ## Per-level replay
 
 `batched_verify` (in `crates/akita-verifier/src/protocol/core/verify.rs`) is

@@ -52,13 +52,55 @@ impl<'a> BitReader<'a> {
         if self.remaining_bits() < needed {
             return Err(AkitaError::InvalidProof);
         }
-        let mut out = 0u64;
-        for i in 0..needed {
-            if self.read_bit()? {
-                out |= 1u64 << i;
+        let end_bit = self
+            .bit_pos
+            .checked_add(needed)
+            .ok_or(AkitaError::InvalidProof)?;
+        let byte_start = self.bit_pos / 8;
+        let byte_end = end_bit.div_ceil(8);
+        let bytes = self
+            .bytes
+            .get(byte_start..byte_end)
+            .ok_or(AkitaError::InvalidProof)?;
+        let mut word = 0u128;
+        for (index, &byte) in bytes.iter().enumerate() {
+            word |= u128::from(byte) << (index * 8);
+        }
+        let shift = self.bit_pos % 8;
+        let mask = (1u128 << count) - 1;
+        self.bit_pos = end_bit;
+        Ok(((word >> shift) & mask) as u64)
+    }
+
+    fn read_unary_ones(&mut self, max_quotient: u64) -> Result<u64, AkitaError> {
+        let mut quotient = 0u64;
+        loop {
+            if self.remaining_bits() == 0 {
+                return Err(AkitaError::InvalidProof);
+            }
+            let byte_index = self.bit_pos / 8;
+            let bit_index = self.bit_pos % 8;
+            let byte = *self.bytes.get(byte_index).ok_or(AkitaError::InvalidProof)?;
+            let available = 8usize - bit_index;
+            let ones = ((byte >> bit_index).trailing_ones() as usize).min(available);
+            quotient = quotient
+                .checked_add(ones as u64)
+                .ok_or(AkitaError::InvalidProof)?;
+            if quotient > max_quotient {
+                return Err(AkitaError::InvalidProof);
+            }
+            self.bit_pos = self
+                .bit_pos
+                .checked_add(ones)
+                .ok_or(AkitaError::InvalidProof)?;
+            if ones < available {
+                self.bit_pos = self
+                    .bit_pos
+                    .checked_add(1)
+                    .ok_or(AkitaError::InvalidProof)?;
+                return Ok(quotient);
             }
         }
-        Ok(out)
     }
 }
 
@@ -510,20 +552,7 @@ fn golomb_rice_decode_one_from(
     zigzag_w: u32,
     max_quotient: u64,
 ) -> Result<i64, AkitaError> {
-    let mut quotient = 0u64;
-    loop {
-        if reader.remaining_bits() == 0 {
-            return Err(AkitaError::InvalidProof);
-        }
-        if reader.read_bit()? {
-            quotient += 1;
-            if quotient > max_quotient {
-                return Err(AkitaError::InvalidProof);
-            }
-            continue;
-        }
-        break;
-    }
+    let quotient = reader.read_unary_ones(max_quotient)?;
     let u = if rice_low_bits == 0 {
         quotient
     } else {
@@ -572,15 +601,25 @@ pub fn golomb_rice_decode_vec(
     zigzag_w: u32,
     max_quotient: u64,
 ) -> Result<Vec<i64>, AkitaError> {
+    golomb_rice_decode_vec_with(bytes, count, rice_low_bits, zigzag_w, max_quotient, Ok)
+}
+
+pub(crate) fn golomb_rice_decode_vec_with<T>(
+    bytes: &[u8],
+    count: usize,
+    rice_low_bits: u32,
+    zigzag_w: u32,
+    max_quotient: u64,
+    mut convert: impl FnMut(i64) -> Result<T, AkitaError>,
+) -> Result<Vec<T>, AkitaError> {
     let mut reader = BitReader::new(bytes);
-    let mut out = Vec::with_capacity(count);
+    let mut out = Vec::new();
+    out.try_reserve_exact(count)
+        .map_err(|_| AkitaError::InvalidProof)?;
     for _ in 0..count {
-        out.push(golomb_rice_decode_one_from(
-            &mut reader,
-            rice_low_bits,
-            zigzag_w,
-            max_quotient,
-        )?);
+        let value =
+            golomb_rice_decode_one_from(&mut reader, rice_low_bits, zigzag_w, max_quotient)?;
+        out.push(convert(value)?);
     }
     golomb_rice_consume_canonical_padding(&mut reader)?;
     Ok(out)

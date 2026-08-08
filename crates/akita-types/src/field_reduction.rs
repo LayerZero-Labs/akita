@@ -16,8 +16,8 @@ use std::array::from_fn;
 /// Extension fields whose `ExtField::to_base_vec` coordinates are the
 /// ring-subfield coordinates consumed by [`psi_embed`] and [`embed_subfield`].
 pub trait FpExtEncoding<F: FieldCore>: ExtField<F> {
-    /// Return coordinates in the ring-subfield basis.
-    fn to_ext_coords(&self) -> Vec<F>;
+    /// Borrow coordinates in the ring-subfield basis.
+    fn ext_coords(&self) -> &[F];
 
     /// Return the underlying base scalar when this encoding is degree one.
     fn degree_one_base(&self) -> Option<F> {
@@ -30,8 +30,8 @@ where
     F: FieldCore + FromPrimitiveInt,
 {
     #[inline]
-    fn to_ext_coords(&self) -> Vec<F> {
-        vec![*self]
+    fn ext_coords(&self) -> &[F] {
+        std::slice::from_ref(self)
     }
 
     #[inline]
@@ -45,8 +45,8 @@ where
     F: FieldCore + FromPrimitiveInt + Valid,
 {
     #[inline]
-    fn to_ext_coords(&self) -> Vec<F> {
-        self.coeffs.to_vec()
+    fn ext_coords(&self) -> &[F] {
+        &self.coeffs
     }
 }
 
@@ -55,8 +55,8 @@ where
     F: FieldCore + FromPrimitiveInt + Valid + FpExt4MulBackend,
 {
     #[inline]
-    fn to_ext_coords(&self) -> Vec<F> {
-        self.coeffs.to_vec()
+    fn ext_coords(&self) -> &[F] {
+        &self.coeffs
     }
 }
 
@@ -65,8 +65,8 @@ where
     F: FieldCore + FromPrimitiveInt + Valid + FpExt8MulBackend,
 {
     #[inline]
-    fn to_ext_coords(&self) -> Vec<F> {
-        self.coeffs.to_vec()
+    fn ext_coords(&self) -> &[F] {
+        &self.coeffs
     }
 }
 
@@ -300,11 +300,11 @@ where
             }
             let mut coords = Vec::with_capacity(D);
             for value in values {
-                let limbs = value.to_ext_coords();
+                let limbs = value.ext_coords();
                 if limbs.len() != $k {
                     return Err(error);
                 }
-                coords.extend(limbs);
+                coords.extend_from_slice(limbs);
             }
             psi_embed::<F, D, $k>(params, &coords).map_err(|_| error)
         }};
@@ -340,9 +340,52 @@ where
     macro_rules! arm {
         ($k:expr) => {{
             let params = SubfieldParams::<D, $k>::new().map_err(|_| error.clone())?;
-            let limbs = value.to_ext_coords();
-            let coords: [F; $k] = limbs.try_into().map_err(|_| error.clone())?;
+            let coords: [F; $k] = value.ext_coords().try_into().map_err(|_| error.clone())?;
             Ok(embed_subfield::<F, D, $k>(params, &coords))
+        }};
+    }
+
+    match E::EXT_DEGREE {
+        1 => arm!(1),
+        2 => arm!(2),
+        4 => arm!(4),
+        8 => arm!(8),
+        _ => Err(error),
+    }
+}
+
+/// Decode one canonical ring-subfield scalar from its base-field ring image.
+///
+/// This is the checked inverse of [`embed_ring_subfield_scalar`].
+///
+/// # Errors
+///
+/// Returns `error` if the extension degree is unsupported or the ring is not
+/// the canonical image of exactly one extension scalar.
+pub fn decode_ring_subfield_scalar<F, E, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    error: AkitaError,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: FpExtEncoding<F>,
+{
+    macro_rules! arm {
+        ($k:expr) => {{
+            let params = SubfieldParams::<D, $k>::new().map_err(|_| error.clone())?;
+            let stride = D / (2 * $k);
+            let mut coordinates = [F::zero(); $k];
+            for (index, coordinate) in coordinates.iter_mut().enumerate() {
+                *coordinate = *ring
+                    .coefficients()
+                    .get(index.checked_mul(stride).ok_or_else(|| error.clone())?)
+                    .ok_or_else(|| error.clone())?;
+            }
+            let value = E::from_base_slice(&coordinates);
+            if embed_subfield::<F, D, $k>(params, &coordinates) != *ring {
+                return Err(error);
+            }
+            Ok(value)
         }};
     }
 
@@ -549,11 +592,14 @@ where
     }
 }
 
-/// Recover one ring-subfield inner product from a ring-level folded output.
+/// Recover one ring-subfield inner product from two ψ-packed rings.
 ///
 /// This is the value-level counterpart of [`check_trace_inner_product`]. It is
 /// used when a verifier needs the extension-field opening value itself, rather
-/// than only checking it against a supplied scalar.
+/// than only checking it against a supplied scalar. The implementation inverts
+/// the two-slot ψ transform independently in every residue class and takes the
+/// extension-field dot product directly. It therefore uses `O(D)` base-field
+/// coordinate work instead of materializing a ring product and subgroup trace.
 ///
 /// # Errors
 ///
@@ -567,7 +613,6 @@ where
     F: FieldCore + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F>,
 {
-    let trace_input = *y_ring * packed_inner_point.sigma_m1();
     macro_rules! arm {
         ($k:expr) => {{
             let params = SubfieldParams::<D, $k>::new().map_err(|_| {
@@ -575,8 +620,7 @@ where
                     "claim-field degree must divide the ring dimension".to_string(),
                 )
             })?;
-            let traced = trace_h::<F, D, $k>(params, &trace_input);
-            decode_traced_to_extension::<F, E, D, $k>(params, &traced)
+            recover_psi_inner_product::<F, E, D, $k>(params, y_ring, packed_inner_point)
         }};
     }
 
@@ -591,34 +635,81 @@ where
     }
 }
 
-#[inline]
-fn decode_traced_to_extension<F, E, const D: usize, const K: usize>(
-    params: SubfieldParams<D, K>,
-    traced: &CyclotomicRing<F, D>,
+fn recover_psi_inner_product<F, E, const D: usize, const K: usize>(
+    _params: SubfieldParams<D, K>,
+    lhs: &CyclotomicRing<F, D>,
+    rhs: &CyclotomicRing<F, D>,
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F>,
 {
-    let scale_inv = F::from_u64(params.packed_len() as u64)
+    let half = F::from_u64(2)
         .inverse()
-        .ok_or_else(|| AkitaError::InvalidInput("trace scale is not invertible".to_string()))?;
-    let coeffs = traced.coefficients();
-    if K == 1 {
-        return Ok(E::from_base_slice(&[coeffs[0] * scale_inv]));
+        .ok_or_else(|| AkitaError::InvalidInput("two is not invertible".to_string()))?;
+    let stride = D / (2 * K);
+    let decode = |ring: &CyclotomicRing<F, D>, residue: usize, high: bool| {
+        let coefficients = ring.coefficients();
+        let mut coordinates = [F::zero(); K];
+        let constant_index =
+            residue.checked_add(usize::from(high).checked_mul(K)?.checked_mul(stride)?)?;
+        *coordinates.get_mut(0)? = *coefficients.get(constant_index)?;
+        for coordinate in 1..K {
+            let (left_block, right_block) = if high {
+                (K.checked_sub(coordinate)?, K.checked_add(coordinate)?)
+            } else {
+                (coordinate, 2usize.checked_mul(K)?.checked_sub(coordinate)?)
+            };
+            let left = residue.checked_add(left_block.checked_mul(stride)?)?;
+            let right = residue.checked_add(right_block.checked_mul(stride)?)?;
+            let left = *coefficients.get(left)?;
+            let right = *coefficients.get(right)?;
+            *coordinates.get_mut(coordinate)? = if high {
+                (left + right) * half
+            } else {
+                (left - right) * half
+            };
+        }
+        Some(E::from_base_slice(&coordinates))
+    };
+
+    let mut inner_product = E::zero();
+    for residue in 0..stride {
+        let lhs_low = decode(lhs, residue, false).ok_or(AkitaError::InvalidProof)?;
+        let rhs_low = decode(rhs, residue, false).ok_or(AkitaError::InvalidProof)?;
+        let lhs_high = decode(lhs, residue, true).ok_or(AkitaError::InvalidProof)?;
+        let rhs_high = decode(rhs, residue, true).ok_or(AkitaError::InvalidProof)?;
+        inner_product += lhs_low * rhs_low + lhs_high * rhs_high;
     }
-    let step = D / (2 * K);
-    let mut coords = Vec::with_capacity(K);
-    coords.push(coeffs[0] * scale_inv);
-    let mut j = 1usize;
-    while j < K {
-        coords.push(coeffs[j * step] * scale_inv);
-        j += 1;
+    Ok(inner_product)
+}
+
+#[inline]
+fn shifted_coefficient<F, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    shift: usize,
+    target: usize,
+) -> Option<F>
+where
+    F: FieldCore,
+{
+    if shift >= D || target >= D {
+        return None;
     }
-    Ok(E::from_base_slice(&coords))
+    if target >= shift {
+        return ring.coefficients().get(target - shift).copied();
+    }
+    let source = D.checked_add(target)?.checked_sub(shift)?;
+    ring.coefficients().get(source).copied().map(|value| -value)
 }
 
 /// `TraceOpen(ring · X^c)` for every ring coordinate `c`, sharing one ring product.
+///
+/// The normalized subgroup trace keeps only the shifted constant coefficient
+/// and the `K - 1` antisymmetric pairs at multiples of `D / (2K)`. Extracting
+/// those pairs directly costs `O(DK)` after the ring product, instead of
+/// materializing `D` separate subgroup traces. The product skips zero
+/// coefficients in `ring`, so the verifier's unit-ring case is `O(DK)` total.
 pub(crate) fn trace_open_ring_row<F, E, const D: usize>(
     ring: &CyclotomicRing<F, D>,
     packed_inner_point: &CyclotomicRing<F, D>,
@@ -632,27 +723,34 @@ where
         .checked_shl(ring_bits as u32)
         .ok_or_else(|| AkitaError::InvalidInput("trace-open row length overflow".to_string()))?;
     let trace_partner = packed_inner_point.sigma_m1();
-    let trace_product = *ring * trace_partner;
+    let mut trace_product = CyclotomicRing::zero();
+    ring.mul_accumulate_into(&trace_partner, &mut trace_product);
+    let half = F::from_u64(2)
+        .inverse()
+        .ok_or_else(|| AkitaError::InvalidInput("two is not invertible".to_string()))?;
     macro_rules! arm {
         ($k:expr) => {{
-            let params = SubfieldParams::<D, $k>::new().map_err(|_| {
+            let _params = SubfieldParams::<D, $k>::new().map_err(|_| {
                 AkitaError::InvalidInput(
                     "claim-field degree must divide the ring dimension".to_string(),
                 )
             })?;
-            if $k == 1 {
-                let mut row = Vec::with_capacity(ring_len);
-                for coord in 0..ring_len {
-                    let trace_input = trace_product.negacyclic_shift(coord);
-                    row.push(E::from_base_slice(&[trace_input.coefficients()[0]]));
-                }
-                return Ok(row);
-            }
+            let step = D / (2 * $k);
             let mut row = Vec::with_capacity(ring_len);
-            for coord in 0..ring_len {
-                let trace_input = trace_product.negacyclic_shift(coord);
-                let traced = trace_h::<F, D, $k>(params, &trace_input);
-                row.push(decode_traced_to_extension::<F, E, D, $k>(params, &traced)?);
+            for shift in 0..ring_len {
+                let mut coordinates = [F::zero(); $k];
+                coordinates[0] = shifted_coefficient(&trace_product, shift, 0)
+                    .ok_or(AkitaError::InvalidProof)?;
+                for (index, coordinate) in coordinates.iter_mut().enumerate().skip(1) {
+                    let position = index.checked_mul(step).ok_or(AkitaError::InvalidProof)?;
+                    let inverse = D.checked_sub(position).ok_or(AkitaError::InvalidProof)?;
+                    let left = shifted_coefficient(&trace_product, shift, position)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let right = shifted_coefficient(&trace_product, shift, inverse)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    *coordinate = (left - right) * half;
+                }
+                row.push(E::from_base_slice(&coordinates));
             }
             Ok(row)
         }};

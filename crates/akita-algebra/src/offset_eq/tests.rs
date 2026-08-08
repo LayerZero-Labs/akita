@@ -9,6 +9,7 @@ use rand::SeedableRng;
 type F = Fp64<4294967197>;
 
 mod affine_bases;
+mod tensor_pair_batches;
 
 #[test]
 fn eq_pair_tensor_matches_dense_mixed_axes() {
@@ -32,6 +33,7 @@ fn eq_pair_tensor_matches_dense_mixed_axes() {
     .unwrap();
 
     let mut expected = F::zero();
+    let mut monomial_expected = F::zero();
     for (row, &row_weight) in row_weights.iter().enumerate() {
         for (fold, &fold_weight) in fold_weights.iter().enumerate() {
             for outer in 0..4 {
@@ -44,14 +46,37 @@ fn eq_pair_tensor_matches_dense_mixed_axes() {
                             * fold_weight
                             * eq_eval_at_index(&left, left_index)
                             * eq_eval_at_index(&right, right_index);
+                        monomial_expected += F::from_u64(9)
+                            * row_weight
+                            * fold_weight
+                            * left
+                                .iter()
+                                .enumerate()
+                                .filter(|(bit, _)| left_index & (1usize << bit) != 0)
+                                .fold(F::one(), |weight, (_, &challenge)| weight * challenge)
+                            * eq_eval_at_index(&right, right_index);
                     }
                 }
             }
         }
     }
     assert_eq!(
-        eval_eq_pair_tensor_families(&left, &right, &[family]).unwrap(),
+        eval_boolean_pair_tensor_families::<_, false, false>(
+            &left,
+            &right,
+            std::slice::from_ref(&family),
+        )
+        .unwrap(),
         expected
+    );
+    assert_eq!(
+        eval_boolean_pair_tensor_families::<_, true, false>(
+            &left,
+            &right,
+            std::slice::from_ref(&family),
+        )
+        .unwrap(),
+        monomial_expected
     );
 }
 
@@ -88,6 +113,26 @@ fn eq_pair_tensor_materialization_fills_contiguous_families() {
             _ => F::zero(),
         })
         .collect::<Vec<_>>();
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn eq_pair_tensor_materialization_preserves_unit_interval_overlaps() {
+    let mut rng = StdRng::seed_from_u64(0xA11C_E55E);
+    let challenges = random_vec(&mut rng, 8);
+    let equality = OffsetEqWindow::new(&challenges).unwrap();
+    let families = [
+        EqPairTensorFamily::new(2, 7, F::one(), vec![EqPairTensorAxis::unit(8, 1, 1)]).unwrap(),
+        EqPairTensorFamily::new(5, 41, F::one(), vec![EqPairTensorAxis::unit(4, 1, 1)]).unwrap(),
+    ];
+    let got = materialize_eq_tensor_left(&equality, &families, 12).unwrap();
+    let mut expected = vec![F::zero(); 12];
+    for (offset, value) in expected[2..10].iter_mut().enumerate() {
+        *value += eq_eval_at_index(&challenges, 7 + offset);
+    }
+    for (offset, value) in expected[5..9].iter_mut().enumerate() {
+        *value += eq_eval_at_index(&challenges, 41 + offset);
+    }
     assert_eq!(got, expected);
 }
 
@@ -170,21 +215,42 @@ fn offset_eq_window_matches_scalar_eq_across_low_bits() {
 }
 
 #[test]
-fn offset_eq_window_caps_low_table_and_crosses_boundary() {
+fn offset_eq_window_balances_bounded_tables() {
+    let mut rng = StdRng::seed_from_u64(0xBA1A_5EED);
+    let challenges = random_vec(&mut rng, 20);
+    let balanced = OffsetEqWindow::new(&challenges).unwrap();
+    assert_eq!(balanced.low_bits, 10);
+    assert_eq!(balanced.eq_low.len(), 1 << 10);
+    assert_eq!(balanced.eq_high.as_ref().unwrap().len(), 1 << 10);
+
+    let challenges = random_vec(&mut rng, 31);
+    let bounded = OffsetEqWindow::new(&challenges).unwrap();
+    assert_eq!(bounded.low_bits, 16);
+    assert_eq!(bounded.eq_low.len(), 1 << 16);
+    assert_eq!(bounded.eq_high.as_ref().unwrap().len(), 1 << 15);
+
+    let challenges = random_vec(&mut rng, 33);
+    let wide = OffsetEqWindow::new(&challenges).unwrap();
+    assert_eq!(wide.low_bits, 16);
+    assert!(wide.eq_high.is_none());
+}
+
+#[test]
+fn offset_eq_window_crosses_adaptive_split_boundary() {
     let mut rng = StdRng::seed_from_u64(0xB0117);
-    // 20 coordinates exceed the 16-bit cap; the low table must stay capped
-    // while evaluation still matches the scalar oracle across the low/high
-    // boundary and at the exact domain end.
+    // Evaluation matches the scalar oracle across the adaptive low/high split
+    // and at the exact domain end.
     let n = 20usize;
     let challenges: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
     let window = OffsetEqWindow::new(&challenges).unwrap();
-    assert_eq!(window.eq_low.len(), 1usize << OFFSET_EQ_LOW_BITS_CAP);
+    assert_eq!(window.eq_low.len(), 1usize << window.low_bits);
+    let low_boundary = 1usize << window.low_bits;
     let domain = 1usize << n;
     for index in [
         0usize,
-        (1 << OFFSET_EQ_LOW_BITS_CAP) - 1,
-        1 << OFFSET_EQ_LOW_BITS_CAP,
-        (1 << OFFSET_EQ_LOW_BITS_CAP) + 5,
+        low_boundary - 1,
+        low_boundary,
+        low_boundary + 5,
         domain - 1,
         domain,
         domain + 9,
@@ -194,6 +260,24 @@ fn offset_eq_window_caps_low_table_and_crosses_boundary() {
             eq_eval_at_index(&challenges, index),
             "index={index}"
         );
+    }
+}
+
+#[test]
+fn offset_eq_window_fills_unaligned_bounded_high_intervals() {
+    let mut rng = StdRng::seed_from_u64(0xF111_1A7E);
+    let challenges = random_vec(&mut rng, 20);
+    let window = OffsetEqWindow::new(&challenges).unwrap();
+    let low_boundary = 1usize << window.low_bits;
+    let domain = 1usize << challenges.len();
+
+    for (start, len) in [(low_boundary - 7, (1 << 14) + 31), (domain - 11, 29)] {
+        let mut actual = vec![F::zero(); len];
+        window.fill_interval(start, &mut actual).unwrap();
+        let expected = (start..start + len)
+            .map(|index| eq_eval_at_index(&challenges, index))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected, "start={start}, len={len}");
     }
 }
 
@@ -639,6 +723,39 @@ fn affine_digit_interval_matches_dense_subwindows_and_partial_rows() {
         );
         assert_eq!(got, expected);
     }
+}
+
+#[test]
+fn affine_digit_interval_factored_high_weights_match_dense_product() {
+    let mut rng = StdRng::seed_from_u64(0xFAC7_0EED);
+    let challenges = random_vec(&mut rng, 12);
+    let digits = random_vec(&mut rng, 3);
+    let outer = random_vec(&mut rng, 4);
+    let inner = random_vec(&mut rng, 3);
+    let low = random_vec(&mut rng, 4);
+    let dense = outer
+        .iter()
+        .flat_map(|&outer| inner.iter().map(move |&inner| outer * inner))
+        .collect::<Vec<_>>();
+    let factored = AffineWeightProduct::new(&outer, &inner).unwrap();
+
+    let expected =
+        eval_affine_digit_intervals(&challenges, &[7], 1, 43, 7, 1, &digits, &dense, &low, &[])
+            .unwrap();
+    let actual = eval_affine_digit_intervals(
+        &challenges,
+        &[7],
+        1,
+        43,
+        7,
+        1,
+        &digits,
+        &factored,
+        &low,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(actual, expected);
 }
 
 #[test]
