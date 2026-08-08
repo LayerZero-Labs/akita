@@ -85,10 +85,6 @@ where
     fn onehot_chunk_size(&self) -> Option<usize> {
         Some(self.onehot_k)
     }
-
-    fn release_root_opening_storage(&self) {
-        self.clear_block_cache();
-    }
 }
 
 impl<F, const D: usize, I> RootPolyShape<F, D> for OneHotPoly<F, I>
@@ -787,9 +783,11 @@ where
         num_digits: usize,
         _log_basis: u32,
     ) -> DecomposeFoldWitness<F> {
-        let blocks = self.blocks_for(D, num_positions_per_block).expect(
-            "OneHotPoly::decompose_fold: invalid num_positions_per_block for this polynomial",
-        );
+        let blocks = self
+            .blocks_for_operation(D, num_positions_per_block)
+            .expect(
+                "OneHotPoly::decompose_fold: invalid num_positions_per_block for this polynomial",
+            );
         match blocks.as_ref() {
             OneHotBlocks::SingleChunk(blocks) => self.decompose_fold_onehot::<SingleChunkEntry, D>(
                 blocks,
@@ -815,22 +813,25 @@ where
         _log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F>> {
         let first = polys.first()?;
-        let first_blocks = first.blocks_for(D, num_positions_per_block).expect(
+        first
+            .num_live_blocks_for(D, num_positions_per_block)
+            .expect(
             "OneHotPoly::decompose_fold_batched: invalid num_positions_per_block for first polynomial",
         );
-        match first_blocks.as_ref() {
-            OneHotBlocks::SingleChunk(_) => Self::decompose_fold_batched_single_chunk_onehot::<D>(
+        if first.onehot_k >= D && first.onehot_k.is_multiple_of(D) {
+            Self::decompose_fold_batched_single_chunk_onehot::<D>(
                 polys,
                 challenges,
                 num_positions_per_block,
                 num_digits,
-            ),
-            OneHotBlocks::MultiChunk(_) => Self::decompose_fold_batched_multi_chunk_onehot::<D>(
+            )
+        } else {
+            Self::decompose_fold_batched_multi_chunk_onehot::<D>(
                 polys,
                 challenges,
                 num_positions_per_block,
                 num_digits,
-            ),
+            )
         }
     }
 
@@ -844,14 +845,13 @@ where
     where
         B: CommitmentComputeBackend<F>,
     {
-        let blocks = self.blocks_for(D, plan.num_positions_per_block)?;
         let t = backend.onehot_commit_rows::<D>(
             prepared,
             OneHotCommitRowsPlan {
                 n_a: plan.n_a,
                 num_positions_per_block: plan.num_positions_per_block,
                 num_digits_inner: plan.num_digits_inner,
-                blocks: blocks.commit_plan_blocks(),
+                blocks: self.commit_plan_blocks_lazy(D, plan.num_positions_per_block)?,
             },
         )?;
 

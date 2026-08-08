@@ -29,7 +29,9 @@ pub struct OneHotPoly<F: FieldCore, I: OneHotIndex = usize> {
     /// Ring-element count at the CONSTRUCTION dimension; metadata, not
     /// authority — kernels validate at their own dimension.
     pub(crate) total_ring_elems: usize,
-    /// Cached per-block layouts keyed by `(ring_d, num_positions_per_block)`.
+    /// Caller-prepared per-block layouts keyed by
+    /// `(ring_d, num_positions_per_block)`. Ordinary operations may borrow an
+    /// entry from this cache, but never populate or evict it.
     pub(crate) block_cache: OneHotBlockCache,
     /// Cached tensor-projected sparse root polynomials keyed by `(ring_d, width)`.
     pub(crate) tensor_root_cache: TensorRootCache<F>,
@@ -157,15 +159,56 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         Ok(evals)
     }
 
-    /// Drop the cached per-block storage. The blocks are rebuilt from the
-    /// retained hot indices on the next `blocks_for` call, so this is
-    /// purely a memory/lifetime knob: the cache is trace-scale (~8 bytes per
-    /// hot entry across every committed column) and otherwise lives from
-    /// commit time until the opening fold consumes it.
-    pub fn clear_block_cache(&self) {
-        if let Ok(mut cache) = self.block_cache.lock() {
-            cache.clear();
+    /// Prepare and retain per-block storage for a specific runtime layout.
+    ///
+    /// Clones of this polynomial share the prepared cache. Block-backed
+    /// operations borrow a matching entry when one exists, but do not add
+    /// entries themselves. Streaming operations may use the canonical hot
+    /// indices directly without consulting this cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the requested layout is invalid or the shared
+    /// cache lock is poisoned.
+    pub fn prepare_block_cache(
+        &self,
+        ring_d: usize,
+        num_positions_per_block: usize,
+    ) -> Result<(), AkitaError> {
+        let key = (ring_d, num_positions_per_block);
+        if self
+            .block_cache
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("onehot block cache lock poisoned".into()))?
+            .contains_key(&key)
+        {
+            return Ok(());
         }
+
+        let built = Arc::new(self.materialize_blocks(ring_d, num_positions_per_block)?);
+        self.block_cache
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("onehot block cache lock poisoned".into()))?
+            .entry(key)
+            .or_insert(built);
+        Ok(())
+    }
+
+    /// Drop all caller-prepared per-block storage.
+    ///
+    /// Clones of this polynomial share the cache, so clearing through any
+    /// clone clears the entries visible through every clone. Operations that
+    /// already hold a block entry keep it alive until their `Arc` is dropped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the shared cache lock is poisoned.
+    pub fn clear_block_cache(&self) -> Result<(), AkitaError> {
+        self.block_cache
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("onehot block cache lock poisoned".into()))?
+            .clear();
+        Ok(())
     }
 
     #[cfg(test)]
@@ -173,9 +216,9 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         self.block_cache.lock().map_or(0, |cache| cache.len())
     }
 
-    /// Return cached per-block storage, building it on first call for the
-    /// requested `(ring_d, num_positions_per_block)` view.
-    pub(super) fn blocks_for(
+    /// Borrow caller-prepared per-block storage when available. Otherwise,
+    /// build operation-local storage without inserting it into the cache.
+    pub(super) fn blocks_for_operation(
         &self,
         ring_d: usize,
         num_positions_per_block: usize,
@@ -189,28 +232,30 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         {
             return Ok(Arc::clone(blocks));
         }
-        // Slow path: build blocks and install them. Validate `ring_d` and
+        Ok(Arc::new(
+            self.materialize_blocks(ring_d, num_positions_per_block)?,
+        ))
+    }
+
+    /// Materialize one validated block layout from the canonical hot indices.
+    fn materialize_blocks(
+        &self,
+        ring_d: usize,
+        num_positions_per_block: usize,
+    ) -> Result<OneHotBlocks, AkitaError> {
         let (ring_elems_at_d, _num_live_blocks) =
             self.view_layout(ring_d, num_positions_per_block)?;
-        let built = {
-            let _span =
-                tracing::debug_span!("OneHotPoly::build_blocks", ring_d, num_positions_per_block)
-                    .entered();
-            self.build_blocks_inner(ring_d, num_positions_per_block, ring_elems_at_d)?
-        };
-        let mut cache = self
-            .block_cache
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("onehot block cache lock poisoned".into()))?;
-        Ok(Arc::clone(
-            cache.entry(key).or_insert_with(|| Arc::new(built)),
-        ))
+        let _span =
+            tracing::debug_span!("OneHotPoly::build_blocks", ring_d, num_positions_per_block)
+                .entered();
+        self.build_blocks_inner(ring_d, num_positions_per_block, ring_elems_at_d)
     }
 
     /// Validate a `(ring_d, num_positions_per_block)` view against this
     /// polynomial's layout and return `(ring_elems_at_d, num_live_blocks)`.
-    /// Single home for the checks shared by [`Self::blocks_for`],
-    /// [`Self::num_live_blocks_for`], and [`Self::commit_plan_blocks_lazy`].
+    /// Single home for the checks shared by [`Self::prepare_block_cache`],
+    /// [`Self::blocks_for_operation`], [`Self::num_live_blocks_for`], and
+    /// [`Self::commit_plan_blocks_lazy`].
     fn view_layout(
         &self,
         ring_d: usize,
@@ -265,7 +310,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     /// Lazily buildable commit blocks over this polynomial's retained index
     /// columns: the sweep materializes one block tile at a time instead of
     /// holding the full entry cache. Performs the same layout validation as
-    /// [`Self::blocks_for`] but never builds or caches anything.
+    /// [`Self::blocks_for_operation`] but never builds or caches anything.
     pub(super) fn commit_plan_blocks_lazy(
         &self,
         ring_d: usize,

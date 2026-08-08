@@ -43,15 +43,6 @@ where
     fn onehot_chunk_size(&self) -> Option<usize> {
         None
     }
-
-    /// Release prover-only storage that is no longer needed once the accepted
-    /// root fold has been prepared.
-    ///
-    /// The root prover calls this after every root opening view has been
-    /// consumed and before proving the prepared relation. Shape metadata must
-    /// remain available. Most polynomial representations retain no separable
-    /// opening storage and use this no-op default.
-    fn release_root_opening_storage(&self) {}
 }
 
 /// Shape metadata every root polynomial exposes, keyed on the const ring
@@ -992,9 +983,5 @@ where
 
     fn onehot_chunk_size(&self) -> Option<usize> {
         RootPolyMeta::onehot_chunk_size(*self)
-    }
-
-    fn release_root_opening_storage(&self) {
-        RootPolyMeta::release_root_opening_storage(*self);
     }
 }

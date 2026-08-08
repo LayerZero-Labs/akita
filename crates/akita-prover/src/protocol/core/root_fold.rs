@@ -175,13 +175,9 @@ where
     // `claims.append_to_transcript` and to the former typed path; S2/S7 parity).
     claims.append_to_transcript::<T>(root_params, transcript)?;
 
-    let root_groups: Vec<P> = claims.groups().cloned().collect();
     let prepared_fold =
         prepare_root::<F, E, T, P, C, O, TS, R>(stack, transcript, claims, root_params, basis)
             .map_err(|err| AkitaError::InvalidInput(format!("prepare root failed: {err:?}")))?;
-    for group in &root_groups {
-        group.release_root_opening_storage();
-    }
 
     prove_fold::<F, E, T, C, O, TS, R, Cfg>(
         expanded,

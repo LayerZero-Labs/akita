@@ -156,13 +156,6 @@ where
             Self::OneHot(poly) => RootPolyMeta::onehot_chunk_size(poly),
         }
     }
-
-    fn release_root_opening_storage(&self) {
-        match self {
-            Self::Dense(poly) => RootPolyMeta::release_root_opening_storage(poly),
-            Self::OneHot(poly) => RootPolyMeta::release_root_opening_storage(poly),
-        }
-    }
 }
 
 impl<F, const D: usize, I> RootPolyShape<F, D> for MultilinearPolynomial<F, I>

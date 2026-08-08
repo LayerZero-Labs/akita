@@ -20,10 +20,6 @@ pub(crate) struct PreparedGroupOpening<F: FieldCore, E: FieldCore> {
 pub(crate) trait RootProverGroupMeta<F: FieldCore> {
     fn num_polynomials(&self) -> usize;
     fn num_vars(&self) -> Result<usize, AkitaError>;
-
-    /// Release per-polynomial prover-only opening storage after the root fold
-    /// has been prepared. No-op for groups whose polynomials retain none.
-    fn release_root_opening_storage(&self) {}
 }
 
 pub(crate) trait RootProverGroupOpening<F, E, B>: RootProverGroupMeta<F>
@@ -111,12 +107,6 @@ where
             ));
         }
         Ok(num_vars)
-    }
-
-    fn release_root_opening_storage(&self) {
-        for poly in self.polynomial_refs() {
-            crate::compute::RootPolyMeta::release_root_opening_storage(*poly);
-        }
     }
 }
 

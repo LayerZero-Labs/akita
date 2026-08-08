@@ -94,6 +94,7 @@ impl<E> FlatBlocks<E> {
         self
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) fn table(&self) -> FlatBlockTable<'_, E> {
         FlatBlockTable::new(&self.entries, &self.offsets)
@@ -385,17 +386,4 @@ impl<E> core::fmt::Debug for LazyOneHotBlocks<'_, E> {
 pub(crate) enum OneHotBlocks {
     SingleChunk(FlatBlocks<SingleChunkEntry>),
     MultiChunk(FlatBlocks<MultiChunkEntry>),
-}
-
-impl OneHotBlocks {
-    pub(super) fn commit_plan_blocks(&self) -> OneHotCommitBlocks<'_> {
-        match self {
-            OneHotBlocks::SingleChunk(blocks) => {
-                OneHotCommitBlocks::SingleChunk(OneHotBlockSource::Eager(blocks.table()))
-            }
-            OneHotBlocks::MultiChunk(blocks) => {
-                OneHotCommitBlocks::MultiChunk(OneHotBlockSource::Eager(blocks.table()))
-            }
-        }
-    }
 }

@@ -149,9 +149,16 @@ fn lazy_multi_sweep_matches_eager_multi_sweep() {
     let a_flat = FlatMatrix::from_ring_slice(&a_rows);
     let a_view = a_flat.ring_view::<D>(n_a, active_a_cols).unwrap();
 
+    for poly in &polys {
+        poly.prepare_block_cache(D, num_positions_per_block)
+            .unwrap();
+    }
     let eager_blocks: Vec<_> = polys
         .iter()
-        .map(|poly| poly.blocks_for(D, num_positions_per_block).unwrap())
+        .map(|poly| {
+            poly.blocks_for_operation(D, num_positions_per_block)
+                .unwrap()
+        })
         .collect();
     let eager_sources: Vec<_> = eager_blocks
         .iter()

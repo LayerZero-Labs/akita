@@ -3,7 +3,7 @@ use crate::backend::{DenseBatchView, OneHotBatchView};
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, ComputeBackendSetup, CpuBackend,
     DecomposeFoldBatchPlan, OpeningBatchKernel, RootCommitKernel, RootCommitSource,
-    RootOpeningSource, RootPolyMeta, RootPolyShape, RootTensorSource, TensorProjectionBatchKernel,
+    RootOpeningSource, RootPolyShape, RootTensorSource, TensorProjectionBatchKernel,
     TensorProjectionKernel,
 };
 use crate::{AkitaProverSetup, DensePoly, OneHotPoly};
@@ -71,7 +71,7 @@ fn multilinear_polynomial_forwards_onehot_chunk_size_from_inner() {
 }
 
 #[test]
-fn multilinear_onehot_release_and_group_commit_use_inner_fast_paths() {
+fn multilinear_onehot_commits_do_not_populate_persistent_block_cache() {
     type F = Prime24Offset3;
     const D: usize = 16;
 
@@ -103,9 +103,23 @@ fn multilinear_onehot_release_and_group_commit_use_inner_fast_paths() {
     let MultilinearPolynomial::OneHot(single_inner) = &single else {
         unreachable!()
     };
-    assert_eq!(single_inner.block_cache_len_for_test(), 1);
-    RootPolyMeta::release_root_opening_storage(&single);
     assert_eq!(single_inner.block_cache_len_for_test(), 0);
+
+    let prepared_inner = sample_onehot::<D>();
+    prepared_inner.prepare_block_cache(D, 2).unwrap();
+    let prepared_single = MultilinearPolynomial::onehot(prepared_inner);
+    let prepared_view = RootCommitSource::<F, D>::commit_view(&prepared_single).unwrap();
+    RootCommitKernel::<MultilinearPolynomialView<'_, F, D>, F, D>::commit_inner(
+        &CpuBackend,
+        &prepared,
+        prepared_view,
+        plan,
+    )
+    .unwrap();
+    let MultilinearPolynomial::OneHot(prepared_inner) = &prepared_single else {
+        unreachable!()
+    };
+    assert_eq!(prepared_inner.block_cache_len_for_test(), 1);
 
     let group = [
         MultilinearPolynomial::onehot(sample_onehot::<D>()),
@@ -130,7 +144,7 @@ fn multilinear_onehot_release_and_group_commit_use_inner_fast_paths() {
         assert_eq!(
             inner.block_cache_len_for_test(),
             0,
-            "homogeneous one-hot wrappers must use the lazy grouped commit path"
+            "one-hot wrappers must keep ordinary commit storage operation-local"
         );
     }
 }

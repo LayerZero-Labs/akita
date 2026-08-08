@@ -46,9 +46,10 @@ use std::sync::{Arc, Mutex};
 
 use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
+#[cfg(test)]
+use crate::compute::FlatBlockTable;
 use crate::compute::{
-    CommitmentComputeBackend, FlatBlockTable, OneHotBlockSource, OneHotCommitBlocks,
-    OneHotCommitRowsPlan,
+    CommitmentComputeBackend, OneHotBlockSource, OneHotCommitBlocks, OneHotCommitRowsPlan,
 };
 use crate::{CommitInnerWitness, DecomposeFoldWitness, SparseRingPoly};
 
