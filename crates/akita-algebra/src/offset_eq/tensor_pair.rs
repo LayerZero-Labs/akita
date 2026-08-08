@@ -163,9 +163,11 @@ impl<F: FieldCore> EqPairTensorFamily<F> {
 
 /// Evaluate tensor-native paired equality families.
 ///
-/// A largest unit-weight axis is kept as an affine stream. The remaining
-/// (normally tiny) tensor axes seed exact stream contractions directly; no
-/// expanded term vector, geometry hashing, or rectangle rediscovery is used.
+/// Multiple power-of-two unit axes are contracted together by an exact binary
+/// carry recurrence. Otherwise, a largest unit-weight axis is kept as an
+/// affine stream and the remaining (normally tiny) tensor axes seed exact
+/// stream contractions directly. No expanded term vector or rectangle
+/// rediscovery is used.
 ///
 /// # Errors
 ///
@@ -187,8 +189,30 @@ pub fn eval_eq_pair_tensor_families<F: FieldCore>(
     let mut batches = BTreeMap::<(usize, usize, usize), Vec<EqPairSeed<F>>>::new();
     let mut scalar_seeds = Vec::new();
     let mut work = 0usize;
+    let mut acc = F::zero();
     for family in families {
         if family.scalar.is_zero() {
+            continue;
+        }
+        let recurrence_axes = family
+            .axes
+            .iter()
+            .enumerate()
+            .filter(|(_, axis)| {
+                matches!(axis.weights, EqPairTensorWeights::Unit)
+                    && axis.len.is_power_of_two()
+                    && (axis.left_stride != 0 || axis.right_stride != 0)
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if recurrence_axes.len() >= 2 {
+            acc += eval_multi_axis_unit_family(
+                left_challenges,
+                right_challenges,
+                family,
+                &recurrence_axes,
+                &mut work,
+            )?;
             continue;
         }
         let stream_axis = family
@@ -214,7 +238,7 @@ pub fn eval_eq_pair_tensor_families<F: FieldCore>(
             &mut work,
         )?;
     }
-    let mut acc = scalar_seeds.into_iter().fold(F::zero(), |sum, seed| {
+    acc += scalar_seeds.into_iter().fold(F::zero(), |sum, seed| {
         sum + seed.weight
             * eq_eval_checked(left_challenges, seed.left_offset)
             * eq_eval_checked(right_challenges, seed.right_offset)
@@ -231,6 +255,240 @@ pub fn eval_eq_pair_tensor_families<F: FieldCore>(
         )?;
     }
     Ok(acc)
+}
+
+fn eval_multi_axis_unit_family<F: FieldCore>(
+    left_challenges: &[F],
+    right_challenges: &[F],
+    family: &EqPairTensorFamily<F>,
+    recurrence_axes: &[usize],
+    work: &mut usize,
+) -> Result<F, AkitaError> {
+    let mut seeds = Vec::new();
+    collect_residual_seeds(
+        family,
+        recurrence_axes,
+        0,
+        family.left_offset,
+        family.right_offset,
+        family.scalar,
+        &mut seeds,
+        work,
+    )?;
+    let bit_count = left_challenges.len().max(right_challenges.len());
+    let mut introductions = vec![Vec::<(usize, usize)>::new(); bit_count];
+    for &axis_index in recurrence_axes {
+        let axis = family
+            .axes
+            .get(axis_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        for coordinate_bit in 0..axis.len.trailing_zeros() as usize {
+            let coordinate = 1usize.checked_shl(coordinate_bit as u32).ok_or_else(|| {
+                AkitaError::InvalidInput("paired tensor coordinate bit overflow".into())
+            })?;
+            let left = axis.left_stride.checked_mul(coordinate).ok_or_else(|| {
+                AkitaError::InvalidInput("paired tensor left stride overflow".into())
+            })?;
+            let right = axis.right_stride.checked_mul(coordinate).ok_or_else(|| {
+                AkitaError::InvalidInput("paired tensor right stride overflow".into())
+            })?;
+            let start_bit = [left, right]
+                .into_iter()
+                .filter(|value| *value != 0)
+                .map(|value| value.trailing_zeros() as usize)
+                .min()
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("paired tensor unit axis is constant".into())
+                })?;
+            if let Some(at_bit) = introductions.get_mut(start_bit) {
+                at_bit.push((left >> start_bit, right >> start_bit));
+            }
+        }
+    }
+
+    let mut states = merge_pair_states(
+        seeds
+            .into_iter()
+            .map(|seed| ((seed.left_offset, seed.right_offset), seed.weight))
+            .collect(),
+    );
+    for bit in 0..bit_count {
+        let choices = unit_axis_choices::<F>(
+            introductions.get(bit).ok_or(AkitaError::InvalidProof)?,
+            work,
+        )?;
+        charge_work(
+            work,
+            states.len().checked_mul(choices.len()).ok_or_else(|| {
+                AkitaError::InvalidInput("paired tensor recurrence work overflow".into())
+            })?,
+        )?;
+        let next_capacity = states
+            .len()
+            .checked_mul(choices.len())
+            .ok_or_else(|| AkitaError::InvalidInput("paired tensor state count overflow".into()))?;
+        let mut next = Vec::new();
+        next.try_reserve_exact(next_capacity).map_err(|_| {
+            AkitaError::InvalidInput("paired tensor recurrence state allocation failed".into())
+        })?;
+        for ((left_carry, right_carry), state_weight) in states {
+            for &(left_add, right_add, multiplicity) in &choices {
+                let left = left_carry.checked_add(left_add).ok_or_else(|| {
+                    AkitaError::InvalidInput("paired tensor left carry overflow".into())
+                })?;
+                let right = right_carry.checked_add(right_add).ok_or_else(|| {
+                    AkitaError::InvalidInput("paired tensor right carry overflow".into())
+                })?;
+                let Some(left_factor) =
+                    equality_bit_factor(left_challenges.get(bit).copied(), left & 1)
+                else {
+                    continue;
+                };
+                let Some(right_factor) =
+                    equality_bit_factor(right_challenges.get(bit).copied(), right & 1)
+                else {
+                    continue;
+                };
+                next.push((
+                    (left >> 1, right >> 1),
+                    state_weight * multiplicity * left_factor * right_factor,
+                ));
+            }
+        }
+        states = merge_pair_states(next);
+    }
+    Ok(states
+        .into_iter()
+        .find_map(|(key, weight)| (key == (0, 0)).then_some(weight))
+        .unwrap_or_else(F::zero))
+}
+
+fn merge_pair_states<F: FieldCore>(
+    mut states: Vec<((usize, usize), F)>,
+) -> Vec<((usize, usize), F)> {
+    states.sort_unstable_by_key(|(key, _)| *key);
+    let mut merged: Vec<((usize, usize), F)> = Vec::with_capacity(states.len());
+    for (key, weight) in states {
+        if weight.is_zero() {
+            continue;
+        }
+        if let Some((last_key, last_weight)) = merged.last_mut() {
+            if *last_key == key {
+                *last_weight += weight;
+                continue;
+            }
+        }
+        merged.push((key, weight));
+    }
+    merged.retain(|(_, weight)| !weight.is_zero());
+    merged
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_residual_seeds<F: FieldCore>(
+    family: &EqPairTensorFamily<F>,
+    recurrence_axes: &[usize],
+    axis_index: usize,
+    left_offset: usize,
+    right_offset: usize,
+    weight: F,
+    seeds: &mut Vec<EqPairSeed<F>>,
+    work: &mut usize,
+) -> Result<(), AkitaError> {
+    if weight.is_zero() {
+        return Ok(());
+    }
+    if axis_index == family.axes.len() {
+        charge_work(work, 1)?;
+        seeds.push(EqPairSeed {
+            left_offset,
+            right_offset,
+            weight,
+        });
+        return Ok(());
+    }
+    if recurrence_axes.contains(&axis_index) {
+        return collect_residual_seeds(
+            family,
+            recurrence_axes,
+            axis_index + 1,
+            left_offset,
+            right_offset,
+            weight,
+            seeds,
+            work,
+        );
+    }
+    let axis = family
+        .axes
+        .get(axis_index)
+        .ok_or(AkitaError::InvalidProof)?;
+    for coordinate in 0..axis.len {
+        let axis_weight = match &axis.weights {
+            EqPairTensorWeights::Unit => F::one(),
+            EqPairTensorWeights::Dense(weights) => {
+                *weights.get(coordinate).ok_or(AkitaError::InvalidProof)?
+            }
+        };
+        if axis_weight.is_zero() {
+            continue;
+        }
+        let next_weight = if axis_weight == F::one() {
+            weight
+        } else if weight == F::one() {
+            axis_weight
+        } else {
+            weight * axis_weight
+        };
+        collect_residual_seeds(
+            family,
+            recurrence_axes,
+            axis_index + 1,
+            checked_axis_offset(left_offset, axis.left_stride, coordinate, "left")?,
+            checked_axis_offset(right_offset, axis.right_stride, coordinate, "right")?,
+            next_weight,
+            seeds,
+            work,
+        )?;
+    }
+    Ok(())
+}
+
+fn unit_axis_choices<F: FieldCore>(
+    introductions: &[(usize, usize)],
+    work: &mut usize,
+) -> Result<Vec<(usize, usize, F)>, AkitaError> {
+    let mut choices = BTreeMap::<(usize, usize), F>::from([((0, 0), F::one())]);
+    for &(left, right) in introductions {
+        charge_work(work, choices.len())?;
+        let previous = choices
+            .iter()
+            .map(|(&key, &weight)| (key, weight))
+            .collect::<Vec<_>>();
+        for ((left_sum, right_sum), weight) in previous {
+            let next_left = left_sum.checked_add(left).ok_or_else(|| {
+                AkitaError::InvalidInput("paired tensor left choice overflow".into())
+            })?;
+            let next_right = right_sum.checked_add(right).ok_or_else(|| {
+                AkitaError::InvalidInput("paired tensor right choice overflow".into())
+            })?;
+            *choices.entry((next_left, next_right)).or_insert(F::zero()) += weight;
+        }
+    }
+    Ok(choices
+        .into_iter()
+        .filter_map(|((left, right), weight)| (!weight.is_zero()).then_some((left, right, weight)))
+        .collect())
+}
+
+fn equality_bit_factor<F: FieldCore>(challenge: Option<F>, bit: usize) -> Option<F> {
+    match (challenge, bit) {
+        (Some(challenge), 0) => Some(F::one() - challenge),
+        (Some(challenge), 1) => Some(challenge),
+        (Some(_), _) => None,
+        (None, 0) => Some(F::one()),
+        (None, _) => None,
+    }
 }
 
 /// Materialize the left-address weights induced by tensor families and one

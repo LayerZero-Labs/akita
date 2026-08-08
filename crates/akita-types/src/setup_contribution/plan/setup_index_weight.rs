@@ -319,17 +319,20 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         if self.d_rows == 0 || self.d_physical_cols == 0 {
             return Ok(());
         }
-        for tensor in &group.d_tensors {
-            push_projected_tensor(
-                batches,
-                group.d_ratio,
+        let lifted = group
+            .d_tensors
+            .iter()
+            .map(|tensor| {
                 lift_role_tensor(
                     tensor,
                     group.d_col_range.start,
                     self.d_physical_cols,
                     &self.d_weights,
-                )?,
-            );
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for tensor in compact_affine_unit_families(lifted, group.num_claims)? {
+            push_projected_tensor(batches, group.d_ratio, tensor);
         }
         Ok(())
     }
@@ -342,12 +345,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         if group.n_b == 0 {
             return Ok(());
         }
-        for tensor in &group.b_tensors {
-            push_projected_tensor(
-                batches,
-                group.b_ratio,
-                lift_role_tensor(tensor, 0, group.t_cols, &group.b_weights)?,
-            );
+        let lifted = group
+            .b_tensors
+            .iter()
+            .map(|tensor| lift_role_tensor(tensor, 0, group.t_cols, &group.b_weights))
+            .collect::<Result<Vec<_>, _>>()?;
+        for tensor in compact_affine_unit_families(lifted, group.num_claims)? {
+            push_projected_tensor(batches, group.b_ratio, tensor);
         }
         Ok(())
     }
@@ -360,12 +364,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         if group.n_a == 0 {
             return Ok(());
         }
-        for tensor in &group.a_tensors {
-            push_projected_tensor(
-                batches,
-                group.a_ratio,
-                lift_role_tensor(tensor, 0, group.z_cols, &group.a_row_weights)?,
-            );
+        let lifted = group
+            .a_tensors
+            .iter()
+            .map(|tensor| lift_role_tensor(tensor, 0, group.z_cols, &group.a_row_weights))
+            .collect::<Result<Vec<_>, _>>()?;
+        for tensor in compact_affine_unit_families(lifted, 1)? {
+            push_projected_tensor(batches, group.a_ratio, tensor);
         }
         Ok(())
     }
@@ -575,6 +580,82 @@ fn lift_role_tensor<E: FieldCore>(
         tensor.scalar,
         axes,
     )
+}
+
+/// Collapse equal-width unit families into one explicit affine unit axis.
+///
+/// Families are chunk-major with `families_per_unit` semantic lanes inside
+/// each chunk. Unequal or non-affine layouts retain their original families.
+fn compact_affine_unit_families<E: FieldCore>(
+    families: Vec<EqPairTensorFamily<E>>,
+    families_per_unit: usize,
+) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
+    if families_per_unit == 0 || !families.len().is_multiple_of(families_per_unit) {
+        return Err(AkitaError::InvalidSetup(
+            "setup tensor families disagree with unit lanes".into(),
+        ));
+    }
+    let unit_count = families.len() / families_per_unit;
+    if unit_count <= 1 {
+        return Ok(families);
+    }
+
+    let mut compact = Vec::with_capacity(families_per_unit);
+    for lane in 0..families_per_unit {
+        let first = families.get(lane).ok_or(AkitaError::InvalidProof)?;
+        let second = families
+            .get(families_per_unit + lane)
+            .ok_or(AkitaError::InvalidProof)?;
+        let Some(left_stride) = second.left_offset.checked_sub(first.left_offset) else {
+            return Ok(families);
+        };
+        let Some(right_stride) = second.right_offset.checked_sub(first.right_offset) else {
+            return Ok(families);
+        };
+        for unit in 1..unit_count {
+            let family_index = unit
+                .checked_mul(families_per_unit)
+                .and_then(|index| index.checked_add(lane))
+                .ok_or_else(|| AkitaError::InvalidSetup("setup unit index overflow".into()))?;
+            let family = families.get(family_index).ok_or(AkitaError::InvalidProof)?;
+            let expected_left = first
+                .left_offset
+                .checked_add(left_stride.checked_mul(unit).ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup unit left stride overflow".into())
+                })?)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup unit left offset overflow".into())
+                })?;
+            let expected_right = first
+                .right_offset
+                .checked_add(right_stride.checked_mul(unit).ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup unit right stride overflow".into())
+                })?)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup unit right offset overflow".into())
+                })?;
+            if family.left_offset != expected_left
+                || family.right_offset != expected_right
+                || family.scalar != first.scalar
+                || family.axes != first.axes
+            {
+                return Ok(families);
+            }
+        }
+        let mut axes = first.axes.clone();
+        axes.push(EqPairTensorAxis::unit(
+            unit_count,
+            left_stride,
+            right_stride,
+        ));
+        compact.push(EqPairTensorFamily::new(
+            first.left_offset,
+            first.right_offset,
+            first.scalar,
+            axes,
+        )?);
+    }
+    Ok(compact)
 }
 
 fn role_tensors_are_aligned<E: FieldCore>(tensors: &[EqPairTensorFamily<E>], ratio: usize) -> bool {
