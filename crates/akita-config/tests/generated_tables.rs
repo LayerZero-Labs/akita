@@ -96,6 +96,7 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
         "fp64_d128_dense" => fp64::D128Dense::schedule_catalog().is_some(),
         "fp64_d128_onehot" => fp64::D128OneHot::schedule_catalog().is_some(),
         "fp64_d256_onehot" => fp64::D256OneHot::schedule_catalog().is_some(),
+        "fp32_d128_dense" => fp32::D128Dense::schedule_catalog().is_some(),
         "fp32_d128_onehot" => fp32::D128OneHot::schedule_catalog().is_some(),
         "fp32_d256_onehot" => fp32::D256OneHot::schedule_catalog().is_some(),
         other => panic!("unknown generated family for catalog guard: {other}"),
@@ -111,13 +112,12 @@ fn assert_table_hit(
     if keys.is_empty() {
         return;
     }
-    let hit = keys
-        .iter()
-        .any(|&key| table_entry(*catalog, &AkitaScheduleLookupKey::single(key)).is_some());
-    assert!(
-        hit,
-        "family {module_name} must have at least one generated-table key hit (non-vacuous catalog guard)"
-    );
+    for &key in keys {
+        assert!(
+            table_entry(*catalog, &AkitaScheduleLookupKey::single(key)).is_some(),
+            "family {module_name} is missing emitted scalar key {key:?}"
+        );
+    }
 }
 
 #[cfg(feature = "all-schedules")]
@@ -355,9 +355,29 @@ fn family_catalog(
         "fp64_d128_dense" => prepare_family_catalog::<fp64::D128Dense>(family, keys),
         "fp64_d128_onehot" => prepare_family_catalog::<fp64::D128OneHot>(family, keys),
         "fp64_d256_onehot" => prepare_family_catalog::<fp64::D256OneHot>(family, keys),
+        "fp32_d128_dense" => prepare_family_catalog::<fp32::D128Dense>(family, keys),
         "fp32_d128_onehot" => prepare_family_catalog::<fp32::D128OneHot>(family, keys),
         "fp32_d256_onehot" => prepare_family_catalog::<fp32::D256OneHot>(family, keys),
         other => panic!("unknown generated family for catalog guard: {other}"),
+    }
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn generated_catalogs_cover_emitted_keys() {
+    for family in ALL_GENERATED_FAMILIES {
+        assert!(
+            family_catalog_is_linked(family),
+            "family {} is not linked under all-schedules",
+            family.module_name
+        );
+        let keys = emitted_scalar_keys(family).unwrap_or_else(|error| {
+            panic!(
+                "family {} key enumeration failed: {error}",
+                family.module_name
+            )
+        });
+        let _ = family_catalog(family, &keys);
     }
 }
 
@@ -433,6 +453,9 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, requests: &[Gro
         }
         "fp64_d256_onehot" => {
             assert_group_batch_table_hits::<fp64::D256OneHot>(family.module_name, requests)
+        }
+        "fp32_d128_dense" => {
+            assert_group_batch_table_hits::<fp32::D128Dense>(family.module_name, requests)
         }
         "fp32_d128_onehot" => {
             assert_group_batch_table_hits::<fp32::D128OneHot>(family.module_name, requests)
@@ -512,6 +535,7 @@ fn resolve_family_group_batch_schedule(
         "fp64_d128_dense" => table_backed_group_batch_schedule::<fp64::D128Dense>(request),
         "fp64_d128_onehot" => table_backed_group_batch_schedule::<fp64::D128OneHot>(request),
         "fp64_d256_onehot" => table_backed_group_batch_schedule::<fp64::D256OneHot>(request),
+        "fp32_d128_dense" => table_backed_group_batch_schedule::<fp32::D128Dense>(request),
         "fp32_d128_onehot" => table_backed_group_batch_schedule::<fp32::D128OneHot>(request),
         "fp32_d256_onehot" => table_backed_group_batch_schedule::<fp32::D256OneHot>(request),
         other => panic!("unknown generated family for multi-group schedule guard: {other}"),
@@ -525,15 +549,18 @@ fn table_backed_expanded(
     key: PolynomialGroupLayout,
 ) -> Result<FoldSchedule, akita_field::AkitaError> {
     let lookup_key = AkitaScheduleLookupKey::single(key);
-    if let Some(entry) = table_entry(catalog, &lookup_key) {
-        return schedule_from_entry(
-            entry,
-            &lookup_key,
-            &(family.policy)(),
-            family.ring_challenge_config,
-        );
-    }
-    (family.regen)(key)
+    let entry = table_entry(catalog, &lookup_key).ok_or_else(|| {
+        AkitaError::UnsupportedSchedule(format!(
+            "generated family {} is missing scalar key {key:?}",
+            family.module_name
+        ))
+    })?;
+    schedule_from_entry(
+        entry,
+        &lookup_key,
+        &(family.policy)(),
+        family.ring_challenge_config,
+    )
 }
 
 /// One `(family, key)` whose table-hit expansion disagrees with the DP.

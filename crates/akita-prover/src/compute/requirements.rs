@@ -120,7 +120,10 @@ impl NttExecutionRequirements {
             params.inner_commit_matrix.ring_dimension(),
             params.inner_commit_matrix.output_rank(),
             params.inner_commit_matrix.input_width(),
-            NttTransformDomain::Negacyclic,
+            signed_commit_domain(
+                params.inner_commit_matrix.input_width(),
+                params.log_basis_inner,
+            )?,
         )?;
         self.add_matrix(
             fold_level,
@@ -183,7 +186,10 @@ impl NttExecutionRequirements {
             params.inner_commit_matrix.ring_dimension(),
             params.inner_commit_matrix.output_rank(),
             params.inner_commit_matrix.input_width(),
-            NttTransformDomain::Negacyclic,
+            signed_commit_domain(
+                params.inner_commit_matrix.input_width(),
+                params.log_basis_inner,
+            )?,
         )?;
         self.add_matrix(
             level,
@@ -273,8 +279,22 @@ impl NttExecutionRequirements {
             params.inner_commit_matrix.ring_dimension(),
             params.inner_commit_matrix.output_rank(),
             params.inner_commit_matrix.input_width(),
-            NttTransformDomain::Negacyclic,
+            signed_commit_domain(
+                params.inner_commit_matrix.input_width(),
+                params.log_basis_inner,
+            )?,
         )
+    }
+}
+
+fn signed_commit_domain(width: usize, log_basis: u32) -> Result<NttTransformDomain, AkitaError> {
+    match crate::validation::signed_digit_kernel_for_setup(log_basis, "for NTT cache planning")? {
+        akita_types::SignedDigitKernel::I8 => Ok(NttTransformDomain::Negacyclic),
+        akita_types::SignedDigitKernel::I16 => Ok(NttTransformDomain::ExactNegacyclicI16 {
+            width,
+            rhs_abs_bound: akita_types::balanced_signed_digit_abs_bound(log_basis)
+                .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?,
+        }),
     }
 }
 
@@ -291,6 +311,7 @@ const fn domain_order(domain: NttTransformDomain) -> u8 {
     match domain {
         NttTransformDomain::Negacyclic => 0,
         NttTransformDomain::Cyclic => 1,
+        NttTransformDomain::ExactNegacyclicI16 { .. } => 2,
     }
 }
 

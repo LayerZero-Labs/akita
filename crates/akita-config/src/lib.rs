@@ -65,8 +65,11 @@ macro_rules! impl_multi_chunk_companion {
                     max_num_batched_polys,
                 )
             }
-            fn basis_range() -> (u32, u32) {
-                <$base as $crate::CommitmentConfig>::basis_range()
+            fn opening_basis_range() -> (u32, u32) {
+                <$base as $crate::CommitmentConfig>::opening_basis_range()
+            }
+            fn inner_basis_range() -> (u32, u32) {
+                <$base as $crate::CommitmentConfig>::inner_basis_range()
             }
             fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
                 <$base as $crate::CommitmentConfig>::root_honest_fold_policy()
@@ -96,7 +99,7 @@ macro_rules! impl_multi_chunk_companion {
     };
 }
 
-pub mod precommitted_commitment;
+mod precommitted_commitment;
 pub mod proof_optimized;
 pub mod recursive_commitment;
 pub mod schedule_selection;
@@ -105,9 +108,7 @@ pub mod setup_prefix_slots;
 pub mod test_support;
 mod transcript_binding;
 pub use akita_schedules::ResolvedScheduleRow;
-pub use precommitted_commitment::{
-    committed_group_params, committed_group_profile, PrecommittedCommitmentConfig,
-};
+pub use precommitted_commitment::committed_group_profile;
 pub use proof_optimized::{
     ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
     setup_level_params_from_schedule,
@@ -139,7 +140,8 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
-        basis_range: Cfg::basis_range(),
+        inner_basis_range: Cfg::inner_basis_range(),
+        opening_basis_range: Cfg::opening_basis_range(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning,
     }
@@ -279,7 +281,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Inclusive `(min, max)` log-basis search range.
     #[doc(hidden)]
-    fn basis_range() -> (u32, u32);
+    fn opening_basis_range() -> (u32, u32);
+
+    /// Inclusive A/source decomposition basis range at every fold level.
+    #[doc(hidden)]
+    fn inner_basis_range() -> (u32, u32) {
+        Self::opening_basis_range()
+    }
 
     /// Group-owned honest sizing rule used only during offline planning.
     fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec;
@@ -305,7 +313,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Catalog-bound schedule selection objective.
     ///
     /// Uniform/direct presets minimize proof payload. Recursive setup presets
-    /// minimize the first remaining direct setup footprint before payload.
+    /// minimize the first remaining direct padded setup capacity before payload.
     /// Mixed-dimension catalogs may opt into the physical setup-field objective
     /// explicitly; the policy is part of catalog identity and never inferred
     /// from a ring dimension.
@@ -472,7 +480,7 @@ mod tests {
             Ok(SetupMatrixCapacity::minimum())
         }
 
-        fn basis_range() -> (u32, u32) {
+        fn opening_basis_range() -> (u32, u32) {
             (3, 3)
         }
 
@@ -717,31 +725,14 @@ mod precommit_tests {
     fn exact_precommit_params_freeze_standalone_metadata() {
         let group = PolynomialGroupLayout::new(16, 1);
         group.validate().expect("group layout");
-        let singleton =
-            OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials()).expect("singleton");
-        let params =
-            <PrecommittedCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::get_params_for_batched_commitment(
-                &singleton,
-            )
-            .expect("precommitted group params");
-        let precommitted = akita_types::CommittedGroupProfile::from_params(group, &params);
-        let root_basis = fp128::D64OneHot::basis_range().0;
+        let precommitted = committed_group_profile::<fp128::D64OneHot>(&group)
+            .expect("precommitted group profile");
+        let root_basis = fp128::D64OneHot::opening_basis_range().0;
         assert_eq!(precommitted.log_basis_inner, root_basis);
         assert_eq!(precommitted.log_basis_outer, root_basis);
         assert_eq!(precommitted.num_positions_per_block, 256);
         assert_eq!(precommitted.num_live_blocks, 4);
         assert_ne!(precommitted.inner_commit_matrix.output_rank(), 0);
         assert_ne!(precommitted.outer_commit_matrix.output_rank(), 0);
-    }
-
-    #[test]
-    fn precommit_config_rejects_prove_schedule() {
-        let layout = OpeningClaimsLayout::new(2, 1).expect("opening layout");
-        let err =
-            <PrecommittedCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::get_params_for_prove(
-                &layout,
-            )
-            .expect_err("precommit config must not prove");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }

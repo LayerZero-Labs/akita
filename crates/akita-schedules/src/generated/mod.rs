@@ -145,7 +145,8 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub ring_subfield_norm_bound: u32,
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
-    pub basis_range: (u32, u32),
+    pub inner_basis_range: (u32, u32),
+    pub opening_basis_range: (u32, u32),
     /// Multi-chunk witness layout this table was emitted under. A chunked policy
     /// never aliases a single-chunk table (and vice versa), even when row keys
     /// match. `ChunkedWitnessCfg::default()` for single-chunk tables.
@@ -429,21 +430,23 @@ pub(crate) fn validate_certified_bases(
     policy: &crate::PlannerPolicy,
     context: &str,
 ) -> Result<(), akita_field::AkitaError> {
-    let (min, max) = policy.basis_range;
-    for (role, basis) in [
-        ("inner", log_basis_inner),
-        ("outer", log_basis_outer),
-        ("open", log_basis_open),
-    ] {
+    let (inner_min, inner_max) = policy.inner_basis_range;
+    if log_basis_inner < inner_min || log_basis_inner > inner_max {
+        return Err(akita_field::AkitaError::InvalidSetup(format!(
+            "{context} inner basis {log_basis_inner} outside policy range [{inner_min}, {inner_max}]"
+        )));
+    }
+    let (min, max) = policy.opening_basis_range;
+    for (role, basis) in [("outer", log_basis_outer), ("open", log_basis_open)] {
         if basis < min || basis > max {
             return Err(akita_field::AkitaError::InvalidSetup(format!(
                 "{context} {role} basis {basis} outside policy range [{min}, {max}]"
             )));
         }
     }
-    if log_basis_open < log_basis_inner || log_basis_open < log_basis_outer {
+    if log_basis_open < log_basis_outer {
         return Err(akita_field::AkitaError::InvalidSetup(format!(
-            "{context} certified open basis must dominate inner and outer bases"
+            "{context} certified open basis must dominate the outer basis"
         )));
     }
     Ok(())
@@ -498,6 +501,10 @@ pub mod fp128_d64_onehot_recursive_precommitted;
 pub mod fp128_mixed_dim_onehot;
 #[cfg(feature = "fp128-mixed-dim-onehot")]
 pub mod fp128_mixed_dim_onehot_precommitted;
+#[cfg(feature = "fp32-d128-dense")]
+pub mod fp32_d128_dense;
+#[cfg(feature = "fp32-d128-dense")]
+pub mod fp32_d128_dense_precommitted;
 #[cfg(feature = "fp32-d128-onehot")]
 pub mod fp32_d128_onehot;
 #[cfg(feature = "fp32-d128-onehot")]
@@ -629,6 +636,16 @@ pub fn fp128_mixed_dim_onehot_table() -> GeneratedScheduleTable {
         entries: fp128_mixed_dim_onehot::FP128_MIXED_DIM_ONEHOT_SCHEDULES,
         precommitted_profiles: fp128_mixed_dim_onehot_precommitted::FP128_MIXED_DIM_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_mixed_dim_onehot::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp32-d128-dense")]
+pub fn fp32_d128_dense_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp32_d128_dense::FP32_D128_DENSE_SCHEDULES,
+        precommitted_profiles:
+            fp32_d128_dense_precommitted::FP32_D128_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp32_d128_dense::CATALOG_IDENTITY,
     }
 }
 

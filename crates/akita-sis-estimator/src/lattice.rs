@@ -197,10 +197,10 @@ fn infinity_log_trial_probability(
 ) -> Result<f64> {
     let d_ = effective_dimension as f64;
     if ((lattice_dimension as f64).sqrt() * length_bound) <= 2.0_f64.powf(log_q) {
-        let vector_length = rho * profile[0].sqrt();
-        let sigma = vector_length / d_.sqrt();
-        let erf_arg = length_bound / (2.0_f64.sqrt() * sigma);
-        Ok(d_ * log2_positive(erf(erf_arg)))
+        let log2_sigma =
+            log2_positive(rho) + 0.5 * log2_positive(profile[0]) - 0.5 * log2_positive(d_);
+        let log2_erf_arg = log2_positive(length_bound) - 0.5 - log2_sigma;
+        Ok(d_ * log2_erf_from_log2_arg(log2_erf_arg))
     } else {
         dilithium_log_trial_probability(log_q, length_bound, profile, sieve_dim)
     }
@@ -265,11 +265,10 @@ fn dilithium_log_trial_probability(
         .iter()
         .rposition(|value| value.sqrt() > 1.0 + UNIT_VECTOR_TOLERANCE)
         .map_or(profile.len() - 1, |index| index);
-    let vector_length = profile[idx_start].sqrt();
     let gaussian_coords = (idx_end - idx_start + 1).max(sieve_dim as usize) as f64;
-    let sigma = vector_length / gaussian_coords.sqrt();
-    let erf_arg = length_bound / (2.0_f64.sqrt() * sigma);
-    let mut log_trial_prob = log2_positive(erf(erf_arg)) * gaussian_coords;
+    let log2_sigma = 0.5 * log2_positive(profile[idx_start]) - 0.5 * log2_positive(gaussian_coords);
+    let log2_erf_arg = log2_positive(length_bound) - 0.5 - log2_sigma;
+    let mut log_trial_prob = log2_erf_from_log2_arg(log2_erf_arg) * gaussian_coords;
     log_trial_prob += log2_positive((2.0 * length_bound + 1.0) / q_f) * idx_start as f64;
     Ok(log_trial_prob)
 }

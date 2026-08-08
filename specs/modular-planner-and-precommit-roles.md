@@ -51,9 +51,13 @@ adds commitment compression, the monotone compressed prefix and raw suffix
 search, and one canonical complete schedule selector for every current search
 path.
 
-The shipped root `log_basis` is 3 for all field widths. Recursive levels remain
-planner-selected. The remaining root precommit implementation still runs a
-hypothetical complete schedule under singleton basis range `(3, 3)` and
+The shipped root outer/opening `log_basis` is 3 for all field widths. The
+A/source inner basis is independent: dense raw coefficients search the
+configured inner domain, while unit one-hot coefficients remain one exact
+digit. Recursive opening bases remain planner-selected, and an already
+decomposed recursive witness retains its producing opening basis. The remaining
+root precommit implementation still runs a hypothetical complete schedule
+under singleton opening basis range `(3, 3)` and
 extracts the root commitment parameters. That probe is a temporary bridge. A
 hypothetical suffix can influence root geometry even though the suffix will
 never be used.
@@ -90,7 +94,7 @@ fold count preference.
 | Chosen | Before final batch is known | For a known recursive edge |
 | Opened | Root only | Recursive suffix |
 | Reuse | Across a declared finite compatibility domain | Only by its owning schedule transition |
-| Basis | Fixed root basis 3 | Exact consuming suffix basis |
+| Basis | Outer/opening basis 3; independently planned A/source basis | Consumer opening basis; independently planned raw-prefix A/source basis |
 | Geometry context | Group layout and root compatibility domain | Producer, consumer, prefix length, basis, and chunk count |
 | Optimization owner | Root-precommit recipe selector | Recursive transition planner |
 | Runtime representation | Commitment-bound descriptor plus catalog recipe | Schedule-owned setup-prefix slot |
@@ -117,7 +121,9 @@ is forbidden.
 
 #### Root-precommit recipes
 
-1. The root basis **MUST** be 3.
+1. The root outer/opening basis **MUST** be 3. Its A/source inner basis is an
+   independent planner choice for dense coefficients; unit one-hot input stays
+   one exact digit.
 2. Recipe generation **MUST NOT** invoke full root-plus-suffix planning.
 3. Recipe selection **MUST** enumerate only commitment layouts that are secure,
    structurally valid, and usable throughout their declared compatibility
@@ -129,13 +135,16 @@ is forbidden.
 7. The final schedule planner **MUST** treat that descriptor as immutable.
 8. Runtime prover and verifier **MUST NOT** recompute the selector.
 9. Conservative rank widening across possible future bases is forbidden. The
-   fixed root basis and exact candidate geometry determine the ranks.
+   selected inner basis, fixed outer/opening basis, and exact candidate geometry
+   determine the ranks.
 
 #### Setup-prefix commitments
 
 1. A setup-prefix slot **MUST** belong to one compact schedule and identify its
    producer and consuming recursive transition.
-2. Its basis **MUST** be the consuming transition's basis, not the root basis.
+2. Its outer/opening basis **MUST** be the consuming transition's basis, not the
+   root basis. Its raw full-field A/source commitment independently searches the
+   configured inner-basis domain.
 3. Its local geometry selector **MAY** be greedy because producer, consumer,
    prefix length, basis, and chunk count are known.
 4. The decision whether to offload, and at which edge, **MUST** remain a global
@@ -505,14 +514,14 @@ mixed dimension:
     (total setup fields, proof bytes, canonical descriptor)
 
 recursive setup:
-    (first direct setup fields, proof bytes, total setup fields,
+    (first direct padded setup capacity, proof bytes, total setup fields,
      canonical descriptor)
 ```
 
 Direct suffix frontiers retain `(proof bytes, total setup fields)`. Recursive
-setup suffix frontiers retain `(first direct setup fields, proof bytes, total
-setup fields)`. The descriptor is a final deterministic tie-break and is not a
-frontier coordinate.
+setup suffix frontiers retain `(first direct padded setup capacity, proof bytes,
+total setup fields)`. Each parent-visible frontier class also uses the canonical
+descriptor as its deterministic tie-break.
 
 The current policies do not use proof byte slack or fold count. Those choices
 are intentionally deferred until one shared frontier engine can measure them

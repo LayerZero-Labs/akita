@@ -11,15 +11,8 @@
 //! that offline path is allowed to name `akita-config` presets. Normal
 //! runtime callers consume the generated tables from `akita-schedules`.
 
-use std::{
-    any::TypeId,
-    collections::HashMap,
-    sync::{LazyLock, Mutex, MutexGuard},
-};
-
 use crate::{
-    derive_standalone_precommit_profile, find_schedule, runtime_schedule_key_cmp, EmitSpec,
-    PlannerPolicy,
+    find_schedule, plan_standalone_precommit, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
@@ -30,19 +23,6 @@ use akita_types::{
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig, RecursiveCommitmentConfig};
-
-type RegenScheduleCacheMap =
-    HashMap<(TypeId, AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>), FoldSchedule>;
-type RegenScheduleCache = LazyLock<Mutex<RegenScheduleCacheMap>>;
-type RegenScheduleCacheGuard = MutexGuard<'static, RegenScheduleCacheMap>;
-
-static REGEN_SCHEDULE_CACHE: RegenScheduleCache = LazyLock::new(|| Mutex::new(HashMap::new()));
-
-fn lock_regen_schedule_cache() -> Result<RegenScheduleCacheGuard, AkitaError> {
-    REGEN_SCHEDULE_CACHE
-        .lock()
-        .map_err(|_| AkitaError::InvalidSetup("schedule regen cache poisoned".to_string()))
-}
 
 /// Standalone frozen precommit descriptor arities emitted into generated catalogs.
 ///
@@ -80,6 +60,7 @@ const FP128_D64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::new(16, 2),
     PolynomialGroupLayout::new(17, 4),
     PolynomialGroupLayout::singleton(24),
+    PolynomialGroupLayout::singleton(26),
     PolynomialGroupLayout::singleton(28),
     PolynomialGroupLayout::singleton(30),
     PolynomialGroupLayout::singleton(32),
@@ -87,8 +68,9 @@ const FP128_D64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(50),
 ];
 
+const FP32_D128_DENSE_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(26)];
+
 const FP128_D64_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
-    PolynomialGroupLayout::singleton(10),
     PolynomialGroupLayout::singleton(12),
     PolynomialGroupLayout::singleton(14),
     PolynomialGroupLayout::singleton(15),
@@ -144,6 +126,7 @@ const FP32_D256_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout:
 const FP64_D128_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
     PolynomialGroupLayout::singleton(20),
+    PolynomialGroupLayout::singleton(26),
 ];
 
 const FP64_D128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(28)];
@@ -267,18 +250,7 @@ fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
     key: AkitaScheduleLookupKey,
     precommitted_honest_fold_policies: Vec<HonestFoldPolicySpec>,
 ) -> Result<FoldSchedule, AkitaError> {
-    let cache_key = (
-        TypeId::of::<Cfg>(),
-        key.clone(),
-        precommitted_honest_fold_policies.clone(),
-    );
-    if let Some(schedule) = lock_regen_schedule_cache()?.get(&cache_key).cloned() {
-        return Ok(schedule);
-    }
-
-    let schedule = plan_regen::<Cfg>(&key, &precommitted_honest_fold_policies)?;
-    lock_regen_schedule_cache()?.insert(cache_key, schedule.clone());
-    Ok(schedule)
+    plan_regen::<Cfg>(&key, &precommitted_honest_fold_policies)
 }
 
 /// Table-backed resolution for `Cfg` — table hit when present, otherwise
@@ -293,69 +265,25 @@ fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
     policy_of::<Cfg>()
 }
 
-fn supported_group_batch_key<Cfg: CommitmentConfig + 'static>(
-    candidate: (AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>),
-) -> Option<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)> {
-    regen_group_batch::<Cfg>(candidate.0.clone(), candidate.1.clone())
-        .is_ok()
-        .then_some(candidate)
-}
-
-fn supported_group_batch_keys<Cfg: CommitmentConfig + 'static>(
-    candidates: Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>,
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
-    let workers = std::thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(1)
-        .min(candidates.len().max(1));
-
-    if workers <= 1 || candidates.len() < 2 * workers {
-        return Ok(candidates
-            .into_iter()
-            .filter_map(supported_group_batch_key::<Cfg>)
-            .collect());
+fn optional_generated_value<T>(result: Result<T, AkitaError>) -> Result<Option<T>, AkitaError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(AkitaError::UnsupportedSchedule(_)) => Ok(None),
+        Err(error) => Err(error),
     }
-
-    let chunk_size = candidates.len().div_ceil(workers);
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = candidates
-            .chunks(chunk_size)
-            .map(|chunk| {
-                scope.spawn(move || {
-                    chunk
-                        .iter()
-                        .cloned()
-                        .filter_map(supported_group_batch_key::<Cfg>)
-                        .collect::<Vec<_>>()
-                })
-            })
-            .collect();
-        let mut keys = Vec::new();
-        let mut worker_panicked = false;
-        for handle in handles {
-            match handle.join() {
-                Ok(local) => keys.extend(local),
-                Err(_) => worker_panicked = true,
-            }
-        }
-        if worker_panicked {
-            return Err(AkitaError::InvalidSetup(
-                "group-batch key worker panicked".to_string(),
-            ));
-        }
-        Ok(keys)
-    })
 }
 
 fn standalone_precommit_profile<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> Result<CommittedGroupProfile, AkitaError> {
-    derive_standalone_precommit_profile(
+    Ok(plan_standalone_precommit(
         group,
         &policy_of::<Cfg>(),
         honest_fold_policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-    )
+    )?
+    .selected
+    .profile)
 }
 
 fn push_unique_profile(profiles: &mut Vec<CommittedGroupProfile>, profile: CommittedGroupProfile) {
@@ -370,7 +298,9 @@ fn precommitted_profiles<Cfg: CommitmentConfig + 'static>(
     for &num_vars in DEFAULT_STANDALONE_PRECOMMIT_NUM_VARS {
         for &num_polys in DEFAULT_STANDALONE_PRECOMMIT_NUM_POLYNOMIALS {
             let group = PolynomialGroupLayout::new(num_vars, num_polys);
-            if let Ok(profile) = standalone_precommit_profile::<Cfg>(group) {
+            if let Some(profile) =
+                optional_generated_value(standalone_precommit_profile::<Cfg>(group))?
+            {
                 push_unique_profile(&mut profiles, profile);
             }
         }
@@ -406,21 +336,11 @@ fn precommitted_profiles<Cfg: CommitmentConfig + 'static>(
 }
 
 fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
-    family: &GeneratedFamily,
+    _family: &GeneratedFamily,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     let mut direct = direct_profile_group_batch_keys_for_cfg::<Cfg>()?;
-    if !family.emit_group_batch {
-        direct.sort_by(|left, right| runtime_schedule_key_cmp(&left.0, &right.0));
-        return Ok(direct);
-    }
-    if Cfg::decomposition().log_commit_bound != 1 {
-        direct.sort_by(|left, right| runtime_schedule_key_cmp(&left.0, &right.0));
-        return Ok(direct);
-    }
-
-    let mut keys = supported_group_batch_keys::<Cfg>(direct)?;
-    keys.sort_by(|left, right| runtime_schedule_key_cmp(&left.0, &right.0));
-    Ok(keys)
+    direct.sort_by(|left, right| runtime_schedule_key_cmp(&left.0, &right.0));
+    Ok(direct)
 }
 
 fn direct_profile_group_batch_keys_for_cfg<Cfg: CommitmentConfig + 'static>(
@@ -845,6 +765,13 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp64::D256OneHot
     ),
     family_row!(
+        "fp32_d128_dense",
+        "FP32_D128_DENSE_SCHEDULES",
+        "fp32-d128-dense",
+        FP32_D128_DENSE_KEYS,
+        fp32::D128Dense
+    ),
+    family_row!(
         "fp32_d128_onehot",
         "FP32_D128_ONEHOT_SCHEDULES",
         "fp32-d128-onehot",
@@ -859,3 +786,29 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp32::D256OneHot
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::optional_generated_value;
+    use akita_field::AkitaError;
+
+    #[test]
+    fn generated_optional_omission_accepts_only_unsupported_schedules() {
+        assert_eq!(
+            optional_generated_value::<usize>(Err(AkitaError::UnsupportedSchedule(
+                "unsupported fixture".to_string()
+            )))
+            .expect("unsupported schedule is an optional omission"),
+            None
+        );
+
+        let error = optional_generated_value::<usize>(Err(AkitaError::InvalidSetup(
+            "broken precommit derivation".to_string(),
+        )))
+        .expect_err("invalid setup must fail catalog generation");
+        assert_eq!(
+            error,
+            AkitaError::InvalidSetup("broken precommit derivation".to_string())
+        );
+    }
+}

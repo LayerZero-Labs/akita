@@ -28,6 +28,7 @@ pub mod proof_size;
 pub mod schedule;
 pub mod schedule_selection;
 pub mod setup_contribution;
+pub mod signed_digit;
 pub mod sis;
 pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
@@ -147,6 +148,10 @@ pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, Sche
 pub use setup_contribution::{
     ensure_setup_envelope, shared_setup_fold_gadget, PreparedRelationAddress,
     SetupContributionGroupInputs, SetupContributionPlan, SetupProjectionGeometry,
+};
+pub use signed_digit::{
+    balanced_signed_digit_abs_bound, SignedDigitKernel, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,
+    MIN_SIGNED_DIGIT_LOG_BASIS,
 };
 pub use sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, ScalarCutoff,

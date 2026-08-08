@@ -313,6 +313,7 @@ where
             let domain = match key.domain {
                 akita_types::NttTransformDomain::Negacyclic => 0,
                 akita_types::NttTransformDomain::Cyclic => 1,
+                akita_types::NttTransformDomain::ExactNegacyclicI16 { .. } => 2,
             };
             (key.ring_d, domain)
         });

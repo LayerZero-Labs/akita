@@ -544,14 +544,13 @@ K_g in {1, 2, 4} including more unequal group sizes
 num_vars in supported family ranges
 ```
 
-## Precommit Configuration
+## Precommit Profiles
 
-Standalone precommitted group commits use the existing `proof_optimized`
-presets through `PrecommittedCommitmentConfig<Cfg>`. The
-adapter overrides ordinary scalar schedule/commit layout selection so
-precommitted groups can be produced with the existing `batched_commit` API while
-freezing their independently planned inner basis and minimum selected outer
-basis. Tiered precommit and multi-group roots return explicit `AkitaError`.
+Standalone precommitted groups resolve a generated `CommittedGroupProfile`
+through `committed_group_profile::<Cfg>` and commit through the profile-native
+`commit_group` API. The profile freezes only the independently planned A/source
+and B/outer geometry. It does not fabricate a full fold level or unchecked
+D/opening parameters before the final grouped-root schedule is known.
 
 ### Standalone Conservative Commit
 
@@ -562,11 +561,12 @@ For a group committed before the final multi-group proof is known:
    ```text
    l_outer,g = l_min = min_basis(Cfg)
    ```
-2. Use the existing proof-optimized schedule planner with the basis search range
-   pinned to `log_basis = l_outer,g`, for example by resolving the standalone group
-   key under:
+2. Use the existing proof-optimized schedule planner with the opening basis
+   pinned to `log_basis = l_outer,g` while retaining the configured A/source
+   inner-basis domain, for example by resolving the standalone group key under:
    ```text
-   basis_range = (l_g, l_g)
+   opening_basis_range = (l_outer,g, l_outer,g)
+   inner_basis_range = configured_inner_basis_range(Cfg)
    ```
    The planner keeps its normal proof-size and weak-binding-aware objective; it
    does not switch to a separate "minimize `t_hat_g`" objective.
@@ -1127,9 +1127,10 @@ At conservative precommit time:
 - the group must be nonempty;
 - the caller is responsible for supplying polynomial material with the claimed
   group shape;
-- `log_basis` must be `min_basis(Cfg)`;
+- `log_basis_outer` must be `min_opening_basis(Cfg)`;
 - the `CommittedGroupProfile` must be derived by the proof-optimized planner
-  with `basis_range = (min_basis(Cfg), min_basis(Cfg))`;
+  with the singleton minimum opening-basis range and the configured independent
+  inner-basis range;
 - the `CommittedGroupProfile` must determine the same `t_hat_g` shape used by
   the commit witness;
 - frozen `n_b` must pass `AjtaiKeyParams::try_new` for

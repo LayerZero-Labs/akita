@@ -19,13 +19,27 @@ use std::sync::{LazyLock, Mutex};
 /// Minimum proof-optimized log-basis.
 ///
 /// This is also the fixed **root-fold** basis: `log_basis_search_range_at_level(0)`
-/// collapses the root to `basis_range.0`. Pinning the root to `3` (rather than the
+/// collapses the root to `opening_basis_range.0`. Pinning the root to `3` (rather than the
 /// smallest reachable `2`) keeps the shrink strong enough that every preset — dense
 /// and small-field included — supports the full `nv` range, and matches the value
 /// the unpinned planner already favored at the root.
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 3;
 /// Maximum proof-optimized log-basis.
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
+/// Maximum A/source log basis searched by proof-optimized presets.
+///
+/// The signed-i16 commitment path supports larger values, but exhaustive
+/// sweeps select 10 or 11 throughout the current dense/full-field domain.
+pub(crate) const PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX: u32 = 11;
+
+const fn proof_optimized_inner_basis_range(field_bits: u32) -> (u32, u32) {
+    let max = if field_bits == 32 {
+        10
+    } else {
+        PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX
+    };
+    (PROOF_OPTIMIZED_LOG_BASIS_MIN, max)
+}
 /// Explicit sparse-binary chunk size used by standard one-hot presets.
 ///
 /// Smaller/nonstandard chunking is represented by a separately named preset
@@ -503,10 +517,16 @@ macro_rules! impl_proof_optimized_preset {
                 )
             }
 
-            fn basis_range() -> (u32, u32) {
+            fn opening_basis_range() -> (u32, u32) {
                 (
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
+                )
+            }
+
+            fn inner_basis_range() -> (u32, u32) {
+                $crate::proof_optimized::proof_optimized_inner_basis_range(
+                    Self::decomposition().field_bits(),
                 )
             }
 
@@ -580,10 +600,17 @@ macro_rules! impl_proof_optimized_preset {
                 )
             }
 
-            fn basis_range() -> (u32, u32) {
+            fn opening_basis_range() -> (u32, u32) {
                 (
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
+                )
+            }
+
+
+            fn inner_basis_range() -> (u32, u32) {
+                $crate::proof_optimized::proof_optimized_inner_basis_range(
+                    Self::decomposition().field_bits(),
                 )
             }
 

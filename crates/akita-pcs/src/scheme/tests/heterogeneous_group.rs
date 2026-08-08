@@ -1,6 +1,5 @@
 use super::*;
 use akita_prover::MultilinearPolynomial;
-use akita_types::PolynomialGroupLayout;
 
 #[test]
 fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
@@ -68,10 +67,7 @@ fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
         .expect("curated heterogeneous schedule")
         .schedule()
         .clone();
-    let onehot_pre_params = akita_config::committed_group_params::<OneHotCfg>(
-        &PolynomialGroupLayout::new(ONEHOT_PRE_NV, 1),
-    )
-    .expect("K=16 precommit params");
+    let onehot_pre_profile = onehot_pre_commitment.profile;
     let final_params = &schedule.root.params.final_group.commitment;
 
     let onehot_pre_point = (0..ONEHOT_PRE_NV)
@@ -83,12 +79,24 @@ fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
     let final_point = (0..FINAL_NV)
         .map(|index| OneHotF::from_u64((index + 71) as u64))
         .collect::<Vec<_>>();
-    let onehot_pre_opening = opening_from_poly(&onehot_pre, &onehot_pre_point, &onehot_pre_params);
+    let onehot_pre_opening = opening_from_poly(
+        &onehot_pre,
+        &onehot_pre_point,
+        onehot_pre_profile.inner_commit_matrix.ring_dimension(),
+        onehot_pre_profile.num_positions_per_block,
+        onehot_pre_profile.num_live_blocks,
+    );
     let dense_openings = vec![
         dense_opening(&dense_evals_a, &dense_point),
         dense_opening(&dense_evals_b, &dense_point),
     ];
-    let final_opening = opening_from_poly(&final_onehot, &final_point, final_params);
+    let final_opening = opening_from_poly(
+        &final_onehot,
+        &final_point,
+        final_params.d_a(),
+        final_params.num_positions_per_block,
+        final_params.num_live_blocks,
+    );
 
     let prover_claims = OpeningClaims::from_groups(vec![
         PolynomialGroupClaims::new(

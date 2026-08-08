@@ -567,6 +567,14 @@ pub const TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM: u128 = 1;
 pub const TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN: u128 = 2;
 
 impl TerminalCommittedGroupParams {
+    /// Canonical byte encoding used to order semantically distinct terminal candidates.
+    #[must_use]
+    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.append_descriptor_bytes(&mut bytes);
+        bytes
+    }
+
     pub fn from_expanded_group(params: CommittedGroupParams) -> Self {
         Self {
             log_basis_inner: params.log_basis_inner,

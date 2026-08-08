@@ -1,7 +1,4 @@
-use super::recursive::{
-    recursive_candidate_order_key, recursive_split_lower_bound, seed_recursive_split_candidates,
-    RecursiveSplitLowerBoundInput,
-};
+use super::recursive::recursive_candidate_order_key;
 use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
@@ -41,46 +38,11 @@ fn grouped_level_params() -> CommittedGroupParams {
 }
 
 #[test]
-fn planned_next_witness_len_rejects_multi_group_root_level_params() {
+fn scalar_next_witness_len_rejects_multi_group_root_level_params() {
     let grouped = grouped_level_params();
-    let err = planned_next_witness_len(128, &grouped, 1, 1)
+    let err = scalar_next_witness_len_if_supported(128, &grouped, 1)
         .expect_err("multi-group root suffix sizing must use output_witness_len");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
-}
-
-#[test]
-fn seed_recursive_split_candidates_falls_back_to_exhaustive_for_small_domains() {
-    assert_eq!(
-        seed_recursive_split_candidates(64, 5, 1, 22, 1),
-        vec![4, 3, 2, 1]
-    );
-}
-
-#[test]
-fn seed_recursive_split_candidates_includes_endpoints_and_unique_window() {
-    let candidates = seed_recursive_split_candidates(8192, 13, 1, 22, 1);
-    assert!(candidates.contains(&1));
-    assert!(candidates.contains(&12));
-    assert!(
-        candidates.windows(2).all(|pair| pair[0] > pair[1]),
-        "candidates must be unique and descending: {candidates:?}"
-    );
-}
-
-#[test]
-fn recursive_split_lower_bound_prices_score_floor() {
-    assert_eq!(
-        recursive_split_lower_bound(RecursiveSplitLowerBoundInput {
-            num_ring_elems: 100,
-            ring_dimension: 64,
-            reduced_vars: 7,
-            r: 3,
-            delta_commit: 1,
-            delta_open: 4,
-            num_chunks: 2,
-        }),
-        Some(5646)
-    );
 }
 
 #[test]
@@ -94,4 +56,36 @@ fn recursive_candidate_order_preserves_exhaustive_tie_break() {
         recursive_candidate_order_key((99, 98, 1, 0), 1) < recursive_candidate_order_key(score, 9),
         "the exact layout score must remain the primary objective"
     );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
+    use akita_config::{
+        policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+    };
+
+    type Recursive = RecursiveCommitmentConfig<D64OneHot>;
+    let policy = policy_of::<Recursive>();
+    let challenge = Recursive::ring_challenge_config(64).expect("challenge config");
+    let mut cache = SetupPrefixSearchCache::default();
+    for log_prefix in 12..=20 {
+        let groups = derive_setup_prefix_groups(
+            &mut cache,
+            &policy,
+            &challenge,
+            3,
+            1usize << log_prefix,
+            1,
+            64,
+        )
+        .expect("setup-prefix frontier");
+        for params in groups {
+            akita_types::setup_prefix_slot_field_elements(&akita_types::setup_prefix_slot_id(
+                1usize << log_prefix,
+                params,
+            ))
+            .expect("frontier candidate must support its compression source");
+        }
+    }
 }

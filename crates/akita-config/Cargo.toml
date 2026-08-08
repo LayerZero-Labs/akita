@@ -26,6 +26,7 @@ schedules-default = [
   "schedules-fp128-d128-dense",
   "schedules-fp128-d256-onehot",
   "schedules-fp32-d128-onehot",
+  "schedules-fp32-d128-dense",
   "schedules-fp32-d256-onehot",
   "schedules-fp64-d128-dense",
   "schedules-fp64-d128-onehot",
@@ -67,6 +68,7 @@ schedules-fp128-d64-dense-multi-chunk = [
 ]
 
 schedules-fp32-d128-onehot = ["akita-schedules/fp32-d128-onehot"]
+schedules-fp32-d128-dense = ["akita-schedules/fp32-d128-dense"]
 schedules-fp32-d256-onehot = ["akita-schedules/fp32-d256-onehot"]
 schedules-fp64-d128-dense = ["akita-schedules/fp64-d128-dense"]
 schedules-fp64-d128-onehot = ["akita-schedules/fp64-d128-onehot"]
@@ -94,6 +96,11 @@ required-features = ["schedules-fp128-d64-onehot", "schedules-fp128-d64-dense"]
 [[test]]
 name = "generated_tables"
 path = "tests/generated_tables.rs"
+required-features = ["all-schedules"]
+
+[[test]]
+name = "dense_inner_basis"
+path = "tests/dense_inner_basis.rs"
 required-features = ["all-schedules"]
 
 [lints]

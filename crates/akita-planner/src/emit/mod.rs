@@ -7,7 +7,6 @@
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
@@ -18,6 +17,7 @@ use akita_types::{
 };
 
 use crate::PlannerPolicy;
+mod publish;
 use akita_schedules::expected_catalog_identity;
 use akita_schedules::generated::{
     GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
@@ -26,6 +26,7 @@ use akita_schedules::generated::{
     GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput,
     GeneratedTerminalFold, GeneratedWitnessPartition,
 };
+pub use publish::publish_generated_outputs;
 
 /// One family the emitter writes to `akita-schedules/src/generated/`.
 #[derive(Clone)]
@@ -49,6 +50,19 @@ pub struct EmitSpec {
 
 const MOD_WIRING_BEGIN: &str = "// @generated schedule module wiring begin";
 const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
+
+pub(crate) fn schedule_generation_worker_count(work_items: usize) -> usize {
+    let configured = std::env::var("AKITA_SCHEDULE_GEN_JOBS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or(2);
+    std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(configured)
+        .min(work_items.max(1))
+}
 
 fn geometry(p: &CommittedGroupParams) -> GeneratedBlockGeometry {
     GeneratedBlockGeometry {
@@ -544,7 +558,8 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    ring_subfield_norm_bound: {ring_subfield_norm_bound},\n",
             "    claim_ext_degree: {claim_ext_degree},\n",
             "    chal_ext_degree: {chal_ext_degree},\n",
-            "    basis_range: ({basis_min}, {basis_max}),\n",
+            "    inner_basis_range: ({inner_basis_min}, {inner_basis_max}),\n",
+            "    opening_basis_range: ({basis_min}, {basis_max}),\n",
             "    witness_chunk: {witness_chunk},\n",
             "    recursive_setup_planning: {recursive_setup_planning},\n",
             "    ring_dimension_candidates: CATALOG_RING_DIMENSION_CANDIDATES,\n",
@@ -574,22 +589,16 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         ring_subfield_norm_bound = identity.ring_subfield_norm_bound,
         claim_ext_degree = identity.claim_ext_degree,
         chal_ext_degree = identity.chal_ext_degree,
-        basis_min = identity.basis_range.0,
-        basis_max = identity.basis_range.1,
+        inner_basis_min = identity.inner_basis_range.0,
+        inner_basis_max = identity.inner_basis_range.1,
+        basis_min = identity.opening_basis_range.0,
+        basis_max = identity.opening_basis_range.1,
         witness_chunk = emit_witness_chunk(identity.witness_chunk),
         recursive_setup_planning = identity.recursive_setup_planning,
         ring_challenge_config_digest = identity.ring_challenge_config_digest,
         key_count = identity.key_count,
         key_digest = identity.key_digest,
     )
-}
-
-fn output_module_name(spec: &EmitSpec) -> String {
-    spec.module_name.to_string()
-}
-
-fn output_const_name(spec: &EmitSpec) -> String {
-    spec.const_name.to_string()
 }
 
 fn materialized_entries(
@@ -604,20 +613,22 @@ fn materialized_entries(
     );
     keys.extend(spec.group_batch_keys.iter().map(|(key, _)| key.clone()));
 
-    let workers = std::thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(1)
-        .min(keys.len().max(1));
-    let mut entries = Vec::new();
+    let workers = schedule_generation_worker_count(keys.len());
+    let mut regenerated_entries = Vec::new();
     if workers > 1 && keys.len() >= 2 * workers {
-        let chunk_size = keys.len().div_ceil(workers);
+        let next_key = std::sync::atomic::AtomicUsize::new(0);
         std::thread::scope(|scope| -> Result<(), String> {
-            let handles: Vec<_> = keys
-                .chunks(chunk_size)
-                .map(|chunk| {
+            let next_key = &next_key;
+            let keys = &keys;
+            let handles: Vec<_> = (0..workers)
+                .map(|_| {
                     scope.spawn(move || {
                         let mut local = Vec::new();
-                        for key in chunk.iter().cloned() {
+                        loop {
+                            let index = next_key.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let Some(key) = keys.get(index).cloned() else {
+                                break;
+                            };
                             if let Some(entry) = materialized_entry(spec, key)? {
                                 local.push(entry);
                             }
@@ -629,7 +640,7 @@ fn materialized_entries(
             let mut first_error = None;
             for handle in handles {
                 match handle.join() {
-                    Ok(Ok(local)) if first_error.is_none() => entries.extend(local),
+                    Ok(Ok(local)) if first_error.is_none() => regenerated_entries.extend(local),
                     Ok(Ok(_)) => {}
                     Ok(Err(error)) => {
                         first_error.get_or_insert(error);
@@ -649,12 +660,13 @@ fn materialized_entries(
     } else {
         for key in keys {
             if let Some(entry) = materialized_entry(spec, key)? {
-                entries.push(entry);
+                regenerated_entries.push(entry);
             }
         }
     }
-    entries.sort_by(|(left, _), (right, _)| akita_schedules::runtime_schedule_key_cmp(left, right));
-    Ok(entries)
+    regenerated_entries
+        .sort_by(|(left, _), (right, _)| akita_schedules::runtime_schedule_key_cmp(left, right));
+    Ok(regenerated_entries)
 }
 
 fn materialized_entry(
@@ -691,7 +703,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     let materialized = materialized_entries(spec)?;
 
     let mut out = String::new();
-    let const_name = output_const_name(spec);
+    let const_name = spec.const_name;
     writeln!(out, "// Generated by `{}`", spec.generator_command).map_err(|e| e.to_string())?;
     writeln!(out, "#[allow(unused_imports)]").map_err(|e| e.to_string())?;
     writeln!(
@@ -844,46 +856,80 @@ fn replace_between_markers(
     Ok(out)
 }
 
-/// Refresh the `@generated schedule module wiring` block in `mod.rs`.
-pub fn refresh_generated_wiring(specs: &[EmitSpec], mod_path: &Path) -> Result<(), String> {
-    let mod_src =
-        fs::read_to_string(mod_path).map_err(|e| format!("read {}: {e}", mod_path.display()))?;
-    let mod_wiring = emit_mod_wiring(specs)?;
-    let mod_src = replace_between_markers(&mod_src, MOD_WIRING_BEGIN, MOD_WIRING_END, &mod_wiring)?;
-    fs::write(mod_path, mod_src).map_err(|e| format!("write {}: {e}", mod_path.display()))?;
-    Ok(())
+/// One fully rendered generated file awaiting publication.
+#[derive(Debug)]
+pub struct GeneratedOutput {
+    pub(super) destination: PathBuf,
+    pub(super) body: String,
 }
 
-/// Run `cargo fmt` on planner, schedules, and config after regen.
-pub fn run_regen_fmt() -> Result<(), String> {
-    for package in ["akita-planner", "akita-schedules", "akita-config"] {
-        let status = Command::new("cargo")
-            .args(["fmt", "-p", package])
-            .status()
-            .map_err(|e| format!("spawn cargo fmt: {e}"))?;
-        if !status.success() {
-            return Err(format!("cargo fmt -p {package} failed with {status}"));
-        }
+/// Render every family module, precommit registry, and optional wiring update.
+///
+/// No destination is modified unless the complete batch renders successfully
+/// and is later passed to [`publish_generated_outputs`].
+pub fn render_generated_outputs(
+    specs: &[EmitSpec],
+    wiring_specs: &[EmitSpec],
+    mod_path: Option<&Path>,
+) -> Result<Vec<GeneratedOutput>, String> {
+    let mut outputs =
+        Vec::with_capacity(specs.len().saturating_mul(2) + usize::from(mod_path.is_some()));
+    for spec in specs {
+        outputs.push(GeneratedOutput {
+            destination: spec.output_dir.join(format!("{}.rs", spec.module_name)),
+            body: emit_family_module(spec)?,
+        });
+        outputs.push(GeneratedOutput {
+            destination: spec
+                .output_dir
+                .join(format!("{}.rs", precommitted_profiles_module_name(spec))),
+            body: emit_precommitted_profiles_module(spec)?,
+        });
     }
-    Ok(())
+    if let Some(mod_path) = mod_path {
+        let mod_src = fs::read_to_string(mod_path)
+            .map_err(|error| format!("read {}: {error}", mod_path.display()))?;
+        let mod_wiring = emit_mod_wiring(wiring_specs)?;
+        outputs.push(GeneratedOutput {
+            destination: mod_path.to_path_buf(),
+            body: replace_between_markers(&mod_src, MOD_WIRING_BEGIN, MOD_WIRING_END, &mod_wiring)?,
+        });
+    }
+    Ok(outputs)
 }
 
-/// Write one family module to `spec.output_dir` and return its path.
-pub fn write_family_module(spec: &EmitSpec) -> Result<PathBuf, String> {
-    let body = emit_family_module(spec)?;
-    let dest = spec
-        .output_dir
-        .join(format!("{}.rs", output_module_name(spec)));
-    fs::write(&dest, &body).map_err(|e| format!("write {}: {e}", dest.display()))?;
-    Ok(dest)
-}
+#[cfg(test)]
+mod tests {
+    use super::render_generated_outputs;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Write one compact standalone precommit registry module to `spec.output_dir`.
-pub fn write_precommitted_profiles_module(spec: &EmitSpec) -> Result<PathBuf, String> {
-    let body = emit_precommitted_profiles_module(spec)?;
-    let dest = spec
-        .output_dir
-        .join(format!("{}.rs", precommitted_profiles_module_name(spec)));
-    fs::write(&dest, &body).map_err(|e| format!("write {}: {e}", dest.display()))?;
-    Ok(dest)
+    static TEST_NONCE: AtomicU64 = AtomicU64::new(0);
+
+    fn test_dir(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "akita-generated-publish-{label}-{}-{}",
+            std::process::id(),
+            TEST_NONCE.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn render_failure_does_not_touch_existing_wiring() {
+        let dir = test_dir("render-failure");
+        fs::create_dir_all(&dir).expect("create test directory");
+        let mod_path = dir.join("mod.rs");
+        let original = "pub mod hand_written;\n";
+        fs::write(&mod_path, original).expect("write wiring fixture");
+
+        let error = render_generated_outputs(&[], &[], Some(&mod_path))
+            .expect_err("missing wiring markers must fail rendering");
+        assert!(error.contains("missing generated marker"));
+        assert_eq!(
+            fs::read_to_string(&mod_path).expect("read wiring fixture"),
+            original
+        );
+        fs::remove_dir_all(dir).expect("remove test directory");
+    }
 }

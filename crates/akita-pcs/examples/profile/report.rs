@@ -278,6 +278,7 @@ pub(crate) fn report_setup_sizes(
         let domain = match metric.key.domain {
             NttTransformDomain::Negacyclic => "negacyclic",
             NttTransformDomain::Cyclic => "cyclic",
+            NttTransformDomain::ExactNegacyclicI16 { .. } => "exact_negacyclic_i16",
         };
         tracing::info!(
             label,
@@ -387,6 +388,12 @@ pub(crate) fn emit_runtime_schedule_summary(
             setup_prefix.map_or(0, |prefix| prefix.natural_len);
         let setup_prefix_padded_field_elements =
             setup_prefix.map_or(0, |prefix| prefix.n_prefix().unwrap_or(0));
+        let a_input_raw_dimension = lp.inner_commit_matrix.raw_input_dimension();
+        let a_output_raw_dimension = lp.inner_commit_matrix.raw_output_dimension();
+        let b_input_raw_dimension = lp.outer_commit_matrix.raw_input_dimension();
+        let b_output_raw_dimension = lp.outer_commit_matrix.raw_output_dimension();
+        let d_input_raw_dimension = lp.open_commit_matrix.raw_input_dimension();
+        let d_output_raw_dimension = lp.open_commit_matrix.raw_output_dimension();
         tracing::info!(
             label,
             level = level_idx,
@@ -397,6 +404,12 @@ pub(crate) fn emit_runtime_schedule_summary(
             n_a = lp.inner_commit_matrix.output_rank(),
             n_b = lp.outer_commit_matrix.output_rank(),
             n_d = lp.open_commit_matrix.output_rank(),
+            ?a_input_raw_dimension,
+            ?a_output_raw_dimension,
+            ?b_input_raw_dimension,
+            ?b_output_raw_dimension,
+            ?d_input_raw_dimension,
+            ?d_output_raw_dimension,
             challenge_l1_mass = lp.challenge_l1_mass(),
             log_basis_inner = lp.log_basis_inner,
             log_basis_outer = lp.log_basis_outer,
@@ -423,11 +436,22 @@ pub(crate) fn emit_runtime_schedule_summary(
 
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
         if let Some(prefix) = &fold.params.incoming_setup_prefix {
+            let layout = &prefix.commitment_params.layout;
             tracing::info!(
                 label,
                 successor_level = index + 1,
                 setup_prefix_natural_field_elements = prefix.natural_len,
                 setup_prefix_padded_field_elements = prefix.n_prefix().unwrap_or(0),
+                log_basis_inner = layout.log_basis_inner,
+                log_basis_open = prefix.commitment_params.log_basis_open,
+                num_live_blocks = layout.num_live_blocks,
+                num_positions_per_block = layout.num_positions_per_block,
+                n_a = layout.inner_commit_matrix.output_rank(),
+                n_b = layout.outer_commit_matrix.output_rank(),
+                a_input_raw_dimension = ?layout.inner_commit_matrix.raw_input_dimension(),
+                a_output_raw_dimension = ?layout.inner_commit_matrix.raw_output_dimension(),
+                b_input_raw_dimension = ?layout.outer_commit_matrix.raw_input_dimension(),
+                b_output_raw_dimension = ?layout.outer_commit_matrix.raw_output_dimension(),
                 "planned recursive setup edge"
             );
         }
@@ -438,6 +462,24 @@ pub(crate) fn emit_runtime_schedule_summary(
         terminal_response_len = schedule.terminal.input_witness_len,
         final_inner_log_basis = schedule.terminal.params.witness.log_basis_inner,
         final_inner_ring_dimension = schedule.terminal.params.witness.d_a(),
+        final_inner_module_rank = schedule
+            .terminal
+            .params
+            .witness
+            .inner_commit_matrix
+            .output_rank(),
+        final_inner_input_raw_dimension = ?schedule
+            .terminal
+            .params
+            .witness
+            .inner_commit_matrix
+            .raw_input_dimension(),
+        final_inner_output_raw_dimension = ?schedule
+            .terminal
+            .params
+            .witness
+            .inner_commit_matrix
+            .raw_output_dimension(),
         "planned terminal state"
     );
 }
@@ -784,6 +826,9 @@ pub(crate) fn print_layout(layout: &CommittedGroupParams, _num_claims: usize, _f
         log_basis_inner = layout.log_basis_inner,
         log_basis_outer = layout.log_basis_outer,
         log_basis_open = layout.log_basis_open,
+        n_a = layout.inner_commit_matrix.output_rank(),
+        n_b = layout.outer_commit_matrix.output_rank(),
+        n_d = layout.open_commit_matrix.output_rank(),
         "layout"
     );
 }

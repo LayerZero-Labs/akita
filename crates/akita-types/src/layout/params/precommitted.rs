@@ -68,11 +68,9 @@ impl PrecommittedLevelParams {
                 "precommitted exact fold plan is missing or inconsistent".to_string(),
             ));
         }
-        if self.log_basis_open < self.layout.log_basis_inner
-            || self.log_basis_open < self.layout.log_basis_outer
-        {
+        if self.log_basis_open < self.layout.log_basis_outer {
             return Err(AkitaError::InvalidSetup(
-                "certified opening basis must dominate precommitted inner/outer bases".to_string(),
+                "certified opening basis must dominate the precommitted outer basis".to_string(),
             ));
         }
         let expected_a_width = self

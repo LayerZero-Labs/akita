@@ -226,7 +226,7 @@ of precommitted groups:
 
 ```bash
 cargo run --release -p akita-planner --features catalog-gen \
-  --bin gen_schedule_tables -- crates/akita-schedules/src/generated \
+  --bin gen_schedule_tables -- target/akita-schedule-sweep \
   --final-group fp128_d64_onehot:32:2 \
   --precommitted-group fp128_d64_onehot:16:1 \
   --precommitted-group fp128_d64_dense:15:2
@@ -244,7 +244,7 @@ Each numeric slot accepts either a single value or an inclusive range written as
 
 ```bash
 cargo run --release -p akita-planner --features catalog-gen \
-  --bin gen_schedule_tables -- crates/akita-schedules/src/generated \
+  --bin gen_schedule_tables -- target/akita-schedule-sweep \
   --final-group fp128_d64_onehot:30..=32:2..=4 \
   --precommitted-group fp128_d64_onehot:14..=16:1 \
   --precommitted-group fp128_d64_dense:15:1..=2
@@ -256,6 +256,10 @@ final-only scalar rows. With precommitted groups, it emits grouped-root rows and
 the required standalone precommit profile registry rows. Repeating a
 precommitted group preserves its multiplicity in the lookup key, while the
 standalone precommit profile registry remains deduplicated.
+
+Explicit sweeps must target an isolated output directory outside
+`crates/akita-schedules/src/generated`. Only the default full-catalog
+regeneration flow may write the checked-in generated catalog.
 
 ## Supported Features
 

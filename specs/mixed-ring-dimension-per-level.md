@@ -242,7 +242,7 @@ verifier-reachable dynamic programming.
 | Policy input | Current meaning |
 |---|---|
 | `ring_dimension` | One scalar `Cfg::D`, used as A, B, D, terminal, setup-generation, and suffix dimension |
-| `decomposition`, `basis_range` | Digit policy; root basis is pinned to the configured minimum, later bases are searched and non-decreasing |
+| `decomposition`, `inner_basis_range`, `opening_basis_range` | Digit policy; the root opening basis is pinned to the configured minimum, raw A/source inputs search the independent inner domain, and later opening bases are searched and non-decreasing |
 | SIS profile, policy, table digest | Exact role-aware minimum-rank lookup identity |
 | ring challenge closure | Sparse A-role fold challenge selected by dimension |
 | claim/challenge extension degrees | Extension-opening proof pricing |

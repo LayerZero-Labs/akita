@@ -23,7 +23,10 @@ pub struct HonestFoldSizingQuery<'a> {
     pub num_chunks: usize,
     /// Total coefficients emitted across all physical response windows.
     pub num_fold_coeffs: usize,
-    pub log_basis: u32,
+    /// Exact source-plane norms after the selected inner decomposition.
+    pub witness_norms: FoldWitnessNorms,
+    /// Basis used to decompose the emitted folded response.
+    pub log_basis_response: u32,
     pub challenge_config: &'a SparseChallengeConfig,
 }
 
@@ -110,7 +113,7 @@ impl BalancedSignedDigitFoldPolicy {
             query.num_live_blocks,
             query.num_claims,
             FoldChallengeNorms::new(query.challenge_config),
-            self.witness,
+            query.witness_norms,
             &cap_config,
         )?;
         Ok((cap, tail_cap))
@@ -125,11 +128,11 @@ impl BalancedSignedDigitFoldPolicy {
 impl HonestFoldPolicy for BalancedSignedDigitFoldPolicy {
     fn num_digits_fold(&self, query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
         let (cap, tail_cap) = self.unsnapped_cap(query)?;
-        let mut digits = self.digit_depth_for_cap(cap, query.log_basis);
+        let mut digits = self.digit_depth_for_cap(cap, query.log_basis_response);
         let floor = tail_cap.saturating_mul(u128::from(self.snap.retain_num))
             / u128::from(self.snap.retain_den);
         let floor = floor.max(1);
-        while digits > 1 && balanced_digit_max(query.log_basis, digits - 1) >= floor {
+        while digits > 1 && balanced_digit_max(query.log_basis_response, digits - 1) >= floor {
             digits -= 1;
         }
         Ok(digits)
@@ -245,10 +248,11 @@ impl HonestFoldPolicy for UnitOneHotFoldPolicy {
                 AkitaError::InvalidSetup("unit one-hot worst-case cap overflow".into())
             })?;
         cap = cap.min(worst_case).max(1);
-        let mut digits = self.digit_depth_for_cap(cap, query.log_basis);
+        let mut digits = self.digit_depth_for_cap(cap, query.log_basis_response);
         let floor =
             cap.saturating_mul(u128::from(self.snap.retain_num)) / u128::from(self.snap.retain_den);
-        while digits > 1 && balanced_digit_max(query.log_basis, digits - 1) >= floor.max(1) {
+        while digits > 1 && balanced_digit_max(query.log_basis_response, digits - 1) >= floor.max(1)
+        {
             digits -= 1;
         }
         Ok(digits.min(legacy))
@@ -260,6 +264,27 @@ impl HonestFoldPolicy for UnitOneHotFoldPolicy {
 pub enum HonestFoldPolicySpec {
     BalancedSignedDigit(BalancedSignedDigitFoldPolicy),
     UnitOneHot(UnitOneHotFoldPolicy),
+}
+
+impl HonestFoldPolicySpec {
+    /// Source-plane norms for one selected A decomposition basis.
+    ///
+    /// Balanced sources follow the candidate basis. Unit one-hot sources keep
+    /// their profile-owned sparse norm; the planner canonicalizes their
+    /// already-single-digit representation without a basis sweep.
+    #[must_use]
+    pub fn witness_norms_for_inner_basis(
+        self,
+        log_basis_inner: u32,
+        ring_dimension: usize,
+    ) -> FoldWitnessNorms {
+        match self {
+            Self::BalancedSignedDigit(_) => {
+                FoldWitnessNorms::bounded(log_basis_inner, ring_dimension)
+            }
+            Self::UnitOneHot(policy) => policy.legacy_fallback.witness,
+        }
+    }
 }
 
 impl HonestFoldPolicy for HonestFoldPolicySpec {
@@ -278,12 +303,13 @@ fn validate_query(query: HonestFoldSizingQuery<'_>) -> Result<(), AkitaError> {
         || query.num_chunks == 0
         || query.num_chunks > query.num_live_blocks
         || query.num_fold_coeffs == 0
-        || query.log_basis == 0
+        || query.log_basis_response == 0
     {
         return Err(AkitaError::InvalidSetup(
             "honest fold sizing requires positive geometry and basis".to_string(),
         ));
     }
+    query.witness_norms.validate()?;
     if !query.num_fold_coeffs.is_multiple_of(query.num_chunks) {
         return Err(AkitaError::InvalidSetup(
             "honest fold coefficient count must cover equally sized chunk responses".to_string(),
@@ -351,7 +377,8 @@ mod tests {
             num_live_blocks: 16,
             num_chunks: 1,
             num_fold_coeffs: 4_096,
-            log_basis: 3,
+            witness_norms: FoldWitnessNorms::bounded(3, 64),
+            log_basis_response: 3,
             challenge_config: challenge,
         }
     }
@@ -421,7 +448,7 @@ mod tests {
             query.num_live_blocks,
             query.num_claims,
             128,
-            query.log_basis,
+            query.log_basis_response,
             FoldChallengeNorms::new(&challenge),
             witness,
             &cap_config,
@@ -470,7 +497,8 @@ mod tests {
                             num_live_blocks,
                             num_chunks: 1,
                             num_fold_coeffs,
-                            log_basis,
+                            witness_norms: legacy_witness,
+                            log_basis_response: log_basis,
                             challenge_config: &challenge,
                         };
                         let exact_digits = one_hot.num_digits_fold(query).unwrap();
@@ -513,7 +541,8 @@ mod tests {
                 num_live_blocks: logical_num_live_blocks,
                 num_chunks,
                 num_fold_coeffs: physical_num_fold_coeffs,
-                log_basis: 3,
+                witness_norms: FoldWitnessNorms::new(1, 4),
+                log_basis_response: 3,
                 challenge_config: &challenge,
             };
             assert_eq!(
@@ -533,7 +562,8 @@ mod tests {
             num_live_blocks: 64,
             num_chunks: 1,
             num_fold_coeffs: 512,
-            log_basis: 3,
+            witness_norms: FoldWitnessNorms::new(1, 4),
+            log_basis_response: 3,
             challenge_config: &challenge,
         };
         assert_eq!(
@@ -561,7 +591,8 @@ mod tests {
             num_live_blocks: 10,
             num_chunks: 4,
             num_fold_coeffs: 512,
-            log_basis: 3,
+            witness_norms: FoldWitnessNorms::new(1, 4),
+            log_basis_response: 3,
             challenge_config: &challenge,
         };
         let largest_window = HonestFoldSizingQuery {

@@ -22,8 +22,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::dispatch::compression_ring_dim_supported_for_tier;
 use crate::{
-    field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
-    protocol_dispatch_tier, AkitaExpandedSetup, ProtocolRingDispatchTierId, RingMatrixView,
+    balanced_signed_digit_abs_bound, field_modulus, ntt_max_ring_d, ntt_min_ring_d,
+    ntt_ring_degree_supported_for_field, protocol_dispatch_tier, AkitaExpandedSetup,
+    ProtocolRingDispatchTierId, RingMatrixView,
 };
 
 mod exact;
@@ -40,6 +41,11 @@ pub enum NttTransformDomain {
     Negacyclic,
     /// Base-profile cyclic transforms only.
     Cyclic,
+    /// Exact negacyclic transforms for a signed-i16 matrix product.
+    ///
+    /// Both values participate in the cache identity because exact CRT sizing
+    /// depends on the active matrix row width and coefficient bound.
+    ExactNegacyclicI16 { width: usize, rhs_abs_bound: u64 },
 }
 
 /// Exact public-matrix prefix required at one ring dimension.
@@ -772,19 +778,21 @@ where
 }
 
 fn validate_i16_rhs<const D: usize>(log_basis: u32, rhs: &[[i16; D]]) -> Result<u64, AkitaError> {
-    if !(1..=16).contains(&log_basis) || rhs.is_empty() {
+    let Some(bound) = balanced_signed_digit_abs_bound(log_basis) else {
+        return Err(AkitaError::InvalidProof);
+    };
+    if rhs.is_empty() {
         return Err(AkitaError::InvalidProof);
     }
-    let bound = 1i32 << (log_basis - 1);
-    if log_basis == 16 {
-        return Ok(bound as u64);
+    if bound == 1u64 << (i16::BITS - 1) {
+        return Ok(bound);
     }
     let digits_valid =
         akita_algebra::ntt::i16_values_in_balanced_range(rhs.as_flattened(), bound as i16);
     if !digits_valid {
         return Err(AkitaError::InvalidProof);
     }
-    Ok(bound as u64)
+    Ok(bound)
 }
 
 fn validate_cache_mode(mode: NttCacheMode) -> Result<(), AkitaError> {

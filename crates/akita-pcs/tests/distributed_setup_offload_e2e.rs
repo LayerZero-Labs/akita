@@ -21,25 +21,20 @@
 mod common;
 
 use akita_config::proof_optimized::fp128;
-use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_types::{
     setup_matrix_capacity_for_schedule, verifier_setup_matrix_capacity_for_schedule,
-    AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule, OpeningClaimsLayout,
-    PolynomialGroupLayout, SetupContributionMode,
+    AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout, SetupContributionMode,
 };
 use common::*;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 
 type W8R2Cfg = RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>;
-type W8R2PrecommittedCfg = PrecommittedCommitmentConfig<fp128::D64OneHotMultiChunk>;
-
 fn w8r2_profiling_key() -> AkitaScheduleLookupKey {
     let pre_group = PolynomialGroupLayout::new(16, 1);
-    let pre_layout = OpeningClaimsLayout::new(16, 1).expect("precommit layout");
-    let pre_params = W8R2PrecommittedCfg::get_params_for_batched_commitment(&pre_layout)
-        .expect("precommit params");
-    let precommitted = CommittedGroupProfile::from_params(pre_group, &pre_params);
+    let precommitted =
+        akita_config::committed_group_profile::<W8R2Cfg>(&pre_group).expect("precommit profile");
     AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![precommitted, precommitted],
