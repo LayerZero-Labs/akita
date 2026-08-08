@@ -18,12 +18,13 @@ use akita_types::sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
 };
 use akita_types::{
-    level_proof_bytes, padded_setup_prefix_len, try_extension_opening_reduction_level_bytes,
-    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile,
-    DecompositionParams, FoldSchedule, FoldScheduleEstimate, PlannedFoldSchedule,
-    PolynomialGroupLayout, PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep,
-    RootFinalGroupParams, RootFoldParams, RootFoldStep, RootPrecommittedGroupParams,
-    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
+    dyadic_block_ranges, level_proof_bytes, padded_setup_prefix_len,
+    try_extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, CommitmentRingDims,
+    CommittedGroupParams, CommittedGroupProfile, DecompositionParams, FoldSchedule,
+    FoldScheduleEstimate, PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams,
+    RecursiveFoldParams, RecursiveFoldStep, RootFinalGroupParams, RootFoldParams, RootFoldStep,
+    RootPrecommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
+    WitnessLayout, WitnessPartition,
 };
 
 use crate::PlannerPolicy;
@@ -387,7 +388,7 @@ pub(crate) fn layout_candidate_score(
     num_chunks: usize,
 ) -> Result<LayoutCandidateScore, AkitaError> {
     let challenge_work = num_live_blocks;
-    let chunk_ranges = WitnessLayout::resolve_chunk_block_ranges(num_live_blocks, num_chunks)?;
+    let chunk_ranges = dyadic_block_ranges(num_live_blocks, num_chunks)?;
     let min_load = chunk_ranges
         .iter()
         .map(|range| range.len())

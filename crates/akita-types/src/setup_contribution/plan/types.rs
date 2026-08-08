@@ -83,7 +83,7 @@ fn validate_group_witness_layout(
     let units = layout.units_for_group(group_id)?;
     let mut next_fold = 0usize;
     for unit in units {
-        if unit.num_live_blocks() == 0 || unit.global_block_start() != next_fold {
+        if unit.global_block_start() != next_fold {
             return Err(AkitaError::InvalidSetup(
                 "setup witness units do not form a contiguous fold tiling".into(),
             ));

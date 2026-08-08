@@ -62,6 +62,9 @@ where
         for (local_claim, claim_index) in parameters.claim_range().enumerate() {
             let mut segments = Vec::with_capacity(units.clone().count());
             for unit in units.clone() {
+                if unit.num_live_blocks() == 0 {
+                    continue;
+                }
                 let physical_coefficient_start = unit.e_coefficient_index(
                     group_dims.d_a(),
                     group_dims.d_d(),
