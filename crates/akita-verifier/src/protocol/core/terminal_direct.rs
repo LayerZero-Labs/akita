@@ -12,52 +12,53 @@ use akita_types::{
     TerminalCommittedGroupParams, TerminalResponse,
 };
 
-fn sparse_challenge_ring<F, const D: usize>(
+fn sparse_challenge_mul_accumulate<F, const D: usize>(
     challenge: &SparseChallenge,
-) -> Result<CyclotomicRing<F, D>, AkitaError>
+    value: &CyclotomicRing<F, D>,
+    destination: &mut CyclotomicRing<F, D>,
+) -> Result<(), AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
 {
     challenge.validate::<D>()?;
-    let mut coeffs = [F::zero(); D];
     for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
-        let slot = coeffs
-            .get_mut(position as usize)
-            .ok_or(AkitaError::InvalidProof)?;
-        *slot += F::from_i64(i64::from(coefficient));
+        let position = usize::try_from(position).map_err(|_| AkitaError::InvalidProof)?;
+        match coefficient {
+            1 => value.shift_accumulate_into(destination, position),
+            -1 => value.shift_sub_into(destination, position),
+            2 => {
+                value.shift_accumulate_into(destination, position);
+                value.shift_accumulate_into(destination, position);
+            }
+            -2 => {
+                value.shift_sub_into(destination, position);
+                value.shift_sub_into(destination, position);
+            }
+            _ => value.shift_scale_accumulate_into(
+                destination,
+                position,
+                F::from_i64(i64::from(coefficient)),
+            ),
+        }
     }
-    Ok(CyclotomicRing::from_coefficients(coeffs))
+    Ok(())
 }
 
-fn challenge_rings<F, const D: usize>(
-    challenges: &Challenges,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + FromPrimitiveInt,
-{
-    challenges
-        .as_slice()
-        .iter()
-        .map(sparse_challenge_ring::<F, D>)
-        .collect()
-}
-
-fn ring_dot<F, const D: usize>(
-    row: &[CyclotomicRing<F, D>],
+fn sparse_challenge_dot<F, const D: usize>(
+    row: &Challenges,
     input: &[CyclotomicRing<F, D>],
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
-    F: FieldCore,
+    F: FieldCore + FromPrimitiveInt,
 {
-    if row.len() != input.len() {
+    if row.as_slice().len() != input.len() {
         return Err(AkitaError::InvalidProof);
     }
-    Ok(row
-        .iter()
-        .zip(input)
-        .fold(CyclotomicRing::zero(), |sum, (lhs, rhs)| {
-            sum + (*lhs * *rhs)
-        }))
+    let mut sum = CyclotomicRing::zero();
+    for (challenge, value) in row.as_slice().iter().zip(input) {
+        sparse_challenge_mul_accumulate(challenge, value, &mut sum)?;
+    }
+    Ok(sum)
 }
 
 #[inline]
@@ -75,7 +76,7 @@ fn check_a_rows<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
     t: &[CyclotomicRing<F, D>],
     z: &[[i16; D]],
-    challenges: &[CyclotomicRing<F, D>],
+    challenges: &Challenges,
     n_a: usize,
     n_a_cols: usize,
     prepared_prefix_len: usize,
@@ -85,6 +86,7 @@ where
 {
     if t.len()
         != challenges
+            .as_slice()
             .len()
             .checked_mul(n_a)
             .ok_or(AkitaError::InvalidProof)?
@@ -98,18 +100,20 @@ where
             let _span = tracing::info_span!(
                 "terminal_direct_a_lhs",
                 rows = n_a,
-                challenges = challenges.len()
+                challenges = challenges.as_slice().len()
             )
             .entered();
             (0..n_a)
                 .map(|row_index| {
-                    challenges.iter().zip(t.chunks_exact(n_a)).try_fold(
-                        CyclotomicRing::zero(),
-                        |sum, (challenge, rows)| {
+                    challenges
+                        .as_slice()
+                        .iter()
+                        .zip(t.chunks_exact(n_a))
+                        .try_fold(CyclotomicRing::zero(), |mut sum, (challenge, rows)| {
                             let row = rows.get(row_index).ok_or(AkitaError::InvalidProof)?;
-                            Ok::<_, AkitaError>(sum + (*challenge * *row))
-                        },
-                    )
+                            sparse_challenge_mul_accumulate(challenge, row, &mut sum)?;
+                            Ok::<_, AkitaError>(sum)
+                        })
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()
         }
@@ -194,18 +198,19 @@ where
                 }
                 rings
             };
-            let challenges = {
+            {
                 let _span = tracing::info_span!(
                     "terminal_direct_challenges",
                     num_blocks = params.num_live_blocks
                 )
                 .entered();
-                challenge_rings::<F, D_A>(challenges).map_err(|error| {
-                    AkitaError::InvalidInput(format!(
-                        "terminal challenge conversion failed: {error:?}"
-                    ))
-                })?
-            };
+                if challenges.as_slice().len() != params.num_live_blocks {
+                    return Err(AkitaError::InvalidProof);
+                }
+                for challenge in challenges.as_slice() {
+                    challenge.validate::<D_A>()?;
+                }
+            }
             let expected_t_len = params
                 .num_live_blocks
                 .checked_mul(params.inner_commit_matrix.output_rank())
@@ -241,10 +246,10 @@ where
                     let folded = {
                         let _span = tracing::info_span!(
                             "terminal_direct_consistency_fold_e",
-                            blocks = challenges.len()
+                            blocks = challenges.as_slice().len()
                         )
                         .entered();
-                        ring_dot(&challenges, e)?
+                        sparse_challenge_dot(challenges, e)?
                     };
                     let reduced = {
                         let _span = tracing::info_span!(
@@ -302,7 +307,7 @@ where
                         setup,
                         t,
                         z_centered,
-                        &challenges,
+                        challenges,
                         n_a,
                         n_a_cols,
                         n_a.checked_mul(n_a_cols).ok_or(AkitaError::InvalidProof)?,
@@ -532,5 +537,34 @@ mod tests {
             assert_direct_matches_legacy::<64>(role, &[group_fixture::<64>(1, 1)]);
             assert_direct_matches_legacy::<128>(role, &[group_fixture::<128>(-1, 2)]);
         }
+    }
+
+    fn assert_sparse_challenge_product<const D: usize>() {
+        let challenge = SparseChallenge {
+            positions: vec![0, 3, (D - 1) as u32].into(),
+            coeffs: vec![2, -1, -2].into(),
+        };
+        let value = CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|index| {
+            F::from_i64(index as i64 - 9)
+        }));
+        let dense = CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|index| {
+            challenge
+                .positions
+                .iter()
+                .position(|&position| position as usize == index)
+                .map_or_else(F::zero, |position| {
+                    F::from_i64(i64::from(challenge.coeffs[position]))
+                })
+        }));
+        let mut actual = CyclotomicRing::zero();
+        sparse_challenge_mul_accumulate(&challenge, &value, &mut actual)
+            .expect("valid sparse challenge");
+        assert_eq!(actual, dense * value);
+    }
+
+    #[test]
+    fn sparse_challenge_product_matches_schoolbook() {
+        assert_sparse_challenge_product::<64>();
+        assert_sparse_challenge_product::<128>();
     }
 }
