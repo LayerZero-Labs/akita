@@ -549,11 +549,14 @@ where
     }
 }
 
-/// Recover one ring-subfield inner product from a ring-level folded output.
+/// Recover one ring-subfield inner product from two ψ-packed rings.
 ///
 /// This is the value-level counterpart of [`check_trace_inner_product`]. It is
 /// used when a verifier needs the extension-field opening value itself, rather
-/// than only checking it against a supplied scalar.
+/// than only checking it against a supplied scalar. The implementation inverts
+/// the two-slot ψ transform independently in every residue class and takes the
+/// extension-field dot product directly. It therefore uses `O(D)` base-field
+/// coordinate work instead of materializing a ring product and subgroup trace.
 ///
 /// # Errors
 ///
@@ -567,7 +570,6 @@ where
     F: FieldCore + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F>,
 {
-    let trace_input = *y_ring * packed_inner_point.sigma_m1();
     macro_rules! arm {
         ($k:expr) => {{
             let params = SubfieldParams::<D, $k>::new().map_err(|_| {
@@ -575,8 +577,7 @@ where
                     "claim-field degree must divide the ring dimension".to_string(),
                 )
             })?;
-            let traced = trace_h::<F, D, $k>(params, &trace_input);
-            decode_traced_to_extension::<F, E, D, $k>(params, &traced)
+            recover_psi_inner_product::<F, E, D, $k>(params, y_ring, packed_inner_point)
         }};
     }
 
@@ -589,6 +590,55 @@ where
             "unsupported ring-subfield extension degree".to_string(),
         )),
     }
+}
+
+fn recover_psi_inner_product<F, E, const D: usize, const K: usize>(
+    _params: SubfieldParams<D, K>,
+    lhs: &CyclotomicRing<F, D>,
+    rhs: &CyclotomicRing<F, D>,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt + Invertible,
+    E: FpExtEncoding<F>,
+{
+    let half = F::from_u64(2)
+        .inverse()
+        .ok_or_else(|| AkitaError::InvalidInput("two is not invertible".to_string()))?;
+    let stride = D / (2 * K);
+    let decode = |ring: &CyclotomicRing<F, D>, residue: usize, high: bool| {
+        let coefficients = ring.coefficients();
+        let mut coordinates = [F::zero(); K];
+        let constant_index =
+            residue.checked_add(usize::from(high).checked_mul(K)?.checked_mul(stride)?)?;
+        *coordinates.get_mut(0)? = *coefficients.get(constant_index)?;
+        for coordinate in 1..K {
+            let (left_block, right_block) = if high {
+                (K.checked_sub(coordinate)?, K.checked_add(coordinate)?)
+            } else {
+                (coordinate, 2usize.checked_mul(K)?.checked_sub(coordinate)?)
+            };
+            let left = residue.checked_add(left_block.checked_mul(stride)?)?;
+            let right = residue.checked_add(right_block.checked_mul(stride)?)?;
+            let left = *coefficients.get(left)?;
+            let right = *coefficients.get(right)?;
+            *coordinates.get_mut(coordinate)? = if high {
+                (left + right) * half
+            } else {
+                (left - right) * half
+            };
+        }
+        Some(E::from_base_slice(&coordinates))
+    };
+
+    let mut inner_product = E::zero();
+    for residue in 0..stride {
+        let lhs_low = decode(lhs, residue, false).ok_or(AkitaError::InvalidProof)?;
+        let rhs_low = decode(rhs, residue, false).ok_or(AkitaError::InvalidProof)?;
+        let lhs_high = decode(lhs, residue, true).ok_or(AkitaError::InvalidProof)?;
+        let rhs_high = decode(rhs, residue, true).ok_or(AkitaError::InvalidProof)?;
+        inner_product += lhs_low * rhs_low + lhs_high * rhs_high;
+    }
+    Ok(inner_product)
 }
 
 #[inline]

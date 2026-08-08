@@ -1,6 +1,6 @@
 use super::*;
 use crate::{reduce_inner_opening_to_ring_element, BasisMode};
-use akita_field::{Fp32, FpExt4, FpExt8};
+use akita_field::{Ext2, Fp32, FpExt4, FpExt8};
 
 type F = Fp32<251>;
 type AkitaF32 = Fp32<4294967197>;
@@ -576,6 +576,11 @@ fn assert_psi_trace_inner_product_identity_fp_ext4<const D: usize>() {
     let scaled = embed_subfield::<AkitaF32, D, 4>(params, &y.coeffs).scale(&scale);
 
     assert_eq!(traced, scaled);
+    assert_eq!(
+        recover_ring_subfield_inner_product::<AkitaF32, FpExt4<AkitaF32>, D>(&big_y, &big_v)
+            .expect("recover ψ-packed fp4 inner product"),
+        y
+    );
 }
 
 #[test]
@@ -640,6 +645,11 @@ fn assert_psi_trace_inner_product_identity_fp_ext2<const D: usize>() {
     let scaled = embed_subfield::<AkitaF32, D, 2>(params, &y).scale(&scale);
 
     assert_eq!(traced, scaled);
+    assert_eq!(
+        recover_ring_subfield_inner_product::<AkitaF32, Ext2<AkitaF32>, D>(&big_y, &big_v)
+            .expect("recover ψ-packed fp2 inner product"),
+        Ext2::new(y[0], y[1])
+    );
 }
 
 #[test]
@@ -654,6 +664,11 @@ fn check_trace_inner_product_k_one_accepts_correct_opening() {
             reduce_inner_opening_to_ring_element::<F, D>(&inner_point, basis).unwrap();
         let product = y_ring * packed_inner.sigma_m1();
         let opening = product.coefficients()[0];
+
+        assert_eq!(
+            recover_ring_subfield_inner_product::<F, F, D>(&y_ring, &packed_inner).unwrap(),
+            opening
+        );
 
         assert!(check_trace_inner_product::<F, D, 1>(
             params,
