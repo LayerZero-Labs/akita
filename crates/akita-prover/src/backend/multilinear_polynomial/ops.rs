@@ -3,7 +3,7 @@
 //! Each kernel dispatches a source-typed view to the dense or one-hot backend,
 //! falling back to a per-polynomial path for truly mixed batches.
 
-use akita_field::unreduced::HasWide;
+use akita_field::unreduced::{HasCommitAccum, HasWide};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
@@ -29,7 +29,7 @@ use super::poly::{
 impl<F, const D: usize, I> RootCommitKernel<MultilinearPolynomialView<'_, F, D, I>, F, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
     I: OneHotIndex,
 {
     fn commit_inner(
@@ -57,12 +57,54 @@ where
             },
         )
     }
+
+    fn commit_inner_group(
+        &self,
+        prepared: &Self::PreparedSetup,
+        sources: Vec<MultilinearPolynomialView<'_, F, D, I>>,
+        plan: CommitInnerPlan,
+    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
+        if sources
+            .iter()
+            .all(|source| matches!(source.poly(), MultilinearPolynomial::Dense(_)))
+        {
+            let views = sources
+                .into_iter()
+                .map(|source| match source.poly() {
+                    MultilinearPolynomial::Dense(poly) => poly.commit_view(),
+                    MultilinearPolynomial::OneHot(_) => unreachable!("checked dense group"),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
+                self, prepared, views, plan,
+            );
+        }
+        if sources
+            .iter()
+            .all(|source| matches!(source.poly(), MultilinearPolynomial::OneHot(_)))
+        {
+            let views = sources
+                .into_iter()
+                .map(|source| match source.poly() {
+                    MultilinearPolynomial::OneHot(poly) => poly.commit_view(),
+                    MultilinearPolynomial::Dense(_) => unreachable!("checked one-hot group"),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return RootCommitKernel::<OneHotView<'_, F, D, I>, F, D>::commit_inner_group(
+                self, prepared, views, plan,
+            );
+        }
+        sources
+            .into_iter()
+            .map(|source| self.commit_inner(prepared, source, plan))
+            .collect()
+    }
 }
 
 impl<F, const D: usize, I> OpeningFoldKernel<MultilinearPolynomialView<'_, F, D, I>, F, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
     I: OneHotIndex,
 {
     fn evaluate_and_fold(
@@ -121,7 +163,7 @@ where
 impl<F, const D: usize, I> OpeningBatchKernel<MultilinearPolynomialBatchView<'_, F, D, I>, F, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
     I: OneHotIndex,
 {
     fn decompose_fold_batch(
@@ -164,7 +206,7 @@ where
 impl<F, E, const D: usize, I>
     TensorProjectionKernel<MultilinearPolynomialView<'_, F, D, I>, F, E, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + HasCommitAccum,
     E: ExtField<F>,
     I: OneHotIndex,
 {
@@ -250,7 +292,7 @@ where
 impl<F, E, const D: usize, I>
     TensorProjectionBatchKernel<MultilinearPolynomialBatchView<'_, F, D, I>, F, E, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + HasCommitAccum,
     E: ExtField<F>,
     I: OneHotIndex,
 {

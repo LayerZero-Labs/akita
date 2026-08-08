@@ -90,13 +90,13 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         F: CanonicalField,
     {
         let total_blocks = challenges.len();
-        let cached_blocks = polys
+        let operation_blocks = polys
             .iter()
-            .map(|poly| poly.blocks_for(D, num_positions_per_block).ok())
+            .map(|poly| poly.blocks_for_operation(D, num_positions_per_block).ok())
             .collect::<Option<Vec<_>>>()?;
         let mut flat_blocks: Vec<&[SingleChunkEntry]> = Vec::with_capacity(total_blocks);
-        for cached in &cached_blocks {
-            let OneHotBlocks::SingleChunk(blocks) = cached.as_ref() else {
+        for operation in &operation_blocks {
+            let OneHotBlocks::SingleChunk(blocks) = operation.as_ref() else {
                 return None;
             };
             for i in 0..blocks.num_live_blocks() {
@@ -126,13 +126,13 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         F: CanonicalField,
     {
         let total_blocks = challenges.len();
-        let cached_blocks = polys
+        let operation_blocks = polys
             .iter()
-            .map(|poly| poly.blocks_for(D, num_positions_per_block).ok())
+            .map(|poly| poly.blocks_for_operation(D, num_positions_per_block).ok())
             .collect::<Option<Vec<_>>>()?;
         let mut flat_blocks: Vec<&[MultiChunkEntry]> = Vec::with_capacity(total_blocks);
-        for cached in &cached_blocks {
-            let OneHotBlocks::MultiChunk(blocks) = cached.as_ref() else {
+        for operation in &operation_blocks {
+            let OneHotBlocks::MultiChunk(blocks) = operation.as_ref() else {
                 return None;
             };
             for i in 0..blocks.num_live_blocks() {

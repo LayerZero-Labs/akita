@@ -35,7 +35,7 @@ use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
-use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
 };
@@ -46,13 +46,16 @@ use std::sync::{Arc, Mutex};
 
 use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
+#[cfg(test)]
+use crate::compute::FlatBlockTable;
 use crate::compute::{
-    CommitmentComputeBackend, FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan,
+    CommitmentComputeBackend, OneHotBlockSource, OneHotCommitBlocks, OneHotCommitRowsPlan,
 };
 use crate::{CommitInnerWitness, DecomposeFoldWitness, SparseRingPoly};
 
 /// Wide accumulators use 16-bit chunks in `i32` limbs, so they can safely
 /// absorb at most 32,768 unit-scale additions before overflow.
+#[cfg(test)]
 pub(super) const MAX_WIDE_SHIFT_ACCUMULATIONS: usize = 1 << 15;
 
 mod accumulate;
@@ -69,8 +72,11 @@ pub(crate) mod test_helpers;
 #[cfg(test)]
 mod tests;
 
+pub use blocks::LazyOneHotBlocks;
 pub(crate) use blocks::{FlatBlocks, OneHotBlocks};
+#[cfg(test)]
 pub(crate) use column_sweep::column_sweep_ajtai_onehot;
+pub(crate) use column_sweep::column_sweep_ajtai_onehot_multi;
 pub(super) use entries::{shift_accumulation_count, OneHotEntry};
 pub use entries::{MultiChunkEntry, OneHotIndex, SingleChunkEntry};
 #[cfg(test)]

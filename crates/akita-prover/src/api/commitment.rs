@@ -340,12 +340,17 @@ where
                 F,
                 dims.d_b(),
                 |D_B| {
-                    let prepared_polynomials = cfg_iter!(polys)
-                        .map(|poly| -> Result<(RingVec<F>, DigitBlocks), AkitaError> {
-                            let view = RootCommitSource::<F, D_A>::commit_view(poly)?;
-                            let inner = RootCommitKernel::<_, F, D_A>::commit_inner(
-                                backend, prepared, view, plan,
-                            )?;
+                    // The whole group multiplies the same A matrix, so the
+                    // backend can stream it once across every polynomial.
+                    let views = polys
+                        .iter()
+                        .map(|poly| RootCommitSource::<F, D_A>::commit_view(poly))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let inners = RootCommitKernel::<_, F, D_A>::commit_inner_group(
+                        backend, prepared, views, plan,
+                    )?;
+                    let prepared_polynomials = cfg_into_iter!(inners)
+                        .map(|inner| -> Result<(RingVec<F>, DigitBlocks), AkitaError> {
                             validate_commit_inner_shape::<F, D_A>(&inner, num_live_blocks, n_a)?;
                             let blocks = (0..num_live_blocks)
                                 .map(|block| inner.block_rows::<D_A>(block, n_a))

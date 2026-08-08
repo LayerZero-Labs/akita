@@ -63,7 +63,7 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
+    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS> + Clone,
     TS: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
     C: ComputeBackendSetup<F>,
@@ -151,7 +151,7 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
+    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS> + Clone,
     C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
     O: RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
         + DigitRowsComputeBackend<F>

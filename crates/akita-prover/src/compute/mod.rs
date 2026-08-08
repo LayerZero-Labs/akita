@@ -34,6 +34,7 @@ mod poly;
 mod requirements;
 mod stack;
 
+pub use crate::backend::onehot::LazyOneHotBlocks;
 pub use backend::{
     CommitmentComputeBackend, CompressionComputeBackend, CompressionRowsProducts,
     ComputeBackendSetup, CyclicRowsComputeBackend, DigitRowsComputeBackend, NttCacheOwnerId,
@@ -52,7 +53,7 @@ pub use operation_plans::{
     RingSwitchQuotientPlan, RingSwitchRelationPlan,
 };
 pub use plans::{
-    DenseCommitInput, DenseCommitRowsPlan, FlatBlockTable, OneHotCommitBlocks,
+    DenseCommitInput, DenseCommitRowsPlan, FlatBlockTable, OneHotBlockSource, OneHotCommitBlocks,
     OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
@@ -71,5 +72,6 @@ pub use poly::{
 };
 pub use stack::{
     planned_ntt_cache_metrics, prewarm_ntt_requirements, LevelProveStacks, OperationCtx,
-    PlannedNttCacheOwnerMetric, ProverComputeStack, TieredProveStacks, UniformProverStack,
+    PlannedNttCacheOwnerMetric, ProverComputeStack, ReleaseRootNttAfterFold, TieredProveStacks,
+    UniformProverStack,
 };

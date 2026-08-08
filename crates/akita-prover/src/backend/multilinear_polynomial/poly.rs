@@ -1,7 +1,7 @@
 //! The multilinear-polynomial wrapper enum, its borrowed dispatch views, and
 //! the source-trait impls. The `CpuBackend` kernel impls live in [`super::ops`].
 
-use akita_field::unreduced::HasWide;
+use akita_field::unreduced::{HasCommitAccum, HasWide};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
@@ -60,6 +60,10 @@ where
     F: FieldCore,
     I: OneHotIndex,
 {
+    pub(super) fn poly(self) -> &'a MultilinearPolynomial<F, I> {
+        self.poly
+    }
+
     pub(super) fn dispatch<T>(
         self,
         dense: impl FnOnce(&DensePoly<F>) -> Result<T, AkitaError>,
@@ -110,7 +114,7 @@ where
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
-        F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+        F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + HasCommitAccum,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         self.polys
@@ -143,6 +147,13 @@ where
         match self {
             Self::Dense(poly) => RootPolyMeta::num_vars(poly),
             Self::OneHot(poly) => RootPolyMeta::num_vars(poly),
+        }
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        match self {
+            Self::Dense(_) => None,
+            Self::OneHot(poly) => RootPolyMeta::onehot_chunk_size(poly),
         }
     }
 }

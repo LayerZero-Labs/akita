@@ -1,6 +1,7 @@
 use super::fold::{fold_onehot_block, fold_onehot_block_ring};
 use super::*;
 use crate::backend::RootTensorProjectionPoly;
+use crate::compute::OneHotCommitBlocks;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
@@ -8,6 +9,39 @@ use crate::compute::{
     RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use akita_field::MulBaseUnreduced;
+
+/// Build or borrow each block once and map its entry slice through the body.
+/// The geometry match monomorphizes the opening fold per entry type.
+macro_rules! for_each_block_source {
+    ($blocks:expr, |$entries:ident| $body:expr) => {
+        match &$blocks {
+            OneHotCommitBlocks::SingleChunk(source) => cfg_into_iter!(0..source.num_live_blocks())
+                .map(|i| {
+                    let materialized = source
+                        .materialize_range(i..i + 1)
+                        .expect("in-range single block build");
+                    let slices = materialized
+                        .block_slices()
+                        .expect("materialized single block");
+                    let $entries = slices[0];
+                    $body
+                })
+                .collect(),
+            OneHotCommitBlocks::MultiChunk(source) => cfg_into_iter!(0..source.num_live_blocks())
+                .map(|i| {
+                    let materialized = source
+                        .materialize_range(i..i + 1)
+                        .expect("in-range single block build");
+                    let slices = materialized
+                        .block_slices()
+                        .expect("materialized single block");
+                    let $entries = slices[0];
+                    $body
+                })
+                .collect(),
+        }
+    };
+}
 
 /// Inner (low) coordinate count for the factorized one-hot column-partials
 /// fast path. The high opening coordinates split into `inner_bits` low bits
@@ -46,6 +80,10 @@ where
 
     fn num_vars(&self) -> usize {
         self.num_vars
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        Some(self.onehot_k)
     }
 }
 
@@ -132,7 +170,7 @@ where
 
 impl<F, const D: usize, I> RootCommitKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
     I: OneHotIndex,
 {
     fn commit_inner(
@@ -143,11 +181,21 @@ where
     ) -> Result<CommitInnerWitness<F>, AkitaError> {
         source.poly.commit_inner::<_, D>(self, prepared, plan)
     }
+
+    fn commit_inner_group(
+        &self,
+        prepared: &Self::PreparedSetup,
+        sources: Vec<OneHotView<'_, F, D, I>>,
+        plan: CommitInnerPlan,
+    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
+        let polys: Vec<&OneHotPoly<F, I>> = sources.iter().map(|source| source.poly).collect();
+        OneHotPoly::commit_inner_group::<_, D>(&polys, self, prepared, plan)
+    }
 }
 
 impl<F, const D: usize, I> OpeningFoldKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
     I: OneHotIndex,
 {
     fn evaluate_and_fold(
@@ -156,8 +204,12 @@ where
         source: OneHotView<'_, F, D, I>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
-        let blocks = source.poly.blocks_for(D, plan.num_positions_per_block())?;
-        plan.validate(blocks.num_live_blocks())?;
+        // Count-only validation: building (and caching) every block here
+        // would defeat the lazy per-block folds below.
+        let num_live_blocks = source
+            .poly
+            .num_live_blocks_for(D, plan.num_positions_per_block())?;
+        plan.validate(num_live_blocks)?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
                 live_block_weights,
@@ -198,7 +250,7 @@ where
 
 impl<F, const D: usize, I> OpeningBatchKernel<OneHotBatchView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
     I: OneHotIndex,
 {
     fn decompose_fold_batch(
@@ -229,7 +281,7 @@ where
 impl<F, E, const D: usize, I> TensorProjectionKernel<OneHotView<'_, F, D, I>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + HasCommitAccum,
     E: ExtField<F>,
     I: OneHotIndex,
 {
@@ -271,7 +323,7 @@ where
 impl<F, E, const D: usize, I> TensorProjectionBatchKernel<OneHotBatchView<'_, F, D, I>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
     E: ExtField<F>,
     I: OneHotIndex,
 {
@@ -299,25 +351,24 @@ where
 
 impl<F, I: OneHotIndex> OneHotPoly<F, I>
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
 {
     pub(crate) fn fold_blocks<const D: usize>(
         &self,
         scalars: &[F],
         num_positions_per_block: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
-        let blocks = self
-            .blocks_for(D, num_positions_per_block)
+        // Each block is visited exactly once, so build its entries from the
+        // retained index columns on the fly instead of materializing (and
+        // caching) every block for the whole fold window.
+        let lazy = self
+            .commit_plan_blocks_lazy(D, num_positions_per_block)
             .expect("OneHotPoly::fold_blocks: invalid num_positions_per_block for this polynomial");
-        let num_live_blocks = blocks.num_live_blocks();
-        match blocks.as_ref() {
-            OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_live_blocks)
-                .map(|i| fold_onehot_block(flat.block(i), scalars, num_positions_per_block))
-                .collect(),
-            OneHotBlocks::MultiChunk(flat) => cfg_into_iter!(0..num_live_blocks)
-                .map(|i| fold_onehot_block(flat.block(i), scalars, num_positions_per_block))
-                .collect(),
-        }
+        for_each_block_source!(lazy, |entries| fold_onehot_block(
+            entries,
+            scalars,
+            num_positions_per_block
+        ))
     }
 
     pub(crate) fn fold_blocks_ring<const D: usize>(
@@ -325,18 +376,16 @@ where
         scalars: &[CyclotomicRing<F, D>],
         num_positions_per_block: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
-        let blocks = self.blocks_for(D, num_positions_per_block).expect(
-            "OneHotPoly::fold_blocks_ring: invalid num_positions_per_block for this polynomial",
-        );
-        let num_live_blocks = blocks.num_live_blocks();
-        match blocks.as_ref() {
-            OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_live_blocks)
-                .map(|i| fold_onehot_block_ring(flat.block(i), scalars, num_positions_per_block))
-                .collect(),
-            OneHotBlocks::MultiChunk(flat) => cfg_into_iter!(0..num_live_blocks)
-                .map(|i| fold_onehot_block_ring(flat.block(i), scalars, num_positions_per_block))
-                .collect(),
-        }
+        let lazy = self
+            .commit_plan_blocks_lazy(D, num_positions_per_block)
+            .expect(
+                "OneHotPoly::fold_blocks_ring: invalid num_positions_per_block for this polynomial",
+            );
+        for_each_block_source!(lazy, |entries| fold_onehot_block_ring(
+            entries,
+            scalars,
+            num_positions_per_block
+        ))
     }
 
     pub(crate) fn evaluate_and_fold<const D: usize>(
@@ -734,9 +783,11 @@ where
         num_digits: usize,
         _log_basis: u32,
     ) -> DecomposeFoldWitness<F> {
-        let blocks = self.blocks_for(D, num_positions_per_block).expect(
-            "OneHotPoly::decompose_fold: invalid num_positions_per_block for this polynomial",
-        );
+        let blocks = self
+            .blocks_for_operation(D, num_positions_per_block)
+            .expect(
+                "OneHotPoly::decompose_fold: invalid num_positions_per_block for this polynomial",
+            );
         match blocks.as_ref() {
             OneHotBlocks::SingleChunk(blocks) => self.decompose_fold_onehot::<SingleChunkEntry, D>(
                 blocks,
@@ -762,22 +813,25 @@ where
         _log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F>> {
         let first = polys.first()?;
-        let first_blocks = first.blocks_for(D, num_positions_per_block).expect(
+        first
+            .num_live_blocks_for(D, num_positions_per_block)
+            .expect(
             "OneHotPoly::decompose_fold_batched: invalid num_positions_per_block for first polynomial",
         );
-        match first_blocks.as_ref() {
-            OneHotBlocks::SingleChunk(_) => Self::decompose_fold_batched_single_chunk_onehot::<D>(
+        if first.onehot_k >= D && first.onehot_k.is_multiple_of(D) {
+            Self::decompose_fold_batched_single_chunk_onehot::<D>(
                 polys,
                 challenges,
                 num_positions_per_block,
                 num_digits,
-            ),
-            OneHotBlocks::MultiChunk(_) => Self::decompose_fold_batched_multi_chunk_onehot::<D>(
+            )
+        } else {
+            Self::decompose_fold_batched_multi_chunk_onehot::<D>(
                 polys,
                 challenges,
                 num_positions_per_block,
                 num_digits,
-            ),
+            )
         }
     }
 
@@ -791,17 +845,47 @@ where
     where
         B: CommitmentComputeBackend<F>,
     {
-        let blocks = self.blocks_for(D, plan.num_positions_per_block)?;
         let t = backend.onehot_commit_rows::<D>(
             prepared,
             OneHotCommitRowsPlan {
                 n_a: plan.n_a,
                 num_positions_per_block: plan.num_positions_per_block,
                 num_digits_inner: plan.num_digits_inner,
-                blocks: blocks.commit_plan_blocks(),
+                blocks: self.commit_plan_blocks_lazy(D, plan.num_positions_per_block)?,
             },
         )?;
 
         Ok(CommitInnerWitness::from_rows(t))
+    }
+
+    /// Group commit: one fused A pass for every polynomial of the batch.
+    #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner_group")]
+    pub(crate) fn commit_inner_group<B, const D: usize>(
+        polys: &[&Self],
+        backend: &B,
+        prepared: &B::PreparedSetup,
+        plan: CommitInnerPlan,
+    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError>
+    where
+        B: CommitmentComputeBackend<F>,
+    {
+        // Lazy plans: the sweep materializes one block tile at a time from
+        // each polynomial's retained index columns — the batch's full entry
+        // cache (~200 B/cycle at trace scale) never exists during commit.
+        let plans = polys
+            .iter()
+            .map(|poly| {
+                Ok(OneHotCommitRowsPlan {
+                    n_a: plan.n_a,
+                    num_positions_per_block: plan.num_positions_per_block,
+                    num_digits_inner: plan.num_digits_inner,
+                    blocks: poly.commit_plan_blocks_lazy(D, plan.num_positions_per_block)?,
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let group_t = backend.onehot_commit_rows_multi::<D>(prepared, plans)?;
+        Ok(cfg_into_iter!(group_t)
+            .map(CommitInnerWitness::from_rows::<D>)
+            .collect())
     }
 }

@@ -178,7 +178,7 @@ fn onehot_poly_rejects_non_divisible_k_d() {
 }
 
 #[test]
-fn onehot_poly_caches_multiple_runtime_layouts() {
+fn onehot_poly_prepares_multiple_runtime_layouts() {
     type F = Prime24Offset3;
     let poly = OneHotPoly::<F>::new(
         32,
@@ -196,12 +196,111 @@ fn onehot_poly_caches_multiple_runtime_layouts() {
     )
     .unwrap();
 
-    let d32_blocks = poly.blocks_for(32, 4).unwrap();
-    let d64_blocks = poly.blocks_for(64, 2).unwrap();
+    poly.prepare_block_cache(32, 4).unwrap();
+    poly.prepare_block_cache(64, 2).unwrap();
+    let d32_blocks = poly.blocks_for_operation(32, 4).unwrap();
+    let d64_blocks = poly.blocks_for_operation(64, 2).unwrap();
 
-    assert_eq!(d32_blocks.num_live_blocks(), 2);
-    assert_eq!(d64_blocks.num_live_blocks(), 2);
+    let live32 = match d32_blocks.as_ref() {
+        OneHotBlocks::SingleChunk(b) => b.num_live_blocks(),
+        OneHotBlocks::MultiChunk(b) => b.num_live_blocks(),
+    };
+    assert_eq!(live32, 2);
+    let live = match d64_blocks.as_ref() {
+        OneHotBlocks::SingleChunk(b) => b.num_live_blocks(),
+        OneHotBlocks::MultiChunk(b) => b.num_live_blocks(),
+    };
+    assert_eq!(live, 2);
     assert_eq!(poly.block_cache.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn operation_local_blocks_do_not_populate_the_prepared_cache() {
+    type F = Prime24Offset3;
+    let poly = OneHotPoly::<F>::new(32, 32, vec![Some(0usize), Some(7), None, Some(31)]).unwrap();
+
+    let local = poly.blocks_for_operation(32, 2).unwrap();
+    assert_eq!(poly.block_cache_len_for_test(), 0);
+
+    poly.prepare_block_cache(32, 2).unwrap();
+    let prepared = poly.blocks_for_operation(32, 2).unwrap();
+    assert_eq!(poly.block_cache_len_for_test(), 1);
+    assert!(!std::sync::Arc::ptr_eq(&local, &prepared));
+
+    let borrowed = poly.blocks_for_operation(32, 2).unwrap();
+    assert!(std::sync::Arc::ptr_eq(&prepared, &borrowed));
+}
+
+#[test]
+fn explicit_clear_drops_shared_prepared_onehot_blocks() {
+    type F = Prime24Offset3;
+    let poly = OneHotPoly::<F>::new(
+        32,
+        32,
+        vec![
+            Some(0usize),
+            Some(7),
+            None,
+            Some(31),
+            Some(3),
+            None,
+            Some(12),
+            Some(1),
+        ],
+    )
+    .unwrap();
+
+    poly.prepare_block_cache(32, 4).unwrap();
+    let cached = poly.blocks_for_operation(32, 4).unwrap();
+    assert_eq!(poly.block_cache_len_for_test(), 1);
+
+    let clone = poly.clone();
+    clone.clear_block_cache().unwrap();
+    assert_eq!(poly.block_cache_len_for_test(), 0);
+    assert_eq!(clone.block_cache_len_for_test(), 0);
+
+    let rebuilt = poly.blocks_for_operation(32, 4).unwrap();
+    assert!(!std::sync::Arc::ptr_eq(&cached, &rebuilt));
+    assert_eq!(poly.block_cache_len_for_test(), 0);
+}
+
+#[test]
+fn tensor_root_projection_cache_is_caller_owned() {
+    type F = Prime24Offset3;
+    type E = FpExt4<F>;
+    const D: usize = 16;
+
+    let poly = OneHotPoly::<F>::new(
+        8,
+        D,
+        vec![
+            Some(0usize),
+            Some(7),
+            None,
+            Some(3),
+            Some(5),
+            Some(1),
+            None,
+            Some(6),
+        ],
+    )
+    .unwrap();
+
+    let local = poly.tensor_packed_sparse_ring_poly::<E, D>().unwrap();
+    assert_eq!(poly.tensor_root_cache_len_for_test(), 0);
+
+    poly.prepare_tensor_root_cache::<E, D>().unwrap();
+    let prepared = poly.tensor_packed_sparse_ring_poly::<E, D>().unwrap();
+    assert_eq!(poly.tensor_root_cache_len_for_test(), 1);
+    assert!(!std::sync::Arc::ptr_eq(&local, &prepared));
+
+    let borrowed = poly.tensor_packed_sparse_ring_poly::<E, D>().unwrap();
+    assert!(std::sync::Arc::ptr_eq(&prepared, &borrowed));
+
+    let clone = poly.clone();
+    clone.clear_tensor_root_cache().unwrap();
+    assert_eq!(poly.tensor_root_cache_len_for_test(), 0);
+    assert_eq!(RootPolyMeta::num_vars(prepared.as_ref()), poly.num_vars());
 }
 
 #[test]
@@ -871,6 +970,9 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
         OneHotPoly::<F>::new(num_positions_per_block, D, indices0).unwrap(),
         OneHotPoly::<F>::new(num_positions_per_block, D, indices1).unwrap(),
     ];
+    polys[0]
+        .prepare_block_cache(D, num_positions_per_block)
+        .unwrap();
     let challenges = vec![
         SparseChallenge {
             positions: vec![0, 5],
@@ -899,6 +1001,8 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
             })
             .collect::<Vec<_>>(),
     );
+    assert_eq!(polys[0].block_cache_len_for_test(), 1);
+    assert_eq!(polys[1].block_cache_len_for_test(), 0);
     let poly_refs: Vec<&OneHotPoly<F>> = polys.iter().collect();
     let got = OneHotPoly::<F>::decompose_fold_batched::<D>(
         &poly_refs,
@@ -910,6 +1014,8 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
     .expect("onehot batched path should apply");
 
     assert_eq!(got, expected);
+    assert_eq!(polys[0].block_cache_len_for_test(), 1);
+    assert_eq!(polys[1].block_cache_len_for_test(), 0);
 }
 
 #[test]
@@ -1057,3 +1163,5 @@ fn multi_chunk_onehot_ring_fold_matches_dense_materialization() {
         dense.fold_blocks_ring(&position_weights, num_positions_per_block)
     );
 }
+
+mod optimized_commit;

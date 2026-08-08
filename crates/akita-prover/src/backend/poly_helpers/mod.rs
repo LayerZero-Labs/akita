@@ -385,15 +385,21 @@ pub fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
     coeff_accum: [i32; D],
     modulus: u128,
 ) -> CyclotomicRing<F, D> {
-    let coeffs = from_fn(|k| {
+    CyclotomicRing::from_coefficients(signed_accum_to_coefficients(coeff_accum, modulus))
+}
+
+fn signed_accum_to_coefficients<F: CanonicalField, const D: usize>(
+    coeff_accum: [i32; D],
+    modulus: u128,
+) -> [F; D] {
+    from_fn(|k| {
         let v = coeff_accum[k];
         if v >= 0 {
             F::from_canonical_u128_reduced(v as u128)
         } else {
             F::from_canonical_u128_reduced(modulus - ((-v) as u128))
         }
-    });
-    CyclotomicRing::from_coefficients(coeffs)
+    })
 }
 
 pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
@@ -406,10 +412,14 @@ pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
         .map(|coeff| coeff.unsigned_abs())
         .max()
         .unwrap_or(0);
-    let z_folded_rings = cfg_iter!(centered_coeffs)
-        .map(|coeff_accum| signed_accum_to_ring::<F, D>(*coeff_accum, modulus))
+    let z_folded_coeffs = cfg_iter!(centered_coeffs)
+        .map(|coeff_accum| signed_accum_to_coefficients::<F, D>(*coeff_accum, modulus))
         .collect();
-    DecomposeFoldWitness::from_parts(z_folded_rings, centered_coeffs, centered_inf_norm)
+    DecomposeFoldWitness::from_coefficient_parts(
+        z_folded_coeffs,
+        centered_coeffs,
+        centered_inf_norm,
+    )
 }
 
 /// Fused base-field fold + evaluation shared by backends that do not specialize it.

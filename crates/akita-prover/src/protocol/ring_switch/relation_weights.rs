@@ -2,6 +2,22 @@
 
 use std::ops::Range;
 
+/// One family of setup-matrix rows read as per-column ring slices borrowed
+/// from the materialized store.
+struct SetupRows<'a, F: akita_field::FieldCore> {
+    rows: Vec<&'a [F]>,
+    ring_d: usize,
+}
+
+impl<F: akita_field::FieldCore> SetupRows<'_, F> {
+    fn ring_slice(&self, row: usize, col: usize) -> Result<&[F], AkitaError> {
+        self.rows
+            .get(row)
+            .and_then(|row| row.get(col * self.ring_d..(col + 1) * self.ring_d))
+            .ok_or(AkitaError::InvalidProof)
+    }
+}
+
 use akita_algebra::eq_poly::SplitEqEvals;
 use akita_algebra::offset_eq::{eq_eval_at_index, OffsetEqWindow};
 use akita_algebra::poly::multilinear_eval;
@@ -15,6 +31,32 @@ use akita_types::{
     CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, RelationAddressGeometry,
     RelationRowFamily, RingRelationInstance, SetupProjectionGeometry,
 };
+
+fn evaluate_setup_columns<F, E>(
+    family: &SetupRows<'_, F>,
+    columns: Range<usize>,
+    row_weights: &[(usize, E)],
+    alpha_powers: &[E],
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore,
+    E: FieldCore + MulBaseUnreduced<F>,
+{
+    cfg_into_iter!(columns)
+        .map(|col| {
+            row_weights
+                .iter()
+                .try_fold(E::zero(), |acc, &(row, weight)| {
+                    Ok(acc
+                        + weight
+                            * eval_flat_ring_at_pows_fast(
+                                family.ring_slice(row, col)?,
+                                alpha_powers,
+                            ))
+                })
+        })
+        .collect()
+}
 
 /// Whether one relation event belongs to the protocol constraint or setup matrix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -516,20 +558,22 @@ where
             .map(|range| range.end)
             .max()
             .unwrap_or(0);
-        Some(setup.shared_matrix.ring_view_dyn(
-            lp.open_commit_matrix.output_rank(),
-            d_physical_columns,
-            d_d,
-        )?)
+        let rank = lp.open_commit_matrix.output_rank();
+        Some((&setup.shared_matrix, rank, d_physical_columns))
     } else {
         None
     };
-    let d_rows = if let Some(d_view) = &d_view {
-        (0..lp.open_commit_matrix.output_rank())
-            .map(|row| d_view.row_flat(row))
-            .collect::<Result<Vec<_>, _>>()?
-    } else {
-        Vec::new()
+    let d_family = match &d_view {
+        Some((matrix, rows, cols)) => {
+            let view = matrix.ring_view_dyn(*rows, *cols, d_d)?;
+            Some(SetupRows {
+                rows: (0..*rows)
+                    .map(|row| view.row_flat(row))
+                    .collect::<Result<Vec<_>, _>>()?,
+                ring_d: d_d,
+            })
+        }
+        None => None,
     };
     let d_start = row_families
         .iter()
@@ -608,26 +652,26 @@ where
         let b_width = k_g
             .checked_mul(t_vector_width)
             .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".to_string()))?;
-        let setup_views = if let Some(setup) = setup_matrix {
-            Some((
-                setup
-                    .shared_matrix
-                    .ring_view_dyn(n_a, inner_width, group_d_a)?,
-                setup.shared_matrix.ring_view_dyn(n_b, b_width, group_d_b)?,
-            ))
+        let (setup_a_family, b_family) = if let Some(setup) = setup_matrix {
+            let a_view = setup
+                .shared_matrix
+                .ring_view_dyn(n_a, inner_width, group_d_a)?;
+            let a_family = SetupRows {
+                rows: (0..n_a)
+                    .map(|row| a_view.row_flat(row))
+                    .collect::<Result<Vec<_>, _>>()?,
+                ring_d: group_d_a,
+            };
+            let b_view = setup.shared_matrix.ring_view_dyn(n_b, b_width, group_d_b)?;
+            let b_family = SetupRows {
+                rows: (0..n_b)
+                    .map(|row| b_view.row_flat(row))
+                    .collect::<Result<Vec<_>, _>>()?,
+                ring_d: group_d_b,
+            };
+            (Some(a_family), Some(b_family))
         } else {
-            None
-        };
-        let (setup_a_rows, b_rows) = if let Some((setup_a_view, b_view)) = &setup_views {
-            let setup_a_rows = (0..n_a)
-                .map(|row| setup_a_view.row_flat(row))
-                .collect::<Result<Vec<_>, _>>()?;
-            let b_rows = (0..n_b)
-                .map(|row| b_view.row_flat(row))
-                .collect::<Result<Vec<_>, _>>()?;
-            (setup_a_rows, b_rows)
-        } else {
-            (Vec::new(), Vec::new())
+            (None, None)
         };
         let a_range = lp.a_row_range(opening_batch, group_index)?;
         let b_range = lp.commitment_row_range(opening_batch, group_index)?;
@@ -652,6 +696,50 @@ where
             .into_iter()
             .map(E::lift_base)
             .collect();
+        let d_setup_start = e_setup_offset;
+        let d_setup_len = total_blocks
+            .checked_mul(d_ratio)
+            .and_then(|len| len.checked_mul(depth_open))
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))?;
+        let d_setup_end = d_setup_start
+            .checked_add(d_setup_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D extent overflow".to_string()))?;
+        let d_setup_accs = if let Some(d_family) = &d_family {
+            let _span = tracing::info_span!("relation_weight_d_setup_columns").entered();
+            let row_weights = (0..n_d_active)
+                .map(|row| Ok((row, eq_tau1.eval_at(d_start + row)?)))
+                .filter_map(|result| match result {
+                    Ok((_, weight)) if weight.is_zero() => None,
+                    other => Some(other),
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            Some(evaluate_setup_columns(
+                d_family,
+                d_setup_start..d_setup_end,
+                &row_weights,
+                &group_alpha_pows_d,
+            )?)
+        } else {
+            None
+        };
+        let b_setup_accs = if let Some(b_family) = &b_family {
+            let _span = tracing::info_span!("relation_weight_b_setup_columns").entered();
+            let row_weights = (0..n_b)
+                .map(|row| Ok((row, eq_tau1.eval_at(b_range.start + row)?)))
+                .filter_map(|result| match result {
+                    Ok((_, weight)) if weight.is_zero() => None,
+                    other => Some(other),
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            Some(evaluate_setup_columns(
+                b_family,
+                0..b_width,
+                &row_weights,
+                &group_alpha_pows_b,
+            )?)
+        } else {
+            None
+        };
 
         for claim in 0..k_g {
             for global_block in 0..num_live_blocks_g {
@@ -686,18 +774,9 @@ where
                             .and_then(|local| e_setup_offset.checked_add(local))
                             .ok_or(AkitaError::InvalidProof)?;
                         let consistency_acc = consistency_weight * challenge_alpha * opening_gadget;
-                        let mut setup_acc = E::zero();
-                        for (di, d_row) in d_rows.iter().take(n_d_active).enumerate() {
-                            let eq_i = eq_tau1.eval_at(d_start + di)?;
-                            if !eq_i.is_zero() {
-                                setup_acc += eq_i
-                                    * eval_flat_ring_at_pows_fast(
-                                        &d_row
-                                            [d_phys_col * group_d_d..(d_phys_col + 1) * group_d_d],
-                                        &group_alpha_pows_d,
-                                    );
-                            }
-                        }
+                        let setup_acc = d_setup_accs
+                            .as_ref()
+                            .map_or(E::zero(), |weights| weights[d_phys_col - d_setup_start]);
                         relation_events.push(
                             physical_start,
                             group_d_d,
@@ -705,7 +784,7 @@ where
                             consistency_acc,
                             RelationWeightContribution::Constraint,
                         )?;
-                        if setup_matrix.is_some() {
+                        if d_setup_accs.is_some() {
                             relation_events.push(
                                 physical_start,
                                 group_d_d,
@@ -748,18 +827,9 @@ where
                                 0,
                             )?;
                             let a_acc = a_row_weight * challenge_alpha * opening_gadget;
-                            let mut b_acc = E::zero();
-                            for (row_idx, b_row) in b_rows.iter().take(n_b).enumerate() {
-                                let eq_i = eq_tau1.eval_at(b_range.start + row_idx)?;
-                                if !eq_i.is_zero() {
-                                    b_acc += eq_i
-                                        * eval_flat_ring_at_pows_fast(
-                                            &b_row[local_col * group_d_b
-                                                ..(local_col + 1) * group_d_b],
-                                            &group_alpha_pows_b,
-                                        );
-                                }
-                            }
+                            let b_acc = b_setup_accs
+                                .as_ref()
+                                .map_or(E::zero(), |weights| weights[local_col]);
                             relation_events.push(
                                 physical_start,
                                 group_d_b,
@@ -767,7 +837,7 @@ where
                                 a_acc,
                                 RelationWeightContribution::Constraint,
                             )?;
-                            if setup_matrix.is_some() {
+                            if b_setup_accs.is_some() {
                                 relation_events.push(
                                     physical_start,
                                     group_d_b,
@@ -781,6 +851,8 @@ where
                 }
             }
         }
+        drop(d_setup_accs);
+        drop(b_setup_accs);
 
         // For z_hat[blk, dc, df], the column value is:
         //
@@ -800,14 +872,16 @@ where
                     .eval_position_at_dyn::<E>(block_idx, &group_alpha_pows_a)?;
                 let constraint = consistency_weight * opening_a_eval * witness_gadget[digit_idx];
                 let mut setup = E::zero();
-                for (a_idx, a_row) in setup_a_rows.iter().take(n_a).enumerate() {
-                    let eq_i = eq_tau1.eval_at(a_range.start + a_idx)?;
-                    if !eq_i.is_zero() {
-                        setup += eq_i
-                            * eval_flat_ring_at_pows_fast(
-                                &a_row[k * group_d_a..(k + 1) * group_d_a],
-                                &group_alpha_pows_a,
-                            );
+                if let Some(setup_a_family) = &setup_a_family {
+                    for a_idx in 0..n_a {
+                        let eq_i = eq_tau1.eval_at(a_range.start + a_idx)?;
+                        if !eq_i.is_zero() {
+                            setup += eq_i
+                                * eval_flat_ring_at_pows_fast(
+                                    setup_a_family.ring_slice(a_idx, k)?,
+                                    &group_alpha_pows_a,
+                                );
+                        }
                     }
                 }
                 Ok((constraint, setup))

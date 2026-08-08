@@ -33,12 +33,12 @@ pub use compute::{
     planned_ntt_cache_metrics, prewarm_ntt_requirements, BatchDecomposeFoldOutcome,
     CommitBackendFor, CommitCluster, CommitmentComputeBackend, ComputeBackendSetup, CpuBackend,
     CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan,
-    DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks, NttCacheOwnerId,
+    DigitRowsComputeBackend, FlatBlockTable, LazyOneHotBlocks, LevelProveStacks, NttCacheOwnerId,
     NttExecutionRequirements, NttOperationCluster, OneHotCommitBlocks, OneHotCommitRowsPlan,
     OpeningCluster, OpeningProveBackendFor, OperationCtx, PlannedNttCacheOwnerMetric,
     PreparedCrtNttProfile, PreparedNttCacheMetric, ProveBackendFor, ProveFlowBackendFor,
     ProveStackFor, ProverComputeStack, RecursiveProveBackend, RecursiveWitnessCommitRowsPlan,
-    RingSwitchCluster, RingSwitchComputeBackend, RingSwitchProveBackend,
+    ReleaseRootNttAfterFold, RingSwitchCluster, RingSwitchComputeBackend, RingSwitchProveBackend,
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
     RootCommitBackend, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
     RootProveBackend, RootProvePoly, RootTensorSource, RoutedNttRequirement,
@@ -79,6 +79,21 @@ pub struct DecomposeFoldWitness<F: FieldCore> {
 }
 
 impl<F: FieldCore> DecomposeFoldWitness<F> {
+    /// Construct from owned coefficient rows at a kernel boundary.
+    pub fn from_coefficient_parts<const D: usize>(
+        z_folded_coeffs: Vec<[F; D]>,
+        centered_coeffs: Vec<[i32; D]>,
+        centered_inf_norm: u32,
+    ) -> Self {
+        debug_assert_eq!(z_folded_coeffs.len(), centered_coeffs.len());
+        Self {
+            z_folded_rings: RingVec::from_coefficient_rows(z_folded_coeffs),
+            centered_coeffs_flat: centered_coeffs.into_flattened(),
+            centered_inf_norm,
+            ring_dim: D,
+        }
+    }
+
     /// Construct from typed ring rows at a kernel boundary.
     pub fn from_parts<const D: usize>(
         z_folded_rings: Vec<CyclotomicRing<F, D>>,

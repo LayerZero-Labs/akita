@@ -242,6 +242,11 @@ where
     let next_state = root.next_state;
     let root = root.level_proof;
 
+    // Prepared NTT state belongs to the supplied stack selector. Shared owners
+    // retain it by default; an owner with an isolated root cache may release it
+    // at this exact root/suffix boundary through the lifecycle hook.
+    stacks.after_root_fold()?;
+
     let suffix = crate::prove_suffix::<Cfg, T, C, O, TS, R>(
         expanded,
         prefix_slots,

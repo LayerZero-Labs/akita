@@ -1,4 +1,4 @@
-use crate::backend::onehot::{column_sweep_ajtai_onehot, MultiChunkEntry, SingleChunkEntry};
+use crate::backend::onehot::{column_sweep_ajtai_onehot_multi, MultiChunkEntry, SingleChunkEntry};
 use crate::backend::sparse_ring::column_sweep_sparse;
 use crate::compute::backend::{
     CommitmentComputeBackend, CompressionComputeBackend, CompressionRowsProducts,
@@ -13,13 +13,14 @@ use crate::compute::plans::{
 use crate::kernels::linear::validate_compression_batch_shape;
 use crate::kernels::linear::{
     digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
-    mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
-    mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
-    mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile,
-    CrtI8CapacityProfile,
+    fused_split_eq_quotients_streamed_prover_bounds, mat_vec_mul_ntt_dense_digits_i8,
+    mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense,
+    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8, mat_vec_mul_ntt_single_i8,
+    mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
+    StreamedASource,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{
     dispatch_for_field, prepare_ntt_cache, AkitaExpandedSetup, NttCacheKey, NttCacheMode,
@@ -33,6 +34,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 mod compression_cache;
+mod ring_switch;
+#[cfg(test)]
+mod streamed_tests;
 
 use compression_cache::CompressionNttCache;
 
@@ -41,6 +45,12 @@ use compression_cache::CompressionNttCache;
 pub struct CpuBackend;
 
 type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
+
+/// Ring-element extent above which one-shot ring-switch relation passes
+/// stream their transforms from the field form instead of building (and
+/// keeping) a matrix-scale NTT cache. Deeper fold levels stay below this and
+/// share the cached path with the per-level digit-row products.
+pub(crate) const NTT_STREAM_THRESHOLD_RING_ELEMENTS: usize = 1 << 21;
 
 /// CPU-prepared setup keyed by runtime ring dimension.
 ///
@@ -168,6 +178,36 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
             .filter_map(|result| result.as_ref().ok())
             .map(|slot| slot.cache_bytes)
             .sum()
+    }
+
+    /// Drop every built NTT slot back to its reserved (empty) state and
+    /// return the bytes freed. Keys are kept, so the next `with_shared_ntt`
+    /// use rebuilds single-flight — callers may drop between pipeline
+    /// windows whose extents differ by orders of magnitude, e.g. after the
+    /// root fold level, whose slots dwarf every deeper level's.
+    pub fn drop_built_ntt_slots(&self) -> Result<usize, AkitaError> {
+        let mut freed = 0usize;
+        let mut cache = self
+            .shared_ntt
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+        for cell in cache.values_mut() {
+            let built = cell
+                .get()
+                .and_then(|result| result.as_ref().ok())
+                .map(|slot| slot.cache_bytes);
+            if let Some(bytes) = built {
+                freed = freed.checked_add(bytes).ok_or_else(|| {
+                    AkitaError::InvalidSetup("released NTT cache bytes overflow".into())
+                })?;
+                *cell = Arc::new(OnceLock::new());
+            }
+        }
+        drop(cache);
+        if freed > 0 {
+            tracing::info!(freed_bytes = freed, "dropped built NTT slots");
+        }
+        Ok(freed)
     }
 
     /// Initialized shared NTT cache entries in deterministic reporting order.
@@ -424,6 +464,10 @@ where
         ensure_ntt_slot_on_prepared(prepared, key)
     }
 
+    fn release_built_ntt_slots(&self, prepared: &Self::PreparedSetup) -> Result<usize, AkitaError> {
+        prepared.drop_built_ntt_slots()
+    }
+
     fn planned_ntt_cache_entry_bytes(
         &self,
         prepared: &Self::PreparedSetup,
@@ -534,8 +578,8 @@ where
         plan: OneHotCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+        F: HasCommitAccum,
+        F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
     {
         let active_a_cols = plan
             .num_positions_per_block
@@ -546,25 +590,105 @@ where
             .shared_matrix
             .ring_view::<D>(plan.n_a, active_a_cols)?;
         Ok(match plan.blocks {
-            OneHotCommitBlocks::SingleChunk(blocks) => {
-                column_sweep_ajtai_onehot::<SingleChunkEntry, F, D>(
+            OneHotCommitBlocks::SingleChunk(source) => {
+                column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
                     &a_view,
-                    &blocks.block_slices()?,
+                    &[&source],
                     plan.n_a,
                     active_a_cols,
                     plan.num_digits_inner,
-                )
+                )?
+                .pop()
+                .unwrap_or_default()
             }
-            OneHotCommitBlocks::MultiChunk(blocks) => {
-                column_sweep_ajtai_onehot::<MultiChunkEntry, F, D>(
+            OneHotCommitBlocks::MultiChunk(source) => {
+                column_sweep_ajtai_onehot_multi::<MultiChunkEntry, F, D>(
                     &a_view,
-                    &blocks.block_slices()?,
+                    &[&source],
                     plan.n_a,
                     active_a_cols,
                     plan.num_digits_inner,
-                )
+                )?
+                .pop()
+                .unwrap_or_default()
             }
         })
+    }
+
+    fn onehot_commit_rows_multi<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        plans: Vec<OneHotCommitRowsPlan<'_>>,
+    ) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
+    where
+        F: HasCommitAccum,
+        F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+    {
+        let Some(first) = plans.first() else {
+            return Ok(Vec::new());
+        };
+        let uniform_shape = plans.iter().all(|plan| {
+            plan.n_a == first.n_a
+                && plan.num_positions_per_block == first.num_positions_per_block
+                && plan.num_digits_inner == first.num_digits_inner
+        });
+        let all_single = plans
+            .iter()
+            .all(|plan| matches!(plan.blocks, OneHotCommitBlocks::SingleChunk(_)));
+        let all_multi = plans
+            .iter()
+            .all(|plan| matches!(plan.blocks, OneHotCommitBlocks::MultiChunk(_)));
+        if !uniform_shape || !(all_single || all_multi) {
+            return plans
+                .into_iter()
+                .map(|plan| self.onehot_commit_rows::<D>(prepared, plan))
+                .collect();
+        }
+
+        let active_a_cols = first
+            .num_positions_per_block
+            .checked_mul(first.num_digits_inner)
+            .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
+        let a_view = prepared
+            .expanded
+            .shared_matrix
+            .ring_view::<D>(first.n_a, active_a_cols)?;
+        let n_a = first.n_a;
+        let num_digits_inner = first.num_digits_inner;
+
+        if all_single {
+            let sources = plans
+                .iter()
+                .map(|plan| match &plan.blocks {
+                    OneHotCommitBlocks::SingleChunk(source) => Some(source),
+                    OneHotCommitBlocks::MultiChunk(_) => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| AkitaError::InvalidSetup("mixed one-hot geometry".to_string()))?;
+            column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
+                &a_view,
+                &sources,
+                n_a,
+                active_a_cols,
+                num_digits_inner,
+            )
+        } else {
+            let sources = plans
+                .iter()
+                .map(|plan| match &plan.blocks {
+                    OneHotCommitBlocks::MultiChunk(source) => Some(source),
+                    OneHotCommitBlocks::SingleChunk(_) => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| AkitaError::InvalidSetup("mixed one-hot geometry".to_string()))?;
+            column_sweep_ajtai_onehot_multi::<MultiChunkEntry, F, D>(
+                &a_view,
+                &sources,
+                n_a,
+                active_a_cols,
+                num_digits_inner,
+            )
+        }
     }
 
     fn sparse_ring_commit_rows<const D: usize>(
@@ -774,128 +898,6 @@ where
             NttCacheKey::from_matrix_shape(D, row_len, digits.len(), NttTransformDomain::Cyclic)?,
             |ntt| mat_vec_mul_ntt_single_i8_cyclic(ntt, row_len, digits.len(), digits, log_basis),
         )
-    }
-}
-
-impl<F> RingSwitchComputeBackend<F> for CpuBackend
-where
-    F: FieldCore + CanonicalField,
-{
-    fn ring_switch_relation_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RingSwitchRelationRowsPlan<'_, D>,
-    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
-    where
-        F: HalvingField,
-    {
-        let mut cyclic_requirement: Option<NttCacheKey> = None;
-        for (rows, width) in [
-            (plan.n_d, plan.e_hat.len()),
-            (plan.n_b, plan.t_hat.len()),
-            (plan.n_a, plan.z_segment.len()),
-        ] {
-            if rows == 0 && width == 0 {
-                continue;
-            }
-            let role_requirement =
-                NttCacheKey::from_matrix_shape(D, rows, width, NttTransformDomain::Cyclic)?;
-            cyclic_requirement = Some(match cyclic_requirement {
-                Some(current) => current.join(role_requirement)?,
-                None => role_requirement,
-            });
-        }
-        let cyclic_requirement = cyclic_requirement.ok_or_else(|| {
-            AkitaError::InvalidSetup("ring-switch relation has no active rows".into())
-        })?;
-        prepared.with_shared_ntt::<D, _>(cyclic_requirement, |cyclic_ntt| {
-            if plan.n_a == 0 {
-                let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
-                    cyclic_ntt,
-                    cyclic_ntt,
-                    plan.n_d,
-                    plan.n_b,
-                    0,
-                    plan.e_hat,
-                    plan.t_hat,
-                    &[],
-                    0,
-                    plan.log_basis_open,
-                    plan.log_basis_outer,
-                )?;
-                return Ok(RingSwitchRelationRows {
-                    d_cyclic,
-                    b_cyclic,
-                    a_quotients,
-                });
-            }
-            let negacyclic_requirement = NttCacheKey::from_matrix_shape(
-                D,
-                plan.n_a,
-                plan.z_segment.len(),
-                NttTransformDomain::Negacyclic,
-            )?;
-            prepared.with_shared_ntt::<D, _>(negacyclic_requirement, |negacyclic_ntt| {
-                let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
-                    negacyclic_ntt,
-                    cyclic_ntt,
-                    plan.n_d,
-                    plan.n_b,
-                    plan.n_a,
-                    plan.e_hat,
-                    plan.t_hat,
-                    plan.z_segment,
-                    plan.z_folded_centered_inf_norm,
-                    plan.log_basis_open,
-                    plan.log_basis_outer,
-                )?;
-                Ok(RingSwitchRelationRows {
-                    d_cyclic,
-                    b_cyclic,
-                    a_quotients,
-                })
-            })
-        })
-    }
-
-    fn ring_switch_quotient_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RingSwitchQuotientRowsPlan<'_, D>,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-    where
-        F: HalvingField,
-    {
-        let cyclic = NttCacheKey::from_matrix_shape(
-            D,
-            plan.n_a,
-            plan.z_segment.len(),
-            NttTransformDomain::Cyclic,
-        )?;
-        let negacyclic = NttCacheKey::from_matrix_shape(
-            D,
-            plan.n_a,
-            plan.z_segment.len(),
-            NttTransformDomain::Negacyclic,
-        )?;
-        prepared.with_shared_ntt::<D, _>(cyclic, |cyclic_ntt| {
-            prepared.with_shared_ntt::<D, _>(negacyclic, |negacyclic_ntt| {
-                let (_d_cyclic, _b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
-                    negacyclic_ntt,
-                    cyclic_ntt,
-                    0,
-                    0,
-                    plan.n_a,
-                    &[][..],
-                    &[][..],
-                    plan.z_segment,
-                    plan.z_folded_centered_inf_norm,
-                    1,
-                    1,
-                )?;
-                Ok(a_quotients)
-            })
-        })
     }
 }
 

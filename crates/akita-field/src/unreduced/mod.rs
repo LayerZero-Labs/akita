@@ -422,7 +422,17 @@ impl Add for Fp128x8i32 {
 impl AddAssign for Fp128x8i32 {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
-        *self = *self + rhs;
+        // In-place NEON: no value round-trip through a stack temporary (the
+        // accumulate kernels call this in their innermost loop).
+        unsafe {
+            use std::arch::aarch64::*;
+            let p = self.0.as_mut_ptr();
+            vst1q_s32(p, vaddq_s32(vld1q_s32(p), vld1q_s32(rhs.0.as_ptr())));
+            vst1q_s32(
+                p.add(4),
+                vaddq_s32(vld1q_s32(p.add(4)), vld1q_s32(rhs.0.as_ptr().add(4))),
+            );
+        }
     }
 }
 
@@ -449,7 +459,16 @@ impl Sub for Fp128x8i32 {
 impl SubAssign for Fp128x8i32 {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
-        *self = *self - rhs;
+        // In-place NEON; see `AddAssign`.
+        unsafe {
+            use std::arch::aarch64::*;
+            let p = self.0.as_mut_ptr();
+            vst1q_s32(p, vsubq_s32(vld1q_s32(p), vld1q_s32(rhs.0.as_ptr())));
+            vst1q_s32(
+                p.add(4),
+                vsubq_s32(vld1q_s32(p.add(4)), vld1q_s32(rhs.0.as_ptr().add(4))),
+            );
+        }
     }
 }
 
@@ -794,6 +813,33 @@ impl<const P: u64> HasWide for Fp64<P> {
 
 impl<const P: u128> HasWide for Fp128<P> {
     type Wide = Fp128x8i32;
+}
+
+/// Associates a field with the accumulator used by unit-scale commitment
+/// streams and the number of additions it can absorb before reduction.
+pub trait HasCommitAccum: FieldCore {
+    /// Accumulator representation used by commitment streams.
+    type CommitAccum: AdditiveGroup + From<Self> + ReduceTo<Self>;
+
+    /// Maximum additions before the accumulator must be reduced.
+    const MAX_COMMIT_ACCUMULATIONS: usize;
+}
+
+const MAX_WIDE_LANE_ACCUMULATIONS: usize = 1 << 15;
+
+impl<const P: u32> HasCommitAccum for Fp32<P> {
+    type CommitAccum = Fp32x2i32;
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+}
+
+impl<const P: u64> HasCommitAccum for Fp64<P> {
+    type CommitAccum = Fp64x4i32;
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+}
+
+impl<const P: u128> HasCommitAccum for Fp128<P> {
+    type CommitAccum = Fp128x8i32;
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
 }
 
 #[cfg(test)]

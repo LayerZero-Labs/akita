@@ -5,7 +5,7 @@ use crate::compute::plans::{
 };
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
-use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{AkitaExpandedSetup, NttCacheKey};
 use std::sync::Arc;
@@ -85,6 +85,20 @@ where
         &self,
         prepared: &'a Self::PreparedSetup,
     ) -> &'a AkitaExpandedSetup<F>;
+
+    /// Drop any built NTT slots back to their reserved state (freed bytes
+    /// returned). Slots rebuild on next use, so callers may drop between
+    /// pipeline windows whose extents differ by orders of magnitude — e.g.
+    /// after the root fold level, whose slots dwarf every deeper level's.
+    /// Backends without droppable caches return `Ok(0)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when backend-owned cache state cannot be updated.
+    fn release_built_ntt_slots(&self, prepared: &Self::PreparedSetup) -> Result<usize, AkitaError> {
+        let _unused = prepared;
+        Ok(0)
+    }
 
     /// Ensure explicit setup metadata and backend-prepared state match.
     fn validate_prepared_setup(
@@ -183,8 +197,29 @@ where
         plan: OneHotCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>;
+        F: HasCommitAccum,
+        F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>;
+
+    /// One-hot A-side commit rows for a same-shape batch of polynomials.
+    ///
+    /// Every polynomial of a committed group multiplies the same A matrix, so
+    /// a backend can stream A once for the whole batch. The default loops
+    /// [`Self::onehot_commit_rows`]; results are per-polynomial in plan
+    /// order.
+    fn onehot_commit_rows_multi<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        plans: Vec<OneHotCommitRowsPlan<'_>>,
+    ) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
+    where
+        F: HasCommitAccum,
+        F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+    {
+        plans
+            .into_iter()
+            .map(|plan| self.onehot_commit_rows::<D>(prepared, plan))
+            .collect()
+    }
 
     /// Sparse signed-ring A-side commit rows.
     fn sparse_ring_commit_rows<const D: usize>(
