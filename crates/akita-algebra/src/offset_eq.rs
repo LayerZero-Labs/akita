@@ -419,23 +419,6 @@ where
     let address_delta = outer_stride
         .checked_mul(local_outer)
         .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?;
-    let mut address_groups = BTreeMap::<usize, (Vec<usize>, Vec<F>)>::new();
-    for (base_index, &base_offset) in base_offsets.iter().enumerate() {
-        let first_address = base_offset
-            .checked_add(address_delta)
-            .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?;
-        let group = address_groups
-            .entry(first_address & (low_len - 1))
-            .or_default();
-        group.0.push(first_address);
-        if !base_scales.is_empty() {
-            group.1.push(
-                *base_scales
-                    .get(base_index)
-                    .ok_or_else(|| AkitaError::InvalidInput("affine base scale missing".into()))?,
-            );
-        }
-    }
     let template = high_weights
         .with_weight(first_high, |weight| weight.zero_like())
         .ok_or_else(|| AkitaError::InvalidInput("affine high factor out of range".into()))?;
@@ -452,7 +435,10 @@ where
     } else {
         None
     };
-    for (address_low, (first_addresses, first_scales)) in address_groups {
+    let mut accumulate_group = |address_low: usize,
+                                first_addresses: &[usize],
+                                first_scales: &[F]|
+     -> Result<(), AkitaError> {
         let summaries = build_affine_low_summaries(
             &template,
             low_challenges,
@@ -473,8 +459,8 @@ where
         if accumulate_high_rows_bucketed(
             out,
             high_challenges,
-            &first_addresses,
-            &first_scales,
+            first_addresses,
+            first_scales,
             outer_stride,
             low_challenges.len(),
             high_weights,
@@ -482,10 +468,10 @@ where
             rows,
             &summaries,
         )? {
-            continue;
+            return Ok(());
         }
 
-        for (base_index, first_address) in first_addresses.into_iter().enumerate() {
+        for (base_index, &first_address) in first_addresses.iter().enumerate() {
             let base_scale = first_scales.get(base_index).copied();
             for row in 0..rows {
                 let high_index = first_high
@@ -526,6 +512,47 @@ where
                     })??;
             }
         }
+        Ok(())
+    };
+
+    if base_offsets.len() == 1 {
+        let first_address = base_offsets[0]
+            .checked_add(address_delta)
+            .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?;
+        let first_addresses = [first_address];
+        let first_scales = if base_scales.is_empty() {
+            &[][..]
+        } else {
+            base_scales
+                .get(..1)
+                .ok_or_else(|| AkitaError::InvalidInput("affine base scale missing".into()))?
+        };
+        return accumulate_group(
+            first_address & (low_len - 1),
+            &first_addresses,
+            first_scales,
+        );
+    }
+
+    let mut address_groups = BTreeMap::<usize, (Vec<usize>, Vec<F>)>::new();
+    for (base_index, &base_offset) in base_offsets.iter().enumerate() {
+        let first_address = base_offset
+            .checked_add(address_delta)
+            .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?;
+        let group = address_groups
+            .entry(first_address & (low_len - 1))
+            .or_default();
+        group.0.push(first_address);
+        if !base_scales.is_empty() {
+            group.1.push(
+                *base_scales
+                    .get(base_index)
+                    .ok_or_else(|| AkitaError::InvalidInput("affine base scale missing".into()))?,
+            );
+        }
+    }
+    for (address_low, (first_addresses, first_scales)) in address_groups {
+        accumulate_group(address_low, &first_addresses, &first_scales)?;
     }
     Ok(())
 }
