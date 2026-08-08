@@ -14,6 +14,8 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels;
 use akita_transcript::Transcript;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 fn mul_pow_2<E: FieldCore>(x: E, k: usize) -> E {
     let mut result = x;
@@ -74,14 +76,14 @@ pub struct BatchedSumcheckRoundResult<E: FieldCore> {
 /// Returns an error if the field inverse of 2 does not exist.
 #[tracing::instrument(skip_all, name = "prove_batched_sumcheck")]
 pub fn prove_batched_sumcheck<F, T, E, S>(
-    mut instances: Vec<&mut dyn SumcheckInstanceProver<E>>,
+    mut instances: Vec<&mut (dyn SumcheckInstanceProver<E> + Send)>,
     transcript: &mut T,
     mut sample_challenge: S,
 ) -> Result<(SumcheckProof<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
-    E: FieldCore + FromPrimitiveInt + HalvingField + AkitaSerialize,
+    E: FieldCore + FromPrimitiveInt + HalvingField + AkitaSerialize + Send + Sync,
     S: FnMut(&mut T) -> E,
 {
     if instances.is_empty() {
@@ -129,10 +131,8 @@ where
     let mut challenges = Vec::with_capacity(max_num_rounds);
 
     for round in 0..max_num_rounds {
-        let univariate_polys: Vec<UniPoly<E>> = instances
-            .iter_mut()
-            .zip(individual_claims.iter())
-            .map(|(inst, previous_claim)| {
+        let compute_univariate =
+            |(inst, previous_claim): (&mut &mut (dyn SumcheckInstanceProver<E> + Send), &E)| {
                 let n = inst.num_rounds();
                 let offset = max_num_rounds - n;
                 let active = round >= offset && round < offset + n;
@@ -141,7 +141,21 @@ where
                 } else {
                     UniPoly::from_coeffs(vec![previous_claim.half()])
                 }
-            })
+            };
+        // With many instances (the fused selector batch carries dozens), the
+        // per-instance round computations dominate late rounds whose domains
+        // are too small for intra-instance parallelism; fan the instances out.
+        #[cfg(feature = "parallel")]
+        let univariate_polys: Vec<UniPoly<E>> = instances
+            .par_iter_mut()
+            .zip(individual_claims.par_iter())
+            .map(compute_univariate)
+            .collect();
+        #[cfg(not(feature = "parallel"))]
+        let univariate_polys: Vec<UniPoly<E>> = instances
+            .iter_mut()
+            .zip(individual_claims.iter())
+            .map(compute_univariate)
             .collect();
 
         let batched_poly = linear_combination(&univariate_polys, &batching_coeffs);
@@ -172,14 +186,18 @@ where
         }
 
         // Ingest challenge into each active instance.
-        for inst in instances.iter_mut() {
+        let ingest = |inst: &mut &mut (dyn SumcheckInstanceProver<E> + Send)| {
             let n = inst.num_rounds();
             let offset = max_num_rounds - n;
             let active = round >= offset && round < offset + n;
             if active {
                 inst.ingest_challenge(round - offset, r_j);
             }
-        }
+        };
+        #[cfg(feature = "parallel")]
+        instances.par_iter_mut().for_each(ingest);
+        #[cfg(not(feature = "parallel"))]
+        instances.iter_mut().for_each(ingest);
 
         round_polys.push(compressed);
     }

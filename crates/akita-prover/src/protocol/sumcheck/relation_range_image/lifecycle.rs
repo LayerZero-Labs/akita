@@ -1,6 +1,56 @@
 use super::*;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
+    /// Create a stage-2 instance containing only the virtual range-image term.
+    ///
+    /// This is the standalone companion to
+    /// [`DigitRangeProver`](crate::protocol::sumcheck::DigitRangeProver):
+    /// stage 1 proves that the compact balanced-digit table is pointwise in
+    /// range, while this sumcheck links its carried range-image claim
+    /// `S(r) = range_image_evaluation` to an opening of the same digit table
+    /// through `S = w(w + 1)`. No relation or evaluation-trace term is
+    /// included.
+    pub fn new_virtual_only(
+        w_evals_compact: impl Into<std::sync::Arc<[i8]>>,
+        stage1_point: &[E],
+        range_image_evaluation: E,
+        b: usize,
+        live_lane_count: usize,
+        lane_bits: usize,
+        coefficient_bits: usize,
+    ) -> Result<Self, AkitaError> {
+        let lane_capacity = 1usize
+            .checked_shl(
+                u32::try_from(lane_bits).map_err(|_| {
+                    AkitaError::InvalidInput("stage-2 lane width overflow".to_string())
+                })?,
+            )
+            .ok_or_else(|| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
+        let coeff_count = 1usize
+            .checked_shl(u32::try_from(coefficient_bits).map_err(|_| {
+                AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
+            })?)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
+            })?;
+        Self::new(
+            E::one(),
+            w_evals_compact,
+            stage1_point,
+            range_image_evaluation,
+            b,
+            vec![E::zero(); coeff_count],
+            vec![E::zero(); lane_capacity],
+            live_lane_count,
+            lane_bits,
+            coefficient_bits,
+            E::zero(),
+            PreparedProverEvaluationTrace::zero(live_lane_count, coeff_count),
+            E::zero(),
+            None,
+        )
+    }
+
     /// Create a fused stage-2 virtual-claim + relation sumcheck prover.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "RelationRangeImageProver::new")]
