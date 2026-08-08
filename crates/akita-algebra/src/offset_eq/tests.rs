@@ -210,21 +210,42 @@ fn offset_eq_window_matches_scalar_eq_across_low_bits() {
 }
 
 #[test]
-fn offset_eq_window_caps_low_table_and_crosses_boundary() {
+fn offset_eq_window_balances_bounded_tables() {
+    let mut rng = StdRng::seed_from_u64(0xBA1A_5EED);
+    let challenges = random_vec(&mut rng, 20);
+    let balanced = OffsetEqWindow::new(&challenges).unwrap();
+    assert_eq!(balanced.low_bits, 10);
+    assert_eq!(balanced.eq_low.len(), 1 << 10);
+    assert_eq!(balanced.eq_high.as_ref().unwrap().len(), 1 << 10);
+
+    let challenges = random_vec(&mut rng, 31);
+    let bounded = OffsetEqWindow::new(&challenges).unwrap();
+    assert_eq!(bounded.low_bits, 16);
+    assert_eq!(bounded.eq_low.len(), 1 << 16);
+    assert_eq!(bounded.eq_high.as_ref().unwrap().len(), 1 << 15);
+
+    let challenges = random_vec(&mut rng, 33);
+    let wide = OffsetEqWindow::new(&challenges).unwrap();
+    assert_eq!(wide.low_bits, 16);
+    assert!(wide.eq_high.is_none());
+}
+
+#[test]
+fn offset_eq_window_crosses_adaptive_split_boundary() {
     let mut rng = StdRng::seed_from_u64(0xB0117);
-    // 20 coordinates exceed the 16-bit cap; the low table must stay capped
-    // while evaluation still matches the scalar oracle across the low/high
-    // boundary and at the exact domain end.
+    // Evaluation matches the scalar oracle across the adaptive low/high split
+    // and at the exact domain end.
     let n = 20usize;
     let challenges: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
     let window = OffsetEqWindow::new(&challenges).unwrap();
-    assert_eq!(window.eq_low.len(), 1usize << OFFSET_EQ_LOW_BITS_CAP);
+    assert_eq!(window.eq_low.len(), 1usize << window.low_bits);
+    let low_boundary = 1usize << window.low_bits;
     let domain = 1usize << n;
     for index in [
         0usize,
-        (1 << OFFSET_EQ_LOW_BITS_CAP) - 1,
-        1 << OFFSET_EQ_LOW_BITS_CAP,
-        (1 << OFFSET_EQ_LOW_BITS_CAP) + 5,
+        low_boundary - 1,
+        low_boundary,
+        low_boundary + 5,
         domain - 1,
         domain,
         domain + 9,

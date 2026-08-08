@@ -900,9 +900,9 @@ where
 
 /// Hard cap on the number of low bits materialized by [`OffsetEqWindow`].
 ///
-/// A 16-bit low table holds at most `2^16 = 65_536` field elements
-/// (about 1 MiB for 16-byte elements), which bounds the allocation regardless
-/// of the full point width.
+/// A 16-bit low table holds at most `2^16 = 65_536` field elements. When the
+/// high side can also be materialized, construction balances the split to
+/// minimize the sum of both table sizes.
 pub const OFFSET_EQ_LOW_BITS_CAP: usize = 16;
 
 /// Hard cap on the number of high bits materialized by [`OffsetEqWindow`].
@@ -947,16 +947,25 @@ impl<F: FieldCore> OffsetEqWindow<F> {
         Self::with_low_bits(challenges, OFFSET_EQ_LOW_BITS_CAP)
     }
 
-    /// Build a window over `challenges` choosing `min(len, cap, CAP)` low bits.
+    /// Build a window over `challenges` with at most `min(cap, CAP)` low bits.
+    /// When both sides fit their caps, the split is balanced to minimize total
+    /// materialization. Wider high remainders stay on demand.
     ///
     /// # Errors
     ///
     /// Returns an error if the low equality table cannot be constructed.
     pub fn with_low_bits(challenges: &[F], low_bits_cap: usize) -> Result<Self, AkitaError> {
-        let low_bits = challenges
-            .len()
-            .min(low_bits_cap)
-            .min(OFFSET_EQ_LOW_BITS_CAP);
+        let low_cap = low_bits_cap.min(OFFSET_EQ_LOW_BITS_CAP);
+        let low_bits = if challenges.len() <= low_cap + OFFSET_EQ_HIGH_BITS_CAP {
+            let minimum_for_bounded_high = challenges.len().saturating_sub(OFFSET_EQ_HIGH_BITS_CAP);
+            challenges
+                .len()
+                .div_ceil(2)
+                .max(minimum_for_bounded_high)
+                .min(low_cap)
+        } else {
+            challenges.len().min(low_cap)
+        };
         let eq_low = crate::eq_poly::EqPolynomial::evals(&challenges[..low_bits])?;
         let low_mask = if low_bits == 0 {
             0

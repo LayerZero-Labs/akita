@@ -107,7 +107,9 @@ where
         })?;
 
     let relation_evaluation = structured_evaluation + setup_evaluation + quotient_evaluation;
-    evaluator.cache_setup_contribution_plan(prepared_point.address_point(), plan)?;
+    if deferred_setup_claim.is_some() {
+        evaluator.cache_setup_contribution_plan(prepared_point.address_point(), plan)?;
+    }
     Ok(prepared_point.common_alpha_evaluation() * relation_evaluation)
 }
 

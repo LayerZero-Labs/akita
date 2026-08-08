@@ -275,16 +275,18 @@ where
     // `eq_y` and the setup-index equality; the scan is `O(required · D)` and is
     // the dominant recursive-mode verifier cost, so evaluate it in parallel.
     let _span = tracing::info_span!("stage3_setup_mle_scan", required).entered();
-    let terms = cfg_into_iter!(0..required)
-        .map(|setup_idx| -> Result<E, AkitaError> {
+    cfg_fold_reduce!(
+        0..required,
+        || Ok(E::zero()),
+        |acc: Result<E, AkitaError>, setup_idx| {
             let entry = setup_entries
                 .get(setup_idx)
                 .ok_or(AkitaError::InvalidProof)?;
             let ring_eval = eval_ring_at_pows_fast(entry, eq_y);
-            Ok(eq_setup_idx.eval_at(setup_idx)? * ring_eval)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(terms.into_iter().fold(E::zero(), |acc, value| acc + value))
+            Ok(acc? + eq_setup_idx.eval_at(setup_idx)? * ring_eval)
+        },
+        |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+    )
 }
 
 #[cfg(test)]
@@ -379,5 +381,58 @@ mod tests {
             &mut direct_transcript,
         )
         .is_err());
+    }
+
+    #[test]
+    fn setup_mle_scan_matches_dense_reference() {
+        let required = 9usize;
+        let setup_eval_len = 12usize;
+        let descriptor = AkitaSetupDescriptor {
+            max_num_vars: 0,
+            max_num_batched_polys: 0,
+            num_field_elements: setup_eval_len * RING_D,
+            setup_seed: [9u8; 32].into(),
+        };
+        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            descriptor,
+            akita_types::FlatMatrix::from_flat_data(
+                (0..setup_eval_len * RING_D)
+                    .map(|index| F::from_u64(11 + index as u64))
+                    .collect(),
+            ),
+        );
+        let rho_y = (0..RING_D.trailing_zeros() as usize)
+            .map(|index| F::from_u64(101 + index as u64))
+            .collect::<Vec<_>>();
+        let eq_y = ring_eq_table::<F, RING_D>(&rho_y).expect("ring equality table");
+        let rho_setup = (0..required.next_power_of_two().trailing_zeros() as usize)
+            .map(|index| F::from_u64(201 + index as u64))
+            .collect::<Vec<_>>();
+        let eq_setup = SplitEqEvals::new(&rho_setup).expect("setup equality");
+        let rings = setup
+            .shared_matrix()
+            .ring_view::<RING_D>(1, setup_eval_len)
+            .expect("setup ring view");
+        let expected = rings
+            .as_slice()
+            .iter()
+            .take(required)
+            .enumerate()
+            .map(|(index, ring)| {
+                eq_setup.eval_at(index).expect("setup equality entry")
+                    * eval_ring_at_pows_fast(ring, &eq_y)
+            })
+            .sum::<F>();
+        assert_eq!(
+            setup_mle_at_eq_tables::<F, F, RING_D>(
+                &setup,
+                required,
+                setup_eval_len,
+                &rho_setup,
+                &eq_y,
+            )
+            .expect("streamed setup scan"),
+            expected
+        );
     }
 }
