@@ -7,9 +7,9 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
 };
 use akita_types::{
-    decode_terminal_z_golomb_payload, dispatch_for_field, recover_ring_subfield_inner_product,
-    AkitaVerifierSetup, FpExtEncoding, PreparedOpeningPoint, RingMultiplierOpeningPoint,
-    TerminalCommittedGroupParams, TerminalResponse,
+    decode_ring_subfield_scalar, decode_terminal_z_golomb_payload, dispatch_for_field,
+    recover_ring_subfield_inner_product, AkitaVerifierSetup, FpExtEncoding, PreparedOpeningPoint,
+    RingMultiplierOpeningPoint, TerminalCommittedGroupParams, TerminalResponse,
 };
 
 fn sparse_challenge_mul_accumulate<F, const D: usize>(
@@ -367,26 +367,37 @@ where
             if claim_e.len() != params.num_live_blocks {
                 return Err(AkitaError::InvalidProof);
             }
-            let mut outer_eval = CyclotomicRing::zero();
-            for (block, value) in claim_e.iter().enumerate() {
-                if let Some(scale) = multiplier.fold_constant_coeff(block) {
+            let claim_opening = if let Some(fold_rings) = multiplier.fold_rings_trusted::<D>()? {
+                let fold_rings = fold_rings
+                    .get(..claim_e.len())
+                    .ok_or(AkitaError::InvalidProof)?;
+                fold_rings
+                    .iter()
+                    .zip(claim_e)
+                    .try_fold(E::zero(), |opening, (weight, value)| {
+                        let weight = decode_ring_subfield_scalar::<F, E, D>(
+                            weight,
+                            AkitaError::InvalidProof,
+                        )?;
+                        let value =
+                            recover_ring_subfield_inner_product::<F, E, D>(value, packed_inner)?;
+                        Ok::<_, AkitaError>(opening + weight * value)
+                    })?
+            } else {
+                let mut outer_eval = CyclotomicRing::zero();
+                for (block, value) in claim_e.iter().enumerate() {
+                    let scale = multiplier
+                        .fold_constant_coeff(block)
+                        .ok_or(AkitaError::InvalidProof)?;
                     outer_eval += value.scale(&scale);
-                } else {
-                    outer_eval += *multiplier
-                        .fold_rings_trusted::<D>()?
-                        .ok_or(AkitaError::InvalidProof)?
-                        .get(block)
-                        .ok_or(AkitaError::InvalidProof)?
-                        * *value;
                 }
-            }
-            let opening =
-                recover_ring_subfield_inner_product::<F, E, D>(&outer_eval, packed_inner)?;
+                recover_ring_subfield_inner_product::<F, E, D>(&outer_eval, packed_inner)?
+            };
             let scale = claim_scales
                 .and_then(|scales| scales.first())
                 .copied()
                 .unwrap_or(global_scale);
-            actual += row_coefficients[0] * scale * opening;
+            actual += row_coefficients[0] * scale * claim_opening;
             Ok::<(), AkitaError>(())
         }
     )?;

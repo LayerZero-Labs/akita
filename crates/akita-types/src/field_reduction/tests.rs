@@ -13,6 +13,56 @@ fn ring_from_index<const D: usize>() -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 1) as u64)))
 }
 
+fn assert_ring_subfield_scalar_roundtrip<E, const D: usize>()
+where
+    E: FpExtEncoding<AkitaF32>,
+{
+    let coordinates = (0..E::EXT_DEGREE)
+        .map(|index| AkitaF32::from_u64(3 + 7 * index as u64))
+        .collect::<Vec<_>>();
+    let value = E::from_base_slice(&coordinates);
+    let embedded =
+        embed_ring_subfield_scalar::<AkitaF32, E, D>(value, AkitaError::InvalidProof).unwrap();
+
+    assert_eq!(
+        decode_ring_subfield_scalar::<AkitaF32, E, D>(&embedded, AkitaError::InvalidProof,)
+            .unwrap(),
+        value
+    );
+}
+
+#[test]
+fn ring_subfield_scalar_decode_inverts_canonical_embedding() {
+    assert_ring_subfield_scalar_roundtrip::<AkitaF32, 64>();
+    assert_ring_subfield_scalar_roundtrip::<Ext2<AkitaF32>, 64>();
+    assert_ring_subfield_scalar_roundtrip::<FpExt4<AkitaF32>, 64>();
+    assert_ring_subfield_scalar_roundtrip::<FpExt8<AkitaF32>, 64>();
+    assert_ring_subfield_scalar_roundtrip::<FpExt4<AkitaF32>, 128>();
+}
+
+#[test]
+fn ring_subfield_scalar_decode_rejects_noncanonical_ring() {
+    let value = FpExt4::new([
+        AkitaF32::from_u64(2),
+        AkitaF32::from_u64(3),
+        AkitaF32::from_u64(5),
+        AkitaF32::from_u64(7),
+    ]);
+    let embedded =
+        embed_ring_subfield_scalar::<AkitaF32, _, 64>(value, AkitaError::InvalidProof).unwrap();
+    let mut coefficients = *embedded.coefficients();
+    coefficients[1] += AkitaF32::one();
+    let malformed = CyclotomicRing::from_coefficients(coefficients);
+
+    assert_eq!(
+        decode_ring_subfield_scalar::<AkitaF32, FpExt4<AkitaF32>, 64>(
+            &malformed,
+            AkitaError::InvalidProof,
+        ),
+        Err(AkitaError::InvalidProof)
+    );
+}
+
 fn ring_subfield_basis<Fq: FieldCore, const D: usize, const K: usize>(
     _params: SubfieldParams<D, K>,
 ) -> Vec<CyclotomicRing<Fq, D>> {
