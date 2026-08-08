@@ -686,33 +686,31 @@ where
 }
 
 #[inline]
-fn decode_traced_to_extension<F, E, const D: usize, const K: usize>(
-    params: SubfieldParams<D, K>,
-    traced: &CyclotomicRing<F, D>,
-) -> Result<E, AkitaError>
+fn shifted_coefficient<F, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    shift: usize,
+    target: usize,
+) -> Option<F>
 where
-    F: FieldCore + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F>,
+    F: FieldCore,
 {
-    let scale_inv = F::from_u64(params.packed_len() as u64)
-        .inverse()
-        .ok_or_else(|| AkitaError::InvalidInput("trace scale is not invertible".to_string()))?;
-    let coeffs = traced.coefficients();
-    if K == 1 {
-        return Ok(E::from_base_slice(&[coeffs[0] * scale_inv]));
+    if shift >= D || target >= D {
+        return None;
     }
-    let step = D / (2 * K);
-    let mut coords = Vec::with_capacity(K);
-    coords.push(coeffs[0] * scale_inv);
-    let mut j = 1usize;
-    while j < K {
-        coords.push(coeffs[j * step] * scale_inv);
-        j += 1;
+    if target >= shift {
+        return ring.coefficients().get(target - shift).copied();
     }
-    Ok(E::from_base_slice(&coords))
+    let source = D.checked_add(target)?.checked_sub(shift)?;
+    ring.coefficients().get(source).copied().map(|value| -value)
 }
 
 /// `TraceOpen(ring · X^c)` for every ring coordinate `c`, sharing one ring product.
+///
+/// The normalized subgroup trace keeps only the shifted constant coefficient
+/// and the `K - 1` antisymmetric pairs at multiples of `D / (2K)`. Extracting
+/// those pairs directly costs `O(DK)` after the ring product, instead of
+/// materializing `D` separate subgroup traces. The product skips zero
+/// coefficients in `ring`, so the verifier's unit-ring case is `O(DK)` total.
 pub(crate) fn trace_open_ring_row<F, E, const D: usize>(
     ring: &CyclotomicRing<F, D>,
     packed_inner_point: &CyclotomicRing<F, D>,
@@ -726,27 +724,34 @@ where
         .checked_shl(ring_bits as u32)
         .ok_or_else(|| AkitaError::InvalidInput("trace-open row length overflow".to_string()))?;
     let trace_partner = packed_inner_point.sigma_m1();
-    let trace_product = *ring * trace_partner;
+    let mut trace_product = CyclotomicRing::zero();
+    ring.mul_accumulate_into(&trace_partner, &mut trace_product);
+    let half = F::from_u64(2)
+        .inverse()
+        .ok_or_else(|| AkitaError::InvalidInput("two is not invertible".to_string()))?;
     macro_rules! arm {
         ($k:expr) => {{
-            let params = SubfieldParams::<D, $k>::new().map_err(|_| {
+            let _params = SubfieldParams::<D, $k>::new().map_err(|_| {
                 AkitaError::InvalidInput(
                     "claim-field degree must divide the ring dimension".to_string(),
                 )
             })?;
-            if $k == 1 {
-                let mut row = Vec::with_capacity(ring_len);
-                for coord in 0..ring_len {
-                    let trace_input = trace_product.negacyclic_shift(coord);
-                    row.push(E::from_base_slice(&[trace_input.coefficients()[0]]));
-                }
-                return Ok(row);
-            }
+            let step = D / (2 * $k);
             let mut row = Vec::with_capacity(ring_len);
-            for coord in 0..ring_len {
-                let trace_input = trace_product.negacyclic_shift(coord);
-                let traced = trace_h::<F, D, $k>(params, &trace_input);
-                row.push(decode_traced_to_extension::<F, E, D, $k>(params, &traced)?);
+            for shift in 0..ring_len {
+                let mut coordinates = [F::zero(); $k];
+                coordinates[0] = shifted_coefficient(&trace_product, shift, 0)
+                    .ok_or(AkitaError::InvalidProof)?;
+                for (index, coordinate) in coordinates.iter_mut().enumerate().skip(1) {
+                    let position = index.checked_mul(step).ok_or(AkitaError::InvalidProof)?;
+                    let inverse = D.checked_sub(position).ok_or(AkitaError::InvalidProof)?;
+                    let left = shifted_coefficient(&trace_product, shift, position)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let right = shifted_coefficient(&trace_product, shift, inverse)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    *coordinate = (left - right) * half;
+                }
+                row.push(E::from_base_slice(&coordinates));
             }
             Ok(row)
         }};

@@ -63,6 +63,50 @@ fn ring_subfield_scalar_decode_rejects_noncanonical_ring() {
     );
 }
 
+fn assert_trace_open_row_matches_subgroup_oracle<E, const D: usize, const K: usize>()
+where
+    E: FpExtEncoding<AkitaF32>,
+{
+    assert_eq!(E::EXT_DEGREE, K);
+    let params = SubfieldParams::<D, K>::new().unwrap();
+    let ring = CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+        AkitaF32::from_u64(3 + 5 * index as u64)
+    }));
+    let packed_inner = CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+        AkitaF32::from_u64(7 + 11 * index as u64)
+    }));
+    let trace_product = ring * packed_inner.sigma_m1();
+    let trace_scale = AkitaF32::from_u64(params.packed_len() as u64)
+        .inverse()
+        .unwrap();
+    let step = D / (2 * K);
+    let expected = (0..D)
+        .map(|shift| {
+            let traced = trace_h(params, &trace_product.negacyclic_shift(shift));
+            let mut coordinates = [AkitaF32::zero(); K];
+            coordinates[0] = traced.coefficients()[0] * trace_scale;
+            for (index, coordinate) in coordinates.iter_mut().enumerate().skip(1) {
+                *coordinate = traced.coefficients()[index * step] * trace_scale;
+            }
+            E::from_base_slice(&coordinates)
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        trace_open_ring_row::<AkitaF32, E, D>(&ring, &packed_inner, D.trailing_zeros() as usize,)
+            .unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn trace_open_row_matches_explicit_subgroup_trace() {
+    assert_trace_open_row_matches_subgroup_oracle::<AkitaF32, 64, 1>();
+    assert_trace_open_row_matches_subgroup_oracle::<Ext2<AkitaF32>, 64, 2>();
+    assert_trace_open_row_matches_subgroup_oracle::<FpExt4<AkitaF32>, 64, 4>();
+    assert_trace_open_row_matches_subgroup_oracle::<FpExt8<AkitaF32>, 64, 8>();
+}
+
 fn ring_subfield_basis<Fq: FieldCore, const D: usize, const K: usize>(
     _params: SubfieldParams<D, K>,
 ) -> Vec<CyclotomicRing<Fq, D>> {
