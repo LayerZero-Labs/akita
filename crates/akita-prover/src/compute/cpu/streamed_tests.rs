@@ -241,7 +241,7 @@ fn drop_built_ntt_slots_frees_and_rebuilds() {
         .with_shared_ntt::<D, _>(key, |_| Ok(()))
         .expect("build slot");
     assert!(prepared.shared_ntt_cache_bytes() > 0);
-    let freed = prepared.drop_built_ntt_slots();
+    let freed = prepared.drop_built_ntt_slots().unwrap();
     assert!(freed > 0);
     assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
     prepared
@@ -274,7 +274,7 @@ fn dropping_built_slots_does_not_invalidate_active_reader() {
                 .expect("active reader keeps its cache alive");
         });
         entered.wait();
-        assert_eq!(prepared.drop_built_ntt_slots(), bytes);
+        assert_eq!(prepared.drop_built_ntt_slots().unwrap(), bytes);
         assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
         released.wait();
         reader.join().expect("reader thread");

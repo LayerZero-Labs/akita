@@ -265,6 +265,45 @@ fn explicit_clear_drops_shared_prepared_onehot_blocks() {
 }
 
 #[test]
+fn tensor_root_projection_cache_is_caller_owned() {
+    type F = Prime24Offset3;
+    type E = FpExt4<F>;
+    const D: usize = 16;
+
+    let poly = OneHotPoly::<F>::new(
+        8,
+        D,
+        vec![
+            Some(0usize),
+            Some(7),
+            None,
+            Some(3),
+            Some(5),
+            Some(1),
+            None,
+            Some(6),
+        ],
+    )
+    .unwrap();
+
+    let local = poly.tensor_packed_sparse_ring_poly::<E, D>().unwrap();
+    assert_eq!(poly.tensor_root_cache_len_for_test(), 0);
+
+    poly.prepare_tensor_root_cache::<E, D>().unwrap();
+    let prepared = poly.tensor_packed_sparse_ring_poly::<E, D>().unwrap();
+    assert_eq!(poly.tensor_root_cache_len_for_test(), 1);
+    assert!(!std::sync::Arc::ptr_eq(&local, &prepared));
+
+    let borrowed = poly.tensor_packed_sparse_ring_poly::<E, D>().unwrap();
+    assert!(std::sync::Arc::ptr_eq(&prepared, &borrowed));
+
+    let clone = poly.clone();
+    clone.clear_tensor_root_cache().unwrap();
+    assert_eq!(poly.tensor_root_cache_len_for_test(), 0);
+    assert_eq!(RootPolyMeta::num_vars(prepared.as_ref()), poly.num_vars());
+}
+
+#[test]
 fn tensor_column_partials_match_dense_reference() {
     type F = Prime24Offset3;
     type E = FpExt4<F>;

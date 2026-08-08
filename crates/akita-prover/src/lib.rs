@@ -38,7 +38,7 @@ pub use compute::{
     OpeningCluster, OpeningProveBackendFor, OperationCtx, PlannedNttCacheOwnerMetric,
     PreparedCrtNttProfile, PreparedNttCacheMetric, ProveBackendFor, ProveFlowBackendFor,
     ProveStackFor, ProverComputeStack, RecursiveProveBackend, RecursiveWitnessCommitRowsPlan,
-    RingSwitchCluster, RingSwitchComputeBackend, RingSwitchProveBackend,
+    ReleaseRootNttAfterFold, RingSwitchCluster, RingSwitchComputeBackend, RingSwitchProveBackend,
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
     RootCommitBackend, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
     RootProveBackend, RootProvePoly, RootTensorSource, RoutedNttRequirement,

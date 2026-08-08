@@ -89,6 +89,19 @@ where
                 .planned_ntt_cache_entry_bytes(self.prepared, key)?,
         ))
     }
+
+    fn release_ntt_if_new(
+        &self,
+        released_owners: &mut Vec<NttCacheOwnerId>,
+    ) -> Result<usize, AkitaError> {
+        let owner = self.backend.ntt_cache_owner_id(self.prepared);
+        if released_owners.contains(&owner) {
+            return Ok(0);
+        }
+        let freed = self.backend.release_built_ntt_slots(self.prepared)?;
+        released_owners.push(owner);
+        Ok(freed)
+    }
 }
 
 /// One fold-level prover stack with four operation clusters.
@@ -120,26 +133,31 @@ where
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
 {
-    /// Drop built NTT slots across all four clusters (idempotent when they
-    /// share one prepared setup). Called between fold levels whose slot
-    /// extents differ by orders of magnitude; dropped slots rebuild on use.
-    pub fn release_built_ntt_slots(&self) {
-        let _ = self
-            .commit
-            .backend()
-            .release_built_ntt_slots(self.commit.prepared());
-        let _ = self
-            .opening
-            .backend()
-            .release_built_ntt_slots(self.opening.prepared());
-        let _ = self
-            .tensor
-            .backend()
-            .release_built_ntt_slots(self.tensor.prepared());
-        let _ = self
-            .ring_switch
-            .backend()
-            .release_built_ntt_slots(self.ring_switch.prepared());
+    /// Drop built NTT slots across all four clusters and return the total
+    /// number of bytes freed. Physically shared cache owners are released once.
+    ///
+    /// Slots rebuild on next use. Callers should release only at a lifecycle
+    /// boundary they own; proof execution retains shared prepared state by
+    /// default.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a backend cannot update its cache state or the
+    /// released-byte total overflows.
+    pub fn release_built_ntt_slots(&self) -> Result<usize, AkitaError> {
+        let mut released_owners = Vec::with_capacity(4);
+        let mut freed = 0usize;
+        for released in [
+            self.commit.release_ntt_if_new(&mut released_owners)?,
+            self.opening.release_ntt_if_new(&mut released_owners)?,
+            self.tensor.release_ntt_if_new(&mut released_owners)?,
+            self.ring_switch.release_ntt_if_new(&mut released_owners)?,
+        ] {
+            freed = freed.checked_add(released).ok_or_else(|| {
+                AkitaError::InvalidSetup("released NTT cache bytes overflow".into())
+            })?;
+        }
+        Ok(freed)
     }
 
     /// Build a heterogeneous prover stack, validating every contained context
@@ -246,6 +264,71 @@ where
         &self,
         level: usize,
     ) -> &ProverComputeStack<'a, F, Self::Commit, Self::Opening, Self::Tensor, Self::RingSwitch>;
+
+    /// Optional lifecycle hook after the root fold and before the recursive
+    /// suffix. The default retains every prepared NTT cache.
+    ///
+    /// A downstream stack selector may override this when it owns an isolated
+    /// root cache and intentionally wants to release it at this boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the selected lifecycle action fails.
+    fn after_root_fold(&self) -> Result<(), AkitaError> {
+        Ok(())
+    }
+}
+
+/// Explicit stack policy that releases every NTT cache owner reachable from
+/// the root stack after the root fold.
+///
+/// This restores the memory-minimizing root/suffix boundary for applications
+/// that choose it. Do not use it when the root stack shares prepared cache
+/// owners with concurrent work whose warm state must be retained.
+pub struct ReleaseRootNttAfterFold<S> {
+    stacks: S,
+}
+
+impl<S> ReleaseRootNttAfterFold<S> {
+    /// Wrap a stack selector with explicit root NTT release behavior.
+    pub fn new(stacks: S) -> Self {
+        Self { stacks }
+    }
+
+    /// Recover the wrapped stack selector.
+    pub fn into_inner(self) -> S {
+        self.stacks
+    }
+}
+
+impl<'a, F, C, O, T, R, S> LevelProveStacks<'a, F> for ReleaseRootNttAfterFold<S>
+where
+    F: FieldCore + CanonicalField,
+    C: ComputeBackendSetup<F> + 'a,
+    O: ComputeBackendSetup<F> + 'a,
+    T: ComputeBackendSetup<F> + 'a,
+    R: ComputeBackendSetup<F> + 'a,
+    S: LevelProveStacks<'a, F, Commit = C, Opening = O, Tensor = T, RingSwitch = R>,
+    C::PreparedSetup: 'a,
+    O::PreparedSetup: 'a,
+    T::PreparedSetup: 'a,
+    R::PreparedSetup: 'a,
+{
+    type Commit = C;
+    type Opening = O;
+    type Tensor = T;
+    type RingSwitch = R;
+
+    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, C, O, T, R> {
+        self.stacks.prove_stack_at_level(level)
+    }
+
+    fn after_root_fold(&self) -> Result<(), AkitaError> {
+        self.stacks
+            .prove_stack_at_level(0)
+            .release_built_ntt_slots()
+            .map(|_| ())
+    }
 }
 
 /// Prewarm an exact cache plan on the cluster and level that will execute it.
@@ -376,6 +459,10 @@ where
 
     fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, C, O, T, R> {
         (*self).prove_stack_at_level(level)
+    }
+
+    fn after_root_fold(&self) -> Result<(), AkitaError> {
+        <S as LevelProveStacks<'a, F>>::after_root_fold(*self)
     }
 }
 
@@ -708,6 +795,30 @@ mod tests {
 
         assert_eq!(metrics.len(), 1);
         assert_eq!(metrics[0].cache_bytes, prepared.shared_ntt_cache_bytes());
+    }
+
+    #[test]
+    fn root_lifecycle_retains_by_default_and_explicit_release_deduplicates_owner() {
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
+            .expect("setup");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let stack = TestUniformStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("uniform stack");
+        let requirements = all_cluster_requirements();
+
+        prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();
+        let resident = prepared.shared_ntt_cache_bytes();
+        assert!(resident > 0);
+
+        LevelProveStacks::after_root_fold(&stack).unwrap();
+        assert_eq!(prepared.shared_ntt_cache_bytes(), resident);
+
+        let releasing = ReleaseRootNttAfterFold::new(&stack);
+        LevelProveStacks::after_root_fold(&releasing).unwrap();
+        assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
+
+        prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();
+        assert_eq!(stack.release_built_ntt_slots().unwrap(), resident);
     }
 
     #[test]

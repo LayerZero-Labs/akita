@@ -67,6 +67,7 @@ fn run_single_onehot(nv: usize) {
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
+        let releasing_stack = akita_prover::ReleaseRootNttAfterFold::new(&stack);
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot");
         let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
@@ -77,7 +78,7 @@ fn run_single_onehot(nv: usize) {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &stack,
+            &releasing_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )

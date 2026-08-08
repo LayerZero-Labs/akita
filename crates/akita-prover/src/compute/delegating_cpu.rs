@@ -63,6 +63,13 @@ macro_rules! delegate_compute_backend_setup {
                 CpuBackend.planned_ntt_cache_entry_bytes(prepared, key)
             }
 
+            fn release_built_ntt_slots(
+                &self,
+                prepared: &Self::PreparedSetup,
+            ) -> Result<usize, AkitaError> {
+                CpuBackend.release_built_ntt_slots(prepared)
+            }
+
             fn prepared_expanded_setup<'a>(
                 &self,
                 prepared: &'a Self::PreparedSetup,

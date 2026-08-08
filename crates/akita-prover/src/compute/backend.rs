@@ -90,10 +90,14 @@ where
     /// returned). Slots rebuild on next use, so callers may drop between
     /// pipeline windows whose extents differ by orders of magnitude — e.g.
     /// after the root fold level, whose slots dwarf every deeper level's.
-    /// Backends without droppable caches return 0.
-    fn release_built_ntt_slots(&self, prepared: &Self::PreparedSetup) -> usize {
+    /// Backends without droppable caches return `Ok(0)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when backend-owned cache state cannot be updated.
+    fn release_built_ntt_slots(&self, prepared: &Self::PreparedSetup) -> Result<usize, AkitaError> {
         let _unused = prepared;
-        0
+        Ok(0)
     }
 
     /// Ensure explicit setup metadata and backend-prepared state match.

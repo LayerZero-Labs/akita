@@ -185,24 +185,29 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
     /// use rebuilds single-flight — callers may drop between pipeline
     /// windows whose extents differ by orders of magnitude, e.g. after the
     /// root fold level, whose slots dwarf every deeper level's.
-    pub fn drop_built_ntt_slots(&self) -> usize {
-        let mut freed = 0;
-        if let Ok(mut cache) = self.shared_ntt.lock() {
-            for cell in cache.values_mut() {
-                let built = cell
-                    .get()
-                    .and_then(|result| result.as_ref().ok())
-                    .map(|slot| slot.cache_bytes);
-                if let Some(bytes) = built {
-                    freed += bytes;
-                    *cell = Arc::new(OnceLock::new());
-                }
+    pub fn drop_built_ntt_slots(&self) -> Result<usize, AkitaError> {
+        let mut freed = 0usize;
+        let mut cache = self
+            .shared_ntt
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+        for cell in cache.values_mut() {
+            let built = cell
+                .get()
+                .and_then(|result| result.as_ref().ok())
+                .map(|slot| slot.cache_bytes);
+            if let Some(bytes) = built {
+                freed = freed.checked_add(bytes).ok_or_else(|| {
+                    AkitaError::InvalidSetup("released NTT cache bytes overflow".into())
+                })?;
+                *cell = Arc::new(OnceLock::new());
             }
         }
+        drop(cache);
         if freed > 0 {
             tracing::info!(freed_bytes = freed, "dropped built NTT slots");
         }
-        freed
+        Ok(freed)
     }
 
     /// Initialized shared NTT cache entries in deterministic reporting order.
@@ -459,7 +464,7 @@ where
         ensure_ntt_slot_on_prepared(prepared, key)
     }
 
-    fn release_built_ntt_slots(&self, prepared: &Self::PreparedSetup) -> usize {
+    fn release_built_ntt_slots(&self, prepared: &Self::PreparedSetup) -> Result<usize, AkitaError> {
         prepared.drop_built_ntt_slots()
     }
 

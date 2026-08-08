@@ -211,9 +211,64 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         Ok(())
     }
 
+    /// Prepare and retain the sparse tensor-root projection for `E` at `D`.
+    ///
+    /// Clones of this polynomial share prepared projections. Ordinary tensor
+    /// projection borrows a matching entry when present and otherwise returns
+    /// operation-local storage without inserting it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the tensor layout is invalid, projection
+    /// construction fails, or the shared cache lock is poisoned.
+    pub fn prepare_tensor_root_cache<E, const D: usize>(&self) -> Result<(), AkitaError>
+    where
+        F: FromPrimitiveInt,
+        E: FpExtEncoding<F>,
+    {
+        let (key, total_evals) = self.tensor_root_layout::<E, D>()?;
+        if self
+            .tensor_root_cache
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("onehot tensor cache lock poisoned".into()))?
+            .contains_key(&key)
+        {
+            return Ok(());
+        }
+
+        let poly = Arc::new(self.materialize_tensor_root_poly(D, key.1, total_evals)?);
+        self.tensor_root_cache
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("onehot tensor cache lock poisoned".into()))?
+            .entry(key)
+            .or_insert(poly);
+        Ok(())
+    }
+
+    /// Drop all caller-prepared sparse tensor-root projections.
+    ///
+    /// Clones share this cache. Projections already borrowed by an operation
+    /// remain valid until their `Arc` is dropped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the shared cache lock is poisoned.
+    pub fn clear_tensor_root_cache(&self) -> Result<(), AkitaError> {
+        self.tensor_root_cache
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("onehot tensor cache lock poisoned".into()))?
+            .clear();
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) fn block_cache_len_for_test(&self) -> usize {
         self.block_cache.lock().map_or(0, |cache| cache.len())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tensor_root_cache_len_for_test(&self) -> usize {
+        self.tensor_root_cache.lock().map_or(0, |cache| cache.len())
     }
 
     /// Borrow caller-prepared per-block storage when available. Otherwise,
@@ -503,14 +558,27 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         F: FromPrimitiveInt,
         E: FpExtEncoding<F>,
     {
-        let (width, total_evals) = self.tensor_packing_shape::<E>()?;
-        let _span = tracing::info_span!(
-            "OneHotPoly::tensor_packed_sparse_ring_poly",
-            width,
+        let (key, total_evals) = self.tensor_root_layout::<E, D>()?;
+        if let Some(poly) = self
+            .tensor_root_cache
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("onehot tensor cache lock poisoned".into()))?
+            .get(&key)
+        {
+            return Ok(Arc::clone(poly));
+        }
+        Ok(Arc::new(self.materialize_tensor_root_poly(
+            D,
+            key.1,
             total_evals,
-            chunks = self.indices.len()
-        )
-        .entered();
+        )?))
+    }
+
+    fn tensor_root_layout<E, const D: usize>(&self) -> Result<(LayoutCacheKey, usize), AkitaError>
+    where
+        E: FpExtEncoding<F>,
+    {
+        let (width, total_evals) = self.tensor_packing_shape::<E>()?;
         if !D.is_multiple_of(width) {
             return Err(AkitaError::InvalidInput(
                 "tensor width must divide root ring dimension".to_string(),
@@ -526,19 +594,35 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                 "root ring dimension must be at least twice the tensor width".to_string(),
             ));
         }
-        let packed_len = D / width;
-        let half = D / double_width;
-        let step = D / double_width;
-        let total_ring_elems = total_evals / D;
-        let key = (D, width);
-        if let Some(poly) = self
-            .tensor_root_cache
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("onehot tensor cache lock poisoned".into()))?
-            .get(&key)
-        {
-            return Ok(Arc::clone(poly));
-        }
+        Ok(((D, width), total_evals))
+    }
+
+    fn materialize_tensor_root_poly(
+        &self,
+        ring_d: usize,
+        width: usize,
+        total_evals: usize,
+    ) -> Result<SparseRingPoly<F>, AkitaError>
+    where
+        F: FromPrimitiveInt,
+    {
+        let _span = tracing::info_span!(
+            "OneHotPoly::tensor_packed_sparse_ring_poly",
+            ring_d,
+            width,
+            total_evals,
+            chunks = self.indices.len()
+        )
+        .entered();
+        let double_width = width.checked_mul(2).ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "tensor width is too large for root ring projection".to_string(),
+            )
+        })?;
+        let packed_len = ring_d / width;
+        let half = ring_d / double_width;
+        let step = ring_d / double_width;
+        let total_ring_elems = total_evals / ring_d;
         let mut coeffs = Vec::with_capacity(self.indices.len() * width.min(2));
 
         for (chunk_idx, opt) in self.indices.iter().copied().enumerate() {
@@ -553,60 +637,58 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             if slot_idx < half {
                 let shift = slot_idx;
                 if coord == 0 {
-                    coeffs.push(SparseRingCoeff::from_ring_coords(ring_idx, shift, D, 1)?);
+                    coeffs.push(SparseRingCoeff::from_ring_coords(
+                        ring_idx, shift, ring_d, 1,
+                    )?);
                 } else {
                     let pos_offset = coord * step;
                     coeffs.push(SparseRingCoeff::from_ring_coords(
                         ring_idx,
                         shift + pos_offset,
-                        D,
+                        ring_d,
                         1,
                     )?);
                     coeffs.push(SparseRingCoeff::from_ring_coords(
                         ring_idx,
-                        shift + D - pos_offset,
-                        D,
+                        shift + ring_d - pos_offset,
+                        ring_d,
                         -1,
                     )?);
                 }
             } else {
-                let shift = slot_idx - half + D / 2;
+                let shift = slot_idx - half + ring_d / 2;
                 if coord == 0 {
-                    coeffs.push(SparseRingCoeff::from_ring_coords(ring_idx, shift, D, 1)?);
+                    coeffs.push(SparseRingCoeff::from_ring_coords(
+                        ring_idx, shift, ring_d, 1,
+                    )?);
                 } else {
                     let pos_offset = coord * step;
                     coeffs.push(SparseRingCoeff::from_ring_coords(
                         ring_idx,
                         shift - pos_offset,
-                        D,
+                        ring_d,
                         1,
                     )?);
                     coeffs.push(SparseRingCoeff::from_ring_coords(
                         ring_idx,
                         shift + pos_offset,
-                        D,
+                        ring_d,
                         1,
                     )?);
                 }
             }
         }
 
-        let poly = if self.onehot_k >= D {
+        if self.onehot_k >= ring_d {
             SparseRingPoly::<F>::from_sorted_packed_coeffs(
                 self.num_vars,
-                D,
+                ring_d,
                 total_ring_elems,
                 coeffs,
             )
         } else {
-            SparseRingPoly::<F>::from_packed_coeffs(self.num_vars, D, total_ring_elems, coeffs)
-        }?;
-        let poly = Arc::new(poly);
-        let mut cache = self
-            .tensor_root_cache
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("onehot tensor cache lock poisoned".into()))?;
-        Ok(Arc::clone(cache.entry(key).or_insert(poly)))
+            SparseRingPoly::<F>::from_packed_coeffs(self.num_vars, ring_d, total_ring_elems, coeffs)
+        }
     }
 
     pub(super) fn tensor_packing_shape<E>(&self) -> Result<(usize, usize), AkitaError>

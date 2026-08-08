@@ -72,5 +72,6 @@ pub use poly::{
 };
 pub use stack::{
     planned_ntt_cache_metrics, prewarm_ntt_requirements, LevelProveStacks, OperationCtx,
-    PlannedNttCacheOwnerMetric, ProverComputeStack, TieredProveStacks, UniformProverStack,
+    PlannedNttCacheOwnerMetric, ProverComputeStack, ReleaseRootNttAfterFold, TieredProveStacks,
+    UniformProverStack,
 };
