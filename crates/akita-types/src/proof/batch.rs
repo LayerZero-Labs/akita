@@ -466,11 +466,11 @@ where
         .try_reserve_exact(coordinate_len)
         .map_err(|_| error.clone())?;
     for value in values {
-        let value_coordinates = value.to_ext_coords();
+        let value_coordinates = value.ext_coords();
         if value_coordinates.len() != extension_degree {
             return Err(error);
         }
-        coordinates.extend(value_coordinates);
+        coordinates.extend_from_slice(value_coordinates);
     }
     Ok(coordinates)
 }

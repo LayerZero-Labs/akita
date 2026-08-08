@@ -16,8 +16,8 @@ use std::array::from_fn;
 /// Extension fields whose `ExtField::to_base_vec` coordinates are the
 /// ring-subfield coordinates consumed by [`psi_embed`] and [`embed_subfield`].
 pub trait FpExtEncoding<F: FieldCore>: ExtField<F> {
-    /// Return coordinates in the ring-subfield basis.
-    fn to_ext_coords(&self) -> Vec<F>;
+    /// Borrow coordinates in the ring-subfield basis.
+    fn ext_coords(&self) -> &[F];
 
     /// Return the underlying base scalar when this encoding is degree one.
     fn degree_one_base(&self) -> Option<F> {
@@ -30,8 +30,8 @@ where
     F: FieldCore + FromPrimitiveInt,
 {
     #[inline]
-    fn to_ext_coords(&self) -> Vec<F> {
-        vec![*self]
+    fn ext_coords(&self) -> &[F] {
+        std::slice::from_ref(self)
     }
 
     #[inline]
@@ -45,8 +45,8 @@ where
     F: FieldCore + FromPrimitiveInt + Valid,
 {
     #[inline]
-    fn to_ext_coords(&self) -> Vec<F> {
-        self.coeffs.to_vec()
+    fn ext_coords(&self) -> &[F] {
+        &self.coeffs
     }
 }
 
@@ -55,8 +55,8 @@ where
     F: FieldCore + FromPrimitiveInt + Valid + FpExt4MulBackend,
 {
     #[inline]
-    fn to_ext_coords(&self) -> Vec<F> {
-        self.coeffs.to_vec()
+    fn ext_coords(&self) -> &[F] {
+        &self.coeffs
     }
 }
 
@@ -65,8 +65,8 @@ where
     F: FieldCore + FromPrimitiveInt + Valid + FpExt8MulBackend,
 {
     #[inline]
-    fn to_ext_coords(&self) -> Vec<F> {
-        self.coeffs.to_vec()
+    fn ext_coords(&self) -> &[F] {
+        &self.coeffs
     }
 }
 
@@ -300,11 +300,11 @@ where
             }
             let mut coords = Vec::with_capacity(D);
             for value in values {
-                let limbs = value.to_ext_coords();
+                let limbs = value.ext_coords();
                 if limbs.len() != $k {
                     return Err(error);
                 }
-                coords.extend(limbs);
+                coords.extend_from_slice(limbs);
             }
             psi_embed::<F, D, $k>(params, &coords).map_err(|_| error)
         }};
@@ -340,8 +340,7 @@ where
     macro_rules! arm {
         ($k:expr) => {{
             let params = SubfieldParams::<D, $k>::new().map_err(|_| error.clone())?;
-            let limbs = value.to_ext_coords();
-            let coords: [F; $k] = limbs.try_into().map_err(|_| error.clone())?;
+            let coords: [F; $k] = value.ext_coords().try_into().map_err(|_| error.clone())?;
             Ok(embed_subfield::<F, D, $k>(params, &coords))
         }};
     }
