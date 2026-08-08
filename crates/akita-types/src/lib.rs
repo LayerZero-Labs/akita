@@ -34,7 +34,6 @@ pub mod trace_weight;
 pub mod transcript;
 pub mod witness;
 
-pub use akita_challenges::TensorChallengeShape;
 pub use compression::{
     compression_ring_dimensions, CommitmentPayloadGeometry, CommitmentPayloadMode,
     CommitmentPayloadPhase, CompressionChainPlan, CompressionChainWitness, CompressionMapPlan,
@@ -84,9 +83,9 @@ pub use layout::{
     SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
 };
 pub use ntt_cache::{
-    max_safe_crt_accumulation_width, ntt_cache_requires_i16_tail, prepare_compression_ntt_cache,
-    prepare_ntt_cache, select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey,
-    NttCacheMode, NttPrefixRequirement, NttTransformDomain, PreparedNttCache, ProtocolCrtNttParams,
+    ntt_cache_requires_i16_tail, prepare_compression_ntt_cache, prepare_ntt_cache,
+    select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey, NttCacheMode,
+    NttPrefixRequirement, NttTransformDomain, PreparedNttCache, ProtocolCrtNttParams,
 };
 pub use proof::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
@@ -139,10 +138,10 @@ pub use schedule::{
     intermediate_w_ring_element_count_with_counts_bits, r_decomp_levels, root_input_witness_len,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
     FoldSchedule, FoldScheduleEstimate, NextWitnessBindingPolicy, PlannedFoldSchedule,
-    RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams,
-    RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, TerminalCommittedGroupParams,
-    TerminalFoldParams, TerminalFoldStep, WitnessPartition,
-    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
+    RecursiveFoldParams, RecursiveFoldStep, RootFinalGroupParams, RootFoldParams, RootFoldStep,
+    RootPrecommittedGroupParams, TerminalCommittedGroupParams, TerminalFoldParams,
+    TerminalFoldStep, WitnessPartition, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN,
+    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{

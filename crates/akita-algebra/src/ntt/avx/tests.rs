@@ -1,89 +1,25 @@
 use super::*;
 use crate::ntt::butterfly::NttTwiddles;
-use crate::ntt::prime::{MontCoeff, NttPrime};
+use crate::ntt::prime::{MontCoeff, NttPrime, I32_LAZY_DOT_BATCH};
 use crate::ntt::tables::Q128_RAW_PRIMES;
 
-const AVX2_ONLY: AvxCpuFeatures = AvxCpuFeatures {
-    avx2: true,
-    avx512f: false,
-    avx512dq: false,
-    avx512bw: false,
-};
+const AVX2_ONLY: AvxCpuFeatures = AvxCpuFeatures { avx2: true };
 
-const AVX512_CAPABLE: AvxCpuFeatures = AvxCpuFeatures {
-    avx2: true,
-    avx512f: true,
-    avx512dq: true,
-    avx512bw: true,
-};
+const NO_AVX2: AvxCpuFeatures = AvxCpuFeatures { avx2: false };
 
 #[test]
 fn avx_mode_defaults_to_avx2_when_supported() {
-    assert_eq!(
-        select_avx_ntt_mode(None, None, None, AVX2_ONLY),
-        Some(AvxNttMode::Avx2)
-    );
+    assert_eq!(select_avx_ntt_mode(None, AVX2_ONLY), Some(AvxNttMode::Avx2));
 }
 
 #[test]
-fn avx512_is_default_pointwise_mode_when_available() {
-    assert_eq!(
-        select_avx_ntt_mode(None, None, None, AVX512_CAPABLE),
-        Some(AvxNttMode::Avx512)
-    );
-    assert_eq!(
-        select_avx_ntt_mode(None, None, Some("1"), AVX512_CAPABLE),
-        Some(AvxNttMode::Avx512)
-    );
+fn x86_ntt_requires_avx2() {
+    assert_eq!(select_avx_ntt_mode(None, NO_AVX2), None);
 }
 
 #[test]
-fn avx2_transform_is_default_and_avx512_is_explicit() {
-    assert!(!select_avx512_transform_ntt(None, Some(AvxNttMode::Avx512)));
-    assert!(select_avx512_transform_ntt(
-        Some("1"),
-        Some(AvxNttMode::Avx512)
-    ));
-    assert!(!select_avx512_transform_ntt(
-        Some("1"),
-        Some(AvxNttMode::Avx2)
-    ));
-}
-
-#[test]
-fn avx512_can_be_opted_out_to_avx2() {
-    assert_eq!(
-        select_avx_ntt_mode(None, None, Some("0"), AVX512_CAPABLE),
-        Some(AvxNttMode::Avx2)
-    );
-}
-
-#[test]
-fn scalar_kill_switch_precedes_avx_flags() {
-    assert_eq!(
-        select_avx_ntt_mode(Some("1"), None, Some("1"), AVX512_CAPABLE),
-        None
-    );
-}
-
-#[test]
-fn avx_kill_switch_disables_x86_ntt_simd() {
-    assert_eq!(
-        select_avx_ntt_mode(None, Some("0"), Some("1"), AVX512_CAPABLE),
-        None
-    );
-}
-
-#[test]
-fn avx512_opt_in_falls_back_to_avx2_without_full_features() {
-    let missing_bw = AvxCpuFeatures {
-        avx512bw: false,
-        ..AVX512_CAPABLE
-    };
-    assert_eq!(
-        select_avx_ntt_mode(None, None, Some("1"), missing_bw),
-        Some(AvxNttMode::Avx2)
-    );
+fn scalar_kill_switch_disables_x86_ntt_simd() {
+    assert_eq!(select_avx_ntt_mode(Some("1"), AVX2_ONLY), None);
 }
 
 fn random_mont_array_i32<const D: usize>(prime: NttPrime<i32>, seed: u64) -> [MontCoeff<i32>; D] {
@@ -494,26 +430,26 @@ fn assert_avx2_ntt_i32_transforms_match_scalar<const D: usize>() {
     let mut avx_fwd = input;
     let mut scalar_fwd = input;
     // SAFETY: guarded by runtime AVX2 detection above.
-    unsafe { forward_ntt_i32(&mut avx_fwd, prime, &tw) };
+    unsafe { forward_ntt_i32(&mut avx_fwd, prime, &tw, false) };
     scalar_forward_ntt_i32(&mut scalar_fwd, prime, &tw);
     assert_eq!(avx_fwd, scalar_fwd);
 
     let mut avx_inv = avx_fwd;
     let mut scalar_inv = scalar_fwd;
     // SAFETY: guarded by runtime AVX2 detection above.
-    unsafe { inverse_ntt_i32(&mut avx_inv, prime, &tw) };
+    unsafe { inverse_ntt_i32(&mut avx_inv, prime, &tw, false) };
     scalar_inverse_ntt_i32(&mut scalar_inv, prime, &tw);
     assert_eq!(avx_inv, scalar_inv);
 
     let mut avx_cyclic = input;
     let mut scalar_cyclic = input;
     // SAFETY: guarded by runtime AVX2 detection above.
-    unsafe { forward_ntt_cyclic_i32(&mut avx_cyclic, prime, &tw) };
+    unsafe { forward_ntt_cyclic_i32(&mut avx_cyclic, prime, &tw, false) };
     scalar_forward_ntt_cyclic_i32(&mut scalar_cyclic, prime, &tw);
     assert_eq!(avx_cyclic, scalar_cyclic);
 
     // SAFETY: guarded by runtime AVX2 detection above.
-    unsafe { inverse_ntt_cyclic_i32(&mut avx_cyclic, prime, &tw) };
+    unsafe { inverse_ntt_cyclic_i32(&mut avx_cyclic, prime, &tw, false) };
     scalar_inverse_ntt_cyclic_i32(&mut scalar_cyclic, prime, &tw);
     assert_eq!(avx_cyclic, scalar_cyclic);
 }
@@ -529,25 +465,37 @@ fn avx2_ntt_i32_transforms_match_scalar() {
     assert_avx2_ntt_i32_transforms_match_scalar::<512>();
 }
 
+fn assert_avx2_ntt_i16_transforms_match_scalar<const D: usize>() {
+    let prime = NttPrime::compute(12289_i16);
+    let tw = NttTwiddles::<i16, D>::compute(prime);
+    for input in [
+        random_mont_array_i16::<D>(prime, 0x1616 ^ D as u64),
+        edge_mont_array_i16::<D>(prime),
+    ] {
+        let mut avx = input;
+        let mut scalar = input;
+        // SAFETY: the caller checks AVX2 support.
+        unsafe { forward_ntt_i16(&mut avx, prime, &tw) };
+        scalar_forward_ntt_i16(&mut scalar, prime, &tw);
+        assert_i16_mont_arrays_eq_mod(&avx, &scalar, prime, "forward");
+
+        // SAFETY: the caller checks AVX2 support.
+        unsafe { inverse_ntt_i16(&mut avx, prime, &tw) };
+        scalar_inverse_ntt_i16(&mut scalar, prime, &tw);
+        assert_i16_mont_arrays_eq_mod(&avx, &scalar, prime, "inverse");
+        assert_i16_mont_arrays_eq_mod(&avx, &input, prime, "round-trip");
+    }
+}
+
 #[test]
 fn avx2_ntt_i16_transforms_match_scalar() {
     if !std::is_x86_feature_detected!("avx2") {
         return;
     }
-    let prime = NttPrime::compute(12289_i16);
-    let tw = NttTwiddles::<i16, 64>::compute(prime);
-    let input = random_mont_array_i16::<64>(prime, 0x1616);
-
-    let mut avx = input;
-    let mut scalar = input;
-    unsafe { forward_ntt_i16(&mut avx, prime, &tw) };
-    scalar_forward_ntt_i16(&mut scalar, prime, &tw);
-    assert_i16_mont_arrays_eq_mod(&avx, &scalar, prime, "forward");
-
-    unsafe { inverse_ntt_i16(&mut avx, prime, &tw) };
-    scalar_inverse_ntt_i16(&mut scalar, prime, &tw);
-    assert_i16_mont_arrays_eq_mod(&avx, &scalar, prime, "inverse");
-    assert_i16_mont_arrays_eq_mod(&avx, &input, prime, "round-trip");
+    assert_avx2_ntt_i16_transforms_match_scalar::<64>();
+    assert_avx2_ntt_i16_transforms_match_scalar::<128>();
+    assert_avx2_ntt_i16_transforms_match_scalar::<256>();
+    assert_avx2_ntt_i16_transforms_match_scalar::<512>();
 }
 
 #[test]
@@ -577,6 +525,57 @@ fn avx2_pointwise_mul_acc_i32_matches_scalar_with_tail() {
     let mut scalar_acc = acc_init;
     scalar_pointwise_i32(&mut scalar_acc, &lhs, &rhs, prime);
     assert_eq!(avx_acc, scalar_acc);
+}
+
+#[test]
+fn avx2_lazy_i32_dot_matches_repeated_reduction() {
+    if !std::is_x86_feature_detected!("avx2") {
+        return;
+    }
+    const D: usize = 19;
+    for raw_prime in Q128_RAW_PRIMES {
+        let prime = NttPrime::compute(raw_prime);
+        let lhs: [[MontCoeff<i32>; D]; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
+            if index == 0 {
+                edge_mont_array_i32(prime)
+            } else {
+                random_mont_array_i32(prime, 0x1000 + index as u64)
+            }
+        });
+        let rhs: [[MontCoeff<i32>; D]; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
+            if index + 1 == I32_LAZY_DOT_BATCH {
+                edge_mont_array_i32(prime)
+            } else {
+                random_mont_array_i32(prime, 0x2000 + index as u64)
+            }
+        });
+        let lhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] =
+            std::array::from_fn(|index| lhs[index].as_ptr().cast::<i32>());
+        let rhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] =
+            std::array::from_fn(|index| rhs[index].as_ptr().cast::<i32>());
+
+        for count in 1..=I32_LAZY_DOT_BATCH {
+            let initial = random_mont_array_i32::<D>(prime, 0x3000 + count as u64);
+            let mut actual = initial;
+            // SAFETY: guarded by runtime AVX2 detection; every pointer covers D values.
+            unsafe {
+                pointwise_dot_acc_i32(
+                    actual.as_mut_ptr().cast::<i32>(),
+                    lhs_pointers.as_ptr(),
+                    rhs_pointers.as_ptr(),
+                    count,
+                    D,
+                    prime.p,
+                    prime.pinv,
+                );
+            }
+            let mut expected = initial;
+            for product in 0..count {
+                scalar_pointwise_i32(&mut expected, &lhs[product], &rhs[product], prime);
+            }
+            assert_eq!(actual, expected, "prime={raw_prime}, count={count}");
+        }
+    }
 }
 
 #[test]

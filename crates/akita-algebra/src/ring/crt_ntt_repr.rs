@@ -4,8 +4,8 @@ use std::array::from_fn;
 
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::crt::GarnerData;
-use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
-use crate::{CanonicalField, FieldCore};
+use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
+use crate::{CanonicalField, CrtCapacity, FieldCore, NttKernelPlan};
 
 /// CRT+NTT-domain representation of a cyclotomic ring element.
 ///
@@ -36,7 +36,9 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     /// Per-prime twiddle tables for forward/inverse NTT.
     pub twiddles: [NttTwiddles<W, D>; K],
     /// Garner reconstruction constants for CRT lift-back.
-    pub garner: GarnerData<W, K>,
+    pub garner: GarnerData<K>,
+    /// Host arithmetic kernels selected when this parameter set was prepared.
+    kernel_plan: NttKernelPlan,
 }
 
 mod convert;
@@ -49,7 +51,64 @@ mod tests;
 pub use lut::{CenteredMontLut, DigitMontLut};
 pub use mixed::{mat_vec_i16_with_tail, I16TailParams};
 
+fn reconstruct<F, W, const K: usize, const D: usize>(
+    primes: &[NttPrime<W>; K],
+    garner: &GarnerData<K>,
+    canonical: &[[W; D]; K],
+) -> [F; D]
+where
+    F: CrtNttConvertibleField,
+    W: PrimeWidth,
+{
+    let mut coefficients = [F::zero(); D];
+    for (index, coefficient) in coefficients.iter_mut().enumerate() {
+        let moduli = primes.map(|prime| prime.p.to_i64() as u64);
+        let residues = std::array::from_fn(|limb| i128::from(canonical[limb][index].to_i64()));
+        let mixed_radix = garner.centered_mixed_radix(residues, moduli);
+
+        let mut result = F::from_i128(mixed_radix[0]);
+        let mut partial_product = F::from_i64(primes[0].p.to_i64());
+        for i in 1..K {
+            result += F::from_i128(mixed_radix[i]) * partial_product;
+            if i + 1 < K {
+                partial_product *= F::from_i64(primes[i].p.to_i64());
+            }
+        }
+        *coefficient = result;
+    }
+    coefficients
+}
+
 impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
+    /// Host kernel plan selected when these parameters were prepared.
+    #[must_use]
+    pub const fn kernel_plan(&self) -> NttKernelPlan {
+        self.kernel_plan
+    }
+
+    /// Number of contiguous products the prepared backend can reduce as one
+    /// pointwise dot batch. A value of one preserves column-at-a-time traversal.
+    #[must_use]
+    pub const fn pointwise_dot_batch_size(&self) -> usize {
+        if self.uses_lazy_i32_dot() {
+            I32_LAZY_DOT_BATCH
+        } else {
+            1
+        }
+    }
+
+    pub(crate) const fn uses_lazy_i32_dot(&self) -> bool {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            core::mem::size_of::<W>() == core::mem::size_of::<i32>()
+                && self.kernel_plan.uses_avx2_i32_dot()
+        }
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+        {
+            false
+        }
+    }
+
     /// Build a full parameter set from CRT primes.
     ///
     /// Computes per-prime twiddles and Garner reconstruction constants.
@@ -60,6 +119,16 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
             primes,
             twiddles,
             garner,
+            kernel_plan: NttKernelPlan::detect::<W>(),
         }
+    }
+
+    /// Exact CRT product capacity of this parameter set.
+    pub fn crt_capacity(&self) -> CrtCapacity {
+        CrtCapacity::from_prime_moduli(self.primes.iter().map(|prime| prime.p.to_i64() as u128))
+    }
+
+    fn reconstruct<F: CrtNttConvertibleField>(&self, canonical: &[[W; D]; K]) -> [F; D] {
+        reconstruct(&self.primes, &self.garner, canonical)
     }
 }

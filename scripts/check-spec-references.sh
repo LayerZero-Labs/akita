@@ -56,6 +56,15 @@ dead_patterns=(
   'direct_witness_bytes'
   'segment_typed_witness_shape_from_groups'
   'dispatch_ring_dim_result'
+  'ExactNegacyclic \{ width, log_basis \}'
+  'ChallengeShape'
+  'ChallengeLabels'
+  'TensorChallenges'
+  'PreparedAffineFactors'
+  'PreparedChallengeEvals'
+  'FoldWitnessLinfCapPolicy'
+  'BoundedL1Norm'
+  'akita-challenges/src/tensor\.rs'
 )
 
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"

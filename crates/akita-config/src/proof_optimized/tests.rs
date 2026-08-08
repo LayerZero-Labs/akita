@@ -80,7 +80,6 @@ fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig, const D: usi
             &AkitaScheduleLookupKey::single(key),
             &policy,
             Cfg::ring_challenge_config,
-            Cfg::fold_challenge_shape_at_level,
         )
         .expect("shipped entry should materialize");
         let terminal = &schedule.terminal.params.witness;
@@ -89,7 +88,7 @@ fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig, const D: usi
         min_width = min_width.min(width);
         max_width = max_width.max(width);
         assert!(
-            ntt_cache_requires_i16_tail::<Cfg::Field, D>(width, 16)
+            ntt_cache_requires_i16_tail::<Cfg::Field, D>(width, 1 << 15)
                 .expect("generated terminal i16 accumulation should fit"),
             "generated q32 terminal unexpectedly fits the base CRT profile for {} key={key:?}, D={D}, width={width}",
             std::any::type_name::<Cfg>(),

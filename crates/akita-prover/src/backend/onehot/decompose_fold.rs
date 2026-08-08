@@ -1,4 +1,4 @@
-use super::accumulate::{onehot_accumulate, onehot_accumulate_tensor};
+use super::accumulate::onehot_accumulate;
 use super::*;
 
 fn expand_onehot_accum<const D: usize>(
@@ -150,92 +150,5 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             num_positions_per_block,
             num_digits,
         ))
-    }
-
-    /// Tensor-shaped batched decompose-fold for one-hot polynomials.
-    pub(super) fn decompose_fold_batched_tensor_onehot<const D: usize>(
-        polys: &[&Self],
-        tensor: &TensorChallengeSet,
-        num_positions_per_block: usize,
-        num_digits: usize,
-    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError>
-    where
-        F: CanonicalField,
-    {
-        let Some(first) = polys.first() else {
-            return Ok(None);
-        };
-        let first_blocks = first
-            .blocks_for(D, num_positions_per_block)
-            .expect("OneHotPoly::decompose_fold_batched_tensor_onehot: invalid num_positions_per_block for first polynomial");
-        let expected_blocks = tensor.total_blocks()?;
-        validate_tensor_blocks::<D>(tensor, expected_blocks)?;
-        let modulus = (-F::one()).to_canonical_u128() + 1;
-
-        let cached_blocks = polys
-            .iter()
-            .map(|poly| poly.blocks_for(D, num_positions_per_block))
-            .collect::<Result<Vec<_>, _>>()?;
-        let witness = match first_blocks.as_ref() {
-            OneHotBlocks::SingleChunk(_) => {
-                let mut flat_blocks: Vec<&[SingleChunkEntry]> = Vec::with_capacity(expected_blocks);
-                for cached in &cached_blocks {
-                    let OneHotBlocks::SingleChunk(blocks) = cached.as_ref() else {
-                        return Ok(None);
-                    };
-                    for i in 0..blocks.num_live_blocks() {
-                        flat_blocks.push(blocks.block(i));
-                    }
-                }
-                if flat_blocks.len() != expected_blocks {
-                    return Err(AkitaError::InvalidSize {
-                        expected: expected_blocks,
-                        actual: flat_blocks.len(),
-                    });
-                }
-                let coeff_accum_i64 = {
-                    let _span = tracing::info_span!("onehot_accumulate_tensor").entered();
-                    onehot_accumulate_tensor::<SingleChunkEntry, D>(
-                        &flat_blocks,
-                        tensor,
-                        expected_blocks,
-                        num_positions_per_block,
-                    )?
-                };
-                let compressed_accum = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
-                let coeff_accum = expand_onehot_accum(compressed_accum, num_digits);
-                build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
-            }
-            OneHotBlocks::MultiChunk(_) => {
-                let mut flat_blocks: Vec<&[MultiChunkEntry]> = Vec::with_capacity(expected_blocks);
-                for cached in &cached_blocks {
-                    let OneHotBlocks::MultiChunk(blocks) = cached.as_ref() else {
-                        return Ok(None);
-                    };
-                    for i in 0..blocks.num_live_blocks() {
-                        flat_blocks.push(blocks.block(i));
-                    }
-                }
-                if flat_blocks.len() != expected_blocks {
-                    return Err(AkitaError::InvalidSize {
-                        expected: expected_blocks,
-                        actual: flat_blocks.len(),
-                    });
-                }
-                let coeff_accum_i64 = {
-                    let _span = tracing::info_span!("onehot_accumulate_tensor").entered();
-                    onehot_accumulate_tensor::<MultiChunkEntry, D>(
-                        &flat_blocks,
-                        tensor,
-                        expected_blocks,
-                        num_positions_per_block,
-                    )?
-                };
-                let compressed_accum = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
-                let coeff_accum = expand_onehot_accum(compressed_accum, num_digits);
-                build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
-            }
-        };
-        Ok(Some(witness))
     }
 }

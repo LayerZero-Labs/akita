@@ -6,7 +6,6 @@ use crate::workload::{
     run_recursive_multi_group_onehot,
 };
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::HasWide;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
@@ -197,10 +196,6 @@ const PROFILE_CI_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2,
     },
     ProfileMode {
-        name: "onehot_fp128_d64_tensor",
-        run: run_profile_onehot_fp128_d64_tensor,
-    },
-    ProfileMode {
         name: "onehot_fp128_d64_multi_chunk_w2r2",
         run: run_profile_onehot_fp128_d64_multi_chunk_w2r2,
     },
@@ -247,10 +242,6 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "onehot_fp128_d128",
         run: run_profile_onehot_fp128_d128,
-    },
-    ProfileMode {
-        name: "onehot_fp128_d64_tensor",
-        run: run_profile_onehot_fp128_d64_tensor,
     },
     ProfileMode {
         name: "onehot_fp128_d64_multi_chunk_w2r2",
@@ -309,7 +300,6 @@ fn profile_modes() -> &'static [ProfileMode] {
 /// Modes registered for explicit `AKITA_MODE=…` runs but omitted from `all`.
 #[cfg(not(feature = "profile-onehot-fp128-d64"))]
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
-    "onehot_fp128_d64_tensor",
     "onehot_fp128_d64_multi_chunk_w2r2",
     "onehot_fp128_d64_multi_chunk_w4r2",
     "onehot_fp128_d64_multi_chunk_w8r2",
@@ -524,22 +514,6 @@ fn run_profile_onehot_fp128_d64_multi_chunk_w4r2(nv: usize, num_polys: usize) {
         nv,
         num_polys,
     );
-}
-
-fn run_profile_onehot_fp128_d64_tensor(nv: usize, num_polys: usize) {
-    type Cfg = tensor_verifier::fp128::D64OneHotTensor;
-    let prime = fp128_prime_label();
-    let onehot_k = onehot_k_for_num_vars(nv);
-    let title = if num_polys == 1 {
-        format!(
-            "=== onehot_fp128_d64_tensor (fp128, {prime}, D=64, 1-of-{onehot_k}, tensor-shaped root fold) ==="
-        )
-    } else {
-        format!(
-            "=== onehot_fp128_d64_tensor batched (fp128, {prime}, D=64, 1-of-{onehot_k}, tensor-shaped root fold, same-point batch={num_polys}) ==="
-        )
-    };
-    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64_tensor", &title, nv, num_polys);
 }
 
 #[cfg(not(feature = "profile-ci"))]

@@ -78,7 +78,6 @@ fn recursive_split_lower_bound_prices_padded_score_floor() {
             delta_commit: 1,
             delta_open: 4,
             num_chunks: 2,
-            requested_fold_shape: TensorChallengeShape::Flat,
         }),
         Some(6160)
     );
