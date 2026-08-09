@@ -585,9 +585,11 @@ impl CompressionChainPlan {
             return Ok(Some(cached));
         }
         let mut maps = [None; COMPRESSION_MAP_COUNT];
-        let mut map_count = 0usize;
         let mut input_coefficients = source_coefficients;
-        for ring_dimension in compression_ring_dimensions(modulus_profile) {
+        for (map_count, ring_dimension) in compression_ring_dimensions(modulus_profile)
+            .into_iter()
+            .enumerate()
+        {
             if map_count == COMPRESSION_MAP_COUNT {
                 return Err(AkitaError::InvalidSetup(format!(
                     "compression chain exceeded {COMPRESSION_MAP_COUNT} maps"
@@ -600,7 +602,6 @@ impl CompressionChainPlan {
                 AkitaError::InvalidSetup("compression output byte length overflow".into())
             })?;
             maps[map_count] = Some(map);
-            map_count += 1;
             if output_bytes == COMPRESSION_TARGET_BYTES {
                 let [Some(first), Some(second)] = maps else {
                     return Err(AkitaError::InvalidSetup(format!(
