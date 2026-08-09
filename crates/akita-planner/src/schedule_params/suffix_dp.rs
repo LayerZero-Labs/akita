@@ -23,282 +23,13 @@ use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
 mod frontier;
 mod prune;
+mod state;
+mod terminal;
 
 use frontier::{consider_child_suffixes, FrontierProjection, ProjectedFrontier};
-
-/// Result of the suffix DP at one state. Each selection objective retains the
-/// candidates its parent needs because proof-size and setup-envelope pricing
-/// depend on the child's first step:
-///
-/// - setup and payload winners keyed by the parent-visible first fold. Direct
-///   states store only payload winners; prefix/root states share each key
-///   between both projections. The setup projection is lexicographically best
-///   by first direct setup scan and then proof payload. The payload projection
-///   is the smallest-payload schedule used after an earlier direct edge has
-///   fixed the setup-size objective.
-/// - `mixed_frontier` — nondominated setup-envelope/proof candidates for the
-///   direct adaptive-dimension objective.
-pub(crate) struct SuffixResult {
-    payload_only: BTreeMap<FirstFoldKey, ScheduleCandidate>,
-    setup_and_payload: BTreeMap<FirstFoldKey, frontier::ObjectiveChoices>,
-    /// Nondominated setup-envelope/proof candidates used by adaptive scalar
-    /// planning. Candidates with different first folds remain distinct because
-    /// the parent proof price and canonical descriptor can distinguish them.
-    pub(crate) mixed_frontier: Vec<ScheduleCandidate>,
-}
-
-impl SuffixResult {
-    pub(crate) fn payload_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
-        self.payload_only.values().chain(
-            self.setup_and_payload
-                .values()
-                .filter_map(|choices| choices.payload.as_ref()),
-        )
-    }
-
-    pub(crate) fn setup_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
-        self.setup_and_payload
-            .values()
-            .filter_map(|choices| choices.setup.as_ref())
-    }
-}
-
-fn mixed_score(candidate: &ScheduleCandidate) -> MixedScore {
-    MixedScore {
-        setup_field_elements: candidate.setup_field_elements,
-        proof_bytes: candidate.total_bytes,
-    }
-}
-
-fn dominates_mixed_score(left: MixedScore, right: MixedScore) -> bool {
-    left.setup_field_elements <= right.setup_field_elements
-        // A setup-only improvement cannot prune `right`: a parent can mask
-        // both setup footprints, leaving proof bytes and the descriptor to
-        // decide the complete schedule.
-        && left.proof_bytes < right.proof_bytes
-}
-
-fn insert_mixed_frontier(
-    policy: &PlannerPolicy,
-    frontier: &mut Vec<ScheduleCandidate>,
-    candidate: ScheduleCandidate,
-) {
-    if policy.selection_policy
-        != crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-        || !policy.admits_setup_field_elements(candidate.setup_field_elements)
-    {
-        return;
-    }
-    let same_first_fold =
-        |other: &ScheduleCandidate| other.first_fold_params() == candidate.first_fold_params();
-    if frontier.iter().any(|other| {
-        same_first_fold(other) && dominates_mixed_score(mixed_score(other), mixed_score(&candidate))
-    }) {
-        return;
-    }
-    frontier.retain(|other| {
-        !same_first_fold(other)
-            || !dominates_mixed_score(mixed_score(&candidate), mixed_score(other))
-    });
-    frontier.push(candidate);
-}
-
-/// Parent-visible first-fold class. A parent edge prices the child's outgoing
-/// commitment payload, so suffixes with different first payload sizes are not
-/// interchangeable even when they use the same digit basis.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct FirstFoldKey {
-    log_basis: u32,
-    outer_payload_bytes: usize,
-    stage3_payload_bytes: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct ParentPayloadKey {
-    outer_payload_bytes: usize,
-    stage3_payload_bytes: usize,
-}
-
-/// Like [`terminal_direct_suffix_cost`], but returns `None` when the fold at
-/// `terminal_fold_level` is multi-chunk. The suffix DP uses this to skip the
-/// fold-then-direct branch without aborting fold-then-fold exploration.
-pub(super) fn try_terminal_direct_suffix_cost(
-    input_witness_len: usize,
-    terminal_lp: &CommittedGroupParams,
-    field_bits: u32,
-    key: PolynomialGroupLayout,
-    terminal_fold_level: usize,
-    opening_layout: Option<&OpeningClaimsLayout>,
-) -> Result<Option<(CandidateTerminalResponse, usize)>, AkitaError> {
-    if terminal_lp.witness_chunk.num_chunks > 1 {
-        return Ok(None);
-    }
-    let result = terminal_direct_suffix_cost(
-        input_witness_len,
-        terminal_lp,
-        field_bits,
-        key,
-        terminal_fold_level,
-        opening_layout,
-    );
-    match result {
-        Ok(candidate) => Ok(Some(candidate)),
-        // Candidate construction is an optimization search. A geometry whose
-        // fixed inner matrix cannot admit the directly checked terminal response is
-        // infeasible, not a fatal planner error.
-        Err(AkitaError::InvalidSetup(_)) => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-pub(crate) fn terminal_direct_suffix_cost(
-    input_witness_len: usize,
-    terminal_lp: &CommittedGroupParams,
-    field_bits: u32,
-    key: PolynomialGroupLayout,
-    terminal_fold_level: usize,
-    opening_layout: Option<&OpeningClaimsLayout>,
-) -> Result<(CandidateTerminalResponse, usize), AkitaError> {
-    // Scalar same-point root fold: polynomial count at the root, 1 recursively.
-    let num_polynomials = if terminal_fold_level == 0 {
-        key.num_polynomials()
-    } else {
-        1
-    };
-    // The terminal-direct (cleartext) witness is single-chunk by construction:
-    // the prover emits the global folded response and one shared `r̂` tail, so
-    // chunking the cleartext tail is unsupported. The last fold level must be
-    // single-chunk (only the leading activated levels are chunked). Reject here
-    // to match `resolve.rs` and avoid a cryptic prover-side layout mismatch.
-    if terminal_lp.witness_chunk.num_chunks > 1 {
-        return Err(AkitaError::InvalidSetup(
-            "terminal-direct witness does not support a multi-chunk last fold level".to_string(),
-        ));
-    }
-    if opening_layout.is_some() || num_polynomials != 1 || terminal_lp.has_precommitted_groups() {
-        return Err(AkitaError::InvalidSetup(
-            "terminal direct response must be a scalar flat fold".to_string(),
-        ));
-    }
-    let (terminal_params, admission_cap) =
-        akita_types::TerminalCommittedGroupParams::try_from_expanded_group(terminal_lp.clone())?;
-    let witness_shape = TerminalResponseShape::derive(&terminal_params, admission_cap)?;
-    let terminal_bytes = terminal_response_bytes(field_bits, &witness_shape);
-    let direct = CandidateTerminalResponse {
-        params: terminal_params,
-        sparse_challenge_config: terminal_lp.fold_challenge_config,
-        input_witness_len,
-        estimated_direct_payload_bytes: 0,
-        response_shape: witness_shape,
-        estimated_payload_bytes: terminal_bytes,
-    };
-    Ok((direct, terminal_bytes))
-}
-
-type ScheduleMemoKey = (
-    usize,
-    usize,
-    u32,
-    usize,
-    usize,
-    usize,
-    usize,
-    akita_types::CommitmentPayloadPhase,
-);
-
-pub(crate) struct ScheduleMemo {
-    entries: HashMap<ScheduleMemoKey, MemoEntry>,
-    direct_insertion_order: VecDeque<ScheduleMemoKey>,
-    prefixed_insertion_order: VecDeque<ScheduleMemoKey>,
-    setup_prefixes: SetupPrefixSearchCache,
-}
-
-struct MemoEntry {
-    result: Arc<SuffixResult>,
-    referenced: bool,
-}
-
-const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 262_144;
-// Prefix layouts create a much wider stream of one-off states than ordinary
-// suffixes. Separate FIFO quotas prevent that stream from evicting the direct
-// states reused across basis, dimension, and split candidates while preserving
-// the original hard bound on total cached results.
-const MAX_DIRECT_SUFFIX_CACHE_ENTRIES: usize = 196_608;
-const MAX_PREFIXED_SUFFIX_CACHE_ENTRIES: usize =
-    MAX_SUFFIX_SEARCH_CACHE_ENTRIES - MAX_DIRECT_SUFFIX_CACHE_ENTRIES;
-const MAX_SECOND_CHANCE_PROBES: usize = 16;
-
-fn evict_suffix_entry(
-    entries: &mut HashMap<ScheduleMemoKey, MemoEntry>,
-    insertion_order: &mut VecDeque<ScheduleMemoKey>,
-) {
-    let mut probes = 0;
-    while let Some(evicted) = insertion_order.pop_front() {
-        let recently_referenced = probes < MAX_SECOND_CHANCE_PROBES
-            && entries.get_mut(&evicted).is_some_and(|entry| {
-                let referenced = entry.referenced;
-                entry.referenced = false;
-                referenced
-            });
-        if recently_referenced {
-            insertion_order.push_back(evicted);
-            probes += 1;
-        } else {
-            entries.remove(&evicted);
-            break;
-        }
-    }
-}
-
-impl ScheduleMemo {
-    pub(crate) fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-            direct_insertion_order: VecDeque::new(),
-            prefixed_insertion_order: VecDeque::new(),
-            setup_prefixes: SetupPrefixSearchCache::default(),
-        }
-    }
-
-    fn get(&mut self, key: &ScheduleMemoKey) -> Option<&Arc<SuffixResult>> {
-        self.entries.get_mut(key).map(|entry| {
-            entry.referenced = true;
-            &entry.result
-        })
-    }
-
-    fn insert(&mut self, key: ScheduleMemoKey, result: Arc<SuffixResult>) {
-        if let Entry::Occupied(mut existing) = self.entries.entry(key) {
-            existing.insert(MemoEntry {
-                result,
-                referenced: true,
-            });
-            return;
-        }
-        let (insertion_order, capacity) = if key.3 == 0 {
-            (
-                &mut self.direct_insertion_order,
-                MAX_DIRECT_SUFFIX_CACHE_ENTRIES,
-            )
-        } else {
-            (
-                &mut self.prefixed_insertion_order,
-                MAX_PREFIXED_SUFFIX_CACHE_ENTRIES,
-            )
-        };
-        if insertion_order.len() >= capacity {
-            evict_suffix_entry(&mut self.entries, insertion_order);
-        }
-        insertion_order.push_back(key);
-        self.entries.insert(
-            key,
-            MemoEntry {
-                result,
-                referenced: false,
-            },
-        );
-    }
-}
+use state::*;
+pub(crate) use state::{ScheduleMemo, SuffixCtx, SuffixState};
+pub(crate) use terminal::try_terminal_direct_suffix_cost;
 
 fn offloaded_witness_contracts(
     input_witness_len: usize,
@@ -465,81 +196,6 @@ fn consider_mixed_child_suffixes(
     Ok(())
 }
 
-fn empty_suffix_result() -> Arc<SuffixResult> {
-    Arc::new(SuffixResult {
-        payload_only: BTreeMap::new(),
-        setup_and_payload: BTreeMap::new(),
-        mixed_frontier: Vec::new(),
-    })
-}
-
-/// DP-invariant inputs for the suffix search.
-///
-/// `policy`, `ring_challenge_cfg`, and `num_vars` are constant across the whole
-/// recursion, so they are carried in one context value rather than as
-/// per-call arguments (keeps the recursive signature small).
-#[derive(Clone, Copy)]
-pub(crate) struct SuffixCtx<'a> {
-    pub(crate) policy: &'a PlannerPolicy,
-    pub(crate) default_ring_challenge_cfg: &'a akita_challenges::SparseChallengeConfig,
-    pub(crate) ring_challenge_config:
-        &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    pub(crate) num_vars: usize,
-    pub(crate) key: PolynomialGroupLayout,
-    pub(crate) setup_field_budget: Option<usize>,
-    pub(crate) root_lookup_key: Option<&'a AkitaScheduleLookupKey>,
-    pub(crate) root_honest_fold_policy: Option<akita_types::sis::HonestFoldPolicySpec>,
-    pub(crate) precommitted_honest_fold_policies: &'a [akita_types::sis::HonestFoldPolicySpec],
-    pub(crate) level_zero_is_root: bool,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct SuffixState {
-    pub(crate) level: usize,
-    pub(crate) current_witness_len: usize,
-    pub(crate) current_lb: u32,
-    pub(crate) incoming_setup_prefix: Option<usize>,
-    pub(crate) dimension_ceiling: CommitmentRingDims,
-    pub(crate) payload_phase: akita_types::CommitmentPayloadPhase,
-}
-
-impl SuffixState {
-    fn memo_key(
-        self,
-        policy: &PlannerPolicy,
-    ) -> (
-        usize,
-        usize,
-        u32,
-        usize,
-        usize,
-        usize,
-        usize,
-        akita_types::CommitmentPayloadPhase,
-    ) {
-        let memo_dimensions = match policy.ring_dimension_schedule_mode {
-            crate::RingDimensionScheduleMode::AdaptiveDimension {
-                num_search_levels,
-                uniform_suffix_dimension,
-                ..
-            } if self.level >= num_search_levels => {
-                CommitmentRingDims::uniform(uniform_suffix_dimension)
-            }
-            _ => self.dimension_ceiling,
-        };
-        (
-            self.level,
-            self.current_witness_len,
-            self.current_lb,
-            self.incoming_setup_prefix.unwrap_or(0),
-            memo_dimensions.d_a(),
-            memo_dimensions.d_b(),
-            memo_dimensions.d_d(),
-            self.payload_phase,
-        )
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn price_level_candidate_with_children(
     ctx: &SuffixCtx<'_>,
@@ -668,7 +324,7 @@ fn price_level_candidate_with_children(
 }
 
 /// Shared inputs for root-level `CommittedGroupParams` candidates.
-/// Suffix DP for the optimal recursive schedule at
+/// Suffix DP for the selected recursive schedule at
 /// `(level, current_witness_len, current_lb)`.
 ///
 /// At each state, the projected maps keep the setup and payload winners for
@@ -678,7 +334,7 @@ fn price_level_candidate_with_children(
 /// `incoming_setup_prefix` when present. Fold-again edges plan exactly one child
 /// state: recursive setup edges pass the outgoing setup prefix to the child,
 /// while direct edges plan the ordinary no-prefix child.
-pub(crate) fn derive_optimal_suffix_schedule(
+pub(crate) fn derive_selected_suffix_schedule(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
     state: SuffixState,
@@ -779,8 +435,9 @@ pub(crate) fn derive_optimal_suffix_schedule(
             log_basis: current_lb,
         }
     };
-    let (min_inner_basis, max_inner_basis) = policy.inner_basis_search_range(inner_source)?;
-    let (min_open_basis, max_open_basis) = policy.log_basis_search_range_at_level(level);
+    let (min_inner_basis, max_inner_basis) = inner_source.search_range(policy)?;
+    let (min_open_basis, max_open_basis) =
+        crate::policy::log_basis_search_range_at_level(policy, level);
     for open_lb in min_open_basis..=max_open_basis {
         if open_lb < current_lb {
             continue;
@@ -947,7 +604,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
             } else if depth == MAX_RECURSION_DEPTH {
                 Some(empty_suffix_result())
             } else {
-                Some(derive_optimal_suffix_schedule(
+                Some(derive_selected_suffix_schedule(
                     ctx,
                     memo,
                     SuffixState {
@@ -969,7 +626,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 // produce results that `child_choice` rejects.
                 && depth + 2 < MAX_RECURSION_DEPTH
             {
-                Some(derive_optimal_suffix_schedule(
+                Some(derive_selected_suffix_schedule(
                     ctx,
                     memo,
                     SuffixState {
@@ -1000,12 +657,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
             )?;
         }
 
-        for (parent_key, choices) in frontier.by_parent_cost {
-            let key = FirstFoldKey {
-                log_basis: open_lb,
-                outer_payload_bytes: parent_key.outer_payload_bytes,
-                stage3_payload_bytes: parent_key.stage3_payload_bytes,
-            };
+        for (key, choices) in frontier.by_parent_cost {
             if retains_setup_projection {
                 setup_and_payload.insert(key, choices);
             } else if let Some(choice) = choices.payload {

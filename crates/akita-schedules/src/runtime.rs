@@ -7,12 +7,9 @@ use akita_types::{
     RecursiveFoldStep, RingRole, RootFinalGroupParams, RootFoldParams, RootFoldStep,
     RootPrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
     TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
-    DEFAULT_SIS_SECURITY_POLICY,
+    DEFAULT_SIS_SECURITY_POLICY, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,
 };
 use std::sync::Arc;
-
-const MAX_OPENING_LOG_BASIS: u32 = 8;
-const MAX_INNER_LOG_BASIS: u32 = 16;
 
 /// Quantities materialized and checked by the current bounded planner cost model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +84,32 @@ impl SelectionPolicyId {
     }
 }
 
+/// Catalog-bound recursive split traversal policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecursiveSplitSearchPolicy {
+    /// Traverse every feasible recursive witness split.
+    Exhaustive,
+    /// Search the two extremes and a fixed radius-two balance window for
+    /// states above twelve reduced variables.
+    BoundedBalancedExtremesV1,
+}
+
+impl RecursiveSplitSearchPolicy {
+    pub const fn tag(self) -> u32 {
+        match self {
+            Self::Exhaustive => 1,
+            Self::BoundedBalancedExtremesV1 => 2,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Exhaustive => "Exhaustive",
+            Self::BoundedBalancedExtremesV1 => "BoundedBalancedExtremesV1",
+        }
+    }
+}
+
 /// Catalog-bound ring-dimension schedule policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RingDimensionScheduleMode {
@@ -128,17 +151,6 @@ impl RingDimensionScheduleMode {
     }
 }
 
-/// Coefficient source whose A-matrix decomposition basis is being selected.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InnerBasisSource {
-    /// Raw coefficients that may benefit from a full basis sweep.
-    RawCoefficients { log_bound: u32 },
-    /// Unit one-hot coefficients already represented by one exact digit.
-    UnitOneHot,
-    /// A recursive witness already represented as balanced digits.
-    BalancedDigits { log_basis: u32 },
-}
-
 /// Runtime schedule validation policy.
 ///
 /// The compatibility name stays `PlannerPolicy` during the migration because
@@ -148,6 +160,7 @@ pub enum InnerBasisSource {
 pub struct PlannerPolicy {
     pub cost_model: PlannerCostModelId,
     pub selection_policy: SelectionPolicyId,
+    pub recursive_split_search_policy: RecursiveSplitSearchPolicy,
     /// Optional host admission budget for materialized setup field elements.
     /// `None` leaves the deterministic public stream uncapped by protocol policy.
     pub setup_field_budget: Option<usize>,
@@ -213,107 +226,6 @@ impl PlannerPolicy {
                 AkitaError::InvalidSetup("challenge field bit width overflow".to_string())
             })
     }
-
-    /// Direct-only counterpart used when scalar schedules are cataloged under
-    /// the non-recursive family identity. It deliberately restores the
-    /// proof-payload objective: callers crossing from a grouped/recursive
-    /// adapter into the uniform scalar planner must not reuse a mixed-domain
-    /// setup-first policy.
-    pub fn direct_only(self) -> Self {
-        Self {
-            recursive_setup_planning: false,
-            selection_policy: SelectionPolicyId::for_policy(
-                false,
-                self.ring_dimension_schedule_mode,
-            ),
-            ..self
-        }
-    }
-
-    /// Number of chunks emitted by fold level `fold_level`.
-    pub fn chunks_at_level(&self, fold_level: usize) -> usize {
-        let mc = self.witness_chunk;
-        if mc.uses_multi_chunk() && fold_level < mc.num_activated_levels {
-            mc.num_chunks
-        } else {
-            1
-        }
-    }
-
-    /// Per-level witness chunk metadata.
-    pub fn witness_chunk_for_level(&self, fold_level: usize) -> ChunkedWitnessCfg {
-        let num_chunks = self.chunks_at_level(fold_level);
-        if num_chunks > 1 {
-            ChunkedWitnessCfg {
-                num_chunks,
-                num_activated_levels: self.witness_chunk.num_activated_levels,
-            }
-        } else {
-            ChunkedWitnessCfg::default()
-        }
-    }
-
-    /// Inclusive `(min, max)` `log_basis` values to evaluate at an absolute fold
-    /// level.
-    ///
-    /// The root fold is fixed to the configured minimum basis. Deeper folds can
-    /// search the full configured range, while the suffix DP separately enforces
-    /// non-decreasing bases across adjacent folds.
-    pub fn log_basis_search_range_at_level(&self, level: usize) -> (u32, u32) {
-        let (configured_min, max) = self.opening_basis_range;
-        if level == 0 {
-            return (configured_min, configured_min);
-        }
-        (configured_min, max)
-    }
-
-    /// Inclusive A/source basis domain for the source coefficient shape.
-    pub fn inner_basis_search_range(
-        &self,
-        source: InnerBasisSource,
-    ) -> Result<(u32, u32), AkitaError> {
-        let (min, max) = self.inner_basis_range;
-        match source {
-            InnerBasisSource::RawCoefficients { log_bound } => {
-                Ok((min, max.min(log_bound.max(min))))
-            }
-            InnerBasisSource::UnitOneHot => Ok((min, min)),
-            InnerBasisSource::BalancedDigits { log_basis }
-                if (1..=MAX_INNER_LOG_BASIS).contains(&log_basis) =>
-            {
-                Ok((log_basis, log_basis))
-            }
-            InnerBasisSource::BalancedDigits { log_basis } => Err(AkitaError::InvalidSetup(
-                format!(
-                    "recursive digit basis {log_basis} is outside the supported range [1, {MAX_INNER_LOG_BASIS}]"
-                ),
-            )),
-        }
-    }
-}
-
-impl InnerBasisSource {
-    /// Exact source digit depth for a selected A basis.
-    pub fn num_digits_inner(
-        self,
-        decomposition: DecompositionParams,
-        selected_log_basis: u32,
-    ) -> Result<usize, AkitaError> {
-        match self {
-            Self::RawCoefficients { log_bound } => Ok(akita_types::sis::num_digits_inner_for_bound(
-                DecompositionParams {
-                    log_basis: selected_log_basis,
-                    ..decomposition
-                },
-                log_bound,
-            )),
-            Self::UnitOneHot => Ok(1),
-            Self::BalancedDigits { log_basis } if log_basis == selected_log_basis => Ok(1),
-            Self::BalancedDigits { log_basis } => Err(AkitaError::InvalidSetup(format!(
-                "balanced source basis {log_basis} cannot be re-decomposed at basis {selected_log_basis}"
-            ))),
-        }
-    }
 }
 
 /// Suffix-DP depth cap shared by planner search and runtime policy validation.
@@ -354,8 +266,8 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
         ));
     }
     for (label, (min, max), supported_max) in [
-        ("opening", policy.opening_basis_range, MAX_OPENING_LOG_BASIS),
-        ("inner", policy.inner_basis_range, MAX_INNER_LOG_BASIS),
+        ("opening", policy.opening_basis_range, MAX_I8_LOG_BASIS),
+        ("inner", policy.inner_basis_range, MAX_I16_LOG_BASIS),
     ] {
         if min == 0 || min > max || max > supported_max {
             return Err(AkitaError::InvalidSetup(format!(
@@ -698,23 +610,6 @@ pub fn planned_next_witness_len(
     final_num_polys: usize,
     num_chunks: usize,
 ) -> Result<Option<usize>, AkitaError> {
-    planned_next_witness_len_with_cache(
-        field_bits,
-        params,
-        final_num_polys,
-        num_chunks,
-        &mut akita_types::CompressionChainPlanCache::default(),
-    )
-}
-
-/// Cached variant of [`planned_next_witness_len`] for exact candidate sweeps.
-pub fn planned_next_witness_len_with_cache(
-    field_bits: u32,
-    params: &CommittedGroupParams,
-    final_num_polys: usize,
-    num_chunks: usize,
-    compression_cache: &mut akita_types::CompressionChainPlanCache,
-) -> Result<Option<usize>, AkitaError> {
     if !params.precommitted_groups.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "multi-group root witness sizing must use CommittedGroupParams::output_witness_len"
@@ -726,26 +621,18 @@ pub fn planned_next_witness_len_with_cache(
     let quotient_depth =
         akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open);
     if params.setup_prefix.is_none() {
-        return WitnessLayout::try_scalar_live_coeff_len_with_cache(
+        return WitnessLayout::try_scalar_live_coeff_len(
             params,
             &opening_batch,
             num_chunks,
             quotient_depth,
-            compression_cache,
         );
     }
-    if !params.compression_sources_supported_with_cache(compression_cache)? {
+    if !params.compression_sources_supported()? {
         return Ok(None);
     }
     Ok(Some(
-        WitnessLayout::new_with_compression_cache(
-            params,
-            &opening_batch,
-            num_chunks,
-            quotient_depth,
-            compression_cache,
-        )?
-        .live_coeff_len(),
+        WitnessLayout::new(params, &opening_batch, num_chunks, quotient_depth)?.live_coeff_len(),
     ))
 }
 
@@ -765,6 +652,7 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selection_policy: SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload,
+            recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 3,
             // This remains the uniform preset candidate. It is deliberately

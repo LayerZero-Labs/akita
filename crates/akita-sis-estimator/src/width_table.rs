@@ -29,15 +29,66 @@ pub static COEFF_LINF_BUCKETS: LazyLock<Vec<u64>> = LazyLock::new(|| {
         .collect()
 });
 
-/// Ring dimensions included in the current reachable generation domain.
-pub const RING_DIMS: &[u32] = &[32, 64, 128, 256, 512];
+fn estimator_profile(profile: akita_types::sis::SisModulusProfileId) -> AkitaModulusProfileId {
+    match profile {
+        akita_types::sis::SisModulusProfileId::Q32Offset99 => AkitaModulusProfileId::Q32Offset99,
+        akita_types::sis::SisModulusProfileId::Q64Offset59 => AkitaModulusProfileId::Q64Offset59,
+        akita_types::sis::SisModulusProfileId::Q128OffsetA7F7 => {
+            AkitaModulusProfileId::Q128OffsetA7F7
+        }
+    }
+}
 
-/// Exact modulus profiles included in the generated artifact.
-pub const FAMILIES: &[AkitaModulusProfileId] = &[
-    AkitaModulusProfileId::Q32Offset99,
-    AkitaModulusProfileId::Q64Offset59,
-    AkitaModulusProfileId::Q128OffsetA7F7,
-];
+fn canonical_scalar_origins() -> Vec<(AkitaModulusProfileId, u32, u64)> {
+    let mut origins = BTreeSet::new();
+    origins.extend(akita_types::sis::sis_role_cells().into_iter().map(|cell| {
+        (
+            estimator_profile(cell.modulus_profile),
+            cell.ring_dimension,
+            u64::try_from(cell.coeff_linf_bound).expect("canonical SIS bound exceeds u64"),
+        )
+    }));
+    origins.extend(
+        akita_types::sis::compression::compression_sis_cells().map(|cell| {
+            (
+                estimator_profile(cell.modulus_profile),
+                cell.ring_dimension,
+                u64::try_from(akita_types::sis::compression::COMPRESSION_SIS_COEFF_LINF_BOUND)
+                    .expect("compression SIS bound exceeds u64"),
+            )
+        }),
+    );
+    origins.into_iter().collect()
+}
+
+#[cfg(test)]
+fn scalar_origin_is_canonical(
+    profile: AkitaModulusProfileId,
+    ring_dimension: u32,
+    coeff_linf_bound: u64,
+) -> bool {
+    canonical_scalar_origins().contains(&(profile, ring_dimension, coeff_linf_bound))
+}
+
+/// Ring dimensions derived from the exact canonical role and compression cells.
+pub static RING_DIMS: LazyLock<Vec<u32>> = LazyLock::new(|| {
+    canonical_scalar_origins()
+        .into_iter()
+        .map(|(_, dimension, _)| dimension)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+});
+
+/// Modulus profiles derived from the exact canonical generation cells.
+pub static FAMILIES: LazyLock<Vec<AkitaModulusProfileId>> = LazyLock::new(|| {
+    canonical_scalar_origins()
+        .into_iter()
+        .map(|(profile, _, _)| profile)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+});
 
 /// Maximum module rank emitted for each scalar row.
 pub const DEFAULT_MAX_RANK: u32 = 20;
@@ -154,8 +205,8 @@ impl Default for InfinityWidthTableConfig {
 /// Comparison profiles may generate CSV output, but production Rust output
 /// must use the profile that certifies every discovered boundary.
 pub fn is_production_infinity_width_table_config(config: &InfinityWidthTableConfig) -> bool {
-    same_set(&config.profiles, FAMILIES)
-        && same_set(&config.ring_dims, RING_DIMS)
+    same_set(&config.profiles, FAMILIES.as_slice())
+        && same_set(&config.ring_dims, RING_DIMS.as_slice())
         && same_set(&config.coeff_linf_bounds, &COEFF_LINF_BUCKETS)
         && config.max_rank == DEFAULT_MAX_RANK
         && config.policy == SisSecurityPolicy::Quantum128BitADPS16
@@ -259,16 +310,15 @@ pub fn generate_infinity_width_rows(
     validate_table_config(config)?;
     let estimator_config = config.profile.config();
     let mut work = Vec::new();
-    for &modulus_profile in &config.profiles {
-        for &d in &config.ring_dims {
-            for &bound in &config.coeff_linf_bounds {
-                if !reachable_role_cell(modulus_profile, d, bound) {
-                    continue;
-                }
-                for rank in 1..=config.max_rank {
-                    work.push((modulus_profile, d, rank, bound));
-                }
-            }
+    for (modulus_profile, d, bound) in canonical_scalar_origins() {
+        if !config.profiles.contains(&modulus_profile)
+            || !config.ring_dims.contains(&d)
+            || !config.coeff_linf_bounds.contains(&bound)
+        {
+            continue;
+        }
+        for rank in 1..=config.max_rank {
+            work.push((modulus_profile, d, rank, bound));
         }
     }
     if work.is_empty() {
@@ -278,42 +328,6 @@ pub fn generate_infinity_width_rows(
         );
     }
     generate_rows_from_work(work, config, &estimator_config)
-}
-
-/// Return whether a scalar origin is reachable from at least one canonical
-/// matrix-role cell. The shared coverage declaration lives in `akita-types`;
-/// this adapter only maps the estimator's modulus enum to that declaration.
-fn reachable_role_cell(
-    modulus_profile: AkitaModulusProfileId,
-    ring_dimension: u32,
-    coeff_linf_bound: u64,
-) -> bool {
-    let profile = match modulus_profile {
-        AkitaModulusProfileId::Q32Offset99 => akita_types::sis::SisModulusProfileId::Q32Offset99,
-        AkitaModulusProfileId::Q64Offset59 => akita_types::sis::SisModulusProfileId::Q64Offset59,
-        AkitaModulusProfileId::Q128OffsetA7F7 => {
-            akita_types::sis::SisModulusProfileId::Q128OffsetA7F7
-        }
-    };
-    let production_role = akita_types::sis::SIS_MATRIX_ROLES
-        .iter()
-        .copied()
-        .any(|role| {
-            akita_types::sis::ajtai_key::sis_role_cell(
-                role,
-                profile,
-                ring_dimension,
-                u128::from(coeff_linf_bound),
-            )
-            .is_some()
-        });
-    production_role
-        || akita_types::sis::compression::compression_sis_cell(
-            profile,
-            ring_dimension,
-            u128::from(coeff_linf_bound),
-        )
-        .is_some()
 }
 
 #[cfg(feature = "parallel")]

@@ -43,13 +43,13 @@ pub(crate) use akita_schedules::planner_support::{
 pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
     derive_candidate_level_params, derive_candidate_level_params_split_frontier,
-    SetupPrefixSearchCache,
+    recursive_split_search_domain, SetupPrefixSearchCache,
 };
 pub(crate) use objective::select_complete_candidate;
 pub(crate) use setup_score::{
     level_setup_field_elements, terminal_setup_field_elements, MixedScore,
 };
-pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
+pub(crate) use suffix_dp::{derive_selected_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
 
 pub(crate) fn root_inner_basis_source(
     honest_fold_policy: HonestFoldPolicySpec,
@@ -291,6 +291,17 @@ impl ScheduleCandidate {
 pub(crate) fn candidate_schedule_descriptor_bytes(
     choice: &ScheduleCandidate,
 ) -> Result<Vec<u8>, AkitaError> {
+    if choice.folds.is_empty() {
+        return Ok(akita_types::TerminalFoldStep {
+            params: akita_types::TerminalFoldParams {
+                witness: choice.terminal.params.clone(),
+                sparse_challenge_config: choice.terminal.sparse_challenge_config,
+                response_shape: choice.terminal.response_shape.clone(),
+            },
+            input_witness_len: choice.terminal.input_witness_len,
+        }
+        .canonical_descriptor_bytes());
+    }
     Ok(materialize_candidate_schedule(
         choice.total_bytes,
         choice.setup_field_elements,
@@ -300,26 +311,6 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
     )?
     .schedule
     .canonical_descriptor_bytes())
-}
-
-pub(crate) fn candidate_suffix_descriptor_bytes(choice: &ScheduleCandidate) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(&choice.folds.len().to_le_bytes());
-    let mut node = choice.folds.head.as_deref();
-    while let Some(current) = node {
-        let fold = &current.step;
-        let params = fold.params.canonical_descriptor_bytes();
-        bytes.extend_from_slice(&params.len().to_le_bytes());
-        bytes.extend_from_slice(&params);
-        bytes.extend_from_slice(&fold.input_witness_len.to_le_bytes());
-        bytes.extend_from_slice(&fold.output_witness_len.to_le_bytes());
-        node = current.tail.as_deref();
-    }
-    let terminal = choice.terminal.params.canonical_descriptor_bytes();
-    bytes.extend_from_slice(&terminal.len().to_le_bytes());
-    bytes.extend_from_slice(&terminal);
-    bytes.extend_from_slice(&choice.terminal.input_witness_len.to_le_bytes());
-    bytes
 }
 
 /// Stage-1 sparse-challenge closure shared by the planner entry points.
@@ -358,11 +349,6 @@ pub(crate) fn layout_candidate_score(
     Ok((combined, physical_width, chunk_work, imbalance))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StandalonePrecommitSelectionPolicy {
-    MinPaddedSetupThenNextWitness,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StandalonePrecommitCandidate {
     pub profile: CommittedGroupProfile,
@@ -373,7 +359,6 @@ pub struct StandalonePrecommitCandidate {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StandalonePrecommitPlan {
-    pub selection_policy: StandalonePrecommitSelectionPolicy,
     pub selected: StandalonePrecommitCandidate,
     pub pareto_frontier: Vec<StandalonePrecommitCandidate>,
 }
@@ -412,7 +397,7 @@ pub fn plan_standalone_precommit(
 ) -> Result<StandalonePrecommitPlan, AkitaError> {
     key.validate()?;
     let schedule_key = AkitaScheduleLookupKey::single(key);
-    let mut direct_policy = policy.direct_only();
+    let mut direct_policy = crate::policy::direct_only_policy(*policy);
     let precommit_dimension = match policy.ring_dimension_schedule_mode {
         crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => ring_dimension,
         crate::RingDimensionScheduleMode::AdaptiveDimension {
@@ -435,13 +420,13 @@ pub fn plan_standalone_precommit(
     let witness_len = 1usize
         .checked_shl(key.num_vars() as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("precommit witness too large".into()))?;
-    let (min_open_basis, max_open_basis) = direct_policy.log_basis_search_range_at_level(0);
+    let (min_open_basis, max_open_basis) =
+        crate::policy::log_basis_search_range_at_level(&direct_policy, 0);
     let inner_source = root_inner_basis_source(
         honest_fold_policy,
         direct_policy.decomposition.log_commit_bound,
     );
-    let (min_inner_basis, max_inner_basis) =
-        direct_policy.inner_basis_search_range(inner_source)?;
+    let (min_inner_basis, max_inner_basis) = inner_source.search_range(&direct_policy)?;
     let dimensions = akita_schedules::planner_support::RingDimensionCandidate::Fixed(
         CommitmentRingDims::uniform(precommit_dimension),
     );
@@ -509,14 +494,14 @@ pub fn plan_standalone_precommit(
 
     frontier.sort_by(|(left, left_descriptor), (right, right_descriptor)| {
         (
-            left.padded_ab_setup_field_elements,
             left.next_witness_len,
+            left.padded_ab_setup_field_elements,
             left.ab_setup_field_elements,
             left_descriptor,
         )
             .cmp(&(
-                right.padded_ab_setup_field_elements,
                 right.next_witness_len,
+                right.padded_ab_setup_field_elements,
                 right.ab_setup_field_elements,
                 right_descriptor,
             ))
@@ -530,26 +515,12 @@ pub fn plan_standalone_precommit(
             ))
         })?;
     Ok(StandalonePrecommitPlan {
-        selection_policy: StandalonePrecommitSelectionPolicy::MinPaddedSetupThenNextWitness,
         selected,
         pareto_frontier: frontier
             .into_iter()
             .map(|(candidate, _)| candidate)
             .collect(),
     })
-}
-
-pub fn derive_standalone_precommit_profile(
-    key: PolynomialGroupLayout,
-    policy: &PlannerPolicy,
-    honest_fold_policy: HonestFoldPolicySpec,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-) -> Result<CommittedGroupProfile, AkitaError> {
-    Ok(
-        plan_standalone_precommit(key, policy, honest_fold_policy, ring_challenge_config)?
-            .selected
-            .profile,
-    )
 }
 
 #[cfg(test)]

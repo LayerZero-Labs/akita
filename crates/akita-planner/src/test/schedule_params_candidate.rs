@@ -1,4 +1,4 @@
-use super::recursive::{prioritized_recursive_split_candidates, recursive_candidate_order_key};
+use super::recursive::{recursive_candidate_order_key, recursive_split_search_domain};
 use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
@@ -59,14 +59,39 @@ fn recursive_candidate_order_preserves_exhaustive_tie_break() {
 }
 
 #[test]
-fn recursive_split_frontier_is_exact_only_for_small_states() {
+fn recursive_split_policy_controls_the_shared_search_domain() {
     assert_eq!(
-        prioritized_recursive_split_candidates(1 << 12, 12, 4, 4, 1),
+        recursive_split_search_domain(
+            crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
+            1 << 12,
+            12,
+            4,
+            4,
+            1,
+        ),
         (1..12).rev().collect::<Vec<_>>()
     );
     assert_eq!(
-        prioritized_recursive_split_candidates(1 << 16, 16, 4, 4, 1),
+        recursive_split_search_domain(
+            crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
+            1 << 16,
+            16,
+            4,
+            4,
+            1,
+        ),
         vec![15, 10, 9, 8, 7, 6, 1]
+    );
+    assert_eq!(
+        recursive_split_search_domain(
+            crate::RecursiveSplitSearchPolicy::Exhaustive,
+            1 << 16,
+            16,
+            4,
+            4,
+            1,
+        ),
+        (1..16).rev().collect::<Vec<_>>()
     );
 }
 

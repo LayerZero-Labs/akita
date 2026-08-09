@@ -37,10 +37,9 @@ pub mod witness;
 
 pub use compression::{
     compression_ring_dimensions, CommitmentPayloadGeometry, CommitmentPayloadMode,
-    CommitmentPayloadPhase, CompressionChainPlan, CompressionChainPlanCache,
-    CompressionChainWitness, CompressionMapPlan, CompressionPolicyId, CompressionTerminalPayload,
-    PackedNegativeBinary, COMPRESSION_MAP_COUNT, COMPRESSION_POLICY, COMPRESSION_TARGET_BYTES,
-    MAX_COMPRESSION_INPUT_BYTES,
+    CommitmentPayloadPhase, CompressionChainPlan, CompressionChainWitness, CompressionMapPlan,
+    CompressionPolicyId, CompressionTerminalPayload, PackedNegativeBinary, COMPRESSION_MAP_COUNT,
+    COMPRESSION_POLICY, COMPRESSION_TARGET_BYTES, MAX_COMPRESSION_INPUT_BYTES,
 };
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{

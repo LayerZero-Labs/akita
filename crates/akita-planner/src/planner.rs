@@ -17,8 +17,8 @@ use akita_types::{
 use akita_schedules::planner_support::{sis_key_at_dimension, RingDimensionCandidate};
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, materialize_candidate_schedule, select_complete_candidate,
-    RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
+    derive_selected_suffix_schedule, materialize_candidate_schedule, recursive_split_search_domain,
+    select_complete_candidate, RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -119,7 +119,7 @@ fn materialize_precommitted_group_for_open_basis(
     };
     let num_digits_open = num_digits_open(open_decomp);
     let ring_dimension = group.layout.inner_commit_matrix.ring_dimension();
-    let num_chunks = policy.chunks_at_level(0);
+    let num_chunks = crate::policy::chunks_at_level(policy, 0);
     let num_fold_coeffs = group
         .inner_commit_matrix
         .input_width()
@@ -301,6 +301,30 @@ pub(crate) fn root_level_candidates_for_basis(
         .ok_or_else(|| AkitaError::InvalidSetup("root batch witness bit length overflow".into()))?;
     let min_block_index_bits: usize = if reduced_vars >= 3 { 1 } else { 0 };
     let max_block_index_bits: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
+    let num_ring_elems = 1usize.checked_shl(reduced_vars as u32).ok_or_else(|| {
+        AkitaError::InvalidSetup("root reduced-variable domain is too large".into())
+    })?;
+    let delta_commit = candidate_ctx
+        .source
+        .num_digits_inner(policy.decomposition, candidate_log_basis_inner)?;
+    let delta_open = num_digits_open(DecompositionParams {
+        log_basis: candidate_log_basis_open,
+        ..policy.decomposition
+    });
+    let mut split_domain = recursive_split_search_domain(
+        policy.recursive_split_search_policy,
+        num_ring_elems,
+        reduced_vars,
+        delta_commit,
+        delta_open,
+        crate::policy::chunks_at_level(policy, 0),
+    );
+    if min_block_index_bits == 0 {
+        split_domain.push(0);
+    }
+    split_domain.retain(|&split| min_block_index_bits <= split && split <= max_block_index_bits);
+    split_domain.sort_unstable_by(|left, right| right.cmp(left));
+    split_domain.dedup();
 
     let mut candidates = Vec::new();
     let shared_opening_ring_dimension = match dimensions {
@@ -324,7 +348,7 @@ pub(crate) fn root_level_candidates_for_basis(
             shared_opening_ring_dimension,
             candidate_log_basis_open,
         )?;
-    for block_index_bits in (min_block_index_bits..=max_block_index_bits).rev() {
+    for block_index_bits in split_domain {
         let position_index_bits = reduced_vars - block_index_bits;
         let Some(mut candidate_params) = root_final_group_level_params_candidate(
             &candidate_ctx,
@@ -338,7 +362,7 @@ pub(crate) fn root_level_candidates_for_basis(
         else {
             continue;
         };
-        candidate_params.witness_chunk = policy.witness_chunk_for_level(0);
+        candidate_params.witness_chunk = crate::policy::witness_chunk_at_level(policy, 0);
         let Some(output_witness_len) =
             root_batch_next_w_len(field_bits, &candidate_params, &opening_batch)?
         else {
@@ -398,7 +422,7 @@ fn root_final_group_level_params_candidate(
     else {
         return Ok(None);
     };
-    let num_chunks = policy.chunks_at_level(0);
+    let num_chunks = crate::policy::chunks_at_level(policy, 0);
     let Some(num_fold_coeffs) = width_s
         .checked_mul(d_a)
         .and_then(|count| count.checked_mul(num_chunks))
@@ -586,7 +610,7 @@ pub fn find_schedule(
         // Empty-precommit keys still enter through the root-key planner, but
         // recursive adapters must not leak their setup-first objective into
         // scalar catalog rows.
-        scalar_policy = policy.direct_only();
+        scalar_policy = crate::policy::direct_only_policy(*policy);
         &scalar_policy
     } else {
         policy
@@ -634,7 +658,7 @@ pub fn find_schedule(
                 .ok_or_else(|| AkitaError::InvalidSetup("adaptive A domain is empty".into()))?,
         ),
     };
-    let suffix = derive_optimal_suffix_schedule(
+    let suffix = derive_selected_suffix_schedule(
         &suffix_ctx,
         &mut memo,
         SuffixState {

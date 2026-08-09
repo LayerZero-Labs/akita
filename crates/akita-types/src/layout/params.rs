@@ -164,17 +164,6 @@ impl CommittedGroupParams {
 
     /// Whether every B/D image at this level fits the compression policy cap.
     pub fn compression_sources_supported(&self) -> Result<bool, AkitaError> {
-        self.compression_sources_supported_with_cache(
-            &mut crate::CompressionChainPlanCache::default(),
-        )
-    }
-
-    /// Cached variant of [`Self::compression_sources_supported`] for exact
-    /// planner sweeps.
-    pub fn compression_sources_supported_with_cache(
-        &self,
-        compression_cache: &mut crate::CompressionChainPlanCache,
-    ) -> Result<bool, AkitaError> {
         if !self.payload_mode.is_compressed() {
             return Ok(true);
         }
@@ -183,9 +172,11 @@ impl CommittedGroupParams {
             .output_rank()
             .checked_mul(self.role_dims().d_b())
             .ok_or_else(|| AkitaError::InvalidSetup("B compression shape overflow".into()))?;
-        if compression_cache
-            .try_for_complete_source(self.outer_commit_matrix.sis_modulus_profile(), final_outer)?
-            .is_none()
+        if crate::CompressionChainPlan::try_for_complete_source(
+            self.outer_commit_matrix.sis_modulus_profile(),
+            final_outer,
+        )?
+        .is_none()
         {
             return Ok(false);
         }
@@ -198,12 +189,11 @@ impl CommittedGroupParams {
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("precommitted B compression shape overflow".into())
                 })?;
-            if compression_cache
-                .try_for_complete_source(
-                    group.layout.outer_commit_matrix.sis_modulus_profile(),
-                    source,
-                )?
-                .is_none()
+            if crate::CompressionChainPlan::try_for_complete_source(
+                group.layout.outer_commit_matrix.sis_modulus_profile(),
+                source,
+            )?
+            .is_none()
             {
                 return Ok(false);
             }
@@ -213,9 +203,11 @@ impl CommittedGroupParams {
             .output_rank()
             .checked_mul(self.role_dims().d_d())
             .ok_or_else(|| AkitaError::InvalidSetup("D compression shape overflow".into()))?;
-        Ok(compression_cache
-            .try_for_complete_source(self.open_commit_matrix.sis_modulus_profile(), opening)?
-            .is_some())
+        Ok(crate::CompressionChainPlan::try_for_complete_source(
+            self.open_commit_matrix.sis_modulus_profile(),
+            opening,
+        )?
+        .is_some())
     }
 
     /// Largest gadget basis accepted by this level's shared D product.

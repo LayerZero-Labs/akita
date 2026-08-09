@@ -37,6 +37,18 @@ pub struct NttExecutionRequirements {
 }
 
 impl NttExecutionRequirements {
+    /// Compile the complete root-commit plus prove call layout used by profile
+    /// execution and other callers that own both phases.
+    pub fn from_commit_and_prove_schedule(schedule: &FoldSchedule) -> Result<Self, AkitaError> {
+        let mut requirements = Self::from_prove_schedule(schedule)?;
+        let root = &schedule.root.params;
+        requirements.add_group_commit(0, &root.final_group.commitment)?;
+        for precommitted in &root.precommitted_groups {
+            requirements.add_precommitted_commit(0, &precommitted.commitment)?;
+        }
+        Ok(requirements)
+    }
+
     /// Compile matrix work performed by one resolved prover execution.
     ///
     /// The root commitment is completed before `batched_prove` and remains
@@ -237,6 +249,33 @@ impl NttExecutionRequirements {
         )
     }
 
+    fn add_precommitted_commit(
+        &mut self,
+        level: usize,
+        params: &PrecommittedLevelParams,
+    ) -> Result<(), AkitaError> {
+        let layout = &params.layout;
+        self.add_matrix(
+            level,
+            NttOperationCluster::Commit,
+            layout.inner_commit_matrix.ring_dimension(),
+            layout.inner_commit_matrix.output_rank(),
+            layout.inner_commit_matrix.input_width(),
+            signed_commit_domain(
+                layout.inner_commit_matrix.input_width(),
+                layout.log_basis_inner,
+            )?,
+        )?;
+        self.add_matrix(
+            level,
+            NttOperationCluster::Commit,
+            layout.outer_commit_matrix.ring_dimension(),
+            layout.outer_commit_matrix.output_rank(),
+            layout.outer_commit_matrix.input_width(),
+            NttTransformDomain::Negacyclic,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn add_relation_ab(
         &mut self,
@@ -288,10 +327,7 @@ impl NttExecutionRequirements {
 }
 
 /// Transform domain required to commit balanced digits at one basis.
-pub fn signed_commit_domain(
-    width: usize,
-    log_basis: u32,
-) -> Result<NttTransformDomain, AkitaError> {
+fn signed_commit_domain(width: usize, log_basis: u32) -> Result<NttTransformDomain, AkitaError> {
     match crate::validation::signed_digit_kernel_for_setup(log_basis, "for NTT cache planning")? {
         akita_types::SignedDigitKernel::I8 => Ok(NttTransformDomain::Negacyclic),
         akita_types::SignedDigitKernel::I16 => Ok(NttTransformDomain::ExactNegacyclicI16 {
@@ -427,5 +463,23 @@ mod tests {
                 && entry.key.ring_d == schedule.terminal.params.witness.d_a()
                 && entry.key.domain == NttTransformDomain::Negacyclic
         }));
+    }
+
+    #[test]
+    #[cfg(feature = "schedules-default")]
+    fn complete_execution_includes_the_root_commitment() {
+        let schedule = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(32),
+        ))
+        .expect("generated schedule");
+        let prove = NttExecutionRequirements::from_prove_schedule(&schedule).unwrap();
+        let complete = NttExecutionRequirements::from_commit_and_prove_schedule(&schedule).unwrap();
+        let root = &schedule.root.params.final_group.commitment;
+        assert!(complete.entries().iter().any(|entry| {
+            entry.fold_level == 0
+                && entry.cluster == NttOperationCluster::Commit
+                && entry.key.ring_d == root.inner_commit_matrix.ring_dimension()
+        }));
+        assert!(complete.entries().len() >= prove.entries().len());
     }
 }

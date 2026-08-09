@@ -62,6 +62,7 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(u64::from(policy.recursive_setup_planning));
     h.write_u64(u64::from(policy.cost_model.tag()));
     h.write_u64(u64::from(policy.selection_policy.tag()));
+    h.write_u64(u64::from(policy.recursive_split_search_policy.tag()));
     write_optional_usize(&mut h, policy.setup_field_budget);
     h.write_u64(policy.min_offloaded_witness_contraction as u64);
     let digest = h.finish();
@@ -93,6 +94,7 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(u64::from(identity.recursive_setup_planning));
     h.write_u64(u64::from(identity.cost_model.tag()));
     h.write_u64(u64::from(identity.selection_policy.tag()));
+    h.write_u64(u64::from(identity.recursive_split_search_policy.tag()));
     write_optional_usize(&mut h, identity.setup_field_budget);
     h.write_u64(identity.min_offloaded_witness_contraction as u64);
 
@@ -129,6 +131,7 @@ struct CatalogIdentityExpectation {
     protocol_epoch: u32,
     cost_model: crate::PlannerCostModelId,
     selection_policy: crate::SelectionPolicyId,
+    recursive_split_search_policy: crate::RecursiveSplitSearchPolicy,
     setup_field_budget: Option<usize>,
     min_offloaded_witness_contraction: usize,
     sis_modulus_profile: akita_types::SisModulusProfileId,
@@ -160,6 +163,7 @@ impl CatalogIdentityExpectation {
             protocol_epoch: identity.protocol_epoch,
             cost_model: identity.cost_model,
             selection_policy: identity.selection_policy,
+            recursive_split_search_policy: identity.recursive_split_search_policy,
             setup_field_budget: identity.setup_field_budget,
             min_offloaded_witness_contraction: identity.min_offloaded_witness_contraction,
             sis_modulus_profile: identity.sis_modulus_profile,
@@ -205,6 +209,7 @@ fn catalog_identity_expectation(
         protocol_epoch: AKITA_INSTANCE_DESCRIPTOR_VERSION,
         cost_model: policy.cost_model,
         selection_policy: policy.selection_policy,
+        recursive_split_search_policy: policy.recursive_split_search_policy,
         setup_field_budget: policy.setup_field_budget,
         min_offloaded_witness_contraction: policy.min_offloaded_witness_contraction,
         sis_modulus_profile: policy.sis_modulus_profile,
@@ -244,6 +249,7 @@ pub fn expected_catalog_identity(
         protocol_epoch: expected.protocol_epoch,
         cost_model: expected.cost_model,
         selection_policy: expected.selection_policy,
+        recursive_split_search_policy: expected.recursive_split_search_policy,
         setup_field_budget: expected.setup_field_budget,
         min_offloaded_witness_contraction: expected.min_offloaded_witness_contraction,
         sis_modulus_profile: expected.sis_modulus_profile,

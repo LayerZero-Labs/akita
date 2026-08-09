@@ -21,8 +21,11 @@ pub(crate) static FP32_D128_ONEHOT_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
             open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 128, log_basis: 3, slice_count: 1 },
             witness_partition: GeneratedWitnessPartition::Single,
         },
-        recursive_folds: &[],
-        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1129, positions_per_block: 128, live_blocks: 9 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 128, log_basis: 3 }, num_digits_inner: 1, inner_output_rank: 7, inner_coeff_linf_bound: 262143, z_admission_linf_cap: 528, z_rice_low_bits: 7, z_payload_bytes: 22528 },
+        recursive_folds: &[
+            GeneratedRecursiveFold { payload_mode: CommitmentPayloadMode::Compressed, witness: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1129, positions_per_block: 128, live_blocks: 9 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 128, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 128, log_basis: 5, slice_count: 1 } }, num_digits_fold: 2, open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 128, log_basis: 5, slice_count: 1 }, incoming_setup_prefix: None, witness_partition: GeneratedWitnessPartition::Single },
+            GeneratedRecursiveFold { payload_mode: CommitmentPayloadMode::Raw, witness: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1015, positions_per_block: 128, live_blocks: 8 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 128, log_basis: 5 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 128, log_basis: 6, slice_count: 1 } }, num_digits_fold: 2, open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 128, log_basis: 6, slice_count: 1 }, incoming_setup_prefix: None, witness_partition: GeneratedWitnessPartition::Single },
+        ],
+        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 766, positions_per_block: 128, live_blocks: 6 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 128, log_basis: 6 }, num_digits_inner: 1, inner_output_rank: 8, inner_coeff_linf_bound: 1048575, z_admission_linf_cap: 2114, z_rice_low_bits: 9, z_payload_bytes: 26624 },
     },
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
@@ -48,7 +51,7 @@ pub(crate) static FP32_D128_ONEHOT_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
             witness_partition: GeneratedWitnessPartition::Single,
         },
         recursive_folds: &[],
-        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 985, positions_per_block: 128, live_blocks: 8 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 128, log_basis: 3 }, num_digits_inner: 1, inner_output_rank: 7, inner_coeff_linf_bound: 262143, z_admission_linf_cap: 528, z_rice_low_bits: 7, z_payload_bytes: 22528 },
+        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 985, positions_per_block: 128, live_blocks: 8 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 128, log_basis: 3 }, num_digits_inner: 1, inner_output_rank: 8, inner_coeff_linf_bound: 1048575, z_admission_linf_cap: 2114, z_rice_low_bits: 9, z_payload_bytes: 26624 },
     },
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
@@ -92,6 +95,7 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     protocol_epoch: 1,
     cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
     selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
+    recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
     setup_field_budget: None,
     min_offloaded_witness_contraction: 3,
     sis_modulus_profile: SisModulusProfileId::Q32Offset99,
@@ -111,5 +115,5 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 12329058664815196960,
     key_count: 5,
-    key_digest: 744061215735877343,
+    key_digest: 625984346374872018,
 };

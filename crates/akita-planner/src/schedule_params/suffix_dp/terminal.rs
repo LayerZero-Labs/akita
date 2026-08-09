@@ -1,14 +1,9 @@
-use akita_field::AkitaError;
-use akita_types::{
-    terminal_response_bytes, CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    TerminalResponseShape,
-};
+use super::*;
 
-use crate::schedule_params::CandidateTerminalResponse;
-
-/// Price a terminal response, returning `None` when the final fold is multi-chunk
-/// or its fixed inner matrix cannot admit the response.
-pub(crate) fn try_direct_cost(
+/// Like [`terminal_direct_suffix_cost`], but returns `None` when the fold at
+/// `terminal_fold_level` is multi-chunk. The suffix DP uses this to skip the
+/// fold-then-direct branch without aborting fold-then-fold exploration.
+pub(crate) fn try_terminal_direct_suffix_cost(
     input_witness_len: usize,
     terminal_lp: &CommittedGroupParams,
     field_bits: u32,
@@ -19,21 +14,25 @@ pub(crate) fn try_direct_cost(
     if terminal_lp.witness_chunk.num_chunks > 1 {
         return Ok(None);
     }
-    match direct_cost(
+    let result = terminal_direct_suffix_cost(
         input_witness_len,
         terminal_lp,
         field_bits,
         key,
         terminal_fold_level,
         opening_layout,
-    ) {
+    );
+    match result {
         Ok(candidate) => Ok(Some(candidate)),
+        // Candidate construction is an optimization search. A geometry whose
+        // fixed inner matrix cannot admit the directly checked terminal response is
+        // infeasible, not a fatal planner error.
         Err(AkitaError::InvalidSetup(_)) => Ok(None),
         Err(error) => Err(error),
     }
 }
 
-pub(super) fn direct_cost(
+pub(crate) fn terminal_direct_suffix_cost(
     input_witness_len: usize,
     terminal_lp: &CommittedGroupParams,
     field_bits: u32,
@@ -41,11 +40,17 @@ pub(super) fn direct_cost(
     terminal_fold_level: usize,
     opening_layout: Option<&OpeningClaimsLayout>,
 ) -> Result<(CandidateTerminalResponse, usize), AkitaError> {
+    // Scalar same-point root fold: polynomial count at the root, 1 recursively.
     let num_polynomials = if terminal_fold_level == 0 {
         key.num_polynomials()
     } else {
         1
     };
+    // The terminal-direct (cleartext) witness is single-chunk by construction:
+    // the prover emits the global folded response and one shared `r̂` tail, so
+    // chunking the cleartext tail is unsupported. The last fold level must be
+    // single-chunk (only the leading activated levels are chunked). Reject here
+    // to match `resolve.rs` and avoid a cryptic prover-side layout mismatch.
     if terminal_lp.witness_chunk.num_chunks > 1 {
         return Err(AkitaError::InvalidSetup(
             "terminal-direct witness does not support a multi-chunk last fold level".to_string(),

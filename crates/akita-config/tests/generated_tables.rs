@@ -57,14 +57,13 @@ use akita_schedules::{
 };
 
 #[test]
-fn group_batch_emission_matches_supported_policy_shape() {
+fn group_batch_requests_are_canonically_ordered() {
     for family in ALL_GENERATED_FAMILIES {
-        let policy = (family.policy)();
-        assert!(
-            !family.emit_group_batch || policy.decomposition.log_commit_bound == 1,
-            "family {} opted into the current one-hot-only grouped catalog enumeration",
-            family.module_name
-        );
+        let requests = (family.group_batch_keys)().expect("grouped request enumeration");
+        assert!(requests.windows(2).all(|pair| {
+            akita_planner::runtime_schedule_key_cmp(&pair[0].0, &pair[1].0)
+                == std::cmp::Ordering::Less
+        }));
     }
 }
 
@@ -844,33 +843,27 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
     #[cfg(feature = "all-schedules")]
     {
         let catalog = family_catalog(family, &keys);
-        let group_batch_keys = (family.group_batch_keys)(family).unwrap_or_else(|e| {
+        let group_batch_keys = (family.group_batch_keys)().unwrap_or_else(|e| {
             panic!(
                 "family {} multi-group key enumeration failed: {e}",
                 family.module_name
             )
         });
         check_scalar_keys(family, &keys, catalog, into);
-        if family.emit_group_batch {
-            assert_family_group_batch_table_hit(family, &group_batch_keys);
-            check_group_batch_keys(family, catalog, &group_batch_keys, into);
-        }
+        assert_family_group_batch_table_hit(family, &group_batch_keys);
+        check_group_batch_keys(family, catalog, &group_batch_keys, into);
     }
     #[cfg(not(feature = "all-schedules"))]
     {
-        let group_batch_keys = (family.group_batch_keys)(family).unwrap_or_else(|e| {
+        let group_batch_keys = (family.group_batch_keys)().unwrap_or_else(|e| {
             panic!(
                 "family {} multi-group key enumeration failed: {e}",
                 family.module_name
             )
         });
-        if family.emit_group_batch {
-            assert_family_group_batch_table_hit(family, &group_batch_keys);
-        }
+        assert_family_group_batch_table_hit(family, &group_batch_keys);
         check_scalar_keys(family, &keys, into);
-        if family.emit_group_batch {
-            check_group_batch_keys(family, &group_batch_keys, into);
-        }
+        check_group_batch_keys(family, &group_batch_keys, into);
     }
 }
 

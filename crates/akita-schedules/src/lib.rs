@@ -24,7 +24,7 @@ pub use resolve::{
     ResolvedScheduleRow,
 };
 pub use runtime::{
-    default_sis_security_policy, InnerBasisSource, PlannerCostModelId, PlannerPolicy,
+    default_sis_security_policy, PlannerCostModelId, PlannerPolicy, RecursiveSplitSearchPolicy,
     RingDimensionScheduleMode, RuntimeSchedulePolicy, SelectionPolicyId, ADAPTIVE_SEARCH_LEVELS,
 };
 
@@ -36,7 +36,7 @@ pub mod planner_support {
     };
     pub use crate::runtime::{
         grouped_segment_rings, materialize_candidate_schedule, planned_next_witness_len,
-        planned_next_witness_len_with_cache, stage3_payload_bytes_for_successor, validate_policy,
-        CandidateFoldStep, CandidateTerminalResponse, MAX_RECURSION_DEPTH,
+        stage3_payload_bytes_for_successor, validate_policy, CandidateFoldStep,
+        CandidateTerminalResponse, MAX_RECURSION_DEPTH,
     };
 }

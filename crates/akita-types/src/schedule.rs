@@ -915,17 +915,27 @@ impl FoldSchedule {
             push_usize(bytes, fold.input_witness_len);
             push_usize(bytes, fold.output_witness_len);
         }
+        self.terminal.append_descriptor_bytes(bytes);
+    }
+}
+
+impl TerminalFoldStep {
+    /// Canonical ordering descriptor for a terminal suffix.
+    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.append_descriptor_bytes(&mut bytes);
+        bytes
+    }
+
+    fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.push(3);
-        self.terminal.params.witness.append_descriptor_bytes(bytes);
+        self.params.witness.append_descriptor_bytes(bytes);
         append_schedule_sparse_challenge_descriptor_bytes(
             bytes,
-            &self.terminal.params.sparse_challenge_config,
+            &self.params.sparse_challenge_config,
         );
-        self.terminal
-            .params
-            .response_shape
-            .append_descriptor_bytes(bytes);
-        push_usize(bytes, self.terminal.input_witness_len);
+        self.params.response_shape.append_descriptor_bytes(bytes);
+        push_usize(bytes, self.input_witness_len);
     }
 }
 

@@ -101,62 +101,62 @@ fn runtime_table_emits_direct_q128_d512_rows() {
 
 #[test]
 fn generation_filters_to_canonical_production_and_compression_cells() {
-    assert!(reachable_role_cell(
+    assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q128OffsetA7F7,
         64,
         15
     ));
-    assert!(!reachable_role_cell(
+    assert!(!scalar_origin_is_canonical(
         AkitaModulusProfileId::Q128OffsetA7F7,
         32,
         2
     ));
-    assert!(reachable_role_cell(
+    assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q128OffsetA7F7,
         64,
         2
     ));
-    assert!(reachable_role_cell(
+    assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q128OffsetA7F7,
         512,
         2
     ));
-    assert!(!reachable_role_cell(
+    assert!(!scalar_origin_is_canonical(
         AkitaModulusProfileId::Q64Offset59,
         512,
         2
     ));
-    assert!(!reachable_role_cell(
+    assert!(!scalar_origin_is_canonical(
         AkitaModulusProfileId::Q128OffsetA7F7,
         16,
         15
     ));
-    assert!(reachable_role_cell(
+    assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q128OffsetA7F7,
         16,
         1
     ));
-    assert!(reachable_role_cell(
+    assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q64Offset59,
         16,
         1
     ));
-    assert!(reachable_role_cell(
+    assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q32Offset99,
         32,
         1
     ));
-    assert!(!reachable_role_cell(
+    assert!(!scalar_origin_is_canonical(
         AkitaModulusProfileId::Q128OffsetA7F7,
         32,
         1
     ));
-    assert!(!reachable_role_cell(
+    assert!(!scalar_origin_is_canonical(
         AkitaModulusProfileId::Q64Offset59,
         64,
         1
     ));
-    assert!(!reachable_role_cell(
+    assert!(!scalar_origin_is_canonical(
         AkitaModulusProfileId::Q32Offset99,
         128,
         1

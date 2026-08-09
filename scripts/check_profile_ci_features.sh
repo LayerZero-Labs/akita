@@ -15,6 +15,7 @@ from pathlib import Path
 repo = Path(".")
 workflow = repo / ".github/workflows/profile-bench.yml"
 pcs = repo / "crates/akita-pcs/Cargo.toml"
+modes_rs = repo / "crates/akita-pcs/examples/profile/modes.rs"
 
 MODE_FEATURE = {
     "onehot_fp32_d128": "schedules-fp32-d128-onehot",
@@ -46,6 +47,19 @@ for line in match.group(1).splitlines():
     if "/" in line:
         line = line.split("/", 1)[1]
     profile_ci.add(line.strip('"'))
+
+modes_text = modes_rs.read_text(encoding="utf-8")
+profile_modes_match = re.search(
+    r"const PROFILE_CI_MODES:.*?=\s*&\[(.*?)\n\];",
+    modes_text,
+    flags=re.DOTALL,
+)
+if not profile_modes_match:
+    print("PROFILE_CI_MODES not found in profile example", file=sys.stderr)
+    raise SystemExit(1)
+profile_ci_modes = set(
+    re.findall(r'name:\s*"([^"]+)"', profile_modes_match.group(1))
+)
 
 wf = workflow.read_text(encoding="utf-8")
 case_line = re.compile(r"^([^:]+:\d+:\d+(?::[^:\s]+)?)\s*$")
@@ -88,6 +102,12 @@ for case_spec in bench_cases:
         print(f"bench case mode '{mode}' is missing from MODE_FEATURE table", file=sys.stderr)
         failed = True
         continue
+    if mode not in profile_ci_modes:
+        print(
+            f"bench case mode '{mode}' is not registered in PROFILE_CI_MODES",
+            file=sys.stderr,
+        )
+        failed = True
     required = MODE_FEATURE[mode]
     if required not in profile_ci:
         print(

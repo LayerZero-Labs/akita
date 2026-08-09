@@ -9,10 +9,10 @@ use std::ops::Range;
 
 use akita_field::AkitaError;
 
-use crate::proof::relation::relation_rhs_layout_for_with_compression_cache;
+use crate::proof::relation::relation_rhs_layout_for;
 use crate::{
-    CommitmentRingDims, CommittedGroupParams, CompressionChainPlanCache, CompressionMapPlan,
-    LevelParamsLike, OpeningClaimsLayout, RelationRowFamily, COMPRESSION_MAP_COUNT,
+    CommitmentRingDims, CommittedGroupParams, CompressionMapPlan, LevelParamsLike,
+    OpeningClaimsLayout, RelationRowFamily, COMPRESSION_MAP_COUNT,
 };
 
 mod chunk_partition;
@@ -387,23 +387,6 @@ impl WitnessLayout {
         num_chunks: usize,
         quotient_depth: usize,
     ) -> Result<Self, AkitaError> {
-        Self::new_with_compression_cache(
-            lp,
-            opening_batch,
-            num_chunks,
-            quotient_depth,
-            &mut CompressionChainPlanCache::default(),
-        )
-    }
-
-    /// Cached variant of [`Self::new`] for exact planner sweeps.
-    pub fn new_with_compression_cache(
-        lp: &CommittedGroupParams,
-        opening_batch: &OpeningClaimsLayout,
-        num_chunks: usize,
-        quotient_depth: usize,
-        compression_cache: &mut CompressionChainPlanCache,
-    ) -> Result<Self, AkitaError> {
         let num_groups = opening_batch.num_groups();
         if num_groups == 0 || num_chunks == 0 || quotient_depth == 0 {
             return Err(AkitaError::InvalidSetup(
@@ -488,8 +471,7 @@ impl WitnessLayout {
                 });
             }
         }
-        let relation_layout =
-            relation_rhs_layout_for_with_compression_cache(lp, opening_batch, compression_cache)?;
+        let relation_layout = relation_rhs_layout_for(lp, opening_batch)?;
         let row_families = relation_layout.row_families()?;
         let r_start = cursor;
         let first_compression_row = row_families

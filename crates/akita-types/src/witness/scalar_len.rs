@@ -4,7 +4,7 @@ use super::{
     checked_align_up, dyadic_block_ranges, witness_unit_lengths, WitnessLayout, MAX_WITNESS_CHUNKS,
 };
 use crate::{
-    CommittedGroupParams, CompressionChainPlanCache, OpeningClaimsLayout, COMPRESSION_MAP_COUNT,
+    CommittedGroupParams, CompressionChainPlan, OpeningClaimsLayout, COMPRESSION_MAP_COUNT,
 };
 
 impl WitnessLayout {
@@ -20,24 +20,6 @@ impl WitnessLayout {
         opening_batch: &OpeningClaimsLayout,
         num_chunks: usize,
         quotient_depth: usize,
-    ) -> Result<Option<usize>, AkitaError> {
-        Self::try_scalar_live_coeff_len_with_cache(
-            lp,
-            opening_batch,
-            num_chunks,
-            quotient_depth,
-            &mut CompressionChainPlanCache::default(),
-        )
-    }
-
-    /// Cached variant of [`Self::try_scalar_live_coeff_len`] for exact planner
-    /// sweeps.
-    pub fn try_scalar_live_coeff_len_with_cache(
-        lp: &CommittedGroupParams,
-        opening_batch: &OpeningClaimsLayout,
-        num_chunks: usize,
-        quotient_depth: usize,
-        compression_cache: &mut CompressionChainPlanCache,
     ) -> Result<Option<usize>, AkitaError> {
         if opening_batch.num_groups() != 1 {
             return Err(AkitaError::InvalidSetup(
@@ -120,7 +102,7 @@ impl WitnessLayout {
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("relation B compression shape overflow".into())
             })?;
-        let Some(b_plan) = compression_cache.try_for_complete_source(
+        let Some(b_plan) = CompressionChainPlan::try_for_complete_source(
             lp.outer_commit_matrix.sis_modulus_profile(),
             b_source_coefficients,
         )?
@@ -134,7 +116,7 @@ impl WitnessLayout {
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("relation D compression shape overflow".into())
             })?;
-        let Some(d_plan) = compression_cache.try_for_complete_source(
+        let Some(d_plan) = CompressionChainPlan::try_for_complete_source(
             lp.open_commit_matrix.sis_modulus_profile(),
             d_source_coefficients,
         )?

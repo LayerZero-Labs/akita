@@ -185,7 +185,7 @@ New / updated assertions added by this PR:
   `akita-planner/src/schedule_params.rs` overrides the placeholder
   Direct-step shape with the true terminal shape (D-block dropped)
   after suffix recursion returns. Called from both
-  `derive_optimal_suffix_schedule` (recursive folds; recursive vector
+  `derive_selected_suffix_schedule` (recursive folds; recursive vector
   counts) and `find_optimal_schedule` (root; batched vector counts).
 
 Feature combinations covered: default (`parallel`), `zk`,

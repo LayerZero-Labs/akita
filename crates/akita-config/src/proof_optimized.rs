@@ -32,11 +32,13 @@ pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 /// sweeps select 10 or 11 throughout the current dense/full-field domain.
 pub(crate) const PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX: u32 = 11;
 
-const fn proof_optimized_inner_basis_range(field_bits: u32) -> (u32, u32) {
-    let max = if field_bits == 32 {
-        10
-    } else {
-        PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX
+const fn proof_optimized_inner_basis_range(
+    profile: akita_types::SisModulusProfileId,
+) -> (u32, u32) {
+    let max = match profile {
+        akita_types::SisModulusProfileId::Q32Offset99 => 10,
+        akita_types::SisModulusProfileId::Q64Offset59
+        | akita_types::SisModulusProfileId::Q128OffsetA7F7 => PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX,
     };
     (PROOF_OPTIMIZED_LOG_BASIS_MIN, max)
 }
@@ -552,7 +554,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn inner_basis_range() -> (u32, u32) {
                 $crate::proof_optimized::proof_optimized_inner_basis_range(
-                    Self::decomposition().field_bits(),
+                    Self::sis_modulus_profile(),
                 )
             }
 
@@ -636,7 +638,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn inner_basis_range() -> (u32, u32) {
                 $crate::proof_optimized::proof_optimized_inner_basis_range(
-                    Self::decomposition().field_bits(),
+                    Self::sis_modulus_profile(),
                 )
             }
 

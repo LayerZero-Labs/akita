@@ -16,15 +16,16 @@
 //! preset-free.
 
 pub use akita_schedules::{
-    ChunkedWitnessCfg, DecompositionParams, InnerBasisSource, PlannerCostModelId, PlannerPolicy,
-    RingDimensionScheduleMode, SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId,
-    DEFAULT_SIS_SECURITY_POLICY,
+    ChunkedWitnessCfg, DecompositionParams, PlannerCostModelId, PlannerPolicy,
+    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId, SisModulusProfileId,
+    SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
 };
 
 pub mod emit;
 #[cfg(feature = "catalog-gen")]
 pub mod generated_families;
 mod planner;
+mod policy;
 pub mod schedule_params;
 
 pub use akita_schedules::{
@@ -36,7 +37,8 @@ pub use akita_schedules::{
 };
 pub use emit::{publish_generated_outputs, render_generated_outputs, EmitSpec, GeneratedOutput};
 pub use planner::find_schedule;
+pub use policy::InnerBasisSource;
 pub use schedule_params::{
-    derive_standalone_precommit_profile, plan_standalone_precommit, suffix_opening_layout,
-    StandalonePrecommitCandidate, StandalonePrecommitPlan, StandalonePrecommitSelectionPolicy,
+    plan_standalone_precommit, suffix_opening_layout, StandalonePrecommitCandidate,
+    StandalonePrecommitPlan,
 };

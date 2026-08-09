@@ -30,9 +30,6 @@ fn transaction_sibling_path(destination: &Path, label: &str, nonce: u64, index: 
 fn cleanup_staged_outputs(staged: &[StagedOutput]) {
     for output in staged {
         let _ = fs::remove_file(&output.staged);
-        if let Some(backup) = &output.backup {
-            let _ = fs::remove_file(backup);
-        }
     }
 }
 
@@ -41,7 +38,15 @@ fn rollback_published_outputs(staged: &mut [StagedOutput]) -> Result<(), String>
     for output in staged.iter_mut().rev() {
         if output.published {
             if let Err(error) = fs::remove_file(&output.destination) {
-                failures.push(format!("remove {}: {error}", output.destination.display()));
+                let recovery = output
+                    .backup
+                    .as_ref()
+                    .map(|path| format!("; original preserved at {}", path.display()))
+                    .unwrap_or_default();
+                failures.push(format!(
+                    "remove {}: {error}{recovery}",
+                    output.destination.display()
+                ));
                 continue;
             }
             output.published = false;
@@ -49,10 +54,12 @@ fn rollback_published_outputs(staged: &mut [StagedOutput]) -> Result<(), String>
         if let Some(backup) = output.backup.take() {
             if let Err(error) = fs::rename(&backup, &output.destination) {
                 failures.push(format!(
-                    "restore {} from {}: {error}",
+                    "restore {} from {}: {error}; original preserved at {}",
                     output.destination.display(),
-                    backup.display()
+                    backup.display(),
+                    backup.display(),
                 ));
+                output.backup = Some(backup);
             }
         }
     }
@@ -300,6 +307,31 @@ mod tests {
                 "rollback must restore output {index}"
             );
         }
+        fs::remove_dir_all(dir).expect("remove test directory");
+    }
+
+    #[test]
+    fn failed_rollback_preserves_the_original_backup() {
+        let dir = test_dir("rollback-preserves-backup");
+        fs::create_dir_all(&dir).expect("create test directory");
+        let destination = dir.join("published-directory");
+        let backup = dir.join("original.rs");
+        fs::create_dir(&destination).expect("create removal-resistant destination");
+        fs::write(&backup, "pub const ORIGINAL: usize = 1;\n").expect("write backup");
+        let mut staged = vec![StagedOutput {
+            destination,
+            staged: dir.join("absent-stage.rs"),
+            backup: Some(backup.clone()),
+            published: true,
+        }];
+
+        let error = rollback_published_outputs(&mut staged).expect_err("rollback must fail");
+        assert!(error.contains(&backup.display().to_string()));
+        assert_eq!(
+            fs::read_to_string(&backup).expect("read preserved backup"),
+            "pub const ORIGINAL: usize = 1;\n"
+        );
+        assert_eq!(staged[0].backup.as_ref(), Some(&backup));
         fs::remove_dir_all(dir).expect("remove test directory");
     }
 

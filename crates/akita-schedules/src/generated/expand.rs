@@ -969,6 +969,7 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
+            recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 3,
             uniform_ring_dimension: 64,

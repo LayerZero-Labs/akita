@@ -570,7 +570,7 @@ At the root-only loop over `(log_basis, block_index_bits)` (absolute level `L = 
    change once `next_w_len` is correct. Keep passing `num_claims =
    key.num_polynomials` at the root (see `resolve.rs`).
 
-#### Step 4 — Suffix DP (`derive_optimal_suffix_schedule`)
+#### Step 4 — Suffix DP (`derive_selected_suffix_schedule`)
 
 The suffix memo key today is `(level, current_w_len, current_witness_len_terminal,
 current_lb)`. Extend **`SuffixCtx`**:
@@ -583,7 +583,7 @@ struct SuffixCtx<'a> {
     key: AkitaScheduleLookupKey,
     // `key` and `policy` are already present today; no new field is needed
     // because the absolute level is the existing `level` argument to
-    // `derive_optimal_suffix_schedule`.
+    // `derive_selected_suffix_schedule`.
 }
 ```
 

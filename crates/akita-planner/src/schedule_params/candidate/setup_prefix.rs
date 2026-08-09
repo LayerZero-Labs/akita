@@ -16,13 +16,6 @@ struct SetupPrefixSearchKey {
 #[derive(Default)]
 pub(crate) struct SetupPrefixSearchCache {
     entries: HashMap<SetupPrefixSearchKey, Arc<[PrecommittedLevelParams]>>,
-    compression_plans: akita_types::CompressionChainPlanCache,
-}
-
-impl SetupPrefixSearchCache {
-    pub(super) fn compression_plans(&mut self) -> &mut akita_types::CompressionChainPlanCache {
-        &mut self.compression_plans
-    }
 }
 
 fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<usize, AkitaError> {
@@ -92,10 +85,10 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     let mut frontier: Vec<(usize, usize, LayoutCandidateScore, PrecommittedLevelParams)> =
         Vec::new();
 
-    let (inner_basis_min, inner_basis_max) =
-        policy.inner_basis_search_range(crate::InnerBasisSource::RawCoefficients {
-            log_bound: policy.decomposition.field_bits(),
-        })?;
+    let (inner_basis_min, inner_basis_max) = crate::InnerBasisSource::RawCoefficients {
+        log_bound: policy.decomposition.field_bits(),
+    }
+    .search_range(policy)?;
     for log_basis_inner in inner_basis_min..=inner_basis_max {
         let inner_decomp = DecompositionParams {
             log_basis: log_basis_inner,

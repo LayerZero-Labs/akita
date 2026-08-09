@@ -291,11 +291,9 @@ structured_attack_review=The scalarized estimate does not model ring/module stru
         akita_types::sis::SisModulusProfileId::Q128OffsetA7F7,
     ] {
         for &role in akita_types::sis::SIS_MATRIX_ROLES {
-            for &d in akita_sis_estimator::width_table::RING_DIMS {
+            for &d in akita_sis_estimator::width_table::RING_DIMS.iter() {
                 for &bound in akita_types::sis::COEFF_LINF_BUCKETS {
-                    if let Some(cell) =
-                        akita_types::sis::ajtai_key::sis_role_cell(role, profile, d, bound)
-                    {
+                    if let Some(cell) = akita_types::sis::sis_role_cell(role, profile, d, bound) {
                         source.push_str(&format!(
                             "role_coverage={},{},{},{},{},{}\n",
                             role.name(),

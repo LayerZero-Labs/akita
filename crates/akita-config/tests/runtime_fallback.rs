@@ -305,6 +305,8 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let expected = PlannerPolicy {
         cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
         selection_policy: Cfg::selection_policy(),
+        recursive_split_search_policy:
+            akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
         setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
         uniform_ring_dimension: Cfg::D,
@@ -409,14 +411,10 @@ fn root_basis_is_derived_from_existing_policy_inputs() {
     let fp128 = policy_of::<fp128::OneHot>();
     assert_eq!(fp128.opening_basis_range, (3, 6));
     assert_eq!(fp128.decomposition.log_basis, 3);
-    assert_eq!(fp128.log_basis_search_range_at_level(0), (3, 3));
-    assert_eq!(fp128.log_basis_search_range_at_level(1), (3, 6));
 
     let fp32 = policy_of::<fp32::D64OneHot>();
     assert_eq!(fp32.opening_basis_range, (3, 6));
     assert_eq!(fp32.decomposition.log_basis, 3);
-    assert_eq!(fp32.log_basis_search_range_at_level(0), (3, 3));
-    assert_eq!(fp32.log_basis_search_range_at_level(1), (3, 6));
 }
 
 #[test]

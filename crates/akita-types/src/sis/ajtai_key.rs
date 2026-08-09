@@ -8,6 +8,7 @@
 
 use akita_field::AkitaError;
 
+use super::coverage::{sis_role_cell, GADGET_COEFF_LINF_ANCHORS};
 use super::generated_sis_table::{
     sis_max_widths as generated_sis_max_widths, Q128_INNER_D512_DIGEST, SIS_TABLE_DIGEST,
 };
@@ -219,90 +220,6 @@ pub struct SisTableKey {
     pub coeff_linf_bound: u128,
 }
 
-/// One reachable role coverage cell used by generation and runtime checks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SisRoleCell {
-    /// Matrix role.
-    pub role: SisMatrixRole,
-    /// Exact modulus profile.
-    pub modulus_profile: SisModulusProfileId,
-    /// Ring dimension.
-    pub ring_dimension: u32,
-    /// Exact role coefficient bound cell.
-    pub coeff_linf_bound: u128,
-    /// Maximum supported module rank.
-    pub max_module_rank: u32,
-    /// Largest required ring width from the planner domain.
-    pub required_max_width: u64,
-}
-
-/// Exact gadget anchors used by B and D.
-pub const GADGET_COEFF_LINF_ANCHORS: &[u128] = &[3, 7, 15, 31, 63, 127, 255];
-
-/// Ring dimensions supported by A for every SIS modulus profile.
-///
-/// Q128 has the additional profile-specific `D = 512` cell enforced by
-/// [`sis_role_cell`].
-pub const A_ROLE_RING_DIMS: &[u32] = &[64, 128, 256];
-
-/// Admitted B/D commitment-matrix dimensions.
-pub const BD_ROLE_RING_DIMS: &[u32] = &[64, 128, 256];
-
-/// Production matrix roles with checked-in coverage.
-pub const SIS_MATRIX_ROLES: &[SisMatrixRole] = &[
-    SisMatrixRole::Inner,
-    SisMatrixRole::Outer,
-    SisMatrixRole::Open,
-];
-
-/// Whether generated SIS security floors cover one role/profile/dimension.
-#[must_use]
-pub fn sis_role_dimension_supported(
-    role: SisMatrixRole,
-    modulus_profile: SisModulusProfileId,
-    ring_dimension: u32,
-) -> bool {
-    match role {
-        SisMatrixRole::Inner => {
-            A_ROLE_RING_DIMS.contains(&ring_dimension)
-                || (modulus_profile == SisModulusProfileId::Q128OffsetA7F7 && ring_dimension == 512)
-        }
-        SisMatrixRole::Outer | SisMatrixRole::Open => BD_ROLE_RING_DIMS.contains(&ring_dimension),
-    }
-}
-
-/// Return whether the exact role cell is part of the canonical coverage.
-///
-/// The function is deliberately role aware. It does not form a product of
-/// independent dimension and bound lists for one shared table.
-#[must_use]
-pub fn sis_role_cell(
-    role: SisMatrixRole,
-    modulus_profile: SisModulusProfileId,
-    ring_dimension: u32,
-    coeff_linf_bound: u128,
-) -> Option<SisRoleCell> {
-    let bounds = match role {
-        SisMatrixRole::Inner => COEFF_LINF_BUCKETS,
-        SisMatrixRole::Outer | SisMatrixRole::Open => GADGET_COEFF_LINF_ANCHORS,
-    };
-    let trivial_collision_bound = (modulus_profile.modulus() - 1) / 2;
-    if !sis_role_dimension_supported(role, modulus_profile, ring_dimension)
-        || !bounds.contains(&coeff_linf_bound)
-        || coeff_linf_bound >= trivial_collision_bound
-    {
-        return None;
-    }
-    Some(SisRoleCell {
-        role,
-        modulus_profile,
-        ring_dimension,
-        coeff_linf_bound,
-        max_module_rank: 20,
-        required_max_width: 6_400_000_000_000,
-    })
-}
-
 /// Smallest coefficient-`L∞` bucket with `B >= linf`.
 #[must_use]
 pub fn ceil_coeff_linf_bucket(linf: u128) -> Option<u128> {
@@ -422,10 +339,10 @@ pub fn min_secure_rank(key: SisTableKey, width: u64) -> Option<usize> {
     )?;
     let max_module_rank = usize::try_from(role_cell.max_module_rank).ok()?;
     let widths = &widths[..max_module_rank.min(widths.len())];
-    // Generated rows are nondecreasing by module rank, so this returns the
-    // same first admitted rank as the former linear scan.
-    let rank_index = widths.partition_point(|&max_width| max_width < width);
-    (rank_index < widths.len()).then_some(rank_index + 1)
+    widths
+        .iter()
+        .position(|&max_width| width <= max_width)
+        .map(|rank_index| rank_index + 1)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -897,6 +814,79 @@ mod tests {
             2,
         );
         assert_eq!(min_secure_rank(unknown, 1), None);
+    }
+
+    #[test]
+    fn min_secure_rank_uses_the_first_admissible_nonmonotone_entry() {
+        let q32 = key(
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q32Offset99,
+            SisMatrixRole::Inner,
+            64,
+            32_767,
+        );
+        assert_eq!(min_secure_rank(q32, 5), Some(3));
+    }
+
+    #[test]
+    fn min_secure_rank_matches_linear_first_match_for_every_generated_row() {
+        let profiles = [
+            SisModulusProfileId::Q32Offset99,
+            SisModulusProfileId::Q64Offset59,
+            SisModulusProfileId::Q128OffsetA7F7,
+        ];
+        let roles = [
+            SisMatrixRole::Outer,
+            SisMatrixRole::Inner,
+            SisMatrixRole::Open,
+        ];
+        let dimensions = [32, 64, 128, 256, 512];
+
+        for profile in profiles {
+            for role in roles {
+                for dimension in dimensions {
+                    for &bound in COEFF_LINF_BUCKETS {
+                        let Some(cell) = sis_role_cell(role, profile, dimension, bound) else {
+                            continue;
+                        };
+                        let digest = if dimension == 512 {
+                            SisTableDigest::Q128_INNER_D512
+                        } else {
+                            SisTableDigest::CURRENT
+                        };
+                        let widths = sis_max_widths(
+                            DEFAULT_SIS_SECURITY_POLICY,
+                            digest,
+                            profile,
+                            dimension,
+                            bound,
+                        )
+                        .expect("reachable role cell has a generated SIS row");
+                        let widths = &widths[..usize::try_from(cell.max_module_rank)
+                            .expect("module rank fits usize")
+                            .min(widths.len())];
+                        let probes = widths
+                            .iter()
+                            .copied()
+                            .flat_map(|width| [width, width.saturating_add(1)]);
+                        for width in probes {
+                            let expected = widths
+                                .iter()
+                                .position(|&max_width| width <= max_width)
+                                .map(|index| index + 1);
+                            assert_eq!(
+                                min_secure_rank(
+                                    key(digest, profile, role, dimension, bound),
+                                    width,
+                                ),
+                                expected,
+                                "profile={profile:?}, role={role:?}, D={dimension}, bound={bound}, width={width}",
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

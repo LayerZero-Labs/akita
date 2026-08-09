@@ -41,12 +41,13 @@ suffix planning also assumes one commitment group, while complete offloading
 requires the successor to prove two openings together: its newly committed
 folded witness and the setup-prefix commitment selected by the preceding fold.
 
-This design adds `RecursiveCommitmentConfig<Cfg>`, parallel to
-`ConservativeCommitmentConfig<Cfg>`. The ordinary `Cfg` always resolves a
-direct-only schedule. Selecting the recursion adapter activates setup
-offloading only for the planner's genuine multi-group path. Scalar/singular
-keys continue through the ordinary direct planner and ordinary generated
-catalog, even under the recursion adapter.
+This design adds `RecursiveCommitmentConfig<Cfg>`. Precommitted groups use the
+generated `CommittedGroupProfile` and `commit_group` flow specified in
+[`multi-group-batching.md`](multi-group-batching.md); the earlier conservative
+config adapter has been removed. The ordinary `Cfg` resolves a direct-only
+schedule. Selecting the recursion adapter activates setup offloading only for
+the planner's genuine multi-group path. Scalar keys continue through the
+ordinary direct planner and generated catalog.
 
 For each supported nonterminal edge on the genuine multi-group path, the
 planner considers two transitions:
@@ -1158,8 +1159,12 @@ Track:
 - verifier cycles saved by eliminating the setup scan;
 - exact selected proof bytes against the direct-only schedule.
 
-The local-minimum suffix heuristic must remain within the existing recursion
-bound. The planner must not enumerate a full split frontier.
+The catalog identity binds `RecursiveSplitSearchPolicy`. Production catalogs
+use `BoundedBalancedExtremesV1`: states through twelve reduced variables are
+exhaustive, while larger states search both extremes and a radius-two window
+around the balance estimate. `Exhaustive` remains available for small-domain
+oracles and audited workloads. Results under the bounded policy are selected
+under that named domain and are not described as globally optimal.
 
 ## Execution
 
@@ -1235,9 +1240,10 @@ generated lookup, and DP fallback aligned.
 
 ### Exhaustive suffix candidate frontier
 
-Rejected. Keeping all feasible splits grows quickly with recursion depth. The
-existing locally minimized candidate heuristic remains the bounded planning
-model; setup compatibility is an additional local filter.
+Available as the `Exhaustive` catalog-bound policy for oracle coverage and
+explicit workloads. Production uses `BoundedBalancedExtremesV1` because the
+full frontier grows quickly with recursion depth. The policy tag prevents the
+two search domains from sharing a catalog identity.
 
 ### Generic carried-opening object
 
