@@ -11,9 +11,9 @@ pub mod dispatch;
 pub use dispatch::{
     compression_ring_dim_supported_for_tier, field_modulus, ntt_max_ring_d, ntt_min_ring_d,
     ntt_ring_degree_supported_for_field, ntt_ring_degree_supported_for_tier,
-    outer_opening_min_ring_d, protocol_dispatch_tier, validate_ring_dispatch,
-    validate_role_dims_for_field, validate_role_dispatch, ProtocolDispatchSlot,
-    ProtocolRingDispatchTierId,
+    outer_opening_min_ring_d, protocol_dispatch_tier, protocol_dispatch_tier_for_sis_profile,
+    validate_ring_dispatch, validate_role_dims_for_field, validate_role_dispatch,
+    ProtocolDispatchSlot, ProtocolRingDispatchTierId,
 };
 pub mod extension_opening_reduction;
 pub mod field_reduction;
@@ -83,9 +83,9 @@ pub use layout::{
     SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
 };
 pub use ntt_cache::{
-    max_safe_crt_accumulation_width, ntt_cache_requires_i16_tail, prepare_compression_ntt_cache,
-    prepare_ntt_cache, select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey,
-    NttCacheMode, NttPrefixRequirement, NttTransformDomain, PreparedNttCache, ProtocolCrtNttParams,
+    ntt_cache_requires_i16_tail, prepare_compression_ntt_cache, prepare_ntt_cache,
+    select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey, NttCacheMode,
+    NttPrefixRequirement, NttTransformDomain, PreparedNttCache, ProtocolCrtNttParams,
 };
 pub use proof::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
@@ -167,6 +167,7 @@ pub use trace_weight::{
 };
 pub use transcript::AppendToTranscript;
 pub use witness::{
-    ChunkedWitnessCfg, CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId,
-    WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout, MAX_WITNESS_CHUNKS,
+    dyadic_block_ranges, ChunkedWitnessCfg, CompressionWitnessLayerLayout, CompressionWitnessSpan,
+    MultiChunkProfileId, WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout,
+    MAX_WITNESS_CHUNKS,
 };

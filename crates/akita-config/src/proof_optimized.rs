@@ -46,8 +46,9 @@ const DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS: usize = 2;
 ///
 /// Fixed-weight sparse families keyed on ring degree `d` via
 /// [`akita_challenges::SparseChallengeConfig::production_for_ring_dim`].
-/// A preset's `D` is fixed across all schedule levels, so both the planner DP
-/// and the generated-table expansion call the per-`Cfg` hook with `d == Cfg::D`.
+/// The planner and generated-table expansion call this hook with each
+/// schedule-selected A dimension. The flat public matrix has no generation
+/// dimension.
 pub(crate) fn proof_optimized_ring_challenge_config(
     d: usize,
 ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
@@ -139,6 +140,32 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
     // Size those schedules from their canonical keys: synthesizing an opening
     // layout at `max_num_vars` can miss a finite-catalog precommit arity.
     if let Some(catalog) = Cfg::schedule_catalog() {
+        let policy = crate::policy_of::<Cfg>();
+        for &row in catalog.precommitted_profiles {
+            let profile = row.expand_to_committed_profile(&policy)?;
+            if profile.group.num_vars() > max_num_vars
+                || profile.group.num_polynomials() > max_num_batched_polys
+            {
+                continue;
+            }
+            let a_coeff_len = matrix_coefficient_len(
+                profile.inner_commit_matrix.output_rank(),
+                profile.inner_commit_matrix.input_width(),
+                profile.inner_commit_matrix.ring_dimension(),
+                "precommit A",
+            )?;
+            let b_coeff_len = matrix_coefficient_len(
+                profile.outer_commit_matrix.output_rank(),
+                profile.outer_commit_matrix.input_width(),
+                profile.outer_commit_matrix.ring_dimension(),
+                "precommit B",
+            )?;
+            saw_supported_shape = true;
+            envelope.num_field_elements = envelope
+                .num_field_elements
+                .max(a_coeff_len)
+                .max(b_coeff_len);
+        }
         for entry in catalog.entries {
             if entry.root.precommitted_groups.is_empty() {
                 continue;
@@ -405,11 +432,10 @@ fn matrix_coefficient_len(
 macro_rules! impl_proof_optimized_preset {
     (@selection_policy default) => {
         fn selection_policy() -> akita_schedules::SelectionPolicyId {
-            if Self::recursive_setup_planning() {
-                akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayload
-            } else {
-                akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
-            }
+            akita_schedules::SelectionPolicyId::for_policy(
+                Self::recursive_setup_planning(),
+                Self::RING_DIMENSION_SCHEDULE_MODE,
+            )
         }
     };
     (@selection_policy $selection_policy:expr) => {
@@ -430,9 +456,9 @@ macro_rules! impl_proof_optimized_preset {
             }
         }
     };
-    (@ring_dimension_candidates) => {};
-    (@ring_dimension_candidates $candidates:expr) => {
-        const RING_DIMENSION_CANDIDATES: &'static [akita_types::CommitmentRingDims] = $candidates;
+    (@ring_dimension_schedule_mode) => {};
+    (@ring_dimension_schedule_mode $mode:expr) => {
+        const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode = $mode;
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr) => {
         impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, none, default);
@@ -443,11 +469,11 @@ macro_rules! impl_proof_optimized_preset {
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), selection_policy = $selection_policy:expr) => {
         impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, selection_policy = $selection_policy);
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), ring_dimension_candidates = $candidates:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, ring_dimension_candidates = $candidates);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), ring_dimension_schedule_mode = $mode:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, ring_dimension_schedule_mode = $mode);
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), selection_policy = $selection_policy:expr, ring_dimension_candidates = $candidates:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, selection_policy = $selection_policy, ring_dimension_candidates = $candidates);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), selection_policy = $selection_policy:expr, ring_dimension_schedule_mode = $mode:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, selection_policy = $selection_policy, ring_dimension_schedule_mode = $mode);
     };
     (@options default) => {
         impl_proof_optimized_preset!(@selection_policy default);
@@ -455,12 +481,12 @@ macro_rules! impl_proof_optimized_preset {
     (@options selection_policy = $selection_policy:expr) => {
         impl_proof_optimized_preset!(@selection_policy $selection_policy);
     };
-    (@options ring_dimension_candidates = $candidates:expr) => {
-        impl_proof_optimized_preset!(@ring_dimension_candidates $candidates);
+    (@options ring_dimension_schedule_mode = $mode:expr) => {
+        impl_proof_optimized_preset!(@ring_dimension_schedule_mode $mode);
         impl_proof_optimized_preset!(@selection_policy default);
     };
-    (@options selection_policy = $selection_policy:expr, ring_dimension_candidates = $candidates:expr) => {
-        impl_proof_optimized_preset!(@ring_dimension_candidates $candidates);
+    (@options selection_policy = $selection_policy:expr, ring_dimension_schedule_mode = $mode:expr) => {
+        impl_proof_optimized_preset!(@ring_dimension_schedule_mode $mode);
         impl_proof_optimized_preset!(@selection_policy $selection_policy);
     };
     (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, none, $($options:tt)*) => {

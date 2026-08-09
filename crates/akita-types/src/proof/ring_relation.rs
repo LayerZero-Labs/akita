@@ -685,16 +685,27 @@ mod tests {
         assert!(build_instance(&lp, num_claims, 4)
             .segment_layout(&lp, None)
             .is_err());
+    }
 
-        // num_chunks = 16 exceeds num_live_blocks = 8.
-        let mut lp = chunk_test_level_params(3, num_claims);
+    #[test]
+    fn resolve_preserves_empty_chunk_slots() {
+        let num_claims = 2;
+        let mut lp = chunk_test_level_params(2, num_claims);
         lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
-            num_chunks: 16,
+            num_chunks: 8,
             num_activated_levels: 1,
         };
-        assert!(build_instance(&lp, num_claims, 4)
+        let layout = build_instance(&lp, num_claims, 4)
             .segment_layout(&lp, None)
-            .is_err());
+            .expect("layout with empty chunk slots");
+        let expected_ranges = crate::dyadic_block_ranges(4, 8).expect("chunk ranges");
+        assert_eq!(layout.units().len(), 8);
+        for (unit, expected_range) in layout.units().iter().zip(expected_ranges) {
+            assert_eq!(unit.global_block_range(), expected_range);
+            assert_eq!(unit.e_range().is_empty(), unit.num_live_blocks() == 0);
+            assert_eq!(unit.t_range().is_empty(), unit.num_live_blocks() == 0);
+            assert!(!unit.z_range().is_empty());
+        }
     }
 
     #[test]

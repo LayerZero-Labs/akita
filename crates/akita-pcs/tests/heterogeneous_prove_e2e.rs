@@ -16,7 +16,7 @@ mod common;
 use common::selected_prover_data;
 use std::any::TypeId;
 
-type Cfg = fp128::D64Dense;
+type Cfg = fp128::Dense;
 type F = fp128::Field;
 const D: usize = Cfg::D;
 type Scheme = AkitaCommitmentScheme<Cfg>;

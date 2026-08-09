@@ -15,9 +15,9 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 type F = fp128::Field;
-type Cfg = fp128::D64Dense;
+type Cfg = fp128::Dense;
 const D: usize = Cfg::D;
-const NV: usize = 25;
+const NV: usize = 24;
 
 fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(0xdead_beef);
@@ -35,7 +35,7 @@ fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
     }
 }
 
-fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
+fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
     let evals = make_dense_evals::<Cfg>(NV);
     let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).expect("dense poly");
     let layout = Cfg::get_params_for_batched_commitment(
@@ -70,7 +70,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
     let inner_width = layout.inner_width();
 
     let mut group = c.benchmark_group("root_kernels");
-    group.bench_function("dense_root_matvec_full_nv25_d32", |b| {
+    group.bench_function("dense_root_matvec_full_nv24_d256", |b| {
         b.iter(|| {
             black_box(mat_vec_mul_ntt_i8_dense(
                 &ntt_shared,
@@ -84,7 +84,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
         })
     });
     group.bench_function(
-        "dense_root_matvec_full_nv25_d32_single_row_subkernel",
+        "dense_root_matvec_full_nv24_d256_single_row_subkernel",
         |b| {
             b.iter(|| {
                 black_box(mat_vec_mul_ntt_i8_dense_single_row(
@@ -102,7 +102,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
         .iter()
         .map(|block| vec![[0i8; D]; block.len() * layout.num_digits_inner])
         .collect();
-    group.bench_function("dense_root_predecomp_digit_matvec_full_nv25_d32", |b| {
+    group.bench_function("dense_root_predecomp_digit_matvec_full_nv24_d256", |b| {
         b.iter(|| {
             for (block, digit_block) in block_slices.iter().zip(digit_blocks.iter_mut()) {
                 decompose_rows_i8_into(
@@ -127,5 +127,5 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(root_kernels, bench_dense_root_matvec_full_nv25_d32);
+criterion_group!(root_kernels, bench_dense_root_matvec_full_nv24_d256);
 criterion_main!(root_kernels);

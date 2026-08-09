@@ -1,7 +1,7 @@
 use super::*;
 use crate::RecursiveWitnessFlat;
 use akita_config::{
-    proof_optimized::fp128::D64OneHot, CommitmentConfig, PrecommittedCommitmentConfig,
+    proof_optimized::fp128::OneHot, CommitmentConfig, PrecommittedCommitmentConfig,
 };
 use akita_field::{Fp32, FpExt2, TwoNr};
 use akita_transcript::AkitaTranscript;
@@ -110,11 +110,11 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     assert_eq!(batch.num_groups(), 3);
     let pre_layout = OpeningClaimsLayout::new(16, 1).expect("precommit layout");
     let pre_params =
-        PrecommittedCommitmentConfig::<D64OneHot>::get_params_for_batched_commitment(&pre_layout)
+        PrecommittedCommitmentConfig::<OneHot>::get_params_for_batched_commitment(&pre_layout)
             .expect("precommit params");
     let precommitted =
         CommittedGroupProfile::from_params(PolynomialGroupLayout::new(16, 1), &pre_params);
-    let schedule = D64OneHot::runtime_schedule(AkitaScheduleLookupKey {
+    let schedule = OneHot::runtime_schedule(AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![precommitted, precommitted],
     })
