@@ -89,15 +89,10 @@ impl<F: FieldCore> SubfieldMultiplierOpeningPoint<F> {
         materialize_subfield_rings::<F, D>(&self.live_block_coordinates, self.extension_degree)
     }
 
-    pub(super) fn eval_position_at<const D: usize, E>(
-        &self,
-        idx: usize,
-        alpha_pows: &[E],
-    ) -> Result<E, AkitaError>
+    pub(super) fn eval_position_at<E>(&self, idx: usize, alpha_pows: &[E]) -> Result<E, AkitaError>
     where
         E: ExtField<F>,
     {
-        self.ensure_ring_dim::<D>()?;
         eval_subfield_at_pows(self.position_coordinates(idx)?, self.ring_dim, alpha_pows)
     }
 

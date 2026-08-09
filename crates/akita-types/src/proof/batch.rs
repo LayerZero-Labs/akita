@@ -184,11 +184,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     /// # Errors
     ///
     /// Returns an invalid proof error if `idx` is out of range.
-    pub fn eval_position_at<const D: usize, E>(
-        &self,
-        idx: usize,
-        alpha_pows: &[E],
-    ) -> Result<E, AkitaError>
+    pub fn eval_position_at<E>(&self, idx: usize, alpha_pows: &[E]) -> Result<E, AkitaError>
     where
         E: ExtField<F>,
     {
@@ -199,7 +195,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
                 .copied()
                 .map(E::lift_base)
                 .ok_or(AkitaError::InvalidProof),
-            Self::Subfield(point) => point.eval_position_at::<D, E>(idx, alpha_pows),
+            Self::Subfield(point) => point.eval_position_at(idx, alpha_pows),
         }
     }
 
@@ -782,7 +778,7 @@ mod tests {
         let alpha_pows = scalar_powers(alpha, D);
         assert_eq!(
             point
-                .eval_position_at::<D, L>(0, &alpha_pows)
+                .eval_position_at::<L>(0, &alpha_pows)
                 .expect("compact evaluation"),
             eval_ring_at_pows_fast(&expected_ring, &alpha_pows)
         );

@@ -788,8 +788,8 @@ where
             .map(|k| {
                 let block_idx = k / depth_witness;
                 let digit_idx = k % depth_witness;
-                let opening_a_eval = ring_multiplier_point
-                    .eval_position_at_dyn::<E>(block_idx, &group_alpha_pows_a)?;
+                let opening_a_eval =
+                    ring_multiplier_point.eval_position_at::<E>(block_idx, &group_alpha_pows_a)?;
                 let constraint = consistency_weight * opening_a_eval * witness_gadget[digit_idx];
                 let mut setup = E::zero();
                 for (a_idx, a_row) in setup_a_rows.iter().take(n_a).enumerate() {
