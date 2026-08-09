@@ -51,3 +51,8 @@ criterion = "0.5"
 name = "relation_evaluator"
 harness = false
 required-features = ["benchmark-support"]
+
+[[bench]]
+name = "evaluation_trace"
+harness = false
+required-features = ["benchmark-support"]

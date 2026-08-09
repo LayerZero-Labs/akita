@@ -120,7 +120,7 @@ where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + FpExtEncoding<F>,
 {
-    let coordinates = value.to_ext_coords();
+    let coordinates = value.ext_coords();
     let Some((&first, tail)) = coordinates.split_first() else {
         return Err(AkitaError::InvalidProof);
     };

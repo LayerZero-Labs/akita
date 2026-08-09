@@ -557,16 +557,8 @@ where
         let group_id = group_index;
         let units = witness_layout.units_for_group(group_id)?;
         let k_g = group_layout.num_polynomials();
-        let opening_point = instance.group_opening_point(group_index)?;
         let ring_multiplier_point = instance.group_ring_multiplier_point(group_index)?;
         let challenges = &instance.group_challenges()[group_index];
-        if opening_point.position_weights.len() != group_lp.num_positions_per_block()
-            || opening_point.live_block_weights.len() != group_lp.num_live_blocks()
-        {
-            return Err(AkitaError::InvalidInput(
-                "relation matrix col eval opening-point layout mismatch".to_string(),
-            ));
-        }
         if ring_multiplier_point.position_len() != group_lp.num_positions_per_block()
             || ring_multiplier_point.fold_len() != group_lp.num_live_blocks()
         {
@@ -796,8 +788,8 @@ where
             .map(|k| {
                 let block_idx = k / depth_witness;
                 let digit_idx = k % depth_witness;
-                let opening_a_eval = ring_multiplier_point
-                    .eval_position_at_dyn::<E>(block_idx, &group_alpha_pows_a)?;
+                let opening_a_eval =
+                    ring_multiplier_point.eval_position_at::<E>(block_idx, &group_alpha_pows_a)?;
                 let constraint = consistency_weight * opening_a_eval * witness_gadget[digit_idx];
                 let mut setup = E::zero();
                 for (a_idx, a_row) in setup_a_rows.iter().take(n_a).enumerate() {

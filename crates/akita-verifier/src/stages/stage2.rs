@@ -4,7 +4,7 @@ use crate::protocol::evaluation_trace::PreparedEvaluationTrace;
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::{
     eq_poly::EqPolynomial,
-    offset_eq::{eval_eq_pair_tensor_families, EqPairTensorFamily},
+    offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily},
 };
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
@@ -164,7 +164,7 @@ where
         let physical_l2_oracle = if self.physical_l2_families.is_empty() {
             E::zero()
         } else {
-            let weight_eval = eval_eq_pair_tensor_families(
+            let weight_eval = eval_boolean_pair_tensor_families::<_, false, false>(
                 challenges,
                 &self.stage1_point,
                 &self.physical_l2_families,

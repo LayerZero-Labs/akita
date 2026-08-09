@@ -263,26 +263,32 @@ fn bench_setup_index_weight(c: &mut Criterion) {
     configure_group(&mut shape_group);
     let num_live_blocks = 1024;
     let mixed_dims = CommitmentRingDims {
-        inner: 64,
-        outer: 32,
-        opening: 32,
+        inner: 128,
+        outer: 64,
+        opening: 64,
     };
     let wider_mixed_dims = CommitmentRingDims {
-        inner: 64,
-        outer: 16,
-        opening: 32,
+        inner: 256,
+        outer: 128,
+        opening: 128,
     };
     for (shape, role_dims, outgoing_ring_dim, num_groups, blocks_per_chunk) in [
-        ("mixed_d/single_group/single_chunk", mixed_dims, 16, 1, 1024),
-        ("mixed_d/single_group/64_chunks", mixed_dims, 16, 1, 16),
+        ("mixed_d/single_group/single_chunk", mixed_dims, 64, 1, 1024),
+        ("mixed_d/single_group/64_chunks", mixed_dims, 64, 1, 16),
         (
-            "mixed_d/a64_b16_d32/single_chunk",
+            "mixed_d/a256_b128_d128/single_chunk",
             wider_mixed_dims,
-            16,
+            128,
             1,
             1024,
         ),
-        ("mixed_d/a64_b16_d32/64_chunks", wider_mixed_dims, 16, 1, 16),
+        (
+            "mixed_d/a256_b128_d128/64_chunks",
+            wider_mixed_dims,
+            128,
+            1,
+            16,
+        ),
         (
             "uniform/two_groups/single_chunk",
             CommitmentRingDims::uniform(D),
