@@ -1,6 +1,6 @@
 //! Exact-prefix paired NTT cache used by compressed commitments.
 
-use super::ErasedCpuNttCache;
+use super::{drop_built_ntt_entries, ErasedCpuNttCache};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{prepare_compression_ntt_cache, AkitaExpandedSetup, PreparedNttCache};
 use std::any::Any;
@@ -78,6 +78,10 @@ impl CompressionNttCache {
             .filter_map(|result| result.as_ref().ok())
             .map(|slot| slot.cache_bytes)
             .sum()
+    }
+
+    pub(super) fn drop_built_slots(&self) -> Result<usize, AkitaError> {
+        drop_built_ntt_entries(&self.slots, "compression")
     }
 
     #[cfg(test)]
@@ -215,6 +219,101 @@ mod tests {
 
         assert_eq!(prepared.compression_ntt.slot_count(), 2);
         assert_eq!(prepared.compression_ntt.slot_build_count(), 2);
+    }
+
+    #[test]
+    fn generic_release_clears_both_cpu_ntt_namespaces_and_rebuilds() {
+        let prepared = empty_prepared();
+        let digits = vec![[0i8; D]; 3];
+        let shared_key = NttCacheKey {
+            ring_d: D,
+            num_ring_elements: digits.len(),
+            domain: NttTransformDomain::Cyclic,
+        };
+        CpuBackend::DEFAULT
+            .compression_rows_products::<D>(&prepared, &[digits.as_slice()])
+            .expect("warm compression NTT");
+        CpuBackend::DEFAULT
+            .ensure_ntt_slot(&prepared, shared_key)
+            .expect("warm shared NTT");
+
+        let shared_bytes = prepared.shared_ntt_cache_bytes();
+        let compression_bytes = prepared.compression_ntt_cache_bytes();
+        let total_bytes = shared_bytes.checked_add(compression_bytes).unwrap();
+        assert!(shared_bytes > 0);
+        assert!(compression_bytes > 0);
+        assert_eq!(prepared.ntt_cache_bytes().unwrap(), total_bytes);
+        let shared_builds = prepared.ntt_slot_build_count();
+        let compression_builds = prepared.compression_ntt.slot_build_count();
+
+        assert_eq!(
+            CpuBackend::DEFAULT
+                .release_built_ntt_slots(&prepared)
+                .unwrap(),
+            total_bytes
+        );
+        assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
+        assert_eq!(prepared.compression_ntt_cache_bytes(), 0);
+        assert_eq!(prepared.ntt_cache_bytes().unwrap(), 0);
+        assert_eq!(prepared.compression_ntt.slot_count(), 0);
+        assert_eq!(
+            CpuBackend::DEFAULT
+                .release_built_ntt_slots(&prepared)
+                .unwrap(),
+            0
+        );
+
+        CpuBackend::DEFAULT
+            .compression_rows_products::<D>(&prepared, &[digits.as_slice()])
+            .expect("rebuild compression NTT");
+        CpuBackend::DEFAULT
+            .ensure_ntt_slot(&prepared, shared_key)
+            .expect("rebuild shared NTT");
+        assert_eq!(prepared.ntt_cache_bytes().unwrap(), total_bytes);
+        assert_eq!(prepared.ntt_slot_build_count(), shared_builds + 1);
+        assert_eq!(
+            prepared.compression_ntt.slot_build_count(),
+            compression_builds + 1
+        );
+    }
+
+    #[test]
+    fn compression_release_preserves_active_reader() {
+        let prepared = empty_prepared();
+        let digits = vec![[0i8; D]; 3];
+        CpuBackend::DEFAULT
+            .compression_rows_products::<D>(&prepared, &[digits.as_slice()])
+            .expect("warm compression NTT");
+        let bytes = prepared.compression_ntt_cache_bytes();
+        let builds_before = prepared.compression_ntt.slot_build_count();
+        let entered = std::sync::Barrier::new(2);
+        let released = std::sync::Barrier::new(2);
+
+        std::thread::scope(|scope| {
+            let reader = scope.spawn(|| {
+                prepared
+                    .with_compression_ntt::<D, _>(digits.len(), |ntt| {
+                        entered.wait();
+                        released.wait();
+                        assert_eq!(ntt.cache_bytes(), bytes);
+                        Ok(())
+                    })
+                    .expect("active reader keeps its compression NTT alive");
+            });
+            entered.wait();
+            assert_eq!(prepared.drop_built_ntt_slots().unwrap(), bytes);
+            assert_eq!(prepared.compression_ntt_cache_bytes(), 0);
+            released.wait();
+            reader.join().expect("reader thread");
+        });
+
+        CpuBackend::DEFAULT
+            .compression_rows_products::<D>(&prepared, &[digits.as_slice()])
+            .expect("released compression NTT rebuilds");
+        assert_eq!(
+            prepared.compression_ntt.slot_build_count(),
+            builds_before + 1
+        );
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use super::*;
+use crate::compute::CompressionComputeBackend;
 use crate::AkitaProverSetup;
 use crate::CpuBackend;
 use akita_field::{AkitaError, Fp64};
@@ -433,17 +434,24 @@ fn root_lifecycle_retains_by_default_and_explicit_release_deduplicates_owner() {
     let requirements = all_cluster_requirements();
 
     prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();
-    let resident = prepared.shared_ntt_cache_bytes();
+    let compression_digits = vec![[0i8; 64]; 3];
+    CpuBackend::DEFAULT
+        .compression_rows_products::<64>(&prepared, &[compression_digits.as_slice()])
+        .expect("warm compression NTT");
+    let resident = prepared.ntt_cache_bytes().unwrap();
     assert!(resident > 0);
 
     LevelProveStacks::after_root_fold(&stack).unwrap();
-    assert_eq!(prepared.shared_ntt_cache_bytes(), resident);
+    assert_eq!(prepared.ntt_cache_bytes().unwrap(), resident);
 
     let releasing = ReleaseRootNttAfterFold::new(&stack);
     LevelProveStacks::after_root_fold(&releasing).unwrap();
-    assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
+    assert_eq!(prepared.ntt_cache_bytes().unwrap(), 0);
 
     prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();
+    CpuBackend::DEFAULT
+        .compression_rows_products::<64>(&prepared, &[compression_digits.as_slice()])
+        .expect("rebuild compression NTT");
     assert_eq!(stack.release_built_ntt_slots().unwrap(), resident);
 }
 

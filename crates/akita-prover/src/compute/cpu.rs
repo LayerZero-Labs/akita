@@ -24,6 +24,7 @@ use akita_types::{
 use std::any::Any;
 use std::array::from_fn;
 use std::collections::HashMap;
+use std::hash::Hash;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -47,6 +48,36 @@ pub struct CpuBackend {
 }
 
 type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
+
+fn drop_built_ntt_entries<K>(
+    slots: &Mutex<HashMap<K, Arc<NttSlotCell>>>,
+    namespace: &'static str,
+) -> Result<usize, AkitaError>
+where
+    K: Copy + Eq + Hash,
+{
+    let mut freed = 0usize;
+    let mut slots = slots
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup(format!("{namespace} NTT cache lock poisoned")))?;
+    let mut released_keys = Vec::new();
+    for (key, cell) in slots.iter() {
+        let built_bytes = cell
+            .get()
+            .and_then(|result| result.as_ref().ok())
+            .map(|slot| slot.cache_bytes);
+        if let Some(bytes) = built_bytes {
+            freed = freed.checked_add(bytes).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!("released {namespace} NTT bytes overflow"))
+            })?;
+            released_keys.push(*key);
+        }
+    }
+    for key in released_keys {
+        slots.remove(&key);
+    }
+    Ok(freed)
+}
 
 impl CpuBackend {
     /// Default maximum cached extent for a ring-switch NTT operation.
@@ -250,40 +281,32 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
             .sum()
     }
 
-    /// Drop every built NTT slot and return the bytes freed.
+    fn drop_built_shared_ntt_slots(&self) -> Result<usize, AkitaError> {
+        drop_built_ntt_entries(&self.shared_ntt, "shared matrix")
+    }
+
+    /// Drop every built CPU NTT slot and return the complete byte count.
     ///
-    /// Removing each released key ensures that a later smaller request creates
-    /// its exact extent instead of rebuilding the released larger prefix.
-    /// Active readers keep the released slot alive through their `Arc`.
+    /// This releases both shared matrix and compression NTT entries. Removing
+    /// each built key makes the next request build its exact extent. Active
+    /// readers keep released entries alive through their `Arc` values.
     /// Construction already in progress is not cancelled, so callers that need
     /// an empty cache after this call must use a quiescent lifecycle boundary.
     pub fn drop_built_ntt_slots(&self) -> Result<usize, AkitaError> {
-        let mut freed = 0usize;
-        let mut cache = self
-            .shared_ntt
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
-        let mut released_keys = Vec::new();
-        for (key, cell) in cache.iter() {
-            let built_bytes = cell
-                .get()
-                .and_then(|result| result.as_ref().ok())
-                .map(|slot| slot.cache_bytes);
-            if let Some(bytes) = built_bytes {
-                freed = freed.checked_add(bytes).ok_or_else(|| {
-                    AkitaError::InvalidSetup("released NTT cache bytes overflow".into())
-                })?;
-                released_keys.push(*key);
-            }
+        let shared_bytes = self.drop_built_shared_ntt_slots()?;
+        let compression_bytes = self.compression_ntt.drop_built_slots()?;
+        let freed_bytes = shared_bytes.checked_add(compression_bytes).ok_or_else(|| {
+            AkitaError::InvalidSetup("released CPU NTT cache bytes overflow".into())
+        })?;
+        if freed_bytes > 0 {
+            tracing::info!(
+                freed_bytes,
+                shared_bytes,
+                compression_bytes,
+                "dropped built CPU NTT slots"
+            );
         }
-        for key in released_keys {
-            cache.remove(&key);
-        }
-        drop(cache);
-        if freed > 0 {
-            tracing::info!(freed_bytes = freed, "dropped built NTT slots");
-        }
-        Ok(freed)
+        Ok(freed_bytes)
     }
 
     /// Initialized shared NTT cache entries in deterministic reporting order.
@@ -350,6 +373,13 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
     /// In-memory byte footprint of exact-prefix compression NTT caches.
     pub fn compression_ntt_cache_bytes(&self) -> usize {
         self.compression_ntt.cache_bytes()
+    }
+
+    /// Complete in-memory byte footprint of all CPU NTT caches.
+    pub fn ntt_cache_bytes(&self) -> Result<usize, AkitaError> {
+        self.shared_ntt_cache_bytes()
+            .checked_add(self.compression_ntt_cache_bytes())
+            .ok_or_else(|| AkitaError::InvalidSetup("CPU NTT cache bytes overflow".into()))
     }
 
     /// CRT/NTT profile and universal i8 capacity metadata for `ring_d`.

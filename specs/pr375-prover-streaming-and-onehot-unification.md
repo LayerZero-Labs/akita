@@ -493,9 +493,9 @@ acceptance test.
       remains private and automatic.
 - [x] Tracing records the effective ring switch limit and one hot scratch
       budget so benchmark results identify the policy in use.
-- [ ] CPU release removes built shared matrix and compression NTT entries,
+- [x] CPU release removes built shared matrix and compression NTT entries,
       preserves active `Arc` readers, and returns the complete freed byte count.
-- [ ] Actual metrics report total CPU NTT bytes and the existing shared and
+- [x] Actual metrics report total CPU NTT bytes and the existing shared and
       compression subtotals.
 - [x] Default policy tests prove byte identical commitments and proofs. Limit
       boundary tests prove cached and streamed ring switch parity. Scratch
