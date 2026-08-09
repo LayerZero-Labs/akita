@@ -477,8 +477,8 @@ mod tests {
         let challenges = Challenges::from_sparse(
             vec![
                 SparseChallenge {
-                    positions: vec![0],
-                    coeffs: vec![1],
+                    positions: vec![0].into(),
+                    coeffs: vec![1].into(),
                 };
                 4
             ],

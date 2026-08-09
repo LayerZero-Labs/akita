@@ -316,6 +316,13 @@ pub struct SetupContributionPlan<E: FieldCore> {
 pub(crate) struct ProjectedEqPairTensor<E: FieldCore> {
     pub(crate) ratio: usize,
     pub(crate) families: Vec<EqPairTensorFamily<E>>,
+    pub(crate) state: ProjectedEqPairTensorState,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProjectedEqPairTensorState {
+    Native,
+    RelationFactored,
 }
 
 impl<E: FieldCore> SetupContributionPlan<E> {
@@ -378,9 +385,19 @@ pub(crate) struct SetupContributionGroupPlan<E: FieldCore> {
     pub(crate) b_weights: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
     pub(crate) direct_scan_weights: Option<DirectScanWeights<E>>,
+    /// Exact non-empty block ranges used by the partitioned E and T roles.
+    pub(crate) active_unit_ranges: Arc<[SetupUnitRange]>,
+    /// All physical units, including empty chunks that retain replicated Z.
+    pub(crate) num_physical_units: usize,
     pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) b_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SetupUnitRange {
+    pub(crate) global_block_start: usize,
+    pub(crate) num_live_blocks: usize,
 }
 
 impl<E: FieldCore> SetupContributionGroupPlan<E> {

@@ -57,12 +57,7 @@ where
     transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, &absorb_buf);
     let seed = transcript.challenge_bytes(CHALLENGE_SPARSE_CHALLENGE, 32);
     let mut cursor = XofCursor::from_seed(&seed);
-    Ok(SignedSparseScratch::sample_challenges(
-        &mut cursor,
-        ring_d,
-        n,
-        cfg,
-    ))
+    SignedSparseScratch::sample_challenges(&mut cursor, ring_d, n, cfg)
 }
 
 #[cfg(test)]
@@ -78,12 +73,13 @@ mod tests {
         let legacy = {
             let mut cursor = XofCursor::from_seed(&seed);
             let mut scratch = SignedSparseScratch::new(31, 0);
-            scratch.sample(&mut cursor, ring_d, 31, 0);
+            scratch.sample(&mut cursor, ring_d, 31, 0).unwrap();
             scratch.take_challenge()
         };
         let unified = {
             let mut cursor = XofCursor::from_seed(&seed);
             SignedSparseScratch::sample_challenges(&mut cursor, ring_d, 1, &cfg)
+                .unwrap()
                 .pop()
                 .expect("one challenge")
         };

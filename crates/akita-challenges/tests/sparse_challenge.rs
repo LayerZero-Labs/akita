@@ -74,8 +74,8 @@ fn dense_hamming_weight<F: FieldCore, const D: usize>(coeffs: &[F; D]) -> usize 
 #[test]
 fn sparse_challenge_to_dense_lays_out_coefficients() {
     let s = SparseChallenge {
-        positions: vec![0, 7, 12],
-        coeffs: vec![1, -1, 1],
+        positions: vec![0, 7, 12].into(),
+        coeffs: vec![1, -1, 1].into(),
     };
     let dense = sparse_challenge_to_dense::<F, D>(&s).unwrap();
     assert_eq!(dense_hamming_weight(&dense), 3);
@@ -87,26 +87,26 @@ fn sparse_challenge_to_dense_lays_out_coefficients() {
 #[test]
 fn sparse_challenge_to_dense_rejects_invalid_inputs() {
     let mismatched = SparseChallenge {
-        positions: vec![0, 1],
-        coeffs: vec![1],
+        positions: vec![0, 1].into(),
+        coeffs: vec![1].into(),
     };
     assert!(sparse_challenge_to_dense::<F, D>(&mismatched).is_err());
 
     let zero_coeff = SparseChallenge {
-        positions: vec![0, 1],
-        coeffs: vec![1, 0],
+        positions: vec![0, 1].into(),
+        coeffs: vec![1, 0].into(),
     };
     assert!(sparse_challenge_to_dense::<F, D>(&zero_coeff).is_err());
 
     let out_of_range = SparseChallenge {
-        positions: vec![0, D as u32],
-        coeffs: vec![1, 1],
+        positions: vec![0, D as u32].into(),
+        coeffs: vec![1, 1].into(),
     };
     assert!(sparse_challenge_to_dense::<F, D>(&out_of_range).is_err());
 
     let duplicate = SparseChallenge {
-        positions: vec![3, 3],
-        coeffs: vec![1, 1],
+        positions: vec![3, 3].into(),
+        coeffs: vec![1, 1].into(),
     };
     assert!(sparse_challenge_to_dense::<F, D>(&duplicate).is_err());
 }
@@ -178,6 +178,8 @@ fn signed_sparse_sampling_has_exact_magnitude_counts() {
         challenge.coeffs.iter().filter(|&&c| c.abs() == 2).count(),
         2
     );
+    assert!(!challenge.positions.spilled());
+    assert!(!challenge.coeffs.spilled());
 }
 
 #[test]
@@ -202,6 +204,8 @@ fn signed_sparse_sampling_handles_weight_above_sign_stack_chunk() {
         assert_eq!(hamming_weight(c), 65);
         assert_eq!(l1_norm(c), 65);
         assert!(c.coeffs.iter().all(|&v| v == 1 || v == -1));
+        assert!(c.positions.spilled());
+        assert!(c.coeffs.spilled());
     }
 }
 
@@ -228,8 +232,8 @@ fn fold_sampling_draws_one_challenge_per_claim_and_block() {
 #[test]
 fn challenge_layout_rejects_mismatched_vector_length() {
     let challenge = SparseChallenge {
-        positions: Vec::new(),
-        coeffs: Vec::new(),
+        positions: Vec::new().into(),
+        coeffs: Vec::new().into(),
     };
     assert!(akita_challenges::Challenges::from_sparse(vec![challenge], 2, 1).is_err());
 }

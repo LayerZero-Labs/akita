@@ -1,7 +1,21 @@
 //! Sampled sparse challenges for one folding round.
 
 use crate::SparseChallenge;
+#[cfg(feature = "parallel")]
+use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
+
+#[cfg(feature = "parallel")]
+// Tuned with `benches/sparse_challenge.rs::bench_sparse_evaluation` on an
+// Apple M4 Max (16 cores, 64 GiB). Near the crossover, two to four coarse
+// leaves amortize Rayon dispatch.
+const PARALLEL_COARSE_LEAF_TERMS: usize = 1 << 15;
+#[cfg(feature = "parallel")]
+// Larger batches expose enough work to keep finer leaves busy.
+const PARALLEL_FINE_LEAF_TERMS: usize = 1 << 13;
+#[cfg(feature = "parallel")]
+// The fine tier starts above the largest measured coarse-leaf sweet spot.
+const PARALLEL_FINE_TOTAL_TERMS: usize = 1 << 17;
 
 /// Stage-1 fold challenges in claim-major block order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,10 +121,55 @@ impl Challenges {
         F: FieldCore + FromPrimitiveInt,
         E: FieldCore + MulBase<F>,
     {
-        self.challenges
-            .iter()
-            .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
-            .collect()
+        let evaluate = |challenge: &SparseChallenge| challenge.eval_at_pows::<F, E>(alpha_pows);
+        #[cfg(feature = "parallel")]
+        let parallel_candidate = {
+            // Same M4 Max benchmark above: smaller batches never amortized
+            // the initial Rayon dispatch, independent of sparse weight.
+            const MIN_PARALLEL_CHALLENGES: usize = 1 << 9;
+            self.challenges.len() >= MIN_PARALLEL_CHALLENGES
+        };
+        #[cfg(feature = "parallel")]
+        if parallel_candidate {
+            let sparse_terms = self.challenges.iter().try_fold(0usize, |sum, challenge| {
+                sum.checked_add(challenge.positions.len()).ok_or_else(|| {
+                    AkitaError::InvalidInput("sparse challenge term count overflow".into())
+                })
+            })?;
+            if sparse_terms <= PARALLEL_COARSE_LEAF_TERMS {
+                return self.challenges.iter().map(evaluate).collect();
+            }
+            let leaf_terms = if sparse_terms > PARALLEL_FINE_TOTAL_TERMS {
+                PARALLEL_FINE_LEAF_TERMS
+            } else {
+                PARALLEL_COARSE_LEAF_TERMS
+            };
+            // Production batches have a uniform sparse weight. Pricing leaves
+            // from the exact average also keeps arbitrary valid batches linear
+            // without rescanning their terms at every recursive fork.
+            let average_terms = sparse_terms.div_ceil(self.challenges.len());
+            let leaf_challenges = (leaf_terms / average_terms).max(1);
+            let mut evaluations = Vec::new();
+            evaluations
+                .try_reserve_exact(self.challenges.len())
+                .map_err(|_| {
+                    AkitaError::InvalidInput("challenge evaluation allocation failed".into())
+                })?;
+            evaluations.resize(self.challenges.len(), E::zero());
+            evaluations
+                .par_chunks_mut(leaf_challenges)
+                .zip(self.challenges.par_chunks(leaf_challenges))
+                .try_for_each(|(evaluation_chunk, challenge_chunk)| {
+                    for (evaluation, challenge) in evaluation_chunk.iter_mut().zip(challenge_chunk)
+                    {
+                        *evaluation = challenge.eval_at_pows::<F, E>(alpha_pows)?;
+                    }
+                    Ok::<(), AkitaError>(())
+                })?;
+            return Ok(evaluations);
+        }
+
+        self.challenges.iter().map(evaluate).collect()
     }
 
     /// Select complete claims in the requested order.
@@ -143,5 +202,37 @@ impl Challenges {
             self.num_live_blocks_per_claim,
             claim_indices.len(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Prime128Offset275;
+
+    type F = Prime128Offset275;
+
+    #[test]
+    fn batch_evaluation_preserves_challenge_order() {
+        let challenges = (0..4096)
+            .map(|index| SparseChallenge {
+                positions: (0..32).collect::<Vec<_>>().into(),
+                coeffs: (0..32)
+                    .map(|position| if (index + position) % 2 == 0 { 1 } else { -1 })
+                    .collect::<Vec<_>>()
+                    .into(),
+            })
+            .collect::<Vec<_>>();
+        let batch = Challenges::from_sparse(challenges, 4096, 1).unwrap();
+        let powers = (0..32)
+            .map(|index| F::from_u64(index + 1))
+            .collect::<Vec<_>>();
+        let actual = batch.evals_at_pows::<F, F>(&powers).unwrap();
+        let expected = batch
+            .as_slice()
+            .iter()
+            .map(|challenge| challenge.eval_at_pows::<F, F>(&powers).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
     }
 }

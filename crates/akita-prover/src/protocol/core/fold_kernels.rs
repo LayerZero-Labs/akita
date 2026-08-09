@@ -14,19 +14,6 @@ pub(in crate::protocol::core) struct TraceTarget<E: FieldCore> {
     pub(in crate::protocol::core) trace_eval_target: E,
 }
 
-/// Extract the typed fold/position ring-weight slices from a multiplier point.
-pub(in crate::protocol::core) fn multiplier_ring_weights<F: FieldCore, const D: usize>(
-    point: &RingMultiplierOpeningPoint<F>,
-) -> Result<MultiplierWeightSlices<'_, F, D>, AkitaError> {
-    let live_block_weights = point.fold_rings_trusted::<D>()?.ok_or_else(|| {
-        AkitaError::InvalidInput("ring multiplier must carry fold weights".to_string())
-    })?;
-    let position_weights = point.position_rings_trusted::<D>()?.ok_or_else(|| {
-        AkitaError::InvalidInput("ring multiplier must carry position weights".to_string())
-    })?;
-    Ok((live_block_weights, position_weights))
-}
-
 fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
@@ -39,19 +26,26 @@ where
     Q: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
-    let plan = if let Some(base_point) = point.as_base() {
-        OpeningFoldPlan::Base {
+    if let Some(base_point) = point.as_base() {
+        let plan = OpeningFoldPlan::Base {
             live_block_weights: &base_point.live_block_weights,
             position_weights: &base_point.position_weights,
             num_positions_per_block,
-        }
-    } else {
-        let (live_block_weights, position_weights) = multiplier_ring_weights(point)?;
-        OpeningFoldPlan::Ring {
-            live_block_weights,
-            position_weights,
-            num_positions_per_block,
-        }
+        };
+        let OpeningFoldOutput { eval, folded } =
+            OpeningFoldKernel::evaluate_and_fold(backend, prepared, poly.opening_view()?, plan)?;
+        return Ok((eval, folded));
+    }
+    let live_block_weights = point
+        .materialize_fold_rings::<D>()?
+        .ok_or_else(|| AkitaError::InvalidInput("missing ring fold weights".to_string()))?;
+    let position_weights = point
+        .materialize_position_rings::<D>()?
+        .ok_or_else(|| AkitaError::InvalidInput("missing ring position weights".to_string()))?;
+    let plan = OpeningFoldPlan::Ring {
+        live_block_weights: &live_block_weights,
+        position_weights: &position_weights,
+        num_positions_per_block,
     };
     let OpeningFoldOutput { eval, folded } =
         OpeningFoldKernel::evaluate_and_fold(backend, prepared, poly.opening_view()?, plan)?;

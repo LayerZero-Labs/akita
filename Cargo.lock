@@ -55,6 +55,7 @@ dependencies = [
  "akita-transcript",
  "criterion",
  "sha3 0.10.9",
+ "smallvec",
  "tracing",
 ]
 
@@ -230,6 +231,7 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "blake2 0.10.6",
+ "criterion",
  "num-traits",
  "rand 0.8.6",
  "rand_core 0.6.4",
