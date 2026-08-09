@@ -106,39 +106,6 @@ enum PreparedTraceContraction<E: FieldCore> {
     },
 }
 
-fn trace_unit_tensor_axis(
-    units: &[PreparedEvaluationTraceUnit],
-    coefficient_block_len: usize,
-) -> Option<TraceUnitTensorAxis> {
-    if units.len() < 2 || !units.len().is_power_of_two() {
-        return None;
-    }
-    let first = units.first()?;
-    let second = units.get(1)?;
-    let strides = trace_unit_run_strides(first, second, coefficient_block_len)?;
-
-    for (index, unit) in units.iter().enumerate() {
-        let expected_block_start = index
-            .checked_mul(strides.block)
-            .and_then(|offset| first.global_block_start.checked_add(offset))?;
-        let expected_coefficient = index
-            .checked_mul(strides.coefficient)
-            .and_then(|offset| first.first_claim_coefficient.checked_add(offset))?;
-        if unit.global_block_start != expected_block_start
-            || unit.first_claim_coefficient != expected_coefficient
-            || unit.block_count != first.block_count
-            || unit.claim_stride_coefficients != first.claim_stride_coefficients
-        {
-            return None;
-        }
-    }
-    Some(TraceUnitTensorAxis {
-        len: units.len(),
-        block_stride: strides.block,
-        lane_stride: strides.lane,
-    })
-}
-
 fn trace_unit_tensor_segments(
     units: &[PreparedEvaluationTraceUnit],
     coefficient_block_len: usize,
@@ -181,12 +148,18 @@ fn trace_unit_tensor_segments(
             let segment_end = segment_start.checked_add(segment_len).ok_or_else(|| {
                 AkitaError::InvalidSetup("trace unit segment range overflow".into())
             })?;
-            let segment_units = units
-                .get(segment_start..segment_end)
-                .ok_or(AkitaError::InvalidProof)?;
+            let axis = match (segment_len, strides) {
+                (1, _) => None,
+                (_, Some(strides)) => Some(TraceUnitTensorAxis {
+                    len: segment_len,
+                    block_stride: strides.block,
+                    lane_stride: strides.lane,
+                }),
+                _ => return Err(AkitaError::InvalidProof),
+            };
             segments.push(TraceUnitTensorSegment {
                 first_unit: segment_start,
-                axis: trace_unit_tensor_axis(segment_units, coefficient_block_len),
+                axis,
             });
             segment_start = segment_end;
         }

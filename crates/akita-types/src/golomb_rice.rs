@@ -590,21 +590,13 @@ pub fn golomb_rice_encode_vec(
     Ok(writer.finish())
 }
 
-/// Decode a fixed number of Golomb-Rice integers from `bytes`.
+/// Decode and convert a fixed number of Golomb-Rice integers from `bytes`.
 ///
 /// Rejects unary quotients above `max_quotient`, non-zero trailing bits, and any byte padding
-/// beyond the minimal length for the encoded bitstream.
-pub fn golomb_rice_decode_vec(
-    bytes: &[u8],
-    count: usize,
-    rice_low_bits: u32,
-    zigzag_w: u32,
-    max_quotient: u64,
-) -> Result<Vec<i64>, AkitaError> {
-    golomb_rice_decode_vec_with(bytes, count, rice_low_bits, zigzag_w, max_quotient, Ok)
-}
-
-pub(crate) fn golomb_rice_decode_vec_with<T>(
+/// beyond the minimal length for the encoded bitstream. Conversion is fused
+/// into decoding so callers can validate and store a narrower representation
+/// without allocating an intermediate `Vec<i64>`.
+pub fn golomb_rice_decode_vec<T>(
     bytes: &[u8],
     count: usize,
     rice_low_bits: u32,
@@ -650,7 +642,7 @@ mod tests {
                 let encoded =
                     golomb_rice_encode_vec(&[n], rice_low_bits, zigzag_w).expect("encode");
                 let decoded =
-                    golomb_rice_decode_vec(&encoded, 1, rice_low_bits, zigzag_w, max_quotient)
+                    golomb_rice_decode_vec(&encoded, 1, rice_low_bits, zigzag_w, max_quotient, Ok)
                         .expect("decode");
                 assert_eq!(decoded, [n], "cap={cap} n={n}");
             }
@@ -681,6 +673,7 @@ mod tests {
             rice_low_bits,
             zigzag_w,
             max_quotient,
+            Ok,
         )
         .unwrap();
         assert_eq!(decoded, values);
@@ -697,7 +690,8 @@ mod tests {
         let mut encoded = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
         encoded.push(0xff);
         assert!(
-            golomb_rice_decode_vec(&encoded, 2, rice_low_bits, zigzag_w, max_quotient).is_err()
+            golomb_rice_decode_vec(&encoded, 2, rice_low_bits, zigzag_w, max_quotient, Ok,)
+                .is_err()
         );
     }
 
@@ -710,7 +704,8 @@ mod tests {
         let mut encoded = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
         encoded.push(0x00);
         assert!(
-            golomb_rice_decode_vec(&encoded, 3, rice_low_bits, zigzag_w, max_quotient).is_err()
+            golomb_rice_decode_vec(&encoded, 3, rice_low_bits, zigzag_w, max_quotient, Ok,)
+                .is_err()
         );
     }
 
@@ -732,12 +727,14 @@ mod tests {
         writer.write_bit(false);
         writer.write_bits(0, rice_low_bits);
         let bytes = writer.finish();
-        assert!(golomb_rice_decode_vec(&bytes, 1, rice_low_bits, zigzag_w, max_quotient).is_err());
+        assert!(
+            golomb_rice_decode_vec(&bytes, 1, rice_low_bits, zigzag_w, max_quotient, Ok,).is_err()
+        );
     }
 
     #[test]
     fn golomb_rice_decode_is_total_on_empty_prefix() {
-        assert!(golomb_rice_decode_vec(&[], 1, 0, 4, 0).is_err());
+        assert!(golomb_rice_decode_vec(&[], 1, 0, 4, 0, Ok).is_err());
     }
 
     #[test]

@@ -10,7 +10,7 @@ use akita_serialization::{
 use super::{checked_shape_len, checked_shape_sequence_len, reserve_shape_len};
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
 use crate::golomb_rice::{
-    golomb_rice_decode_vec_with, golomb_rice_encode_vec, golomb_rice_max_quotient_for_cap,
+    golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_max_quotient_for_cap,
     golomb_rice_values_within_cap, golomb_rice_zigzag_width, tail_z_planner_bits_per_coord,
 };
 use crate::layout::field_bytes;
@@ -650,7 +650,7 @@ pub fn decode_terminal_z_golomb_payload(
     let rice_low_bits = group.z_rice_low_bits;
     let zigzag_w = golomb_rice_zigzag_width(cap);
     let max_quotient = golomb_rice_max_quotient_for_cap(cap, rice_low_bits, zigzag_w)?;
-    let values = golomb_rice_decode_vec_with(
+    let values = golomb_rice_decode_vec(
         payload,
         group.z_coords,
         rice_low_bits,

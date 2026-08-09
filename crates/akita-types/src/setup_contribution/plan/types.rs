@@ -313,28 +313,16 @@ pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) direct_scan_alpha: Option<E>,
 }
 
-pub(crate) struct ProjectedEqPairTensorBatch<E: FieldCore> {
+pub(crate) struct ProjectedEqPairTensor<E: FieldCore> {
     pub(crate) ratio: usize,
     pub(crate) families: Vec<EqPairTensorFamily<E>>,
+    pub(crate) state: ProjectedEqPairTensorState,
 }
 
-pub(crate) enum ProjectedEqPairTensor<E: FieldCore> {
-    Native(ProjectedEqPairTensorBatch<E>),
-    RelationFactored(ProjectedEqPairTensorBatch<E>),
-}
-
-impl<E: FieldCore> ProjectedEqPairTensor<E> {
-    pub(crate) fn ratio(&self) -> usize {
-        match self {
-            Self::Native(batch) | Self::RelationFactored(batch) => batch.ratio,
-        }
-    }
-
-    pub(crate) fn families(&self) -> &[EqPairTensorFamily<E>] {
-        match self {
-            Self::Native(batch) | Self::RelationFactored(batch) => &batch.families,
-        }
-    }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProjectedEqPairTensorState {
+    Native,
+    RelationFactored,
 }
 
 impl<E: FieldCore> SetupContributionPlan<E> {

@@ -101,17 +101,6 @@ impl<F: FieldCore> SubfieldMultiplierOpeningPoint<F> {
         eval_subfield_at_pows(self.position_coordinates(idx)?, self.ring_dim, alpha_pows)
     }
 
-    pub(super) fn eval_position_at_dyn<E>(
-        &self,
-        idx: usize,
-        alpha_pows: &[E],
-    ) -> Result<E, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        eval_subfield_at_pows(self.position_coordinates(idx)?, self.ring_dim, alpha_pows)
-    }
-
     pub(super) fn fold_subfield_value<E>(&self, idx: usize) -> Result<E, AkitaError>
     where
         E: ExtField<F>,
@@ -284,35 +273,13 @@ fn add_subfield_product<F: FieldCore, const D: usize>(
             continue;
         }
         let shift = index.checked_mul(stride).ok_or(AkitaError::InvalidProof)?;
-        add_negacyclic_monomial_product(rhs, shift, coordinate, output)?;
-        if shift != 0 {
-            add_negacyclic_monomial_product(rhs, D - shift, -coordinate, output)?;
+        if shift >= D {
+            return Err(AkitaError::InvalidProof);
         }
-    }
-    Ok(())
-}
-
-fn add_negacyclic_monomial_product<F: FieldCore, const D: usize>(
-    rhs: &CyclotomicRing<F, D>,
-    shift: usize,
-    coefficient: F,
-    output: &mut CyclotomicRing<F, D>,
-) -> Result<(), AkitaError> {
-    if shift >= D {
-        return Err(AkitaError::InvalidProof);
-    }
-    for (index, &value) in rhs.coefficients().iter().enumerate() {
-        let shifted = index.checked_add(shift).ok_or(AkitaError::InvalidProof)?;
-        let (output_index, product) = if shifted < D {
-            (shifted, coefficient * value)
-        } else {
-            (shifted - D, -(coefficient * value))
-        };
-        let slot = output
-            .coefficients_mut()
-            .get_mut(output_index)
-            .ok_or(AkitaError::InvalidProof)?;
-        *slot += product;
+        rhs.shift_scale_accumulate_into(output, shift, coordinate);
+        if shift != 0 {
+            rhs.shift_scale_accumulate_into(output, D - shift, -coordinate);
+        }
     }
     Ok(())
 }

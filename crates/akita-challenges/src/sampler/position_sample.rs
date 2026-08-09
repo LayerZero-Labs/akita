@@ -135,15 +135,16 @@ pub(crate) fn sample_distinct_positions_into(
         return sample_distinct_positions_into_sparse(cursor, universe, out, scratch);
     }
     match universe {
-        0..=8 => sample_distinct_positions_into_stack_u8::<8>(cursor, universe, out),
-        9..=16 => sample_distinct_positions_into_stack_u8::<16>(cursor, universe, out),
-        17..=32 => sample_distinct_positions_into_stack_u8::<32>(cursor, universe, out),
-        33..=64 => sample_distinct_positions_into_stack_u8::<64>(cursor, universe, out),
-        65..=128 => sample_distinct_positions_into_stack_u8::<128>(cursor, universe, out),
-        129..=256 => sample_distinct_positions_into_stack_u8::<256>(cursor, universe, out),
-        257..=512 => sample_distinct_positions_into_stack_u16::<512>(cursor, universe, out),
-        513..=1024 => sample_distinct_positions_into_stack_u16::<1024>(cursor, universe, out),
-        1025..=MAX_STACK_TIER_RING_DIM => sample_distinct_positions_into_stack_u16::<
+        0..=8 => sample_distinct_positions_into_stack::<u8, 8>(cursor, universe, out),
+        9..=16 => sample_distinct_positions_into_stack::<u8, 16>(cursor, universe, out),
+        17..=32 => sample_distinct_positions_into_stack::<u8, 32>(cursor, universe, out),
+        33..=64 => sample_distinct_positions_into_stack::<u8, 64>(cursor, universe, out),
+        65..=128 => sample_distinct_positions_into_stack::<u8, 128>(cursor, universe, out),
+        129..=256 => sample_distinct_positions_into_stack::<u8, 256>(cursor, universe, out),
+        257..=512 => sample_distinct_positions_into_stack::<u16, 512>(cursor, universe, out),
+        513..=1024 => sample_distinct_positions_into_stack::<u16, 1024>(cursor, universe, out),
+        1025..=MAX_STACK_TIER_RING_DIM => sample_distinct_positions_into_stack::<
+            u16,
             MAX_STACK_TIER_RING_DIM,
         >(cursor, universe, out),
         _ => {
@@ -176,42 +177,23 @@ fn sample_distinct_positions_into_sparse(
 }
 
 #[inline]
-fn sample_distinct_positions_into_stack_u8<const N: usize>(
+fn sample_distinct_positions_into_stack<T, const N: usize>(
     cursor: &mut XofCursor,
     universe: usize,
     out: &mut [u32],
-) -> Result<(), AkitaError> {
-    if out.len() > universe || universe > N || N > 256 {
-        return Err(AkitaError::InvalidInput(
-            "u8 permutation tier has invalid dimensions".into(),
-        ));
-    }
-    let mut perm = [0u8; N];
-    for (i, slot) in perm[..universe].iter_mut().enumerate() {
-        *slot = u8::try_from(i).map_err(|_| AkitaError::InvalidProof)?;
-    }
-    for (i, dst) in out.iter_mut().enumerate() {
-        let j = i + cursor.next_usize_mod(universe - i);
-        perm.swap(i, j);
-        *dst = u32::from(perm[i]);
-    }
-    Ok(())
-}
-
-#[inline]
-fn sample_distinct_positions_into_stack_u16<const N: usize>(
-    cursor: &mut XofCursor,
-    universe: usize,
-    out: &mut [u32],
-) -> Result<(), AkitaError> {
+) -> Result<(), AkitaError>
+where
+    T: Copy + Default + TryFrom<usize>,
+    u32: From<T>,
+{
     if out.len() > universe || universe > N || N > MAX_STACK_TIER_RING_DIM {
         return Err(AkitaError::InvalidInput(
-            "u16 permutation tier has invalid dimensions".into(),
+            "permutation tier has invalid dimensions".into(),
         ));
     }
-    let mut perm = [0u16; N];
+    let mut perm = [T::default(); N];
     for (i, slot) in perm[..universe].iter_mut().enumerate() {
-        *slot = u16::try_from(i).map_err(|_| AkitaError::InvalidProof)?;
+        *slot = T::try_from(i).map_err(|_| AkitaError::InvalidProof)?;
     }
     for (i, dst) in out.iter_mut().enumerate() {
         let j = i + cursor.next_usize_mod(universe - i);
@@ -236,22 +218,22 @@ mod tests {
             let mut scratch = DistinctPositionScratch::new();
             for round in 0..16 {
                 match universe {
-                    128 => sample_distinct_positions_into_stack_u8::<128>(
+                    128 => sample_distinct_positions_into_stack::<u8, 128>(
                         &mut dense_cursor,
                         universe,
                         &mut dense,
                     ),
-                    256 => sample_distinct_positions_into_stack_u8::<256>(
+                    256 => sample_distinct_positions_into_stack::<u8, 256>(
                         &mut dense_cursor,
                         universe,
                         &mut dense,
                     ),
-                    1024 => sample_distinct_positions_into_stack_u16::<1024>(
+                    1024 => sample_distinct_positions_into_stack::<u16, 1024>(
                         &mut dense_cursor,
                         universe,
                         &mut dense,
                     ),
-                    2048 => sample_distinct_positions_into_stack_u16::<2048>(
+                    2048 => sample_distinct_positions_into_stack::<u16, 2048>(
                         &mut dense_cursor,
                         universe,
                         &mut dense,

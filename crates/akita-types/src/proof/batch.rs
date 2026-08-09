@@ -215,29 +215,6 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         }
     }
 
-    /// Runtime-dimension form of [`Self::eval_position_at`]: the ring dimension is
-    /// `alpha_pows.len()` and ring multipliers are read as flat coefficient
-    /// chunks.
-    ///
-    /// # Errors
-    ///
-    /// Returns an invalid proof error if `idx` is out of range or the stored
-    /// multiplier data does not chunk at the supplied dimension.
-    pub fn eval_position_at_dyn<E>(&self, idx: usize, alpha_pows: &[E]) -> Result<E, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        match self {
-            Self::Base(point) => point
-                .position_weights
-                .get(idx)
-                .copied()
-                .map(E::lift_base)
-                .ok_or(AkitaError::InvalidProof),
-            Self::Subfield(point) => point.eval_position_at_dyn(idx, alpha_pows),
-        }
-    }
-
     /// Decode one live-block multiplier directly into its extension field.
     pub fn fold_subfield_value<E>(&self, idx: usize) -> Result<Option<E>, AkitaError>
     where

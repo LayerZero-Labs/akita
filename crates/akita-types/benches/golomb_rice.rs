@@ -42,6 +42,7 @@ fn bench_terminal_decode(c: &mut Criterion) {
                     rice_low_bits,
                     zigzag_width,
                     max_quotient,
+                    Ok,
                 )
                 .expect("canonical payload"),
             );
@@ -63,6 +64,7 @@ fn bench_terminal_decode(c: &mut Criterion) {
                 rice_low_bits,
                 zigzag_width,
                 max_quotient,
+                Ok,
             )
             .expect("canonical payload");
             golomb_rice_values_within_cap(&decoded, CAP).expect("values within cap");

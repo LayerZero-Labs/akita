@@ -1,4 +1,4 @@
-use super::types::{ProjectedEqPairTensor, ProjectedEqPairTensorBatch};
+use super::types::{ProjectedEqPairTensor, ProjectedEqPairTensorState};
 use super::*;
 use akita_algebra::{
     offset_eq::{
@@ -134,8 +134,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         self.setup_index_tensors
             .iter()
             .try_fold(E::zero(), |evaluation, batch| {
-                let ratio = batch.ratio();
-                let families = batch.families();
+                let ratio = batch.ratio;
+                let families = &batch.families;
                 if ratio == 1 {
                     return Ok(evaluation
                         + eval_boolean_pair_tensor_families::<_, false, false>(
@@ -165,8 +165,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     setup_low_point,
                 )?;
                 let relation_point = self.relation_address.point();
-                let contraction = match batch {
-                    ProjectedEqPairTensor::RelationFactored(batch) => {
+                let contraction = match batch.state {
+                    ProjectedEqPairTensorState::RelationFactored => {
                         let relation_low_point = relation_point
                             .get(..low_variable_count)
                             .ok_or(AkitaError::InvalidProof)?;
@@ -182,12 +182,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             * eval_boolean_pair_tensor_families::<_, false, false>(
                                 setup_high_point,
                                 relation_high_point,
-                                &batch.families,
+                                families,
                             )?
                     }
-                    ProjectedEqPairTensor::Native(batch) => {
+                    ProjectedEqPairTensorState::Native => {
                         let projected = project_role_tensors(
-                            &batch.families,
+                            families,
                             ratio,
                             alpha,
                             self.projection_geometry.base_ring_dim(),
@@ -221,19 +221,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             self.append_b_tensors(group, &mut batches)?;
             self.append_a_tensors(group, &mut batches)?;
         }
-        batches
-            .into_iter()
-            .map(|batch| match batch {
-                ProjectedEqPairTensor::Native(mut projected)
-                    if projected.ratio > 1
-                        && role_tensors_are_aligned(&projected.families, projected.ratio) =>
-                {
-                    factor_aligned_role_tensors(&mut projected.families, projected.ratio)?;
-                    Ok(ProjectedEqPairTensor::RelationFactored(projected))
-                }
-                batch => Ok(batch),
-            })
-            .collect()
+        for batch in &mut batches {
+            if batch.ratio > 1 && role_tensors_are_aligned(&batch.families, batch.ratio) {
+                factor_aligned_role_tensors(&mut batch.families, batch.ratio)?;
+                batch.state = ProjectedEqPairTensorState::RelationFactored;
+            }
+        }
+        Ok(batches)
     }
 
     fn group_projection_scales(
@@ -755,17 +749,20 @@ fn push_projected_tensor<E: FieldCore>(
     ratio: usize,
     family: EqPairTensorFamily<E>,
 ) -> Result<(), AkitaError> {
-    match batches.iter_mut().find(|batch| batch.ratio() == ratio) {
-        Some(ProjectedEqPairTensor::Native(batch)) => batch.families.push(family),
-        Some(ProjectedEqPairTensor::RelationFactored(_)) => {
+    match batches.iter_mut().find(|batch| batch.ratio == ratio) {
+        Some(batch) if batch.state == ProjectedEqPairTensorState::Native => {
+            batch.families.push(family);
+        }
+        Some(_) => {
             return Err(AkitaError::InvalidSetup(
                 "projected tensors pushed after relation factoring".into(),
             ));
         }
-        None => batches.push(ProjectedEqPairTensor::Native(ProjectedEqPairTensorBatch {
+        None => batches.push(ProjectedEqPairTensor {
             ratio,
             families: vec![family],
-        })),
+            state: ProjectedEqPairTensorState::Native,
+        }),
     }
     Ok(())
 }

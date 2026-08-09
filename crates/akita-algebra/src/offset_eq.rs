@@ -55,23 +55,18 @@ pub trait AffineWeightSource<F: FieldCore, A: AffineWeight<F>>: Sync {
     fn with_weight<R>(&self, index: usize, consume: impl FnOnce(&A) -> R) -> Option<R>;
 }
 
-impl<F: FieldCore, A: AffineWeight<F>> AffineWeightSource<F, A> for [A] {
+impl<F, A, H> AffineWeightSource<F, A> for H
+where
+    F: FieldCore,
+    A: AffineWeight<F>,
+    H: AsRef<[A]> + Sync + ?Sized,
+{
     fn len(&self) -> usize {
-        <[A]>::len(self)
+        self.as_ref().len()
     }
 
     fn with_weight<R>(&self, index: usize, consume: impl FnOnce(&A) -> R) -> Option<R> {
-        self.get(index).map(consume)
-    }
-}
-
-impl<F: FieldCore, A: AffineWeight<F>> AffineWeightSource<F, A> for Vec<A> {
-    fn len(&self) -> usize {
-        Vec::len(self)
-    }
-
-    fn with_weight<R>(&self, index: usize, consume: impl FnOnce(&A) -> R) -> Option<R> {
-        self.as_slice().get(index).map(consume)
+        self.as_ref().get(index).map(consume)
     }
 }
 
