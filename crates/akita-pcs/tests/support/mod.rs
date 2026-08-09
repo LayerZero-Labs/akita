@@ -186,6 +186,10 @@ where
         Envelope::opening_basis_range()
     }
 
+    fn inner_basis_range() -> (u32, u32) {
+        Envelope::inner_basis_range()
+    }
+
     fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
         Envelope::root_honest_fold_policy()
     }

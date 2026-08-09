@@ -287,7 +287,11 @@ impl NttExecutionRequirements {
     }
 }
 
-fn signed_commit_domain(width: usize, log_basis: u32) -> Result<NttTransformDomain, AkitaError> {
+/// Transform domain required to commit balanced digits at one basis.
+pub fn signed_commit_domain(
+    width: usize,
+    log_basis: u32,
+) -> Result<NttTransformDomain, AkitaError> {
     match crate::validation::signed_digit_kernel_for_setup(log_basis, "for NTT cache planning")? {
         akita_types::SignedDigitKernel::I8 => Ok(NttTransformDomain::Negacyclic),
         akita_types::SignedDigitKernel::I16 => Ok(NttTransformDomain::ExactNegacyclicI16 {

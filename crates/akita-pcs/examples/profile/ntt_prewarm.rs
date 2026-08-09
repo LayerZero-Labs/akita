@@ -1,7 +1,7 @@
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_prover::{
-    prewarm_ntt_requirements, CpuBackend, NttExecutionRequirements, NttOperationCluster,
-    UniformProverStack,
+    prewarm_ntt_requirements, signed_commit_domain, CpuBackend, NttExecutionRequirements,
+    NttOperationCluster, UniformProverStack,
 };
 use akita_types::{FoldSchedule, NttTransformDomain};
 
@@ -29,7 +29,10 @@ where
         final_layout.inner_commit_matrix.ring_dimension(),
         final_layout.inner_commit_matrix.output_rank(),
         final_layout.inner_commit_matrix.input_width(),
-        NttTransformDomain::Negacyclic,
+        signed_commit_domain(
+            final_layout.inner_commit_matrix.input_width(),
+            final_layout.log_basis_inner,
+        )?,
     )?;
     requirements.add_matrix(
         0,
@@ -47,7 +50,10 @@ where
             layout.inner_commit_matrix.ring_dimension(),
             layout.inner_commit_matrix.output_rank(),
             layout.inner_commit_matrix.input_width(),
-            NttTransformDomain::Negacyclic,
+            signed_commit_domain(
+                layout.inner_commit_matrix.input_width(),
+                layout.log_basis_inner,
+            )?,
         )?;
         requirements.add_matrix(
             0,

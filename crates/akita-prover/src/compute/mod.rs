@@ -56,7 +56,9 @@ pub use plans::{
     OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
-pub use requirements::{NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement};
+pub use requirements::{
+    signed_commit_domain, NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement,
+};
 
 pub use poly::{
     CommitBackendFor, OpeningProveBackendFor, ProjectBackendFor, ProveBackendFor,

@@ -265,7 +265,7 @@ mod tests {
             .iter()
             .map(SetupPrefixSlotId::d_setup)
             .collect::<BTreeSet<_>>();
-        assert_eq!(dimensions, BTreeSet::from([64, 256]));
+        assert_eq!(dimensions, BTreeSet::from([256]));
         let unique: BTreeSet<_> = ids.iter().cloned().collect();
         assert_eq!(unique.len(), ids.len());
     }

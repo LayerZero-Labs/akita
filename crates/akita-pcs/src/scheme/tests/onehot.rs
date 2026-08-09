@@ -366,14 +366,16 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     let multi_group_schedule =
         ProtocolCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
     let main_params = multi_group_root_params(&multi_group_schedule);
-    assert!(
+    assert_eq!(
         multi_group_schedule
             .root
             .params
             .precommitted_groups
             .iter()
-            .all(|group| group.descriptor.inner_commit_matrix.ring_dimension() == TestCfg::D),
-        "precommitted groups must retain their native A dimension"
+            .map(|group| group.descriptor)
+            .collect::<Vec<_>>(),
+        pre_layouts,
+        "precommitted groups must retain their native descriptors"
     );
     if TestCfg::chunked_witness_cfg().uses_multi_chunk() {
         let root = &multi_group_schedule.root;

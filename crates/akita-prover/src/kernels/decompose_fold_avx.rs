@@ -61,6 +61,65 @@ pub(crate) unsafe fn sparse_mul_acc_avx(
     }
 }
 
+/// Signed-i16 variant used by large inner decomposition bases.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn sparse_mul_acc_i16_avx(
+    digit_plane: *const i16,
+    acc: *mut i32,
+    d: usize,
+    positions: &[u32],
+    coeffs: &[i8],
+) {
+    debug_assert!(d.is_multiple_of(8));
+    for (&pos, &coeff) in positions.iter().zip(coeffs.iter()) {
+        let p = pos as usize;
+        let split = d - p;
+        for _ in 0..coeff.unsigned_abs() {
+            if coeff > 0 {
+                acc_segment_i16_add(digit_plane, acc.add(p), split);
+                if p > 0 {
+                    acc_segment_i16_sub(digit_plane.add(split), acc, p);
+                }
+            } else {
+                acc_segment_i16_sub(digit_plane, acc.add(p), split);
+                if p > 0 {
+                    acc_segment_i16_add(digit_plane.add(split), acc, p);
+                }
+            }
+        }
+    }
+}
+
+#[inline(always)]
+unsafe fn acc_segment_i16_add(src: *const i16, dst: *mut i32, len: usize) {
+    let chunks = len / 8;
+    for i in 0..chunks {
+        let offset = i * 8;
+        let values = _mm_loadu_si128(src.add(offset).cast());
+        let widened = _mm256_cvtepi16_epi32(values);
+        let current = _mm256_loadu_si256(dst.add(offset).cast());
+        _mm256_storeu_si256(dst.add(offset).cast(), _mm256_add_epi32(current, widened));
+    }
+    for i in chunks * 8..len {
+        *dst.add(i) += i32::from(*src.add(i));
+    }
+}
+
+#[inline(always)]
+unsafe fn acc_segment_i16_sub(src: *const i16, dst: *mut i32, len: usize) {
+    let chunks = len / 8;
+    for i in 0..chunks {
+        let offset = i * 8;
+        let values = _mm_loadu_si128(src.add(offset).cast());
+        let widened = _mm256_cvtepi16_epi32(values);
+        let current = _mm256_loadu_si256(dst.add(offset).cast());
+        _mm256_storeu_si256(dst.add(offset).cast(), _mm256_sub_epi32(current, widened));
+    }
+    for i in chunks * 8..len {
+        *dst.add(i) -= i32::from(*src.add(i));
+    }
+}
+
 /// `acc[i+p] += digits[i]` for `i in [0, split)`,
 /// `acc[i-split] -= digits[i]` for `i in [split, D)` (negacyclic wrap).
 //

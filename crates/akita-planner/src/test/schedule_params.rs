@@ -746,7 +746,7 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        90_728
+        88_888
     );
 }
 
@@ -787,7 +787,7 @@ fn recursive_exact_cutover_proof_size_is_documented() {
 
     assert_eq!(
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
-        96_876
+        91_832
     );
 }
 
