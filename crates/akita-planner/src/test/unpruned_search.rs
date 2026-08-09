@@ -68,7 +68,7 @@ fn enumerate_suffixes(
             };
             for &payload_mode in payload_phase.candidate_modes(level, false) {
                 let candidates = if level < akita_schedules::ADAPTIVE_SEARCH_LEVELS {
-                    derive_candidate_level_params_all_splits(
+                    derive_candidate_level_params_split_frontier(
                         None,
                         policy,
                         payload_mode,
@@ -132,7 +132,7 @@ fn enumerate_suffixes(
                             })?;
                         terminal.estimated_direct_payload_bytes = direct_bytes;
                         schedules.push(ScheduleCandidate {
-                            first_direct_setup_field_len: Some(
+                            first_direct_setup_field_len: std::num::NonZeroUsize::new(
                                 akita_types::active_setup_field_len(
                                     &params,
                                     &suffix_opening_layout(input_witness_len, None)?,
@@ -193,7 +193,7 @@ fn enumerate_suffixes(
                             estimated_stage3_payload_bytes: 0,
                         });
                         schedules.push(ScheduleCandidate {
-                            first_direct_setup_field_len: Some(
+                            first_direct_setup_field_len: std::num::NonZeroUsize::new(
                                 akita_types::active_setup_field_len(
                                     &params,
                                     &suffix_opening_layout(input_witness_len, None)?,

@@ -26,6 +26,7 @@ impl FrontierProjection {
 pub(super) fn consider_child_suffixes<'a>(
     edge: &super::ChildEdge<'_>,
     child_candidates: impl IntoIterator<Item = &'a ScheduleCandidate>,
+    incoming_setup_prefix: Option<usize>,
     projection: FrontierProjection,
     frontier: &mut ProjectedFrontier,
 ) -> Result<(), AkitaError> {
@@ -33,6 +34,13 @@ pub(super) fn consider_child_suffixes<'a>(
         let Some(candidate) = child_choice(edge, suffix)? else {
             continue;
         };
+        if incoming_setup_prefix.is_some_and(|natural_len| {
+            candidate.suffix_folds.len() + 1 < 2
+                || candidate.metrics().first_direct_setup_capacity
+                    >= crate::schedule_params::SetupPrefixCapacity::for_natural_len(natural_len)
+        }) {
+            continue;
+        }
         frontier.consider_pending(edge.policy, candidate, projection)?;
     }
     Ok(())

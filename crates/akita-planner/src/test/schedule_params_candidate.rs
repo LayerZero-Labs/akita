@@ -1,4 +1,4 @@
-use super::recursive::recursive_candidate_order_key;
+use super::recursive::{prioritized_recursive_split_candidates, recursive_candidate_order_key};
 use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
@@ -55,6 +55,18 @@ fn recursive_candidate_order_preserves_exhaustive_tie_break() {
     assert!(
         recursive_candidate_order_key((99, 98, 1, 0), 1) < recursive_candidate_order_key(score, 9),
         "the exact layout score must remain the primary objective"
+    );
+}
+
+#[test]
+fn recursive_split_frontier_is_exact_only_for_small_states() {
+    assert_eq!(
+        prioritized_recursive_split_candidates(1 << 12, 12, 4, 4, 1),
+        (1..12).rev().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        prioritized_recursive_split_candidates(1 << 16, 16, 4, 4, 1),
+        vec![15, 10, 9, 8, 7, 6, 1]
     );
 }
 

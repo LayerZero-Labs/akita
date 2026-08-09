@@ -6,7 +6,7 @@
 //! exactly the shape generated catalog emission consumes. This keeps the DP a
 //! pure function of `(policy, key, dimension domain)` for offline table generation.
 
-use std::sync::Arc;
+use std::{num::NonZeroUsize, sync::Arc};
 
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
@@ -42,7 +42,8 @@ pub(crate) use akita_schedules::planner_support::{
 };
 pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
-    derive_candidate_level_params, derive_candidate_level_params_all_splits, SetupPrefixSearchCache,
+    derive_candidate_level_params, derive_candidate_level_params_split_frontier,
+    SetupPrefixSearchCache,
 };
 pub(crate) use objective::select_complete_candidate;
 pub(crate) use setup_score::{
@@ -240,7 +241,7 @@ impl CandidateFoldChain {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ScheduleCandidate {
-    pub(crate) first_direct_setup_field_len: Option<usize>,
+    pub(crate) first_direct_setup_field_len: Option<NonZeroUsize>,
     pub(crate) total_bytes: usize,
     pub(crate) setup_field_elements: usize,
     pub(crate) folds: CandidateFoldChain,
@@ -276,10 +277,11 @@ impl ScheduleCandidate {
 
     pub(crate) fn metrics(&self) -> CandidateMetrics {
         CandidateMetrics {
-            first_direct_setup_capacity: self.first_direct_setup_field_len.map_or(
-                SetupPrefixCapacity::MAX,
-                SetupPrefixCapacity::for_natural_len,
-            ),
+            first_direct_setup_capacity: self
+                .first_direct_setup_field_len
+                .map_or(SetupPrefixCapacity::MAX, |natural_len| {
+                    SetupPrefixCapacity::for_natural_len(natural_len.get())
+                }),
             proof_bytes: self.total_bytes,
             setup_field_elements: self.setup_field_elements,
         }
@@ -292,7 +294,7 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
     Ok(materialize_candidate_schedule(
         choice.total_bytes,
         choice.setup_field_elements,
-        choice.first_direct_setup_field_len,
+        choice.first_direct_setup_field_len.map(NonZeroUsize::get),
         choice.folds.to_vec(),
         choice.terminal.as_ref().clone(),
     )?

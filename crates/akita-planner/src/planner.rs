@@ -678,11 +678,15 @@ pub fn find_schedule(
         )));
     };
     let first_direct_setup_field_len = if active_policy.recursive_setup_planning {
-        Some(best.first_direct_setup_field_len.ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "recursive setup schedule is missing its first direct setup size".into(),
-            )
-        })?)
+        Some(
+            best.first_direct_setup_field_len
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "recursive setup schedule is missing its first direct setup size".into(),
+                    )
+                })?
+                .get(),
+        )
     } else {
         None
     };

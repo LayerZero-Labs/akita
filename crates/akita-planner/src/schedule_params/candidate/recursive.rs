@@ -172,14 +172,23 @@ fn push_recursive_split_candidate(candidates: &mut Vec<usize>, reduced_vars: usi
     }
 }
 
-pub(super) fn seed_recursive_split_candidates(
+const EXHAUSTIVE_SPLIT_VARIABLE_LIMIT: usize = 12;
+const LARGE_SPLIT_BALANCE_RADIUS: isize = 2;
+
+/// Return the prioritized split domain used by recursive candidate search.
+///
+/// Small states remain exhaustive. Large multi-candidate frontiers are
+/// deliberately bounded to both extremes and a narrow window around the
+/// square-root balance point. The single-winner search uses these as seeds,
+/// then appends the complete domain before applying admissible lower bounds.
+pub(super) fn prioritized_recursive_split_candidates(
     num_ring_elems: usize,
     reduced_vars: usize,
     delta_commit: usize,
     delta_open: usize,
     num_chunks: usize,
 ) -> Vec<usize> {
-    if reduced_vars <= 12 {
+    if reduced_vars <= EXHAUSTIVE_SPLIT_VARIABLE_LIMIT {
         return (1..reduced_vars).rev().collect();
     }
 
@@ -205,7 +214,7 @@ pub(super) fn seed_recursive_split_candidates(
                 best_distance = Some(distance);
             }
         }
-        for offset in -5..=5 {
+        for offset in -LARGE_SPLIT_BALANCE_RADIUS..=LARGE_SPLIT_BALANCE_RADIUS {
             push_recursive_split_candidate(&mut candidates, reduced_vars, center as isize + offset);
         }
     }
@@ -459,7 +468,6 @@ pub(crate) fn derive_candidate_level_params(
     let mut best: Option<(LayoutCandidateScore, usize, CommittedGroupParams, usize)> = None;
     let mut local_compression_cache = akita_types::CompressionChainPlanCache::default();
     let compression_cache = setup_prefix_cache
-        .as_deref_mut()
         .map(SetupPrefixSearchCache::compression_plans)
         .unwrap_or(&mut local_compression_cache);
     let delta_commit = source.num_digits_inner(policy.decomposition, log_basis_inner)?;
@@ -468,7 +476,7 @@ pub(crate) fn derive_candidate_level_params(
         ..policy.decomposition
     });
     let mut evaluated = Vec::new();
-    let mut candidates = seed_recursive_split_candidates(
+    let mut candidates = prioritized_recursive_split_candidates(
         search.num_ring_elems,
         search.reduced_vars,
         delta_commit,
@@ -548,8 +556,14 @@ pub(crate) fn derive_candidate_level_params(
     Ok(Some((candidate_params, next_witness_len)))
 }
 
+/// Derive the candidate frontier over recursive splits.
+///
+/// This is exhaustive through [`EXHAUSTIVE_SPLIT_VARIABLE_LIMIT`] reduced
+/// variables and intentionally bounded above that threshold. Large states use
+/// [`prioritized_recursive_split_candidates`] to keep catalog generation
+/// tractable.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn derive_candidate_level_params_all_splits(
+pub(crate) fn derive_candidate_level_params_split_frontier(
     mut setup_prefix_cache: Option<&mut SetupPrefixSearchCache>,
     policy: &PlannerPolicy,
     payload_mode: akita_types::CommitmentPayloadMode,
@@ -583,10 +597,16 @@ pub(crate) fn derive_candidate_level_params_all_splits(
     let mut candidates = Vec::new();
     let mut local_compression_cache = akita_types::CompressionChainPlanCache::default();
     let compression_cache = setup_prefix_cache
-        .as_deref_mut()
         .map(SetupPrefixSearchCache::compression_plans)
         .unwrap_or(&mut local_compression_cache);
-    for block_index_bits in (1..search.reduced_vars).rev() {
+    let split_candidates = prioritized_recursive_split_candidates(
+        search.num_ring_elems,
+        search.reduced_vars,
+        delta_commit,
+        delta_open,
+        search.num_chunks,
+    );
+    for block_index_bits in split_candidates {
         if recursive_witness_body_lower_bound(RecursiveSplitLowerBoundInput {
             num_ring_elems: search.num_ring_elems,
             ring_dimension: dimensions.inner(),

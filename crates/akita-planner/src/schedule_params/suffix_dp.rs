@@ -1,5 +1,6 @@
 use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap, VecDeque},
+    num::NonZeroUsize,
     sync::Arc,
 };
 
@@ -13,10 +14,10 @@ use akita_types::{
 use crate::{planner::root_level_candidates_for_basis, PlannerPolicy};
 
 use super::{
-    derive_candidate_level_params, derive_candidate_level_params_all_splits, dimension_candidates,
-    level_setup_field_elements, stage3_payload_bytes_for_successor, suffix_opening_layout,
-    terminal_setup_field_elements, CandidateFoldStep, CandidateTerminalResponse, MixedScore,
-    ScheduleCandidate, SetupPrefixSearchCache,
+    derive_candidate_level_params, derive_candidate_level_params_split_frontier,
+    dimension_candidates, level_setup_field_elements, stage3_payload_bytes_for_successor,
+    suffix_opening_layout, terminal_setup_field_elements, CandidateFoldStep,
+    CandidateTerminalResponse, MixedScore, ScheduleCandidate, SetupPrefixSearchCache,
 };
 use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
@@ -37,7 +38,6 @@ use frontier::{consider_child_suffixes, FrontierProjection, ProjectedFrontier};
 ///   fixed the setup-size objective.
 /// - `mixed_frontier` — nondominated setup-envelope/proof candidates for the
 ///   direct adaptive-dimension objective.
-#[derive(Clone)]
 pub(crate) struct SuffixResult {
     payload_only: BTreeMap<FirstFoldKey, ScheduleCandidate>,
     setup_and_payload: BTreeMap<FirstFoldKey, frontier::ObjectiveChoices>,
@@ -340,7 +340,7 @@ struct ChildEdge<'a> {
 }
 
 struct PendingScheduleCandidate {
-    first_direct_setup_field_len: Option<usize>,
+    first_direct_setup_field_len: Option<NonZeroUsize>,
     total_bytes: usize,
     setup_field_elements: usize,
     first_fold: CandidateFoldStep,
@@ -351,10 +351,11 @@ struct PendingScheduleCandidate {
 impl PendingScheduleCandidate {
     fn metrics(&self) -> super::CandidateMetrics {
         super::CandidateMetrics {
-            first_direct_setup_capacity: self.first_direct_setup_field_len.map_or(
-                super::SetupPrefixCapacity::MAX,
-                super::SetupPrefixCapacity::for_natural_len,
-            ),
+            first_direct_setup_capacity: self
+                .first_direct_setup_field_len
+                .map_or(super::SetupPrefixCapacity::MAX, |natural_len| {
+                    super::SetupPrefixCapacity::for_natural_len(natural_len.get())
+                }),
             proof_bytes: self.total_bytes,
             setup_field_elements: self.setup_field_elements,
         }
@@ -427,7 +428,11 @@ fn child_choice(
     let first_direct_setup_field_len = if edge.offloaded {
         suffix.first_direct_setup_field_len
     } else {
-        Some(edge.natural_setup_field_len)
+        Some(
+            NonZeroUsize::new(edge.natural_setup_field_len).ok_or_else(|| {
+                AkitaError::InvalidSetup("direct setup field length must be nonzero".into())
+            })?,
+        )
     };
     let first_fold = CandidateFoldStep {
         params: Arc::clone(&edge.candidate_params),
@@ -596,7 +601,9 @@ fn price_level_candidate_with_children(
             })?;
             direct_step.estimated_direct_payload_bytes = level_proof_size;
             let candidate = ScheduleCandidate {
-                first_direct_setup_field_len: Some(natural_len),
+                first_direct_setup_field_len: Some(NonZeroUsize::new(natural_len).ok_or_else(
+                    || AkitaError::InvalidSetup("direct setup field length must be nonzero".into()),
+                )?),
                 total_bytes: total,
                 setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
                 folds: super::CandidateFoldChain::default(),
@@ -624,10 +631,17 @@ fn price_level_candidate_with_children(
         consider_child_suffixes(
             &direct_edge,
             direct_child.payload_candidates(),
+            state.incoming_setup_prefix,
             direct_projection,
             frontier,
         )?;
-        consider_mixed_child_suffixes(&direct_edge, &direct_child.mixed_frontier, mixed_frontier)?;
+        if state.incoming_setup_prefix.is_none() {
+            consider_mixed_child_suffixes(
+                &direct_edge,
+                &direct_child.mixed_frontier,
+                mixed_frontier,
+            )?;
+        }
     }
     if let Some(offloaded_child) = offloaded_child {
         let offloaded_edge = ChildEdge {
@@ -637,12 +651,14 @@ fn price_level_candidate_with_children(
         consider_child_suffixes(
             &offloaded_edge,
             offloaded_child.setup_candidates(),
+            state.incoming_setup_prefix,
             FrontierProjection::FirstDirectSetup,
             frontier,
         )?;
         consider_child_suffixes(
             &offloaded_edge,
             offloaded_child.payload_candidates(),
+            state.incoming_setup_prefix,
             FrontierProjection::Payload,
             frontier,
         )?;
@@ -855,7 +871,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     for &mode in
                         payload_phase.candidate_modes(level, incoming_setup_prefix.is_some())
                     {
-                        let exhaustive_splits = incoming_setup_prefix.is_some()
+                        let retain_split_frontier = incoming_setup_prefix.is_some()
                             || matches!(
                                 policy.ring_dimension_schedule_mode,
                                 crate::RingDimensionScheduleMode::AdaptiveDimension {
@@ -863,8 +879,8 @@ pub(crate) fn derive_optimal_suffix_schedule(
                                     ..
                                 } if level < num_search_levels
                             );
-                        let level_candidates = if exhaustive_splits {
-                            derive_candidate_level_params_all_splits(
+                        let level_candidates = if retain_split_frontier {
+                            derive_candidate_level_params_split_frontier(
                                 Some(&mut memo.setup_prefixes),
                                 policy,
                                 mode,
@@ -922,7 +938,13 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 }
             }
             let natural_len = active_setup_field_len(&candidate_params, current_opening_layout)?;
-            let direct_child = if depth == MAX_RECURSION_DEPTH {
+            let direct_edge_is_admissible = incoming_setup_prefix.is_none_or(|incoming_len| {
+                akita_types::padded_setup_prefix_len(natural_len)
+                    < akita_types::padded_setup_prefix_len(incoming_len)
+            });
+            let direct_child = if !direct_edge_is_admissible {
+                None
+            } else if depth == MAX_RECURSION_DEPTH {
                 Some(empty_suffix_result())
             } else {
                 Some(derive_optimal_suffix_schedule(

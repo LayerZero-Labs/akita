@@ -9,7 +9,7 @@ mod recursive;
 mod setup_prefix;
 
 pub(crate) use recursive::{
-    derive_candidate_level_params, derive_candidate_level_params_all_splits,
+    derive_candidate_level_params, derive_candidate_level_params_split_frontier,
 };
 pub(super) use setup_prefix::derive_setup_prefix_groups;
 pub(crate) use setup_prefix::SetupPrefixSearchCache;
