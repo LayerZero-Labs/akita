@@ -1,9 +1,9 @@
 # The distributed relation verifier
 
-> **Status: design note (verifier side only).** This chapter specifies the
-> verifier for the relation produced by the [distributed prover](../proving/distributed-prover.md)
-> of Akita. It describes *what the verifier must compute and why its cost is
-> unchanged*; it is not an implementation.
+> **Status: verifier design and implementation guide.** This chapter explains
+> the relation produced by the [distributed prover](../proving/distributed-prover.md),
+> the work required from one verifier, and the implementation that evaluates
+> exact witness chunks without padding them to equal length.
 
 > **A note on the name.** "Distributed verifier" would be a misnomer: nothing
 > about the verification is distributed. There is a *single* verifier, running on
@@ -32,11 +32,18 @@ partitioned columns. Consequently **every component of the single-machine $M$ no
 appears as $\mathcal M$ column-repetitions**, and the verifier evaluates each
 component once per machine and sums.
 
-This chapter is a delta against
-[Matrix evaluation at a point](./matrix_evaluation.md): it follows the same
-sections in the same order, and for each component explains how its $\mathcal M$
-repetitions are formed and combined. One distinction recurs throughout and is
-worth fixing up front:
+The implementation represents these machine slices as witness chunks. Chunk
+$j$ owns the same exact block range $\mathcal I_j$. `WitnessLayout` is the
+source of truth for the chunk range and for every physical `Z`, `E`, and `T`
+address. The verifier does not reconstruct a second partition from the machine
+count.
+
+Read this chapter together with
+[Matrix evaluation at a point](./matrix_evaluation.md). That chapter defines
+the production row families, witness order, and compact evaluator. This one
+keeps the original component-by-component derivation and explains how each
+component changes when the prover splits the witness into $\mathcal M$ chunks.
+One distinction recurs throughout and is worth fixing up front:
 
 - **Partitioned segments** ($\hat e$, $\hat t$). Machine $P_j$ owns the blocks
   $\mathcal I_j \subset [B]$, so its $\hat e^{(j)}, \hat t^{(j)}$ cover only
@@ -52,8 +59,10 @@ worth fixing up front:
 The headline, derived component by component below, is that the verifier's
 **dominant cost is unchanged**: the expensive $O(D)$ SIS-matrix
 $\alpha$-evaluations are still performed exactly once, and all $\mathcal M$-fold
-structure lands on the cheap bookkeeping. The canonical single-machine
-implementation lives in `crates/akita-verifier/src/protocol/ring_switch.rs`.
+structure lands on the cheap bookkeeping. Relation replay lives in
+`crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs`.
+Prepared setup geometry and the shared setup scan live in
+`crates/akita-types/src/setup_contribution/`.
 
 When equal chunks apply, we write $B_{\mathsf{loc}} := B/\mathcal M$ for the
 number of live blocks one machine owns. This is a power of two exactly when the
@@ -71,13 +80,16 @@ $$
 \sum_{i, c} \mathrm{eq}(i, r_{\text{row}}) \cdot \mathrm{eq}(c, r_{\text{col}}) \cdot M(i, c).
 $$
 
-The **row axis is unchanged**: $M$ still has only $\sim 10$–$20$ rows (the
-consistency row, the `A`/`B`/`D` commitment rows, the `r`-tail rows), and the
-verifier still precomputes one `row_weight[i] = eq(i, r_row)` per row, up front.
-Each machine writes into these *same* rows — the consistency row carries the
-`e`/`z` contributions of every machine, and the $n_A$ `A`-rows carry the `t` and
-`A·G_fold·z_hat` contributions of every machine — so each row weight is applied
-**once**, after summing across machines.
+The **row axis is unchanged by chunking**. The ordinary relation has the
+consistency row, the `A`/`B`/`D` commitment rows, and the quotient rows.
+Compressed schedules also have `F` and `H` rows and their quotient rows.
+Chunking does not duplicate any of these rows. The verifier precomputes one
+`row_weight[i] = eq(i, r_row)` per validated row. Each machine writes into the
+same rows, so each row weight is applied once after summing across machines.
+
+The formulas below focus on the ordinary structured and setup contributions.
+The [Stage 2 fused check](./stage2.md) explains how the compression rows join
+the same final equation.
 
 What changed is the **column axis**: the columns now enumerate the $\mathcal M$
 machine witnesses. Splitting the column sum by machine,
@@ -120,6 +132,13 @@ seed-expanded matrix, so **every machine regenerates the same public columns
 locally** — the fact that keeps the verifier's dominant cost flat.
 
 ### The witness layout is grouped by machine
+
+This derivation fixes one commitment group so that the machine axis is clear.
+With several commitment groups, `WitnessLayout` places chunks first and groups
+in authenticated relation order inside each chunk. The same formulas apply to
+each group with its own point, claims, dimensions, and block range. The
+[matrix evaluation chapter](./matrix_evaluation.md) defines that complete
+physical order.
 
 The distributed prover assembles the next-level witness **one machine block at a
 time**: machine $P_j$ contributes its local witness
@@ -189,13 +208,17 @@ its full width. The honest prover writes zero in that `z_hat^(j)` piece.
 > block `blk_g = s_j + block_local`, which is what the folding challenge
 > `c_α` is indexed by (see the e-tensor section).
 
-### Equal-partition peelable fast path
+### Exact partitions and the equal-width special case
 
-This subsection applies only when every $B_j$ equals the same power-of-two
-$B_{\mathsf{loc}}=B/\mathcal M$. `matrix_evaluation` can then peel the block
-window exactly as in the single-machine case. Uneven partitions, including the
-empty ranges created by $B<\mathcal M$, use the dense per-piece path described
-below and skip empty `e` and `t` pieces.
+The production verifier accepts every canonical exact partition. It skips
+empty `E` and `T` pieces. It evaluates short irregular pieces as checked affine
+intervals and long repeated geometry with paired equality tensors. It never
+pads a shorter chunk or materializes a dense witness-sized equality table.
+
+The simple derivation below applies when every $B_j$ equals the same
+power-of-two value $B_{\mathsf{loc}}=B/\mathcal M$. In that case the verifier
+can peel the block window exactly as in the single-machine case. This remains
+an important special case because it makes the two-carry structure explicit.
 
 One `eq_low` table still serves every machine — and this holds *regardless* of the
 per-machine offsets, despite the gaps. The `eq_low` table is just the equality
@@ -216,14 +239,13 @@ single-machine `e`/`t` sharing, now per machine). Across machines the shifts may
 differ, but each machine covers different blocks (different `c_α` values) and so
 needs its own summaries anyway.
 
-What *does* grow with $\mathcal M$ are the cheap high tables: `eq_high_e`,
-`eq_high_t`, `eq_high_z` gain a machine axis (size `M·C·do`, `M·n_A·C·do`,
-`M·DF·DC`). These are precompute-once field tables, not $\alpha$-evaluations, so
-the growth is negligible.
+What *does* grow with $\mathcal M$ are the cheap high factors. The `E`, `T`,
+and `Z` address descriptions gain a chunk axis. These factors are prepared
+once. They do not cause more setup-ring $\alpha$ evaluations.
 
-The fast path depends on equal power-of-two windows, not merely on a
-power-of-two machine count. See the closing partition-shape note for the dense
-fallback.
+The exact path does not require equal chunks. Equal power-of-two windows only
+allow the simplest combined tensor. The closing partition section explains how
+the verifier handles every other canonical shape.
 
 ## Tensor components
 
@@ -302,9 +324,9 @@ Because $\sum_j B_j=B$, the triple-plus-machine loop costs
 $O(B \cdot C \cdot \text{do})$, the same total as the single-machine naive
 scan, plus a dense `eq` table. Empty pieces do no work.
 
-#### Equal-partition optimization: per-(machine, claim) block summaries
+#### Equal-width derivation: per-(machine, claim) block summaries
 
-When the equal-partition fast-path condition holds, peel the
+When the equal-width condition holds, peel the
 $B_{\mathsf{loc}}$ block window exactly as single-machine, now per
 machine. Split $e^{(j)}_{\text{start}} = e^{(j)}_{\text{lo}} + B_{\mathsf{loc}}\, e^{(j)}_{\text{hi}}$;
 the low part $s = e^{(j)}_{\text{lo}} + \text{block\_local}$ produces at most one
@@ -355,6 +377,12 @@ $$
 versus single-machine $O\!\big(C \cdot (B + \text{do})\big)$: the heavy block term
 is unchanged; only the light digit term scales with $\mathcal M$.
 
+The production kernel obtains the same result from compact affine intervals or
+paired tensor families. Consecutive exact units may share one chunk axis only
+when their block count, scalar, axis shape, and address strides match. Other
+units remain separate. The dense loop above remains a definition and a test
+oracle, not the production fallback.
+
 ### t-related tensor components
 
 The per-`A`-row consistency component $c^{\top} \otimes G_{n_A}$ is the same check
@@ -380,7 +408,7 @@ $$
 weighted by `row_weight[a_row]`. This is the same claim-and-block-coupled
 $c_{\alpha}$ as the `e_hat` component, with the extra `a_row` axis tensored on.
 
-#### The optimization: reuse the per-(machine, claim) block summaries
+#### Equal-width derivation: reuse the per-(machine, claim) block summaries
 
 On the equal-partition fast path, the block-dependent factor
 $c_{\alpha}[\text{claim}, \text{blk}_g] \cdot
@@ -475,18 +503,19 @@ acc *= -consistency_weight
 Because $a[\text{blk}]$ is shared, the per-machine summaries differ only by the
 offset/carry split; they combine additively into one `acc`.
 
-#### Case 2: `num_positions_per_block` not a power of two (dense fallback)
+#### Case 2: `num_positions_per_block` not a power of two
 
-Per machine, materialize the structured `z` segment (the tensor product) and run
-one offset-equality evaluation over it — $\mathcal M$ times — exactly as the
-single-machine fallback, repeated per machine.
+The direct loop remains the semantic definition. The production verifier
+represents the same addresses as a checked affine stream and contracts it
+against the equality point. It does not materialize the full structured `Z`
+segment. The work remains bounded by the size of the explicit `Z` axes.
 
 #### Cost
 
 | case | overhead |
 |---|---|
 | `num_positions_per_block` a power of two (root) | $O(\mathcal M \cdot \text{block\_len} + \mathcal M \cdot \text{DF} \cdot \text{DC})$ |
-| `num_positions_per_block` not a power of two | $O(\mathcal M \cdot \text{DF} \cdot \text{DC} \cdot \text{block\_len})$ |
+| `num_positions_per_block` not a power of two | $O(\mathcal M \cdot \text{DF} \cdot \text{DC} \cdot \text{block\_len})$ upper bound |
 
 This is $\mathcal M\times$ the single-machine `z`-tensor — but the `z`-tensor is
 already the *cheap* part of the verifier (no $\alpha$-evaluations), so
@@ -693,9 +722,9 @@ This is the precise sense in which the distributed-relation verifier has
 with overhead that is logarithmic in the machine count plus a negligible
 field-arithmetic pre-pass.
 
-## Partition shape and the equal-partition fast path
+## Partition shape and exact contraction
 
-The per-machine fast path requires an equal block window
+The combined equal-width tensor requires an equal block window
 $B_{\mathsf{loc}} = B/\mathcal M$ to be a power of two, so that `block_local`
 occupies a contiguous low-bit window and the two-bucket carry split is defined
 (the same condition `num_positions_per_block` must satisfy in the `z`-tensor Case 1). This holds
@@ -705,26 +734,23 @@ $\mathcal M=2^N\le B$ satisfies this automatically. A recursive level can
 have $B<B_{\mathsf{dom}}$ and must not substitute $B_{\mathsf{dom}}$ merely to
 recover equal chunks.
 
-For uneven partitions, including $B<\mathcal M$, each `e_hat`/`t_hat`
-contribution uses a dense per-piece evaluation with its exact $B_j$, the analogue
-of the `z`-tensor dense fallback (Case 2). Empty pieces are skipped. The combined
-work is still $O(C \cdot B)$ for the block scan because $\sum_j B_j=B$, so this
-affects only the constant, not the dominant $\alpha$-evaluation cost. A
-power-of-two machine count alone does not justify the peeled path; exact live
-$B$ must also divide evenly and produce a power-of-two quotient.
+For uneven partitions, including $B<\mathcal M$, empty pieces are skipped and
+every nonempty piece keeps its exact $B_j$. Short pieces use prepared affine
+block weights. Long pieces use the paired recurrence. Consecutive units with
+matching geometry are divided into power-of-two segments, and an irregular
+unit remains separate. The combined block work still covers each of the $B$
+live blocks exactly once. A power-of-two machine count never permits the
+verifier to substitute a padded block domain for exact live $B$.
 
-## Relationship to setup-claim offloading
+## Relationship to setup contribution modes
 
-The dominant cost analyzed above — the shared SIS-matrix $\alpha$-evaluation scan
-— is exactly the cost that [verifier offloading](../../roadmap/verifier-offloading.md)
-removes from the verifier's local work by delegating the setup contribution to a
-product sum-check against a preprocessed commitment. The two techniques are
-**orthogonal and compose**: the distributed prover keeps the scan *equivalent* to
-today's single-machine scan, and offloading (once landed) removes that scan for
-the single-machine and distributed-relation verifier alike. Nothing in the
-distributed construction changes the offloading interface, because the setup
-matrices are shared and the verifier's setup contribution is the same
-shared-matrix evaluation in both cases.
+The dominant cost analyzed above is the shared SIS-matrix $\alpha$ evaluation
+scan. A schedule may check this setup contribution directly in Stage 2 or use
+the deferred Stage 3 setup product described in
+[Setup contribution and Stage 3](./setup_contribution.md). The two choices use
+the same `SetupContributionPlan`. The distributed construction does not change
+that interface because both modes evaluate the same shared matrix and the same
+exact chunk weights.
 
 ## Verifier no-panic obligations
 
@@ -740,3 +766,18 @@ restriction of the global $c$ and the offsets are exact). After those boundary
 checks the hot path above performs no $\mathcal M$-dependent allocation or
 indexing that has not already been bounded; malformed input is rejected with
 `AkitaError` / `SerializationError`, never by panicking.
+
+## Implementation map
+
+- `crates/akita-types/src/witness.rs` owns physical chunk, group, and segment
+  addresses.
+- `crates/akita-types/src/witness/chunk_partition.rs` owns the exact dyadic
+  block ranges.
+- `crates/akita-types/src/setup_contribution/` prepares the shared A, B, and D
+  setup contribution.
+- `crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs`
+  combines structured, setup, quotient, and compression contributions.
+- `crates/akita-verifier/src/protocol/evaluation_trace.rs` evaluates the
+  opening trace over the same exact chunks.
+- `crates/akita-algebra/src/offset_eq/tensor_pair/` owns the paired equality
+  contraction and its dense test oracle.

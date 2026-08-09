@@ -209,6 +209,15 @@ where
     let g_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
     let mut cyclic = [F::zero(); D];
     let mut reduced = CyclotomicRing::<F, D>::zero();
+    let position_rings = if ring_multiplier_point.is_constant() {
+        None
+    } else {
+        Some(
+            ring_multiplier_point
+                .materialize_position_rings::<D>()?
+                .ok_or(AkitaError::InvalidProof)?,
+        )
+    };
 
     {
         if ring_multiplier_point.position_len() < num_positions_per_block {
@@ -227,10 +236,10 @@ where
                 add_cyclic_scalar_ring_product::<F, D>(&mut cyclic, scalar, &z_block);
                 reduced += z_block.scale(&scalar);
             } else {
-                let a_rings = ring_multiplier_point
-                    .position_rings_trusted::<D>()?
+                let multiplier = position_rings
+                    .as_ref()
+                    .and_then(|rings| rings.get(block_idx))
                     .ok_or(AkitaError::InvalidProof)?;
-                let multiplier = a_rings.get(block_idx).ok_or(AkitaError::InvalidProof)?;
                 add_cyclic_ring_product::<F, D>(&mut cyclic, multiplier, &z_block);
                 reduced += *multiplier * z_block;
             }
@@ -816,20 +825,20 @@ mod tests {
         const D: usize = 8;
         let sparse = vec![
             SparseChallenge {
-                positions: vec![0, 7],
-                coeffs: vec![1, -1],
+                positions: vec![0, 7].into(),
+                coeffs: vec![1, -1].into(),
             },
             SparseChallenge {
-                positions: vec![2, 4],
-                coeffs: vec![1, 2],
+                positions: vec![2, 4].into(),
+                coeffs: vec![1, 2].into(),
             },
             SparseChallenge {
-                positions: vec![1],
-                coeffs: vec![-1],
+                positions: vec![1].into(),
+                coeffs: vec![-1].into(),
             },
             SparseChallenge {
-                positions: vec![3, 6],
-                coeffs: vec![1, 1],
+                positions: vec![3, 6].into(),
+                coeffs: vec![1, 1].into(),
             },
         ];
         let rings = (0..sparse.len())
