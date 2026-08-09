@@ -2084,7 +2084,11 @@ def proof_step_label(level: dict[str, object]) -> str:
 def exact_choice(current: str, baseline: str | None) -> str:
     if baseline is None or current == baseline:
         return current
-    return f"{current}<br><sub>merge base: {baseline}</sub>"
+    return f"{current}<br><sub>Merge base</sub><br>{baseline}"
+
+
+def detail_block(title: str, rows: list[str]) -> str:
+    return f"<strong>{title}</strong><br>" + "<br>".join(rows)
 
 
 def tuple_choice(
@@ -2132,13 +2136,13 @@ def witness_choice(
     level: dict[str, object], baseline: dict[str, object] | None
 ) -> str:
     current = (
-        f"Witness: {format_witness_groups_inline(level.get('current_w_len'))} → "
+        f"Input → output: {format_witness_groups_inline(level.get('current_w_len'))} → "
         f"{fmt_count(float(level['next_w_len']))}"
     )
     baseline_value = None
     if baseline is not None and baseline.get("next_w_len") is not None:
         baseline_value = (
-            f"Witness: {format_witness_groups_inline(baseline.get('current_w_len'))} → "
+            f"Input → output: {format_witness_groups_inline(baseline.get('current_w_len'))} → "
             f"{fmt_count(float(baseline['next_w_len']))}"
         )
     return exact_choice(current, baseline_value)
@@ -2147,41 +2151,54 @@ def witness_choice(
 def relation_layout_choice(
     level: dict[str, object], baseline: dict[str, object] | None
 ) -> str:
-    current = (
-        f"Relation: {fmt_count(float(level['num_live_ring_elements_per_claim']))} live/claim; "
-        f"{fmt_count(float(level['num_live_blocks']))} × "
-        f"{fmt_count(float(level['num_positions_per_block']))} positions; "
-        f"{fmt_count(float(level['block_index_domain_size']))} domain slots"
-    )
-    baseline_value = None
     keys = (
         "num_live_ring_elements_per_claim",
         "num_live_blocks",
         "num_positions_per_block",
         "block_index_domain_size",
     )
-    if baseline is not None and all(baseline.get(key) is not None for key in keys):
-        baseline_value = (
-            f"Relation: "
-            f"{fmt_count(float(baseline['num_live_ring_elements_per_claim']))} live/claim; "
-            f"{fmt_count(float(baseline['num_live_blocks']))} × "
-            f"{fmt_count(float(baseline['num_positions_per_block']))} positions; "
-            f"{fmt_count(float(baseline['block_index_domain_size']))} domain slots"
-        )
-    return exact_choice(current, baseline_value)
+    comparable_baseline = (
+        baseline
+        if baseline is not None and all(baseline.get(key) is not None for key in keys)
+        else None
+    )
+    return "<br>".join(
+        [
+            exact_choice(
+                f"Live per claim: {fmt_count(float(level['num_live_ring_elements_per_claim']))}",
+                f"Live per claim: {fmt_count(float(comparable_baseline['num_live_ring_elements_per_claim']))}"
+                if comparable_baseline
+                else None,
+            ),
+            exact_choice(
+                f"Blocks × positions: {fmt_count(float(level['num_live_blocks']))} × "
+                f"{fmt_count(float(level['num_positions_per_block']))}",
+                f"Blocks × positions: {fmt_count(float(comparable_baseline['num_live_blocks']))} × "
+                f"{fmt_count(float(comparable_baseline['num_positions_per_block']))}"
+                if comparable_baseline
+                else None,
+            ),
+            exact_choice(
+                f"Domain slots: {fmt_count(float(level['block_index_domain_size']))}",
+                f"Domain slots: {fmt_count(float(comparable_baseline['block_index_domain_size']))}"
+                if comparable_baseline
+                else None,
+            ),
+        ]
+    )
 
 
 def setup_prefix_choice(
     level: dict[str, object], baseline: dict[str, object] | None
 ) -> str:
     current = (
-        f"Setup prefix: {fmt_count(float(level['setup_prefix_natural_field_elements']))} → "
+        f"Natural → padded: {fmt_count(float(level['setup_prefix_natural_field_elements']))} → "
         f"{fmt_count(float(level['setup_prefix_padded_field_elements']))}"
     )
     baseline_value = None
     if baseline is not None and baseline.get("setup_prefix_natural_field_elements") is not None:
         baseline_value = (
-            f"Setup prefix: "
+            f"Natural → padded: "
             f"{fmt_count(float(baseline['setup_prefix_natural_field_elements']))} → "
             f"{fmt_count(float(baseline['setup_prefix_padded_field_elements']))}"
         )
@@ -2212,20 +2229,28 @@ def planned_group_key(group: dict[str, object]) -> tuple[str, str, int]:
 
 
 def planned_group_planner_value(group: dict[str, object]) -> str:
-    return (
-        f"{planned_group_label(group)}: rings "
-        f"{fmt_count(float(group['d_a']))} / {fmt_count(float(group['d_b']))} / "
-        f"{fmt_count(float(group['d_d']))}; rows "
-        f"{fmt_count(float(group['n_a']))} / {fmt_count(float(group['n_b']))} / "
-        f"{fmt_count(float(group['n_d']))}; basis "
-        f"{fmt_count(float(group['log_basis_inner']))} / "
+    matrix = (
+        f"Rings A/B/D: {fmt_count(float(group['d_a']))} / "
+        f"{fmt_count(float(group['d_b']))} / {fmt_count(float(group['d_d']))}<br>"
+        f"Rows A/B/D: {fmt_count(float(group['n_a']))} / "
+        f"{fmt_count(float(group['n_b']))} / {fmt_count(float(group['n_d']))}"
+    )
+    decomposition = (
+        f"Basis bits A/B/D: {fmt_count(float(group['log_basis_inner']))} / "
         f"{fmt_count(float(group['log_basis_outer']))} / "
-        f"{fmt_count(float(group['log_basis_open']))}; digits "
-        f"{fmt_count(float(group['num_digits_inner']))} / "
+        f"{fmt_count(float(group['log_basis_open']))}<br>"
+        f"Digits A/B/D/W: {fmt_count(float(group['num_digits_inner']))} / "
         f"{fmt_count(float(group['num_digits_outer']))} / "
         f"{fmt_count(float(group['num_digits_open']))} / "
-        f"{fmt_count(float(group['num_digits_fold']))}; challenge L1 "
-        f"{fmt_count(float(group['challenge_l1_mass']))}"
+        f"{fmt_count(float(group['num_digits_fold']))}"
+    )
+    return detail_block(
+        planned_group_label(group),
+        [
+            f"<em>Matrix geometry</em><br>{matrix}",
+            f"<br><em>Decomposition</em><br>{decomposition}",
+            f"<br><em>Challenge</em><br>L1 mass: {fmt_count(float(group['challenge_l1_mass']))}",
+        ],
     )
 
 
@@ -2233,21 +2258,25 @@ def planned_group_work_value(group: dict[str, object]) -> str:
     role = str(group["group_role"])
     label = planned_group_label(group)
     relation = (
-        f"{fmt_count(float(group['num_live_ring_elements_per_claim']))} live/claim, "
-        f"{fmt_count(float(group['num_live_blocks']))} × "
-        f"{fmt_count(float(group['num_positions_per_block']))} positions, "
-        f"{fmt_count(float(group['block_index_domain_size']))} domain slots"
+        f"Live per claim: {fmt_count(float(group['num_live_ring_elements_per_claim']))}<br>"
+        f"Blocks × positions: {fmt_count(float(group['num_live_blocks']))} × "
+        f"{fmt_count(float(group['num_positions_per_block']))}<br>"
+        f"Domain slots: {fmt_count(float(group['block_index_domain_size']))}"
     )
     if role == "setup_offload":
-        return (
-            f"{label}: "
+        source = (
+            f"Natural → padded: "
             f"{fmt_count(float(group['setup_prefix_natural_field_elements']))} → "
-            f"{fmt_count(float(group['setup_prefix_padded_field_elements']))} setup fields; "
-            f"relation {relation}"
+            f"{fmt_count(float(group['setup_prefix_padded_field_elements']))}"
         )
-    return (
-        f"{label}: witness {fmt_count(float(group['witness_field_elements']))}; "
-        f"relation {relation}"
+    else:
+        source = f"Field elements: {fmt_count(float(group['witness_field_elements']))}"
+    return detail_block(
+        label,
+        [
+            f"<em>{'Setup prefix' if role == 'setup_offload' else 'Witness'}</em><br>{source}",
+            f"<br><em>Relation geometry</em><br>{relation}",
+        ],
     )
 
 
@@ -2273,7 +2302,7 @@ def render_group_choices(
             f"{planned_group_label(label_source)}: absent" if baseline_groups else None
         )
         rows.append(exact_choice(current_text, baseline_text))
-    return "<br>".join(rows)
+    return "<br><br>".join(rows)
 
 
 def proof_component_group(
@@ -2297,8 +2326,12 @@ def proof_component_group(
         return total, values
 
     def render_value(total: int, values: list[str]) -> str:
-        detail = f" ({'; '.join(values)})" if len(components) > 1 and values else ""
-        return f"{group_label}: {fmt_bytes(float(total))}{detail}"
+        detail = (
+            f"<br><sub>{' · '.join(values)}</sub>"
+            if len(components) > 1 and values
+            else ""
+        )
+        return f"<strong>{group_label}</strong><br>{fmt_bytes(float(total))} bytes{detail}"
 
     current_total, current_values = group_value(level)
     baseline_total, baseline_values = group_value(baseline)
@@ -2320,7 +2353,7 @@ def proof_cost_summary(
         " bytes",
         baseline is not None,
     )
-    rows = [f"Total: {total}"]
+    rows = [f"<strong>Total</strong><br>{total}"]
     groups = (
         (
             "Opening",
@@ -2355,7 +2388,7 @@ def proof_cost_summary(
         )
         if rendered is not None:
             rows.append(rendered)
-    return "<br>".join(rows)
+    return "<br><br>".join(rows)
 
 
 def render_fold_details(
@@ -2434,60 +2467,93 @@ def render_fold_details(
                 work = render_group_choices(
                     typed_groups, typed_baseline_groups, planned_group_work_value
                 )
-                next_w = f"Folded output: {fmt_count(float(schedule['next_w_len']))}"
+                next_w = f"Field elements: {fmt_count(float(schedule['next_w_len']))}"
                 baseline_next_w = None
-                if baseline_schedule is not None and baseline_schedule.get("next_w_len") is not None:
+                if (
+                    baseline_schedule is not None
+                    and baseline_schedule.get("next_w_len") is not None
+                ):
                     baseline_next_w = (
-                        f"Folded output: "
+                        f"Field elements: "
                         f"{fmt_count(float(baseline_schedule['next_w_len']))}"
                     )
-                work = f"{work}<br>{exact_choice(next_w, baseline_next_w)}"
+                work = (
+                    f"{work}<br><br>"
+                    f"{detail_block('Folded output', [exact_choice(next_w, baseline_next_w)])}"
+                )
             else:
-                schedule_choice = "<br>".join(
+                schedule_choice = "<br><br>".join(
                     [
-                        tuple_choice(
-                            schedule,
-                            baseline_schedule,
-                            "Rings A/B/D",
-                            ("d_a", "d_b", "d_d"),
+                        detail_block(
+                            "Matrix geometry",
+                            [
+                                tuple_choice(
+                                    schedule,
+                                    baseline_schedule,
+                                    "Rings A/B/D",
+                                    ("d_a", "d_b", "d_d"),
+                                ),
+                                tuple_choice(
+                                    schedule,
+                                    baseline_schedule,
+                                    "Rows A/B/D",
+                                    ("n_a", "n_b", "n_d"),
+                                ),
+                            ],
                         ),
-                        tuple_choice(
-                            schedule,
-                            baseline_schedule,
-                            "Rows A/B/D",
-                            ("n_a", "n_b", "n_d"),
+                        detail_block(
+                            "Decomposition",
+                            [
+                                tuple_choice(
+                                    schedule,
+                                    baseline_schedule,
+                                    "Basis bits A/B/D",
+                                    (
+                                        "log_basis_inner",
+                                        "log_basis_outer",
+                                        "log_basis_open",
+                                    ),
+                                ),
+                                tuple_choice(
+                                    schedule,
+                                    baseline_schedule,
+                                    "Digits A/B/D/W",
+                                    (
+                                        "num_digits_inner",
+                                        "num_digits_outer",
+                                        "num_digits_open",
+                                        "delta_fold",
+                                    ),
+                                ),
+                            ],
                         ),
-                        tuple_choice(
-                            schedule,
-                            baseline_schedule,
-                            "Basis bits A/B/D",
-                            ("log_basis_inner", "log_basis_outer", "log_basis_open"),
-                        ),
-                        tuple_choice(
-                            schedule,
-                            baseline_schedule,
-                            "Digits A/B/D/W",
-                            (
-                                "num_digits_inner",
-                                "num_digits_outer",
-                                "num_digits_open",
-                                "delta_fold",
-                            ),
-                        ),
-                        scalar_choice(
-                            schedule,
-                            baseline_schedule,
-                            "Fold challenge L1",
-                            "challenge_l1_mass",
+                        detail_block(
+                            "Challenge",
+                            [
+                                scalar_choice(
+                                    schedule,
+                                    baseline_schedule,
+                                    "Fold challenge L1",
+                                    "challenge_l1_mass",
+                                ),
+                            ],
                         ),
                     ]
                 )
                 witness = witness_choice(schedule, baseline_schedule)
                 relation = relation_layout_choice(schedule, baseline_schedule)
-                work_parts = [witness, relation]
+                work_parts = [
+                    detail_block("Witness flow", [witness]),
+                    detail_block("Relation geometry", [relation]),
+                ]
                 if show_setup_prefix:
-                    work_parts.append(setup_prefix_choice(schedule, baseline_schedule))
-                work = "<br>".join(work_parts)
+                    work_parts.append(
+                        detail_block(
+                            "Setup prefix",
+                            [setup_prefix_choice(schedule, baseline_schedule)],
+                        )
+                    )
+                work = "<br><br>".join(work_parts)
 
         proof_bytes = "n/a"
         if proof_level is not None:
@@ -2499,7 +2565,7 @@ def render_fold_details(
     print(
         "Role tuples use A / B / D order. The digit tuple adds folded witness W as "
         "its fourth value. Proof groups with zero bytes are omitted. Component details "
-        "appear in parentheses when a group contains multiple fields. "
+        "appear below the group total when a group contains multiple fields. "
         "Unchanged choices omit merge base text. The terminal response is reported "
         "separately and is not part of the terminal fold byte total."
     )

@@ -147,6 +147,12 @@ comment shows the public statements first. It then uses separate tables for
 phase time, memory and setup size, and proof size. This keeps each table narrow
 enough to read in a pull request.
 
+The full artifact keeps each fold in one side by side table. Each detailed cell
+uses named blocks for matrix geometry, decomposition, challenge parameters,
+witness or setup input, relation geometry, and proof components. Multi group
+rows repeat those blocks for each precommitment, final group, and setup offload
+instead of joining unrelated values in one line.
+
 The phase table labels the existing verifier time as multi threaded and adds a
 separate single threaded verifier column. Both runs use the same proof, claims,
 and verifier setup. The multi threaded run comes first so comparisons with

@@ -399,7 +399,12 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("Fold schedule and proof cost", report)
         self.assertIn("Rings A/B/D: 64 / 32 / 16", report)
         self.assertIn("Rows A/B/D: 4 / 6 / 8", report)
-        self.assertIn("merge base: Rows A/B/D: 2 / 6 / 8", report)
+        self.assertIn("<strong>Matrix geometry</strong>", report)
+        self.assertIn(
+            "Rows A/B/D: 4 / 6 / 8<br><sub>Merge base</sub><br>"
+            "Rows A/B/D: 2 / 6 / 8",
+            report,
+        )
         self.assertNotIn("+100.0% vs base", report)
         self.assertIn("Proof bytes", report)
         self.assertNotIn("Planned fold-level proof bytes", report)
@@ -515,11 +520,31 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             render_fold_details(planned, proof, planned, proof)
         report = output.getvalue()
 
-        self.assertIn("Precommit 1: rings 64 / 64 / 64", report)
-        self.assertIn("Final group: rings 256 / 64 / 64", report)
-        self.assertIn("Setup offload → L1: rings 256 / 64 / 64", report)
-        self.assertIn("11,294,208 → 16,777,216 setup fields", report)
-        self.assertIn("Folded output: 47,963,968", report)
+        self.assertIn(
+            "<strong>Precommit 1</strong><br><em>Matrix geometry</em><br>"
+            "Rings A/B/D: 64 / 64 / 64",
+            report,
+        )
+        self.assertIn(
+            "<strong>Final group</strong><br><em>Matrix geometry</em><br>"
+            "Rings A/B/D: 256 / 64 / 64",
+            report,
+        )
+        self.assertIn(
+            "<strong>Setup offload → L1</strong><br><em>Matrix geometry</em><br>"
+            "Rings A/B/D: 256 / 64 / 64",
+            report,
+        )
+        self.assertIn(
+            "<em>Setup prefix</em><br>Natural → padded: "
+            "11,294,208 → 16,777,216",
+            report,
+        )
+        self.assertIn(
+            "<strong>Folded output</strong><br>Field elements: 47,963,968",
+            report,
+        )
+        self.assertNotIn("setup fields; relation", report)
 
     def test_proof_breakdown_omits_zero_components(self) -> None:
         from scripts.profile_bench_report import (
@@ -551,10 +576,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         report = output.getvalue()
 
         self.assertIn("Fold by fold", report)
-        self.assertIn("Stage 1: 16", report)
-        self.assertIn("range image 16", report)
-        self.assertNotIn("Opening:", report)
-        self.assertNotIn("Stage 2:", report)
+        self.assertIn("<strong>Stage 1</strong><br>16 bytes", report)
+        self.assertIn("<sub>range image 16</sub>", report)
+        self.assertNotIn("<strong>Opening</strong>", report)
+        self.assertNotIn("<strong>Stage 2</strong>", report)
         self.assertIn("+0.0% vs base", report)
         self.assertIn("terminal response", report)
         self.assertIn("Grinding retries", report)
