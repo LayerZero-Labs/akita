@@ -109,18 +109,6 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         Self::Base(point.clone())
     }
 
-    fn from_subfield<E, const D: usize>(
-        position_weights: &[E],
-        live_block_weights: &[E],
-        error: AkitaError,
-    ) -> Result<Self, AkitaError>
-    where
-        E: FpExtEncoding<F>,
-    {
-        SubfieldMultiplierOpeningPoint::new::<E, D>(position_weights, live_block_weights, error)
-            .map(Self::Subfield)
-    }
-
     /// Stored ring dimension for the [`Self::Subfield`] variant, or zero for [`Self::Base`].
     pub fn ring_dim(&self) -> usize {
         match self {
@@ -302,7 +290,8 @@ where
     let error = AkitaError::InvalidInput(
         "opening point does not encode in the ring-subfield basis".to_string(),
     );
-    RingMultiplierOpeningPoint::from_subfield::<E, D>(&position_weights, &live_block_weights, error)
+    SubfieldMultiplierOpeningPoint::new::<E, D>(&position_weights, &live_block_weights, error)
+        .map(RingMultiplierOpeningPoint::Subfield)
 }
 
 /// Absorb public claim-field evaluations into the base-field transcript.
@@ -756,11 +745,12 @@ mod tests {
                 .map(|index| F::from_u64((index + 2) as u64))
                 .collect::<Vec<_>>(),
         );
-        let point = RingMultiplierOpeningPoint::from_subfield::<L, D>(
+        let point = SubfieldMultiplierOpeningPoint::new::<L, D>(
             &[value],
             &[value],
             AkitaError::InvalidProof,
         )
+        .map(RingMultiplierOpeningPoint::Subfield)
         .expect("valid compact subfield multiplier");
         assert!(matches!(point, RingMultiplierOpeningPoint::Subfield(_)));
         assert_eq!(point.position_len(), 1);

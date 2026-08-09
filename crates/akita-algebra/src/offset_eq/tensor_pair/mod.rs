@@ -115,8 +115,8 @@ impl<F: FieldCore> EqPairTensorFamily<F> {
                     "paired tensor axes must be non-empty".into(),
                 ));
             }
-            checked_axis_span(axis.len, axis.left_stride, "left")?;
-            checked_axis_span(axis.len, axis.right_stride, "right")?;
+            checked_axis_offset(0, axis.left_stride, axis.len - 1, "left")?;
+            checked_axis_offset(0, axis.right_stride, axis.len - 1, "right")?;
 
             if axis.len == 1 {
                 if let EqPairTensorWeights::Dense(weights) = axis.weights {
@@ -165,10 +165,6 @@ impl<F: FieldCore> EqPairTensorFamily<F> {
             axes: normalized,
         })
     }
-}
-
-fn checked_axis_span(len: usize, stride: usize, side: &'static str) -> Result<(), AkitaError> {
-    checked_axis_offset(0, stride, len - 1, side).map(|_| ())
 }
 
 pub(super) fn checked_axis_offset(
