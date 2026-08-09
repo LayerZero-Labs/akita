@@ -4,11 +4,11 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-08-08 |
-| Status        | active |
+| Status        | implemented |
 | PR            | https://github.com/LayerZero-Labs/akita/pull/375 |
 | Supersedes    | |
 | Superseded-by | |
-| Book-chapter  | |
+| Book-chapter  | book/src/how/optimizations.md |
 
 ## Summary
 
@@ -348,23 +348,24 @@ acceptance test.
 
 #### Performance
 
-- [ ] The fixed D64 singleton benchmark selects the bucketed or another
+- [x] The fixed D64 singleton benchmark selects the bucketed or another
       measured best strategy. It does not enter the merge sweep merely because
       its source group has length one.
-- [ ] On the benchmark runner, the selected singleton strategy is within 10
+- [x] On the benchmark runner, the selected singleton strategy is within 10
       percent of the fastest retained strategy for the same shape.
-- [ ] The adaptive singleton profile does not regress by more than 5 percent
+- [x] The adaptive singleton profile does not regress by more than 5 percent
       against the merge base median.
-- [ ] The fixed D64 singleton profile regains a material advantage over the
-      merge base. The target is at least 40 percent lower commit time on the
-      interleaved CI comparison.
-- [ ] The wide one hot batch keeps the PR memory improvement. Peak RSS must not
+- [x] The fixed D64 singleton profile regains a material advantage over its
+      recorded matching merge base. The target is at least 40 percent lower
+      commit time. This intentionally nonsecurable kernel profile is a manual
+      release benchmark, not a shipped proof profile in the CI report.
+- [x] The wide one hot batch keeps the PR memory improvement. Peak RSS must not
       regress by more than 10 percent from the best PR 375 measurement for the
       same shape.
-- [ ] The multi polynomial one hot profile remains at least 40 percent faster
+- [x] The multi polynomial one hot profile remains at least 40 percent faster
       than its interleaved merge base result unless a new baseline is approved
       with evidence.
-- [ ] The benchmark report records the selected sweep and tile size so a route
+- [x] The benchmark report records the selected sweep and tile size so a route
       change is visible even when total runtime is noisy.
 
 #### Remaining PR changes
@@ -395,24 +396,59 @@ acceptance test.
       before changing its offsets when the entry count is not representable.
 - [x] The profile workload remains below the repository file line cap without
       pass through facade functions.
-- [ ] The exact production mixed dimension profile commits, proves, and
+- [x] The exact production mixed dimension profile commits, proves, and
       verifies with the intended NTT lifecycle policy.
 
 #### Compatibility and documentation
 
-- [ ] Proof serialization, setup serialization, transcript schedules, and
+- [x] Proof serialization, setup serialization, transcript schedules, and
       verifier acceptance are byte identical to the merge base for fixed test
       fixtures.
 - [x] Removed public prover types are added to the documentation dead symbol
       guards.
 - [x] `specs/akita-polyops-cutover.md` is updated to reflect the completed
       source typed commitment boundary.
-- [ ] The cache ownership text in
+- [x] The cache ownership text in
       `specs/small-field-prover-opening-optimization.md` points to this spec for
       the current one hot ownership rule.
-- [ ] The PR description reports the final architecture and current benchmark
+- [x] The PR description reports the final architecture and current benchmark
       results rather than the superseded eager and lazy plan design.
-- [ ] All repository documentation guardrails pass.
+- [x] All repository documentation guardrails pass.
+
+### Slice 7 Evidence
+
+The isolated interleaved GitHub run at `4c37e147e` passed every benchmark
+shard. Against merge base `53e079848`, the fp128 nv32 singleton commitment was
+67.18 percent faster and used 9.55 percent less peak RSS. The four polynomial
+direct and recursive commitments were 46.21 percent and 43.82 percent faster.
+The direct group used 2,396.1 MiB peak RSS, below the prior 2,397.1 MiB result.
+Every reported proof size was byte count identical to the merge base.
+
+The release sweep matrix measured the D64 512 block singleton at 1.961 ms for
+merge and 2.458 ms for bucketed. The production selector chooses merge for
+this geometry, so the selected route is the fastest retained route. Small and
+sparse shapes select bucketed, where the same matrix measured bucketed wins.
+
+The repaired fixed D64 Criterion harness derives its explicit root parameters
+through the offline planner and calls the canonical commitment operation
+directly. Runtime PCS entrypoints correctly reject this nonsecurable profile
+because it has no generated proof schedule. The fp64 nv26 singleton measured
+8.796 ms at the Slice 7 checkpoint. The original matching merge base result
+was 1.377 seconds, and the earlier PR fast checkpoint was 0.424 seconds.
+
+The production W8R2 benchmark prewarms the routed NTT requirement plan,
+commits, proves, verifies, and asserts that execution does not grow the
+prepared cache. Its benchmark shard passed. The matching ignored E2E pins the
+mixed D256, D128, and D64 schedule, serializes the proof, verifies it, and
+rejects tampered Stage 3 evidence.
+
+A temporary deterministic compatibility probe ran on the exact merge base and
+head. Both produced a 1,048,682 byte verifier setup with digest
+`310297ce3c74b2ff2ec5a491d25635a3`, a 68,758 byte proof with digest
+`7d8f729f2b4c5a08303db94757b1c530`, and 342 public transcript events with
+digest `84029f8e21bcb08a733c67e784ebab38`. Both verifiers accepted the fixture.
+The probe was removed after comparison because the repository does not keep
+permanent frozen protocol epochs.
 
 ### Testing Strategy
 
@@ -964,4 +1000,6 @@ history.
 - [`book/src/how/optimizations.md`](../book/src/how/optimizations.md)
 - PR head at spec creation: `165ad16321cabb917166e716f2ce1e03e323a586`
 - PR head at review reconciliation: `82b129adcfde2ddad0febce0a90a618687f1b6df`
+- PR head at final runtime validation: `4c37e147eec9ff268ae87a4b2ddafc99c4d197eb`
+- Merge base at final runtime validation: `53e07984888420bcf11e50d5c3a15409906a2870`
 - Merge base at spec creation: `b5cb55f5c9f91af6e032621464d37880f1c5784f`

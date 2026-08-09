@@ -258,17 +258,13 @@ produce sorted or sorted-unique sparse entries, it may use a stronger
 constructor that validates and consumes that invariant directly. Generic callers
 still use constructors that sort or combine as needed.
 
-> **Superseded ownership target:** The active
-> `pr375-prover-streaming-and-onehot-unification` spec supersedes this cache
-> ownership decision. PR 375 keeps derived one-hot projection storage local to
-> the operation and removes mutable derived state from `OneHotPoly`. The text
-> below records the design implemented by this earlier PR.
-
-The one-hot root projection cache is attached to `OneHotPoly`, the owner of the
-immutable indices that determine the projection. `RootTensorProjectionPoly`
-stores sparse projected roots by shared ownership so commit/prove can reuse the
-same deterministic projection without threading borrowed lifetimes through the
-prover API.
+> **Current ownership rule:**
+> [`pr375-prover-streaming-and-onehot-unification.md`](pr375-prover-streaming-and-onehot-unification.md)
+> is the source of truth. `OneHotPoly` owns only its logical indices and scalar
+> shape data. Derived commitment blocks are operation local. Tensor projection
+> builds one sparse ring polynomial and moves it into the existing
+> `RootTensorProjectionPoly` result. There is no mutable derived cache on the
+> source polynomial.
 
 The field arithmetic change is intentionally small: `Fp2` multiplication uses
 the standard three-base-multiply Karatsuba formula in scalar and packed paths.

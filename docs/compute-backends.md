@@ -37,6 +37,12 @@ let (commitment, hint) =
 Ring dimension enters only at kernel boundaries through schedule-derived dispatch,
 not as a type parameter on the PCS API.
 
+One hot sources cross this boundary as validated `OneHotView` values. The CPU
+kernel derives one flat sparse block tile from those views, selects a private
+bucketed or merge sweep, and drops the tile after producing its commitment
+rows. `OneHotPoly` does not own block or tensor caches. Opening and tensor
+projection derive their own active data for the lifetime of their operation.
+
 ## NTT lifecycle
 
 `NttExecutionRequirements` describes the matrix work for one proof. It does not
@@ -84,11 +90,16 @@ rebuild released slots at the next exact request
 - Root commit kernels consume borrowed source views. Dense, one-hot,
   sparse-ring, projection, and recursive-witness sources do not cross a public
   representation-specific row-plan boundary.
+- The group method is the only root commitment method. A singleton call passes
+  one source. Backends cannot replace a fused group operation with an optional
+  default loop.
 - One-hot and sparse-ring compact block storage is private to their source or
   operation. An accelerator integration should implement the source-typed
   kernel for its backend instead of depending on CPU storage plans.
 - Dynamic ring-dimension code uses `dispatch_for_field!` and prepares the
   target backend context inside the matched `D` arm.
+- Cached and streamed ring switch quotient kernels consume the same validated
+  private quotient plan. Width dispatch selects CRT arithmetic only.
 
 ## Current Scope
 

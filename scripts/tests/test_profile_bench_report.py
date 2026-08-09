@@ -173,6 +173,36 @@ class ProfileBenchReportTests(unittest.TestCase):
 
         self.assertEqual(summary["num_setup_field_elements"], 4096)
 
+    def test_onehot_commit_schedule_is_recorded(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        log = (
+            " INFO one hot commit schedule sweep=merge block_tile=64 hot_terms=512 "
+            "source_count=2 total_blocks=128 workers=8 n_a=5 active_a_cols=64 "
+            "ring_dimension=256 estimated_matrix_passes=8 "
+            "scratch_budget_per_worker=8388608\n"
+        )
+
+        summary = extract_summary(log, "onehot_fp128", 32, 2)
+
+        self.assertEqual(
+            summary["onehot_commit_schedules"],
+            [
+                {
+                    "sweep": "merge",
+                    "block_tile": 64,
+                    "hot_terms": 512,
+                    "source_count": 2,
+                    "total_blocks": 128,
+                    "workers": 8,
+                    "n_a": 5,
+                    "active_a_cols": 64,
+                    "ring_dimension": 256,
+                    "estimated_matrix_passes": 8,
+                }
+            ],
+        )
+
     def test_setup_size_converts_merge_base_ring_count_to_flat_fields(self) -> None:
         from scripts.profile_bench_report import extract_summary
 

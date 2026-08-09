@@ -765,6 +765,7 @@ def extract_summary(
     }
     planned_levels: dict[int, dict[str, int]] = {}
     proof_levels: dict[int, dict[str, int]] = {}
+    onehot_commit_schedules: list[dict[str, object]] = []
 
     for line in log_text.splitlines():
         line = ANSI_RE.sub("", line)
@@ -808,6 +809,21 @@ def extract_summary(
             summary["setup_s"] = float(kvs["elapsed_s"])
         elif " INFO commit" in line and kvs.get("label") == mode:
             summary["commit_s"] = float(kvs["elapsed_s"])
+        elif "one hot commit schedule" in line:
+            onehot_commit_schedules.append(
+                {
+                    "sweep": kvs["sweep"],
+                    "block_tile": int(kvs["block_tile"]),
+                    "hot_terms": int(kvs["hot_terms"]),
+                    "source_count": int(kvs["source_count"]),
+                    "total_blocks": int(kvs["total_blocks"]),
+                    "workers": int(kvs["workers"]),
+                    "n_a": int(kvs["n_a"]),
+                    "active_a_cols": int(kvs["active_a_cols"]),
+                    "ring_dimension": int(kvs["ring_dimension"]),
+                    "estimated_matrix_passes": int(kvs["estimated_matrix_passes"]),
+                }
+            )
         elif "akita prove complete" in line or "akita batched prove complete" in line:
             summary["prove_akita_s"] = float(kvs["elapsed_s"])
             if "levels" in kvs:
@@ -986,6 +1002,8 @@ def extract_summary(
         summary["planned_levels"] = [planned_levels[level] for level in sorted(planned_levels)]
     if proof_levels:
         summary["proof_levels"] = [proof_levels[level] for level in sorted(proof_levels)]
+    if onehot_commit_schedules:
+        summary["onehot_commit_schedules"] = onehot_commit_schedules
 
     return summary
 
@@ -2306,6 +2324,17 @@ def render_report(args: argparse.Namespace) -> int:
                 "- Extension opening fallback: root-direct proof; folded planner byte estimates "
                 "do not apply until the Frobenius optimization is wired."
             )
+        onehot_schedules = current.get("onehot_commit_schedules")
+        if isinstance(onehot_schedules, list) and onehot_schedules:
+            routes = []
+            for schedule in onehot_schedules:
+                routes.append(
+                    f"`{schedule['sweep']}` sweep, tile `{schedule['block_tile']}`, "
+                    f"D`{schedule['ring_dimension']}`, `{schedule['source_count']}` source(s), "
+                    f"`{schedule['total_blocks']}` blocks, "
+                    f"`{schedule['estimated_matrix_passes']}` estimated matrix pass(es)"
+                )
+            print("- One hot commit routes: " + "; ".join(routes) + ".")
         render_tail_encoding(current)
         if (
             current.get("terminal_w_len") is not None
