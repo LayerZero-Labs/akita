@@ -649,15 +649,14 @@ pub fn find_schedule(
     )?;
     let best = match active_policy.selection_policy {
         crate::SelectionPolicyId::MinEstimatedProofPayload => {
-            select_complete_candidate(active_policy, suffix.best_by_payload_per_lb.values())?
+            select_complete_candidate(active_policy, suffix.payload_candidates())?
         }
         crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
             select_complete_candidate(active_policy, &suffix.mixed_frontier)?
         }
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => select_complete_candidate(
-            active_policy,
-            suffix.best_by_first_direct_setup_per_lb.values(),
-        )?,
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
+            select_complete_candidate(active_policy, suffix.setup_candidates())?
+        }
     };
 
     let Some(best) = best.cloned() else {

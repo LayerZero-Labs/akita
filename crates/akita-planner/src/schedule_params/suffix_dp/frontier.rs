@@ -4,9 +4,7 @@ use akita_field::AkitaError;
 
 use crate::{schedule_params::stage3_payload_bytes_for_successor, PlannerPolicy};
 
-use super::{
-    child_choice, FirstFoldKey, ParentPayloadKey, PendingScheduleCandidate, ScheduleCandidate,
-};
+use super::{child_choice, ParentPayloadKey, PendingScheduleCandidate, ScheduleCandidate};
 
 #[derive(Clone, Copy)]
 pub(super) enum FrontierProjection {
@@ -25,13 +23,13 @@ impl FrontierProjection {
     }
 }
 
-pub(super) fn consider_child_suffixes(
+pub(super) fn consider_child_suffixes<'a>(
     edge: &super::ChildEdge<'_>,
-    child_candidates: &BTreeMap<FirstFoldKey, ScheduleCandidate>,
+    child_candidates: impl IntoIterator<Item = &'a ScheduleCandidate>,
     projection: FrontierProjection,
     frontier: &mut ProjectedFrontier,
 ) -> Result<(), AkitaError> {
-    for suffix in child_candidates.values() {
+    for suffix in child_candidates {
         let Some(candidate) = child_choice(edge, suffix)? else {
             continue;
         };
@@ -70,10 +68,10 @@ fn first_parent_visible_cost(
     parent_visible_cost(policy, candidate.first_fold_params())
 }
 
-#[derive(Default)]
-pub(super) struct ObjectiveChoices {
-    pub(super) setup: Option<ScheduleCandidate>,
-    pub(super) payload: Option<ScheduleCandidate>,
+#[derive(Clone, Default)]
+pub(crate) struct ObjectiveChoices {
+    pub(crate) setup: Option<ScheduleCandidate>,
+    pub(crate) payload: Option<ScheduleCandidate>,
 }
 
 #[derive(Default)]

@@ -427,12 +427,11 @@ pub fn min_secure_rank(key: SisTableKey, width: u64) -> Option<usize> {
         key.coeff_linf_bound,
     )?;
     let max_module_rank = usize::try_from(role_cell.max_module_rank).ok()?;
-    for (i, &max_width) in widths.iter().take(max_module_rank).enumerate() {
-        if width <= max_width {
-            return Some(i + 1);
-        }
-    }
-    None
+    let widths = &widths[..max_module_rank.min(widths.len())];
+    // Generated rows are nondecreasing by module rank, so this returns the
+    // same first admitted rank as the former linear scan.
+    let rank_index = widths.partition_point(|&max_width| max_width < width);
+    (rank_index < widths.len()).then_some(rank_index + 1)
 }
 
 #[derive(Debug, Clone, Copy)]

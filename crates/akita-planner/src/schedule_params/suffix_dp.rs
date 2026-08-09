@@ -29,24 +29,38 @@ use frontier::{consider_child_suffixes, FrontierProjection, ProjectedFrontier};
 /// candidates its parent needs because proof-size and setup-envelope pricing
 /// depend on the child's first step:
 ///
-/// - `best_by_first_direct_setup_per_lb` — lexicographically best fold-first
-///   schedule by first direct setup scan and then proof payload, per first-fold
-///   `log_basis`. An entry with no ordinary folds terminates directly on the
-///   current witness; otherwise it consumes `incoming_setup_prefix` when one
-///   is present.
-/// - `best_by_payload_per_lb` — smallest-payload fold-first schedule per
-///   first-fold `log_basis`, used after an earlier direct edge has fixed the
-///   setup-size objective.
+/// - setup and payload winners keyed by the parent-visible first fold. Direct
+///   states store only payload winners; prefix/root states share each key
+///   between both projections. The setup projection is lexicographically best
+///   by first direct setup scan and then proof payload. The payload projection
+///   is the smallest-payload schedule used after an earlier direct edge has
+///   fixed the setup-size objective.
 /// - `mixed_frontier` — nondominated setup-envelope/proof candidates for the
 ///   direct adaptive-dimension objective.
 #[derive(Clone)]
 pub(crate) struct SuffixResult {
-    pub(crate) best_by_first_direct_setup_per_lb: BTreeMap<FirstFoldKey, ScheduleCandidate>,
-    pub(crate) best_by_payload_per_lb: BTreeMap<FirstFoldKey, ScheduleCandidate>,
+    payload_only: BTreeMap<FirstFoldKey, ScheduleCandidate>,
+    setup_and_payload: BTreeMap<FirstFoldKey, frontier::ObjectiveChoices>,
     /// Nondominated setup-envelope/proof candidates used by adaptive scalar
     /// planning. Candidates with different first folds remain distinct because
     /// the parent proof price and canonical descriptor can distinguish them.
     pub(crate) mixed_frontier: Vec<ScheduleCandidate>,
+}
+
+impl SuffixResult {
+    pub(crate) fn payload_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
+        self.payload_only.values().chain(
+            self.setup_and_payload
+                .values()
+                .filter_map(|choices| choices.payload.as_ref()),
+        )
+    }
+
+    pub(crate) fn setup_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
+        self.setup_and_payload
+            .values()
+            .filter_map(|choices| choices.setup.as_ref())
+    }
 }
 
 fn mixed_score(candidate: &ScheduleCandidate) -> MixedScore {
@@ -193,10 +207,15 @@ type ScheduleMemoKey = (
 );
 
 pub(crate) struct ScheduleMemo {
-    entries: HashMap<ScheduleMemoKey, Arc<SuffixResult>>,
+    entries: HashMap<ScheduleMemoKey, MemoEntry>,
     direct_insertion_order: VecDeque<ScheduleMemoKey>,
     prefixed_insertion_order: VecDeque<ScheduleMemoKey>,
     setup_prefixes: SetupPrefixSearchCache,
+}
+
+struct MemoEntry {
+    result: Arc<SuffixResult>,
+    referenced: bool,
 }
 
 const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 262_144;
@@ -207,6 +226,29 @@ const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 262_144;
 const MAX_DIRECT_SUFFIX_CACHE_ENTRIES: usize = 196_608;
 const MAX_PREFIXED_SUFFIX_CACHE_ENTRIES: usize =
     MAX_SUFFIX_SEARCH_CACHE_ENTRIES - MAX_DIRECT_SUFFIX_CACHE_ENTRIES;
+const MAX_SECOND_CHANCE_PROBES: usize = 16;
+
+fn evict_suffix_entry(
+    entries: &mut HashMap<ScheduleMemoKey, MemoEntry>,
+    insertion_order: &mut VecDeque<ScheduleMemoKey>,
+) {
+    let mut probes = 0;
+    while let Some(evicted) = insertion_order.pop_front() {
+        let recently_referenced = probes < MAX_SECOND_CHANCE_PROBES
+            && entries.get_mut(&evicted).is_some_and(|entry| {
+                let referenced = entry.referenced;
+                entry.referenced = false;
+                referenced
+            });
+        if recently_referenced {
+            insertion_order.push_back(evicted);
+            probes += 1;
+        } else {
+            entries.remove(&evicted);
+            break;
+        }
+    }
+}
 
 impl ScheduleMemo {
     pub(crate) fn new() -> Self {
@@ -219,12 +261,18 @@ impl ScheduleMemo {
     }
 
     fn get(&mut self, key: &ScheduleMemoKey) -> Option<&Arc<SuffixResult>> {
-        self.entries.get(key)
+        self.entries.get_mut(key).map(|entry| {
+            entry.referenced = true;
+            &entry.result
+        })
     }
 
     fn insert(&mut self, key: ScheduleMemoKey, result: Arc<SuffixResult>) {
         if let Entry::Occupied(mut existing) = self.entries.entry(key) {
-            existing.insert(result);
+            existing.insert(MemoEntry {
+                result,
+                referenced: true,
+            });
             return;
         }
         let (insertion_order, capacity) = if key.3 == 0 {
@@ -239,12 +287,16 @@ impl ScheduleMemo {
             )
         };
         if insertion_order.len() >= capacity {
-            if let Some(evicted) = insertion_order.pop_front() {
-                self.entries.remove(&evicted);
-            }
+            evict_suffix_entry(&mut self.entries, insertion_order);
         }
         insertion_order.push_back(key);
-        self.entries.insert(key, result);
+        self.entries.insert(
+            key,
+            MemoEntry {
+                result,
+                referenced: false,
+            },
+        );
     }
 }
 
@@ -410,8 +462,8 @@ fn consider_mixed_child_suffixes(
 
 fn empty_suffix_result() -> Arc<SuffixResult> {
     Arc::new(SuffixResult {
-        best_by_first_direct_setup_per_lb: BTreeMap::new(),
-        best_by_payload_per_lb: BTreeMap::new(),
+        payload_only: BTreeMap::new(),
+        setup_and_payload: BTreeMap::new(),
         mixed_frontier: Vec::new(),
     })
 }
@@ -501,7 +553,7 @@ fn price_level_candidate_with_children(
     // Only a prefix-consuming state is read through the setup projection by
     // an offloaded parent. The top-level recursive objective also reads the
     // root setup projection. Ordinary direct suffixes are consumed solely
-    // through `best_by_payload_per_lb`, so retaining a parallel setup winner
+    // through the payload projection, so retaining a parallel setup winner
     // there duplicates frontier work and memo ownership with no observer.
     let direct_projection =
         if state.incoming_setup_prefix.is_some() || (ctx.level_zero_is_root && state.level == 0) {
@@ -571,7 +623,7 @@ fn price_level_candidate_with_children(
     if let Some(direct_child) = direct_child {
         consider_child_suffixes(
             &direct_edge,
-            &direct_child.best_by_payload_per_lb,
+            direct_child.payload_candidates(),
             direct_projection,
             frontier,
         )?;
@@ -584,13 +636,13 @@ fn price_level_candidate_with_children(
         };
         consider_child_suffixes(
             &offloaded_edge,
-            &offloaded_child.best_by_first_direct_setup_per_lb,
+            offloaded_child.setup_candidates(),
             FrontierProjection::FirstDirectSetup,
             frontier,
         )?;
         consider_child_suffixes(
             &offloaded_edge,
-            &offloaded_child.best_by_payload_per_lb,
+            offloaded_child.payload_candidates(),
             FrontierProjection::Payload,
             frontier,
         )?;
@@ -603,8 +655,8 @@ fn price_level_candidate_with_children(
 /// Suffix DP for the optimal recursive schedule at
 /// `(level, current_witness_len, current_lb)`.
 ///
-/// At each state, `best_by_first_direct_setup_per_lb` keeps one candidate per
-/// `log_basis` (from
+/// At each state, the projected maps keep the setup and payload winners for
+/// each parent-visible first-fold key (from
 /// [`derive_candidate_level_params`]). A candidate may terminate on the current
 /// witness when there is no incoming setup prefix, or fold again and consume
 /// `incoming_setup_prefix` when present. Fold-again edges plan exactly one child
@@ -651,9 +703,10 @@ pub(crate) fn derive_optimal_suffix_schedule(
         // recomputations.
         return Ok(empty_suffix_result());
     }
-    let mut best_by_first_direct_setup_per_lb: BTreeMap<FirstFoldKey, ScheduleCandidate> =
-        BTreeMap::new();
-    let mut best_by_payload_per_lb: BTreeMap<FirstFoldKey, ScheduleCandidate> = BTreeMap::new();
+    let retains_setup_projection =
+        incoming_setup_prefix.is_some() || (level_zero_is_root && level == 0);
+    let mut payload_only = BTreeMap::new();
+    let mut setup_and_payload: BTreeMap<FirstFoldKey, frontier::ObjectiveChoices> = BTreeMap::new();
     let mut mixed_frontier = Vec::new();
     let root_level_key = root_lookup_key.filter(|_| level == 0);
     if root_level_key.is_some() && incoming_setup_prefix.is_some() {
@@ -931,18 +984,17 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 outer_payload_bytes: parent_key.outer_payload_bytes,
                 stage3_payload_bytes: parent_key.stage3_payload_bytes,
             };
-            if let Some(choice) = choices.setup {
-                best_by_first_direct_setup_per_lb.insert(key, choice);
-            }
-            if let Some(choice) = choices.payload {
-                best_by_payload_per_lb.insert(key, choice);
+            if retains_setup_projection {
+                setup_and_payload.insert(key, choices);
+            } else if let Some(choice) = choices.payload {
+                payload_only.insert(key, choice);
             }
         }
     }
 
     let result = Arc::new(SuffixResult {
-        best_by_first_direct_setup_per_lb,
-        best_by_payload_per_lb,
+        payload_only,
+        setup_and_payload,
         mixed_frontier,
     });
     memo.insert(memo_key, Arc::clone(&result));

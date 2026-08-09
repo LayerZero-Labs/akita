@@ -1,5 +1,47 @@
 use super::{dominates_mixed_score, offloaded_witness_contracts};
 use crate::schedule_params::MixedScore;
+use std::collections::VecDeque;
+
+#[test]
+fn suffix_cache_gives_referenced_entry_a_second_chance() {
+    let key = |level| {
+        (
+            level,
+            1024,
+            3,
+            0,
+            64,
+            64,
+            64,
+            akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        )
+    };
+    let hot = key(1);
+    let cold = key(2);
+    let mut entries = std::collections::HashMap::from([
+        (
+            hot,
+            super::MemoEntry {
+                result: super::empty_suffix_result(),
+                referenced: true,
+            },
+        ),
+        (
+            cold,
+            super::MemoEntry {
+                result: super::empty_suffix_result(),
+                referenced: false,
+            },
+        ),
+    ]);
+    let mut insertion_order = VecDeque::from([hot, cold]);
+
+    super::evict_suffix_entry(&mut entries, &mut insertion_order);
+
+    assert!(entries.contains_key(&hot));
+    assert!(!entries.contains_key(&cold));
+    assert_eq!(insertion_order, VecDeque::from([hot]));
+}
 
 #[test]
 fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
