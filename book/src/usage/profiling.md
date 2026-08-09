@@ -169,6 +169,10 @@ Times are medians of the measured samples after the configured warmup runs.
 Peak RSS is the largest sample. A negative delta means less time, memory, or
 proof data. Failed cases remain visible and identify the phase that failed.
 
+Each sample runs in a new process and constructs setup in memory. Profile CI
+does not enable disk persistence. Setup time therefore does not include loading
+a setup matrix or prefix registry from an earlier sample.
+
 `Setup and preparation` includes exact NTT prewarming for the resolved profile
 execution on its uniform CPU stack. This is an execution prewarm, not part of
 public setup identity or `ComputeBackendSetup::prepare_setup`: it joins the root

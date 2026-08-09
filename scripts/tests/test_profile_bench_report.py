@@ -8,6 +8,15 @@ import unittest
 
 
 class ProfileBenchReportTests(unittest.TestCase):
+    def test_profile_bench_does_not_persist_setup_cache(self) -> None:
+        repo = pathlib.Path(__file__).resolve().parents[2]
+        workflow = (repo / ".github/workflows/profile-bench.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("disk-persistence", workflow)
+        self.assertNotIn("LOCALAPPDATA", workflow)
+
     def test_merge_base_policy_reads_narrow_profile_mode_registry(self) -> None:
         from scripts.profile_bench_merge_base_policy import profile_modes_from_modes_rs
 
