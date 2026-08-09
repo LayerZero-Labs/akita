@@ -1,7 +1,8 @@
 use super::test_helpers::inner_ajtai_reference;
 use super::*;
 use crate::backend::test_support::aggregate_witnesses;
-use crate::compute::RootPolyMeta;
+use crate::backend::RootTensorProjectionPoly;
+use crate::compute::{RootCommitSource, RootOpeningSource, RootPolyMeta, RootTensorSource};
 use crate::DensePoly;
 use akita_field::RandomSampling;
 use akita_field::{Fp64, FpExt4, Prime128Offset275, Prime24Offset3, Prime32Offset99};
@@ -38,6 +39,16 @@ where
 
 fn block_entry(pos_in_block: usize, coeff_idx: usize) -> SparseRingBlockEntry {
     SparseRingBlockEntry::new(pos_in_block as u32, coeff_idx as u16, 1)
+}
+
+fn assert_flat_blocks_eq(
+    left: &FlatBlocks<SparseRingBlockEntry>,
+    right: &FlatBlocks<SparseRingBlockEntry>,
+) {
+    assert_eq!(left.num_live_blocks(), right.num_live_blocks());
+    for block in 0..left.num_live_blocks() {
+        assert_eq!(left.block(block), right.block(block));
+    }
 }
 
 // -------------------------------------------------------------------------
@@ -261,7 +272,49 @@ fn onehot_poly_rejects_non_divisible_k_d() {
 }
 
 #[test]
-fn onehot_poly_prepares_multiple_runtime_layouts() {
+fn onehot_view_validates_runtime_dimension_and_exposes_semantics() {
+    type F = Prime24Offset3;
+    const D: usize = 16;
+    const BAD_D: usize = 12;
+    let poly = OneHotPoly::<F>::new(
+        8,
+        D,
+        vec![
+            Some(0usize),
+            Some(7),
+            None,
+            Some(3),
+            Some(5),
+            Some(1),
+            None,
+            Some(6),
+        ],
+    )
+    .unwrap();
+
+    let view = RootCommitSource::<F, D>::commit_view(&poly).unwrap();
+    assert_eq!(view.indices(), poly.indices());
+    assert_eq!(view.onehot_k(), poly.onehot_k());
+    assert_eq!(view.num_vars(), poly.num_vars());
+    let polys = [&poly];
+    let batch = RootOpeningSource::<F, D>::opening_batch(&polys).unwrap();
+    assert_eq!(
+        batch
+            .views()
+            .map(|view| view.num_vars())
+            .collect::<Vec<_>>(),
+        vec![poly.num_vars()]
+    );
+
+    assert!(RootCommitSource::<F, BAD_D>::commit_view(&poly).is_err());
+    assert!(RootOpeningSource::<F, BAD_D>::opening_view(&poly).is_err());
+    assert!(RootTensorSource::<F, BAD_D>::tensor_view(&poly).is_err());
+    assert!(RootOpeningSource::<F, BAD_D>::opening_batch(&[&poly]).is_err());
+    assert!(RootTensorSource::<F, BAD_D>::tensor_batch(&[&poly]).is_err());
+}
+
+#[test]
+fn onehot_poly_materializes_multiple_runtime_layouts() {
     type F = Prime24Offset3;
     let poly = OneHotPoly::<F>::new(
         32,
@@ -279,41 +332,38 @@ fn onehot_poly_prepares_multiple_runtime_layouts() {
     )
     .unwrap();
 
-    poly.prepare_block_cache(32, 4).unwrap();
-    poly.prepare_block_cache(64, 2).unwrap();
-    let d32_blocks = poly.blocks_for_operation(32, 4).unwrap();
-    let d64_blocks = poly.blocks_for_operation(64, 2).unwrap();
+    let d32_count = poly.num_live_blocks_for(32, 4).unwrap();
+    let d64_count = poly.num_live_blocks_for(64, 2).unwrap();
+    let d32_blocks = poly.materialize_block_range(32, 4, 0..d32_count).unwrap();
+    let d64_blocks = poly.materialize_block_range(64, 2, 0..d64_count).unwrap();
 
-    let live32 = d32_blocks.num_live_blocks();
-    assert_eq!(live32, 2);
-    let live = d64_blocks.num_live_blocks();
-    assert_eq!(live, 2);
-    assert_eq!(poly.block_cache.lock().unwrap().len(), 2);
+    assert_eq!(d32_blocks.num_live_blocks(), 2);
+    assert_eq!(d64_blocks.num_live_blocks(), 2);
 }
 
 #[test]
-fn operation_local_blocks_do_not_populate_the_prepared_cache() {
+fn onehot_clone_owns_semantic_indices_independently() {
     type F = Prime24Offset3;
     let poly = OneHotPoly::<F>::new(32, 32, vec![Some(0usize), Some(7), None, Some(31)]).unwrap();
+    let mut cloned = poly.clone();
 
-    let local = poly.blocks_for_operation(32, 2).unwrap();
-    assert_eq!(poly.block_cache_len_for_test(), 0);
+    cloned.indices[0] = None;
+    assert_eq!(poly.indices[0], Some(0));
+    assert_eq!(cloned.indices[0], None);
 
-    poly.prepare_block_cache(32, 2).unwrap();
-    let prepared = poly.blocks_for_operation(32, 2).unwrap();
-    assert_eq!(poly.block_cache_len_for_test(), 1);
-    assert!(!std::sync::Arc::ptr_eq(&local, &prepared));
-
-    let borrowed = poly.blocks_for_operation(32, 2).unwrap();
-    assert!(std::sync::Arc::ptr_eq(&prepared, &borrowed));
+    let original = poly.materialize_block_range(32, 2, 0..2).unwrap();
+    let changed = cloned.materialize_block_range(32, 2, 0..2).unwrap();
+    assert_ne!(original.block(0), changed.block(0));
 }
 
 #[test]
-fn explicit_clear_drops_shared_prepared_onehot_blocks() {
+fn concurrent_onehot_operations_use_independent_derived_storage() {
     type F = Prime24Offset3;
+    type E = FpExt4<F>;
+    const D: usize = 32;
     let poly = OneHotPoly::<F>::new(
         32,
-        32,
+        D,
         vec![
             Some(0usize),
             Some(7),
@@ -326,23 +376,43 @@ fn explicit_clear_drops_shared_prepared_onehot_blocks() {
         ],
     )
     .unwrap();
+    let num_blocks = poly.num_live_blocks_for(D, 2).unwrap();
 
-    poly.prepare_block_cache(32, 4).unwrap();
-    let cached = poly.blocks_for_operation(32, 4).unwrap();
-    assert_eq!(poly.block_cache_len_for_test(), 1);
+    let (left, right) = std::thread::scope(|scope| {
+        let left = scope.spawn(|| {
+            let blocks = poly.materialize_block_range(D, 2, 0..num_blocks).unwrap();
+            let projection = poly.tensor_packed_extension_root_poly::<E, D>().unwrap();
+            (blocks, projection)
+        });
+        let right = scope.spawn(|| {
+            let blocks = poly.materialize_block_range(D, 2, 0..num_blocks).unwrap();
+            let projection = poly.tensor_packed_extension_root_poly::<E, D>().unwrap();
+            (blocks, projection)
+        });
+        (left.join().unwrap(), right.join().unwrap())
+    });
 
-    let clone = poly.clone();
-    clone.clear_block_cache().unwrap();
-    assert_eq!(poly.block_cache_len_for_test(), 0);
-    assert_eq!(clone.block_cache_len_for_test(), 0);
-
-    let rebuilt = poly.blocks_for_operation(32, 4).unwrap();
-    assert!(!std::sync::Arc::ptr_eq(&cached, &rebuilt));
-    assert_eq!(poly.block_cache_len_for_test(), 0);
+    assert_flat_blocks_eq(&left.0, &right.0);
+    let (
+        RootTensorProjectionPoly::Sparse(left_projection),
+        RootTensorProjectionPoly::Sparse(right_projection),
+    ) = (&left.1, &right.1)
+    else {
+        panic!("one hot tensor projections must remain sparse");
+    };
+    assert!(!std::sync::Arc::ptr_eq(left_projection, right_projection));
+    assert_eq!(
+        RootPolyMeta::num_vars(left_projection.as_ref()),
+        RootPolyMeta::num_vars(right_projection.as_ref())
+    );
+    assert_eq!(
+        left_projection.direct_field_evals().unwrap(),
+        right_projection.direct_field_evals().unwrap()
+    );
 }
 
 #[test]
-fn tensor_root_projection_cache_is_caller_owned() {
+fn tensor_root_projection_is_operation_local() {
     type F = Prime24Offset3;
     type E = FpExt4<F>;
     const D: usize = 16;
@@ -363,21 +433,16 @@ fn tensor_root_projection_cache_is_caller_owned() {
     )
     .unwrap();
 
-    let local = poly.tensor_packed_sparse_ring_poly::<E, D>().unwrap();
-    assert_eq!(poly.tensor_root_cache_len_for_test(), 0);
-
-    poly.prepare_tensor_root_cache::<E, D>().unwrap();
-    let prepared = poly.tensor_packed_sparse_ring_poly::<E, D>().unwrap();
-    assert_eq!(poly.tensor_root_cache_len_for_test(), 1);
-    assert!(!std::sync::Arc::ptr_eq(&local, &prepared));
-
-    let borrowed = poly.tensor_packed_sparse_ring_poly::<E, D>().unwrap();
-    assert!(std::sync::Arc::ptr_eq(&prepared, &borrowed));
-
-    let clone = poly.clone();
-    clone.clear_tensor_root_cache().unwrap();
-    assert_eq!(poly.tensor_root_cache_len_for_test(), 0);
-    assert_eq!(RootPolyMeta::num_vars(prepared.as_ref()), poly.num_vars());
+    let first = poly.tensor_packed_extension_root_poly::<E, D>().unwrap();
+    let second = poly.tensor_packed_extension_root_poly::<E, D>().unwrap();
+    let (RootTensorProjectionPoly::Sparse(first), RootTensorProjectionPoly::Sparse(second)) =
+        (&first, &second)
+    else {
+        panic!("one hot tensor projections must remain sparse");
+    };
+    assert!(!std::sync::Arc::ptr_eq(first, second));
+    assert_eq!(RootPolyMeta::num_vars(first.as_ref()), poly.num_vars());
+    assert_eq!(RootPolyMeta::num_vars(second.as_ref()), poly.num_vars());
 }
 
 #[test]
@@ -1055,9 +1120,6 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
         OneHotPoly::<F>::new(num_positions_per_block, D, indices0).unwrap(),
         OneHotPoly::<F>::new(num_positions_per_block, D, indices1).unwrap(),
     ];
-    polys[0]
-        .prepare_block_cache(D, num_positions_per_block)
-        .unwrap();
     let challenges = vec![
         SparseChallenge {
             positions: vec![0, 5],
@@ -1086,8 +1148,6 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
             })
             .collect::<Vec<_>>(),
     );
-    assert_eq!(polys[0].block_cache_len_for_test(), 1);
-    assert_eq!(polys[1].block_cache_len_for_test(), 0);
     let poly_refs: Vec<&OneHotPoly<F>> = polys.iter().collect();
     let got = OneHotPoly::<F>::decompose_fold_batched::<D>(
         &poly_refs,
@@ -1099,8 +1159,6 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
     .expect("onehot batched path should apply");
 
     assert_eq!(got, expected);
-    assert_eq!(polys[0].block_cache_len_for_test(), 1);
-    assert_eq!(polys[1].block_cache_len_for_test(), 0);
 }
 
 #[test]

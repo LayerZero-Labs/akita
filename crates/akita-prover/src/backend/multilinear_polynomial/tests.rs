@@ -1,5 +1,5 @@
 use super::{MultilinearPolynomial, MultilinearPolynomialBatchView, MultilinearPolynomialView};
-use crate::backend::{DenseBatchView, OneHotBatchView};
+use crate::backend::{DenseBatchView, OneHotBatchView, OneHotView};
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, ComputeBackendSetup, CpuBackend,
     DecomposeFoldBatchPlan, OpeningBatchKernel, RootCommitKernel, RootCommitSource,
@@ -71,7 +71,7 @@ fn multilinear_polynomial_forwards_onehot_chunk_size_from_inner() {
 }
 
 #[test]
-fn multilinear_onehot_commits_do_not_populate_persistent_block_cache() {
+fn multilinear_onehot_group_commit_matches_inner_kernel() {
     type F = Prime24Offset3;
     const D: usize = 16;
 
@@ -91,61 +91,37 @@ fn multilinear_onehot_commits_do_not_populate_persistent_block_cache() {
         log_basis_inner: 2,
     };
 
-    let single = MultilinearPolynomial::onehot(sample_onehot::<D>());
-    let single_view = RootCommitSource::<F, D>::commit_view(&single).unwrap();
-    <CpuBackend as RootCommitKernel<MultilinearPolynomialView<'_, F, D>, F, D>>::commit_inner_group(
-        &CpuBackend,
-        &prepared,
-        vec![single_view],
-        plan,
-    )
-    .unwrap();
-    let MultilinearPolynomial::OneHot(single_inner) = &single else {
-        unreachable!()
-    };
-    assert_eq!(single_inner.block_cache_len_for_test(), 0);
-
-    let prepared_inner = sample_onehot::<D>();
-    prepared_inner.prepare_block_cache(D, 2).unwrap();
-    let prepared_single = MultilinearPolynomial::onehot(prepared_inner);
-    let prepared_view = RootCommitSource::<F, D>::commit_view(&prepared_single).unwrap();
-    <CpuBackend as RootCommitKernel<MultilinearPolynomialView<'_, F, D>, F, D>>::commit_inner_group(
-        &CpuBackend,
-        &prepared,
-        vec![prepared_view],
-        plan,
-    )
-    .unwrap();
-    let MultilinearPolynomial::OneHot(prepared_inner) = &prepared_single else {
-        unreachable!()
-    };
-    assert_eq!(prepared_inner.block_cache_len_for_test(), 1);
-
-    let group = [
-        MultilinearPolynomial::onehot(sample_onehot::<D>()),
-        MultilinearPolynomial::onehot(sample_onehot::<D>()),
-    ];
-    let views = group
+    let inner = [sample_onehot::<D>(), sample_onehot::<D>()];
+    let inner_views = inner
         .iter()
         .map(RootCommitSource::<F, D>::commit_view)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    RootCommitKernel::<MultilinearPolynomialView<'_, F, D>, F, D>::commit_inner_group(
+    let expected = RootCommitKernel::<OneHotView<'_, F, D>, F, D>::commit_inner_group(
         &CpuBackend,
         &prepared,
-        views,
+        inner_views,
         plan,
     )
     .unwrap();
-    for poly in &group {
-        let MultilinearPolynomial::OneHot(inner) = poly else {
-            unreachable!()
-        };
-        assert_eq!(
-            inner.block_cache_len_for_test(),
-            0,
-            "one-hot wrappers must keep ordinary commit storage operation-local"
-        );
+
+    let wrapped = inner.map(MultilinearPolynomial::onehot);
+    let wrapped_views = wrapped
+        .iter()
+        .map(RootCommitSource::<F, D>::commit_view)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let got = RootCommitKernel::<MultilinearPolynomialView<'_, F, D>, F, D>::commit_inner_group(
+        &CpuBackend,
+        &prepared,
+        wrapped_views,
+        plan,
+    )
+    .unwrap();
+    assert_eq!(got.len(), expected.len());
+    for (got, expected) in got.iter().zip(&expected) {
+        assert_eq!(got.inner_rows.ring_dim(), expected.inner_rows.ring_dim());
+        assert_eq!(got.inner_rows.coeffs(), expected.inner_rows.coeffs());
     }
 }
 

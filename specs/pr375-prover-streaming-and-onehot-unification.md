@@ -283,21 +283,21 @@ acceptance test.
 
 #### One hot source and representation
 
-- [ ] `OneHotPoly` contains logical witness metadata and indices, but no block
+- [x] `OneHotPoly` contains logical witness metadata and indices, but no block
       cache or tensor projection cache.
-- [ ] `OneHotView` validates the selected ring dimension and exposes the
+- [x] `OneHotView` validates the selected ring dimension and exposes the
       semantic indices, chunk size, and variable count needed by an external
       backend.
-- [ ] One canonical builder maps a requested block range to
+- [x] One canonical builder maps a requested block range to
       `FlatBlocks<SparseRingBlockEntry>`.
-- [ ] `SingleChunkEntry`, `MultiChunkEntry`, and the `OneHotEntry` trait are
+- [x] `SingleChunkEntry`, `MultiChunkEntry`, and the `OneHotEntry` trait are
       removed.
-- [ ] `OneHotBlocks`, `OneHotCommitBlocks`, `OneHotBlockSource`,
+- [x] `OneHotBlocks`, `OneHotCommitBlocks`, `OneHotBlockSource`,
       `OneHotBlockRange`, and `LazyOneHotBlocks` are removed.
-- [ ] `SparseRingBlocks` is replaced by the existing generic `FlatBlocks`.
-- [ ] The one hot mapping handles every currently supported `K` and `D` shape,
+- [x] `SparseRingBlocks` is replaced by the existing generic `FlatBlocks`.
+- [x] The one hot mapping handles every currently supported `K` and `D` shape,
       including several chunks contributing to one ring.
-- [ ] No new one hot struct is added unless its review documents the invariant
+- [x] No new one hot struct is added unless its review documents the invariant
       it owns and the existing types it replaces.
 
 #### Commitment boundary
@@ -540,8 +540,9 @@ separate measured design.
 backend extension boundary. Successful construction validates the source at
 dimension `D`. Public read only accessors expose semantic indices and shape.
 
-The view also owns the crate private range materialization method. It does not
-store blocks, a strategy, or a cache.
+The view stores only a reference to the logical polynomial. CPU kernels call
+the polynomial's one crate-private canonical range builder through that
+reference. The view does not store blocks, a strategy, or a cache.
 
 #### `CommitInnerPlan`
 
@@ -855,6 +856,9 @@ Completed checkpoints:
 - Slice 4: one CPU group driver, an explicit 8 MiB per-worker tile budget, and
   a measured private bucketed-or-merge selector. Dominated direct production
   routing and duplicate schedulers removed.
+- Slice 5: mutable one hot block and tensor caches removed. Opening derives
+  only active ranges, tensor projection is operation local, clones own their
+  indices, and validated views expose semantic read-only data.
 
 ### Slice 0: Freeze evidence and add route observability
 

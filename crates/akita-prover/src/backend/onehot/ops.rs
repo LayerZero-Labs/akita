@@ -47,12 +47,43 @@ pub struct OneHotView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> 
     pub(super) poly: &'a OneHotPoly<F, I>,
 }
 
+impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> OneHotView<'a, F, D, I> {
+    /// Per-chunk hot positions. `None` denotes an all-zero chunk.
+    pub fn indices(&self) -> &'a [Option<I>] {
+        &self.poly.indices
+    }
+
+    /// Number of field-evaluation slots in each one-hot chunk.
+    pub fn onehot_k(&self) -> usize {
+        self.poly.onehot_k
+    }
+
+    /// Number of variables in the logical multilinear polynomial.
+    pub fn num_vars(&self) -> usize {
+        self.poly.num_vars
+    }
+}
+
 /// Same-point batch view over several one-hot polynomials.
 ///
 /// `D` is the kernel dispatch dimension, as in [`OneHotView`].
 #[derive(Debug, Clone, Copy)]
 pub struct OneHotBatchView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     polys: &'a [&'a OneHotPoly<F, I>],
+}
+
+impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> OneHotBatchView<'a, F, D, I> {
+    /// Validated semantic views in source order.
+    pub fn views(&self) -> impl ExactSizeIterator<Item = OneHotView<'a, F, D, I>> + '_ {
+        self.polys.iter().map(|&poly| OneHotView { poly })
+    }
+}
+
+impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
+    fn source_view<const D: usize>(&self) -> Result<OneHotView<'_, F, D, I>, AkitaError> {
+        self.validate_ring_dimension(D)?;
+        Ok(OneHotView { poly: self })
+    }
 }
 
 impl<F, I> RootPolyMeta<F> for OneHotPoly<F, I>
@@ -102,7 +133,7 @@ where
         Self: 'a;
 
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
-        Ok(OneHotView { poly: self })
+        self.source_view()
     }
 }
 
@@ -122,10 +153,13 @@ where
         Self: 'a;
 
     fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
-        Ok(OneHotView { poly: self })
+        self.source_view()
     }
 
     fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
+        for poly in polys {
+            poly.validate_ring_dimension(D)?;
+        }
         Ok(OneHotBatchView { polys })
     }
 }
@@ -146,10 +180,13 @@ where
         Self: 'a;
 
     fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
-        Ok(OneHotView { poly: self })
+        self.source_view()
     }
 
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
+        for poly in polys {
+            poly.validate_ring_dimension(D)?;
+        }
         Ok(OneHotBatchView { polys })
     }
 }
@@ -771,17 +808,6 @@ where
             .view_layout(D, num_positions_per_block)
             .expect("OneHotPoly::decompose_fold: invalid block layout");
         let active_blocks = challenges.len().min(num_blocks);
-        if active_blocks == num_blocks {
-            let blocks = self
-                .blocks_for_operation(D, num_positions_per_block)
-                .expect("OneHotPoly::decompose_fold: valid full block layout");
-            return self.decompose_fold_onehot::<D>(
-                &blocks,
-                challenges,
-                num_positions_per_block,
-                num_digits,
-            );
-        }
         let blocks = self
             .materialize_block_range(D, num_positions_per_block, 0..active_blocks)
             .expect("OneHotPoly::decompose_fold: valid active block range");
