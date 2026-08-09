@@ -1,6 +1,8 @@
 use super::*;
 
+#[cfg(test)]
 pub(crate) use akita_schedules::planner_support::planned_next_witness_len;
+pub(crate) use akita_schedules::planner_support::planned_next_witness_len_with_cache;
 use akita_schedules::planner_support::{sis_key_at_dimension, RingDimensionCandidate};
 
 mod recursive;

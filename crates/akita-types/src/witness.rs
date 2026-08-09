@@ -9,12 +9,14 @@ use std::ops::Range;
 
 use akita_field::AkitaError;
 
+use crate::proof::relation::relation_rhs_layout_for_with_compression_cache;
 use crate::{
-    relation_rhs_layout_for, CommittedGroupParams, CompressionMapPlan, OpeningClaimsLayout,
-    RelationRowFamily, COMPRESSION_MAP_COUNT,
+    CommitmentRingDims, CommittedGroupParams, CompressionChainPlanCache, CompressionMapPlan,
+    LevelParamsLike, OpeningClaimsLayout, RelationRowFamily, COMPRESSION_MAP_COUNT,
 };
 
 mod chunk_partition;
+mod scalar_len;
 
 pub use chunk_partition::dyadic_block_ranges;
 
@@ -385,6 +387,23 @@ impl WitnessLayout {
         num_chunks: usize,
         quotient_depth: usize,
     ) -> Result<Self, AkitaError> {
+        Self::new_with_compression_cache(
+            lp,
+            opening_batch,
+            num_chunks,
+            quotient_depth,
+            &mut CompressionChainPlanCache::default(),
+        )
+    }
+
+    /// Cached variant of [`Self::new`] for exact planner sweeps.
+    pub fn new_with_compression_cache(
+        lp: &CommittedGroupParams,
+        opening_batch: &OpeningClaimsLayout,
+        num_chunks: usize,
+        quotient_depth: usize,
+        compression_cache: &mut CompressionChainPlanCache,
+    ) -> Result<Self, AkitaError> {
         let num_groups = opening_batch.num_groups();
         if num_groups == 0 || num_chunks == 0 || quotient_depth == 0 {
             return Err(AkitaError::InvalidSetup(
@@ -435,10 +454,6 @@ impl WitnessLayout {
                     params,
                     role_dims,
                     num_claims,
-                    depth_witness,
-                    depth_commit,
-                    depth_open,
-                    depth_fold,
                     chunk_block_ranges,
                 ))
             })
@@ -447,17 +462,8 @@ impl WitnessLayout {
         // Chunk is the outer physical key. Within each chunk, groups are laid
         // out in relation order, and each unit is `[Z | E | T]`.
         for chunk_index in 0..num_chunks {
-            for &(
-                group_index,
-                params,
-                role_dims,
-                num_claims,
-                depth_witness,
-                depth_commit,
-                depth_open,
-                depth_fold,
-                ref chunk_block_ranges,
-            ) in &group_geometry
+            for &(group_index, params, role_dims, num_claims, ref chunk_block_ranges) in
+                &group_geometry
             {
                 let global_block_range = chunk_block_ranges
                     .get(chunk_index)
@@ -465,28 +471,8 @@ impl WitnessLayout {
                     .clone();
                 let global_block_start = global_block_range.start;
                 let chunk_num_live_blocks = global_block_range.len();
-                let z_len = checked_mul3(
-                    params.num_positions_per_block(),
-                    depth_witness,
-                    depth_fold,
-                    "witness Z width overflow",
-                )?
-                .checked_mul(role_dims.d_a())
-                .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".into()))?;
-                let e_len = checked_mul3(
-                    num_claims,
-                    chunk_num_live_blocks,
-                    depth_open,
-                    "witness E width overflow",
-                )?
-                .checked_mul(role_dims.d_a())
-                .ok_or_else(|| AkitaError::InvalidSetup("witness E width overflow".into()))?;
-                let t_len = num_claims
-                    .checked_mul(chunk_num_live_blocks)
-                    .and_then(|n| n.checked_mul(params.a_rows_len()))
-                    .and_then(|n| n.checked_mul(depth_commit))
-                    .and_then(|n| n.checked_mul(role_dims.d_a()))
-                    .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".into()))?;
+                let (z_len, e_len, t_len) =
+                    witness_unit_lengths(params, role_dims, num_claims, chunk_num_live_blocks)?;
                 let z_range = checked_range(cursor, z_len, "witness Z range overflow")?;
                 let e_range = checked_range(z_range.end, e_len, "witness E range overflow")?;
                 let t_range = checked_range(e_range.end, t_len, "witness T range overflow")?;
@@ -502,7 +488,8 @@ impl WitnessLayout {
                 });
             }
         }
-        let relation_layout = relation_rhs_layout_for(lp, opening_batch)?;
+        let relation_layout =
+            relation_rhs_layout_for_with_compression_cache(lp, opening_batch, compression_cache)?;
         let row_families = relation_layout.row_families()?;
         let r_start = cursor;
         let first_compression_row = row_families
@@ -919,6 +906,37 @@ fn checked_align_up(value: usize, alignment: usize, context: &str) -> Result<usi
     value
         .checked_add(alignment - remainder)
         .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
+}
+
+fn witness_unit_lengths(
+    params: &dyn LevelParamsLike,
+    role_dims: CommitmentRingDims,
+    num_claims: usize,
+    chunk_num_live_blocks: usize,
+) -> Result<(usize, usize, usize), AkitaError> {
+    let z_len = checked_mul3(
+        params.num_positions_per_block(),
+        params.num_digits_inner(),
+        params.num_digits_fold(),
+        "witness Z width overflow",
+    )?
+    .checked_mul(role_dims.d_a())
+    .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".into()))?;
+    let e_len = checked_mul3(
+        num_claims,
+        chunk_num_live_blocks,
+        params.num_digits_open(),
+        "witness E width overflow",
+    )?
+    .checked_mul(role_dims.d_a())
+    .ok_or_else(|| AkitaError::InvalidSetup("witness E width overflow".into()))?;
+    let t_len = num_claims
+        .checked_mul(chunk_num_live_blocks)
+        .and_then(|n| n.checked_mul(params.a_rows_len()))
+        .and_then(|n| n.checked_mul(params.num_digits_outer()))
+        .and_then(|n| n.checked_mul(role_dims.d_a()))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".into()))?;
+    Ok((z_len, e_len, t_len))
 }
 
 #[allow(clippy::too_many_arguments)]

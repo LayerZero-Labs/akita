@@ -698,24 +698,55 @@ pub fn planned_next_witness_len(
     final_num_polys: usize,
     num_chunks: usize,
 ) -> Result<Option<usize>, AkitaError> {
+    planned_next_witness_len_with_cache(
+        field_bits,
+        params,
+        final_num_polys,
+        num_chunks,
+        &mut akita_types::CompressionChainPlanCache::default(),
+    )
+}
+
+/// Cached variant of [`planned_next_witness_len`] for exact candidate sweeps.
+pub fn planned_next_witness_len_with_cache(
+    field_bits: u32,
+    params: &CommittedGroupParams,
+    final_num_polys: usize,
+    num_chunks: usize,
+    compression_cache: &mut akita_types::CompressionChainPlanCache,
+) -> Result<Option<usize>, AkitaError> {
     if !params.precommitted_groups.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "multi-group root witness sizing must use CommittedGroupParams::output_witness_len"
                 .to_string(),
         ));
     }
-    if !params.compression_sources_supported()? {
-        return Ok(None);
-    }
     let opening_batch =
         params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
-    let layout = WitnessLayout::new(
-        params,
-        &opening_batch,
-        num_chunks,
-        akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open),
-    )?;
-    Ok(Some(layout.live_coeff_len()))
+    let quotient_depth =
+        akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open);
+    if params.setup_prefix.is_none() {
+        return WitnessLayout::try_scalar_live_coeff_len_with_cache(
+            params,
+            &opening_batch,
+            num_chunks,
+            quotient_depth,
+            compression_cache,
+        );
+    }
+    if !params.compression_sources_supported_with_cache(compression_cache)? {
+        return Ok(None);
+    }
+    Ok(Some(
+        WitnessLayout::new_with_compression_cache(
+            params,
+            &opening_batch,
+            num_chunks,
+            quotient_depth,
+            compression_cache,
+        )?
+        .live_coeff_len(),
+    ))
 }
 
 /// Convenience policy used by config adapters.

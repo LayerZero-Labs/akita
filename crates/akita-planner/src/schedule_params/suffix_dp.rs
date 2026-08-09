@@ -826,7 +826,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                             )?
                         } else {
                             derive_candidate_level_params(
-                                None,
+                                Some(&mut memo.setup_prefixes),
                                 policy,
                                 mode,
                                 &ring_challenge_cfg,

@@ -16,6 +16,13 @@ struct SetupPrefixSearchKey {
 #[derive(Default)]
 pub(crate) struct SetupPrefixSearchCache {
     entries: HashMap<SetupPrefixSearchKey, Arc<[PrecommittedLevelParams]>>,
+    compression_plans: akita_types::CompressionChainPlanCache,
+}
+
+impl SetupPrefixSearchCache {
+    pub(super) fn compression_plans(&mut self) -> &mut akita_types::CompressionChainPlanCache {
+        &mut self.compression_plans
+    }
 }
 
 fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<usize, AkitaError> {

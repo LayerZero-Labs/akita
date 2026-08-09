@@ -260,6 +260,7 @@ impl RelationRhsLayout {
 }
 
 fn compression_plan(
+    compression_cache: &mut crate::CompressionChainPlanCache,
     profile: SisModulusProfileId,
     rows: usize,
     ring_dim: usize,
@@ -267,7 +268,7 @@ fn compression_plan(
     let source_coefficients = rows
         .checked_mul(ring_dim)
         .ok_or_else(|| AkitaError::InvalidSetup("compression source shape overflow".into()))?;
-    CompressionChainPlan::for_complete_source(profile, source_coefficients)
+    compression_cache.for_complete_source(profile, source_coefficients)
 }
 
 /// Single source of truth for the relation rhs row layout at one level.
@@ -279,6 +280,18 @@ pub fn relation_rhs_layout_for(
     lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<RelationRhsLayout, AkitaError> {
+    relation_rhs_layout_for_with_compression_cache(
+        lp,
+        opening_batch,
+        &mut crate::CompressionChainPlanCache::default(),
+    )
+}
+
+pub(crate) fn relation_rhs_layout_for_with_compression_cache(
+    lp: &CommittedGroupParams,
+    opening_batch: &OpeningClaimsLayout,
+    compression_cache: &mut crate::CompressionChainPlanCache,
+) -> Result<RelationRhsLayout, AkitaError> {
     opening_batch.check()?;
     let n_d = lp.open_commit_matrix.output_rank();
     let opening_plan = lp
@@ -286,6 +299,7 @@ pub fn relation_rhs_layout_for(
         .is_compressed()
         .then(|| {
             compression_plan(
+                compression_cache,
                 lp.open_commit_matrix.sis_modulus_profile(),
                 n_d,
                 lp.open_commit_matrix.ring_dimension(),
@@ -307,6 +321,7 @@ pub fn relation_rhs_layout_for(
             .collect::<Vec<_>>();
         let compression = if let Some(opening_plan) = opening_plan {
             let group_plan = compression_plan(
+                compression_cache,
                 lp.outer_commit_matrix.sis_modulus_profile(),
                 lp.outer_commit_matrix.output_rank(),
                 role_dims.d_b(),
@@ -342,6 +357,7 @@ pub fn relation_rhs_layout_for(
     group_indices.push(final_group_index);
     if opening_plan.is_some() {
         group_plans.push(compression_plan(
+            compression_cache,
             lp.outer_commit_matrix.sis_modulus_profile(),
             lp.outer_commit_matrix.output_rank(),
             final_role_dims.d_b(),
@@ -358,6 +374,7 @@ pub fn relation_rhs_layout_for(
         group_indices.push(group_index);
         if opening_plan.is_some() {
             group_plans.push(compression_plan(
+                compression_cache,
                 group.layout.outer_commit_matrix.sis_modulus_profile(),
                 group.layout.outer_commit_matrix.output_rank(),
                 role_dims.d_b(),

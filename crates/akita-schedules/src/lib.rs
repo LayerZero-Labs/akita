@@ -36,7 +36,7 @@ pub mod planner_support {
     };
     pub use crate::runtime::{
         grouped_segment_rings, materialize_candidate_schedule, planned_next_witness_len,
-        stage3_payload_bytes_for_successor, validate_policy, CandidateFoldStep,
-        CandidateTerminalResponse, MAX_RECURSION_DEPTH,
+        planned_next_witness_len_with_cache, stage3_payload_bytes_for_successor, validate_policy,
+        CandidateFoldStep, CandidateTerminalResponse, MAX_RECURSION_DEPTH,
     };
 }

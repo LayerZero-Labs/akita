@@ -16,6 +16,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
     log_basis_open: u32,
     fold_level: usize,
     block_index_bits: usize,
+    current_witness_len: usize,
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
     if reduced_vars <= 2
         || reduced_vars >= 53
@@ -81,6 +82,22 @@ pub(crate) fn recursive_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
+    let physical_witness_len = akita_schedules::planner_support::grouped_segment_rings(
+        1,
+        num_live_blocks,
+        num_chunks,
+        num_positions_per_block,
+        inner_commit_matrix.output_rank(),
+        delta_commit,
+        delta_open,
+        delta_open,
+        num_digits_fold,
+    )?
+    .checked_mul(d_a)
+    .ok_or_else(|| AkitaError::InvalidSetup("recursive witness body overflow".into()))?;
+    if physical_witness_len >= current_witness_len {
+        return Ok(None);
+    }
     let Some(native_width_t) = decomposed_t_ring_count(
         inner_commit_matrix.output_rank(),
         delta_open,
@@ -197,14 +214,7 @@ pub(super) fn seed_recursive_split_candidates(
     candidates
 }
 
-/// Lower bound on the final layout score for one recursive split.
-///
-/// The true score is `next_witness_len + challenge_work + chunk_work +
-/// imbalance`. For any feasible scalar recursive candidate,
-/// `next_witness_len` includes at least `D * (e_hat + t_hat + z_hat)`, with
-/// `n_A >= 1`, `num_digits_fold >= 1`, and any setup-prefix / relation-tail
-/// terms only increasing the witness. A split whose lower bound already exceeds
-/// the current best score therefore cannot become optimal.
+/// Inputs shared by conservative recursive split bounds.
 #[derive(Clone, Copy)]
 pub(super) struct RecursiveSplitLowerBoundInput {
     pub(super) num_ring_elems: usize,
@@ -216,7 +226,7 @@ pub(super) struct RecursiveSplitLowerBoundInput {
     pub(super) num_chunks: usize,
 }
 
-pub(super) fn recursive_split_lower_bound(input: RecursiveSplitLowerBoundInput) -> Option<usize> {
+fn recursive_witness_body_lower_bound(input: RecursiveSplitLowerBoundInput) -> Option<usize> {
     if input.r == 0 || input.r >= input.reduced_vars {
         return None;
     }
@@ -233,9 +243,21 @@ pub(super) fn recursive_split_lower_bound(input: RecursiveSplitLowerBoundInput) 
         .checked_add(t_hat_floor)?
         .checked_add(z_hat_floor)?
         .checked_mul(input.ring_dimension)?;
-    let challenge_work = num_live_blocks;
+    Some(physical_width_floor)
+}
+
+/// Lower bound on the final layout score for one recursive split.
+///
+/// The true score adds challenge and chunk work to the next witness. The next
+/// witness itself includes at least the physical Z/E/T body returned above;
+/// setup-prefix and relation-tail terms can only increase it.
+pub(super) fn recursive_split_lower_bound(input: RecursiveSplitLowerBoundInput) -> Option<usize> {
+    let physical_width_floor = recursive_witness_body_lower_bound(input)?;
+    let p = input.reduced_vars.checked_sub(input.r)?;
+    let num_positions_per_block = 1usize.checked_shl(p as u32)?;
+    let num_live_blocks = input.num_ring_elems.div_ceil(num_positions_per_block);
     physical_width_floor
-        .checked_add(challenge_work)?
+        .checked_add(num_live_blocks)?
         .checked_add(num_live_blocks)
 }
 
@@ -250,6 +272,7 @@ struct RecursiveLevelSearch {
     num_chunks: usize,
     num_ring_elems: usize,
     reduced_vars: usize,
+    current_witness_len: usize,
     setup_prefixes: Vec<Option<akita_types::SetupPrefixSlotId>>,
 }
 
@@ -321,6 +344,7 @@ fn prepare_recursive_level_search(
         num_chunks,
         num_ring_elems,
         reduced_vars,
+        current_witness_len,
         setup_prefixes,
     }))
 }
@@ -331,6 +355,7 @@ fn finalize_recursive_level_candidate(
     search: &RecursiveLevelSearch,
     setup_prefix: Option<&akita_types::SetupPrefixSlotId>,
     mut candidate_params: CommittedGroupParams,
+    compression_cache: &mut akita_types::CompressionChainPlanCache,
 ) -> Result<Option<(LayoutCandidateScore, CommittedGroupParams, usize)>, AkitaError> {
     candidate_params.setup_prefix = setup_prefix.cloned();
     if let Some(prefix) = &candidate_params.setup_prefix {
@@ -349,11 +374,12 @@ fn finalize_recursive_level_candidate(
             total_d_width,
         )?;
     }
-    let Some(next_witness_len) = planned_next_witness_len(
+    let Some(next_witness_len) = planned_next_witness_len_with_cache(
         policy.decomposition.field_bits(),
         &candidate_params,
         1,
         search.num_chunks,
+        compression_cache,
     )?
     else {
         return Ok(None);
@@ -390,6 +416,7 @@ fn recursive_level_base_candidate_for_split(
         log_basis_open,
         fold_level,
         block_index_bits,
+        search.current_witness_len,
     )?
     else {
         return Ok(None);
@@ -400,7 +427,7 @@ fn recursive_level_base_candidate_for_split(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn derive_candidate_level_params(
-    setup_prefix_cache: Option<&mut SetupPrefixSearchCache>,
+    mut setup_prefix_cache: Option<&mut SetupPrefixSearchCache>,
     policy: &PlannerPolicy,
     payload_mode: akita_types::CommitmentPayloadMode,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
@@ -413,7 +440,7 @@ pub(crate) fn derive_candidate_level_params(
     incoming_setup_prefix: Option<usize>,
 ) -> Result<Option<(CommittedGroupParams, usize)>, AkitaError> {
     let Some(search) = prepare_recursive_level_search(
-        setup_prefix_cache,
+        setup_prefix_cache.as_deref_mut(),
         policy,
         ring_challenge_cfg,
         dimensions,
@@ -430,6 +457,11 @@ pub(crate) fn derive_candidate_level_params(
     // equal-scoring candidate. Keep that tie-break explicit because the
     // seed-first search intentionally evaluates splits in a different order.
     let mut best: Option<(LayoutCandidateScore, usize, CommittedGroupParams, usize)> = None;
+    let mut local_compression_cache = akita_types::CompressionChainPlanCache::default();
+    let compression_cache = setup_prefix_cache
+        .as_deref_mut()
+        .map(SetupPrefixSearchCache::compression_plans)
+        .unwrap_or(&mut local_compression_cache);
     let delta_commit = source.num_digits_inner(policy.decomposition, log_basis_inner)?;
     let delta_open = num_digits_open(DecompositionParams {
         log_basis: log_basis_open,
@@ -491,6 +523,7 @@ pub(crate) fn derive_candidate_level_params(
                     &search,
                     setup_prefix.as_ref(),
                     base_candidate.clone(),
+                    compression_cache,
                 )?
             else {
                 continue;
@@ -517,7 +550,7 @@ pub(crate) fn derive_candidate_level_params(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn derive_candidate_level_params_all_splits(
-    setup_prefix_cache: Option<&mut SetupPrefixSearchCache>,
+    mut setup_prefix_cache: Option<&mut SetupPrefixSearchCache>,
     policy: &PlannerPolicy,
     payload_mode: akita_types::CommitmentPayloadMode,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
@@ -530,7 +563,7 @@ pub(crate) fn derive_candidate_level_params_all_splits(
     incoming_setup_prefix: Option<usize>,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     let Some(search) = prepare_recursive_level_search(
-        setup_prefix_cache,
+        setup_prefix_cache.as_deref_mut(),
         policy,
         ring_challenge_cfg,
         dimensions,
@@ -542,8 +575,31 @@ pub(crate) fn derive_candidate_level_params_all_splits(
     else {
         return Ok(Vec::new());
     };
+    let delta_commit = source.num_digits_inner(policy.decomposition, log_basis_inner)?;
+    let delta_open = num_digits_open(DecompositionParams {
+        log_basis: log_basis_open,
+        ..policy.decomposition
+    });
     let mut candidates = Vec::new();
+    let mut local_compression_cache = akita_types::CompressionChainPlanCache::default();
+    let compression_cache = setup_prefix_cache
+        .as_deref_mut()
+        .map(SetupPrefixSearchCache::compression_plans)
+        .unwrap_or(&mut local_compression_cache);
     for block_index_bits in (1..search.reduced_vars).rev() {
+        if recursive_witness_body_lower_bound(RecursiveSplitLowerBoundInput {
+            num_ring_elems: search.num_ring_elems,
+            ring_dimension: dimensions.inner(),
+            reduced_vars: search.reduced_vars,
+            r: block_index_bits,
+            delta_commit,
+            delta_open,
+            num_chunks: search.num_chunks,
+        })
+        .is_some_and(|lower_bound| lower_bound >= current_witness_len)
+        {
+            continue;
+        }
         let Some(base_candidate) = recursive_level_base_candidate_for_split(
             policy,
             payload_mode,
@@ -565,6 +621,7 @@ pub(crate) fn derive_candidate_level_params_all_splits(
                 &search,
                 setup_prefix.as_ref(),
                 base_candidate.clone(),
+                compression_cache,
             )?
             else {
                 continue;

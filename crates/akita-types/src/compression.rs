@@ -8,6 +8,7 @@ use crate::field_modulus;
 use crate::sis::compression::{min_compression_secure_rank, COMPRESSION_SIS_COEFF_LINF_BOUND};
 use crate::sis::{SisModulusProfileId, DEFAULT_SIS_SECURITY_POLICY};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
+use std::cell::RefCell;
 
 /// Maximum complete B/D image accepted by the compression protocol.
 pub const MAX_COMPRESSION_INPUT_BYTES: usize = 8 * 1024;
@@ -395,7 +396,87 @@ pub struct CompressionChainPlan {
     field_bits: usize,
     field_bytes: usize,
     source_coefficients: usize,
-    maps: Vec<CompressionMapPlan>,
+    maps: [CompressionMapPlan; COMPRESSION_MAP_COUNT],
+}
+
+thread_local! {
+    /// Bounded by the protocol input cap: at most one entry per supported
+    /// `(profile, source coefficient count)` on this worker thread.
+    static CHECKED_COMPRESSION_PLANS: RefCell<CompressionChainPlanCache> =
+        RefCell::new(CompressionChainPlanCache::default());
+}
+
+/// Explicit search-local cache of fully checked compression plans.
+#[derive(Default)]
+pub struct CompressionChainPlanCache {
+    entries: [Vec<Option<CompressionChainPlan>>; 3],
+}
+
+impl CompressionChainPlanCache {
+    fn profile_index(modulus_profile: SisModulusProfileId) -> usize {
+        match modulus_profile {
+            SisModulusProfileId::Q32Offset99 => 0,
+            SisModulusProfileId::Q64Offset59 => 1,
+            SisModulusProfileId::Q128OffsetA7F7 => 2,
+        }
+    }
+
+    fn get(
+        &self,
+        modulus_profile: SisModulusProfileId,
+        source_coefficients: usize,
+    ) -> Option<CompressionChainPlan> {
+        self.entries[Self::profile_index(modulus_profile)]
+            .get(source_coefficients)
+            .and_then(Clone::clone)
+    }
+
+    fn insert(
+        &mut self,
+        modulus_profile: SisModulusProfileId,
+        source_coefficients: usize,
+        plan: CompressionChainPlan,
+    ) {
+        let entries = &mut self.entries[Self::profile_index(modulus_profile)];
+        if entries.len() <= source_coefficients {
+            entries.resize_with(source_coefficients + 1, || None);
+        }
+        entries[source_coefficients] = Some(plan);
+    }
+
+    /// Derive or reuse a supported canonical plan, preserving the standard
+    /// cap-exceeded diagnostic.
+    pub fn for_complete_source(
+        &mut self,
+        modulus_profile: SisModulusProfileId,
+        source_coefficients: usize,
+    ) -> Result<CompressionChainPlan, AkitaError> {
+        self.try_for_complete_source(modulus_profile, source_coefficients)?
+            .ok_or_else(|| {
+                let source_bytes = source_coefficients
+                    .saturating_mul(modulus_profile.field_bits().div_ceil(8) as usize);
+                AkitaError::InvalidInput(format!(
+                    "compression source is {source_bytes} bytes, exceeding the {MAX_COMPRESSION_INPUT_BYTES}-byte maximum"
+                ))
+            })
+    }
+
+    /// Derive or reuse the canonical plan for a complete source image.
+    pub fn try_for_complete_source(
+        &mut self,
+        modulus_profile: SisModulusProfileId,
+        source_coefficients: usize,
+    ) -> Result<Option<CompressionChainPlan>, AkitaError> {
+        if let Some(cached) = self.get(modulus_profile, source_coefficients) {
+            return Ok(Some(cached));
+        }
+        let plan =
+            CompressionChainPlan::try_for_complete_source(modulus_profile, source_coefficients)?;
+        if let Some(plan) = &plan {
+            self.insert(modulus_profile, source_coefficients, plan.clone());
+        }
+        Ok(plan)
+    }
 }
 
 impl CompressionChainPlan {
@@ -403,7 +484,7 @@ impl CompressionChainPlan {
     pub fn new(
         modulus_profile: SisModulusProfileId,
         source_coefficients: usize,
-        maps: Vec<CompressionMapPlan>,
+        maps: [CompressionMapPlan; COMPRESSION_MAP_COUNT],
     ) -> Result<Self, AkitaError> {
         let field_bits = profile_field_bits(modulus_profile);
         let field_bytes = field_bits.div_ceil(8);
@@ -420,11 +501,6 @@ impl CompressionChainPlan {
         if source_bytes > MAX_COMPRESSION_INPUT_BYTES {
             return Err(AkitaError::InvalidInput(format!(
                 "compression source is {source_bytes} bytes, exceeding the {MAX_COMPRESSION_INPUT_BYTES}-byte maximum"
-            )));
-        }
-        if maps.len() != COMPRESSION_MAP_COUNT {
-            return Err(AkitaError::InvalidSetup(format!(
-                "compression chain must contain exactly {COMPRESSION_MAP_COUNT} maps"
             )));
         }
         let mut expected_input = source_coefficients;
@@ -496,23 +572,46 @@ impl CompressionChainPlan {
                 AkitaError::InvalidSetup("compression source byte length overflow".into())
             })?;
         if source_coefficients == 0 {
-            return Self::new(modulus_profile, source_coefficients, Vec::new()).map(Some);
+            return Err(AkitaError::InvalidInput(
+                "compression source must be nonempty".into(),
+            ));
         }
         if source_bytes > MAX_COMPRESSION_INPUT_BYTES {
             return Ok(None);
         }
-        let mut maps = Vec::with_capacity(COMPRESSION_MAP_COUNT);
+        if let Some(cached) = CHECKED_COMPRESSION_PLANS
+            .with_borrow(|cache| cache.get(modulus_profile, source_coefficients))
+        {
+            return Ok(Some(cached));
+        }
+        let mut maps = [None; COMPRESSION_MAP_COUNT];
+        let mut map_count = 0usize;
         let mut input_coefficients = source_coefficients;
         for ring_dimension in compression_ring_dimensions(modulus_profile) {
+            if map_count == COMPRESSION_MAP_COUNT {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "compression chain exceeded {COMPRESSION_MAP_COUNT} maps"
+                )));
+            }
             let map =
                 CompressionMapPlan::new(modulus_profile, input_coefficients, ring_dimension, 1)?;
             input_coefficients = map.output_coefficients();
             let output_bytes = input_coefficients.checked_mul(field_bytes).ok_or_else(|| {
                 AkitaError::InvalidSetup("compression output byte length overflow".into())
             })?;
-            maps.push(map);
+            maps[map_count] = Some(map);
+            map_count += 1;
             if output_bytes == COMPRESSION_TARGET_BYTES {
-                return Self::new(modulus_profile, source_coefficients, maps).map(Some);
+                let [Some(first), Some(second)] = maps else {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "compression chain must contain exactly {COMPRESSION_MAP_COUNT} maps"
+                    )));
+                };
+                let plan = Self::new(modulus_profile, source_coefficients, [first, second])?;
+                CHECKED_COMPRESSION_PLANS.with_borrow_mut(|cache| {
+                    cache.insert(modulus_profile, source_coefficients, plan.clone());
+                });
+                return Ok(Some(plan));
             }
             if output_bytes < COMPRESSION_TARGET_BYTES {
                 return Err(AkitaError::InvalidSetup(
@@ -957,12 +1056,10 @@ mod tests {
         assert!(CompressionMapPlan::new(profile, 64, 32, 1).is_err());
 
         let plan = CompressionChainPlan::for_complete_source(profile, 64).unwrap();
-        assert!(CompressionChainPlan::new(profile, 64, vec![plan.maps()[0]]).is_err());
         let wrong_continuation =
             CompressionMapPlan::new(profile, 15, plan.maps()[1].ring_dimension(), 1).unwrap();
         assert!(
-            CompressionChainPlan::new(profile, 64, vec![plan.maps()[0], wrong_continuation])
-                .is_err()
+            CompressionChainPlan::new(profile, 64, [plan.maps()[0], wrong_continuation]).is_err()
         );
         assert!(CompressionChainWitness::new(plan.clone(), Vec::new()).is_err());
         assert!(CompressionTerminalPayload::<Prime128OffsetA7F7>::new(
