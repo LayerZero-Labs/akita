@@ -152,7 +152,7 @@ where
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
 {
-    /// Drop built NTT slots across all four clusters and return the total
+    /// Drop releasable NTT slots across all four clusters and return the total
     /// number of bytes freed. Physically shared cache owners are released once.
     ///
     /// Slots rebuild on next use. Callers should release only at a lifecycle

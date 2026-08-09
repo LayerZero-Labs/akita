@@ -438,21 +438,24 @@ fn root_lifecycle_retains_by_default_and_explicit_release_deduplicates_owner() {
     CpuBackend::DEFAULT
         .compression_rows_products::<64>(&prepared, &[compression_digits.as_slice()])
         .expect("warm compression NTT");
+    let shared_bytes = prepared.shared_ntt_cache_bytes();
+    let compression_bytes = prepared.compression_ntt_cache_bytes();
     let resident = prepared.ntt_cache_bytes().unwrap();
-    assert!(resident > 0);
+    assert!(shared_bytes > 0);
+    assert!(compression_bytes > 0);
 
     LevelProveStacks::after_root_fold(&stack).unwrap();
     assert_eq!(prepared.ntt_cache_bytes().unwrap(), resident);
 
     let releasing = ReleaseRootNttAfterFold::new(&stack);
     LevelProveStacks::after_root_fold(&releasing).unwrap();
-    assert_eq!(prepared.ntt_cache_bytes().unwrap(), 0);
+    assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
+    assert_eq!(prepared.compression_ntt_cache_bytes(), compression_bytes);
+    assert_eq!(prepared.ntt_cache_bytes().unwrap(), compression_bytes);
 
     prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();
-    CpuBackend::DEFAULT
-        .compression_rows_products::<64>(&prepared, &[compression_digits.as_slice()])
-        .expect("rebuild compression NTT");
-    assert_eq!(stack.release_built_ntt_slots().unwrap(), resident);
+    assert_eq!(stack.release_built_ntt_slots().unwrap(), shared_bytes);
+    assert_eq!(prepared.compression_ntt_cache_bytes(), compression_bytes);
 }
 
 #[test]

@@ -62,7 +62,7 @@ do not need to share one implementation abstraction.
 | Ring relation and quotient work | Matrix sized transformed inputs and repeated validation | One validated plan with cached or streamed execution |
 | NTT state | Oversized or stale prepared transforms | Prepared setup owner with explicit release policy |
 | CPU resource policy | Fixed limits chosen for one host and workload | Existing `CpuBackend` with checked deployment limits |
-| CPU NTT cleanup | Generic release omits compression NTT state | One complete backend lifecycle operation |
+| CPU NTT cleanup | Small reusable compression state shares the large cache release boundary | Release shared matrix state and retain compression state |
 | Exact prefix and relation preparation | Sequential independent work | Existing table and relation functions with safe parallel ranges |
 | Fold witness output | Copies between equivalent owned containers | Existing output types with consuming constructors |
 | Verifier setup scan | Reading a padded prefix that is not used | Stage 3 required prefix calculation |
@@ -197,14 +197,15 @@ These are resource limits, not protocol parameters. They belong to the CPU
 backend value. The one hot sweep choice remains private because it describes
 the current arithmetic implementation rather than an application contract.
 
-#### Generic NTT release does not cover every CPU NTT cache
+#### CPU NTT caches have different useful lifetimes
 
 `ComputeBackendSetup::release_built_ntt_slots` is the public lifecycle
-operation. The CPU implementation releases shared matrix NTT slots, but its
-separate compression NTT cache remains resident. A caller such as Jolt cannot
-use the generic operation to release all reconstructed CPU NTT state after a
-commitment phase. The release name, byte report, and resulting resident state
-must agree.
+operation for shedding large prepared matrix transforms. The separate
+compression NTT cache is small and reusable across operations, so releasing it
+at the same boundary would add rebuild work without a material memory reduction.
+The CPU implementation must therefore release shared matrix slots and retain
+compression slots. Its byte report must count only the shared matrix bytes that
+were actually removed.
 
 ### Invariants
 
@@ -280,8 +281,8 @@ must agree.
   prewarming, and planned memory reporting through one decision function.
 - The configured one hot scratch budget changes only temporary tile size. It
   does not let callers select a sweep or change commitment results.
-- Generic CPU NTT release removes both shared matrix and compression NTT
-  entries. It reports the complete number of bytes released.
+- Generic CPU NTT release removes built shared matrix entries and reports the
+  number of bytes removed. Compression NTT entries remain resident.
 - CPU cache metrics expose the complete resident NTT total while preserving
   the useful namespace breakdown.
 - CPU resource settings do not change schedules, transcripts, setup bytes,
@@ -493,8 +494,9 @@ acceptance test.
       remains private and automatic.
 - [x] Tracing records the effective ring switch limit and one hot scratch
       budget so benchmark results identify the policy in use.
-- [x] CPU release removes built shared matrix and compression NTT entries,
-      preserves active `Arc` readers, and returns the complete freed byte count.
+- [x] CPU release removes built shared matrix entries, preserves active `Arc`
+      readers, retains compression entries, and returns the shared matrix bytes
+      removed.
 - [x] Actual metrics report total CPU NTT bytes and the existing shared and
       compression subtotals.
 - [x] Default policy tests prove byte identical commitments and proofs. Limit
@@ -859,13 +861,13 @@ The existing backend should carry these fields directly. Add another policy
 type only if a later design needs to pass the same policy independently of a
 backend value or if several new settings make construction unclear.
 
-### Complete CPU NTT Lifecycle
+### Separate CPU NTT Lifetimes and Complete Accounting
 
-The generic release operation means that the prepared backend owner releases
-all built NTT state that it can reconstruct. For `CpuPreparedSetup`, this
-includes the shared matrix cache and the compression cache. Active readers
-remain valid through their `Arc` values. A later request builds an exact entry
-again.
+The generic release operation sheds the large shared matrix NTT state that the
+prepared backend can reconstruct. Active readers remain valid through their
+`Arc` values, and a later matrix request builds an exact entry again. The small
+compression NTT cache remains resident because retaining it avoids repeated
+setup work at a small resident memory cost.
 
 The CPU prepared setup reports the shared matrix byte count, the compression
 byte count, and their checked sum. Planned requirement metrics continue to
@@ -1165,14 +1167,15 @@ history.
 This slice changes no default behavior. Pause for review before changing cache
 release semantics.
 
-### Slice 9: Complete CPU NTT release and accounting
+### Slice 9: Separate CPU NTT lifetimes and complete accounting
 
-- Add release support to the compression NTT cache.
-- Make the generic CPU release operation clear shared matrix and compression
-  entries once and return their checked byte total.
+- Keep generic CPU release specific to built shared matrix entries and return
+  their checked byte total.
+- Keep compression NTT entries resident across generic and root release
+  boundaries.
 - Add total resident NTT accounting while keeping the namespace subtotals.
-- Test active readers, repeated release, rebuild, and byte accounting in both
-  namespaces.
+- Test active readers, repeated shared release, shared rebuild, retained
+  compression state, and byte accounting across both namespaces.
 
 Pause for review before downstream integration validation.
 

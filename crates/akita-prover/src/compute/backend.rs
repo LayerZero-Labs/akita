@@ -95,8 +95,9 @@ where
         prepared: &'a Self::PreparedSetup,
     ) -> &'a AkitaExpandedSetup<F>;
 
-    /// Drop any built NTT slots and return the freed bytes. Slots rebuild on
-    /// next use. Backends without droppable caches return `Ok(0)`.
+    /// Drop backend-designated releasable NTT slots and return the freed bytes.
+    /// Slots rebuild on next use. Backends may retain small reusable caches and
+    /// backends without droppable caches return `Ok(0)`.
     ///
     /// Release must not invalidate active readers. A backend may require the
     /// caller to prevent concurrent cache construction if release must leave

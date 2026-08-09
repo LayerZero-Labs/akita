@@ -63,12 +63,16 @@ choice for shared prepared state. `ReleaseRootNttAfterFold` is an explicit
 memory policy for a caller that owns an isolated root cache. It releases each
 physical owner once after the root fold.
 
-CPU release removes built keys from both the shared matrix and compression NTT
-caches. It returns the checked sum of the bytes removed. A later request creates
-its exact extent unless another populated covering slot exists. Readers that
-already hold an `Arc` remain valid. Release does not stop construction already
-in progress. A caller that needs the cache to be empty after release must
-prevent concurrent construction at that boundary.
+CPU release removes built keys from the shared matrix NTT cache and returns the
+checked sum of the bytes removed. A later request creates its exact extent
+unless another populated covering slot exists. Readers that already hold an
+`Arc` remain valid. Release does not stop construction already in progress. A
+caller that needs the shared matrix cache to be empty after release must prevent
+concurrent construction at that boundary.
+
+Compression NTT entries are small and reusable, so generic and root release
+leave them resident. This avoids repeated compression setup work while giving
+up only a small memory reduction.
 
 `CpuPreparedSetup` reports the shared matrix and compression cache byte counts
 separately. `ntt_cache_bytes` is their checked sum and reports the complete
