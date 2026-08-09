@@ -1,5 +1,6 @@
 //! Source-typed views and `CpuBackend` kernels for [`super::SparseRingPoly`].
 
+use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
@@ -143,8 +144,7 @@ where
             .prepared_expanded_setup(prepared)
             .shared_matrix
             .ring_view::<D>(plan.n_a, active_a_cols)?;
-        sources
-            .into_iter()
+        cfg_into_iter!(sources)
             .map(|source| {
                 let blocks = source.poly.blocks_for(D, plan.num_positions_per_block)?;
                 let block_slices = (0..blocks.num_live_blocks())

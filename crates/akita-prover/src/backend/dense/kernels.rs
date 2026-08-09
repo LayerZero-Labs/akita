@@ -10,6 +10,7 @@ use crate::compute::{
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
+use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
@@ -25,8 +26,7 @@ where
         sources: Vec<DenseView<'_, F, D>>,
         plan: CommitInnerPlan,
     ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
-        sources
-            .into_iter()
+        cfg_into_iter!(sources)
             .map(|source| {
                 source
                     .poly
