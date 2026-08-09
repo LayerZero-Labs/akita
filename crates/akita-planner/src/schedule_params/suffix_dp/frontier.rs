@@ -5,7 +5,7 @@ use akita_field::AkitaError;
 use crate::{schedule_params::stage3_payload_bytes_for_successor, PlannerPolicy};
 
 use super::{
-    child_choice, FirstFoldKey, ParentVisibleCost, PendingScheduleCandidate, ScheduleCandidate,
+    child_choice, FirstFoldKey, ParentPayloadKey, PendingScheduleCandidate, ScheduleCandidate,
 };
 
 #[derive(Clone, Copy)]
@@ -40,12 +40,15 @@ pub(super) fn consider_child_suffixes(
     Ok(())
 }
 
-fn first_parent_visible_cost(
+fn parent_visible_cost(
     policy: &PlannerPolicy,
-    candidate: &ScheduleCandidate,
-) -> Result<ParentVisibleCost, AkitaError> {
-    let Some(first) = candidate.first_fold_params() else {
-        return Ok(ParentVisibleCost::default());
+    first: Option<&akita_types::CommittedGroupParams>,
+) -> Result<ParentPayloadKey, AkitaError> {
+    let Some(first) = first else {
+        return Ok(ParentPayloadKey {
+            outer_payload_bytes: 0,
+            stage3_payload_bytes: 0,
+        });
     };
     let outer_payload_bytes = first
         .outer_payload_geometry()?
@@ -54,10 +57,17 @@ fn first_parent_visible_cost(
             policy.decomposition.field_bits(),
         ))
         .ok_or_else(|| AkitaError::InvalidSetup("first-fold payload size overflow".into()))?;
-    Ok(ParentVisibleCost {
+    Ok(ParentPayloadKey {
         outer_payload_bytes,
         stage3_payload_bytes: stage3_payload_bytes_for_successor(policy, Some(first))?,
     })
+}
+
+fn first_parent_visible_cost(
+    policy: &PlannerPolicy,
+    candidate: &ScheduleCandidate,
+) -> Result<ParentPayloadKey, AkitaError> {
+    parent_visible_cost(policy, candidate.first_fold_params())
 }
 
 #[derive(Default)]
@@ -68,14 +78,14 @@ pub(super) struct ObjectiveChoices {
 
 #[derive(Default)]
 pub(super) struct ProjectedFrontier {
-    pub(super) by_parent_cost: BTreeMap<ParentVisibleCost, ObjectiveChoices>,
+    pub(super) by_parent_cost: BTreeMap<ParentPayloadKey, ObjectiveChoices>,
 }
 
 impl ProjectedFrontier {
-    fn could_improve(
+    pub(super) fn could_improve(
         &self,
         policy: &PlannerPolicy,
-        parent_cost: ParentVisibleCost,
+        parent_cost: ParentPayloadKey,
         metrics: super::super::CandidateMetrics,
         projection: FrontierProjection,
     ) -> bool {
@@ -110,7 +120,7 @@ impl ProjectedFrontier {
     fn consider(
         &mut self,
         policy: &PlannerPolicy,
-        parent_cost: ParentVisibleCost,
+        parent_cost: ParentPayloadKey,
         candidate: ScheduleCandidate,
         projection: FrontierProjection,
     ) -> Result<(), AkitaError> {
@@ -184,11 +194,11 @@ impl ProjectedFrontier {
                 policy.decomposition.field_bits(),
             ))
             .ok_or_else(|| AkitaError::InvalidSetup("first-fold payload size overflow".into()))?;
-        let parent_cost = ParentVisibleCost {
+        let parent_cost = ParentPayloadKey {
             outer_payload_bytes,
             stage3_payload_bytes: stage3_payload_bytes_for_successor(
                 policy,
-                Some(&pending.first_fold.params),
+                Some(pending.first_fold.params.as_ref()),
             )?,
         };
         if self.could_improve(policy, parent_cost, pending.metrics(), projection) {

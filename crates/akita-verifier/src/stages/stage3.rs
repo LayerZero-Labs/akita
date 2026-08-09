@@ -290,7 +290,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::{proof_optimized::fp128::D64Dense, CommitmentConfig};
+    use akita_config::{proof_optimized::fp128::Dense, CommitmentConfig};
     use akita_field::Prime128OffsetA7F7;
     use akita_transcript::AkitaTranscript;
     use akita_types::{
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn offloaded_setup_ignores_shared_matrix_divisibility() {
-        let level_params = D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+        let level_params = Dense::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(16),
         ))
         .expect("scalar schedule")
@@ -354,7 +354,12 @@ mod tests {
         .params
         .final_group
         .commitment;
-        let natural_field_len = RING_D + 1;
+        let natural_field_len = level_params
+            .inner_commit_matrix
+            .ring_dimension()
+            .div_ceil(2)
+            + 1;
+        let expected_setup_eval_len = padded_setup_prefix_len(natural_field_len) / RING_D;
         let (setup, offloaded_params) =
             verifier_setup_with_unaligned_matrix(level_params.clone(), natural_field_len);
         assert!(!setup
@@ -373,7 +378,7 @@ mod tests {
                 &mut offloaded_transcript,
             )
             .expect("offloaded setup uses the registered prefix"),
-            2,
+            expected_setup_eval_len,
         );
 
         let mut direct_transcript = AkitaTranscript::<F>::new(b"test/direct-stage3");

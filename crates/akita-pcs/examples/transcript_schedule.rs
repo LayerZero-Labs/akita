@@ -30,7 +30,7 @@ fn main() {
     transcript.assert_smell_checks();
     println!(
         "Akita transcript schedule example using D={}",
-        fp128::D64OneHot::D
+        fp128::OneHot::D
     );
     for (index, event) in transcript.events().iter().enumerate() {
         println!("{index:02}: {}", format_event(event));

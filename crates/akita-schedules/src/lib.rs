@@ -25,15 +25,18 @@ pub use resolve::{
 };
 pub use runtime::{
     default_sis_security_policy, InnerBasisSource, PlannerCostModelId, PlannerPolicy,
-    RuntimeSchedulePolicy, SelectionPolicyId,
+    RingDimensionScheduleMode, RuntimeSchedulePolicy, SelectionPolicyId, ADAPTIVE_SEARCH_LEVELS,
 };
 
 /// Shared schedule-construction primitives used by offline search and generated-row replay.
 #[doc(hidden)]
 pub mod planner_support {
-    pub use crate::candidate::{projected_collision_role_price, sis_key_at_dimension};
+    pub use crate::candidate::{
+        projected_collision_role_price, sis_key_at_dimension, RingDimensionCandidate,
+    };
     pub use crate::runtime::{
-        grouped_segment_rings, materialize_candidate_schedule, stage3_payload_bytes_for_successor,
-        validate_policy, CandidateFoldStep, CandidateTerminalResponse, MAX_RECURSION_DEPTH,
+        grouped_segment_rings, materialize_candidate_schedule, planned_next_witness_len,
+        stage3_payload_bytes_for_successor, validate_policy, CandidateFoldStep,
+        CandidateTerminalResponse, MAX_RECURSION_DEPTH,
     };
 }

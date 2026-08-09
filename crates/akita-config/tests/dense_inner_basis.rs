@@ -96,7 +96,7 @@ fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
         }
     );
 
-    let fp128 = snapshot::<fp128::D64Dense>();
+    let fp128 = snapshot::<fp128::Dense>();
     assert_ne!(fp128.inner_basis, fp128.opening_basis);
     assert_eq!(
         fp128,

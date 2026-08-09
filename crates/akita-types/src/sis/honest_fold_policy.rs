@@ -301,7 +301,6 @@ fn validate_query(query: HonestFoldSizingQuery<'_>) -> Result<(), AkitaError> {
         || query.num_claims == 0
         || query.num_live_blocks == 0
         || query.num_chunks == 0
-        || query.num_chunks > query.num_live_blocks
         || query.num_fold_coeffs == 0
         || query.log_basis_response == 0
     {
@@ -605,6 +604,27 @@ mod tests {
             one_hot.exact_threshold(uneven),
             one_hot.exact_threshold(largest_window)
         );
+    }
+
+    #[test]
+    fn chunked_query_accepts_empty_physical_windows() {
+        let challenge = d64_challenge();
+        let one_hot =
+            UnitOneHotFoldPolicy::preserving_existing_behavior(128, FoldWitnessNorms::new(1, 4));
+        let query = HonestFoldSizingQuery {
+            ring_dimension: 64,
+            num_claims: 1,
+            num_live_blocks: 4,
+            num_chunks: 8,
+            num_fold_coeffs: 4_096,
+            witness_norms: FoldWitnessNorms::new(1, 4),
+            log_basis_response: 3,
+            challenge_config: &challenge,
+        };
+
+        one_hot
+            .num_digits_fold(query)
+            .expect("empty physical windows have valid honest-fold sizing");
     }
 
     #[test]

@@ -16,10 +16,12 @@ use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_planner::find_schedule;
 use akita_schedules::resolve_schedule;
 use akita_schedules::{
-    resolve_generated_schedule_selection, select_generated_schedule_row, InnerBasisSource,
-    PlannerCostModelId, PlannerPolicy, ResolvedScheduleRow, SelectionPolicyId,
+    resolve_generated_schedule_selection, select_generated_schedule_row, PlannerCostModelId,
+    PlannerPolicy, ResolvedScheduleRow,
 };
-use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
+use akita_types::{
+    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout,
+};
 
 /// A one-point 3-poly key that no generated table carries (generated tables only
 /// hold singleton / 2-batched / 4-batched keys), so strict runtime resolution
@@ -80,14 +82,14 @@ fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
 
 #[test]
 fn catalog_miss_rejects_non_shipped_keys() {
-    check_table_miss_rejection::<fp128::D64OneHot>(14);
-    check_table_miss_rejection::<fp128::D64Dense>(16);
+    check_table_miss_rejection::<fp128::OneHot>(27);
+    check_table_miss_rejection::<fp128::Dense>(27);
     check_table_miss_rejection::<fp32::D128OneHot>(16);
 }
 
 #[test]
 fn fixed_width_selection_resolves_the_same_exact_generated_row() {
-    type Cfg = fp128::D64Dense;
+    type Cfg = fp128::Dense;
 
     let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
     let entry = catalog.entries.first().expect("nonempty generated catalog");
@@ -129,7 +131,7 @@ fn fixed_width_selection_resolves_the_same_exact_generated_row() {
 
 #[test]
 fn cached_catalog_rows_do_not_bypass_runtime_hook_validation() {
-    type Cfg = fp128::D64Dense;
+    type Cfg = fp128::Dense;
 
     let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
     let entry = catalog.entries.first().expect("nonempty generated catalog");
@@ -179,7 +181,7 @@ fn assert_mutated_row_is_rejected<Cfg: CommitmentConfig>(
 
 #[test]
 fn resolved_row_audit_rejects_low_rank_root_d_and_terminal_a() {
-    type Cfg = fp128::D64Dense;
+    type Cfg = fp128::Dense;
 
     let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
     let entry = catalog.entries.first().expect("nonempty generated catalog");
@@ -239,7 +241,7 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_terminal_a() {
 
 #[test]
 fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
-    type Cfg = fp128::D64Dense;
+    type Cfg = fp128::Dense;
 
     let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
     let entry = catalog.entries.first().expect("nonempty generated catalog");
@@ -284,22 +286,18 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
 }
 
 #[test]
-fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(18));
-    let ordinary = fp128::D64OneHot::runtime_schedule(key.clone())
-        .expect("ordinary scalar schedule must resolve");
-    let recursive = RecursiveCommitmentConfig::<fp128::D64OneHot>::runtime_schedule(key)
-        .expect("recursive adapter scalar schedule must resolve");
-    assert_schedule_eq("recursive scalar delegation", &ordinary, &recursive);
-}
-
-#[test]
-fn recursive_adapter_forwards_mixed_dimension_policy() {
-    type Base = fp128::MixedDimFp128OneHot;
-    assert_eq!(
-        <RecursiveCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
-        Base::RING_DIMENSION_CANDIDATES,
-    );
+fn grouped_recursive_catalog_rejects_without_recursive_feature() {
+    let precommitted_group = PolynomialGroupLayout::singleton(16);
+    let descriptor = akita_config::committed_group_profile::<fp128::OneHot>(&precommitted_group)
+        .expect("base OneHot precommit profile");
+    let key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(32, 2),
+        precommitteds: vec![descriptor, descriptor],
+    };
+    assert!(matches!(
+        RecursiveCommitmentConfig::<fp128::OneHot>::runtime_schedule(key),
+        Err(akita_field::AkitaError::UnsupportedSchedule(_))
+    ));
 }
 
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
@@ -311,7 +309,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         min_offloaded_witness_contraction: 3,
         uniform_ring_dimension: Cfg::D,
         setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),
-        ring_dimension_candidates: Cfg::RING_DIMENSION_CANDIDATES,
+        ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
@@ -332,7 +330,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
 
 #[test]
 fn runtime_rejects_malformed_extension_geometry_without_panicking() {
-    type Cfg = fp128::D64OneHot;
+    type Cfg = fp128::OneHot;
     let catalog = Cfg::schedule_catalog();
     let key = PolynomialGroupLayout::singleton(14);
     let reject = |mutate: fn(&mut PlannerPolicy)| {
@@ -359,25 +357,23 @@ fn runtime_rejects_malformed_extension_geometry_without_panicking() {
 
 #[test]
 fn policy_bridge_matches_cfg_hooks() {
-    assert_policy_matches_cfg::<fp128::D64Dense>();
-    assert_policy_matches_cfg::<fp128::D128Dense>();
-    assert_policy_matches_cfg::<fp128::D64OneHot>();
-    assert_policy_matches_cfg::<fp128::MixedDimFp128OneHot>();
+    assert_policy_matches_cfg::<fp128::Dense>();
+    assert_policy_matches_cfg::<fp128::OneHot>();
     assert_policy_matches_cfg::<fp32::D64OneHot>();
 }
 
 #[test]
-fn offline_planner_admits_dense_multi_group_roots() {
-    type Cfg = fp128::D64Dense;
+fn adaptive_dense_plans_multi_group_roots_at_uniform_suffix_dimension() {
+    type Cfg = fp128::Dense;
     const PRE_NV: usize = 16;
     const FINAL_NV: usize = 20;
 
     let pre_group = PolynomialGroupLayout::singleton(PRE_NV);
-    let precommitted =
+    let pre_profile =
         akita_config::committed_group_profile::<Cfg>(&pre_group).expect("dense precommit profile");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(FINAL_NV),
-        precommitteds: vec![precommitted],
+        precommitteds: vec![pre_profile],
     };
     let precommitted_honest_fold_policies = vec![Cfg::root_honest_fold_policy()];
     let planned = find_schedule(
@@ -387,21 +383,30 @@ fn offline_planner_admits_dense_multi_group_roots() {
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
     )
-    .expect("dense multi-group schedule");
-
-    assert_eq!(
-        planned.schedule.root.params.precommitted_groups.len(),
-        key.precommitteds.len()
-    );
+    .expect("adaptive dense grouped schedule");
     planned
         .schedule
         .validate_structure()
-        .expect("dense grouped schedule structure");
+        .expect("valid grouped schedule");
+    assert_eq!(
+        planned
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .role_dims(),
+        CommitmentRingDims::uniform(64)
+    );
+    assert_eq!(
+        planned.schedule.root.params.precommitted_groups[0].descriptor,
+        key.precommitteds[0]
+    );
 }
 
 #[test]
 fn root_basis_is_derived_from_existing_policy_inputs() {
-    let fp128 = policy_of::<fp128::D64OneHot>();
+    let fp128 = policy_of::<fp128::OneHot>();
     assert_eq!(fp128.opening_basis_range, (3, 6));
     assert_eq!(fp128.decomposition.log_basis, 3);
     assert_eq!(fp128.log_basis_search_range_at_level(0), (3, 3));
@@ -412,66 +417,6 @@ fn root_basis_is_derived_from_existing_policy_inputs() {
     assert_eq!(fp32.decomposition.log_basis, 3);
     assert_eq!(fp32.log_basis_search_range_at_level(0), (3, 3));
     assert_eq!(fp32.log_basis_search_range_at_level(1), (3, 6));
-}
-
-#[test]
-fn inner_basis_domain_depends_on_the_coefficient_source() {
-    let mut policy = policy_of::<fp128::D64Dense>();
-    assert_eq!(
-        policy
-            .inner_basis_search_range(InnerBasisSource::RawCoefficients { log_bound: 3 })
-            .unwrap(),
-        (3, 3)
-    );
-    assert_eq!(
-        policy
-            .inner_basis_search_range(InnerBasisSource::RawCoefficients { log_bound: 11 })
-            .unwrap(),
-        (3, 11)
-    );
-    assert_eq!(
-        policy
-            .inner_basis_search_range(InnerBasisSource::RawCoefficients { log_bound: 128 })
-            .unwrap(),
-        policy.inner_basis_range
-    );
-    assert_eq!(
-        policy
-            .inner_basis_search_range(InnerBasisSource::UnitOneHot)
-            .unwrap(),
-        (3, 3)
-    );
-    assert_eq!(
-        policy
-            .inner_basis_search_range(InnerBasisSource::BalancedDigits { log_basis: 6 })
-            .unwrap(),
-        (6, 6)
-    );
-    policy.inner_basis_range = (10, 11);
-    assert_eq!(
-        policy
-            .inner_basis_search_range(InnerBasisSource::BalancedDigits { log_basis: 6 })
-            .unwrap(),
-        (6, 6),
-        "recursive balanced digits retain their source basis independently of the raw-source search domain"
-    );
-    policy.opening_basis_range = (3, 6);
-    akita_schedules::planner_support::validate_policy(&policy)
-        .expect("opening and raw inner search domains are independent");
-    assert!(policy
-        .inner_basis_search_range(InnerBasisSource::BalancedDigits { log_basis: 17 })
-        .is_err());
-}
-
-#[test]
-fn runtime_policy_validation_preserves_an_explicit_selection_objective() {
-    type Recursive = RecursiveCommitmentConfig<fp128::D64OneHot>;
-    let mut policy = policy_of::<Recursive>();
-    assert!(policy.recursive_setup_planning);
-    policy.selection_policy = SelectionPolicyId::MinEstimatedProofPayload;
-
-    akita_schedules::planner_support::validate_policy(&policy)
-        .expect("recursive search capability must not infer a setup-first objective");
 }
 
 #[test]
@@ -486,10 +431,9 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
     ];
     for key in adversarial {
         // Must return without panicking; either branch (Ok/Err) is fine.
-        let _ = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key));
+        let _ = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key));
     }
 }
-
 fn committed_descriptor<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> CommittedGroupProfile {
@@ -498,9 +442,9 @@ fn committed_descriptor<Cfg: CommitmentConfig>(
 
 #[test]
 fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order() {
-    type Cfg = fp128::D64OneHot;
+    type Cfg = fp128::OneHot;
     let onehot_16 = committed_descriptor::<Cfg>(PolynomialGroupLayout::new(14, 1));
-    let dense = committed_descriptor::<fp128::D64Dense>(PolynomialGroupLayout::new(15, 2));
+    let dense = committed_descriptor::<fp128::Dense>(PolynomialGroupLayout::new(15, 2));
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(16, 1),
         precommitteds: vec![onehot_16, dense],

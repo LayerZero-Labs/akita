@@ -5,13 +5,13 @@
 //!
 //! Two polynomial representations are covered:
 //!
-//! * **One-hot** — `fp128::D64OneHot` (D = 64, K = 256).
-//! * **Dense**   — `fp128::D128Dense`   (D = 128, arbitrary field coefficients).
+//! * **One-hot** — adaptive `fp128::OneHot` (K = 256).
+//! * **Dense**   — adaptive `fp128::Dense` (arbitrary field coefficients).
 //!
 //! Variable counts:
 //!
 //! - one-hot: 12, 15, 20
-//! - dense: 13, 15, 18
+//! - dense: 14, 16, 24
 
 #![allow(missing_docs)]
 
@@ -34,7 +34,8 @@ fn run_single_onehot(nv: usize) {
             &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let total_field = layout.num_live_blocks * layout.num_positions_per_block * ONEHOT_D;
+        let root_d = layout.d_a();
+        let total_field = layout.num_live_blocks * layout.num_positions_per_block * root_d;
         assert_eq!(total_field, 1usize << nv);
         let total_chunks = total_field / ONEHOT_K;
 
@@ -42,10 +43,15 @@ fn run_single_onehot(nv: usize) {
         let indices: Vec<Option<u8>> = (0..total_chunks)
             .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
             .collect();
-        let poly = OneHotPoly::<F, u8>::new(ONEHOT_K, ONEHOT_D, indices).expect("onehot poly");
+        let poly = OneHotPoly::<F, u8>::new(ONEHOT_K, root_d, indices).expect("onehot poly");
 
         let pt = random_point(nv, 0xcafe_0000 + nv as u64);
-        let expected_opening = opening_from_poly::<ONEHOT_D, _>(&poly, &pt, &layout);
+        let expected_opening = match root_d {
+            64 => opening_from_poly::<64, _>(&poly, &pt, &layout),
+            128 => opening_from_poly::<128, _>(&poly, &pt, &layout),
+            256 => opening_from_poly::<256, _>(&poly, &pt, &layout),
+            _ => panic!("unsupported adaptive one-hot root dimension D{root_d}"),
+        };
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -111,11 +117,10 @@ fn run_single_onehot(nv: usize) {
 }
 
 // ---------------------------------------------------------------------------
-// Dense helpers (D = 128)
+// Dense helpers (D = 64)
 // ---------------------------------------------------------------------------
 
-type DenseCfg = fp128::D128Dense;
-const DENSE_D: usize = DenseCfg::D;
+type DenseCfg = fp128::Dense;
 
 fn run_single_dense(nv: usize) {
     init_rayon_pool();
@@ -124,12 +129,13 @@ fn run_single_dense(nv: usize) {
             &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
+        let root_d = layout.d_a();
 
         let evals = dense_field_evals(nv, 0xface_feed_0000 + nv as u64);
-        let poly = DensePoly::<F>::from_field_evals(nv, DENSE_D, &evals).expect("dense poly");
+        let poly = DensePoly::<F>::from_field_evals(nv, root_d, &evals).expect("dense poly");
 
         let pt = random_point(nv, 0xbabe_0000 + nv as u64);
-        let expected_opening = opening_from_poly::<DENSE_D, _>(&poly, &pt, &layout);
+        let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, 1).unwrap();
         let commit_prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -254,18 +260,18 @@ fn single_onehot_nv20() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn single_dense_nv13() {
-    run_single_dense(13);
+fn single_dense_nv14() {
+    run_single_dense(14);
 }
 
 #[test]
-fn single_dense_nv15() {
-    run_single_dense(15);
+fn single_dense_nv16() {
+    run_single_dense(16);
 }
 
 #[test]
-fn single_dense_nv18() {
-    run_single_dense(18);
+fn single_dense_nv24() {
+    run_single_dense(24);
 }
 
 // #[test]
@@ -285,7 +291,8 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let total_field = layout.num_live_blocks * layout.num_positions_per_block * ONEHOT_D;
+        let root_d = layout.d_a();
+        let total_field = layout.num_live_blocks * layout.num_positions_per_block * root_d;
         assert_eq!(total_field, 1usize << poly_nv);
         let total_chunks = total_field / ONEHOT_K;
 
@@ -293,10 +300,15 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let indices: Vec<Option<u8>> = (0..total_chunks)
             .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
             .collect();
-        let poly = OneHotPoly::<F, u8>::new(ONEHOT_K, ONEHOT_D, indices).expect("onehot poly");
+        let poly = OneHotPoly::<F, u8>::new(ONEHOT_K, root_d, indices).expect("onehot poly");
 
         let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
-        let expected_opening = opening_from_poly::<ONEHOT_D, _>(&poly, &pt, &layout);
+        let expected_opening = match root_d {
+            64 => opening_from_poly::<64, _>(&poly, &pt, &layout),
+            128 => opening_from_poly::<128, _>(&poly, &pt, &layout),
+            256 => opening_from_poly::<256, _>(&poly, &pt, &layout),
+            _ => panic!("unsupported adaptive one-hot root dimension D{root_d}"),
+        };
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(setup_nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();

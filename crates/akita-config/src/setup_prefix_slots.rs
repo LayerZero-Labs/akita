@@ -149,14 +149,14 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
     Ok(keys)
 }
 
-#[cfg(all(test, feature = "schedules-fp128-d64-onehot-recursive"))]
+#[cfg(all(test, feature = "schedules-fp128-onehot-recursive"))]
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
     use crate::{CommitmentConfig, RecursiveCommitmentConfig};
     use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
-    type SetupCfg = RecursiveCommitmentConfig<fp128::D64OneHot>;
+    type SetupCfg = RecursiveCommitmentConfig<fp128::OneHot>;
 
     fn profiling_recursive_key() -> AkitaScheduleLookupKey {
         let pre = PolynomialGroupLayout::new(16, 1);
@@ -258,10 +258,14 @@ mod tests {
         .expect("slot ids");
         assert!(!ids.is_empty());
         for slot_id in &ids {
-            assert_eq!(slot_id.d_setup(), 64);
             assert!(slot_id.natural_len > 0);
             assert!(slot_id.n_prefix().expect("n_prefix") >= slot_id.natural_len);
         }
+        let dimensions = ids
+            .iter()
+            .map(SetupPrefixSlotId::d_setup)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(dimensions, BTreeSet::from([64, 256]));
         let unique: BTreeSet<_> = ids.iter().cloned().collect();
         assert_eq!(unique.len(), ids.len());
     }

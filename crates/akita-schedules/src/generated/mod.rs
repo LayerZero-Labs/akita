@@ -153,9 +153,8 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub witness_chunk: akita_types::ChunkedWitnessCfg,
     pub recursive_setup_planning: bool,
 
-    /// Complete ordered A/B/D domain used to generate this catalog, including
-    /// candidates that did not win an emitted row.
-    pub ring_dimension_candidates: &'static [akita_types::CommitmentRingDims],
+    /// Complete uniform or adaptive dimension policy used to generate this catalog.
+    pub ring_dimension_schedule_mode: crate::RingDimensionScheduleMode,
     pub ring_dimensions: &'static [usize],
     pub ring_challenge_config_digest: u64,
     pub key_count: usize,
@@ -174,7 +173,7 @@ pub mod validate;
 pub(crate) mod walk;
 pub use crate::{
     ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, PlannerCostModelId,
-    SelectionPolicyId, SisSecurityPolicyId,
+    RingDimensionScheduleMode, SelectionPolicyId, SisSecurityPolicyId,
 };
 pub use akita_types::{
     CommitmentPayloadMode, CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
@@ -453,54 +452,38 @@ pub(crate) fn validate_certified_bases(
 }
 
 // @generated schedule module wiring begin
-#[cfg(feature = "fp128-d128-dense")]
-pub mod fp128_d128_dense;
-#[cfg(feature = "fp128-d128-dense")]
-pub mod fp128_d128_dense_precommitted;
-#[cfg(feature = "fp128-d128-onehot")]
-pub mod fp128_d128_onehot;
-#[cfg(feature = "fp128-d128-onehot")]
-pub mod fp128_d128_onehot_precommitted;
-#[cfg(feature = "fp128-d256-onehot")]
-pub mod fp128_d256_onehot;
-#[cfg(feature = "fp128-d256-onehot")]
-pub mod fp128_d256_onehot_precommitted;
-#[cfg(feature = "fp128-d64-dense")]
-pub mod fp128_d64_dense;
-#[cfg(feature = "fp128-d64-dense-multi-chunk")]
-pub mod fp128_d64_dense_multi_chunk;
-#[cfg(feature = "fp128-d64-dense-multi-chunk")]
-pub mod fp128_d64_dense_multi_chunk_precommitted;
-#[cfg(feature = "fp128-d64-dense")]
-pub mod fp128_d64_dense_precommitted;
-#[cfg(feature = "fp128-d64-onehot")]
-pub mod fp128_d64_onehot;
-#[cfg(feature = "fp128-d64-onehot-multi-chunk")]
-pub mod fp128_d64_onehot_multi_chunk;
-#[cfg(feature = "fp128-d64-onehot-multi-chunk")]
-pub mod fp128_d64_onehot_multi_chunk_precommitted;
-#[cfg(feature = "fp128-d64-onehot-multi-chunk-w2r2")]
-pub mod fp128_d64_onehot_multi_chunk_w2r2;
-#[cfg(feature = "fp128-d64-onehot-multi-chunk-w2r2")]
-pub mod fp128_d64_onehot_multi_chunk_w2r2_precommitted;
-#[cfg(feature = "fp128-d64-onehot-multi-chunk-w4r2")]
-pub mod fp128_d64_onehot_multi_chunk_w4r2;
-#[cfg(feature = "fp128-d64-onehot-multi-chunk-w4r2")]
-pub mod fp128_d64_onehot_multi_chunk_w4r2_precommitted;
-#[cfg(feature = "fp128-d64-onehot")]
-pub mod fp128_d64_onehot_precommitted;
-#[cfg(feature = "fp128-d64-onehot-recursive")]
-pub mod fp128_d64_onehot_recursive;
-#[cfg(feature = "fp128-d64-onehot-recursive-multi-chunk-w8r2")]
-pub mod fp128_d64_onehot_recursive_multi_chunk_w8r2;
-#[cfg(feature = "fp128-d64-onehot-recursive-multi-chunk-w8r2")]
-pub mod fp128_d64_onehot_recursive_multi_chunk_w8r2_precommitted;
-#[cfg(feature = "fp128-d64-onehot-recursive")]
-pub mod fp128_d64_onehot_recursive_precommitted;
-#[cfg(feature = "fp128-mixed-dim-onehot")]
-pub mod fp128_mixed_dim_onehot;
-#[cfg(feature = "fp128-mixed-dim-onehot")]
-pub mod fp128_mixed_dim_onehot_precommitted;
+#[cfg(feature = "fp128-dense")]
+pub mod fp128_dense;
+#[cfg(feature = "fp128-dense-multi-chunk")]
+pub mod fp128_dense_multi_chunk;
+#[cfg(feature = "fp128-dense-multi-chunk")]
+pub mod fp128_dense_multi_chunk_precommitted;
+#[cfg(feature = "fp128-dense")]
+pub mod fp128_dense_precommitted;
+#[cfg(feature = "fp128-onehot")]
+pub mod fp128_onehot;
+#[cfg(feature = "fp128-onehot-multi-chunk")]
+pub mod fp128_onehot_multi_chunk;
+#[cfg(feature = "fp128-onehot-multi-chunk")]
+pub mod fp128_onehot_multi_chunk_precommitted;
+#[cfg(feature = "fp128-onehot-multi-chunk-w2r2")]
+pub mod fp128_onehot_multi_chunk_w2r2;
+#[cfg(feature = "fp128-onehot-multi-chunk-w2r2")]
+pub mod fp128_onehot_multi_chunk_w2r2_precommitted;
+#[cfg(feature = "fp128-onehot-multi-chunk-w4r2")]
+pub mod fp128_onehot_multi_chunk_w4r2;
+#[cfg(feature = "fp128-onehot-multi-chunk-w4r2")]
+pub mod fp128_onehot_multi_chunk_w4r2_precommitted;
+#[cfg(feature = "fp128-onehot")]
+pub mod fp128_onehot_precommitted;
+#[cfg(feature = "fp128-onehot-recursive")]
+pub mod fp128_onehot_recursive;
+#[cfg(feature = "fp128-onehot-recursive-multi-chunk-w8r2")]
+pub mod fp128_onehot_recursive_multi_chunk_w8r2;
+#[cfg(feature = "fp128-onehot-recursive-multi-chunk-w8r2")]
+pub mod fp128_onehot_recursive_multi_chunk_w8r2_precommitted;
+#[cfg(feature = "fp128-onehot-recursive")]
+pub mod fp128_onehot_recursive_precommitted;
 #[cfg(feature = "fp32-d128-dense")]
 pub mod fp32_d128_dense;
 #[cfg(feature = "fp32-d128-dense")]
@@ -526,116 +509,77 @@ pub mod fp64_d256_onehot;
 #[cfg(feature = "fp64-d256-onehot")]
 pub mod fp64_d256_onehot_precommitted;
 
-#[cfg(feature = "fp128-d128-dense")]
-pub fn fp128_d128_dense_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp128-dense")]
+pub fn fp128_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp128_d128_dense::FP128_D128_DENSE_SCHEDULES,
+        entries: fp128_dense::FP128_DENSE_SCHEDULES,
         precommitted_profiles:
-            fp128_d128_dense_precommitted::FP128_D128_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d128_dense::CATALOG_IDENTITY,
+            fp128_dense_precommitted::FP128_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp128_dense::CATALOG_IDENTITY,
     }
 }
 
-#[cfg(feature = "fp128-d128-onehot")]
-pub fn fp128_d128_onehot_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp128-dense-multi-chunk")]
+pub fn fp128_dense_multi_chunk_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp128_d128_onehot::FP128_D128_ONEHOT_SCHEDULES,
+        entries: fp128_dense_multi_chunk::FP128_DENSE_MULTI_CHUNK_SCHEDULES,
+        precommitted_profiles: fp128_dense_multi_chunk_precommitted::FP128_DENSE_MULTI_CHUNK_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp128_dense_multi_chunk::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-onehot")]
+pub fn fp128_onehot_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_onehot::FP128_ONEHOT_SCHEDULES,
         precommitted_profiles:
-            fp128_d128_onehot_precommitted::FP128_D128_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d128_onehot::CATALOG_IDENTITY,
+            fp128_onehot_precommitted::FP128_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp128_onehot::CATALOG_IDENTITY,
     }
 }
 
-#[cfg(feature = "fp128-d256-onehot")]
-pub fn fp128_d256_onehot_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp128-onehot-multi-chunk")]
+pub fn fp128_onehot_multi_chunk_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp128_d256_onehot::FP128_D256_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp128_d256_onehot_precommitted::FP128_D256_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d256_onehot::CATALOG_IDENTITY,
+        entries: fp128_onehot_multi_chunk::FP128_ONEHOT_MULTI_CHUNK_SCHEDULES,
+        precommitted_profiles: fp128_onehot_multi_chunk_precommitted::FP128_ONEHOT_MULTI_CHUNK_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp128_onehot_multi_chunk::CATALOG_IDENTITY,
     }
 }
 
-#[cfg(feature = "fp128-d64-dense")]
-pub fn fp128_d64_dense_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp128-onehot-multi-chunk-w2r2")]
+pub fn fp128_onehot_multi_chunk_w2r2_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp128_d64_dense::FP128_D64_DENSE_SCHEDULES,
-        precommitted_profiles:
-            fp128_d64_dense_precommitted::FP128_D64_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_dense::CATALOG_IDENTITY,
+        entries: fp128_onehot_multi_chunk_w2r2::FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES,
+        precommitted_profiles: fp128_onehot_multi_chunk_w2r2_precommitted::FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp128_onehot_multi_chunk_w2r2::CATALOG_IDENTITY,
     }
 }
 
-#[cfg(feature = "fp128-d64-dense-multi-chunk")]
-pub fn fp128_d64_dense_multi_chunk_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp128-onehot-multi-chunk-w4r2")]
+pub fn fp128_onehot_multi_chunk_w4r2_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp128_d64_dense_multi_chunk::FP128_D64_DENSE_MULTI_CHUNK_SCHEDULES,
-        precommitted_profiles: fp128_d64_dense_multi_chunk_precommitted::FP128_D64_DENSE_MULTI_CHUNK_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_dense_multi_chunk::CATALOG_IDENTITY,
+        entries: fp128_onehot_multi_chunk_w4r2::FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES,
+        precommitted_profiles: fp128_onehot_multi_chunk_w4r2_precommitted::FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp128_onehot_multi_chunk_w4r2::CATALOG_IDENTITY,
     }
 }
 
-#[cfg(feature = "fp128-d64-onehot")]
-pub fn fp128_d64_onehot_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp128-onehot-recursive")]
+pub fn fp128_onehot_recursive_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp128_d64_onehot::FP128_D64_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp128_d64_onehot_precommitted::FP128_D64_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_onehot::CATALOG_IDENTITY,
+        entries: fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES,
+        precommitted_profiles: fp128_onehot_recursive_precommitted::FP128_ONEHOT_RECURSIVE_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp128_onehot_recursive::CATALOG_IDENTITY,
     }
 }
 
-#[cfg(feature = "fp128-d64-onehot-multi-chunk")]
-pub fn fp128_d64_onehot_multi_chunk_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp128-onehot-recursive-multi-chunk-w8r2")]
+pub fn fp128_onehot_recursive_multi_chunk_w8r2_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp128_d64_onehot_multi_chunk::FP128_D64_ONEHOT_MULTI_CHUNK_SCHEDULES,
-        precommitted_profiles: fp128_d64_onehot_multi_chunk_precommitted::FP128_D64_ONEHOT_MULTI_CHUNK_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_onehot_multi_chunk::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d64-onehot-multi-chunk-w2r2")]
-pub fn fp128_d64_onehot_multi_chunk_w2r2_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_onehot_multi_chunk_w2r2::FP128_D64_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES,
-        precommitted_profiles: fp128_d64_onehot_multi_chunk_w2r2_precommitted::FP128_D64_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_onehot_multi_chunk_w2r2::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d64-onehot-multi-chunk-w4r2")]
-pub fn fp128_d64_onehot_multi_chunk_w4r2_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_onehot_multi_chunk_w4r2::FP128_D64_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES,
-        precommitted_profiles: fp128_d64_onehot_multi_chunk_w4r2_precommitted::FP128_D64_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_onehot_multi_chunk_w4r2::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d64-onehot-recursive")]
-pub fn fp128_d64_onehot_recursive_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_onehot_recursive::FP128_D64_ONEHOT_RECURSIVE_SCHEDULES,
-        precommitted_profiles: fp128_d64_onehot_recursive_precommitted::FP128_D64_ONEHOT_RECURSIVE_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_onehot_recursive::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d64-onehot-recursive-multi-chunk-w8r2")]
-pub fn fp128_d64_onehot_recursive_multi_chunk_w8r2_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_onehot_recursive_multi_chunk_w8r2::FP128_D64_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES,
-        precommitted_profiles: fp128_d64_onehot_recursive_multi_chunk_w8r2_precommitted::FP128_D64_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_onehot_recursive_multi_chunk_w8r2::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-mixed-dim-onehot")]
-pub fn fp128_mixed_dim_onehot_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_mixed_dim_onehot::FP128_MIXED_DIM_ONEHOT_SCHEDULES,
-        precommitted_profiles: fp128_mixed_dim_onehot_precommitted::FP128_MIXED_DIM_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_mixed_dim_onehot::CATALOG_IDENTITY,
+        entries: fp128_onehot_recursive_multi_chunk_w8r2::FP128_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES,
+        precommitted_profiles: fp128_onehot_recursive_multi_chunk_w8r2_precommitted::FP128_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp128_onehot_recursive_multi_chunk_w8r2::CATALOG_IDENTITY,
     }
 }
 

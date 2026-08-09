@@ -7,7 +7,7 @@
 //! proof-byte totals.
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
     extension_opening_reduction_level_bytes, level_proof_bytes, terminal_response_bytes,
     AkitaScheduleLookupKey, PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams,
@@ -17,8 +17,8 @@ use akita_types::{
 use crate::generated::{validate_entry_key, GeneratedFoldScheduleEntry};
 use crate::group_batch::multi_group_root_precommitted_groups_for_open_basis;
 use crate::runtime::{
-    materialize_candidate_schedule, stage3_payload_bytes_for_successor, CandidateFoldStep,
-    CandidateTerminalResponse,
+    materialize_candidate_schedule, planned_next_witness_len, stage3_payload_bytes_for_successor,
+    CandidateFoldStep, CandidateTerminalResponse,
 };
 use crate::PlannerPolicy;
 
@@ -50,6 +50,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 policy,
                 ring_challenge_config,
                 entry.root.open_commit_matrix.log_basis,
+                entry.root.open_commit_matrix.ring_dimension as usize,
             )?;
         validate_expanded_precommitted_groups(key, &precommitted_groups)?;
         entry
@@ -93,8 +94,21 @@ pub(crate) fn walk_generated_schedule_entry(
     );
     root_params.witness_chunk =
         partition_to_chunk(entry.root.witness_partition, distributed_levels)?;
-    let root_output_len =
-        root_params.output_witness_len_for_field_bits(field_bits, &key.opening_layout()?)?;
+    let root_output_len = if is_multi_group {
+        root_params.output_witness_len::<Prime128OffsetA7F7>(&key.opening_layout()?)?
+    } else {
+        planned_next_witness_len(
+            field_bits,
+            &root_params,
+            key.final_group.num_polynomials(),
+            root_params.witness_chunk.num_chunks,
+        )?
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "generated root uses unsupported compression-source geometry".to_string(),
+            )
+        })?
+    };
 
     let mut expanded = vec![(root_params, expected_root_w_len, root_output_len)];
     let mut input_witness_len = root_output_len;
@@ -112,10 +126,13 @@ pub(crate) fn walk_generated_schedule_entry(
             fold.incoming_setup_prefix,
         )?;
         params.witness_chunk = partition_to_chunk(fold.witness_partition, distributed_levels)?;
-        let output_witness_len = params.output_witness_len_for_field_bits(
-            field_bits,
-            &params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, 1))?,
-        )?;
+        let output_witness_len =
+            planned_next_witness_len(field_bits, &params, 1, params.witness_chunk.num_chunks)?
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(format!(
+                "generated recursive fold {index} uses unsupported compression-source geometry"
+            ))
+                })?;
         expanded.push((params, input_witness_len, output_witness_len));
         input_witness_len = output_witness_len;
     }
@@ -198,7 +215,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 AkitaError::InvalidSetup("generated proof byte total overflow".to_string())
             })?;
         folds.push(CandidateFoldStep {
-            params: lp.clone(),
+            params: std::sync::Arc::new(lp.clone()),
             input_witness_len: *input_witness_len,
             output_witness_len: *output_witness_len,
             estimated_direct_payload_bytes: direct_level_bytes,

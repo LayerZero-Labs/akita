@@ -40,7 +40,7 @@ fn grouped_level_params() -> CommittedGroupParams {
 #[test]
 fn scalar_next_witness_len_rejects_multi_group_root_level_params() {
     let grouped = grouped_level_params();
-    let err = scalar_next_witness_len_if_supported(128, &grouped, 1)
+    let err = planned_next_witness_len(128, &grouped, 1, 1)
         .expect_err("multi-group root suffix sizing must use output_witness_len");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }
@@ -62,10 +62,10 @@ fn recursive_candidate_order_preserves_exhaustive_tie_break() {
 #[test]
 fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
     use akita_config::{
-        policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
 
-    type Recursive = RecursiveCommitmentConfig<D64OneHot>;
+    type Recursive = RecursiveCommitmentConfig<OneHot>;
     let policy = policy_of::<Recursive>();
     let challenge = Recursive::ring_challenge_config(64).expect("challenge config");
     let mut cache = SetupPrefixSearchCache::default();
@@ -77,6 +77,7 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
             3,
             1usize << log_prefix,
             1,
+            64,
             64,
         )
         .expect("setup-prefix frontier");

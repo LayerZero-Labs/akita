@@ -529,11 +529,9 @@ mod tests {
 
     #[test]
     fn explicit_scalar_sweep_replaces_default_catalog_work() {
-        let family = family_by_name("fp128_d64_onehot").expect("known family");
+        let family = family_by_name("fp128_onehot").expect("known family");
         let explicit_rows = ExplicitRows {
-            final_group: Some(
-                parse_explicit_group("fp128_d64_onehot:14:1").expect("explicit group"),
-            ),
+            final_group: Some(parse_explicit_group("fp128_onehot:14:1").expect("explicit group")),
             precommitted_groups: Vec::new(),
         };
 
@@ -554,9 +552,7 @@ mod tests {
     #[test]
     fn explicit_sweeps_reject_the_checked_in_generated_tree() {
         let explicit_rows = ExplicitRows {
-            final_group: Some(
-                parse_explicit_group("fp128_d64_onehot:14:1").expect("explicit group"),
-            ),
+            final_group: Some(parse_explicit_group("fp128_onehot:14:1").expect("explicit group")),
             precommitted_groups: Vec::new(),
         };
         let checked_in_generated_dir =

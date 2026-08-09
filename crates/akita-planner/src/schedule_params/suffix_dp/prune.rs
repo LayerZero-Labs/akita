@@ -5,10 +5,10 @@ use crate::schedule_params::level_setup_field_elements;
 
 pub(super) fn level_candidates(
     opening_layout: &OpeningClaimsLayout,
-    candidates: Vec<(CommittedGroupParams, usize)>,
-) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
-    let mut frontier: Vec<([usize; 5], CommittedGroupParams, usize)> = Vec::new();
-    for (params, next_witness_len) in candidates {
+    candidates: Vec<(CommittedGroupParams, usize, usize)>,
+) -> Result<Vec<(CommittedGroupParams, usize, usize)>, AkitaError> {
+    let mut frontier: Vec<([usize; 5], CommittedGroupParams, usize, usize)> = Vec::new();
+    for (params, next_witness_len, eor_bytes) in candidates {
         let outer_payload_coeffs = params.outer_payload_geometry()?.transmitted_coefficients();
         let coords = [
             akita_types::padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?),
@@ -28,8 +28,9 @@ pub(super) fn level_candidates(
         let descriptor = params.canonical_descriptor_bytes();
         if frontier
             .iter()
-            .any(|(best, best_params, best_next_witness_len)| {
+            .any(|(best, best_params, best_next_witness_len, _)| {
                 best_params.payload_mode == params.payload_mode
+                    && best_params.role_dims() == params.role_dims()
                     && *best_next_witness_len == next_witness_len
                     && best.iter().zip(coords).all(|(lhs, rhs)| *lhs <= rhs)
                     && (best != &coords || best_params.canonical_descriptor_bytes() <= descriptor)
@@ -37,16 +38,17 @@ pub(super) fn level_candidates(
         {
             continue;
         }
-        frontier.retain(|(other, other_params, other_next_witness_len)| {
+        frontier.retain(|(other, other_params, other_next_witness_len, _)| {
             other_params.payload_mode != params.payload_mode
+                || other_params.role_dims() != params.role_dims()
                 || *other_next_witness_len != next_witness_len
                 || !coords.iter().zip(*other).all(|(lhs, rhs)| *lhs <= rhs)
                 || (other == &coords && other_params.canonical_descriptor_bytes() < descriptor)
         });
-        frontier.push((coords, params, next_witness_len));
+        frontier.push((coords, params, next_witness_len, eor_bytes));
     }
     Ok(frontier
         .into_iter()
-        .map(|(_, params, next_witness_len)| (params, next_witness_len))
+        .map(|(_, params, next_witness_len, eor_bytes)| (params, next_witness_len, eor_bytes))
         .collect())
 }

@@ -37,14 +37,14 @@ pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 // Bare presets: test-only non-singleton batched opening shapes
 // fall through to the offline DP planner on table miss via the default
 // `runtime_schedule` fallback.
-pub(super) type OneHotCfg = fp128::D64OneHot;
+pub(super) type OneHotCfg = fp128::OneHot;
 pub(super) const ONEHOT_D: usize = OneHotCfg::D;
-// `fp128::D64OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
+// `fp128::OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
 // ring elements), so the committed poly has `2^nv / K` chunks, not one chunk
 // per ring element.
 pub(super) const ONEHOT_K: usize = 256;
 
-pub(super) type DenseCfg = fp128::D64Dense;
+pub(super) type DenseCfg = fp128::Dense;
 pub(super) const DENSE_D: usize = DenseCfg::D;
 
 static INIT_RAYON: Once = Once::new();
@@ -289,6 +289,30 @@ where
     CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, F, D>,
 {
     opening_from_poly_with_basis::<D, P>(poly, point, layout, BasisMode::Lagrange)
+}
+
+pub(super) fn opening_from_poly_for_layout<'a, P>(
+    poly: &'a P,
+    point: &[F],
+    layout: &CommittedGroupParams,
+) -> F
+where
+    P: RootOpeningSource<F, 64>
+        + RootPolyShape<F, 64>
+        + RootOpeningSource<F, 128>
+        + RootPolyShape<F, 128>
+        + RootOpeningSource<F, 256>
+        + RootPolyShape<F, 256>,
+    CpuBackend: OpeningFoldKernel<<P as RootOpeningSource<F, 64>>::OpeningView<'a>, F, 64>
+        + OpeningFoldKernel<<P as RootOpeningSource<F, 128>>::OpeningView<'a>, F, 128>
+        + OpeningFoldKernel<<P as RootOpeningSource<F, 256>>::OpeningView<'a>, F, 256>,
+{
+    match layout.d_a() {
+        64 => opening_from_poly::<64, _>(poly, point, layout),
+        128 => opening_from_poly::<128, _>(poly, point, layout),
+        256 => opening_from_poly::<256, _>(poly, point, layout),
+        dimension => panic!("unsupported test opening ring dimension D={dimension}"),
+    }
 }
 
 pub(super) fn opening_from_poly_with_basis<'a, const D: usize, P>(

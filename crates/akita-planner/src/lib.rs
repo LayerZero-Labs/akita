@@ -2,8 +2,8 @@
 //!
 //! This crate is a **pure, `Cfg`-free DP library**. The DP entry point
 //! is [`find_schedule`], which runs an exhaustive dynamic program to
-//! minimize proof size for a schedule lookup key. Every per-preset input is
-//! carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
+//! optimize a schedule lookup key under its catalog-bound selection policy.
+//! Every per-preset input is carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
 //! ring-challenge closure, so the planner names no `CommitmentConfig`
 //! types and depends only on `akita-schedules` / `akita-types` /
 //! `akita-challenges` / `akita-field`.
@@ -17,7 +17,8 @@
 
 pub use akita_schedules::{
     ChunkedWitnessCfg, DecompositionParams, InnerBasisSource, PlannerCostModelId, PlannerPolicy,
-    SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
+    RingDimensionScheduleMode, SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId,
+    DEFAULT_SIS_SECURITY_POLICY,
 };
 
 pub mod emit;
@@ -33,9 +34,9 @@ pub use akita_schedules::{
     validate_catalog_identity, validate_generated_schedule_entry,
     validate_generated_schedule_table, GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
 };
-pub use emit::{publish_generated_outputs, render_generated_outputs, EmitSpec};
+pub use emit::{publish_generated_outputs, render_generated_outputs, EmitSpec, GeneratedOutput};
 pub use planner::find_schedule;
 pub use schedule_params::{
-    plan_standalone_precommit, suffix_opening_layout, RingDimensionSearchDomain,
+    derive_standalone_precommit_profile, plan_standalone_precommit, suffix_opening_layout,
     StandalonePrecommitCandidate, StandalonePrecommitPlan, StandalonePrecommitSelectionPolicy,
 };

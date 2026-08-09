@@ -9,11 +9,12 @@ struct SetupPrefixSearchKey {
     log_basis_open: u32,
     n_prefix: usize,
     num_chunks: usize,
+    inner_ring_dimension: usize,
     outer_ring_dimension: usize,
 }
 
 #[derive(Default)]
-pub(in crate::schedule_params) struct SetupPrefixSearchCache {
+pub(crate) struct SetupPrefixSearchCache {
     entries: HashMap<SetupPrefixSearchKey, Arc<[PrecommittedLevelParams]>>,
 }
 
@@ -29,28 +30,6 @@ fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<
     Ok(padded.trailing_zeros() as usize)
 }
 
-pub(crate) fn scalar_next_witness_len_if_supported(
-    field_bits: u32,
-    params: &CommittedGroupParams,
-    final_num_polys: usize,
-) -> Result<Option<usize>, AkitaError> {
-    if !params.precommitted_groups.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "multi-group root witness sizing must use CommittedGroupParams::output_witness_len"
-                .to_string(),
-        ));
-    }
-    if !params.compression_sources_supported()? {
-        return Ok(None);
-    }
-    let opening_batch =
-        params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
-    Ok(Some(params.output_witness_len_for_field_bits(
-        field_bits,
-        &opening_batch,
-    )?))
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     cache: &mut SetupPrefixSearchCache,
@@ -59,6 +38,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     log_basis_open: u32,
     n_prefix: usize,
     num_chunks: usize,
+    inner_ring_dimension: usize,
     outer_ring_dimension: usize,
 ) -> Result<Vec<PrecommittedLevelParams>, AkitaError> {
     let cache_key = SetupPrefixSearchKey {
@@ -66,6 +46,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         log_basis_open,
         n_prefix,
         num_chunks,
+        inner_ring_dimension,
         outer_ring_dimension,
     };
     if let Some(cached) = cache.entries.get(&cache_key) {
@@ -73,9 +54,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     }
     if outer_ring_dimension == 0
         || !outer_ring_dimension.is_power_of_two()
-        || !policy
-            .setup_prefix_inner_ring_dimension
-            .is_multiple_of(outer_ring_dimension)
+        || !inner_ring_dimension.is_multiple_of(outer_ring_dimension)
     {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix B dimension must be a power-of-two divisor of its A dimension"
@@ -87,16 +66,16 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
             "setup prefix length must be a nonzero power of two".to_string(),
         ));
     }
-    if !n_prefix.is_multiple_of(policy.setup_prefix_inner_ring_dimension) {
+    if !n_prefix.is_multiple_of(inner_ring_dimension) {
         return Err(AkitaError::InvalidSetup(
             "setup prefix length must be a multiple of the ring dimension".to_string(),
         ));
     }
-    let ring_slots = n_prefix / policy.setup_prefix_inner_ring_dimension;
+    let ring_slots = n_prefix / inner_ring_dimension;
     let reduced_vars = checked_power_of_two_vars(ring_slots, "setup prefix ring slots")?;
     let prefix_num_vars = checked_power_of_two_vars(n_prefix, "setup prefix field length")?;
     let family = policy.sis_modulus_profile;
-    let d = policy.setup_prefix_inner_ring_dimension;
+    let d = inner_ring_dimension;
     let open_decomp = DecompositionParams {
         log_basis: log_basis_open,
         ..policy.decomposition
@@ -172,7 +151,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                 sis_key_at_dimension(
                     policy,
                     akita_types::SisMatrixRole::Inner,
-                    policy.setup_prefix_inner_ring_dimension,
+                    inner_ring_dimension,
                     norm_s,
                 ),
                 width_s,

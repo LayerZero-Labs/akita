@@ -633,48 +633,15 @@ fn multi_group_root_opens_multi_polynomial_precommitted_group() {
 }
 
 #[test]
-fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
-    const PRE_NV: usize = 14;
-    const FINAL_NV: usize = 24;
-    type ProtocolCfg =
-        crate::test_support::EnvelopeFinalGroupConfig<fp128::D128OneHot, fp128::D64OneHot>;
-
-    let pre_group = akita_types::PolynomialGroupLayout::new(PRE_NV, 1);
-    let pre_profile = akita_config::committed_group_profile::<ProtocolCfg>(&pre_group)
-        .expect("precommit profile");
-    let test_pre_profile = akita_config::committed_group_profile::<fp128::D128OneHot>(&pre_group)
-        .expect("test precommit profile");
-    assert_eq!(
-        pre_profile.outer_commit_matrix.output_rank(),
-        test_pre_profile.outer_commit_matrix.output_rank(),
-        "protocol and standalone precommit policies must freeze the same B rank"
-    );
-    let key = akita_types::AkitaScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, 2),
-        precommitteds: vec![pre_profile],
-    };
-    let opening_layout = key.opening_layout().unwrap();
-    let schedule = ProtocolCfg::runtime_schedule(key).expect("descending-A schedule");
-    let root = multi_group_root_params(&schedule);
-    assert_eq!(root.d_a(), 64);
-    assert_eq!(root.group_role_dims(&opening_layout, 0).unwrap().d_a(), 128);
-
-    multi_group_root_round_trip_onehot::<fp128::D128OneHot, ProtocolCfg>(
-        PRE_NV,
-        FINAL_NV,
-        &[1],
-        2,
-        true,
-    );
-}
-
-#[test]
 #[cfg(feature = "profile-ci")]
 fn multi_group_multi_chunk_fold_round_trips() {
-    multi_group_root_round_trip_onehot::<
-        fp128::D64OneHotMultiChunkW2R2,
-        fp128::D64OneHotMultiChunkW2R2,
-    >(14, 14, &[1], 1, false);
+    multi_group_root_round_trip_onehot::<fp128::OneHotMultiChunkW2R2, fp128::OneHotMultiChunkW2R2>(
+        14,
+        14,
+        &[1],
+        1,
+        false,
+    );
 }
 
 #[test]

@@ -1,7 +1,7 @@
 //! End-to-end coverage for the mixed distributed (multi-chunk) + recursive
 //! setup-offload profile.
 //!
-//! This test uses `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>` (the
+//! This test uses `RecursiveCommitmentConfig<fp128::OneHotMultiChunk>` (the
 //! production `W8R2` preset, `fp128_d64_onehot_recursive_multi_chunk_w8r2`
 //! family): two precommitted singleton groups at `nv=16` and a two-polynomial
 //! final group at `nv=32`. That schedule combines the `W8R2` chunked witness
@@ -30,7 +30,7 @@ use common::*;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 
-type W8R2Cfg = RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>;
+type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
 fn w8r2_profiling_key() -> AkitaScheduleLookupKey {
     let pre_group = PolynomialGroupLayout::new(16, 1);
     let precommitted =
@@ -86,7 +86,7 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
 /// the test pins every distinguishing fact. This catches `W4R2` vs `W8R2`, a
 /// level-0/level-1 mode swap, only one mixed leading fold, and a missing/extra
 /// setup-prefix handoff — none of which a bare "any chunked recursive fold" check
-/// would detect. `D64OneHot` (single-chunk) also fails this on levels 0/1.
+/// would detect. `OneHot` (single-chunk) also fails this on levels 0/1.
 fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
     assert!(
         schedule.recursive_folds.len() >= 2,
@@ -157,7 +157,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
 #[test]
 #[ignore = "production-sized profile E2E; run explicitly with --release"]
 fn mix_multi_chunk_recursive_profile_proves_and_verifies() {
-    recursive_multi_group_round_trip::<fp128::D64OneHotMultiChunk>(
+    recursive_multi_group_round_trip::<fp128::OneHotMultiChunk>(
         TRANSCRIPT_DOMAIN,
         assert_w8r2_profile_shape,
     );

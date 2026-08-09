@@ -1,8 +1,91 @@
-use super::{
-    offloaded_witness_contracts, SuffixResult, SuffixSearchCache, SuffixState,
-    MAX_SUFFIX_SEARCH_CACHE_ENTRIES,
-};
-use std::{collections::BTreeMap, sync::Arc};
+use super::{dominates_mixed_score, offloaded_witness_contracts};
+use crate::schedule_params::MixedScore;
+
+#[test]
+fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
+    let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::OneHot>();
+    let crate::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels, ..
+    } = policy.ring_dimension_schedule_mode
+    else {
+        panic!("test preset must be adaptive");
+    };
+    let state = |level, dimension_ceiling| super::SuffixState {
+        level,
+        current_witness_len: 1024,
+        current_lb: 3,
+        incoming_setup_prefix: None,
+        dimension_ceiling,
+        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+    };
+    let d64 = akita_types::CommitmentRingDims::uniform(64);
+    let d256 = akita_types::CommitmentRingDims::uniform(256);
+
+    assert_ne!(
+        state(num_search_levels - 1, d64).memo_key(&policy),
+        state(num_search_levels - 1, d256).memo_key(&policy),
+        "dimension ceilings remain semantically active during adaptive search"
+    );
+    assert_eq!(
+        state(num_search_levels, d64).memo_key(&policy),
+        state(num_search_levels, d256).memo_key(&policy),
+        "uniform suffix states must not retain dead dimension history"
+    );
+
+    policy.ring_dimension_schedule_mode =
+        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
+    assert_ne!(
+        state(num_search_levels, d64).memo_key(&policy),
+        state(num_search_levels, d256).memo_key(&policy),
+        "uniform-mode keys retain the explicit caller ceiling"
+    );
+}
+
+#[test]
+fn mixed_frontier_keeps_lower_payload_child_until_parent_masks_setup() {
+    let lower_setup = MixedScore {
+        setup_field_elements: 10,
+        proof_bytes: 20,
+    };
+    let lower_payload = MixedScore {
+        setup_field_elements: 15,
+        proof_bytes: 10,
+    };
+    assert!(!dominates_mixed_score(lower_setup, lower_payload));
+    assert!(!dominates_mixed_score(lower_payload, lower_setup));
+
+    let parent_setup = 20;
+    let lower_setup_complete = MixedScore {
+        setup_field_elements: parent_setup.max(lower_setup.setup_field_elements),
+        proof_bytes: lower_setup.proof_bytes,
+    };
+    let lower_payload_complete = MixedScore {
+        setup_field_elements: parent_setup.max(lower_payload.setup_field_elements),
+        proof_bytes: lower_payload.proof_bytes,
+    };
+    assert!(lower_payload_complete < lower_setup_complete);
+}
+
+#[test]
+fn mixed_frontier_keeps_equal_payload_alternatives_for_descriptor_ties() {
+    let lower_setup = MixedScore {
+        setup_field_elements: 10,
+        proof_bytes: 20,
+    };
+    let higher_setup = MixedScore {
+        setup_field_elements: 15,
+        proof_bytes: 20,
+    };
+
+    assert!(!dominates_mixed_score(lower_setup, higher_setup));
+    assert!(!dominates_mixed_score(higher_setup, lower_setup));
+
+    let parent_setup = 20;
+    assert_eq!(
+        parent_setup.max(lower_setup.setup_field_elements),
+        parent_setup.max(higher_setup.setup_field_elements)
+    );
+}
 
 #[test]
 fn offloaded_contraction_accepts_exact_threefold_boundary() {
@@ -21,61 +104,4 @@ fn offloaded_contraction_prices_changed_digit_basis() {
 fn offloaded_contraction_includes_full_field_setup_prefix() {
     assert!(offloaded_witness_contracts(100, 2, 100, 128, 1000, 4, 3).unwrap());
     assert!(!offloaded_witness_contracts(100, 2, 90, 128, 1000, 4, 3).unwrap());
-}
-
-#[test]
-fn suffix_cache_evicts_without_conflating_exact_states() {
-    let result = Arc::new(SuffixResult {
-        best_by_first_direct_setup_per_lb: BTreeMap::new(),
-        best_by_payload_per_lb: BTreeMap::new(),
-    });
-    let mut memo = SuffixSearchCache::new();
-    for witness_len in 0..=MAX_SUFFIX_SEARCH_CACHE_ENTRIES {
-        memo.insert(
-            SuffixState {
-                level: 1,
-                current_witness_len: witness_len,
-                current_lb: 3,
-                incoming_setup_prefix: None,
-                payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-            },
-            &result,
-        );
-    }
-
-    assert_eq!(memo.entries.len(), MAX_SUFFIX_SEARCH_CACHE_ENTRIES);
-    assert!(memo
-        .get(&SuffixState {
-            level: 1,
-            current_witness_len: 0,
-            current_lb: 3,
-            incoming_setup_prefix: None,
-            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-        })
-        .is_none());
-    assert!(memo
-        .get(&SuffixState {
-            level: 1,
-            current_witness_len: MAX_SUFFIX_SEARCH_CACHE_ENTRIES,
-            current_lb: 3,
-            incoming_setup_prefix: None,
-            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-        })
-        .is_some());
-
-    let exact_none = SuffixState {
-        level: 2,
-        current_witness_len: 7,
-        current_lb: 4,
-        incoming_setup_prefix: None,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-    };
-    let exact_zero = SuffixState {
-        incoming_setup_prefix: Some(0),
-        ..exact_none
-    };
-    memo.insert(exact_none, &result);
-    memo.insert(exact_zero, &result);
-    assert!(memo.get(&exact_none).is_some());
-    assert!(memo.get(&exact_zero).is_some());
 }

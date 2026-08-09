@@ -201,21 +201,17 @@ conversion boundary.
 ## Chunk partition
 
 Every group is partitioned into the same positive `W` chunk indices. For group
-`g`, chunk `c` owns the exact block interval
+`g`, define
 
 \[
-[S_{g,c},S_{g,c}+F_{g,c}),
+S_{g,c}=\left\lfloor\frac{cF_g}{W}\right\rfloor,
+\qquad
+F_{g,c}=S_{g,c+1}-S_{g,c}.
 \]
 
-where
-
-\[
-F_{g,c}=\lfloor F_g/W\rfloor+[c < F_g\bmod W]
-\]
-
-and `S_{g,c}` is the checked prefix sum of earlier chunk lengths. Each interval
-**MUST** be nonempty, intervals **MUST** be adjacent, and their union **MUST**
-be `[0,F_g)`.
+Chunk `c` owns `[S_{g,c},S_{g,c+1})`. The intervals **MUST** be adjacent, and
+their union **MUST** be `[0,F_g)`. When `W > F_g`, repeated boundaries produce
+empty intervals. The layout still retains all `W` chunk indices.
 
 `ChunkedWitnessCfg` chooses `W`; it is not resolved address geometry.
 `WitnessLayout` owns the resolved block intervals and coefficient ranges.
@@ -260,8 +256,7 @@ L_T(g,c) &= H_gF_{g,c}n_{A,g}q_{B,g}\delta_{B,g}b_g
 \end{aligned}
 \]
 
-Starting from `cursor = 0`, each physical unit receives adjacent nonempty
-ranges:
+Starting from `cursor = 0`, each physical unit receives adjacent ranges:
 
 ```text
 z_range = cursor .. cursor + L_Z(g)
@@ -271,7 +266,8 @@ cursor  = t_range.end
 ```
 
 Every chunk contains a complete copy of group `g`'s Z segment. E and T contain
-only the source blocks owned by that chunk.
+only the source blocks owned by that chunk. An empty chunk therefore has an
+empty E range and an empty T range, but its Z range remains nonempty.
 
 ### Z order
 

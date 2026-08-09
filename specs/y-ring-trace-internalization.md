@@ -312,7 +312,7 @@ target.
 - [ ] Non-ZK and ZK e2e suites are green: `cargo nextest run --profile ci-non-zk` and `--profile ci-all-features`.
 - [ ] `cargo test -p akita-pcs --features logging-transcript --test transcript_hardening` green (event-stream equality after the `y_ring` absorb removal and `trace_coeff = γ²` derivation from post-witness `CHALLENGE_SUMCHECK_BATCH`).
 - [ ] A negative test: tampering the committed `e_hat` digits so that `sum_j b_j · e_folded_j` projects to the wrong subfield value is rejected (replaces the role of the current `y_ring` trace-mismatch rejection paths, e.g. `crates/akita-pcs/src/scheme/tests/batched.rs:419-421`).
-- [ ] Profile shows the expected per-level shrink: `AKITA_MODE=onehot_fp128_d128 AKITA_NUM_VARS=32 cargo run --release --example profile` reports `y_ring_bytes = 0` at every level and total proof size reduced by the predicted amount.
+- [ ] Profile shows the expected per-level shrink: `AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 cargo run --release --example profile` reports `y_ring_bytes = 0` at every level and total proof size reduced by the predicted amount.
 
 ### Testing Strategy
 

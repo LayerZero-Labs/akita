@@ -379,7 +379,7 @@ mod tests {
     #[test]
     #[cfg(feature = "schedules-default")]
     fn generated_schedule_excludes_prior_root_commitment() {
-        let schedule = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
+        let schedule = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(32),
         ))
         .expect("generated schedule");

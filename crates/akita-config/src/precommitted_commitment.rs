@@ -25,8 +25,8 @@ mod tests {
     #[test]
     fn same_layout_can_resolve_config_specific_profiles() {
         let key = PolynomialGroupLayout::new(16, 1);
-        let dense = committed_group_profile::<fp128::D64Dense>(&key).expect("dense profile");
-        let one_hot = committed_group_profile::<fp128::D64OneHot>(&key).expect("one-hot profile");
+        let dense = committed_group_profile::<fp128::Dense>(&key).expect("dense profile");
+        let one_hot = committed_group_profile::<fp128::OneHot>(&key).expect("one-hot profile");
         assert_ne!(
             dense, one_hot,
             "commitment config must affect standalone commitment parameters"
@@ -34,11 +34,11 @@ mod tests {
     }
 
     #[test]
-    fn dense_precommit_profile_uses_dense_config() {
+    fn dense_precommit_profile_uses_independent_basis() {
         let key = PolynomialGroupLayout::new(15, 2);
-        let profile = committed_group_profile::<fp128::D64Dense>(&key).expect("dense profile");
-        assert_eq!(profile.log_basis_inner, 8);
-        assert_eq!(profile.log_basis_outer, 3);
-        assert_eq!(profile.num_digits_inner, 16);
+        let profile = committed_group_profile::<fp128::Dense>(&key).expect("dense profile");
+        assert_eq!(profile.inner_commit_matrix.ring_dimension(), 64);
+        assert_eq!(profile.outer_commit_matrix.ring_dimension(), 64);
+        assert!(profile.log_basis_inner > profile.log_basis_outer);
     }
 }

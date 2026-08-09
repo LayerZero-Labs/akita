@@ -14,6 +14,10 @@ use crate::{
     RelationRowFamily, COMPRESSION_MAP_COUNT,
 };
 
+mod chunk_partition;
+
+pub use chunk_partition::dyadic_block_ranges;
+
 /// One physical `[z_hat | e_hat | t_hat]` group-and-chunk unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WitnessUnitLayout {
@@ -425,8 +429,7 @@ impl WitnessLayout {
                         "witness group has malformed dimensions".into(),
                     ));
                 }
-                let chunk_block_ranges =
-                    Self::resolve_chunk_block_ranges(params.num_live_blocks(), num_chunks)?;
+                let chunk_block_ranges = dyadic_block_ranges(params.num_live_blocks(), num_chunks)?;
                 Ok((
                     group_index,
                     params,
@@ -703,40 +706,6 @@ impl WitnessLayout {
             r_range: r_start..aligned_witness_end,
             quotient_depth,
         })
-    }
-
-    /// Resolve the exact contiguous block ranges owned by each chunk.
-    pub fn resolve_chunk_block_ranges(
-        num_live_blocks: usize,
-        num_chunks: usize,
-    ) -> Result<Vec<Range<usize>>, AkitaError> {
-        if num_chunks == 0 || num_chunks > MAX_WITNESS_CHUNKS || num_live_blocks == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "witness chunk geometry is malformed".into(),
-            ));
-        }
-        if num_chunks > num_live_blocks {
-            return Err(AkitaError::InvalidSetup(
-                "witness chunks exceed the live blocks".into(),
-            ));
-        }
-
-        let base_blocks = num_live_blocks / num_chunks;
-        let extra_blocks = num_live_blocks % num_chunks;
-        let mut ranges = Vec::with_capacity(num_chunks);
-        let mut start = 0usize;
-        for chunk_index in 0..num_chunks {
-            let count = base_blocks + usize::from(chunk_index < extra_blocks);
-            let range = checked_range(start, count, "witness chunk range overflow")?;
-            start = range.end;
-            ranges.push(range);
-        }
-        if start != num_live_blocks {
-            return Err(AkitaError::InvalidSetup(
-                "witness chunks do not cover the live blocks".into(),
-            ));
-        }
-        Ok(ranges)
     }
 
     pub fn units(&self) -> &[WitnessUnitLayout] {
@@ -1304,17 +1273,17 @@ mod tests {
             lp.num_digits_inner, lp.num_digits_outer,
             "fixture must distinguish witness and commitment depths"
         );
-        assert_eq!(unit.global_block_range(), 4..7);
+        assert_eq!(unit.global_block_range(), 3..7);
         let dims = lp.role_dims();
         assert_eq!(
             unit.e_coefficient_index(dims.d_a(), dims.d_d(), 2, 2, 1, 6, 0, 1, 0)
                 .expect("e"),
-            unit.e_range().start + 11 * dims.d_a()
+            unit.e_range().start + 15 * dims.d_a()
         );
         assert_eq!(
             unit.t_coefficient_index(dims.d_a(), dims.d_b(), 2, 1, 2, 0, 5, 0, 0, 1, 0,)
                 .expect("t"),
-            unit.t_range().start + 3 * dims.d_a()
+            unit.t_range().start + 5 * dims.d_a()
         );
         assert_eq!(
             unit.z_coefficient_index(dims.d_a(), 4, 1, depth_fold, 1, 0, 0, 0)
@@ -1335,8 +1304,8 @@ mod tests {
         let first = units.next().expect("first unit");
         let second = units.next().expect("second unit");
         assert!(units.next().is_none());
-        assert_eq!(first.global_block_range(), 0..4);
-        assert_eq!(second.global_block_range(), 4..7);
+        assert_eq!(first.global_block_range(), 0..3);
+        assert_eq!(second.global_block_range(), 3..7);
         assert_eq!(first.t_range().end, second.z_range().start);
         let support = layout.negative_binary_support_intervals();
         assert_eq!(support.len(), COMPRESSION_MAP_COUNT);
@@ -1373,16 +1342,6 @@ mod tests {
             assert_eq!(h_quotient.range().start, f_quotient.range().end);
         }
         assert_eq!(layout.group_num_live_blocks(0).expect("fold count"), 7);
-    }
-
-    #[test]
-    fn balanced_chunks_distribute_residual_to_earliest_chunks() {
-        let (mut lp, _, _) = test_layout(1);
-        lp.num_live_blocks = 13;
-        lp.num_live_ring_elements_per_claim = 13 * lp.num_positions_per_block;
-        let ranges =
-            WitnessLayout::resolve_chunk_block_ranges(lp.num_live_blocks, 4).expect("chunk ranges");
-        assert_eq!(ranges, vec![0..4, 4..7, 7..10, 10..13]);
     }
 
     #[test]

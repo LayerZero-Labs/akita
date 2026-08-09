@@ -21,14 +21,14 @@ MODE_FEATURE = {
     "dense_fp32_d128": "schedules-fp32-d128-dense",
     "onehot_fp64_d128": "schedules-fp64-d128-onehot",
     "dense_fp64_d128": "schedules-fp64-d128-dense",
-    "dense_fp128_d64": "schedules-fp128-d64-dense",
-    "onehot_fp128_d64": "schedules-fp128-d64-onehot",
-    "onehot_fp128_mixed_dim": "schedules-fp128-mixed-dim-onehot",
-    "onehot_fp128_d64_multi_group_recursive": "schedules-fp128-d64-onehot-recursive",
-    "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2": "schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2",
-    "onehot_fp128_d64_multi_chunk_w8r2": "schedules-fp128-d64-onehot-multi-chunk",
-    "onehot_fp128_d64_multi_chunk_w2r2": "schedules-fp128-d64-onehot-multi-chunk-w2r2",
-    "onehot_fp128_d64_multi_chunk_w4r2": "schedules-fp128-d64-onehot-multi-chunk-w4r2",
+    "dense_fp128": "schedules-fp128-dense",
+    "onehot_fp128": "schedules-fp128-onehot",
+    "onehot_fp128_multi_group": "schedules-fp128-onehot",
+    "onehot_fp128_multi_group_recursive": "schedules-fp128-onehot-recursive",
+    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": "schedules-fp128-onehot-recursive-multi-chunk-w8r2",
+    "onehot_fp128_multi_chunk_w8r2": "schedules-fp128-onehot-multi-chunk",
+    "onehot_fp128_multi_chunk_w2r2": "schedules-fp128-onehot-multi-chunk-w2r2",
+    "onehot_fp128_multi_chunk_w4r2": "schedules-fp128-onehot-multi-chunk-w4r2",
 }
 MODE_NUM_POLYS = {mode: {1, 4} for mode in MODE_FEATURE}
 
