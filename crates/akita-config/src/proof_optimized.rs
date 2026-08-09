@@ -35,22 +35,6 @@ pub const STANDARD_ONEHOT_CHUNK_SIZE: usize = 256;
 
 const FP128_ONEHOT_L2_CAPS: &[akita_schedules::SelectiveL2FoldCap] = &[
     akita_schedules::SelectiveL2FoldCap {
-        fold_level: 3,
-        input_witness_len: 948_672,
-        physical_response_len: 65_536,
-        fold_basis: 16,
-        fold_digit_count: 3,
-        response_l2_sq_cap: 1 << 29,
-    },
-    akita_schedules::SelectiveL2FoldCap {
-        fold_level: 4,
-        input_witness_len: 419_328,
-        physical_response_len: 65_536,
-        fold_basis: 64,
-        fold_digit_count: 2,
-        response_l2_sq_cap: 1 << 29,
-    },
-    akita_schedules::SelectiveL2FoldCap {
         fold_level: 5,
         input_witness_len: 223_040,
         physical_response_len: 32_768,

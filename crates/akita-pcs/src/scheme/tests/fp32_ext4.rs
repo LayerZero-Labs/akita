@@ -257,6 +257,57 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
     let poly = onehot_poly_for_num_vars(NUM_VARS, 3);
     let point = extension_point(NUM_VARS);
     let opening = onehot_opening_at_point(&poly, &point);
+
+    // Prove the same polynomial opening through the ordinary L-infinity
+    // schedule before exercising the synthetic L2 schedule below.
+    {
+        const LINF_LABEL: &[u8] = b"test/fp32-ext4-same-witness-linf";
+        let setup = SmallScheme::setup_prover(NUM_VARS, 1).expect("Linf prover setup");
+        let prepared = CpuBackend
+            .prepare_setup(&setup)
+            .expect("prepared Linf setup");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("Linf prover stack");
+        let verifier_setup = SmallScheme::setup_verifier(&setup).expect("Linf verifier setup");
+        let (commitment, hint) = SmallScheme::commit(&setup, std::slice::from_ref(&poly), &stack)
+            .expect("Linf commitment");
+        let poly_refs = [&poly];
+        let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+            point.clone(),
+            vec![SmallE::zero()],
+            commitment.clone(),
+        )
+        .expect("Linf prover group")])
+        .expect("Linf prover claims");
+        let mut prover_transcript = AkitaTranscript::<SmallF>::new(LINF_LABEL);
+        let proof = SmallScheme::batched_prove(
+            &setup,
+            selected_prover_data::<SmallCfg, _>(prover_claims, vec![hint], vec![&poly_refs])
+                .expect("Linf prover data"),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("same-witness Linf proof");
+        assert!(proof
+            .recursive_folds
+            .iter()
+            .all(|fold| fold.stage1.norm_proof.is_none()));
+        let mut verifier_transcript = AkitaTranscript::<SmallF>::new(LINF_LABEL);
+        SmallScheme::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            small_verifier_statement(&point, &[opening], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect("verify same-witness Linf proof");
+    }
+
     let setup = L2Scheme::setup_prover(NUM_VARS, 1).expect("L2 prover setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared L2 setup");
     let stack =

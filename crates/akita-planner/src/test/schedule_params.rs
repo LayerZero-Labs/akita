@@ -235,6 +235,146 @@ fn adaptive_dimension_search_is_canonical() {
     );
 }
 
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn complete_suffix_selects_l2_only_when_it_wins_globally() {
+    use akita_config::{
+        policy_of,
+        proof_optimized::{fp128, fp32},
+        CommitmentConfig,
+    };
+    use akita_schedules::planner_support::RingDimensionCandidate;
+    use akita_types::InnerCommitSecurityRoute;
+
+    let fp128_domain = RingDimensionSearchDomain::uniform(64).unwrap();
+    let mut fp128_policy = policy_of::<fp128::OneHot>();
+    fp128_policy.uniform_ring_dimension = 64;
+    fp128_policy = policy_for_domain(fp128_policy, &fp128_domain);
+
+    let selected = find_schedule(
+        PolynomialGroupLayout::singleton(32),
+        &fp128_policy,
+        fp128::OneHot::root_honest_fold_policy(),
+        &fp128_domain,
+        fp128::OneHot::ring_challenge_config,
+    )
+    .expect("fp128 selective L2 schedule");
+    assert!(selected.schedule.recursive_folds.iter().any(|step| {
+        matches!(
+            step.params.witness.inner_commit_matrix.security_route(),
+            InnerCommitSecurityRoute::L2 { .. }
+        )
+    }));
+
+    // An exact synthetic cap can make the smaller successor terminal one fold
+    // earlier. This pins the suffix effect rather than only the local A rank.
+    let mut fold_reducing_policy = fp128_policy;
+    let fold_reducing_caps = fp128_policy
+        .selective_l2_fold_caps
+        .iter()
+        .copied()
+        .map(|mut cap| {
+            cap.response_l2_sq_cap = 2;
+            cap
+        })
+        .collect::<Vec<_>>();
+    fold_reducing_policy.selective_l2_fold_caps = Box::leak(fold_reducing_caps.into_boxed_slice());
+    let mut linf_policy = fp128_policy;
+    linf_policy.selective_l2_fold_caps = &[];
+    let linf = find_schedule(
+        PolynomialGroupLayout::singleton(31),
+        &linf_policy,
+        fp128::OneHot::root_honest_fold_policy(),
+        &fp128_domain,
+        fp128::OneHot::ring_challenge_config,
+    )
+    .expect("Linf comparison schedule");
+    let fold_reducing = find_schedule(
+        PolynomialGroupLayout::singleton(31),
+        &fold_reducing_policy,
+        fp128::OneHot::root_honest_fold_policy(),
+        &fp128_domain,
+        fp128::OneHot::ring_challenge_config,
+    )
+    .expect("fold-reducing L2 schedule");
+    assert_eq!(
+        fold_reducing.schedule.recursive_folds.len() + 1,
+        linf.schedule.recursive_folds.len()
+    );
+    assert!(fold_reducing.schedule.recursive_folds.iter().any(|step| {
+        matches!(
+            step.params.witness.inner_commit_matrix.security_route(),
+            InnerCommitSecurityRoute::L2 { .. }
+        )
+    }));
+
+    // The exact fp32 cap offers a smaller local A matrix, but the norm-proof
+    // cost makes its complete suffix lose to the ordinary L-infinity route.
+    let fp32_policy = policy_of::<fp32::D128OneHot>();
+    let fp32_challenge = fp32::D128OneHot::ring_challenge_config(128).unwrap();
+    let candidates = derive_candidate_level_params(
+        &fp32_policy,
+        akita_types::CommitmentPayloadMode::Compressed,
+        &fp32_challenge,
+        RingDimensionCandidate::Fixed(CommitmentRingDims::uniform(128)),
+        386_560,
+        4,
+        3,
+        None,
+    )
+    .expect("fp32 measured candidates");
+    let linf_rank = candidates
+        .iter()
+        .find_map(|(params, _)| {
+            matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::Linf(_)
+            )
+            .then(|| params.inner_commit_matrix.output_rank())
+        })
+        .expect("fp32 L-infinity candidate");
+    let l2_rank = candidates
+        .iter()
+        .find_map(|(params, _)| {
+            matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::L2 { .. }
+            )
+            .then(|| params.inner_commit_matrix.output_rank())
+        })
+        .expect("fp32 L2 candidate");
+    assert!(l2_rank < linf_rank);
+
+    let fp32_domain = RingDimensionSearchDomain::uniform(128).unwrap();
+    let fp32_schedule = find_schedule(
+        PolynomialGroupLayout::singleton(28),
+        &fp32_policy,
+        fp32::D128OneHot::root_honest_fold_policy(),
+        &fp32_domain,
+        fp32::D128OneHot::ring_challenge_config,
+    )
+    .expect("fp32 measured schedule");
+    assert!(matches!(
+        fp32_schedule
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .inner_commit_matrix
+            .security_route(),
+        InnerCommitSecurityRoute::Linf(_)
+    ));
+    assert!(fp32_schedule
+        .schedule
+        .recursive_folds
+        .iter()
+        .all(|step| matches!(
+            step.params.witness.inner_commit_matrix.security_route(),
+            InnerCommitSecurityRoute::Linf(_)
+        )));
+}
+
 #[test]
 fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};

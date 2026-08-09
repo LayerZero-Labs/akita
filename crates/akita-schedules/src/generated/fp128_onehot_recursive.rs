@@ -47,7 +47,7 @@ pub(crate) static CATALOG_POTENTIAL_D_DIMENSIONS: &[usize] = &[64, 128];
 #[rustfmt::skip]
 pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64, 256];
 #[rustfmt::skip]
-pub(crate) static CATALOG_SELECTIVE_L2_FOLD_CAPS: &[SelectiveL2FoldCap] = &[SelectiveL2FoldCap { fold_level: 3, input_witness_len: 948672, physical_response_len: 65536, fold_basis: 16, fold_digit_count: 3, response_l2_sq_cap: 536870912 }, SelectiveL2FoldCap { fold_level: 4, input_witness_len: 419328, physical_response_len: 65536, fold_basis: 64, fold_digit_count: 2, response_l2_sq_cap: 536870912 }, SelectiveL2FoldCap { fold_level: 5, input_witness_len: 223040, physical_response_len: 32768, fold_basis: 64, fold_digit_count: 2, response_l2_sq_cap: 4294967296 }, SelectiveL2FoldCap { fold_level: 6, input_witness_len: 135936, physical_response_len: 16384, fold_basis: 64, fold_digit_count: 2, response_l2_sq_cap: 4294967296 }];
+pub(crate) static CATALOG_SELECTIVE_L2_FOLD_CAPS: &[SelectiveL2FoldCap] = &[SelectiveL2FoldCap { fold_level: 5, input_witness_len: 223040, physical_response_len: 32768, fold_basis: 64, fold_digit_count: 2, response_l2_sq_cap: 4294967296 }, SelectiveL2FoldCap { fold_level: 6, input_witness_len: 135936, physical_response_len: 16384, fold_basis: 64, fold_digit_count: 2, response_l2_sq_cap: 4294967296 }];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp128_onehot_recursive",
