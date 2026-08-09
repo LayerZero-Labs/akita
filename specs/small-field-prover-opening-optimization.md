@@ -265,7 +265,7 @@ still use constructors that sort or combine as needed.
 > sparse ring polynomial and moves it into the existing
 > `RootTensorProjectionPoly` result. There is no mutable derived cache on the
 > source polynomial. The full PR design record is
-> [archived](archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md).
+> [active](pr375-prover-streaming-and-onehot-unification.md).
 
 The field arithmetic change is intentionally small: `Fp2` multiplication uses
 the standard three-base-multiply Karatsuba formula in scalar and packed paths.

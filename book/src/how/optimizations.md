@@ -199,4 +199,4 @@ plan as public API.
 
 See [Compute Backends](../../../docs/compute-backends.md) for backend ownership
 and NTT lifecycle details. The full PR 375 design record is
-[`specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md`](../../../specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md).
+[`specs/pr375-prover-streaming-and-onehot-unification.md`](../../../specs/pr375-prover-streaming-and-onehot-unification.md).

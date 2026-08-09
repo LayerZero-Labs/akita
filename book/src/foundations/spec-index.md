@@ -8,6 +8,7 @@ line, status (`active` / `implemented` / `superseded` / `archived`), and the boo
 chapter it feeds. Keep this in sync with `specs/PRUNING.md` and the archive index.
 
 The active design frontier (keep as live specs):
+`pr375-prover-streaming-and-onehot-unification`,
 `flat-public-matrix-and-exact-ntt-cache`, `role-native-projected-digit-layout`,
 `setup-layout-repack`,
 `setup-offloading-planner`, `eor-streamed-prover`, `packed-sumcheck`,

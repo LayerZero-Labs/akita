@@ -4,7 +4,7 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-08-08 |
-| Status        | archived |
+| Status        | active |
 | PR            | https://github.com/LayerZero-Labs/akita/pull/375 |
 | Supersedes    | |
 | Superseded-by | |
@@ -30,6 +30,14 @@ polynomial owns no mutable derived storage. The remaining PR changes follow
 the same ownership rule. Derived memory belongs to the operation that builds
 it or to an explicit prepared setup owner.
 
+The first implementation reached that ownership model with fixed CPU resource
+limits. This reopened specification adds the remaining downstream integration
+work. The existing `CpuBackend` will own checked limits for ring switch NTT
+retention and one hot scratch memory. Its defaults will preserve the measured
+behavior. Applications may set resource limits without selecting private
+arithmetic strategies or changing protocol schedules. CPU NTT release and
+accounting will also cover every CPU NTT cache namespace.
+
 ## Intent
 
 ### Goal
@@ -53,6 +61,8 @@ do not need to share one implementation abstraction.
 | Wide accumulation | Repeated reduction and ring shift overhead | Field accumulator contract and ring primitives |
 | Ring relation and quotient work | Matrix sized transformed inputs and repeated validation | One validated plan with cached or streamed execution |
 | NTT state | Oversized or stale prepared transforms | Prepared setup owner with explicit release policy |
+| CPU resource policy | Fixed limits chosen for one host and workload | Existing `CpuBackend` with checked deployment limits |
+| CPU NTT cleanup | Generic release omits compression NTT state | One complete backend lifecycle operation |
 | Exact prefix and relation preparation | Sequential independent work | Existing table and relation functions with safe parallel ranges |
 | Fold witness output | Copies between equivalent owned containers | Existing output types with consuming constructors |
 | Verifier setup scan | Reading a padded prefix that is not used | Stage 3 required prefix calculation |
@@ -175,6 +185,27 @@ separate production and test scheduling paths. These are boundary sensitive
 loops. Shared validation and range planning must have one owner, and tests
 must invoke the production scheduler.
 
+#### CPU deployment limits are fixed inside the implementation
+
+The CPU backend uses a `2^21` ring element cutoff for cached ring switch work
+and an 8 MiB one hot scratch budget per worker. These defaults match the
+measured Akita and Jolt workloads. A downstream application cannot lower the
+limits for a memory constrained host or raise them for a host that benefits
+from more retained work.
+
+These are resource limits, not protocol parameters. They belong to the CPU
+backend value. The one hot sweep choice remains private because it describes
+the current arithmetic implementation rather than an application contract.
+
+#### Generic NTT release does not cover every CPU NTT cache
+
+`ComputeBackendSetup::release_built_ntt_slots` is the public lifecycle
+operation. The CPU implementation releases shared matrix NTT slots, but its
+separate compression NTT cache remains resident. A caller such as Jolt cannot
+use the generic operation to release all reconstructed CPU NTT state after a
+commitment phase. The release name, byte report, and resulting resident state
+must agree.
+
 ### Invariants
 
 #### Protocol invariants
@@ -243,12 +274,24 @@ must invoke the production scheduler.
 - The verifier scans only the setup prefix required by Stage 3.
 - The profile workload split does not change scenario behavior or public
   profile entry points.
+- `CpuBackend::default()` preserves the current ring switch retention cutoff
+  and one hot scratch budget.
+- The CPU backend applies its configured ring switch limit during runtime,
+  prewarming, and planned memory reporting through one decision function.
+- The configured one hot scratch budget changes only temporary tile size. It
+  does not let callers select a sweep or change commitment results.
+- Generic CPU NTT release removes both shared matrix and compression NTT
+  entries. It reports the complete number of bytes released.
+- CPU cache metrics expose the complete resident NTT total while preserving
+  the useful namespace breakdown.
+- CPU resource settings do not change schedules, transcripts, setup bytes,
+  proof bytes, or verifier behavior.
 
 ### Non Goals
 
 - This spec does not change the Akita protocol or planner policy.
 - This spec does not change transcript or serialization formats.
-- This spec does not add a public commitment strategy flag.
+- This spec does not add a protocol level commitment or retention flag.
 - This spec does not add a separate streaming trait.
 - This spec does not force dense, one hot, and sparse ring arithmetic into one
   generic kernel when their accumulator rules differ.
@@ -258,6 +301,10 @@ must invoke the production scheduler.
   support requires its own validation and security review.
 - This spec does not restore the planner payload slack changes that were
   removed from PR 375.
+- This spec does not expose the one hot merge or bucketed sweep choice.
+- This spec does not add a second CPU policy trait or a configuration wrapper.
+- This spec does not add a global cache budget optimizer or a new prewarm mode.
+  Those changes require evidence from another workload.
 
 ## Evaluation
 
@@ -426,6 +473,39 @@ acceptance test.
 - [x] The PR description reports the final architecture and current benchmark
       results rather than the superseded eager and lazy plan design.
 - [x] All repository documentation guardrails pass.
+
+#### Downstream CPU policy extension
+
+- [ ] `CpuBackend` is a configured value rather than a unit struct. It owns a
+      maximum cached ring switch extent and a one hot scratch budget per
+      worker.
+- [ ] `CpuBackend::default()` preserves the existing `2^21` ring element
+      cutoff and 8 MiB scratch budget.
+- [ ] Checked constructors or builder methods reject a zero scratch budget.
+      Tile sizing rejects a geometry whose minimum scratch exceeds the
+      configured budget before allocation.
+- [ ] A zero ring switch cache limit streams every ring switch operation that
+      has a streamed implementation. `usize::MAX` retains every supported ring
+      switch operation.
+- [ ] Runtime routing and `ntt_requirement_is_cached` call one method on the
+      configured backend. The threshold is not copied into a kernel.
+- [ ] One hot tile sizing reads the configured backend budget. Sweep selection
+      remains private and automatic.
+- [ ] Tracing records the effective ring switch limit and one hot scratch
+      budget so benchmark results identify the policy in use.
+- [ ] CPU release removes built shared matrix and compression NTT entries,
+      preserves active `Arc` readers, and returns the complete freed byte count.
+- [ ] Actual metrics report total CPU NTT bytes and the existing shared and
+      compression subtotals.
+- [ ] Default policy tests prove byte identical commitments and proofs. Limit
+      boundary tests prove cached and streamed ring switch parity. Scratch
+      budget tests prove identical one hot commitments across valid tile sizes.
+- [ ] The Jolt integration guidance preserves its release after stage zero and
+      selects `ReleaseRootNttAfterFold` when it ports from the original
+      optimized Akita head.
+- [ ] The Jolt compatibility workflow passes against the final Akita head. The
+      Jolt acceptance run records time and peak RSS after its dependency pin is
+      updated.
 
 ### Slice 7 Evidence
 
@@ -716,8 +796,9 @@ they are retained output and do not change with tile size. A geometry whose
 minimum one block scratch exceeds the budget returns `InvalidSetup` instead of
 silently violating the bound.
 
-The policy is private. Protocol APIs cannot request a sweep. Source types do
-not encode a sweep.
+CPU sweep selection is private. Protocol APIs cannot request a sweep. Source
+types do not encode a sweep. The CPU backend owns the separate scratch memory
+limit described below.
 
 A private enum is justified only if several strategies remain after the
 benchmark matrix. The enum then makes policy tests and tracing exact. It is not
@@ -737,6 +818,55 @@ it owns the lifecycle boundary.
 These policies are intentionally different. The owner and reuse window decide
 retention. The protocol does not clear data merely because it finished one
 phase.
+
+### Configurable CPU Resource Limits
+
+`CpuBackend` is the existing owner of CPU execution policy. It will carry two
+private limits and expose checked construction methods. No separate policy
+object is needed.
+
+```rust
+pub struct CpuBackend {
+    max_cached_ring_switch_elements: usize,
+    onehot_scratch_bytes_per_worker: usize,
+}
+```
+
+The default values are the current measured values:
+
+```text
+max cached ring switch elements = 2^21
+one hot scratch per worker       = 8 MiB
+```
+
+The ring switch limit controls whether an operation with a streamed CPU path
+retains its transformed matrix input. Commit, opening, and tensor operations
+keep their current cached path because they do not yet have streamed CPU
+implementations. The backend must use one decision method for runtime routing
+and the `ComputeBackendSetup` retention hook.
+
+The one hot limit controls the existing tile formula by replacing its fixed
+8 MiB numerator with the configured value. It does not change the private
+merge or bucketed selector. Applications can set a memory bound while the
+library remains free to improve its arithmetic kernels.
+
+The existing backend should carry these fields directly. Add another policy
+type only if a later design needs to pass the same policy independently of a
+backend value or if several new settings make construction unclear.
+
+### Complete CPU NTT Lifecycle
+
+The generic release operation means that the prepared backend owner releases
+all built NTT state that it can reconstruct. For `CpuPreparedSetup`, this
+includes the shared matrix cache and the compression cache. Active readers
+remain valid through their `Arc` values. A later request builds an exact entry
+again.
+
+The CPU prepared setup reports the shared matrix byte count, the compression
+byte count, and their checked sum. Planned requirement metrics continue to
+describe schedule derived shared matrix work. Documentation must state that
+compression cache growth is operation driven and is included in actual total
+resident bytes.
 
 ### Other PR 375 Work
 
@@ -866,11 +996,22 @@ The current production tree does not prepare these one hot caches. Operation
 local storage is simpler and gives the scheduler exact control over peak
 memory.
 
-#### Expose a public sweep or retention flag
+#### Expose a public sweep or protocol retention flag
 
 Sweep selection depends on CPU and workload costs. Retention depends on the
 owner and reuse window. Neither is a protocol choice. Public flags would make
 callers maintain backend policy.
+
+The selected design instead lets a configured CPU backend state its resource
+limits. The backend still owns the resulting cache and sweep decisions.
+
+#### Add a separate CPU policy struct or trait
+
+A policy struct would only be stored by `CpuBackend`, and a policy trait would
+duplicate `ComputeBackendSetup` as the execution decision boundary. Neither
+has a second owner in this PR. The existing backend will carry the two limits
+directly. A later change may extract a policy value if another real consumer
+needs to pass or store it independently.
 
 ## Documentation
 
@@ -907,6 +1048,10 @@ Completed checkpoints:
 - Slice 5: mutable one hot block and tensor caches removed. Opening derives
   only active ranges, tensor projection is operation local, clones own their
   indices, and validated views expose semantic read-only data.
+- Slice 6: relation and quotient execution use one validated plan. Exact
+  prefix, wide accumulation, and profile structure checks are complete.
+- Slice 7: full validation, benchmark evidence, durable documentation, and
+  independent review cleanup are complete for the fixed default policy.
 
 ### Slice 0: Freeze evidence and add route observability
 
@@ -1000,10 +1145,52 @@ history.
   validating test, deletion, documentation, or benchmark evidence.
 - Mark this spec `implemented` only when the desired end state is present.
 
+### Slice 8: Configure CPU resource limits
+
+- Change `CpuBackend` from a unit struct to the owner of the ring switch cache
+  limit and one hot scratch budget.
+- Preserve the current values through `Default`.
+- Add checked construction methods and public accessors for reporting.
+- Route runtime NTT selection and requirement retention through one backend
+  method.
+- Pass the configured scratch budget into the existing one hot tile formula.
+- Keep sweep selection private.
+- Add default, limit boundary, scratch boundary, and arithmetic parity tests.
+
+This slice changes no default behavior. Pause for review before changing cache
+release semantics.
+
+### Slice 9: Complete CPU NTT release and accounting
+
+- Add release support to the compression NTT cache.
+- Make the generic CPU release operation clear shared matrix and compression
+  entries once and return their checked byte total.
+- Add total resident NTT accounting while keeping the namespace subtotals.
+- Test active readers, repeated release, rebuild, and byte accounting in both
+  namespaces.
+
+Pause for review before downstream integration validation.
+
+### Slice 10: Validate downstream integration and finish documentation
+
+- Run every repository gate and the configured policy test matrix.
+- Run the Jolt compatibility workflow at the final Akita head.
+- Update the Jolt porting guidance so stage zero cleanup uses the generic
+  release operation and proving selects `ReleaseRootNttAfterFold`.
+- Coordinate the Jolt dependency update and rerun its documented acceptance
+  ladder. Record any result that cannot land in this repository as explicit
+  downstream evidence.
+- Refresh the book, backend documentation, PR description, and benchmark
+  policy report.
+- Mark this spec implemented and archive it only after all repository work is
+  complete and the durable content is folded into the book.
+
 ## References
 
 - [PR 375](https://github.com/LayerZero-Labs/akita/pull/375)
 - [PR 375 benchmark history](https://github.com/LayerZero-Labs/akita/pull/375#issuecomment-5222232182)
+- [Original Akita optimization PR 345](https://github.com/LayerZero-Labs/akita/pull/345)
+- [Jolt modular Akita prover PR 1732](https://github.com/a16z/jolt/pull/1732)
 - [SumChecker review](https://github.com/LayerZero-Labs/akita/pull/375#issuecomment-5227378132)
 - [`specs/akita-polyops-cutover.md`](akita-polyops-cutover.md)
 - [`specs/small-field-prover-opening-optimization.md`](small-field-prover-opening-optimization.md)
