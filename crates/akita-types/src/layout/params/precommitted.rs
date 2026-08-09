@@ -39,6 +39,13 @@ impl PartialEq for PrecommittedLevelParams {
 impl Eq for PrecommittedLevelParams {}
 
 impl PrecommittedLevelParams {
+    /// Worst-case L1 mass of this group's fold-round challenge.
+    #[inline]
+    #[must_use]
+    pub fn challenge_l1_mass(&self) -> usize {
+        self.fold_challenge_config.l1_norm()
+    }
+
     /// This group's A/B dimensions completed with the consuming level's shared
     /// D dimension.
     #[must_use]

@@ -428,7 +428,7 @@ impl PlannedGroupReport {
             num_digits_outer: layout.num_digits_outer,
             num_digits_open: params.num_digits_open,
             num_digits_fold: params.num_digits_fold,
-            challenge_l1_mass: params.fold_challenge_config.weight(),
+            challenge_l1_mass: params.challenge_l1_mass(),
             num_live_ring_elements_per_claim: layout.num_live_ring_elements_per_claim,
             num_live_blocks: layout.num_live_blocks,
             num_positions_per_block: layout.num_positions_per_block,
@@ -500,13 +500,17 @@ pub(crate) fn emit_runtime_schedule_summary(
 
     let root_current_w_groups = root_current_w_groups(schedule, root_num_claims);
     let root_open = &schedule.root.params.open_commit_matrix;
-    let mut precommitted_witness_field_elements = 0usize;
+    let precommitted_polys = schedule
+        .root
+        .params
+        .precommitted_groups
+        .iter()
+        .map(|group| group.descriptor.group.num_polynomials())
+        .sum::<usize>();
     for (index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
         let layout = group.descriptor.group;
         let witness_field_elements =
             group_field_elements(layout.num_vars(), layout.num_polynomials());
-        precommitted_witness_field_elements =
-            precommitted_witness_field_elements.saturating_add(witness_field_elements);
         PlannedGroupReport::precommitted(
             format!("pre{index}"),
             "precommitted",
@@ -522,10 +526,11 @@ pub(crate) fn emit_runtime_schedule_summary(
         "final".to_string(),
         "final",
         0,
-        schedule
-            .root
-            .input_witness_len
-            .saturating_sub(precommitted_witness_field_elements),
+        root_final_group_field_elements(
+            schedule.root.input_witness_len,
+            root_num_claims,
+            precommitted_polys,
+        ),
         &schedule.root.params.final_group.commitment,
     )
     .emit(label, 0);
@@ -649,6 +654,14 @@ fn group_field_elements(num_vars: usize, num_polynomials: usize) -> usize {
         .unwrap_or(0)
 }
 
+fn root_final_group_field_elements(
+    one_polynomial_field_elements: usize,
+    root_num_claims: usize,
+    precommitted_polys: usize,
+) -> usize {
+    one_polynomial_field_elements.saturating_mul(root_num_claims.saturating_sub(precommitted_polys))
+}
+
 fn root_current_w_groups(schedule: &FoldSchedule, root_num_claims: usize) -> String {
     let mut groups = schedule
         .root
@@ -671,12 +684,30 @@ fn root_current_w_groups(schedule: &FoldSchedule, root_num_claims: usize) -> Str
         .iter()
         .map(|group| group.descriptor.group.num_polynomials())
         .sum::<usize>();
-    let final_polys = root_num_claims.saturating_sub(precommitted_polys);
     groups.push(format!(
         "final={}",
-        schedule.root.input_witness_len.saturating_mul(final_polys)
+        root_final_group_field_elements(
+            schedule.root.input_witness_len,
+            root_num_claims,
+            precommitted_polys,
+        )
     ));
     groups.join(";")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::root_final_group_field_elements;
+
+    #[test]
+    fn root_final_group_count_scales_the_per_polynomial_schedule_length() {
+        let one_final_polynomial = 1usize << 32;
+
+        assert_eq!(
+            root_final_group_field_elements(one_final_polynomial, 4, 2),
+            2 * one_final_polynomial
+        );
+    }
 }
 
 fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
