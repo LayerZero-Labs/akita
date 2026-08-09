@@ -450,7 +450,8 @@ fn test_group_plan(
             t: t_eq_slice,
             z: z_eq_slice,
         }),
-        unit_partition: Vec::new().into(),
+        active_unit_ranges: Vec::new().into(),
+        num_physical_units: 0,
         d_tensors: Vec::new(),
         b_tensors: Vec::new(),
         a_tensors: Vec::new(),
@@ -1052,6 +1053,7 @@ fn single_group_plan_supports_multi_chunk_weights() {
         .unwrap();
     assert_eq!(got, expected);
 }
+
 #[test]
 fn packed_direct_matches_row_fallback_with_d_offset() {
     let plan = finalize_test_plan(

@@ -397,7 +397,10 @@ pub(crate) struct SetupContributionGroupPlan<E: FieldCore> {
     pub(crate) b_weights: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
     pub(crate) direct_scan_weights: Option<DirectScanWeights<E>>,
-    pub(crate) unit_partition: Arc<[SetupUnitRange]>,
+    /// Exact non-empty block ranges used by the partitioned E and T roles.
+    pub(crate) active_unit_ranges: Arc<[SetupUnitRange]>,
+    /// All physical units, including empty chunks that retain replicated Z.
+    pub(crate) num_physical_units: usize,
     pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) b_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,

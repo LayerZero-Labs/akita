@@ -218,22 +218,23 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 "structured role tensor families disagree".into(),
             ));
         }
-        let unit_count = group.unit_partition.len();
-        if unit_count == 0 {
+        let active_unit_count = group.active_unit_ranges.len();
+        if active_unit_count == 0 || group.num_physical_units == 0 {
             return Err(AkitaError::InvalidSetup(
                 "structured tensor partition is empty".into(),
             ));
         }
         let family_count = group
             .num_claims
-            .checked_mul(unit_count)
+            .checked_mul(active_unit_count)
             .ok_or(AkitaError::InvalidProof)?;
         if group.d_tensors.len() != family_count
             || group.b_tensors.len() != usize::from(group.n_b != 0) * family_count
-            || group.a_tensors.len() != usize::from(group.n_a != 0) * unit_count
+            || group.a_tensors.len() != usize::from(group.n_a != 0) * group.num_physical_units
         {
             return Err(AkitaError::InvalidSetup(
-                "structured tensor families disagree with the compiled unit partition".into(),
+                "structured tensor families disagree with compiled active and physical units"
+                    .into(),
             ));
         }
 
@@ -241,8 +242,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         // inside each unit. The evaluation fold itself is claim-major, so this
         // explicit conversion is the single ordering boundary between them.
         let fold_family = |acc: Result<E, AkitaError>, family_index: usize| {
-            let claim = family_index / unit_count;
-            let unit_index = family_index % unit_count;
+            let claim = family_index / active_unit_count;
+            let unit_index = family_index % active_unit_count;
             let tensor_index = unit_index
                 .checked_mul(group.num_claims)
                 .and_then(|index| index.checked_add(claim))
@@ -262,7 +263,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 )
             };
             let unit = group
-                .unit_partition
+                .active_unit_ranges
                 .get(unit_index)
                 .ok_or(AkitaError::InvalidProof)?;
             let global_block_start = unit.global_block_start;

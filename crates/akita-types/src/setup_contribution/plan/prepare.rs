@@ -127,8 +127,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let consistency_weight = *eq_tau1
                     .get(level_params.consistency_row_index(opening_batch, group.group_id)?)
                     .ok_or(AkitaError::InvalidProof)?;
-                let unit_partition = witness_layout
+                let num_physical_units = witness_layout.units_for_group(group.group_id)?.count();
+                let active_unit_ranges = witness_layout
                     .units_for_group(group.group_id)?
+                    .filter(|unit| unit.num_live_blocks() != 0)
                     .map(|unit| SetupUnitRange {
                         global_block_start: unit.global_block_start(),
                         num_live_blocks: unit.num_live_blocks(),
@@ -186,7 +188,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     b_weights,
                     fold_gadget,
                     direct_scan_weights: None,
-                    unit_partition,
+                    active_unit_ranges,
+                    num_physical_units,
                     d_tensors: Vec::new(),
                     b_tensors: Vec::new(),
                     a_tensors: Vec::new(),
