@@ -1,150 +1,82 @@
 use super::*;
 
-#[test]
-fn merge_sweep_matches_bucketed_core_across_polys() {
-    use super::super::column_sweep::{
-        column_sweep_core, column_sweep_core_merge, L2_TILE_BUDGET, MERGE_COL_CHUNK,
-    };
-    use akita_field::unreduced::HasCommitAccum;
-
-    type F = Prime128Offset275;
-    const D: usize = 64;
-
-    let mut rng = StdRng::seed_from_u64(0x05ee_d0a5);
-    let n_a = 3;
-    let num_positions_per_block = 96;
-    let num_digits_inner = 1;
-    let active_a_cols = num_positions_per_block * num_digits_inner;
-
-    let a_rows: Vec<CyclotomicRing<F, D>> = (0..n_a * active_a_cols)
-        .map(|_| CyclotomicRing::random(&mut rng))
-        .collect();
-    let a_flat = FlatMatrix::from_ring_slice(&a_rows);
-    let a_view = a_flat.ring_view::<D>(n_a, active_a_cols).unwrap();
-
-    // Three "polys" with varying block counts, sparse sorted entries, and
-    // some empty blocks — the shapes the fused sweep must round-trip.
-    let mut polys_buckets: Vec<Vec<Vec<SparseRingBlockEntry>>> = Vec::new();
-    for poly in 0..3usize {
-        let num_blocks = 40 + poly * 17;
-        let buckets = (0..num_blocks)
-            .map(|block| {
-                if (block + poly) % 7 == 0 {
-                    return Vec::new();
-                }
-                (0..num_positions_per_block)
-                    .filter(|pos| (pos + block + poly) % 3 != 0)
-                    .map(|pos| block_entry(pos, (pos * 11 + block) % D))
-                    .collect()
-            })
-            .collect::<Vec<_>>();
-        polys_buckets.push(buckets);
-    }
-    let polys_blocks: Vec<FlatBlocks<SparseRingBlockEntry>> = polys_buckets
-        .iter()
-        .map(|buckets| super::super::test_helpers::from_buckets(buckets.clone()))
-        .collect();
-    let polys_views: Vec<Vec<&[SparseRingBlockEntry]>> = polys_blocks
-        .iter()
-        .map(|blocks| {
-            (0..blocks.num_live_blocks())
-                .map(|i| blocks.block(i))
-                .collect()
-        })
-        .collect();
-
-    // Direct core-vs-core equality over the concatenated batch.
-    let flat: Vec<&[SparseRingBlockEntry]> = polys_views.iter().flatten().copied().collect();
-    let merge = column_sweep_core_merge::<F, D>(
-        &a_view,
-        &flat,
-        n_a,
-        active_a_cols,
-        num_digits_inner,
-        L2_TILE_BUDGET,
-        MERGE_COL_CHUNK,
-    );
-    let bucketed = column_sweep_core::<F, D>(&a_view, &flat, n_a, active_a_cols, num_digits_inner);
-    assert_eq!(merge, bucketed, "merge sweep must match the bucketed core");
-
-    // Tiny tiles force multi-tile merge paths and cursor resets.
-    let merge_tiny_tiles = column_sweep_core_merge::<F, D>(
-        &a_view,
-        &flat,
-        n_a,
-        active_a_cols,
-        num_digits_inner,
-        3 * D * std::mem::size_of::<<F as HasCommitAccum>::CommitAccum>(),
-        5,
-    );
-    assert_eq!(
-        merge_tiny_tiles, bucketed,
-        "merge sweep must be tile-size independent"
-    );
-}
-
-#[test]
-fn view_multi_sweep_matches_per_poly_sweep() {
-    use super::super::column_sweep::column_sweep_ajtai_onehot_multi;
+fn assert_retained_sweeps_match<const D: usize>(seed: u64) {
+    use super::super::column_sweep::{column_sweep_ajtai_onehot_multi_forced, OneHotSweep};
     use rand::Rng;
 
     type F = Prime128Offset275;
-    const D: usize = 64;
     const K: usize = 256;
 
-    let mut rng = StdRng::seed_from_u64(0x1a2b_3c4d);
-    let n_a = 2;
-    let num_positions_per_block = 8;
-    let num_vars = 14; // 2^14 field slots -> 256 rings -> 32 blocks
+    let mut rng = StdRng::seed_from_u64(seed);
+    let n_a = 3;
+    let num_positions_per_block = 32;
+    let num_vars = 18;
     let num_chunks = (1usize << num_vars) / K;
-
     let polys: Vec<OneHotPoly<F, u8>> = (0..3)
         .map(|_| {
-            let indices: Vec<Option<u8>> = (0..num_chunks)
+            let indices = (0..num_chunks)
                 .map(|_| (rng.gen::<u8>() % 4 != 0).then(|| rng.gen::<u8>()))
                 .collect();
             OneHotPoly::new(K, D, indices).unwrap()
         })
         .collect();
 
-    let active_a_cols = num_positions_per_block; // num_digits_inner = 1
+    let active_a_cols = num_positions_per_block;
     let a_rows: Vec<CyclotomicRing<F, D>> = (0..n_a * active_a_cols)
         .map(|_| CyclotomicRing::random(&mut rng))
         .collect();
     let a_flat = FlatMatrix::from_ring_slice(&a_rows);
     let a_view = a_flat.ring_view::<D>(n_a, active_a_cols).unwrap();
-
     let sources: Vec<OneHotView<'_, F, D, u8>> =
         polys.iter().map(|poly| OneHotView { poly }).collect();
-    let fused =
-        column_sweep_ajtai_onehot_multi::<F, D, u8>(&a_view, &sources, n_a, active_a_cols, 1)
-            .unwrap();
 
-    let per_poly = polys
-        .iter()
-        .map(|poly| {
-            let blocks = poly
-                .materialize_block_range(
-                    D,
-                    num_positions_per_block,
-                    0..poly
-                        .num_live_blocks_for(D, num_positions_per_block)
-                        .unwrap(),
-                )
-                .unwrap();
-            let views = (0..blocks.num_live_blocks())
-                .map(|block| blocks.block(block))
-                .collect::<Vec<_>>();
-            column_sweep_ajtai_onehot::<F, D>(&a_view, &views, n_a, active_a_cols, 1)
-        })
-        .collect::<Vec<_>>();
+    let bucketed = column_sweep_ajtai_onehot_multi_forced(
+        &a_view,
+        &sources,
+        n_a,
+        active_a_cols,
+        1,
+        OneHotSweep::Bucketed,
+    )
+    .unwrap();
+    let merge = column_sweep_ajtai_onehot_multi_forced(
+        &a_view,
+        &sources,
+        n_a,
+        active_a_cols,
+        1,
+        OneHotSweep::Merge,
+    )
+    .unwrap();
 
-    assert_eq!(fused, per_poly);
+    assert_eq!(merge, bucketed);
 }
 
 #[test]
-fn merge_sweep_self_reduces_oversized_blocks() {
-    use super::super::column_sweep::{column_sweep_core_merge, L2_TILE_BUDGET, MERGE_COL_CHUNK};
+fn retained_sweeps_match_across_polys_and_dimensions() {
+    assert_retained_sweeps_match::<64>(0x1a2b_3c4d);
+    assert_retained_sweeps_match::<128>(0x1a2b_3c4e);
+    assert_retained_sweeps_match::<256>(0x1a2b_3c4f);
+}
+
+#[test]
+fn production_selector_has_measured_regions_and_explicit_boundaries() {
+    use super::super::column_sweep::{select_sweep, OneHotSweep};
+
+    assert_eq!(select_sweep(512, 4096, 16), OneHotSweep::Bucketed);
+    assert_eq!(select_sweep(512, 64, 16), OneHotSweep::Merge);
+
+    assert_eq!(select_sweep(31, 64, 1), OneHotSweep::Bucketed);
+    assert_eq!(select_sweep(32, 64, 1), OneHotSweep::Merge);
+    assert_eq!(select_sweep(512, 64, 16), OneHotSweep::Merge);
+    assert_eq!(select_sweep(512, 64, 17), OneHotSweep::Bucketed);
+}
+
+#[test]
+fn retained_sweeps_handle_oversized_and_empty_blocks() {
+    use super::super::column_sweep::{
+        bucketed_sweep_tile_checked, direct_sweep_tile, merge_sweep_tile, MERGE_COL_CHUNK,
+    };
 
     type F = Prime128Offset275;
     const D: usize = 64;
@@ -153,39 +85,129 @@ fn merge_sweep_self_reduces_oversized_blocks() {
     let n_a = 2;
     let num_positions_per_block = MAX_WIDE_SHIFT_ACCUMULATIONS + 129;
     let active_a_cols = num_positions_per_block;
-
     let a_rows: Vec<CyclotomicRing<F, D>> = (0..n_a * active_a_cols)
         .map(|_| CyclotomicRing::random(&mut rng))
         .collect();
     let a_flat = FlatMatrix::from_ring_slice(&a_rows);
     let a_view = a_flat.ring_view::<D>(n_a, active_a_cols).unwrap();
 
-    // One oversized dense block (exceeds the wide-accumulator cap) plus a
-    // small one; the merge kernel must self-reduce mid-row instead of
-    // relying on the block-splitting wrapper.
-    let big: Vec<SparseRingBlockEntry> = (0..num_positions_per_block)
+    let big = (0..num_positions_per_block)
         .map(|pos| block_entry(pos, (pos * 7) % D))
-        .collect();
-    let small: Vec<SparseRingBlockEntry> =
-        (0..97).map(|pos| block_entry(pos * 11, pos % D)).collect();
-    let blocks = super::super::test_helpers::from_buckets(vec![big, small]);
-    let views: Vec<&[SparseRingBlockEntry]> = (0..blocks.num_live_blocks())
-        .map(|i| blocks.block(i))
-        .collect();
+        .collect::<Vec<_>>();
+    let small = (0..97)
+        .map(|pos| block_entry(pos * 11, pos % D))
+        .collect::<Vec<_>>();
+    let blocks = super::super::test_helpers::from_buckets(vec![big, small, Vec::new()]);
+    let views = (0..blocks.num_live_blocks())
+        .map(|block| blocks.block(block))
+        .collect::<Vec<_>>();
 
-    let merge = column_sweep_core_merge::<F, D>(
+    let mut chunk_buf = vec![WideCyclotomicRing::zero(); MERGE_COL_CHUNK];
+    let merge = merge_sweep_tile(&a_view, &views, n_a, active_a_cols, 1, &mut chunk_buf);
+    let direct = direct_sweep_tile(&a_view, &views, 1);
+    let bucketed = bucketed_sweep_tile_checked(&a_view, &views, n_a, active_a_cols, 1);
+    assert_eq!(merge, direct);
+    assert_eq!(bucketed, direct);
+}
+
+fn sweep_median_ms<F, const D: usize>(
+    a_view: &RingMatrixView<'_, F, D>,
+    sources: &[OneHotView<'_, F, D, usize>],
+    n_a: usize,
+    active_a_cols: usize,
+    sweep: super::super::column_sweep::OneHotSweep,
+) -> f64
+where
+    F: FieldCore + CanonicalField + HasCommitAccum,
+    F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+{
+    use super::super::column_sweep::column_sweep_ajtai_onehot_multi_forced;
+    use std::time::Instant;
+
+    let mut samples = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let start = Instant::now();
+        std::hint::black_box(
+            column_sweep_ajtai_onehot_multi_forced(a_view, sources, n_a, active_a_cols, 1, sweep)
+                .unwrap(),
+        );
+        samples.push(start.elapsed());
+    }
+    samples.sort_unstable();
+    samples[2].as_secs_f64() * 1_000.0
+}
+
+fn benchmark_sweep_case<const D: usize>(
+    label: &str,
+    onehot_k: usize,
+    positions_per_block: usize,
+    blocks_per_poly: usize,
+    num_polys: usize,
+    hot_stride: usize,
+) {
+    use super::super::column_sweep::OneHotSweep;
+
+    type F = Prime128Offset275;
+    let n_a = 4;
+    let field_elems_per_poly = blocks_per_poly * positions_per_block * D;
+    let num_chunks = field_elems_per_poly / onehot_k;
+    assert!(field_elems_per_poly.is_power_of_two());
+    assert_eq!(num_chunks * onehot_k, field_elems_per_poly);
+    let polys = (0..num_polys)
+        .map(|poly| {
+            let indices = (0..num_chunks)
+                .map(|chunk| {
+                    (chunk + poly)
+                        .is_multiple_of(hot_stride)
+                        .then_some((chunk * 17 + poly * 29) % onehot_k)
+                })
+                .collect();
+            OneHotPoly::<F>::new(onehot_k, D, indices).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let sources = polys
+        .iter()
+        .map(|poly| OneHotView { poly })
+        .collect::<Vec<_>>();
+    let a_rows = vec![CyclotomicRing::<F, D>::zero(); n_a * positions_per_block];
+    let a_flat = FlatMatrix::from_ring_slice(&a_rows);
+    let a_view = a_flat.ring_view::<D>(n_a, positions_per_block).unwrap();
+
+    let bucketed = sweep_median_ms(
         &a_view,
-        &views,
+        &sources,
         n_a,
-        active_a_cols,
-        1,
-        L2_TILE_BUDGET,
-        MERGE_COL_CHUNK,
+        positions_per_block,
+        OneHotSweep::Bucketed,
     );
-    // Reference: the splitting wrapper (overflow-safe by segmentation).
-    let wrapper = column_sweep_ajtai_onehot::<F, D>(&a_view, &views, n_a, active_a_cols, 1);
-    assert_eq!(
-        merge, wrapper,
-        "self-reducing merge must match the splitting wrapper"
+    let merge = sweep_median_ms(
+        &a_view,
+        &sources,
+        n_a,
+        positions_per_block,
+        OneHotSweep::Merge,
     );
+    println!(
+        "{label}: D={D} K={onehot_k} positions={positions_per_block} blocks={blocks_per_poly} polys={num_polys} hot_stride={hot_stride} bucketed={bucketed:.3}ms merge={merge:.3}ms"
+    );
+}
+
+/// Manual release-mode matrix for choosing production sweep regions.
+#[test]
+#[ignore = "manual one hot sweep benchmark"]
+fn benchmark_production_sweep_matrix() {
+    benchmark_sweep_case::<64>("tiny_single", 256, 4, 1, 1, 1);
+    benchmark_sweep_case::<64>("tiny_pair", 256, 4, 2, 1, 1);
+    benchmark_sweep_case::<64>("tiny_4", 256, 4, 4, 1, 1);
+    benchmark_sweep_case::<64>("tiny_8", 256, 4, 8, 1, 1);
+    benchmark_sweep_case::<64>("small_single", 256, 64, 16, 1, 1);
+    benchmark_sweep_case::<64>("small_sparse", 256, 64, 64, 1, 16);
+    benchmark_sweep_case::<64>("large_single", 256, 64, 512, 1, 1);
+    benchmark_sweep_case::<64>("large_group4", 256, 64, 512, 4, 1);
+    benchmark_sweep_case::<128>("equal_group2", 128, 64, 256, 2, 1);
+    benchmark_sweep_case::<256>("k_lt_d_group4", 64, 64, 128, 4, 1);
+    benchmark_sweep_case::<256>("equal_group8", 256, 64, 128, 8, 1);
+    benchmark_sweep_case::<64>("wide_group29", 256, 64, 64, 29, 1);
+    benchmark_sweep_case::<64>("dense_columns", 64, 4096, 64, 4, 1);
+    benchmark_sweep_case::<64>("sparse_wide_columns", 256, 4096, 64, 4, 64);
 }

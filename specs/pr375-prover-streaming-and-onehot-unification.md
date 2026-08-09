@@ -324,23 +324,25 @@ acceptance test.
 
 #### CPU execution
 
-- [ ] One private CPU module owns one hot commitment. It has one group entry
+- [x] One private CPU module owns one hot commitment. It has one group entry
       function. Its helpers own tiling and the retained arithmetic kernels.
-- [ ] Tile size follows an explicit per worker scratch memory budget.
-- [ ] Sweep selection uses workload measures such as block count, term count,
-      matrix width, output rank, and ring dimension. It does not use blocks per
-      Rayon thread as its only policy.
-- [ ] Direct, bucketed, and merge sweeps have one common flat entry type.
-- [ ] Every retained sweep has a measured workload where it wins. A sweep with
+- [x] Tile size follows an explicit per worker scratch memory budget.
+- [x] Sweep selection uses the measured crossover inputs: active matrix width
+      and blocks per worker. Term count, output rank, ring dimension, and source
+      count remain benchmark and trace context rather than unused selector
+      parameters. Rayon topology is not the policy by itself.
+- [x] Direct, bucketed, and merge sweeps use the same flat entry type. Direct
+      remains only as a test oracle after it was dominated in production.
+- [x] Every retained sweep has a measured workload where it wins. A sweep with
       no winning region is deleted.
-- [ ] A private sweep enum is added only when at least two retained strategies
+- [x] A private sweep enum is added only when at least two retained strategies
       need a testable selector. If one direct branch is enough, no enum is
       added.
-- [ ] Strategy, tile size, hot term count, and estimated matrix passes are
+- [x] Strategy, tile size, hot term count, and estimated matrix passes are
       visible in tracing or test statistics.
-- [ ] Tests call the production scheduler. No test only scheduler duplicates
+- [x] Tests call the production scheduler. No test only scheduler duplicates
       production traversal or merge decisions.
-- [ ] Opening and decomposition compute the active block range before building
+- [x] Opening and decomposition compute the active block range before building
       entries. A batch holds at most the current configured polynomial and
       block tile.
 
@@ -616,13 +618,54 @@ and arithmetic. Protocol code owns neither.
 
 ### CPU Sweep Policy
 
-The direct, bucketed, and merge sweeps remain separate only while each has a
-measured use.
+The bucketed and merge sweeps are the retained production strategies. The
+direct sweep remains a test oracle, but the production selector cannot choose
+it. Repeated release measurements found no stable direct winning region. It
+tied bucketed at one block and lost from two blocks onward, so a third policy
+branch did not earn its keep.
 
-The direct sweep is suitable for very few blocks. The bucketed sweep pays a
-count and scatter cost but streams matrix columns in order across many blocks.
-The merge sweep avoids bucket scratch but performs cursor work across blocks
-and matrix column chunks.
+The bucketed sweep pays a count and scatter cost but streams matrix columns in
+order across many blocks. The merge sweep avoids bucket scatter and performs
+cursor work across blocks and matrix column chunks. Measurements show merge
+wins on narrow matrices with enough blocks per worker. Bucketed wins on small
+jobs and wide matrices.
+
+Let `A` be the number of active matrix columns, `B` the total block count, and
+`W` the worker count. The measured policy is:
+
+\[
+\operatorname{sweep}(A,B,W)=
+\begin{cases}
+\text{merge}, & A \le 256 \land \lceil B/W\rceil \ge 32,\\
+\text{bucketed}, & \text{otherwise}.
+\end{cases}
+\]
+
+Worker count is an explicit selector input and is clamped to the number of
+blocks. Tests cover both sides of the block per worker boundary without
+changing the global Rayon pool.
+
+Tiling is a separate calculation with an 8 MiB scratch budget per worker. Let
+`E` be the conservative maximum number of sparse entries in one block. The
+driver uses:
+
+\[
+\begin{aligned}
+M_{block} ={}& E(M_{sparse}+M_{packed}) + D M_{accum} + D M_F
+                + 2M_{usize},\\
+M_{fixed} ={}& \max(3A M_{usize}+M_{usize},\;32D M_{accum}),\\
+B_{tile} ={}& \min\left(B, 2^{16},
+  \left\lfloor\frac{8\text{ MiB}-M_{fixed}}{M_{block}}\right\rfloor\right).
+\end{aligned}
+\]
+
+The first fixed term bounds the bucket counts, offsets, and cursors. The
+second bounds the merge column chunk. The per block term conservatively covers
+the canonical entries, packed bucket entries, wide row accumulator, reduced
+merge partial, and cursor scalars. Final commitment rows are excluded because
+they are retained output and do not change with tile size. A geometry whose
+minimum one block scratch exceeds the budget returns `InvalidSetup` instead of
+silently violating the bound.
 
 The policy is private. Protocol APIs cannot request a sweep. Source types do
 not encode a sweep.
@@ -809,6 +852,9 @@ Completed checkpoints:
 - Slice 2: one canonical flat sparse block representation and range builder.
 - Slice 3: one source-typed group commitment boundary; legacy commitment row
   trait and public representation plans removed.
+- Slice 4: one CPU group driver, an explicit 8 MiB per-worker tile budget, and
+  a measured private bucketed-or-merge selector. Dominated direct production
+  routing and duplicate schedulers removed.
 
 ### Slice 0: Freeze evidence and add route observability
 

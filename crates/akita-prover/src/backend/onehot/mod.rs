@@ -49,6 +49,7 @@ mod column_sweep;
 mod decompose_fold;
 mod entries;
 mod fold;
+#[cfg(test)]
 mod inner_ajtai;
 mod ops;
 mod poly;

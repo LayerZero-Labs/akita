@@ -14,6 +14,7 @@ use super::*;
 /// Using the wide accumulator avoids per-addition modular reduction versus
 /// a direct field-ring accumulator.
 #[allow(non_snake_case)]
+#[cfg(test)]
 pub(crate) fn inner_ajtai_wide_onehot<F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
     entries: &[SparseRingBlockEntry],
