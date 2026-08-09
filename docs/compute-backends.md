@@ -52,6 +52,12 @@ prewarming, memory reporting, and runtime execution. The CPU backend skips full
 slots for large ring switch operations because those kernels stream transform
 chunks from the public matrix.
 
+Each routed requirement keeps the complete operation extent until that
+decision is made. Requests from cached and streamed operations are therefore
+not joined prematurely. After streamed requests are removed, planned memory
+reporting max-joins the retained prefixes by physical cache owner, ring
+dimension, and transform domain.
+
 Prepared caches remain resident across proofs by default. This is the normal
 choice for shared prepared state. `ReleaseRootNttAfterFold` is an explicit
 memory policy for a caller that owns an isolated root cache. It releases each

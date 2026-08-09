@@ -44,9 +44,17 @@ fn streamed_relation_rows_match_cached_kernel() {
         .shared_matrix()
         .ring_view::<D>(1, extent)
         .expect("field view");
-    let source = StreamedASource::new(view.as_slice());
     let streamed = fused_split_eq_quotients_streamed_prover_bounds(
-        &source, 2, 2, 1, &e_hat, &t_hat, &z_segment, 5, 2, 3,
+        view.as_slice(),
+        2,
+        2,
+        1,
+        &e_hat,
+        &t_hat,
+        &z_segment,
+        5,
+        2,
+        3,
     )
     .expect("streamed rows")
     .expect("shape is one-shot safe");
@@ -89,9 +97,17 @@ fn streamed_relation_rows_match_cached_q32_kernel() {
         .shared_matrix()
         .ring_view::<D>(1, extent)
         .expect("field view");
-    let source = StreamedASource::new(view.as_slice());
     let streamed = fused_split_eq_quotients_streamed_prover_bounds(
-        &source, 2, 2, 1, &e_hat, &t_hat, &z_segment, 5, 2, 3,
+        view.as_slice(),
+        2,
+        2,
+        1,
+        &e_hat,
+        &t_hat,
+        &z_segment,
+        5,
+        2,
+        3,
     )
     .expect("streamed rows")
     .expect("shape is one-shot safe");
@@ -128,10 +144,8 @@ fn cached_and_streamed_reject_the_same_short_matrix_shape() {
         .shared_matrix()
         .ring_view::<D>(1, 1)
         .expect("one-element field view");
-    let source = StreamedASource::new(view.as_slice());
-
     let streamed = fused_split_eq_quotients_streamed_prover_bounds(
-        &source,
+        view.as_slice(),
         1,
         0,
         0,
@@ -176,9 +190,8 @@ fn streamed_chunked_z_quotient_matches_cached_kernel() {
         .shared_matrix()
         .ring_view::<D>(1, extent)
         .expect("field view");
-    let source = StreamedASource::new(view.as_slice());
     let streamed = fused_split_eq_quotients_streamed_prover_bounds(
-        &source,
+        view.as_slice(),
         0,
         0,
         1,
@@ -234,9 +247,8 @@ fn streamed_chunked_t_rows_match_cached_kernel() {
         .shared_matrix()
         .ring_view::<D128>(1, T_LEN)
         .expect("field view");
-    let flat_source = StreamedASource::new(view.as_slice());
     let streamed = fused_split_eq_quotients_streamed_prover_bounds(
-        &flat_source,
+        view.as_slice(),
         1,
         1,
         1,

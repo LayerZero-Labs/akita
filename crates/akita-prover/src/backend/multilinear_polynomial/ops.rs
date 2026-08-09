@@ -103,7 +103,7 @@ where
 impl<F, const D: usize, I> OpeningFoldKernel<MultilinearPolynomialView<'_, F, D, I>, F, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
+    F: FieldCore + CanonicalField + HasWide,
     I: OneHotIndex,
 {
     fn evaluate_and_fold(
@@ -162,7 +162,7 @@ where
 impl<F, const D: usize, I> OpeningBatchKernel<MultilinearPolynomialBatchView<'_, F, D, I>, F, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
+    F: FieldCore + CanonicalField + HasWide,
     I: OneHotIndex,
 {
     fn decompose_fold_batch(
@@ -205,7 +205,7 @@ where
 impl<F, E, const D: usize, I>
     TensorProjectionKernel<MultilinearPolynomialView<'_, F, D, I>, F, E, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + HasCommitAccum,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     E: ExtField<F>,
     I: OneHotIndex,
 {
@@ -291,7 +291,7 @@ where
 impl<F, E, const D: usize, I>
     TensorProjectionBatchKernel<MultilinearPolynomialBatchView<'_, F, D, I>, F, E, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + HasCommitAccum,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     E: ExtField<F>,
     I: OneHotIndex,
 {

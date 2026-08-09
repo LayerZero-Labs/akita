@@ -1,5 +1,6 @@
 //! Tensor extension-opening packing helpers.
 
+use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, CanonicalField, FromPrimitiveInt, MulBaseUnreduced};
 use akita_field::{AkitaError, ExtField, FieldCore};
@@ -171,35 +172,65 @@ where
         sources: Vec<RootTensorProjectionView<'_, F, D>>,
         plan: CommitInnerPlan,
     ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
-        let mut witnesses = Vec::with_capacity(sources.len());
-        for source in sources {
-            let committed = match source.poly {
-                RootTensorProjectionPoly::Dense(poly) => {
-                    RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
-                        self,
-                        prepared,
-                        vec![poly.commit_view()?],
-                        plan,
-                    )?
-                }
-                RootTensorProjectionPoly::Sparse(poly) => {
-                    RootCommitKernel::<SparseRingView<'_, F, D>, F, D>::commit_inner_group(
-                        self,
-                        prepared,
-                        vec![poly.as_ref().commit_view()?],
-                        plan,
-                    )?
-                }
-            };
-            let [witness] = committed.try_into().map_err(|committed: Vec<_>| {
-                AkitaError::InvalidSetup(format!(
-                    "child kernel returned {} tensor projections, expected one",
-                    committed.len()
-                ))
-            })?;
-            witnesses.push(witness);
+        if sources
+            .iter()
+            .all(|source| matches!(source.poly, RootTensorProjectionPoly::Dense(_)))
+        {
+            let views = sources
+                .into_iter()
+                .map(|source| match source.poly {
+                    RootTensorProjectionPoly::Dense(poly) => poly.commit_view(),
+                    RootTensorProjectionPoly::Sparse(_) => unreachable!("checked dense group"),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
+                self, prepared, views, plan,
+            );
         }
-        Ok(witnesses)
+        if sources
+            .iter()
+            .all(|source| matches!(source.poly, RootTensorProjectionPoly::Sparse(_)))
+        {
+            let views = sources
+                .into_iter()
+                .map(|source| match source.poly {
+                    RootTensorProjectionPoly::Sparse(poly) => poly.as_ref().commit_view(),
+                    RootTensorProjectionPoly::Dense(_) => unreachable!("checked sparse group"),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return RootCommitKernel::<SparseRingView<'_, F, D>, F, D>::commit_inner_group(
+                self, prepared, views, plan,
+            );
+        }
+        cfg_into_iter!(sources)
+            .map(|source| {
+                let committed = match source.poly {
+                    RootTensorProjectionPoly::Dense(poly) => {
+                        RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
+                            self,
+                            prepared,
+                            vec![poly.commit_view()?],
+                            plan,
+                        )?
+                    }
+                    RootTensorProjectionPoly::Sparse(poly) => {
+                        RootCommitKernel::<SparseRingView<'_, F, D>, F, D>::commit_inner_group(
+                            self,
+                            prepared,
+                            vec![poly.as_ref().commit_view()?],
+                            plan,
+                        )?
+                    }
+                };
+                let [witness] = committed.try_into().map_err(|committed: Vec<_>| {
+                    AkitaError::InvalidSetup(format!(
+                        "child kernel returned {} tensor projections, expected one",
+                        committed.len()
+                    ))
+                })?;
+                Ok(witness)
+            })
+            .collect()
     }
 }
 
@@ -500,7 +531,80 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{AkitaError, FpExt4, Prime32Offset99};
+    use crate::compute::ComputeBackendSetup;
+    use crate::AkitaProverSetup;
+    use akita_field::{AkitaError, CanonicalField, FpExt4, Prime32Offset99};
+    use akita_types::SetupMatrixCapacity;
+
+    #[test]
+    fn homogeneous_projected_group_matches_one_dense_group_call() {
+        type F = Prime32Offset99;
+        const D: usize = 128;
+
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(
+            7,
+            2,
+            SetupMatrixCapacity {
+                num_field_elements: 4096,
+            },
+        )
+        .unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let plan = CommitInnerPlan {
+            n_a: 2,
+            num_positions_per_block: 1,
+            num_digits_inner: 1,
+            log_basis_inner: 2,
+        };
+        let dense = [
+            DensePoly::from_field_evals(
+                7,
+                D,
+                &(0..128)
+                    .map(|i| F::from_canonical_u128_reduced(i + 1))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+            DensePoly::from_field_evals(
+                7,
+                D,
+                &(0..128)
+                    .map(|i| F::from_canonical_u128_reduced(3 * i + 7))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        ];
+        let expected = RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
+            &CpuBackend,
+            &prepared,
+            dense
+                .iter()
+                .map(RootCommitSource::<F, D>::commit_view)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            plan,
+        )
+        .unwrap();
+        let projected = dense.map(RootTensorProjectionPoly::Dense);
+        let actual =
+            RootCommitKernel::<RootTensorProjectionView<'_, F, D>, F, D>::commit_inner_group(
+                &CpuBackend,
+                &prepared,
+                projected
+                    .iter()
+                    .map(RootCommitSource::<F, D>::commit_view)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+                plan,
+            )
+            .unwrap();
+
+        assert_eq!(actual.len(), 2);
+        for (actual, expected) in actual.iter().zip(&expected) {
+            assert_eq!(actual.inner_rows.ring_dim(), expected.inner_rows.ring_dim());
+            assert_eq!(actual.inner_rows.coeffs(), expected.inner_rows.coeffs());
+        }
+    }
 
     #[test]
     fn recursive_tensor_pack_rejects_non_divisible_digit_count() {

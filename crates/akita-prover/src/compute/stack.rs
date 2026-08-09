@@ -75,35 +75,37 @@ where
         self.prepared
     }
 
-    fn prewarm_ntt(
+    fn ensure_ntt(&self, requirement: RoutedNttRequirement) -> Result<(), AkitaError> {
+        self.backend.ensure_ntt_slot(self.prepared, requirement.key)
+    }
+
+    fn retained_ntt_owner(
         &self,
-        cluster: NttOperationCluster,
-        key: akita_types::NttCacheKey,
-    ) -> Result<(), AkitaError> {
-        if self
+        requirement: RoutedNttRequirement,
+    ) -> Result<Option<NttCacheOwnerId>, AkitaError> {
+        if !self
             .backend
-            .ntt_requirement_is_cached(self.prepared, cluster, key)?
+            .ntt_requirement_is_cached(self.prepared, requirement)?
         {
-            self.backend.ensure_ntt_slot(self.prepared, key)?;
+            return Ok(None);
         }
-        Ok(())
+        Ok(Some(self.backend.ntt_cache_owner_id(self.prepared)))
     }
 
     fn planned_ntt(
         &self,
-        cluster: NttOperationCluster,
-        key: akita_types::NttCacheKey,
+        requirement: RoutedNttRequirement,
     ) -> Result<Option<(NttCacheOwnerId, usize)>, AkitaError> {
         if !self
             .backend
-            .ntt_requirement_is_cached(self.prepared, cluster, key)?
+            .ntt_requirement_is_cached(self.prepared, requirement)?
         {
             return Ok(None);
         }
         Ok(Some((
             self.backend.ntt_cache_owner_id(self.prepared),
             self.backend
-                .planned_ntt_cache_entry_bytes(self.prepared, key)?,
+                .planned_ntt_cache_entry_bytes(self.prepared, requirement.key)?,
         )))
     }
 
@@ -222,18 +224,22 @@ where
 
     fn prewarm_requirement(&self, requirement: RoutedNttRequirement) -> Result<(), AkitaError> {
         match requirement.cluster {
-            NttOperationCluster::Commit => self
-                .commit
-                .prewarm_ntt(requirement.cluster, requirement.key),
-            NttOperationCluster::Opening => self
-                .opening
-                .prewarm_ntt(requirement.cluster, requirement.key),
-            NttOperationCluster::Tensor => self
-                .tensor
-                .prewarm_ntt(requirement.cluster, requirement.key),
-            NttOperationCluster::RingSwitch => self
-                .ring_switch
-                .prewarm_ntt(requirement.cluster, requirement.key),
+            NttOperationCluster::Commit => self.commit.ensure_ntt(requirement),
+            NttOperationCluster::Opening => self.opening.ensure_ntt(requirement),
+            NttOperationCluster::Tensor => self.tensor.ensure_ntt(requirement),
+            NttOperationCluster::RingSwitch => self.ring_switch.ensure_ntt(requirement),
+        }
+    }
+
+    fn retained_requirement_owner(
+        &self,
+        requirement: RoutedNttRequirement,
+    ) -> Result<Option<NttCacheOwnerId>, AkitaError> {
+        match requirement.cluster {
+            NttOperationCluster::Commit => self.commit.retained_ntt_owner(requirement),
+            NttOperationCluster::Opening => self.opening.retained_ntt_owner(requirement),
+            NttOperationCluster::Tensor => self.tensor.retained_ntt_owner(requirement),
+            NttOperationCluster::RingSwitch => self.ring_switch.retained_ntt_owner(requirement),
         }
     }
 
@@ -242,18 +248,10 @@ where
         requirement: RoutedNttRequirement,
     ) -> Result<Option<(NttCacheOwnerId, usize)>, AkitaError> {
         match requirement.cluster {
-            NttOperationCluster::Commit => self
-                .commit
-                .planned_ntt(requirement.cluster, requirement.key),
-            NttOperationCluster::Opening => self
-                .opening
-                .planned_ntt(requirement.cluster, requirement.key),
-            NttOperationCluster::Tensor => self
-                .tensor
-                .planned_ntt(requirement.cluster, requirement.key),
-            NttOperationCluster::RingSwitch => self
-                .ring_switch
-                .planned_ntt(requirement.cluster, requirement.key),
+            NttOperationCluster::Commit => self.commit.planned_ntt(requirement),
+            NttOperationCluster::Opening => self.opening.planned_ntt(requirement),
+            NttOperationCluster::Tensor => self.tensor.planned_ntt(requirement),
+            NttOperationCluster::RingSwitch => self.ring_switch.planned_ntt(requirement),
         }
     }
 }
@@ -381,10 +379,29 @@ where
     F: FieldCore + CanonicalField + 'a,
     S: LevelProveStacks<'a, F> + ?Sized + 'a,
 {
+    let mut retained = Vec::<(NttCacheOwnerId, RoutedNttRequirement)>::new();
     for requirement in requirements.entries() {
+        let stack = stacks.prove_stack_at_level(requirement.fold_level);
+        let Some(owner) = stack.retained_requirement_owner(*requirement)? else {
+            continue;
+        };
+        if let Some((_, existing)) = retained.iter_mut().find(|(existing_owner, existing)| {
+            *existing_owner == owner
+                && existing.key.ring_d == requirement.key.ring_d
+                && existing.key.domain == requirement.key.domain
+        }) {
+            if requirement.key.num_ring_elements > existing.key.num_ring_elements {
+                *existing = *requirement;
+            }
+        } else {
+            retained.push((owner, *requirement));
+        }
+    }
+    retained.sort_by_key(|(_, requirement)| std::cmp::Reverse(requirement.key.num_ring_elements));
+    for (_, requirement) in retained {
         stacks
             .prove_stack_at_level(requirement.fold_level)
-            .prewarm_requirement(*requirement)?;
+            .prewarm_requirement(requirement)?;
     }
     Ok(())
 }
@@ -630,368 +647,4 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::compute::cpu::NTT_STREAM_THRESHOLD_RING_ELEMENTS;
-    use crate::AkitaProverSetup;
-    use crate::CpuBackend;
-    use akita_field::{AkitaError, Fp64};
-    use akita_types::SetupMatrixCapacity;
-
-    type F = Fp64<4294967197>;
-    fn test_envelope(num_field_elements: usize) -> SetupMatrixCapacity {
-        SetupMatrixCapacity { num_field_elements }
-    }
-
-    #[test]
-    fn operation_ctx_rejects_mismatched_expanded_setup() {
-        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
-            .expect("setup a");
-        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(8192))
-            .expect("setup b");
-        assert_ne!(setup_a.expanded.seed(), setup_b.expanded.seed());
-
-        let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
-        assert!(matches!(
-            OperationCtx::new(&CpuBackend, &prepared_a, setup_b.expanded.as_ref()),
-            Err(AkitaError::InvalidSetup(_))
-        ));
-    }
-
-    #[test]
-    fn operation_ctx_accepts_matching_expanded_setup() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
-            .expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
-        OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("matching expanded metadata should validate");
-    }
-
-    use crate::compute::{CommitCluster, RingSwitchCluster};
-
-    fn assert_distinct_backend_types<C: 'static, R: 'static>() {
-        fn type_id<T: 'static>() -> std::any::TypeId {
-            std::any::TypeId::of::<T>()
-        }
-        assert_ne!(type_id::<C>(), type_id::<R>());
-    }
-
-    type TestUniformStack<'a> = UniformProverStack<'a, F, CpuBackend>;
-    type TestHeterogeneousStack<'a> =
-        ProverComputeStack<'a, F, CommitCluster, CpuBackend, CpuBackend, RingSwitchCluster>;
-
-    fn all_cluster_requirements() -> NttExecutionRequirements {
-        let mut requirements = NttExecutionRequirements::default();
-        for (cluster, domain, width) in [
-            (
-                NttOperationCluster::Commit,
-                akita_types::NttTransformDomain::Negacyclic,
-                3,
-            ),
-            (
-                NttOperationCluster::Opening,
-                akita_types::NttTransformDomain::Negacyclic,
-                4,
-            ),
-            (
-                NttOperationCluster::Tensor,
-                akita_types::NttTransformDomain::Cyclic,
-                5,
-            ),
-            (
-                NttOperationCluster::RingSwitch,
-                akita_types::NttTransformDomain::Cyclic,
-                6,
-            ),
-        ] {
-            requirements
-                .add_matrix(0, cluster, 64, 1, width, domain)
-                .unwrap();
-        }
-        requirements
-    }
-
-    #[test]
-    fn heterogeneous_stack_accepts_distinct_operation_clusters() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
-            .expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
-        let commit_backend = CommitCluster;
-        let ring_backend = RingSwitchCluster;
-        let stack: TestHeterogeneousStack<'_> = ProverComputeStack::new(
-            (&commit_backend, &prepared),
-            (&CpuBackend, &prepared),
-            (&CpuBackend, &prepared),
-            (&ring_backend, &prepared),
-            setup.expanded.as_ref(),
-        )
-        .expect("heterogeneous stack");
-        assert_distinct_backend_types::<CommitCluster, RingSwitchCluster>();
-        assert_eq!(
-            stack.commit().backend() as *const _,
-            &commit_backend as *const _
-        );
-        assert_eq!(
-            stack.ring_switch().backend() as *const _,
-            &ring_backend as *const _
-        );
-    }
-
-    #[test]
-    fn heterogeneous_stack_implements_level_prove_stacks() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
-            .expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
-        let commit_backend = CommitCluster;
-        let ring_backend = RingSwitchCluster;
-        let stack: TestHeterogeneousStack<'_> = ProverComputeStack::new(
-            (&commit_backend, &prepared),
-            (&CpuBackend, &prepared),
-            (&CpuBackend, &prepared),
-            (&ring_backend, &prepared),
-            setup.expanded.as_ref(),
-        )
-        .expect("heterogeneous stack");
-        let selected: &TestHeterogeneousStack<'_> =
-            LevelProveStacks::prove_stack_at_level(&stack, 0);
-        assert_eq!(
-            selected.commit().backend() as *const _,
-            stack.commit().backend() as *const _
-        );
-    }
-
-    #[test]
-    fn prewarm_routes_only_to_declared_physical_cluster_owner() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
-            .expect("setup");
-        let commit_prepared = CpuBackend.prepare_setup(&setup).expect("commit prepared");
-        let ring_prepared = CpuBackend.prepare_setup(&setup).expect("ring prepared");
-        let commit_backend = CommitCluster;
-        let ring_backend = RingSwitchCluster;
-        let stack: TestHeterogeneousStack<'_> = ProverComputeStack::new(
-            (&commit_backend, &commit_prepared),
-            (&CpuBackend, &commit_prepared),
-            (&CpuBackend, &commit_prepared),
-            (&ring_backend, &ring_prepared),
-            setup.expanded.as_ref(),
-        )
-        .expect("heterogeneous stack");
-        let mut requirements = NttExecutionRequirements::default();
-        requirements
-            .add_matrix(
-                0,
-                NttOperationCluster::Commit,
-                64,
-                2,
-                3,
-                akita_types::NttTransformDomain::Negacyclic,
-            )
-            .unwrap();
-        requirements
-            .add_matrix(
-                0,
-                NttOperationCluster::RingSwitch,
-                64,
-                1,
-                5,
-                akita_types::NttTransformDomain::Cyclic,
-            )
-            .unwrap();
-
-        prewarm_ntt_requirements::<F, _>(&stack, &requirements).expect("prewarm plan");
-
-        assert_eq!(commit_prepared.shared_ntt_cache_metrics().unwrap().len(), 1);
-        assert_eq!(ring_prepared.shared_ntt_cache_metrics().unwrap().len(), 1);
-        assert_eq!(
-            commit_prepared.shared_ntt_cache_metrics().unwrap()[0]
-                .key
-                .domain,
-            akita_types::NttTransformDomain::Negacyclic
-        );
-        assert_eq!(
-            ring_prepared.shared_ntt_cache_metrics().unwrap()[0]
-                .key
-                .domain,
-            akita_types::NttTransformDomain::Cyclic
-        );
-        let metrics = planned_ntt_cache_metrics::<F, _>(&stack, &requirements).unwrap();
-        assert_eq!(metrics.len(), 2);
-        assert_eq!(
-            metrics
-                .iter()
-                .map(|metric| metric.cache_bytes)
-                .sum::<usize>(),
-            commit_prepared.shared_ntt_cache_bytes() + ring_prepared.shared_ntt_cache_bytes()
-        );
-    }
-
-    #[test]
-    fn prewarm_and_metrics_skip_streamed_cpu_ring_switch_slots() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
-            .expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
-        let stack = TestUniformStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("uniform stack");
-        let mut requirements = NttExecutionRequirements::default();
-        for domain in [
-            akita_types::NttTransformDomain::Negacyclic,
-            akita_types::NttTransformDomain::Cyclic,
-        ] {
-            requirements
-                .add_matrix(
-                    0,
-                    NttOperationCluster::RingSwitch,
-                    64,
-                    1,
-                    NTT_STREAM_THRESHOLD_RING_ELEMENTS + 1,
-                    domain,
-                )
-                .unwrap();
-        }
-
-        prewarm_ntt_requirements::<F, _>(&stack, &requirements).expect("prewarm streamed plan");
-
-        assert!(prepared.shared_ntt_cache_metrics().unwrap().is_empty());
-        assert!(planned_ntt_cache_metrics::<F, _>(&stack, &requirements)
-            .unwrap()
-            .is_empty());
-    }
-
-    #[test]
-    fn planned_metrics_deduplicate_all_shared_clusters() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
-            .expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
-        let stack = TestUniformStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("uniform stack");
-        let requirements = all_cluster_requirements();
-
-        prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();
-        let metrics = planned_ntt_cache_metrics::<F, _>(&stack, &requirements).unwrap();
-
-        assert_eq!(metrics.len(), 1);
-        assert_eq!(metrics[0].cache_bytes, prepared.shared_ntt_cache_bytes());
-    }
-
-    #[test]
-    fn root_lifecycle_retains_by_default_and_explicit_release_deduplicates_owner() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
-            .expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
-        let stack = TestUniformStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("uniform stack");
-        let requirements = all_cluster_requirements();
-
-        prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();
-        let resident = prepared.shared_ntt_cache_bytes();
-        assert!(resident > 0);
-
-        LevelProveStacks::after_root_fold(&stack).unwrap();
-        assert_eq!(prepared.shared_ntt_cache_bytes(), resident);
-
-        let releasing = ReleaseRootNttAfterFold::new(&stack);
-        LevelProveStacks::after_root_fold(&releasing).unwrap();
-        assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
-
-        prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();
-        assert_eq!(stack.release_built_ntt_slots().unwrap(), resident);
-    }
-
-    #[test]
-    fn planned_metrics_keep_four_independent_clusters_separate() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
-            .expect("setup");
-        let commit = CpuBackend.prepare_setup(&setup).expect("commit prepared");
-        let opening = CpuBackend.prepare_setup(&setup).expect("opening prepared");
-        let tensor = CpuBackend.prepare_setup(&setup).expect("tensor prepared");
-        let ring = CpuBackend.prepare_setup(&setup).expect("ring prepared");
-        let stack = ProverComputeStack::new(
-            (&CpuBackend, &commit),
-            (&CpuBackend, &opening),
-            (&CpuBackend, &tensor),
-            (&CpuBackend, &ring),
-            setup.expanded.as_ref(),
-        )
-        .expect("independent stack");
-        let requirements = all_cluster_requirements();
-
-        prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();
-        let metrics = planned_ntt_cache_metrics::<F, _>(&stack, &requirements).unwrap();
-
-        assert_eq!(metrics.len(), 4);
-        assert_eq!(
-            metrics
-                .iter()
-                .map(|metric| metric.cache_bytes)
-                .sum::<usize>(),
-            commit.shared_ntt_cache_bytes()
-                + opening.shared_ntt_cache_bytes()
-                + tensor.shared_ntt_cache_bytes()
-                + ring.shared_ntt_cache_bytes()
-        );
-    }
-
-    #[test]
-    fn tiered_prove_stacks_rejects_empty_table() {
-        let result =
-            TieredProveStacks::<F, CpuBackend, CpuBackend, CpuBackend, CpuBackend>::new(&[], &[]);
-        assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
-    }
-
-    #[test]
-    fn tiered_prove_stacks_rejects_length_mismatch() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
-            .expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
-        let stack = TestUniformStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
-        let stacks = [stack];
-        let result = TieredProveStacks::new(&stacks, &[1, 2]);
-        assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
-    }
-
-    #[test]
-    fn tiered_prove_stacks_rejects_non_increasing_bounds() {
-        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
-            .expect("setup a");
-        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(8192))
-            .expect("setup b");
-        let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
-        let prepared_b = CpuBackend.prepare_setup(&setup_b).expect("prepared b");
-        let stack_a =
-            TestUniformStack::uniform(&CpuBackend, &prepared_a, setup_a.expanded.as_ref())
-                .expect("stack a");
-        let stack_b =
-            TestUniformStack::uniform(&CpuBackend, &prepared_b, setup_b.expanded.as_ref())
-                .expect("stack b");
-        let stacks = [stack_a, stack_b];
-        let result = TieredProveStacks::new(&stacks, &[2, 1]);
-        assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
-    }
-
-    #[test]
-    fn tiered_prove_stacks_selects_by_fold_level() {
-        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
-            .expect("setup a");
-        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(8192))
-            .expect("setup b");
-        let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
-        let prepared_b = CpuBackend.prepare_setup(&setup_b).expect("prepared b");
-        let stack_a =
-            TestUniformStack::uniform(&CpuBackend, &prepared_a, setup_a.expanded.as_ref())
-                .expect("stack a");
-        let stack_b =
-            TestUniformStack::uniform(&CpuBackend, &prepared_b, setup_b.expanded.as_ref())
-                .expect("stack b");
-        let stacks = [stack_a, stack_b];
-        let tiered = TieredProveStacks::new(&stacks, &[1, usize::MAX]).expect("tiered");
-        assert!(std::ptr::eq(
-            tiered.prove_stack_at_level(0),
-            tiered.prove_stack_at_level(1),
-        ));
-        assert!(!std::ptr::eq(
-            tiered.prove_stack_at_level(0),
-            tiered.prove_stack_at_level(2),
-        ));
-    }
-}
+mod tests;

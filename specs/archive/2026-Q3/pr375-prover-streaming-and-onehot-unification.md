@@ -4,7 +4,7 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-08-08 |
-| Status        | implemented |
+| Status        | archived |
 | PR            | https://github.com/LayerZero-Labs/akita/pull/375 |
 | Supersedes    | |
 | Superseded-by | |
@@ -225,6 +225,10 @@ must invoke the production scheduler.
   allocation for a smaller request.
 - Prewarm and runtime use the same retained or streamed decision. Prewarm does
   not materialize a full slot for an operation that runtime will stream.
+- Each NTT request retains its operation routing extent until the backend
+  applies that decision. Cached and streamed operations sharing a route are
+  not max-joined before filtering, and domains in one fused operation share
+  one decision.
 - Active challenge bounds are computed before one hot block materialization.
   Batch peak derived storage is bounded by the current tile.
 - Every `FlatBlocks` offset conversion is checked before the offset table is
@@ -384,6 +388,14 @@ acceptance test.
 - [x] The routed backend applies the same retained or streamed policy during
       runtime, prewarming, and memory reporting. Prewarming a streamed
       operation leaves no complete relation or quotient slot resident.
+- [x] Mixed cached and streamed operations sharing one route remain distinct
+      until filtering. An operation-level streamed extent suppresses every
+      domain request belonging to that fused operation.
+- [x] Homogeneous transformed-root commitment groups enter the dense or sparse
+      child group kernel once; only genuinely mixed groups use per-source
+      fallback dispatch.
+- [x] The one hot commitment accumulator capability is required only by root
+      commitment arithmetic, not by opening or tensor kernels.
 - [x] Exact prefix parallel folding has dense differential tests that cross
       every sequential and parallel wave boundary.
 - [x] Wide shift accumulation tests cover negacyclic wrap and addition limits.

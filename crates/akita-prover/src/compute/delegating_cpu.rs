@@ -18,7 +18,6 @@ use super::operation_plans::{
     RingSwitchQuotientPlan, RingSwitchRelationPlan,
 };
 use super::plans::RingSwitchRelationRows;
-use super::requirements::NttOperationCluster;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
 use akita_field::{
@@ -53,10 +52,9 @@ macro_rules! delegate_compute_backend_setup {
             fn ntt_requirement_is_cached(
                 &self,
                 prepared: &Self::PreparedSetup,
-                cluster: NttOperationCluster,
-                key: NttCacheKey,
+                requirement: crate::compute::RoutedNttRequirement,
             ) -> Result<bool, AkitaError> {
-                CpuBackend.ntt_requirement_is_cached(prepared, cluster, key)
+                CpuBackend.ntt_requirement_is_cached(prepared, requirement)
             }
 
             fn planned_ntt_cache_entry_bytes(

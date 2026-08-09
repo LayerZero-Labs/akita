@@ -226,7 +226,7 @@ where
 
 impl<F, const D: usize, I> OpeningFoldKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
+    F: FieldCore + CanonicalField + HasWide,
     I: OneHotIndex,
 {
     fn evaluate_and_fold(
@@ -281,7 +281,7 @@ where
 
 impl<F, const D: usize, I> OpeningBatchKernel<OneHotBatchView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
+    F: FieldCore + CanonicalField + HasWide,
     I: OneHotIndex,
 {
     fn decompose_fold_batch(
@@ -312,7 +312,7 @@ where
 impl<F, E, const D: usize, I> TensorProjectionKernel<OneHotView<'_, F, D, I>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + HasCommitAccum,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     E: ExtField<F>,
     I: OneHotIndex,
 {
@@ -354,7 +354,7 @@ where
 impl<F, E, const D: usize, I> TensorProjectionBatchKernel<OneHotBatchView<'_, F, D, I>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
+    F: FieldCore + CanonicalField + HasWide,
     E: ExtField<F>,
     I: OneHotIndex,
 {
@@ -382,7 +382,7 @@ where
 
 impl<F, I: OneHotIndex> OneHotPoly<F, I>
 where
-    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
+    F: FieldCore + CanonicalField + HasWide,
 {
     pub(crate) fn fold_blocks<const D: usize>(
         &self,

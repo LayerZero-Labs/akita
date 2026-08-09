@@ -205,7 +205,7 @@ where
         })
     });
 
-    group.bench_function("scheme_commit_uncached_projection", |b| {
+    group.bench_function("commit_onehot_with_planned_params", |b| {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for _ in 0..iters {

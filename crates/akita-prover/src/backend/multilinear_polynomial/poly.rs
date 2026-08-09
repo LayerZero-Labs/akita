@@ -1,7 +1,7 @@
 //! The multilinear-polynomial wrapper enum, its borrowed dispatch views, and
 //! the source-trait impls. The `CpuBackend` kernel impls live in [`super::ops`].
 
-use akita_field::unreduced::{HasCommitAccum, HasWide};
+use akita_field::unreduced::HasWide;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
@@ -114,7 +114,7 @@ where
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
-        F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + HasCommitAccum,
+        F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         self.polys

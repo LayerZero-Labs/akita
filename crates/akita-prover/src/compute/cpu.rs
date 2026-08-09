@@ -5,7 +5,7 @@ use crate::compute::backend::{
 use crate::compute::kernels::{RingSwitchQuotientKernel, RingSwitchRelationKernel};
 use crate::compute::operation_plans::{RingSwitchQuotientPlan, RingSwitchRelationPlan};
 use crate::compute::plans::{DenseCommitInput, RingSwitchRelationRows};
-use crate::compute::requirements::NttOperationCluster;
+use crate::compute::requirements::{NttOperationCluster, RoutedNttRequirement};
 use crate::kernels::linear::validate_compression_batch_shape;
 use crate::kernels::linear::{
     digit_blocks_are_balanced, fused_quotient_matrix_extent,
@@ -13,7 +13,7 @@ use crate::kernels::linear::{
     mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
     mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
     mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile,
-    CrtI8CapacityProfile, StreamedASource,
+    CrtI8CapacityProfile,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
@@ -129,6 +129,11 @@ impl From<CrtI8CapacityProfile> for PreparedCrtNttProfile {
 }
 
 impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
+    #[cfg(test)]
+    pub(crate) fn ntt_slot_build_count(&self) -> usize {
+        self.ntt_slot_build_count.load(Ordering::Relaxed)
+    }
+
     pub(crate) fn with_shared_ntt<const D: usize, R>(
         &self,
         key: NttCacheKey,
@@ -474,10 +479,12 @@ where
     fn ntt_requirement_is_cached(
         &self,
         _prepared: &Self::PreparedSetup,
-        cluster: NttOperationCluster,
-        key: NttCacheKey,
+        requirement: RoutedNttRequirement,
     ) -> Result<bool, AkitaError> {
-        Ok(ntt_operation_uses_cache(cluster, key.num_ring_elements))
+        Ok(ntt_operation_uses_cache(
+            requirement.cluster,
+            requirement.routing_extent,
+        ))
     }
 
     fn release_built_ntt_slots(&self, prepared: &Self::PreparedSetup) -> Result<usize, AkitaError> {

@@ -146,6 +146,12 @@ Large ring relation and quotient operations stream transformed chunks. Their
 complete transformed inputs never become prepared cache slots. Smaller reused
 operations retain exact prefixes across proofs.
 
+The requirement record retains each operation's routing extent until the
+backend makes this decision. This prevents a large streamed operation from
+hiding a smaller cached operation on the same matrix route. Requests from one
+fused operation share one routing extent across transform domains. Only
+retained requests are max-joined into physical cache slots.
+
 Retention is the default. A caller with an isolated root owner may apply
 `ReleaseRootNttAfterFold`. Release removes every built key once per physical
 owner. Existing readers remain valid through shared ownership. A later smaller
@@ -193,4 +199,4 @@ plan as public API.
 
 See [Compute Backends](../../../docs/compute-backends.md) for backend ownership
 and NTT lifecycle details. The full PR 375 design record is
-[`specs/pr375-prover-streaming-and-onehot-unification.md`](../../../specs/pr375-prover-streaming-and-onehot-unification.md).
+[`specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md`](../../../specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md).

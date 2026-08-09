@@ -1,4 +1,4 @@
-use crate::compute::requirements::NttOperationCluster;
+use crate::compute::requirements::RoutedNttRequirement;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -52,7 +52,7 @@ where
         key: NttCacheKey,
     ) -> Result<(), AkitaError>;
 
-    /// Whether `key` remains resident for this operation cluster.
+    /// Whether this routed request remains resident for its operation cluster.
     ///
     /// Prewarming and planned memory reporting both use this decision. The
     /// default retains every requirement. A backend that streams an operation
@@ -61,8 +61,7 @@ where
     fn ntt_requirement_is_cached(
         &self,
         _prepared: &Self::PreparedSetup,
-        _cluster: NttOperationCluster,
-        _key: NttCacheKey,
+        _requirement: RoutedNttRequirement,
     ) -> Result<bool, AkitaError> {
         Ok(true)
     }

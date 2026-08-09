@@ -32,9 +32,8 @@ where
                 .expanded
                 .shared_matrix()
                 .ring_view::<D>(1, stream_extent)?;
-            let streamed_source = StreamedASource::new(view.as_slice());
             let streamed = fused_split_eq_quotients_streamed_prover_bounds(
-                &streamed_source,
+                view.as_slice(),
                 plan.n_d,
                 plan.n_b,
                 plan.n_a,
@@ -143,9 +142,8 @@ where
                 .expanded
                 .shared_matrix()
                 .ring_view::<D>(1, stream_extent)?;
-            let streamed_source = StreamedASource::new(view.as_slice());
             let streamed = fused_split_eq_quotients_streamed_prover_bounds(
-                &streamed_source,
+                view.as_slice(),
                 0,
                 0,
                 plan.n_a,

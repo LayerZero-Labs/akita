@@ -203,7 +203,7 @@ Focused benchmark lenses:
 - `extension_opening_reduction`: isolates the one-hot sparse tensor reduction
   used by root extension openings. This is the fast loop for future EOR work.
 - `onehot_root_projection_commit`: decomposes root projection, transformed-root
-  commitment, and scheme-level small-field commitment.
+  commitment, and direct one-hot commitment with offline-planned parameters.
 
 The remaining one-hot gap is concentrated in
 `prove_prepared_root_extension_opening_reduction`, especially sparse witness
@@ -258,13 +258,14 @@ produce sorted or sorted-unique sparse entries, it may use a stronger
 constructor that validates and consumes that invariant directly. Generic callers
 still use constructors that sort or combine as needed.
 
-> **Current ownership rule:**
-> [`pr375-prover-streaming-and-onehot-unification.md`](pr375-prover-streaming-and-onehot-unification.md)
-> is the source of truth. `OneHotPoly` owns only its logical indices and scalar
-> shape data. Derived commitment blocks are operation local. Tensor projection
-> builds one sparse ring polynomial and moves it into the existing
+> **Current ownership rule:** The
+> [optimization chapter](../book/src/how/optimizations.md) is the source of
+> truth. `OneHotPoly` owns only its logical indices and scalar shape data.
+> Derived commitment blocks are operation local. Tensor projection builds one
+> sparse ring polynomial and moves it into the existing
 > `RootTensorProjectionPoly` result. There is no mutable derived cache on the
-> source polynomial.
+> source polynomial. The full PR design record is
+> [archived](archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md).
 
 The field arithmetic change is intentionally small: `Fp2` multiplication uses
 the standard three-base-multiply Karatsuba formula in scalar and packed paths.
