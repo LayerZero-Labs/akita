@@ -129,7 +129,7 @@ private Akita write-up and are not reproduced here.
   matrix now benches only families that fold securely (fp128 D128 plus the
   small-field D128 one-hot families); the non-securable D32 / D64 small-field
   cells were removed. See
-  [`specs/profile-bench-coverage-matrix.md`](profile-bench-coverage-matrix.md).
+  [`book/src/usage/profiling.md`](../book/src/usage/profiling.md).
 
 ### Related fix on this branch: small-field ring-challenge soundness
 

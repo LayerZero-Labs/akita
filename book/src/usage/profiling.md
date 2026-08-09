@@ -66,9 +66,16 @@ AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
 ## CI benchmark matrix
 
 Workflow: `.github/workflows/profile-bench.yml`.
-CI builds use `--no-default-features --features parallel,profile-ci`.
-When adding a bench case, extend the mode→feature table in
-`scripts/check_profile_ci_features.sh`.
+Each matrix group builds with the narrow `profile-ci-*` feature named beside
+its cases in the workflow. The head and merge base use the same feature when
+both revisions define it. An older merge base falls back to the `profile-ci`
+compatibility union. When adding a case, update its mode and schedule mapping in
+`scripts/check_profile_ci_features.sh`. That guard checks the narrow group
+feature and the compatibility union.
+
+The benchmark jobs consume the generated schedule tables committed at each
+revision. They do not regenerate those tables before compiling. The separate
+schedule drift CI job checks committed tables against the generator.
 
 Committed-fold A-role pricing (every cell folds securely):
 
@@ -89,10 +96,63 @@ fp32/fp64 use `nv=28` because the ext-degree-4 challenge schedule exceeds the 1
 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` budget at higher `num_vars`.
 The long multi-group recursive rows run in separate parallel CI groups so each
 task keeps one benchmark case. The distributed rows also run in their own group
-and are compared against merge-base like the other rows.
+and are compared against the merge base like the other rows.
 
-Report pipeline: `scripts/profile_bench_report.py`.
-Coverage matrix spec: `specs/profile-bench-coverage-matrix.md`.
+The workflow file is the source of truth for the exact active cases. The table
+above explains the checked in matrix, but it must not replace the workflow when
+the two disagree.
+
+### What the profiles prove
+
+Every row measures a complete PCS opening proof.
+
+| Profile family | Public opening statement |
+|----------------|--------------------------|
+| Dense `nv24` | One committed 24 variable multilinear polynomial with `2^24` coefficients, opened at one 24 coordinate point. |
+| One hot `nv28` | One committed 28 variable multilinear polynomial with `2^28` coefficients, opened at one 28 coordinate point. |
+| One hot `nv32` | One committed 32 variable multilinear polynomial with `2^32` coefficients, opened at one 32 coordinate point. |
+| Multi group | Four polynomials in three groups. Two precommitted groups each contain one 16 variable polynomial and use independent 16 coordinate points. The final group contains two 32 variable polynomials that share one 32 coordinate point. |
+
+The one hot generator places one `1` in every consecutive 256 coefficient
+chunk. This is the benchmark witness shape. The public statement checks only
+commitment and opening consistency. It does not assert one hot structure.
+
+`direct` evaluates the public setup matrix contribution during Stage 2.
+`recursive` carries the same check through a Stage 3 setup product sumcheck.
+Both modes execute the complete fold schedule and terminal verification. A
+`W2R2`, `W4R2`, or `W8R2` profile divides the witness relation into 2, 4, or 8
+exact chunks for the first two fold levels. Generated profiles may select
+different A, B, and D ring dimensions at different levels. The short report
+labels omit those selected dimensions.
+
+Each measured sample performs these operations:
+
+1. Generate deterministic witnesses and opening points.
+2. Expand and prepare setup.
+3. Commit to the polynomials.
+4. Produce and serialize a complete proof.
+5. Check the reported proof size.
+6. Build verifier setup and verify the claimed openings.
+
+The profile workflow does not test malformed proofs or rejection paths. The
+test suite owns those checks.
+
+### CI report format
+
+`scripts/profile_bench_report.py` writes `summary.json`, `summary.csv`, the
+compact pull request comment, and the full `report.md` artifact. The compact
+comment shows the public statements first. It then uses separate tables for
+phase time, memory and setup size, and proof size. This keeps each table narrow
+enough to read in a pull request.
+
+Pull request runs compare the head with its merge base. The two binaries run
+interleaved on the same runner. User facing report text must say merge base, not
+main. The full artifact may also show a prior run from the same pull request,
+but that prior run is not the baseline for the reported delta.
+
+Times are medians of the measured samples after the configured warmup runs.
+Peak RSS is the largest sample. A negative delta means less time, memory, or
+proof data. Failed cases remain visible and identify the phase that failed.
 
 `Setup and preparation` includes exact NTT prewarming for the resolved profile
 execution on its uniform CPU stack. This is an execution prewarm, not part of

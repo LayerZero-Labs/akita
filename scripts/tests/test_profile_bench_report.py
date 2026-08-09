@@ -8,6 +8,24 @@ import unittest
 
 
 class ProfileBenchReportTests(unittest.TestCase):
+    def test_merge_base_policy_reads_narrow_profile_mode_registry(self) -> None:
+        from scripts.profile_bench_merge_base_policy import profile_modes_from_modes_rs
+
+        modes_rs = """
+const PROFILE_SELECTED_MODES: &[ProfileMode] = &[
+    ProfileMode { name: "dense_fp128", run: run_dense },
+    ProfileMode { name: "onehot_fp128", run: run_onehot },
+];
+const PROFILE_ALL_MODES: &[ProfileMode] = &[
+    ProfileMode { name: "unrelated", run: run_unrelated },
+];
+"""
+
+        self.assertEqual(
+            profile_modes_from_modes_rs(modes_rs, profile_ci=True),
+            {"dense_fp128", "onehot_fp128"},
+        )
+
     def test_plan_case_runs_orders_warmups_then_measured(self) -> None:
         from scripts.profile_bench_report import BenchmarkCaseSpec, ScheduledRun, plan_case_runs
 
@@ -305,7 +323,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertEqual(level["num_positions_per_block"], 128)
         self.assertEqual(level["num_live_blocks"], 1)
 
-    def test_rendered_schedule_uses_names_and_main_deltas(self) -> None:
+    def test_rendered_schedule_uses_names_and_merge_base_deltas(self) -> None:
         from scripts.profile_bench_report import extract_summary, render_planned_levels
 
         current_log = (
@@ -329,7 +347,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertIn("A ring dimension", report)
         self.assertIn("Number of positions in each block", report)
         self.assertIn("Number of live source A-ring elements in each claim", report)
-        self.assertIn("+100.00% vs main", report)
+        self.assertIn("+100.0% vs base", report)
         self.assertNotIn("| M |", report)
         self.assertNotIn("r_pos", report)
 
@@ -357,12 +375,12 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertIn("Fold-level bytes", report)
         self.assertIn("Range-image evaluation", report)
         self.assertIn("—", report)
-        self.assertIn("+0.00% vs main", report)
+        self.assertIn("+0.0% vs base", report)
         self.assertIn("final witness", report)
         proof_table_lines = [line for line in report.splitlines() if line.startswith("| ")][:3]
         self.assertEqual(len({line.count("|") for line in proof_table_lines}), 1)
 
-    def test_matrix_embeds_main_delta_in_every_numeric_metric(self) -> None:
+    def test_matrix_splits_metrics_and_embeds_merge_base_deltas(self) -> None:
         from scripts.profile_bench_report import normalize_case_summary, render_matrix_summary
 
         current = normalize_case_summary(
@@ -400,16 +418,22 @@ class ProfileBenchReportTests(unittest.TestCase):
             render_matrix_summary([current], {str(current["case_id"]): baseline})
         report = output.getvalue()
 
-        self.assertEqual(report.count("+100.00% vs main"), 8)
-        self.assertIn("Setup vector size", report)
-        self.assertIn("Prepared NTT cache size", report)
+        self.assertEqual(report.count("+100.0%"), 8)
+        self.assertNotIn("vs base</sub>", report)
+        self.assertIn("### Phase time", report)
+        self.assertIn("### Memory and setup size", report)
+        self.assertIn("### Proof size", report)
+        self.assertIn("Setup vector", report)
+        self.assertIn("Prepared NTT cache", report)
         self.assertIn("4.0 MiB", report)
         self.assertIn("8.0 MiB", report)
         self.assertIn("4,096 bytes", report)
-        self.assertIn("nv32Onehot256", report)
+        self.assertIn("Fp128 one\\-hot nv32", report)
         self.assertNotIn("D=64", report)
         self.assertNotIn("Proof B", report)
         self.assertNotIn("Setup Mode", report)
+        table_lines = [line for line in report.splitlines() if line.startswith("|")]
+        self.assertLessEqual(max(line.count("|") for line in table_lines), 6)
 
     def test_adaptive_case_label_omits_ring_dimensions_and_mixed_dimension_config(self) -> None:
         from scripts.profile_bench_report import human_case_label, normalize_case_summary
@@ -426,7 +450,7 @@ class ProfileBenchReportTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(human_case_label(summary), "Fp128 - nv32Onehot256")
+        self.assertEqual(human_case_label(summary), "Fp128 one-hot nv32")
 
     def test_adaptive_multi_group_case_label_omits_ring_dimensions(self) -> None:
         from scripts.profile_bench_report import human_case_label, normalize_case_summary
@@ -445,7 +469,7 @@ class ProfileBenchReportTests(unittest.TestCase):
 
         self.assertEqual(
             human_case_label(summary),
-            "Fp128 - nv32Onehot256 - Batched4 - MultiGroup",
+            "Fp128 multi-group, direct setup check",
         )
 
     def test_case_label_keeps_non_dimension_topology_variant(self) -> None:
@@ -465,8 +489,35 @@ class ProfileBenchReportTests(unittest.TestCase):
 
         self.assertEqual(
             human_case_label(summary),
-            "Fp128 - nv32Onehot256 - MultiChunkW4R2",
+            "Fp128 one-hot nv32 W4R2",
         )
+
+    def test_multi_group_statement_uses_three_points_and_mixed_arities(self) -> None:
+        from scripts.profile_bench_report import (
+            benchmark_name,
+            normalize_case_summary,
+            public_opening_statement,
+        )
+
+        summary = normalize_case_summary(
+            {
+                "mode": "onehot_fp128_multi_group_recursive",
+                "num_vars": 32,
+                "num_polys": 4,
+                "setup_contribution_mode": "recursive",
+                "exit_code": 0,
+            }
+        )
+
+        statement = public_opening_statement(summary)
+        name = benchmark_name(
+            "onehot_fp128_multi_group_recursive", 32, 4, "recursive"
+        )
+        self.assertIn("one 16 variable polynomial", statement)
+        self.assertIn("another point", statement)
+        self.assertIn("two 32 variable polynomials", statement)
+        self.assertIn("two separate 16 variable polynomials", name)
+        self.assertNotIn("same-point", name)
 
     def test_full_report_renders_overhauled_tables(self) -> None:
         from scripts.profile_bench_report import render_report
@@ -554,13 +605,46 @@ class ProfileBenchReportTests(unittest.TestCase):
                 self.assertEqual(render_report(args), 0)
             report = output.getvalue()
 
-        self.assertIn("Delta versus main", report)
+        self.assertIn("Delta versus merge base", report)
         self.assertIn("unchanged", report)
         self.assertIn("4.0<br><sub>4,194,304 bytes</sub>", report)
         self.assertIn("8.0<br><sub>8,388,608 bytes</sub>", report)
         self.assertIn("A ring dimension", report)
         self.assertIn("Proof size by fold level", report)
         self.assertNotIn("Proof framing", report)
+
+    def test_failed_report_does_not_claim_successful_timing_samples(self) -> None:
+        from scripts.profile_bench_report import render_report
+
+        case = {
+            "mode": "onehot_fp128",
+            "num_vars": 32,
+            "num_polys": 1,
+            "exit_code": 1,
+            "failure_phase": "prove",
+            "error": "benchmark process failed",
+            "runs": 1,
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            summary_path = pathlib.Path(tmp) / "summary.json"
+            summary_path.write_text(
+                json.dumps({"warmups": 0, "cases": [case]}), encoding="utf-8"
+            )
+            args = argparse.Namespace(
+                summary=str(summary_path),
+                main_baseline_dir="",
+                previous_baseline_dir="",
+                compact=True,
+            )
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(render_report(args), 0)
+            report = output.getvalue()
+
+        self.assertIn("0 of 1 profiles passed", report)
+        self.assertNotIn("Times are medians", report)
 
     def test_configured_cases_treats_setup_mode_as_case_dimension(self) -> None:
         from scripts.profile_bench_report import configured_cases
