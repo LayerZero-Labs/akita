@@ -369,11 +369,11 @@ acceptance test.
 
 #### Remaining PR changes
 
-- [ ] Streamed relation and quotient tests compare against their cached
+- [x] Streamed relation and quotient tests compare against their cached
       reference kernels across every supported field profile that exercises a
       distinct CRT capacity.
-- [ ] Shared quotient validation, bounds, and chunk planning have one owner.
-- [ ] Cached and streamed quotient modes consume the same typed chunk and
+- [x] Shared quotient validation, bounds, and chunk planning have one owner.
+- [x] Cached and streamed quotient modes consume the same typed chunk and
       matrix slice plan. The `q32`, `q64`, and `q128` branches contain only the
       arithmetic that must differ by width.
 - [x] NTT retention remains the default. Explicit root release reports errors,
@@ -383,17 +383,17 @@ acceptance test.
 - [x] The routed backend applies the same retained or streamed policy during
       runtime, prewarming, and memory reporting. Prewarming a streamed
       operation leaves no complete relation or quotient slot resident.
-- [ ] Exact prefix parallel folding has dense differential tests that cross
+- [x] Exact prefix parallel folding has dense differential tests that cross
       every sequential and parallel wave boundary.
-- [ ] Wide shift accumulation tests cover negacyclic wrap and addition limits.
-- [ ] Every new public `WideCyclotomicRing` helper is used by production code
+- [x] Wide shift accumulation tests cover negacyclic wrap and addition limits.
+- [x] Every new public `WideCyclotomicRing` helper is used by production code
       and documents its invariant, or is removed.
 - [x] Every changed NEON `unsafe` block has one adjacent complete safety
       argument. Repeated unchecked access is centralized when that reduces the
       audited surface.
-- [ ] `FlatBlocks` uses checked offset conversion and returns a typed error
+- [x] `FlatBlocks` uses checked offset conversion and returns a typed error
       before changing its offsets when the entry count is not representable.
-- [ ] The profile workload remains below the repository file line cap without
+- [x] The profile workload remains below the repository file line cap without
       pass through facade functions.
 - [ ] The exact production mixed dimension profile commits, proves, and
       verifies with the intended NTT lifecycle policy.
@@ -403,9 +403,9 @@ acceptance test.
 - [ ] Proof serialization, setup serialization, transcript schedules, and
       verifier acceptance are byte identical to the merge base for fixed test
       fixtures.
-- [ ] Removed public prover types are added to the documentation dead symbol
+- [x] Removed public prover types are added to the documentation dead symbol
       guards.
-- [ ] `specs/akita-polyops-cutover.md` is updated to reflect the completed
+- [x] `specs/akita-polyops-cutover.md` is updated to reflect the completed
       source typed commitment boundary.
 - [ ] The cache ownership text in
       `specs/small-field-prover-opening-optimization.md` points to this spec for

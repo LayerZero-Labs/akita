@@ -990,7 +990,7 @@ fn single_chunk_onehot_large_block_uses_safe_accumulator_path() {
     type F = Prime24Offset3;
     const D: usize = 64;
 
-    let num_positions_per_block = MAX_WIDE_SHIFT_ACCUMULATIONS + 1;
+    let num_positions_per_block = F::MAX_COMMIT_ACCUMULATIONS + 1;
     let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
     let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
     let a_matrix = [vec![dense_ring; num_positions_per_block]];
@@ -1025,9 +1025,9 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
     const D: usize = 64;
 
     let coeffs_per_entry: usize = D / 2;
-    let num_entries: usize = MAX_WIDE_SHIFT_ACCUMULATIONS / coeffs_per_entry + 1;
+    let num_entries: usize = F::MAX_COMMIT_ACCUMULATIONS / coeffs_per_entry + 1;
     let total_shift_accumulates: usize = num_entries * coeffs_per_entry;
-    assert!(total_shift_accumulates > MAX_WIDE_SHIFT_ACCUMULATIONS);
+    assert!(total_shift_accumulates > F::MAX_COMMIT_ACCUMULATIONS);
 
     let n_a = 1;
     let num_digits_inner = 1;
@@ -1069,7 +1069,7 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
     assert_eq!(
         got[0], reference,
         "column_sweep_ajtai_onehot must agree with the non-wide \
-         reference at fan-out totals above MAX_WIDE_SHIFT_ACCUMULATIONS"
+         reference above the field's commitment accumulation cap"
     );
 }
 
@@ -1084,7 +1084,7 @@ fn repeated_onehot_position_overflow_splits_entries() {
     let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
     let a_matrix = [vec![dense_ring]];
 
-    let bucket = vec![block_entry(0, 0); MAX_WIDE_SHIFT_ACCUMULATIONS + 1];
+    let bucket = vec![block_entry(0, 0); F::MAX_COMMIT_ACCUMULATIONS + 1];
     let multi_chunk_blocks = super::test_helpers::from_buckets(vec![bucket.clone()]);
     let views: Vec<&[SparseRingBlockEntry]> = (0..multi_chunk_blocks.num_live_blocks())
         .map(|i| multi_chunk_blocks.block(i))

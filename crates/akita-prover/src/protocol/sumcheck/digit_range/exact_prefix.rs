@@ -1,5 +1,7 @@
 use akita_field::{parallel::*, AkitaError, FieldCore};
 
+const EXACT_PREFIX_SEQUENTIAL_LEN: usize = 1 << 12;
+
 /// Explicit prefix of a power-of-two table followed by one implicit default value.
 pub(super) struct ExactPrefixTable<T: Copy> {
     domain_len: usize,
@@ -56,12 +58,10 @@ impl<T: Copy> ExactPrefixTable<T> {
                 "cannot fold a one-element exact-prefix table".to_string(),
             ));
         }
-        const SEQUENTIAL_PREFIX: usize = 1 << 12;
-
         let next_explicit_len = self.explicit.len().div_ceil(2);
         let explicit_len = self.explicit.len();
         let default = self.default;
-        let sequential_len = next_explicit_len.min(SEQUENTIAL_PREFIX);
+        let sequential_len = next_explicit_len.min(EXACT_PREFIX_SEQUENTIAL_LEN);
         for pair_index in 0..sequential_len {
             let left = self.explicit[2 * pair_index];
             let right = self
@@ -200,29 +200,48 @@ mod tests {
     #[test]
     fn exact_prefix_fold_matches_dense_table_across_parallel_waves() {
         let domain_len = 1 << 16;
-        let explicit_len = 3 * domain_len / 4 + 1;
         let challenge = F::from_u64(17);
         let default = F::from_u64(91);
-        let explicit = (0..explicit_len)
-            .map(|index| F::from_u64(index as u64 + 3))
-            .collect::<Vec<_>>();
-        let mut compact = ExactPrefixTable::new(domain_len, explicit.clone(), default).unwrap();
-        let mut expected = explicit;
-        expected.resize(domain_len, default);
+        let output_boundaries = [
+            EXACT_PREFIX_SEQUENTIAL_LEN,
+            2 * EXACT_PREFIX_SEQUENTIAL_LEN,
+            4 * EXACT_PREFIX_SEQUENTIAL_LEN,
+            8 * EXACT_PREFIX_SEQUENTIAL_LEN,
+        ];
+        let explicit_lengths = output_boundaries.into_iter().flat_map(|boundary| {
+            [
+                2 * boundary - 1,
+                2 * boundary,
+                (2 * boundary + 1).min(domain_len),
+            ]
+        });
 
-        compact
-            .fold_in_place(|left, right| left + challenge * (right - left))
-            .unwrap();
-        for pair_index in 0..domain_len / 2 {
-            let left = expected[2 * pair_index];
-            let right = expected[2 * pair_index + 1];
-            expected[pair_index] = left + challenge * (right - left);
+        for explicit_len in explicit_lengths {
+            let explicit = (0..explicit_len)
+                .map(|index| F::from_u64(index as u64 + 3))
+                .collect::<Vec<_>>();
+            let mut compact = ExactPrefixTable::new(domain_len, explicit.clone(), default).unwrap();
+            let mut expected = explicit;
+            expected.resize(domain_len, default);
+
+            compact
+                .fold_in_place(|left, right| left + challenge * (right - left))
+                .unwrap();
+            for pair_index in 0..domain_len / 2 {
+                let left = expected[2 * pair_index];
+                let right = expected[2 * pair_index + 1];
+                expected[pair_index] = left + challenge * (right - left);
+            }
+            expected.truncate(domain_len / 2);
+
+            assert_eq!(
+                compact.explicit,
+                expected[..explicit_len.div_ceil(2)],
+                "explicit length {explicit_len}"
+            );
+            assert_eq!(compact.default, default);
+            assert_eq!(compact.domain_len, domain_len / 2);
         }
-        expected.truncate(domain_len / 2);
-
-        assert_eq!(compact.explicit, expected[..explicit_len.div_ceil(2)]);
-        assert_eq!(compact.default, default);
-        assert_eq!(compact.domain_len, domain_len / 2);
     }
 
     #[test]

@@ -118,6 +118,51 @@ fn streamed_relation_rows_match_cached_q32_kernel() {
 }
 
 #[test]
+fn cached_and_streamed_reject_the_same_short_matrix_shape() {
+    assert!(fused_quotient_matrix_extent(usize::MAX, 2, 0, 0, 0, 0).is_err());
+
+    let prepared = prepared();
+    let e_hat = vec![[1i8; D], [-1i8; D]];
+    let view = prepared
+        .expanded
+        .shared_matrix()
+        .ring_view::<D>(1, 1)
+        .expect("one-element field view");
+    let source = StreamedASource::new(view.as_slice());
+
+    let streamed = fused_split_eq_quotients_streamed_prover_bounds(
+        &source,
+        1,
+        0,
+        0,
+        &e_hat,
+        &[],
+        &[],
+        0,
+        2,
+        1,
+    );
+    assert!(streamed.is_err());
+
+    let cached = prepared.with_shared_ntt::<D, _>(cyclic_key(1), |cyclic_ntt| {
+        fused_split_eq_quotients_prover_bounds::<F, D>(
+            cyclic_ntt,
+            cyclic_ntt,
+            1,
+            0,
+            0,
+            &e_hat,
+            &[],
+            &[],
+            0,
+            2,
+            1,
+        )
+    });
+    assert!(cached.is_err());
+}
+
+#[test]
 fn streamed_chunked_z_quotient_matches_cached_kernel() {
     let prepared = prepared();
     // A capacity bound sized so the safe CRT chunk width lands strictly

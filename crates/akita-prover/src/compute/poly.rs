@@ -1,4 +1,4 @@
-use super::backend::{ComputeBackendSetup, DigitRowsComputeBackend, RingSwitchComputeBackend};
+use super::backend::{ComputeBackendSetup, DigitRowsComputeBackend};
 use super::kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RingSwitchQuotientKernel, RingSwitchRelationKernel,
     RootCommitKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
@@ -224,8 +224,7 @@ where
 
 /// Ring-switch cluster capability: row mat-vecs plus source-typed relation/quotient kernels.
 pub trait RingSwitchProveBackend<F, const D: usize>:
-    RingSwitchComputeBackend<F>
-    + for<'a> RingSwitchRelationKernel<RingSwitchRelationView<'a, D>, F, D>
+    for<'a> RingSwitchRelationKernel<RingSwitchRelationView<'a, D>, F, D>
     + for<'a> RingSwitchQuotientKernel<RingSwitchQuotientView<'a, D>, F, D>
 where
     F: FieldCore + CanonicalField,
@@ -235,8 +234,7 @@ where
 impl<F, const D: usize, B> RingSwitchProveBackend<F, D> for B
 where
     F: FieldCore + CanonicalField,
-    B: RingSwitchComputeBackend<F>
-        + for<'a> RingSwitchRelationKernel<RingSwitchRelationView<'a, D>, F, D>
+    B: for<'a> RingSwitchRelationKernel<RingSwitchRelationView<'a, D>, F, D>
         + for<'a> RingSwitchQuotientKernel<RingSwitchQuotientView<'a, D>, F, D>,
 {
 }

@@ -21,38 +21,6 @@ pub(crate) enum DenseCommitInput<'a, F: FieldCore, const D: usize> {
     },
 }
 
-/// Full ring-switch relation operation input.
-pub struct RingSwitchRelationRowsPlan<'a, const D: usize> {
-    /// Number of D-side cyclic rows to produce.
-    pub n_d: usize,
-    /// Number of B-side cyclic rows to produce.
-    pub n_b: usize,
-    /// Number of A-side quotient rows to produce.
-    pub n_a: usize,
-    /// Flat decomposed `e_hat` digits for the D-side relation rows.
-    pub e_hat: &'a [[i8; D]],
-    /// Flat decomposed inner-commitment digits for the B-side relation rows.
-    pub t_hat: &'a [[i8; D]],
-    /// One centered `z` segment contributing to A-side quotient rows.
-    pub z_segment: &'a [[i32; D]],
-    /// Infinity norm of the full centered `z_folded_rings` witness.
-    pub z_folded_centered_inf_norm: u32,
-    /// Logarithm of the D/opening gadget basis used to produce `e_hat`.
-    pub log_basis_open: u32,
-    /// Logarithm of the B/outer gadget basis used to produce `t_hat`.
-    pub log_basis_outer: u32,
-}
-
-/// Additional public-row quotient operation input.
-pub struct RingSwitchQuotientRowsPlan<'a, const D: usize> {
-    /// Number of A-side quotient rows to produce.
-    pub n_a: usize,
-    /// One centered `z` segment contributing to A-side quotient rows.
-    pub z_segment: &'a [[i32; D]],
-    /// Infinity norm of the full centered `z_folded_rings` witness.
-    pub z_folded_centered_inf_norm: u32,
-}
-
 /// Named ring-switch relation rows returned by a backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingSwitchRelationRows<F: FieldCore, const D: usize> {

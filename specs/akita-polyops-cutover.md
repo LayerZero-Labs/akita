@@ -801,8 +801,8 @@ Affected public and semi-public surfaces:
   operation commit context and `RootCommitKernel<_, F, D>` bounds.
 - `crates/akita-prover/src/api/scheme.rs`: update docs and bounds away from
   `impl AkitaPolyOps`.
-- `crates/akita-prover/src/compute/`: replace the public fixed
-  `CommitmentComputeBackend`, `RingSwitchComputeBackend`, and
+- `crates/akita-prover/src/compute/`: replace the former public fixed
+  commitment, ring-switch, and
   `ProverComputeBackend` surfaces (today in `backend.rs`) with operation
   contexts plus source-typed commit/ring-switch/opening/tensor kernels. Low-level
   standard row helpers in `cpu.rs` may remain public if they are useful building
@@ -903,10 +903,9 @@ Current implementation:
   reuse standard views or implement kernels for their own local view types.
 - Opening, folding, decomposition, and tensor work use the same source-typed
   backend shape as commitment.
-- Ring-switch work currently has a named backend trait, but it is still closed
-  around `RingSwitchRelationRowsPlan` and `RingSwitchQuotientRowsPlan`. This
-  spec turns those plans into standard views/helpers below a source-typed
-  kernel.
+- Ring-switch work uses `RingSwitchRelationView` and
+  `RingSwitchQuotientView` directly through source-typed kernels. The former
+  fixed backend trait and data-bearing row plans are deleted.
 
 ### Interoperation Model
 

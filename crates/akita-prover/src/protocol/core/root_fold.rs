@@ -160,7 +160,10 @@ where
     TS: RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, E>
         + ComputeBackendSetup<F>
         + 'stack,
-    R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,
+    R: RuntimeRingSwitchProveBackend<F>
+        + DigitRowsComputeBackend<F>
+        + ComputeBackendSetup<F>
+        + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
     <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,

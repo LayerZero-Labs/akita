@@ -1,10 +1,7 @@
-use crate::compute::plans::{
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-};
 use crate::compute::requirements::NttOperationCluster;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{AkitaExpandedSetup, NttCacheKey};
 use std::sync::Arc;
 
@@ -190,28 +187,4 @@ where
         digits: &[[i8; D]],
         log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-}
-
-/// Ring-switch relation operations for migrated proving work.
-pub trait RingSwitchComputeBackend<F>: CyclicRowsComputeBackend<F>
-where
-    F: FieldCore + CanonicalField,
-{
-    /// Fused cyclic/quotient rows used by ring-switch finalization.
-    fn ring_switch_relation_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RingSwitchRelationRowsPlan<'_, D>,
-    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
-    where
-        F: HalvingField;
-
-    /// A-side quotient rows for an additional public-row segment.
-    fn ring_switch_quotient_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RingSwitchQuotientRowsPlan<'_, D>,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-    where
-        F: HalvingField;
 }

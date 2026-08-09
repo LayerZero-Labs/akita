@@ -14,7 +14,7 @@
 //!
 //! | Sibling module | Role |
 //! | --- | --- |
-//! | `plans` | Internal CPU inputs and ring-switch row plans |
+//! | `plans` | Internal CPU inputs and named operation outputs |
 //! | `backend` | Prepared setup, digit-row, compression, and ring-switch capabilities |
 //! | `cpu` | `CpuBackend` / `CpuPreparedSetup` and standard row-kernel impls |
 //! | `operation_plans` | PO1 scalar operation parameters (`CommitInnerPlan`, `OpeningFoldPlan`, …) |
@@ -36,7 +36,7 @@ mod stack;
 
 pub use backend::{
     CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
-    CyclicRowsComputeBackend, DigitRowsComputeBackend, NttCacheOwnerId, RingSwitchComputeBackend,
+    CyclicRowsComputeBackend, DigitRowsComputeBackend, NttCacheOwnerId,
 };
 pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile, PreparedNttCacheMetric};
 pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
@@ -51,7 +51,7 @@ pub use operation_plans::{
     RingSwitchQuotientPlan, RingSwitchRelationPlan,
 };
 pub(crate) use plans::DenseCommitInput;
-pub use plans::{RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan};
+pub use plans::RingSwitchRelationRows;
 pub use requirements::{NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement};
 
 pub use poly::{

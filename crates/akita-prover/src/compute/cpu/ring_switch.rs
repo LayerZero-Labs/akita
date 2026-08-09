@@ -1,13 +1,15 @@
 use super::*;
+use crate::backend::{RingSwitchQuotientView, RingSwitchRelationView};
 
-impl<F> RingSwitchComputeBackend<F> for CpuBackend
+impl<F, const D: usize> RingSwitchRelationKernel<RingSwitchRelationView<'_, D>, F, D> for CpuBackend
 where
     F: FieldCore + CanonicalField,
 {
-    fn ring_switch_relation_rows<const D: usize>(
+    fn relation_rows(
         &self,
         prepared: &Self::PreparedSetup,
-        plan: RingSwitchRelationRowsPlan<'_, D>,
+        source: RingSwitchRelationView<'_, D>,
+        plan: RingSwitchRelationPlan,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
     where
         F: HalvingField,
@@ -17,26 +19,29 @@ where
         // the field form instead of materializing a matrix-scale NTT cache
         // for one pass. Small (deeper-level) extents keep the cached path,
         // which is shared with the per-level digit-row products.
-        let stream_extent = plan
-            .n_d
-            .saturating_mul(plan.e_hat.len())
-            .max(plan.n_b.saturating_mul(plan.t_hat.len()))
-            .max(plan.n_a.saturating_mul(plan.z_segment.len()));
+        let stream_extent = fused_quotient_matrix_extent(
+            plan.n_d,
+            source.e_hat.len(),
+            plan.n_b,
+            source.t_hat.len(),
+            plan.n_a,
+            source.z_segment.len(),
+        )?;
         if !ntt_operation_uses_cache(NttOperationCluster::RingSwitch, stream_extent) {
             let view = prepared
                 .expanded
                 .shared_matrix()
                 .ring_view::<D>(1, stream_extent)?;
-            let source = StreamedASource::new(view.as_slice());
+            let streamed_source = StreamedASource::new(view.as_slice());
             let streamed = fused_split_eq_quotients_streamed_prover_bounds(
-                &source,
+                &streamed_source,
                 plan.n_d,
                 plan.n_b,
                 plan.n_a,
-                plan.e_hat,
-                plan.t_hat,
-                plan.z_segment,
-                plan.z_folded_centered_inf_norm,
+                source.e_hat,
+                source.t_hat,
+                source.z_segment,
+                source.z_folded_centered_inf_norm,
                 plan.log_basis_open,
                 plan.log_basis_outer,
             )?;
@@ -50,9 +55,9 @@ where
         }
         let mut cyclic_requirement: Option<NttCacheKey> = None;
         for (rows, width) in [
-            (plan.n_d, plan.e_hat.len()),
-            (plan.n_b, plan.t_hat.len()),
-            (plan.n_a, plan.z_segment.len()),
+            (plan.n_d, source.e_hat.len()),
+            (plan.n_b, source.t_hat.len()),
+            (plan.n_a, source.z_segment.len()),
         ] {
             if rows == 0 && width == 0 {
                 continue;
@@ -75,8 +80,8 @@ where
                     plan.n_d,
                     plan.n_b,
                     0,
-                    plan.e_hat,
-                    plan.t_hat,
+                    source.e_hat,
+                    source.t_hat,
                     &[],
                     0,
                     plan.log_basis_open,
@@ -91,7 +96,7 @@ where
             let negacyclic_requirement = NttCacheKey::from_matrix_shape(
                 D,
                 plan.n_a,
-                plan.z_segment.len(),
+                source.z_segment.len(),
                 NttTransformDomain::Negacyclic,
             )?;
             prepared.with_shared_ntt::<D, _>(negacyclic_requirement, |negacyclic_ntt| {
@@ -101,10 +106,10 @@ where
                     plan.n_d,
                     plan.n_b,
                     plan.n_a,
-                    plan.e_hat,
-                    plan.t_hat,
-                    plan.z_segment,
-                    plan.z_folded_centered_inf_norm,
+                    source.e_hat,
+                    source.t_hat,
+                    source.z_segment,
+                    source.z_folded_centered_inf_norm,
                     plan.log_basis_open,
                     plan.log_basis_outer,
                 )?;
@@ -116,31 +121,38 @@ where
             })
         })
     }
+}
 
-    fn ring_switch_quotient_rows<const D: usize>(
+impl<F, const D: usize> RingSwitchQuotientKernel<RingSwitchQuotientView<'_, D>, F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
+    fn quotient_rows(
         &self,
         prepared: &Self::PreparedSetup,
-        plan: RingSwitchQuotientRowsPlan<'_, D>,
+        source: RingSwitchQuotientView<'_, D>,
+        plan: RingSwitchQuotientPlan,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
     where
         F: HalvingField,
     {
-        let stream_extent = plan.n_a.saturating_mul(plan.z_segment.len());
+        let stream_extent =
+            fused_quotient_matrix_extent(0, 0, 0, 0, plan.n_a, source.z_segment.len())?;
         if !ntt_operation_uses_cache(NttOperationCluster::RingSwitch, stream_extent) {
             let view = prepared
                 .expanded
                 .shared_matrix()
                 .ring_view::<D>(1, stream_extent)?;
-            let source = StreamedASource::new(view.as_slice());
+            let streamed_source = StreamedASource::new(view.as_slice());
             let streamed = fused_split_eq_quotients_streamed_prover_bounds(
-                &source,
+                &streamed_source,
                 0,
                 0,
                 plan.n_a,
                 &[][..],
                 &[][..],
-                plan.z_segment,
-                plan.z_folded_centered_inf_norm,
+                source.z_segment,
+                source.z_folded_centered_inf_norm,
                 1,
                 1,
             )?;
@@ -151,13 +163,13 @@ where
         let cyclic = NttCacheKey::from_matrix_shape(
             D,
             plan.n_a,
-            plan.z_segment.len(),
+            source.z_segment.len(),
             NttTransformDomain::Cyclic,
         )?;
         let negacyclic = NttCacheKey::from_matrix_shape(
             D,
             plan.n_a,
-            plan.z_segment.len(),
+            source.z_segment.len(),
             NttTransformDomain::Negacyclic,
         )?;
         prepared.with_shared_ntt::<D, _>(cyclic, |cyclic_ntt| {
@@ -170,8 +182,8 @@ where
                     plan.n_a,
                     &[][..],
                     &[][..],
-                    plan.z_segment,
-                    plan.z_folded_centered_inf_norm,
+                    source.z_segment,
+                    source.z_folded_centered_inf_norm,
                     1,
                     1,
                 )?;

@@ -52,7 +52,7 @@ where
     let n_a = a_view.num_rows();
     let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
 
-    for tile in entries.chunks(MAX_WIDE_SHIFT_ACCUMULATIONS) {
+    for tile in entries.chunks(F::MAX_COMMIT_ACCUMULATIONS) {
         let partial = inner_ajtai_wide_onehot::<F, D>(a_view, tile, num_digits);
         for (dst, src) in t.iter_mut().zip(partial.iter()) {
             *dst += *src;

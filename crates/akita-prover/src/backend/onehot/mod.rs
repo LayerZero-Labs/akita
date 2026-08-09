@@ -36,11 +36,6 @@ use super::sparse_ring::{SparseRingBlockEntry, SparseRingCoeff};
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::{CommitInnerWitness, DecomposeFoldWitness, SparseRingPoly};
 
-/// Wide accumulators use 16-bit chunks in `i32` limbs, so they can safely
-/// absorb at most 32,768 unit-scale additions before overflow.
-#[cfg(test)]
-pub(super) const MAX_WIDE_SHIFT_ACCUMULATIONS: usize = 1 << 15;
-
 mod accumulate;
 mod blocks;
 mod column_sweep;

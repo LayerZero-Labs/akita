@@ -1,20 +1,19 @@
 use crate::compute::backend::{
     CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
-    CyclicRowsComputeBackend, DigitRowsComputeBackend, RingSwitchComputeBackend,
+    CyclicRowsComputeBackend, DigitRowsComputeBackend,
 };
-use crate::compute::plans::{
-    DenseCommitInput, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
-    RingSwitchRelationRowsPlan,
-};
+use crate::compute::kernels::{RingSwitchQuotientKernel, RingSwitchRelationKernel};
+use crate::compute::operation_plans::{RingSwitchQuotientPlan, RingSwitchRelationPlan};
+use crate::compute::plans::{DenseCommitInput, RingSwitchRelationRows};
 use crate::compute::requirements::NttOperationCluster;
 use crate::kernels::linear::validate_compression_batch_shape;
 use crate::kernels::linear::{
-    digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
-    fused_split_eq_quotients_streamed_prover_bounds, mat_vec_mul_ntt_dense_digits_i8,
-    mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense,
-    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8, mat_vec_mul_ntt_single_i8,
-    mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
-    StreamedASource,
+    digit_blocks_are_balanced, fused_quotient_matrix_extent,
+    fused_split_eq_quotients_prover_bounds, fused_split_eq_quotients_streamed_prover_bounds,
+    mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
+    mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
+    mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile,
+    CrtI8CapacityProfile, StreamedASource,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
@@ -775,11 +774,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::RingSwitchRelationView;
     use crate::compute::backend::{
         ComputeBackendSetup, CyclicRowsComputeBackend, DigitRowsComputeBackend,
-        RingSwitchComputeBackend,
     };
-    use crate::compute::plans::RingSwitchRelationRowsPlan;
+    use crate::compute::{RingSwitchRelationKernel, RingSwitchRelationPlan};
     use crate::kernels::linear::{mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic};
     use crate::validation::MAX_I8_LOG_BASIS;
     use crate::AkitaProverSetup;
@@ -1120,16 +1119,18 @@ mod tests {
         let z_segment = vec![[1i32; D]; 2];
 
         CpuBackend
-            .ring_switch_relation_rows::<D>(
+            .relation_rows(
                 &prepared,
-                RingSwitchRelationRowsPlan {
-                    n_d: 2,
-                    n_b: 1,
-                    n_a: 1,
+                RingSwitchRelationView {
                     e_hat: &e_hat,
                     t_hat: &t_hat,
                     z_segment: &z_segment,
                     z_folded_centered_inf_norm: 1,
+                },
+                RingSwitchRelationPlan {
+                    n_d: 2,
+                    n_b: 1,
+                    n_a: 1,
                     log_basis_open: 2,
                     log_basis_outer: 2,
                 },
@@ -1156,16 +1157,18 @@ mod tests {
         let t_hat = vec![[1i8; D]; 3];
 
         let rows = CpuBackend
-            .ring_switch_relation_rows::<D>(
+            .relation_rows(
                 &prepared,
-                RingSwitchRelationRowsPlan {
-                    n_d: 0,
-                    n_b: 2,
-                    n_a: 0,
+                RingSwitchRelationView {
                     e_hat: &[],
                     t_hat: &t_hat,
                     z_segment: &[],
                     z_folded_centered_inf_norm: 0,
+                },
+                RingSwitchRelationPlan {
+                    n_d: 0,
+                    n_b: 2,
+                    n_a: 0,
                     log_basis_open: 2,
                     log_basis_outer: 2,
                 },
@@ -1256,16 +1259,18 @@ mod tests {
         let t_hat = vec![[-1i8; D], [3i8; D]];
         let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D]];
         let via_backend = CpuBackend
-            .ring_switch_relation_rows::<D>(
+            .relation_rows(
                 &prepared,
-                RingSwitchRelationRowsPlan {
-                    n_d: 1,
-                    n_b: 1,
-                    n_a: 1,
+                RingSwitchRelationView {
                     e_hat: &e_hat,
                     t_hat: &t_hat,
                     z_segment: &z_segment,
                     z_folded_centered_inf_norm: 3,
+                },
+                RingSwitchRelationPlan {
+                    n_d: 1,
+                    n_b: 1,
+                    n_a: 1,
                     log_basis_open: 2,
                     log_basis_outer: 3,
                 },

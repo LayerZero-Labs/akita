@@ -83,7 +83,7 @@ fn retained_sweeps_handle_oversized_and_empty_blocks() {
 
     let mut rng = StdRng::seed_from_u64(0x05e2_517e);
     let n_a = 2;
-    let num_positions_per_block = MAX_WIDE_SHIFT_ACCUMULATIONS + 129;
+    let num_positions_per_block = F::MAX_COMMIT_ACCUMULATIONS + 129;
     let active_a_cols = num_positions_per_block;
     let a_rows: Vec<CyclotomicRing<F, D>> = (0..n_a * active_a_cols)
         .map(|_| CyclotomicRing::random(&mut rng))

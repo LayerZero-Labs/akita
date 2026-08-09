@@ -6,7 +6,7 @@
 
 use super::backend::{
     CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
-    CyclicRowsComputeBackend, DigitRowsComputeBackend, RingSwitchComputeBackend,
+    CyclicRowsComputeBackend, DigitRowsComputeBackend,
 };
 use super::cpu::CpuBackend;
 use super::kernels::{
@@ -17,9 +17,7 @@ use super::operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
     RingSwitchQuotientPlan, RingSwitchRelationPlan,
 };
-use super::plans::{
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-};
+use super::plans::RingSwitchRelationRows;
 use super::requirements::NttOperationCluster;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
@@ -356,32 +354,4 @@ pub struct RingSwitchCluster;
 delegate_compute_backend_setup!(RingSwitchCluster);
 delegate_compression!(RingSwitchCluster);
 delegate_digit_rows!(RingSwitchCluster);
-delegate_cyclic_rows!(RingSwitchCluster);
 delegate_ring_switch_kernels!(RingSwitchCluster);
-
-impl<F> RingSwitchComputeBackend<F> for RingSwitchCluster
-where
-    F: FieldCore + CanonicalField,
-{
-    fn ring_switch_relation_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RingSwitchRelationRowsPlan<'_, D>,
-    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
-    where
-        F: HalvingField,
-    {
-        CpuBackend.ring_switch_relation_rows(prepared, plan)
-    }
-
-    fn ring_switch_quotient_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RingSwitchQuotientRowsPlan<'_, D>,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-    where
-        F: HalvingField,
-    {
-        CpuBackend.ring_switch_quotient_rows(prepared, plan)
-    }
-}

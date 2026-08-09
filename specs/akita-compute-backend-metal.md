@@ -168,10 +168,10 @@ The key surfaces modified by this spec are:
       instead of panicking through CPU-cache-specific dispatch for migrated
       paths.
 - [x] `CpuBackend` implements `ComputeBackendSetup`,
-      `DigitRowsComputeBackend`, `CyclicRowsComputeBackend`, and
-      `RingSwitchComputeBackend`, plus `RootCommitKernel` for each built-in
-      source view. Commitment groups use the source-typed group kernel
-      directly.
+      `DigitRowsComputeBackend`, `CyclicRowsComputeBackend`, and the
+      source-typed relation and quotient kernels, plus `RootCommitKernel` for
+      each built-in source view. Commitment groups use the source-typed group
+      kernel directly.
 - [x] The compute boundary contains no type-erased prepared-cache map, runtime
       downcast, or mutexed hot-path lookup for const-generic prepared state.
 - [x] The compute boundary contains no public raw prepared-setup accessor used
@@ -537,14 +537,15 @@ where
     ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError>;
 }
 
-pub trait RingSwitchComputeBackend<F>: CyclicRowsComputeBackend<F>
+pub trait RingSwitchRelationKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
     F: FieldCore + CanonicalField,
 {
-    fn ring_switch_relation_rows<const D: usize>(
+    fn relation_rows(
         &self,
         prepared: &Self::PreparedSetup,
-        plan: RingSwitchRelationRowsPlan<'_, D>,
+        source: S,
+        plan: RingSwitchRelationPlan,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
     where
         F: HalvingField;
@@ -559,9 +560,8 @@ pub struct CpuPreparedSetup<F> {
 ```
 
 Full ring-switch relation rows and additional public-row quotient segments use
-separate `RingSwitchRelationRowsPlan` / `RingSwitchQuotientRowsPlan` inputs and
-separate backend methods, so quotient-only work is not represented with
-sentinel zero D/B row counts.
+separate source views and kernel traits, so quotient-only work is not
+represented with sentinel zero D/B row counts.
 
 Rules:
 

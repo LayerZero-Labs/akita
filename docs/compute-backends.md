@@ -15,9 +15,9 @@ scheduling remain follow-up work.
   keyed by field family and ring role at kernel boundaries via `dispatch_for_field!`.
 - `RootCommitKernel<S, F, D>` owns source-typed inner commitment. Its single
   group method is the canonical boundary for singleton and batched sources.
-- `DigitRowsComputeBackend<F>` owns shared outer digit rows.
-  `CyclicRowsComputeBackend<F>` and `RingSwitchComputeBackend<F>` own the
-  remaining fixed ring-switch row operations.
+- `DigitRowsComputeBackend<F>` and `CyclicRowsComputeBackend<F>` own reusable
+  row arithmetic. `RingSwitchRelationKernel<S, F, D>` and
+  `RingSwitchQuotientKernel<S, F, D>` own source-typed ring-switch operations.
 - `CpuBackend` prepares `CpuPreparedSetup<F>` from an `AkitaProverSetup<F>` or
   an `Arc<AkitaExpandedSetup<F>>`. Per-dimension NTT caches live inside the
   prepared stack. Matrix-consuming kernels lazily acquire exact prefixes keyed
