@@ -37,44 +37,59 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         )?;
         let base_d = geometry.base_ring_dim();
         let alpha = *alpha_pows_a.get(1).ok_or(AkitaError::InvalidProof)?;
-        let base_pows = scalar_powers(alpha, base_d);
-        for (role, powers, ratio) in [
-            ("A", alpha_pows_a, geometry.a_ratio()),
-            ("B", alpha_pows_b, geometry.b_ratio()),
-            ("D", alpha_pows_d, geometry.d_ratio()),
-        ] {
-            role_projection(powers, &base_pows, ratio).ok_or_else(|| {
+        let base_pows_storage;
+        let base_pows = if alpha_pows_a.len() == base_d {
+            alpha_pows_a
+        } else if alpha_pows_b.len() == base_d {
+            alpha_pows_b
+        } else if alpha_pows_d.len() == base_d {
+            alpha_pows_d
+        } else {
+            base_pows_storage = scalar_powers(alpha, base_d);
+            &base_pows_storage
+        };
+        let build_root_projection = |role: &'static str, powers: &[E], ratio: usize| {
+            role_projection(powers, base_pows, ratio).ok_or_else(|| {
                 AkitaError::InvalidSetup(format!(
                     "{role} alpha powers do not decompose over the shared setup base"
                 ))
-            })?;
-        }
-        let projections = self
-            .groups
-            .iter()
-            .map(|group| {
-                let build = |role: &'static str, dimension: usize, ratio: usize| {
-                    let powers = scalar_powers(alpha, dimension);
-                    role_projection(&powers, &base_pows, ratio).ok_or_else(|| {
-                        AkitaError::InvalidSetup(format!(
-                            "{role} alpha powers do not decompose over the shared setup base"
-                        ))
-                    })
-                };
-                Ok([
-                    build("A", group.role_dims.d_a(), group.a_ratio)?,
-                    build("B", group.role_dims.d_b(), group.b_ratio)?,
-                    build("D", group.role_dims.d_d(), group.d_ratio)?,
-                ])
             })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
+        };
+        let root_projections = [
+            build_root_projection("A", alpha_pows_a, geometry.a_ratio())?,
+            build_root_projection("B", alpha_pows_b, geometry.b_ratio())?,
+            build_root_projection("D", alpha_pows_d, geometry.d_ratio())?,
+        ];
+        let projections =
+            if self.groups.len() == 1 && self.groups[0].role_dims == geometry.role_dims() {
+                vec![root_projections]
+            } else {
+                self.groups
+                    .iter()
+                    .map(|group| {
+                        let build = |role: &'static str, dimension: usize, ratio: usize| {
+                            let powers = scalar_powers(alpha, dimension);
+                            role_projection(&powers, base_pows, ratio).ok_or_else(|| {
+                                AkitaError::InvalidSetup(format!(
+                                "{role} alpha powers do not decompose over the shared setup base"
+                            ))
+                            })
+                        };
+                        Ok([
+                            build("A", group.role_dims.d_a(), group.a_ratio)?,
+                            build("B", group.role_dims.d_b(), group.b_ratio)?,
+                            build("D", group.role_dims.d_d(), group.d_ratio)?,
+                        ])
+                    })
+                    .collect::<Result<Vec<_>, AkitaError>>()?
+            };
 
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
             base_d,
             |BASE_D| {
-                self.evaluate_role_dims_direct_typed::<F, BASE_D>(setup, &base_pows, &projections)
+                self.evaluate_role_dims_direct_typed::<F, BASE_D>(setup, base_pows, &projections)
             }
         )
     }

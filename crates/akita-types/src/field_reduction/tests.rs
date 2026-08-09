@@ -1,6 +1,6 @@
 use super::*;
 use crate::{reduce_inner_opening_to_ring_element, BasisMode};
-use akita_field::{Fp32, FpExt4, FpExt8};
+use akita_field::{Ext2, Fp32, FpExt4, FpExt8};
 
 type F = Fp32<251>;
 type AkitaF32 = Fp32<4294967197>;
@@ -11,6 +11,50 @@ fn ring_from_i64s<const D: usize>(values: [i64; D]) -> CyclotomicRing<F, D> {
 
 fn ring_from_index<const D: usize>() -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 1) as u64)))
+}
+
+fn assert_trace_open_row_matches_subgroup_oracle<E, const D: usize, const K: usize>()
+where
+    E: FpExtEncoding<AkitaF32>,
+{
+    assert_eq!(E::EXT_DEGREE, K);
+    let params = SubfieldParams::<D, K>::new().unwrap();
+    let ring = CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+        AkitaF32::from_u64(3 + 5 * index as u64)
+    }));
+    let packed_inner = CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+        AkitaF32::from_u64(7 + 11 * index as u64)
+    }));
+    let trace_product = ring * packed_inner.sigma_m1();
+    let trace_scale = AkitaF32::from_u64(params.packed_len() as u64)
+        .inverse()
+        .unwrap();
+    let step = D / (2 * K);
+    let expected = (0..D)
+        .map(|shift| {
+            let traced = trace_h(params, &trace_product.negacyclic_shift(shift));
+            let mut coordinates = [AkitaF32::zero(); K];
+            coordinates[0] = traced.coefficients()[0] * trace_scale;
+            for (index, coordinate) in coordinates.iter_mut().enumerate().skip(1) {
+                *coordinate = traced.coefficients()[index * step] * trace_scale;
+            }
+            E::from_base_slice(&coordinates)
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        trace_open_ring_row::<AkitaF32, E, D>(&ring, &packed_inner, D.trailing_zeros() as usize,)
+            .unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn trace_open_row_matches_explicit_subgroup_trace() {
+    assert_trace_open_row_matches_subgroup_oracle::<AkitaF32, 64, 1>();
+    assert_trace_open_row_matches_subgroup_oracle::<Ext2<AkitaF32>, 64, 2>();
+    assert_trace_open_row_matches_subgroup_oracle::<FpExt4<AkitaF32>, 64, 4>();
+    assert_trace_open_row_matches_subgroup_oracle::<FpExt8<AkitaF32>, 64, 8>();
 }
 
 fn ring_subfield_basis<Fq: FieldCore, const D: usize, const K: usize>(
@@ -576,6 +620,11 @@ fn assert_psi_trace_inner_product_identity_fp_ext4<const D: usize>() {
     let scaled = embed_subfield::<AkitaF32, D, 4>(params, &y.coeffs).scale(&scale);
 
     assert_eq!(traced, scaled);
+    assert_eq!(
+        recover_ring_subfield_inner_product::<AkitaF32, FpExt4<AkitaF32>, D>(&big_y, &big_v)
+            .expect("recover ψ-packed fp4 inner product"),
+        y
+    );
 }
 
 #[test]
@@ -640,6 +689,11 @@ fn assert_psi_trace_inner_product_identity_fp_ext2<const D: usize>() {
     let scaled = embed_subfield::<AkitaF32, D, 2>(params, &y).scale(&scale);
 
     assert_eq!(traced, scaled);
+    assert_eq!(
+        recover_ring_subfield_inner_product::<AkitaF32, Ext2<AkitaF32>, D>(&big_y, &big_v)
+            .expect("recover ψ-packed fp2 inner product"),
+        Ext2::new(y[0], y[1])
+    );
 }
 
 #[test]
@@ -654,6 +708,11 @@ fn check_trace_inner_product_k_one_accepts_correct_opening() {
             reduce_inner_opening_to_ring_element::<F, D>(&inner_point, basis).unwrap();
         let product = y_ring * packed_inner.sigma_m1();
         let opening = product.coefficients()[0];
+
+        assert_eq!(
+            recover_ring_subfield_inner_product::<F, F, D>(&y_ring, &packed_inner).unwrap(),
+            opening
+        );
 
         assert!(check_trace_inner_product::<F, D, 1>(
             params,

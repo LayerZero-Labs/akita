@@ -492,7 +492,10 @@ mod tests {
                 _ => -2,
             })
             .collect();
-        let challenge = SparseChallenge { positions, coeffs };
+        let challenge = SparseChallenge {
+            positions: positions.into(),
+            coeffs: coeffs.into(),
+        };
 
         let digit_plane: [i8; D] = std::array::from_fn(|k| (((7 * k as i64) % 13) - 6) as i8);
 
@@ -514,8 +517,8 @@ mod tests {
     fn sparse_mul_acc_simd_zero_position() {
         const D: usize = 64;
         let challenge = SparseChallenge {
-            positions: vec![0],
-            coeffs: vec![1],
+            positions: vec![0].into(),
+            coeffs: vec![1].into(),
         };
         let digit_plane: [i8; D] = std::array::from_fn(|k| (k as i8) - 32);
 
@@ -533,8 +536,8 @@ mod tests {
     fn sparse_mul_acc_simd_max_position() {
         const D: usize = 64;
         let challenge = SparseChallenge {
-            positions: vec![(D - 1) as u32],
-            coeffs: vec![-2],
+            positions: vec![(D - 1) as u32].into(),
+            coeffs: vec![-2].into(),
         };
         let digit_plane: [i8; D] = std::array::from_fn(|k| ((k as i8) - 32).wrapping_mul(3));
 
@@ -694,15 +697,17 @@ mod tests {
             positions: vec![
                 0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
                 25, 26, 27, 28, 29, 30, 31,
-            ],
+            ]
+            .into(),
             coeffs: vec![
                 2, 2, -1, 4, 1, -1, 5, 4, -3, -4, -3, -6, 2, -8, -4, -3, -7, -3, 4, -1, 4, -4, 5,
                 -2, -4, 6, 6, -3, 4, 4,
-            ],
+            ]
+            .into(),
         };
         let sparse = SparseChallenge {
-            positions: vec![1, 7, 19],
-            coeffs: vec![2, -1, 3],
+            positions: vec![1, 7, 19].into(),
+            coeffs: vec![2, -1, 3].into(),
         };
         assert!(should_use_rotated_challenge::<D>(&high_density));
         assert!(!should_use_rotated_challenge::<D>(&sparse));
@@ -773,8 +778,8 @@ mod tests {
                 .collect(),
         };
         let sparse = SparseChallenge {
-            positions: vec![1, 17, 33, 49],
-            coeffs: vec![2, -1, 1, -2],
+            positions: vec![1, 17, 33, 49].into(),
+            coeffs: vec![2, -1, 1, -2].into(),
         };
         assert!(should_use_rotated_challenge::<D>(&high_density));
         assert!(!should_use_rotated_challenge::<D>(&sparse));

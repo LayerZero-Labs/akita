@@ -728,20 +728,20 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
     ];
     let challenges = vec![
         SparseChallenge {
-            positions: vec![0, 5],
-            coeffs: vec![1, -1],
+            positions: vec![0, 5].into(),
+            coeffs: vec![1, -1].into(),
         },
         SparseChallenge {
-            positions: vec![2, 7],
-            coeffs: vec![1, 1],
+            positions: vec![2, 7].into(),
+            coeffs: vec![1, 1].into(),
         },
         SparseChallenge {
-            positions: vec![4, 11],
-            coeffs: vec![-1, 2],
+            positions: vec![4, 11].into(),
+            coeffs: vec![-1, 2].into(),
         },
         SparseChallenge {
-            positions: vec![8, 13],
-            coeffs: vec![1, -2],
+            positions: vec![8, 13].into(),
+            coeffs: vec![1, -2].into(),
         },
     ];
 

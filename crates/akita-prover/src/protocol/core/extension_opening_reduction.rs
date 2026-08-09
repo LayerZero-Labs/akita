@@ -463,7 +463,5 @@ where
         .collect()
 }
 
-pub(in crate::protocol::core) type MultiplierWeightSlices<'a, F, const D: usize> =
-    (&'a [CyclotomicRing<F, D>], &'a [CyclotomicRing<F, D>]);
 pub(in crate::protocol::core) type FoldedClaimEvals<F, const D: usize> =
     (Vec<CyclotomicRing<F, D>>, Vec<Vec<CyclotomicRing<F, D>>>);

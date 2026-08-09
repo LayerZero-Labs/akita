@@ -78,7 +78,7 @@ pub trait FoldDraw {
         absorb_buf.extend_from_slice(&grind_nonce.to_le_bytes());
         let seed = self.absorb_and_squeeze(ABSORB_SPARSE_CHALLENGE, &absorb_buf);
         let mut cursor = XofCursor::from_seed(&seed);
-        let challenges = SignedSparseScratch::sample_challenges(&mut cursor, ring_d, total, cfg);
+        let challenges = SignedSparseScratch::sample_challenges(&mut cursor, ring_d, total, cfg)?;
         Challenges::from_sparse(challenges, num_live_blocks, num_claims)
     }
 }

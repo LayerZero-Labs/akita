@@ -965,12 +965,12 @@ mod tests {
         let view = w.view::<F, D>().expect("view");
         let challenges = vec![
             SparseChallenge {
-                positions: vec![0, 2],
-                coeffs: vec![1, -1],
+                positions: vec![0, 2].into(),
+                coeffs: vec![1, -1].into(),
             },
             SparseChallenge {
-                positions: vec![1, 3],
-                coeffs: vec![2, 1],
+                positions: vec![1, 3].into(),
+                coeffs: vec![2, 1].into(),
             },
         ];
 
