@@ -191,6 +191,52 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertEqual(summary["num_setup_field_elements"], 4096)
 
+    def test_verify_timings_keep_multi_and_single_thread_modes_separate(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        log = "\n".join(
+            [
+                "INFO profile thread pools prove_threads=16 verify_multi_threads=16 "
+                "verify_single_threads=1",
+                "INFO profile verification start label=onehot_fp128 "
+                'verify_mode="multi threaded"',
+                "INFO akita batched verify complete elapsed_s=0.007",
+                "INFO verify multi threaded OK label=onehot_fp128 elapsed_s=0.008",
+                "INFO profile verification start label=onehot_fp128 "
+                'verify_mode="single threaded"',
+                "INFO akita batched verify complete elapsed_s=0.012",
+                "INFO verify single threaded OK label=onehot_fp128 elapsed_s=0.013",
+            ]
+        )
+
+        summary = extract_summary(log, "onehot_fp128", 32, 1)
+
+        self.assertEqual(summary["prove_threads"], 16)
+        self.assertEqual(summary["verify_multi_threads"], 16)
+        self.assertEqual(summary["verify_single_threads"], 1)
+        self.assertEqual(summary["verification_modes"], "multi_and_single")
+        self.assertEqual(summary["verify_total_s"], 0.008)
+        self.assertEqual(summary["verify_single_total_s"], 0.013)
+        self.assertEqual(summary["verify_akita_s"], 0.007)
+        self.assertEqual(summary["verify_single_akita_s"], 0.012)
+
+    def test_legacy_verify_timing_is_the_multi_thread_baseline(self) -> None:
+        from scripts.profile_bench_report import extract_summary, missing_required_run_metrics
+
+        summary = extract_summary(
+            "INFO verify OK label=onehot_fp128 elapsed_s=0.008\n",
+            "onehot_fp128",
+            32,
+            1,
+        )
+
+        self.assertEqual(summary["verify_total_s"], 0.008)
+        self.assertNotIn("verify_single_total_s", summary)
+        self.assertNotIn("verify_single_total_s", missing_required_run_metrics(summary))
+
+        summary["verification_modes"] = "multi_and_single"
+        self.assertIn("verify_single_total_s", missing_required_run_metrics(summary))
+
     def test_setup_size_converts_merge_base_ring_count_to_flat_fields(self) -> None:
         from scripts.profile_bench_report import extract_summary
 
@@ -534,6 +580,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "commit_s": 4.0,
                 "prove_total_s": 6.0,
                 "verify_total_s": 0.008,
+                "verify_single_total_s": 0.012,
                 "max_rss_kib": 2048,
                 "proof_size_bytes": 4096,
                 "planned_levels": [{"level": 0, "d_a": 64, "d_b": 64, "d_d": 64}],
@@ -547,6 +594,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             "commit_s",
             "prove_total_s",
             "verify_total_s",
+            "verify_single_total_s",
             "max_rss_kib",
             "proof_size_bytes",
         ):
@@ -557,13 +605,15 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             render_matrix_summary([current], {str(current["case_id"]): baseline})
         report = output.getvalue()
 
-        self.assertEqual(report.count("+100.0%"), 8)
+        self.assertEqual(report.count("+100.0%"), 9)
         self.assertNotIn("vs base</sub>", report)
         self.assertIn("### Phase time", report)
         self.assertIn("### Memory and setup size", report)
         self.assertIn("### Proof size", report)
         self.assertIn("Setup vector", report)
         self.assertIn("Prepared NTT cache", report)
+        self.assertIn("Verify, multi threaded", report)
+        self.assertIn("Verify, single threaded", report)
         self.assertIn("4.0 MiB", report)
         self.assertIn("8.0 MiB", report)
         self.assertIn("4,096 bytes", report)
@@ -572,7 +622,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertNotIn("Proof B", report)
         self.assertNotIn("Setup Mode", report)
         table_lines = [line for line in report.splitlines() if line.startswith("|")]
-        self.assertLessEqual(max(line.count("|") for line in table_lines), 6)
+        self.assertLessEqual(max(line.count("|") for line in table_lines), 7)
 
     def test_adaptive_case_label_omits_ring_dimensions_and_mixed_dimension_config(self) -> None:
         from scripts.profile_bench_report import human_case_label, normalize_case_summary

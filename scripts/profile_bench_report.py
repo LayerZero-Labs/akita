@@ -24,7 +24,7 @@ RSS_PATTERNS = [
 ]
 ONEHOT_ARITY = 256
 ONEHOT_WORKLOAD_LABEL = f"1-of-{ONEHOT_ARITY} one-hot"
-CASE_SCHEMA_VERSION = 6
+CASE_SCHEMA_VERSION = 7
 REQUIRED_RUN_METRICS = (
     "setup_s",
     "commit_s",
@@ -610,6 +610,11 @@ def require_int(summary: dict[str, object], key: str) -> int:
 
 def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
     missing = [key for key in REQUIRED_RUN_METRICS if summary.get(key) is None]
+    if (
+        summary.get("verification_modes") == "multi_and_single"
+        and summary.get("verify_single_total_s") is None
+    ):
+        missing.append("verify_single_total_s")
     for key in REQUIRED_RUN_SEQUENCES:
         value = summary.get(key)
         if not isinstance(value, list) or not value:
@@ -640,8 +645,10 @@ TIMING_SAMPLE_METRICS = (
     "commit_s",
     "prove_total_s",
     "verify_total_s",
+    "verify_single_total_s",
     "prove_akita_s",
     "verify_akita_s",
+    "verify_single_akita_s",
 )
 GRIND_SAMPLE_METRICS = (
     "grind_levels",
@@ -784,11 +791,21 @@ def extract_summary(
     planned_levels: dict[int, dict[str, object]] = {}
     planned_groups: dict[int, list[dict[str, object]]] = {}
     proof_levels: dict[int, dict[str, object]] = {}
+    active_verify_mode = "multi threaded"
 
     for line in log_text.splitlines():
         line = ANSI_RE.sub("", line)
         kvs = parse_kvs(line)
-        if " INFO setup sizes" in line and kvs.get("label") == mode:
+        if "profile thread pools" in line:
+            summary["prove_threads"] = int(kvs["prove_threads"])
+            summary["verify_multi_threads"] = int(
+                kvs.get("verify_multi_threads", kvs.get("verify_threads", "1"))
+            )
+            summary["verify_single_threads"] = int(kvs.get("verify_single_threads", "1"))
+        elif "profile verification start" in line and kvs.get("label") == mode:
+            active_verify_mode = kvs["verify_mode"].replace("_", " ")
+            summary["verification_modes"] = "multi_and_single"
+        elif " INFO setup sizes" in line and kvs.get("label") == mode:
             setup_vector_bytes = int(kvs["setup_vector_bytes"])
             summary["setup_vector_bytes"] = setup_vector_bytes
             if "num_setup_field_elements" in kvs:
@@ -834,8 +851,17 @@ def extract_summary(
         elif " INFO prove" in line and kvs.get("label") == mode:
             summary["prove_total_s"] = float(kvs["elapsed_s"])
         elif "akita verify complete" in line or "akita batched verify complete" in line:
-            summary["verify_akita_s"] = float(kvs["elapsed_s"])
-        elif "verify OK" in line and kvs.get("label") == mode:
+            key = (
+                "verify_single_akita_s"
+                if active_verify_mode == "single threaded"
+                else "verify_akita_s"
+            )
+            summary[key] = float(kvs["elapsed_s"])
+        elif "verify single threaded OK" in line and kvs.get("label") == mode:
+            summary["verify_single_total_s"] = float(kvs["elapsed_s"])
+        elif (
+            "verify multi threaded OK" in line or "verify OK" in line
+        ) and kvs.get("label") == mode:
             summary["verify_total_s"] = float(kvs["elapsed_s"])
         elif "proof summary" in line and kvs.get("label") == mode:
             summary["proof_size_bytes"] = int(kvs["proof_size_bytes"])
@@ -1117,6 +1143,7 @@ def infer_failure_phase(summary: dict[str, object], first_missing: str | None = 
         "commit_s": "commit",
         "prove_total_s": "prove",
         "verify_total_s": "verify",
+        "verify_single_total_s": "single threaded verify",
         "proof_size_bytes": "proof summary",
         "accounted_bytes": "proof accounting",
         "consistent_proof_accounting": "proof accounting",
@@ -1184,6 +1211,10 @@ SUMMARY_CSV_COLUMNS = (
     "commit_s",
     "prove_total_s",
     "verify_total_s",
+    "verify_single_total_s",
+    "prove_threads",
+    "verify_multi_threads",
+    "verify_single_threads",
     "max_rss_kib",
     "proof_size_bytes",
     "accounted_bytes",
@@ -1617,7 +1648,8 @@ MEASURED_METRICS = [
     Metric("backend_prepare_s", "Backend preparation", "s", fmt_seconds),
     Metric("commit_s", "Commit", "s", fmt_seconds),
     Metric("prove_total_s", "Prove", "s", fmt_seconds),
-    Metric("verify_total_s", "Verify", "ms", fmt_milliseconds),
+    Metric("verify_total_s", "Verify, multi threaded", "ms", fmt_milliseconds),
+    Metric("verify_single_total_s", "Verify, single threaded", "ms", fmt_milliseconds),
     Metric("max_rss_kib", "Peak process RSS", "MiB", fmt_mib),
     Metric(
         "num_setup_field_elements",
@@ -1711,6 +1743,18 @@ def render_execution_parameters(
     )
     if extension_degree is not None:
         rows.append(("Claim extension degree", extension_degree))
+
+    verifier_threads = parameter_value(
+        current,
+        baseline,
+        ("verify_multi_threads", "verify_single_threads"),
+        lambda multi, single: (
+            f"{code_text(fmt_count(float(multi)))} for the multi threaded timing and "
+            f"{code_text(fmt_count(float(single)))} for the single threaded timing."
+        ),
+    )
+    if verifier_threads is not None:
+        rows.append(("Verifier threads", verifier_threads))
 
     print("#### Execution parameters")
     print()
@@ -1918,7 +1962,18 @@ def render_matrix_summary(
                 Metric("setup_s", "Setup", " s", fmt_seconds),
                 Metric("commit_s", "Commit", " s", fmt_seconds),
                 Metric("prove_total_s", "Prove", " s", fmt_seconds),
-                Metric("verify_total_s", "Verify", " ms", fmt_milliseconds),
+                Metric(
+                    "verify_total_s",
+                    "Verify, multi threaded",
+                    " ms",
+                    fmt_milliseconds,
+                ),
+                Metric(
+                    "verify_single_total_s",
+                    "Verify, single threaded",
+                    " ms",
+                    fmt_milliseconds,
+                ),
             ],
         ),
         (
@@ -2628,6 +2683,12 @@ def render_report(args: argparse.Namespace) -> int:
             "warmup run. Peak RSS is the largest measured value."
         )
         print()
+        if any(case.get("verify_single_total_s") is not None for case in current_cases):
+            print(
+                "Each sample verifies the same proof first with the configured multi threaded "
+                "pool and then with one thread. Both timings reuse the same verifier setup."
+            )
+            print()
     if baselines[0][1] is not None:
         print(
             "Head and merge base binaries ran interleaved on the same runner. Each delta "
@@ -2735,12 +2796,14 @@ def render_report(args: argparse.Namespace) -> int:
                 ("setup_s", "setup"),
                 ("commit_s", "commit"),
                 ("prove_total_s", "prove"),
-                ("verify_total_s", "verify"),
+                ("verify_total_s", "multi threaded verify"),
+                ("verify_single_total_s", "single threaded verify"),
             ]:
                 observed_range = sample_range(current, key)
                 if observed_range is not None:
-                    formatter = fmt_milliseconds if key == "verify_total_s" else fmt_seconds
-                    unit = "ms" if key == "verify_total_s" else "s"
+                    is_verify = key in ("verify_total_s", "verify_single_total_s")
+                    formatter = fmt_milliseconds if is_verify else fmt_seconds
+                    unit = "ms" if is_verify else "s"
                     ranges.append(
                         f"{label} `{formatter(observed_range[0])}-{formatter(observed_range[1])}{unit}`"
                     )

@@ -50,7 +50,7 @@ The direct configs are `akita_config::proof_optimized::fp128::OneHot` and
 | `AKITA_PROFILE_ANSI` | `1` | Colored log output |
 | `AKITA_PROFILE_SPAN_CLOSES` | `1` | Log span close events |
 | `AKITA_PROFILE_PROVE_THREADS` | `RAYON_NUM_THREADS` or Rayon default | Global prove pool size (`0` = Rayon default) |
-| `AKITA_PROFILE_VERIFY_THREADS` | `RAYON_NUM_THREADS` or Rayon default | Verify pool when it differs from prove (`0` = Rayon default) |
+| `AKITA_PROFILE_VERIFY_THREADS` | `RAYON_NUM_THREADS` or Rayon default | Multi threaded verify pool when it differs from prove (`0` = Rayon default) |
 | `AKITA_ALLOW_DEBUG_PROFILE` | unset | Bypass `--release` guard |
 | `RAYON_NUM_THREADS` | Rayon default | Fallback when profile thread vars are unset |
 
@@ -132,7 +132,9 @@ Each measured sample performs these operations:
 3. Commit to the polynomials.
 4. Produce and serialize a complete proof.
 5. Check the reported proof size.
-6. Build verifier setup and verify the claimed openings.
+6. Build verifier setup once.
+7. Verify the claimed openings with the configured multi threaded pool.
+8. Verify the same proof and claims again with one thread.
 
 The profile workflow does not test malformed proofs or rejection paths. The
 test suite owns those checks.
@@ -144,6 +146,13 @@ compact pull request comment, and the full `report.md` artifact. The compact
 comment shows the public statements first. It then uses separate tables for
 phase time, memory and setup size, and proof size. This keeps each table narrow
 enough to read in a pull request.
+
+The phase table labels the existing verifier time as multi threaded and adds a
+separate single threaded verifier column. Both runs use the same proof, claims,
+and verifier setup. The multi threaded run comes first so comparisons with
+older merge bases preserve the old measurement order. Profile CI sets both
+configured thread counts to the runner CPU count and rejects a runner with
+fewer than two CPUs.
 
 Pull request runs compare the head with its merge base. The two binaries run
 interleaved on the same runner. User facing report text must say merge base, not
