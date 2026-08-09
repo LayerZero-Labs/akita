@@ -24,7 +24,7 @@ RSS_PATTERNS = [
 ]
 ONEHOT_ARITY = 256
 ONEHOT_WORKLOAD_LABEL = f"1-of-{ONEHOT_ARITY} one-hot"
-CASE_SCHEMA_VERSION = 5
+CASE_SCHEMA_VERSION = 6
 REQUIRED_RUN_METRICS = (
     "setup_s",
     "commit_s",
@@ -781,8 +781,9 @@ def extract_summary(
         "case_id": case_id(mode, num_vars, num_polys, setup_mode),
         "collected_at": datetime.now(timezone.utc).isoformat(),
     }
-    planned_levels: dict[int, dict[str, int]] = {}
-    proof_levels: dict[int, dict[str, int]] = {}
+    planned_levels: dict[int, dict[str, object]] = {}
+    planned_groups: dict[int, list[dict[str, object]]] = {}
+    proof_levels: dict[int, dict[str, object]] = {}
 
     for line in log_text.splitlines():
         line = ANSI_RE.sub("", line)
@@ -852,6 +853,42 @@ def extract_summary(
                 )
         elif "extension opening used root-direct fallback" in line and kvs.get("label") == mode:
             summary["extension_root_direct_fallback"] = True
+        elif "planned fold group" in line and kvs.get("label") == mode:
+            level = int(kvs["level"])
+            planned_groups.setdefault(level, []).append(
+                {
+                    "group": kvs["group"],
+                    "group_role": kvs["group_role"],
+                    "consumer_level": int(kvs["consumer_level"]),
+                    "witness_field_elements": int(kvs["witness_field_elements"]),
+                    "d_a": int(kvs["d_a"]),
+                    "d_b": int(kvs["d_b"]),
+                    "d_d": int(kvs["d_d"]),
+                    "n_a": int(kvs["n_a"]),
+                    "n_b": int(kvs["n_b"]),
+                    "n_d": int(kvs["n_d"]),
+                    "log_basis_inner": int(kvs["log_basis_inner"]),
+                    "log_basis_outer": int(kvs["log_basis_outer"]),
+                    "log_basis_open": int(kvs["log_basis_open"]),
+                    "num_digits_inner": int(kvs["num_digits_inner"]),
+                    "num_digits_outer": int(kvs["num_digits_outer"]),
+                    "num_digits_open": int(kvs["num_digits_open"]),
+                    "num_digits_fold": int(kvs["num_digits_fold"]),
+                    "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
+                    "num_live_ring_elements_per_claim": int(
+                        kvs["num_live_ring_elements_per_claim"]
+                    ),
+                    "num_live_blocks": int(kvs["num_live_blocks"]),
+                    "num_positions_per_block": int(kvs["num_positions_per_block"]),
+                    "block_index_domain_size": int(kvs["block_index_domain_size"]),
+                    "setup_prefix_natural_field_elements": int(
+                        kvs["setup_prefix_natural_field_elements"]
+                    ),
+                    "setup_prefix_padded_field_elements": int(
+                        kvs["setup_prefix_padded_field_elements"]
+                    ),
+                }
+            )
         elif "planned fold level" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
             # Benchmark runs parse both the PR binary and its merge-base binary.
@@ -1000,6 +1037,9 @@ def extract_summary(
             summary["max_rss_kib"] = rss_value
             break
 
+    for level, groups in planned_groups.items():
+        if level in planned_levels:
+            planned_levels[level]["groups"] = groups
     if planned_levels:
         summary["planned_levels"] = [planned_levels[level] for level in sorted(planned_levels)]
     if proof_levels:
@@ -1571,7 +1611,7 @@ class Metric:
     value_formatter: callable
 
 
-REPORT_METRICS = [
+MEASURED_METRICS = [
     Metric("setup_s", "Setup and preparation", "s", fmt_seconds),
     Metric("setup_expand_s", "Setup expansion", "s", fmt_seconds),
     Metric("backend_prepare_s", "Backend preparation", "s", fmt_seconds),
@@ -1591,23 +1631,6 @@ REPORT_METRICS = [
     Metric("proof_size_bytes", "Proof size", "bytes", fmt_bytes),
     Metric("akita_fold_bytes", "Recursive fold payload", "bytes", fmt_bytes),
     Metric("tail_bytes", "Final-witness tail", "bytes", fmt_bytes),
-    Metric("akita_levels", "Fold levels", "levels", fmt_count),
-    Metric("crt_num_primes", "CRT prime count", "primes", fmt_count),
-    Metric("crt_prime_modulus_bits", "CRT prime modulus width", "bits", fmt_count),
-    Metric("crt_limb_bits", "CRT signed storage width", "bits", fmt_count),
-    Metric(
-        "balanced_digit_safe_width",
-        "Maximum safe balanced-digit accumulation width",
-        "terms",
-        fmt_count,
-    ),
-    Metric(
-        "raw_i8_safe_width",
-        "Maximum safe signed-i8 accumulation width",
-        "terms",
-        fmt_count,
-    ),
-    Metric("ext_degree", "Claim extension degree", "degree", fmt_count),
 ]
 
 
@@ -1630,6 +1653,69 @@ def render_metric_row(
 
     columns.append(numeric_delta(current, main_baseline, metric.key))
     return f"| {metric.name} | " + " | ".join(columns) + f" | {metric.unit} |"
+
+
+def parameter_value(
+    current: dict[str, object],
+    baseline: dict[str, object] | None,
+    keys: tuple[str, ...],
+    render: callable,
+) -> str | None:
+    if any(current.get(key) is None for key in keys):
+        return None
+    current_values = tuple(current[key] for key in keys)
+    rendered = render(*current_values)
+    if baseline is None or any(baseline.get(key) is None for key in keys):
+        return rendered
+    baseline_values = tuple(baseline[key] for key in keys)
+    if current_values == baseline_values:
+        return rendered
+    return f"{rendered} Merge base: {render(*baseline_values)}"
+
+
+def render_execution_parameters(
+    current: dict[str, object], baseline: dict[str, object] | None
+) -> None:
+    rows = [("Internal mode", code_text(current["mode"]))]
+
+    crt = parameter_value(
+        current,
+        baseline,
+        ("crt_num_primes", "crt_prime_modulus_bits", "crt_limb_bits"),
+        lambda primes, modulus_bits, limb_bits: (
+            f"{code_text(fmt_count(float(primes)))} prime moduli of "
+            f"{code_text(fmt_count(float(modulus_bits)))} bits in signed "
+            f"{code_text(f'i{int(limb_bits)}')} lanes."
+        ),
+    )
+    if crt is not None:
+        rows.append(("CRT arithmetic", crt))
+
+    safe_width = parameter_value(
+        current,
+        baseline,
+        ("balanced_digit_safe_width", "raw_i8_safe_width"),
+        lambda balanced, raw_i8: (
+            f"{code_text(fmt_count(float(balanced)))} balanced digit terms and "
+            f"{code_text(fmt_count(float(raw_i8)))} signed i8 terms."
+        ),
+    )
+    if safe_width is not None:
+        rows.append(("Safe accumulation limit", safe_width))
+
+    extension_degree = parameter_value(
+        current,
+        baseline,
+        ("ext_degree",),
+        lambda degree: code_text(fmt_count(float(degree))),
+    )
+    if extension_degree is not None:
+        rows.append(("Claim extension degree", extension_degree))
+
+    print("#### Execution parameters")
+    print()
+    for label, value in rows:
+        print(f"- {label}: {value}")
 
 
 def numeric_delta(
@@ -1696,21 +1782,6 @@ def optional_value_with_baseline_delta(
         compare_to_baseline,
         comparison_label,
     )
-
-
-def format_witness_groups(groups: object) -> str:
-    if not isinstance(groups, list) or not groups:
-        return "n/a"
-    parts = []
-    for group in groups:
-        if not isinstance(group, dict):
-            continue
-        name = group.get("group")
-        field_elements = group.get("field_elements")
-        if name is None or field_elements is None:
-            continue
-        parts.append(f"{name}: {fmt_count(float(field_elements))}")
-    return "<br>".join(parts) if parts else "n/a"
 
 
 def field_family_bits(field_family: object) -> int | None:
@@ -1932,96 +2003,6 @@ def sample_range(summary: dict[str, object], key: str) -> tuple[float, float] | 
     return min(values), max(values)
 
 
-def level_by_index(
-    levels: list[dict[str, object]] | None, level_index: object
-) -> dict[str, object] | None:
-    if levels is None:
-        return None
-    return next((level for level in levels if level.get("level") == level_index), {})
-
-
-def level_value(
-    level: dict[str, object],
-    baseline: dict[str, object] | None,
-    key: str,
-    formatter: callable = fmt_count,
-    unit: str = "",
-    compare_to_baseline: bool = False,
-) -> str:
-    baseline_value = baseline.get(key) if baseline is not None else None
-    return value_with_baseline_delta(
-        level[key], baseline_value, formatter, unit, compare_to_baseline or baseline is not None
-    )
-
-
-def render_planned_levels(
-    levels: list[dict[str, object]], baseline_levels: list[dict[str, object]] | None
-) -> None:
-    print("<details>")
-    print("<summary>Fold schedule geometry and security sizing</summary>")
-    print()
-    print("#### Schedule geometry")
-    print()
-    print(
-        "| Fold level | A ring dimension | B ring dimension | D ring dimension | "
-        "Number of live source A-ring elements in each claim | "
-        "Number of positions in each block | Number of live blocks | "
-        "Block-domain slots |"
-    )
-    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-    for level in levels:
-        baseline = level_by_index(baseline_levels, level["level"])
-        print(
-            f"| L{level['level']} | {level_value(level, baseline, 'd_a')} | "
-            f"{level_value(level, baseline, 'd_b')} | {level_value(level, baseline, 'd_d')} | "
-            f"{level_value(level, baseline, 'num_live_ring_elements_per_claim')} | "
-            f"{level_value(level, baseline, 'num_positions_per_block')} | "
-            f"{level_value(level, baseline, 'num_live_blocks')} | "
-            f"{level_value(level, baseline, 'block_index_domain_size')} |"
-        )
-    print()
-    print("#### Security and proof sizing")
-    print()
-    print(
-        "| Fold level | A rows | B rows | D rows | Inner/A basis bits | Outer/B basis bits | Open/D basis bits | "
-        "Fold-challenge L1 bound | Inner/A digits | Outer/B digits | Open/D digits | Folded-witness digits | "
-        "Current witness field elements | Next witness field elements | "
-        "Setup prefix field elements | Setup prefix padded field elements | "
-        "Planned fold-level proof bytes |"
-    )
-    print(
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-        "--- | ---: | ---: | ---: | ---: |"
-    )
-    for level in levels:
-        baseline = level_by_index(baseline_levels, level["level"])
-        print(
-            f"| L{level['level']} | {level_value(level, baseline, 'n_a')} | "
-            f"{level_value(level, baseline, 'n_b')} | {level_value(level, baseline, 'n_d')} | "
-            f"{level_value(level, baseline, 'log_basis_inner')} | "
-            f"{level_value(level, baseline, 'log_basis_outer')} | "
-            f"{level_value(level, baseline, 'log_basis_open')} | "
-            f"{level_value(level, baseline, 'challenge_l1_mass')} | "
-            f"{level_value(level, baseline, 'num_digits_inner')} | "
-            f"{level_value(level, baseline, 'num_digits_outer')} | "
-            f"{level_value(level, baseline, 'num_digits_open')} | "
-            f"{level_value(level, baseline, 'delta_fold')} | "
-            f"{format_witness_groups(level.get('current_w_len'))} | "
-            f"{level_value(level, baseline, 'next_w_len')} | "
-            f"{level_value(level, baseline, 'setup_prefix_natural_field_elements')} | "
-            f"{level_value(level, baseline, 'setup_prefix_padded_field_elements')} | "
-            f"{optional_value_with_baseline_delta(level, baseline, 'level_bytes', fmt_bytes, ' bytes', baseline is not None)} |"
-        )
-    if baseline_levels is not None:
-        print()
-        print(
-            "Each numeric value includes its percentage delta versus the matching "
-            "merge base fold level."
-        )
-    print()
-    print("</details>")
-
-
 def proof_level_component_bytes(level: dict[str, object]) -> int:
     return sum(int(level.get(field, 0)) for field in PROOF_LEVEL_BYTE_FIELDS)
 
@@ -2031,19 +2012,6 @@ def proof_field_present(level: dict[str, object], field: str) -> bool:
     if isinstance(present, list):
         return field in present
     return level.get("root_variant") != "direct"
-
-
-def proof_component_value(
-    level: dict[str, object], baseline: dict[str, object] | None, field: str
-) -> str:
-    if not proof_field_present(level, field):
-        return "—"
-    baseline_value = None
-    if baseline is not None and proof_field_present(baseline, field):
-        baseline_value = baseline.get(field)
-    return value_with_baseline_delta(
-        level[field], baseline_value, fmt_bytes, " bytes", baseline is not None
-    )
 
 
 def proof_step_label(level: dict[str, object]) -> str:
@@ -2058,77 +2026,455 @@ def proof_step_label(level: dict[str, object]) -> str:
     return "intermediate fold"
 
 
-def render_proof_levels(
-    levels: list[dict[str, object]], baseline_levels: list[dict[str, object]] | None
+def exact_choice(current: str, baseline: str | None) -> str:
+    if baseline is None or current == baseline:
+        return current
+    return f"{current}<br><sub>merge base: {baseline}</sub>"
+
+
+def tuple_choice(
+    level: dict[str, object],
+    baseline: dict[str, object] | None,
+    label: str,
+    keys: tuple[str, ...],
+) -> str:
+    current = " / ".join(fmt_count(float(level[key])) for key in keys)
+    baseline_value = None
+    if baseline is not None and all(baseline.get(key) is not None for key in keys):
+        baseline_value = " / ".join(fmt_count(float(baseline[key])) for key in keys)
+    return exact_choice(f"{label}: {current}", f"{label}: {baseline_value}" if baseline_value else None)
+
+
+def scalar_choice(
+    level: dict[str, object],
+    baseline: dict[str, object] | None,
+    label: str,
+    key: str,
+) -> str:
+    current = fmt_count(float(level[key]))
+    baseline_value = None
+    if baseline is not None and baseline.get(key) is not None:
+        baseline_value = fmt_count(float(baseline[key]))
+    return exact_choice(f"{label}: {current}", f"{label}: {baseline_value}" if baseline_value else None)
+
+
+def format_witness_groups_inline(groups: object) -> str:
+    if not isinstance(groups, list) or not groups:
+        return "n/a"
+    values = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        name = group.get("group")
+        field_elements = group.get("field_elements")
+        if name is None or field_elements is None:
+            continue
+        values.append(f"{name} {fmt_count(float(field_elements))}")
+    return "; ".join(values) if values else "n/a"
+
+
+def witness_choice(
+    level: dict[str, object], baseline: dict[str, object] | None
+) -> str:
+    current = (
+        f"Witness: {format_witness_groups_inline(level.get('current_w_len'))} → "
+        f"{fmt_count(float(level['next_w_len']))}"
+    )
+    baseline_value = None
+    if baseline is not None and baseline.get("next_w_len") is not None:
+        baseline_value = (
+            f"Witness: {format_witness_groups_inline(baseline.get('current_w_len'))} → "
+            f"{fmt_count(float(baseline['next_w_len']))}"
+        )
+    return exact_choice(current, baseline_value)
+
+
+def relation_layout_choice(
+    level: dict[str, object], baseline: dict[str, object] | None
+) -> str:
+    current = (
+        f"Relation: {fmt_count(float(level['num_live_ring_elements_per_claim']))} live/claim; "
+        f"{fmt_count(float(level['num_live_blocks']))} × "
+        f"{fmt_count(float(level['num_positions_per_block']))} positions; "
+        f"{fmt_count(float(level['block_index_domain_size']))} domain slots"
+    )
+    baseline_value = None
+    keys = (
+        "num_live_ring_elements_per_claim",
+        "num_live_blocks",
+        "num_positions_per_block",
+        "block_index_domain_size",
+    )
+    if baseline is not None and all(baseline.get(key) is not None for key in keys):
+        baseline_value = (
+            f"Relation: "
+            f"{fmt_count(float(baseline['num_live_ring_elements_per_claim']))} live/claim; "
+            f"{fmt_count(float(baseline['num_live_blocks']))} × "
+            f"{fmt_count(float(baseline['num_positions_per_block']))} positions; "
+            f"{fmt_count(float(baseline['block_index_domain_size']))} domain slots"
+        )
+    return exact_choice(current, baseline_value)
+
+
+def setup_prefix_choice(
+    level: dict[str, object], baseline: dict[str, object] | None
+) -> str:
+    current = (
+        f"Setup prefix: {fmt_count(float(level['setup_prefix_natural_field_elements']))} → "
+        f"{fmt_count(float(level['setup_prefix_padded_field_elements']))}"
+    )
+    baseline_value = None
+    if baseline is not None and baseline.get("setup_prefix_natural_field_elements") is not None:
+        baseline_value = (
+            f"Setup prefix: "
+            f"{fmt_count(float(baseline['setup_prefix_natural_field_elements']))} → "
+            f"{fmt_count(float(baseline['setup_prefix_padded_field_elements']))}"
+        )
+    return exact_choice(current, baseline_value)
+
+
+def planned_group_label(group: dict[str, object]) -> str:
+    role = str(group["group_role"])
+    name = str(group["group"])
+    if role == "final":
+        return "Final group"
+    if role == "folded":
+        return "Folded witness"
+    if role == "precommitted" and name.startswith("pre"):
+        index = name.removeprefix("pre")
+        return f"Precommit {int(index) + 1}" if index.isdigit() else name
+    if role == "setup_offload":
+        return f"Setup offload → L{int(group['consumer_level'])}"
+    return name
+
+
+def planned_group_key(group: dict[str, object]) -> tuple[str, str, int]:
+    return (
+        str(group["group_role"]),
+        str(group["group"]),
+        int(group["consumer_level"]),
+    )
+
+
+def planned_group_planner_value(group: dict[str, object]) -> str:
+    return (
+        f"{planned_group_label(group)}: rings "
+        f"{fmt_count(float(group['d_a']))} / {fmt_count(float(group['d_b']))} / "
+        f"{fmt_count(float(group['d_d']))}; rows "
+        f"{fmt_count(float(group['n_a']))} / {fmt_count(float(group['n_b']))} / "
+        f"{fmt_count(float(group['n_d']))}; basis "
+        f"{fmt_count(float(group['log_basis_inner']))} / "
+        f"{fmt_count(float(group['log_basis_outer']))} / "
+        f"{fmt_count(float(group['log_basis_open']))}; digits "
+        f"{fmt_count(float(group['num_digits_inner']))} / "
+        f"{fmt_count(float(group['num_digits_outer']))} / "
+        f"{fmt_count(float(group['num_digits_open']))} / "
+        f"{fmt_count(float(group['num_digits_fold']))}; challenge L1 "
+        f"{fmt_count(float(group['challenge_l1_mass']))}"
+    )
+
+
+def planned_group_work_value(group: dict[str, object]) -> str:
+    role = str(group["group_role"])
+    label = planned_group_label(group)
+    relation = (
+        f"{fmt_count(float(group['num_live_ring_elements_per_claim']))} live/claim, "
+        f"{fmt_count(float(group['num_live_blocks']))} × "
+        f"{fmt_count(float(group['num_positions_per_block']))} positions, "
+        f"{fmt_count(float(group['block_index_domain_size']))} domain slots"
+    )
+    if role == "setup_offload":
+        return (
+            f"{label}: "
+            f"{fmt_count(float(group['setup_prefix_natural_field_elements']))} → "
+            f"{fmt_count(float(group['setup_prefix_padded_field_elements']))} setup fields; "
+            f"relation {relation}"
+        )
+    return (
+        f"{label}: witness {fmt_count(float(group['witness_field_elements']))}; "
+        f"relation {relation}"
+    )
+
+
+def render_group_choices(
+    groups: list[dict[str, object]],
+    baseline_groups: list[dict[str, object]],
+    value: callable,
+) -> str:
+    current = {planned_group_key(group): group for group in groups}
+    baseline = {planned_group_key(group): group for group in baseline_groups}
+    keys = [*current, *(key for key in baseline if key not in current)]
+    rows = []
+    for key in keys:
+        current_group = current.get(key)
+        baseline_group = baseline.get(key)
+        label_source = current_group or baseline_group
+        if label_source is None:
+            continue
+        current_text = value(current_group) if current_group is not None else (
+            f"{planned_group_label(label_source)}: absent"
+        )
+        baseline_text = value(baseline_group) if baseline_group is not None else (
+            f"{planned_group_label(label_source)}: absent" if baseline_groups else None
+        )
+        rows.append(exact_choice(current_text, baseline_text))
+    return "<br>".join(rows)
+
+
+def proof_component_group(
+    level: dict[str, object],
+    baseline: dict[str, object] | None,
+    group_label: str,
+    components: tuple[tuple[str, str], ...],
+) -> str | None:
+    def group_value(source: dict[str, object] | None) -> tuple[int, list[str]]:
+        if source is None:
+            return 0, []
+        values = []
+        total = 0
+        for field, label in components:
+            if not proof_field_present(source, field):
+                continue
+            value = int(source.get(field, 0))
+            total += value
+            if value != 0:
+                values.append(f"{label} {fmt_bytes(float(value))}")
+        return total, values
+
+    def render_value(total: int, values: list[str]) -> str:
+        detail = f" ({'; '.join(values)})" if len(components) > 1 and values else ""
+        return f"{group_label}: {fmt_bytes(float(total))}{detail}"
+
+    current_total, current_values = group_value(level)
+    baseline_total, baseline_values = group_value(baseline)
+    if current_total == 0 and (baseline is None or baseline_total == 0):
+        return None
+    baseline_text = (
+        render_value(baseline_total, baseline_values) if baseline is not None else None
+    )
+    return exact_choice(render_value(current_total, current_values), baseline_text)
+
+
+def proof_cost_summary(
+    level: dict[str, object], baseline: dict[str, object] | None
+) -> str:
+    total = value_with_baseline_delta(
+        level["total_bytes"],
+        baseline.get("total_bytes") if baseline else None,
+        fmt_bytes,
+        " bytes",
+        baseline is not None,
+    )
+    rows = [f"Total: {total}"]
+    groups = (
+        (
+            "Opening",
+            (
+                ("extension_opening_partials_bytes", "partials"),
+                ("extension_opening_sumcheck_bytes", "sumcheck"),
+                ("opening_payload_bytes", "p_H"),
+            ),
+        ),
+        (
+            "Stage 1",
+            (
+                ("stage1_sumcheck_bytes", "sumcheck"),
+                ("stage1_interstage_claims_bytes", "claims"),
+                ("stage1_range_image_evaluation_bytes", "range image"),
+            ),
+        ),
+        ("Stage 2", (("stage2_sumcheck_bytes", "sumcheck"),)),
+        ("Stage 3", (("stage3_sumcheck_bytes", "sumcheck"),)),
+        (
+            "Next witness",
+            (
+                ("next_w_payload_bytes", "payload"),
+                ("next_w_eval_bytes", "evaluation"),
+            ),
+        ),
+        ("Grinding nonce", (("fold_grind_nonce_bytes", "nonce"),)),
+    )
+    for group_label, components in groups:
+        rendered = proof_component_group(
+            level, baseline, group_label, components
+        )
+        if rendered is not None:
+            rows.append(rendered)
+    return "<br>".join(rows)
+
+
+def render_fold_details(
+    planned_levels: list[dict[str, object]],
+    proof_levels: list[dict[str, object]],
+    baseline_planned_levels: list[dict[str, object]] | None,
+    baseline_proof_levels: list[dict[str, object]] | None,
 ) -> None:
+    planned = {int(level["level"]): level for level in planned_levels}
+    proof = {int(level["level"]): level for level in proof_levels}
+    baseline_planned = {
+        int(level["level"]): level for level in (baseline_planned_levels or [])
+    }
+    baseline_proof = {
+        int(level["level"]): level for level in (baseline_proof_levels or [])
+    }
+    level_indices = sorted(set(planned) | set(proof))
+    show_setup_prefix = any(
+        int(level.get("setup_prefix_natural_field_elements", 0)) != 0
+        or int(level.get("setup_prefix_padded_field_elements", 0)) != 0
+        for level in [*planned_levels, *(baseline_planned_levels or [])]
+    )
+
     print("<details>")
-    print("<summary>Proof size by fold level</summary>")
+    print("<summary>Fold schedule and proof cost</summary>")
+    print()
+    print("#### Fold by fold")
+    print()
+    headers = ["Fold", "Step", "Planner choice", "Work at this fold", "Proof bytes"]
+    print("| " + " | ".join(headers) + " |")
+    print("| --- | --- | --- | --- | --- |")
+
+    for level_index in level_indices:
+        schedule = planned.get(level_index)
+        proof_level = proof.get(level_index)
+        baseline_schedule = baseline_planned.get(level_index)
+        baseline_proof_level = baseline_proof.get(level_index)
+        step = proof_step_label(proof_level) if proof_level is not None else "scheduled fold"
+        if schedule is None:
+            schedule_choice = "—"
+            work = "—"
+        else:
+            groups = schedule.get("groups")
+            baseline_groups = baseline_schedule.get("groups") if baseline_schedule else None
+            current_group_rows = groups if isinstance(groups, list) else []
+            baseline_group_rows = baseline_groups if isinstance(baseline_groups, list) else []
+            main_group_count = sum(
+                group.get("group_role") != "setup_offload"
+                for group in current_group_rows
+                if isinstance(group, dict)
+            )
+            baseline_main_group_count = sum(
+                group.get("group_role") != "setup_offload"
+                for group in baseline_group_rows
+                if isinstance(group, dict)
+            )
+            group_aware = (
+                main_group_count > 1
+                or baseline_main_group_count > 1
+                or any(
+                    group.get("group_role") == "setup_offload"
+                    for group in [*current_group_rows, *baseline_group_rows]
+                    if isinstance(group, dict)
+                )
+            )
+            if group_aware:
+                typed_groups = [
+                    group for group in current_group_rows if isinstance(group, dict)
+                ]
+                typed_baseline_groups = [
+                    group for group in baseline_group_rows if isinstance(group, dict)
+                ]
+                schedule_choice = render_group_choices(
+                    typed_groups, typed_baseline_groups, planned_group_planner_value
+                )
+                work = render_group_choices(
+                    typed_groups, typed_baseline_groups, planned_group_work_value
+                )
+                next_w = f"Folded output: {fmt_count(float(schedule['next_w_len']))}"
+                baseline_next_w = None
+                if baseline_schedule is not None and baseline_schedule.get("next_w_len") is not None:
+                    baseline_next_w = (
+                        f"Folded output: "
+                        f"{fmt_count(float(baseline_schedule['next_w_len']))}"
+                    )
+                work = f"{work}<br>{exact_choice(next_w, baseline_next_w)}"
+            else:
+                schedule_choice = "<br>".join(
+                    [
+                        tuple_choice(
+                            schedule,
+                            baseline_schedule,
+                            "Rings A/B/D",
+                            ("d_a", "d_b", "d_d"),
+                        ),
+                        tuple_choice(
+                            schedule,
+                            baseline_schedule,
+                            "Rows A/B/D",
+                            ("n_a", "n_b", "n_d"),
+                        ),
+                        tuple_choice(
+                            schedule,
+                            baseline_schedule,
+                            "Basis bits A/B/D",
+                            ("log_basis_inner", "log_basis_outer", "log_basis_open"),
+                        ),
+                        tuple_choice(
+                            schedule,
+                            baseline_schedule,
+                            "Digits A/B/D/W",
+                            (
+                                "num_digits_inner",
+                                "num_digits_outer",
+                                "num_digits_open",
+                                "delta_fold",
+                            ),
+                        ),
+                        scalar_choice(
+                            schedule,
+                            baseline_schedule,
+                            "Fold challenge L1",
+                            "challenge_l1_mass",
+                        ),
+                    ]
+                )
+                witness = witness_choice(schedule, baseline_schedule)
+                relation = relation_layout_choice(schedule, baseline_schedule)
+                work_parts = [witness, relation]
+                if show_setup_prefix:
+                    work_parts.append(setup_prefix_choice(schedule, baseline_schedule))
+                work = "<br>".join(work_parts)
+
+        proof_bytes = "n/a"
+        if proof_level is not None:
+            proof_bytes = proof_cost_summary(proof_level, baseline_proof_level)
+        row = [f"L{level_index}", step, schedule_choice, work, proof_bytes]
+        print("| " + " | ".join(row) + " |")
+
     print()
     print(
-        "| Fold level | Proof step | Fold-level bytes | Extension-opening partials | "
-        "Extension-opening sumcheck | Grinding nonce | Opening payload (`p_H`) | "
-        "Stage 1 sumcheck | Stage 1 transition claims | Range-image evaluation | "
-        "Stage 2 sumcheck | Stage 3 sumcheck | Next-witness payload | "
-        "Next-witness evaluation |"
+        "Role tuples use A / B / D order. The digit tuple adds folded witness W as "
+        "its fourth value. Proof groups with zero bytes are omitted. Component details "
+        "appear in parentheses when a group contains multiple fields. "
+        "Unchanged choices omit merge base text. The terminal response is reported "
+        "separately and is not part of the terminal fold byte total."
     )
-    print(
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-        "---: | ---: | ---: |"
-    )
-    for level in levels:
-        baseline = level_by_index(baseline_levels, level["level"])
-        total_bytes = value_with_baseline_delta(
-            level["total_bytes"],
-            baseline.get("total_bytes") if baseline else None,
-            fmt_bytes,
-            " bytes",
-            baseline is not None,
-        )
-        print(
-            f"| L{level['level']} | {proof_step_label(level)} | {total_bytes} | "
-            f"{proof_component_value(level, baseline, 'extension_opening_partials_bytes')} | "
-            f"{proof_component_value(level, baseline, 'extension_opening_sumcheck_bytes')} | "
-            f"{proof_component_value(level, baseline, 'fold_grind_nonce_bytes')} | "
-            f"{proof_component_value(level, baseline, 'opening_payload_bytes')} | "
-            f"{proof_component_value(level, baseline, 'stage1_sumcheck_bytes')} | "
-            f"{proof_component_value(level, baseline, 'stage1_interstage_claims_bytes')} | "
-            f"{proof_component_value(level, baseline, 'stage1_range_image_evaluation_bytes')} | "
-            f"{proof_component_value(level, baseline, 'stage2_sumcheck_bytes')} | "
-            f"{proof_component_value(level, baseline, 'stage3_sumcheck_bytes')} | "
-            f"{proof_component_value(level, baseline, 'next_w_payload_bytes')} | "
-            f"{proof_component_value(level, baseline, 'next_w_eval_bytes')} |"
-        )
-    print()
-    print(
-        "The terminal final witness is reported separately as the final-witness tail and is "
-        "excluded from the terminal fold-level byte total. An em dash means that the proof "
-        "variant does not contain that component."
-    )
-    grind_rows = [level for level in levels if level.get("grind_nonce_val") is not None]
+    grind_rows = [
+        level
+        for level in proof_levels
+        if int(level.get("grind_nonce_val", 0)) != 0
+        or int(level.get("grind_attempts", 0)) != 0
+    ]
     if grind_rows:
         print()
-        print("#### Grinding diagnostics")
+        print("#### Grinding retries")
         print()
-        print("| Fold level | Accepted nonce | Grinding attempts |")
+        print("| Fold | Accepted nonce | Attempts |")
         print("| --- | ---: | ---: |")
         for level in grind_rows:
-            baseline = level_by_index(baseline_levels, level["level"])
-            nonce = value_with_baseline_delta(
-                level["grind_nonce_val"],
-                baseline.get("grind_nonce_val") if baseline else None,
-                fmt_count,
-                compare_to_baseline=baseline is not None,
+            baseline = baseline_proof.get(int(level["level"]))
+            nonce = exact_choice(
+                fmt_count(float(level.get("grind_nonce_val", 0))),
+                fmt_count(float(baseline.get("grind_nonce_val", 0))) if baseline else None,
             )
-            attempts = value_with_baseline_delta(
-                level.get("grind_attempts", 0),
-                baseline.get("grind_attempts") if baseline else None,
-                fmt_count,
-                compare_to_baseline=baseline is not None,
+            attempts = exact_choice(
+                fmt_count(float(level.get("grind_attempts", 0))),
+                fmt_count(float(baseline.get("grind_attempts", 0))) if baseline else None,
             )
-            print(
-                f"| L{level['level']} | {nonce} | {attempts} |"
-            )
+            print(f"| L{level['level']} | {nonce} | {attempts} |")
+    else:
         print()
+        print("No fold needed a grinding retry.")
+    print()
     print("</details>")
 
 
@@ -2368,6 +2714,8 @@ def render_report(args: argparse.Namespace) -> int:
             if baselines[0][1] is not None
             else None
         )
+        print("#### Measured result")
+        print()
         column_labels = ["Head"] + [md_text(label) for label, _ in case_baselines]
         print("| Metric | " + " | ".join(column_labels) + " | Delta versus merge base | Unit |")
         print(
@@ -2376,7 +2724,7 @@ def render_report(args: argparse.Namespace) -> int:
             + " | ---: | --- |"
         )
 
-        for metric in REPORT_METRICS:
+        for metric in MEASURED_METRICS:
             row = render_metric_row(metric, current, case_baselines, main_case)
             if row:
                 print(row)
@@ -2401,19 +2749,16 @@ def render_report(args: argparse.Namespace) -> int:
                 print(f"- Sample ranges: {', '.join(ranges)}.")
 
         print()
-        print(f"- Internal benchmark mode: {code_text(current['mode'])}")
-        if current.get("crt_profile") is not None:
-            print(
-                f"- CRT profile: `{current['crt_profile']}` uses "
-                f"`{current.get('crt_num_primes', 'n/a')}` prime moduli of "
-                f"`{current.get('crt_prime_modulus_bits', 'n/a')}` bits each, stored in signed "
-                f"`i{current.get('crt_limb_bits', 'n/a')}` lanes."
-            )
+        render_execution_parameters(current, main_case)
         if current.get("extension_root_direct_fallback"):
+            print()
             print(
                 "- Extension opening fallback: root-direct proof; folded planner byte estimates "
                 "do not apply until the Frobenius optimization is wired."
             )
+        print()
+        print("#### Terminal response")
+        print()
         render_tail_encoding(current)
         if (
             current.get("terminal_w_len") is not None
@@ -2437,18 +2782,24 @@ def render_report(args: argparse.Namespace) -> int:
             )
 
         planned_levels = current.get("planned_levels")
-        if isinstance(planned_levels, list) and planned_levels:
+        proof_levels = current.get("proof_levels")
+        if (
+            isinstance(planned_levels, list)
+            and planned_levels
+            and isinstance(proof_levels, list)
+            and proof_levels
+        ):
             print()
             baseline_planned_levels = (
                 main_case.get("planned_levels") if main_case is not None else None
             )
-            render_planned_levels(planned_levels, baseline_planned_levels)
-
-        proof_levels = current.get("proof_levels")
-        if isinstance(proof_levels, list) and proof_levels:
-            print()
             baseline_proof_levels = main_case.get("proof_levels") if main_case is not None else None
-            render_proof_levels(proof_levels, baseline_proof_levels)
+            render_fold_details(
+                planned_levels,
+                proof_levels,
+                baseline_planned_levels,
+                baseline_proof_levels,
+            )
         if len(current_cases) > 1:
             print()
             print("</details>")
