@@ -135,10 +135,11 @@ matches the slots that prewarming can leave resident.
 
 Prepared state stays warm across proofs by default. A caller may use
 `ReleaseRootNttAfterFold` when it owns an isolated root cache and wants to free
-it before the recursive suffix. Release removes built keys and deduplicates
-clusters that share one physical cache owner. Existing readers remain valid
-through their `Arc`. Release does not cancel construction already in progress,
-so a caller that needs an empty cache must prevent new construction during the
+it before the recursive suffix. Release removes built shared matrix keys and
+deduplicates clusters that share one physical cache owner. Small compression
+NTT entries stay resident. Existing readers remain valid through their `Arc`.
+Release does not cancel construction already in progress, so a caller that
+needs an empty shared matrix cache must prevent new construction during the
 release boundary.
 
 A normal lifecycle is:
@@ -147,8 +148,8 @@ A normal lifecycle is:
 prepare empty backend state
 prewarm retained requirements and skip streamed requirements
 run the proof and retain built slots for reuse
-optionally release at an exclusive root boundary
-reuse the prepared setup; released slots rebuild at the next exact extent
+optionally release shared matrix state at an exclusive root boundary
+reuse the prepared setup; released shared slots rebuild at the next exact extent
 ```
 
 The terminal verifier keeps its separate exact-negacyclic cache and adds the

@@ -8,7 +8,6 @@ line, status (`active` / `implemented` / `superseded` / `archived`), and the boo
 chapter it feeds. Keep this in sync with `specs/PRUNING.md` and the archive index.
 
 The active design frontier (keep as live specs):
-`pr375-prover-streaming-and-onehot-unification`,
 `flat-public-matrix-and-exact-ntt-cache`, `role-native-projected-digit-layout`,
 `setup-layout-repack`,
 `setup-offloading-planner`, `eor-streamed-prover`, `packed-sumcheck`,
@@ -24,7 +23,10 @@ quantum LGSA policy at a 128-bit target.
 Recent archived records include
 [`group-local-opening-points`](../../../specs/archive/2026-Q3/group-local-opening-points.md),
 whose durable claim ownership and protocol dataflow now live in the architecture,
-verification, commitment API, and extension-opening chapters.
+verification, commitment API, and extension-opening chapters. The
+[`PR 375 prover optimization record`](../../../specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md)
+now lives in the same archive. Its durable source ownership, CPU resource, and
+NTT lifecycle rules live in the optimization and commitment API chapters.
 
 ## Sources to fold in
 

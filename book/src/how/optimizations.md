@@ -86,9 +86,10 @@ one hot polynomial does not share mutable derived state.
 
 Tile size and arithmetic traversal solve different problems.
 
-The tile size bounds temporary memory. The CPU driver uses an 8 MiB scratch
-budget per worker. Its estimate includes sparse entries, sweep indexes, wide
-accumulators, reduced rows, and small offset arrays. In simplified form,
+The tile size bounds temporary memory. The default CPU backend uses an 8 MiB
+scratch budget per worker. An application may choose another nonzero budget.
+The estimate includes sparse entries, sweep indexes, wide accumulators,
+reduced rows, and small offset arrays. In simplified form,
 
 ```text
 tile = floor((budget - fixed scratch) / scratch per block).
@@ -111,6 +112,23 @@ count. Correctness tests compare both retained sweeps with a direct arithmetic
 reference. A release benchmark measures the retained choices over the
 production region. The profile report records the selected sweep and tile so
 a route change is visible even when total runtime is noisy.
+
+## CPU resource limits
+
+`CpuBackend` owns two deployment limits. The first is the largest ring switch
+operation that keeps a complete transformed matrix prefix. The second is the
+one hot scratch budget for each worker. `CpuBackend::DEFAULT` uses `2^21` ring
+elements and 8 MiB. Applications may use `CpuBackend::with_resource_limits` to
+choose other values.
+
+A zero ring switch limit streams every ring switch operation that has a
+streamed implementation. `usize::MAX` retains every supported operation. A one
+hot scratch budget must be nonzero. The kernel returns `InvalidSetup` before
+allocation if even one block cannot fit.
+
+These limits choose equivalent CPU execution paths. They do not change the
+proof schedule, transcript, setup bytes, proof bytes, or verifier behavior.
+The CPU backend still selects the private one hot arithmetic sweep.
 
 ## Wide accumulation
 
@@ -153,10 +171,16 @@ fused operation share one routing extent across transform domains. Only
 retained requests are max-joined into physical cache slots.
 
 Retention is the default. A caller with an isolated root owner may apply
-`ReleaseRootNttAfterFold`. Release removes every built key once per physical
-owner. Existing readers remain valid through shared ownership. A later smaller
-request builds the smaller exact extent instead of reviving an empty covering
-slot.
+`ReleaseRootNttAfterFold`. Release removes every built shared matrix key once
+per physical owner. Existing readers remain valid through shared ownership. A
+later smaller request builds the smaller exact extent instead of reviving an
+empty covering slot. Small compression NTT entries remain resident and are
+reused after this boundary.
+
+`CpuPreparedSetup::shared_ntt_cache_bytes` and
+`compression_ntt_cache_bytes` report each namespace. `ntt_cache_bytes` returns
+their checked sum. Planned requirement metrics describe only shared matrix
+work because compression entries are created by compression operations.
 
 ## Ring relation and quotient streaming
 
@@ -199,4 +223,4 @@ plan as public API.
 
 See [Compute Backends](../../../docs/compute-backends.md) for backend ownership
 and NTT lifecycle details. The full PR 375 design record is
-[`specs/pr375-prover-streaming-and-onehot-unification.md`](../../../specs/pr375-prover-streaming-and-onehot-unification.md).
+[`specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md`](../../../specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md).

@@ -27,12 +27,25 @@ Callers prepare once, then pass both the backend and prepared setup into prover
 entrypoints:
 
 ```rust
-let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys, points)?;
-let backend = CpuBackend;
+let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys)?;
+let backend = CpuBackend::DEFAULT;
 let prepared = backend.prepare_setup(&setup)?;
+let stack = UniformProverStack::uniform(
+    &backend,
+    &prepared,
+    setup.expanded.as_ref(),
+)?;
 let (commitment, hint) =
-    AkitaCommitmentScheme::<Cfg>::commit(&setup, &backend, &prepared, polys)?;
+    AkitaCommitmentScheme::<Cfg>::commit(&setup, polys, &stack)?;
 ```
+
+Applications may replace the default with
+`CpuBackend::with_resource_limits(max_cached_ring_switch_elements,
+onehot_scratch_bytes_per_worker)`. A zero ring switch limit streams every
+operation that has a streamed path. `usize::MAX` retains every supported ring
+switch operation. The one hot scratch budget must be nonzero and must fit one
+minimum tile. These settings change memory use and CPU work. They do not change
+the schedule, transcript, setup bytes, proof bytes, or verifier.
 
 Ring dimension enters only at kernel boundaries through schedule-derived dispatch,
 not as a type parameter on the PCS API.
@@ -87,7 +100,7 @@ prepare empty state
 prewarm retained requirements
 stream nonretained operations during the proof
 retain slots for another proof, or release at an exclusive boundary
-rebuild released slots at the next exact request
+rebuild released shared matrix slots at the next exact request
 ```
 
 ## Boundary Rules

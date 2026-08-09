@@ -4,7 +4,7 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-08-08 |
-| Status        | active |
+| Status        | archived |
 | PR            | https://github.com/LayerZero-Labs/akita/pull/375 |
 | Supersedes    | |
 | Superseded-by | |
@@ -36,7 +36,8 @@ work. The existing `CpuBackend` will own checked limits for ring switch NTT
 retention and one hot scratch memory. Its defaults will preserve the measured
 behavior. Applications may set resource limits without selecting private
 arithmetic strategies or changing protocol schedules. CPU NTT release and
-accounting will also cover every CPU NTT cache namespace.
+accounting will distinguish the large releasable shared matrix state from the
+small retained compression state while reporting both.
 
 ## Intent
 
@@ -502,12 +503,14 @@ acceptance test.
 - [x] Default policy tests prove byte identical commitments and proofs. Limit
       boundary tests prove cached and streamed ring switch parity. Scratch
       budget tests prove identical one hot commitments across valid tile sizes.
-- [ ] The Jolt integration guidance preserves its release after stage zero and
+- [x] The Jolt integration guidance preserves its release after stage zero and
       selects `ReleaseRootNttAfterFold` when it ports from the original
       optimized Akita head.
-- [ ] The Jolt compatibility workflow passes against the final Akita head. The
-      Jolt acceptance run records time and peak RSS after its dependency pin is
-      updated.
+- [x] The Akita Jolt compatibility workflow passes against the implementation
+      head. A trial dependency update of Jolt PR 1732 head `78ca897044` reaches
+      27 compile errors across its older schedule, custom trace one hot, root
+      storage, and wide ring APIs. Runtime and peak RSS measurements remain a
+      downstream follow up after that separate reconciliation.
 
 ### Slice 7 Evidence
 
@@ -875,6 +878,32 @@ describe schedule derived shared matrix work. Documentation must state that
 compression cache growth is operation driven and is included in actual total
 resident bytes.
 
+### Downstream Jolt Port Evidence
+
+Akita's Jolt compatibility workflow passes at implementation head
+`e9a25b8c6f`. Jolt PR
+1732 still pins the earlier optimized Akita head `a9f3c29678`. A trial port used
+Jolt head `78ca897044` and made these initial changes:
+
+- it moved every Akita dependency to the LayerZero repository at
+  `e9a25b8c6f`;
+- it replaced unit `CpuBackend` values with `CpuBackend::DEFAULT`;
+- it preserved shared matrix release after the stage zero trace commitment;
+- it wrapped each Akita opening proof stack in `ReleaseRootNttAfterFold`.
+
+`cargo check -p jolt-akita` then stopped with 27 compile errors before any
+runtime benchmark. The remaining work is broader than a dependency pin. The
+Jolt branch must update its custom schedule configs and generated catalog
+identity, replace its singleton trace one hot commitment method with the group
+method, remove its root storage release hook, and port code that used removed
+wide ring helpers.
+
+No proving time or peak RSS is reported for this trial because the downstream
+crate does not compile with the current Akita API. Jolt PR 1732 needs a separate
+reconciliation commit, followed by its Akita byte parity, verifier, prover, and
+modular benchmark acceptance ladder. The Akita Book records that porting
+sequence without claiming that this separate Jolt work has landed.
+
 ### Other PR 375 Work
 
 #### Wide commitment accumulation
@@ -1200,11 +1229,11 @@ Pause for review before downstream integration validation.
 - [Original Akita optimization PR 345](https://github.com/LayerZero-Labs/akita/pull/345)
 - [Jolt modular Akita prover PR 1732](https://github.com/a16z/jolt/pull/1732)
 - [SumChecker review](https://github.com/LayerZero-Labs/akita/pull/375#issuecomment-5227378132)
-- [`specs/akita-polyops-cutover.md`](akita-polyops-cutover.md)
-- [`specs/small-field-prover-opening-optimization.md`](small-field-prover-opening-optimization.md)
-- [`docs/compute-backends.md`](../docs/compute-backends.md)
-- [`docs/documentation.md`](../docs/documentation.md)
-- [`book/src/how/optimizations.md`](../book/src/how/optimizations.md)
+- [`specs/akita-polyops-cutover.md`](../../akita-polyops-cutover.md)
+- [`specs/small-field-prover-opening-optimization.md`](../../small-field-prover-opening-optimization.md)
+- [`docs/compute-backends.md`](../../../docs/compute-backends.md)
+- [`docs/documentation.md`](../../../docs/documentation.md)
+- [`book/src/how/optimizations.md`](../../../book/src/how/optimizations.md)
 - PR head at spec creation: `165ad16321cabb917166e716f2ce1e03e323a586`
 - PR head at review reconciliation: `82b129adcfde2ddad0febce0a90a618687f1b6df`
 - PR head at final runtime validation: `4c37e147eec9ff268ae87a4b2ddafc99c4d197eb`
