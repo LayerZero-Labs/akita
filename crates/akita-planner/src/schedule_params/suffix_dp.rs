@@ -438,11 +438,15 @@ pub(crate) fn derive_selected_suffix_schedule(
     let (min_inner_basis, max_inner_basis) = inner_source.search_range(policy)?;
     let (min_open_basis, max_open_basis) =
         crate::policy::log_basis_search_range_at_level(policy, level);
+    // Every opening basis contributes to one state frontier. In particular,
+    // terminal-direct candidates have no first fold and therefore share the
+    // `None` key; they must be compared by the canonical objective instead of
+    // being overwritten by the last basis visited.
+    let mut frontier = ProjectedFrontier::default();
     for open_lb in min_open_basis..=max_open_basis {
         if open_lb < current_lb {
             continue;
         }
-        let mut frontier = ProjectedFrontier::default();
         let current_opening_layout = if root_level_key.is_some() {
             root_opening_layout.as_ref().ok_or_else(|| {
                 AkitaError::InvalidSetup("root batch opening layout is missing".to_string())
@@ -656,13 +660,12 @@ pub(crate) fn derive_selected_suffix_schedule(
                 &mut mixed_frontier,
             )?;
         }
-
-        for (key, choices) in frontier.by_parent_cost {
-            if retains_setup_projection {
-                setup_and_payload.insert(key, choices);
-            } else if let Some(choice) = choices.payload {
-                payload_only.insert(key, choice);
-            }
+    }
+    for (key, choices) in frontier.by_parent_cost {
+        if retains_setup_projection {
+            setup_and_payload.insert(key, choices);
+        } else if let Some(choice) = choices.payload {
+            payload_only.insert(key, choice);
         }
     }
 

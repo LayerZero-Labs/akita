@@ -196,6 +196,35 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
+fn terminal_candidates_compete_across_opening_bases() {
+    use akita_config::{policy_of, proof_optimized::fp32::D128OneHot, CommitmentConfig};
+
+    let dimensions = RingDimensionSearchDomain::uniform(D128OneHot::D).unwrap();
+    let selected = find_schedule(
+        PolynomialGroupLayout::singleton(14),
+        &policy_of::<D128OneHot>(),
+        D128OneHot::root_honest_fold_policy(),
+        &dimensions,
+        D128OneHot::ring_challenge_config,
+    )
+    .unwrap();
+
+    assert!(selected.schedule.recursive_folds.is_empty());
+    assert_eq!(selected.schedule.terminal.params.witness.log_basis_inner, 3);
+    assert_eq!(
+        selected
+            .schedule
+            .terminal
+            .params
+            .witness
+            .inner_commit_matrix
+            .coeff_linf_bound(),
+        262_143,
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
 fn adaptive_dimension_search_is_canonical() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 

@@ -16,6 +16,7 @@ repo = Path(".")
 workflow = repo / ".github/workflows/profile-bench.yml"
 pcs = repo / "crates/akita-pcs/Cargo.toml"
 modes_rs = repo / "crates/akita-pcs/examples/profile/modes.rs"
+linkage = repo / "scripts/check_profile_ci_linkage.sh"
 
 MODE_FEATURE = {
     "onehot_fp32_d128": "schedules-fp32-d128-onehot",
@@ -32,6 +33,19 @@ MODE_FEATURE = {
     "onehot_fp128_multi_chunk_w4r2": "schedules-fp128-onehot-multi-chunk-w4r2",
 }
 MODE_NUM_POLYS = {mode: {1, 4} for mode in MODE_FEATURE}
+FEATURE_SYMBOL = {
+    "schedules-fp32-d128-onehot": "FP32_D128_ONEHOT_SCHEDULES",
+    "schedules-fp32-d128-dense": "FP32_D128_DENSE_SCHEDULES",
+    "schedules-fp64-d128-onehot": "FP64_D128_ONEHOT_SCHEDULES",
+    "schedules-fp64-d128-dense": "FP64_D128_DENSE_SCHEDULES",
+    "schedules-fp128-dense": "FP128_DENSE_SCHEDULES",
+    "schedules-fp128-onehot": "FP128_ONEHOT_SCHEDULES",
+    "schedules-fp128-onehot-recursive": "FP128_ONEHOT_RECURSIVE_SCHEDULES",
+    "schedules-fp128-onehot-recursive-multi-chunk-w8r2": "FP128_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES",
+    "schedules-fp128-onehot-multi-chunk": "FP128_ONEHOT_MULTI_CHUNK_SCHEDULES",
+    "schedules-fp128-onehot-multi-chunk-w2r2": "FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES",
+    "schedules-fp128-onehot-multi-chunk-w4r2": "FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES",
+}
 
 text = pcs.read_text(encoding="utf-8")
 match = re.search(r"^profile-ci\s*=\s*\[(.*?)\]", text, flags=re.MULTILINE | re.DOTALL)
@@ -59,6 +73,15 @@ if not profile_modes_match:
     raise SystemExit(1)
 profile_ci_modes = set(
     re.findall(r'name:\s*"([^"]+)"', profile_modes_match.group(1))
+)
+
+linkage_text = linkage.read_text(encoding="utf-8")
+forbidden_match = re.search(r"forbidden=\(\n(.*?)\n\)", linkage_text, flags=re.DOTALL)
+if not forbidden_match:
+    print("forbidden symbol list not found in profile linkage guard", file=sys.stderr)
+    raise SystemExit(1)
+forbidden_symbols = set(
+    re.findall(r"^\s*([A-Z0-9_]+)\s*$", forbidden_match.group(1), flags=re.MULTILINE)
 )
 
 wf = workflow.read_text(encoding="utf-8")
@@ -112,6 +135,19 @@ for case_spec in bench_cases:
     if required not in profile_ci:
         print(
             f"profile-ci does not enable required feature '{required}' for bench mode '{mode}'",
+            file=sys.stderr,
+        )
+        failed = True
+    linked_symbol = FEATURE_SYMBOL.get(required)
+    if linked_symbol is None:
+        print(
+            f"profile-ci feature '{required}' has no linkage symbol mapping",
+            file=sys.stderr,
+        )
+        failed = True
+    elif linked_symbol in forbidden_symbols:
+        print(
+            f"profile-ci bench mode '{mode}' requires symbol '{linked_symbol}' but the linkage guard forbids it",
             file=sys.stderr,
         )
         failed = True
