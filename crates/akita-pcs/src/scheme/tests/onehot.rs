@@ -18,10 +18,15 @@ fn precommit_config_commit_returns_exact_frozen_layout() {
     let polys = [debug_make_onehot_poly(&layout, 0x0bee_fcaf_9a77_0001)];
 
     let setup = PrecommitCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepared setup");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let (commitment, _hint) =
         PrecommitCommitter::commit(&setup, &polys, &stack).expect("precommit");
     let frozen_layout = akita_types::CommittedGroupProfile::from_params(key, &layout);
@@ -60,10 +65,15 @@ fn with_precommit_stack<R>(
     ) -> R,
 ) -> R {
     let setup = PrecommitCommitter::setup_prover(max_num_vars, max_num_polys).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepared setup");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     run(&setup, &stack)
 }
 
@@ -198,12 +208,15 @@ fn group_batch_commits_independent_arity_precommitteds() {
     let pre_b_polys = [debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_6001)];
 
     let setup = OneHotScheme::setup_prover(FINAL_NV, SETUP_CAPACITY_SIZE).expect("protocol setup");
-    let prepared = CpuBackend
+    let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared protocol setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("protocol stack");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("protocol stack");
     let (pre_a_commitment, _pre_a_hint) =
         PrecommitCommitter::commit::<_, _>(&setup, &pre_a_polys, &stack).expect("precommit A");
     let (pre_b_commitment, _pre_b_hint) =
@@ -287,10 +300,15 @@ fn commit_group_returns_frozen_exact_layout() {
     let polys = [debug_make_onehot_poly(&layout, 0x0bee_fcaf_9a77_0001)];
 
     let setup = PrecommitCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepared setup");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let (commitment, _hint) =
         OneHotScheme::commit_group(&setup, &polys, &stack).expect("commit group");
     let frozen_layout = commitment.profile;
@@ -336,10 +354,15 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
 
     let setup =
         AkitaCommitmentScheme::<ProtocolCfg>::setup_prover(opening_num_vars, total).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepared setup");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     // Commit every precommitted group under the exact precommit config; keep the
     // polynomials alive so the prover/verifier can borrow references.
     let mut pre_keys = Vec::new();
@@ -668,10 +691,13 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         .collect();
 
     let setup = OneHotScheme::setup_prover(NV, BATCH_SIZE).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup = OneHotScheme::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) =
         OneHotScheme::commit::<_, _>(&setup, &polys, &stack).expect("batched onehot commit");

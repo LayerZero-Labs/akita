@@ -36,6 +36,7 @@ fn assert_retained_sweeps_match<const D: usize>(seed: u64) {
         n_a,
         active_a_cols,
         1,
+        crate::compute::CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER,
         OneHotSweep::Bucketed,
     )
     .unwrap();
@@ -45,6 +46,7 @@ fn assert_retained_sweeps_match<const D: usize>(seed: u64) {
         n_a,
         active_a_cols,
         1,
+        crate::compute::CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER,
         OneHotSweep::Merge,
     )
     .unwrap();
@@ -57,6 +59,71 @@ fn retained_sweeps_match_across_polys_and_dimensions() {
     assert_retained_sweeps_match::<64>(0x1a2b_3c4d);
     assert_retained_sweeps_match::<128>(0x1a2b_3c4e);
     assert_retained_sweeps_match::<256>(0x1a2b_3c4f);
+}
+
+#[test]
+fn configured_scratch_budget_preserves_onehot_commit_arithmetic() {
+    use crate::compute::{CommitInnerPlan, ComputeBackendSetup, CpuBackend, RootCommitKernel};
+    use crate::AkitaProverSetup;
+    use akita_types::SetupMatrixCapacity;
+
+    type F = Prime128Offset275;
+    const D: usize = 64;
+    const K: usize = 64;
+
+    let poly = OneHotPoly::<F, u8>::new(
+        K,
+        D,
+        (0usize..256)
+            .map(|chunk| (!chunk.is_multiple_of(5)).then_some((chunk % K) as u8))
+            .collect(),
+    )
+    .unwrap();
+    let plan = CommitInnerPlan {
+        n_a: 2,
+        num_positions_per_block: 16,
+        num_digits_inner: 1,
+        log_basis_inner: 1,
+    };
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        8,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: plan.n_a * plan.num_positions_per_block * D,
+        },
+    )
+    .unwrap();
+    let default_backend = CpuBackend::DEFAULT;
+    let prepared = default_backend.prepare_setup(&setup).unwrap();
+    let default = default_backend
+        .commit_inner_group(
+            &prepared,
+            vec![OneHotView::<F, D, u8> { poly: &poly }],
+            plan,
+        )
+        .unwrap();
+    let constrained_backend = CpuBackend::with_resource_limits(usize::MAX, 1 << 20).unwrap();
+    let constrained = constrained_backend
+        .commit_inner_group(
+            &prepared,
+            vec![OneHotView::<F, D, u8> { poly: &poly }],
+            plan,
+        )
+        .unwrap();
+    assert_eq!(constrained.len(), default.len());
+    for (constrained, default) in constrained.iter().zip(&default) {
+        assert_eq!(constrained.inner_rows.coeffs(), default.inner_rows.coeffs());
+    }
+
+    let too_small_backend = CpuBackend::with_resource_limits(usize::MAX, 1).unwrap();
+    assert!(matches!(
+        too_small_backend.commit_inner_group(
+            &prepared,
+            vec![OneHotView::<F, D, u8> { poly: &poly }],
+            plan,
+        ),
+        Err(AkitaError::InvalidSetup(_))
+    ));
 }
 
 #[test]
@@ -128,8 +195,16 @@ where
     for _ in 0..5 {
         let start = Instant::now();
         std::hint::black_box(
-            column_sweep_ajtai_onehot_multi_forced(a_view, sources, n_a, active_a_cols, 1, sweep)
-                .unwrap(),
+            column_sweep_ajtai_onehot_multi_forced(
+                a_view,
+                sources,
+                n_a,
+                active_a_cols,
+                1,
+                crate::compute::CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER,
+                sweep,
+            )
+            .unwrap(),
         );
         samples.push(start.elapsed());
     }

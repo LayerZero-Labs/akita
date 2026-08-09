@@ -132,7 +132,7 @@ mod tests {
     fn empty_prepared() -> CpuPreparedSetup<F> {
         let setup =
             AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_envelope(6 * D)).unwrap();
-        CpuBackend
+        CpuBackend::DEFAULT
             .prepare_expanded(setup.expanded)
             .expect("empty prepared setup")
     }
@@ -143,7 +143,7 @@ mod tests {
         let vectors = [vec![[0i8; D]; 3], vec![[-1i8; D]; 3]];
         let views = vectors.iter().map(Vec::as_slice).collect::<Vec<_>>();
 
-        CpuBackend
+        CpuBackend::DEFAULT
             .compression_rows_products::<D>(&prepared, &views)
             .expect("compression rows");
 
@@ -163,7 +163,7 @@ mod tests {
         let prepared = empty_prepared();
         let envelope_width = prepared.expanded.shared_matrix().num_field_elements() / D;
         let compression_digits = vec![[0i8; D]; envelope_width];
-        CpuBackend
+        CpuBackend::DEFAULT
             .compression_rows_products::<D>(&prepared, &[compression_digits.as_slice()])
             .expect("compression cache at the full materialized prefix length");
         assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
@@ -173,12 +173,12 @@ mod tests {
             num_ring_elements: envelope_width,
             domain: NttTransformDomain::Cyclic,
         };
-        CpuBackend
+        CpuBackend::DEFAULT
             .ensure_ntt_slot(&prepared, envelope_key)
             .expect("independent cyclic envelope cache");
         assert!(prepared.shared_ntt_cache_bytes() > 0);
         let cyclic_digits = vec![[0i8; D]; envelope_width];
-        CpuBackend
+        CpuBackend::DEFAULT
             .cyclic_digit_rows::<D>(&prepared, 1, &cyclic_digits, 1)
             .expect("cyclic transform remains available");
     }
@@ -193,7 +193,7 @@ mod tests {
                 let prepared = &prepared;
                 let digits = &digits;
                 scope.spawn(move || {
-                    CpuBackend
+                    CpuBackend::DEFAULT
                         .compression_rows_products::<D>(prepared, &[digits.as_slice()])
                         .expect("compression rows");
                 });
@@ -208,7 +208,7 @@ mod tests {
         let prepared = empty_prepared();
         for input_width in [3, 6] {
             let digits = vec![[0i8; D]; input_width];
-            CpuBackend
+            CpuBackend::DEFAULT
                 .compression_rows_products::<D>(&prepared, &[digits.as_slice()])
                 .expect("compression rows");
         }
@@ -223,7 +223,7 @@ mod tests {
         let valid = vec![[0i8; D]; 3];
         let short = vec![[0i8; D]; 2];
 
-        assert!(CpuBackend
+        assert!(CpuBackend::DEFAULT
             .compression_rows_products::<D>(&prepared, &[valid.as_slice(), short.as_slice()])
             .is_err());
         assert_eq!(prepared.compression_ntt.slot_count(), 0);

@@ -36,21 +36,85 @@ mod streamed_tests;
 use compression_cache::CompressionNttCache;
 
 /// CPU backend using the existing Rust/Rayon kernels.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct CpuBackend;
+///
+/// The backend owns deployment resource limits. These limits only choose
+/// equivalent CPU execution paths and do not affect proof bytes or protocol
+/// parameters.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct CpuBackend {
+    max_cached_ring_switch_elements: usize,
+    onehot_scratch_bytes_per_worker: usize,
+}
 
 type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
 
-/// Ring-element extent above which one-shot ring-switch relation passes
-/// stream their transforms from the field form instead of building (and
-/// keeping) a matrix-scale NTT cache. Deeper fold levels stay below this and
-/// share the cached path with the per-level digit-row products.
-pub(crate) const NTT_STREAM_THRESHOLD_RING_ELEMENTS: usize = 1 << 21;
+impl CpuBackend {
+    /// Default maximum cached extent for a ring-switch NTT operation.
+    pub const DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS: usize = 1 << 21;
 
-#[inline]
-fn ntt_operation_uses_cache(cluster: NttOperationCluster, num_ring_elements: usize) -> bool {
-    cluster != NttOperationCluster::RingSwitch
-        || num_ring_elements <= NTT_STREAM_THRESHOLD_RING_ELEMENTS
+    /// Default temporary one hot commitment memory per worker.
+    pub const DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER: usize = 8 << 20;
+
+    /// CPU backend with the default resource limits.
+    pub const DEFAULT: Self = Self {
+        max_cached_ring_switch_elements: Self::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
+        onehot_scratch_bytes_per_worker: Self::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER,
+    };
+
+    /// Creates a CPU backend with explicit resource limits.
+    ///
+    /// A zero ring-switch limit streams every stream-capable ring-switch
+    /// operation. A limit of [`usize::MAX`] retains every supported operation.
+    /// The one hot scratch budget must be nonzero. A commitment whose minimum
+    /// tile does not fit returns [`AkitaError::InvalidSetup`].
+    pub fn with_resource_limits(
+        max_cached_ring_switch_elements: usize,
+        onehot_scratch_bytes_per_worker: usize,
+    ) -> Result<Self, AkitaError> {
+        if onehot_scratch_bytes_per_worker == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "CPU one hot scratch bytes per worker must be nonzero".into(),
+            ));
+        }
+        Ok(Self {
+            max_cached_ring_switch_elements,
+            onehot_scratch_bytes_per_worker,
+        })
+    }
+
+    /// Returns the largest ring-switch operation extent retained as an NTT cache.
+    pub const fn max_cached_ring_switch_elements(&self) -> usize {
+        self.max_cached_ring_switch_elements
+    }
+
+    /// Returns the temporary one hot commitment memory allowed per worker.
+    pub const fn onehot_scratch_bytes_per_worker(&self) -> usize {
+        self.onehot_scratch_bytes_per_worker
+    }
+
+    #[inline]
+    pub(crate) fn ntt_operation_uses_cache(
+        &self,
+        cluster: NttOperationCluster,
+        num_ring_elements: usize,
+    ) -> bool {
+        let cached = cluster != NttOperationCluster::RingSwitch
+            || num_ring_elements <= self.max_cached_ring_switch_elements;
+        tracing::debug!(
+            ?cluster,
+            num_ring_elements,
+            max_cached_ring_switch_elements = self.max_cached_ring_switch_elements,
+            cached,
+            "CPU NTT execution policy"
+        );
+        cached
+    }
+}
+
+impl Default for CpuBackend {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 /// CPU-prepared setup keyed by runtime ring dimension.
@@ -481,10 +545,7 @@ where
         _prepared: &Self::PreparedSetup,
         requirement: RoutedNttRequirement,
     ) -> Result<bool, AkitaError> {
-        Ok(ntt_operation_uses_cache(
-            requirement.cluster,
-            requirement.routing_extent,
-        ))
+        Ok(self.ntt_operation_uses_cache(requirement.cluster, requirement.routing_extent))
     }
 
     fn release_built_ntt_slots(&self, prepared: &Self::PreparedSetup) -> Result<usize, AkitaError> {
@@ -804,7 +865,7 @@ mod tests {
 
     fn prepared() -> CpuPreparedSetup<F> {
         let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
-        CpuBackend.prepare_setup(&setup).unwrap()
+        CpuBackend::DEFAULT.prepare_setup(&setup).unwrap()
     }
 
     #[test]
@@ -813,13 +874,13 @@ mod tests {
             AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
         let setup_b =
             AkitaProverSetup::<F>::generate_with_capacity(9, 1, setup_capacity(D)).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup_a).unwrap();
 
-        CpuBackend
+        CpuBackend::DEFAULT
             .validate_prepared_setup(&prepared, setup_a.expanded.as_ref())
             .expect("matching setup");
         assert!(
-            CpuBackend
+            CpuBackend::DEFAULT
                 .validate_prepared_setup(&prepared, setup_b.expanded.as_ref())
                 .is_err(),
             "prepared context must stay bound to the setup used to create it"
@@ -834,9 +895,9 @@ mod tests {
             AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
         assert!(!Arc::ptr_eq(&setup_a.expanded, &setup_b.expanded));
 
-        let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup_a).unwrap();
 
-        CpuBackend
+        CpuBackend::DEFAULT
             .validate_prepared_setup(&prepared, setup_b.expanded.as_ref())
             .expect("equivalent deterministic setup should validate");
     }
@@ -844,7 +905,7 @@ mod tests {
     #[test]
     fn cpu_prepared_setup_reports_checked_crt_capacity_profile() {
         let prepared = prepared();
-        CpuBackend
+        CpuBackend::DEFAULT
             .digit_rows::<D>(&prepared, 1, &[[1i8; D]], 2)
             .expect("build exact NTT prefix");
         let profile = prepared.shared_ntt_profile(D).expect("profile");
@@ -860,7 +921,7 @@ mod tests {
     #[test]
     fn prepare_setup_starts_with_empty_ntt_cache() {
         let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
         assert!(prepared.shared_ntt.lock().unwrap().is_empty());
     }
@@ -868,13 +929,13 @@ mod tests {
     #[test]
     fn cpu_prepared_setup_builds_only_requested_ntt_slots() {
         let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let partial_key = NttCacheKey {
             ring_d: D,
             num_ring_elements: 1,
             domain: NttTransformDomain::Negacyclic,
         };
-        CpuBackend
+        CpuBackend::DEFAULT
             .ensure_ntt_slot(&prepared, partial_key)
             .expect("warm partial slot");
         assert!(prepared.shared_ntt_cache_bytes() > 0);
@@ -893,7 +954,7 @@ mod tests {
     #[test]
     fn concurrent_same_key_ntt_warm_builds_once() {
         let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
-        let prepared = CpuBackend
+        let prepared = CpuBackend::DEFAULT
             .prepare_expanded(setup.expanded.clone())
             .expect("empty prepared setup");
         let key = NttCacheKey {
@@ -906,13 +967,13 @@ mod tests {
             for _ in 0..8 {
                 let prepared = &prepared;
                 scope.spawn(move || {
-                    CpuBackend
+                    CpuBackend::DEFAULT
                         .ensure_ntt_slot(prepared, key)
                         .expect("warm shared NTT slot");
                 });
             }
         });
-        CpuBackend
+        CpuBackend::DEFAULT
             .ensure_ntt_slot(&prepared, key)
             .expect("repeated warm is a no-op");
 
@@ -928,7 +989,7 @@ mod tests {
             num_ring_elements: 8,
             domain: NttTransformDomain::Negacyclic,
         };
-        CpuBackend
+        CpuBackend::DEFAULT
             .ensure_ntt_slot(&prepared, covering_key)
             .expect("warm covering prefix");
 
@@ -958,10 +1019,10 @@ mod tests {
             num_ring_elements: 8,
             domain: NttTransformDomain::Negacyclic,
         };
-        CpuBackend
+        CpuBackend::DEFAULT
             .ensure_ntt_slot(&prepared, small)
             .expect("warm small prefix");
-        CpuBackend
+        CpuBackend::DEFAULT
             .ensure_ntt_slot(&prepared, large)
             .expect("grow to larger prefix");
 
@@ -984,11 +1045,13 @@ mod tests {
             domain: NttTransformDomain::Negacyclic,
         };
 
-        CpuBackend
+        CpuBackend::DEFAULT
             .ensure_ntt_slot(&prepared, small)
             .expect("warm small prefix");
-        assert!(CpuBackend.ensure_ntt_slot(&prepared, oversized).is_err());
-        CpuBackend
+        assert!(CpuBackend::DEFAULT
+            .ensure_ntt_slot(&prepared, oversized)
+            .is_err());
+        CpuBackend::DEFAULT
             .ensure_ntt_slot(&prepared, small)
             .expect("failed growth must leave the smaller prefix usable");
 
@@ -1021,7 +1084,7 @@ mod tests {
             .planned_shared_ntt_cache_bytes(keys)
             .expect("planned bytes");
         for key in keys {
-            CpuBackend
+            CpuBackend::DEFAULT
                 .ensure_ntt_slot(&prepared, key)
                 .expect("prewarm exact requirement");
         }
@@ -1037,7 +1100,7 @@ mod tests {
             for num_ring_elements in [2, 5, 3, 8, 4, 7] {
                 let prepared = &prepared;
                 scope.spawn(move || {
-                    CpuBackend
+                    CpuBackend::DEFAULT
                         .ensure_ntt_slot(
                             prepared,
                             NttCacheKey {
@@ -1074,9 +1137,11 @@ mod tests {
             domain: NttTransformDomain::Negacyclic,
         };
 
-        assert!(CpuBackend.ensure_ntt_slot(&prepared, oversized).is_err());
+        assert!(CpuBackend::DEFAULT
+            .ensure_ntt_slot(&prepared, oversized)
+            .is_err());
         assert!(prepared.shared_ntt.lock().unwrap().is_empty());
-        CpuBackend
+        CpuBackend::DEFAULT
             .ensure_ntt_slot(&prepared, valid)
             .expect("failed oversized warm must not poison a valid prefix");
 
@@ -1101,15 +1166,15 @@ mod tests {
         };
 
         std::thread::scope(|scope| {
-            let failed = scope.spawn(|| CpuBackend.ensure_ntt_slot(&prepared, oversized));
-            let warmed = scope.spawn(|| CpuBackend.ensure_ntt_slot(&prepared, valid));
+            let failed = scope.spawn(|| CpuBackend::DEFAULT.ensure_ntt_slot(&prepared, oversized));
+            let warmed = scope.spawn(|| CpuBackend::DEFAULT.ensure_ntt_slot(&prepared, valid));
             assert!(failed.join().expect("oversized warm thread").is_err());
             warmed
                 .join()
                 .expect("valid warm thread")
                 .expect("valid warm must retry a failed covering entry");
         });
-        CpuBackend
+        CpuBackend::DEFAULT
             .ensure_ntt_slot(&prepared, valid)
             .expect("valid prefix remains available after failed growth");
 
@@ -1125,7 +1190,7 @@ mod tests {
         let t_hat = vec![[1i8; D]; 3];
         let z_segment = vec![[1i32; D]; 2];
 
-        CpuBackend
+        CpuBackend::DEFAULT
             .relation_rows(
                 &prepared,
                 RingSwitchRelationView {
@@ -1163,7 +1228,7 @@ mod tests {
         let prepared = prepared();
         let t_hat = vec![[1i8; D]; 3];
 
-        let rows = CpuBackend
+        let rows = CpuBackend::DEFAULT
             .relation_rows(
                 &prepared,
                 RingSwitchRelationView {
@@ -1199,7 +1264,7 @@ mod tests {
         let prepared = prepared();
         let digits = vec![[1i8; D], [-1i8; D], [2i8; D]];
         let log_basis = 3;
-        let via_backend = CpuBackend
+        let via_backend = CpuBackend::DEFAULT
             .digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend digit rows");
         let direct = prepared
@@ -1217,7 +1282,7 @@ mod tests {
         let prepared = prepared();
         let digits = vec![[1i8; D]; 12];
         let log_basis = 3;
-        let via_backend = CpuBackend
+        let via_backend = CpuBackend::DEFAULT
             .digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend digit rows");
         let direct = prepared
@@ -1234,7 +1299,7 @@ mod tests {
     fn recursive_commit_ignores_commitment_padding_blocks() {
         let prepared = prepared();
         let coeffs = vec![[1i8; D]; 6];
-        let rows = CpuBackend
+        let rows = CpuBackend::DEFAULT
             .recursive_witness_commit_rows(&prepared, &coeffs, 1, 2, 2, 1, 3, Some(3))
             .expect("recursive commit rows");
 
@@ -1246,7 +1311,7 @@ mod tests {
         let prepared = prepared();
         let digits = vec![[1i8; D], [0i8; D], [-2i8; D], [3i8; D]];
         let log_basis = 3;
-        let via_backend = CpuBackend
+        let via_backend = CpuBackend::DEFAULT
             .cyclic_digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend cyclic digit rows");
         let direct = prepared
@@ -1265,7 +1330,7 @@ mod tests {
         let e_hat = vec![[1i8; D], [-1i8; D]];
         let t_hat = vec![[-1i8; D], [3i8; D]];
         let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D]];
-        let via_backend = CpuBackend
+        let via_backend = CpuBackend::DEFAULT
             .relation_rows(
                 &prepared,
                 RingSwitchRelationView {

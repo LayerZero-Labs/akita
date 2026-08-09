@@ -549,7 +549,7 @@ mod tests {
             },
         )
         .unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let plan = CommitInnerPlan {
             n_a: 2,
             num_positions_per_block: 1,
@@ -575,7 +575,7 @@ mod tests {
             .unwrap(),
         ];
         let expected = RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             &prepared,
             dense
                 .iter()
@@ -588,7 +588,7 @@ mod tests {
         let projected = dense.map(RootTensorProjectionPoly::Dense);
         let actual =
             RootCommitKernel::<RootTensorProjectionView<'_, F, D>, F, D>::commit_inner_group(
-                &CpuBackend,
+                &CpuBackend::DEFAULT,
                 &prepared,
                 projected
                     .iter()

@@ -119,7 +119,7 @@ where
         .map(|poly| {
             let view = poly.tensor_view()?;
             TensorProjectionKernel::<_, F, Cfg::ExtField, D>::root_projection(
-                &CpuBackend,
+                &CpuBackend::DEFAULT,
                 None,
                 view,
             )
@@ -151,10 +151,13 @@ where
         },
     )
     .expect("benchmark setup");
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
 
     let mut group = c.benchmark_group(format!(
         "onehot_root_projection_commit/{label}/nv{num_vars}_np{num_polys}"
@@ -172,7 +175,7 @@ where
                     .map(|poly| {
                         let view = poly.tensor_view()?;
                         TensorProjectionKernel::<_, F, Cfg::ExtField, D>::root_projection(
-                            &CpuBackend,
+                            &CpuBackend::DEFAULT,
                             None,
                             view,
                         )

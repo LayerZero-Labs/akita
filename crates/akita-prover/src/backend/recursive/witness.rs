@@ -831,7 +831,7 @@ mod tests {
         let witness = RecursiveWitnessFlat::from_i8_digits(digits);
         let view = witness.tensor_view().expect("tensor view");
         let err = TensorProjectionKernel::<SuffixWitnessView<'_, F, D>, F, E, D>::root_projection(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             None,
             view,
         )

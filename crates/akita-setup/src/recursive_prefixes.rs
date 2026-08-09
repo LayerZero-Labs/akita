@@ -97,7 +97,7 @@ where
         max_num_vars,
         max_num_batched_polys,
     )?;
-    let backend = CpuBackend;
+    let backend = CpuBackend::DEFAULT;
     let prepared = backend.prepare_setup(setup)?;
     materialize_setup_prefix_slots(setup, &backend, &prepared, &required_ids)?;
     validate_prefix_registry_complete(&setup.prefix_slots, &required_ids)?;

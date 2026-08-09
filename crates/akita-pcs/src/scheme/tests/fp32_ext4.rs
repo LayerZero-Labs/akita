@@ -121,12 +121,15 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         .collect();
 
     let setup = SmallScheme::setup_prover(SMALL_NV, SMALL_BATCH).expect("fp32 prover setup");
-    let prepared = CpuBackend
+    let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared fp32 setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("fp32 prover stack");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("fp32 prover stack");
     let verifier_setup = SmallScheme::setup_verifier(&setup).expect("fp32 verifier setup");
     let (commitment, hint) =
         SmallScheme::commit(&setup, &polys, &stack).expect("fp32 batched commitment");
@@ -232,11 +235,11 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         .commitment;
     let pre_poly = grouped_onehot_poly(&pre_params, 1);
     let pre_setup = ProtocolScheme::setup_prover(PRE_NV, 1).expect("precommit setup");
-    let pre_prepared = CpuBackend
+    let pre_prepared = CpuBackend::DEFAULT
         .prepare_setup(&pre_setup)
         .expect("prepared precommit setup");
     let pre_stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         &pre_prepared,
         pre_setup.expanded.as_ref(),
     )
@@ -273,12 +276,15 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     let final_poly = grouped_onehot_poly(root_params, 2);
 
     let setup = ProtocolScheme::setup_prover(FINAL_NV, 2).expect("protocol setup");
-    let prepared = CpuBackend
+    let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared protocol setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("protocol stack");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("protocol stack");
     let (final_commitment, final_hint, _selection) = ProtocolScheme::commit_final_group(
         &setup,
         std::slice::from_ref(&final_poly),

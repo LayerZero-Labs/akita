@@ -104,7 +104,7 @@ where
         &self,
         expanded: std::sync::Arc<akita_types::AkitaExpandedSetup<F>>,
     ) -> Result<Self::PreparedSetup, AkitaError> {
-        CpuBackend.prepare_expanded(expanded)
+        CpuBackend::DEFAULT.prepare_expanded(expanded)
     }
 
     fn ensure_ntt_slot(
@@ -112,14 +112,14 @@ where
         prepared: &Self::PreparedSetup,
         key: NttCacheKey,
     ) -> Result<(), AkitaError> {
-        CpuBackend.ensure_ntt_slot(prepared, key)
+        CpuBackend::DEFAULT.ensure_ntt_slot(prepared, key)
     }
 
     fn prepared_expanded_setup<'a>(
         &self,
         prepared: &'a Self::PreparedSetup,
     ) -> &'a akita_types::AkitaExpandedSetup<F> {
-        CpuBackend.prepared_expanded_setup(prepared)
+        CpuBackend::DEFAULT.prepared_expanded_setup(prepared)
     }
 }
 
@@ -134,7 +134,7 @@ where
         digits: &[[i8; RING_D]],
         log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, RING_D>>, AkitaError> {
-        CpuBackend.digit_rows(prepared, row_len, digits, log_basis)
+        CpuBackend::DEFAULT.digit_rows(prepared, row_len, digits, log_basis)
     }
 }
 
@@ -143,7 +143,7 @@ where
     F: FieldCore + CanonicalField,
 {
     fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {
-        CpuBackend.compression_cache_bytes(prepared)
+        CpuBackend::DEFAULT.compression_cache_bytes(prepared)
     }
 
     fn compression_rows_products<const RING_D: usize>(
@@ -151,7 +151,7 @@ where
         prepared: &Self::PreparedSetup,
         digit_vectors: &[&[[i8; RING_D]]],
     ) -> Result<Vec<CompressionRowsProducts<F, RING_D>>, AkitaError> {
-        CpuBackend.compression_rows_products(prepared, digit_vectors)
+        CpuBackend::DEFAULT.compression_rows_products(prepared, digit_vectors)
     }
 }
 
@@ -171,7 +171,7 @@ where
             .map(|source| RootCommitSource::<F, DD>::commit_view(&source.poly.dense))
             .collect::<Result<Vec<_>, _>>()?;
         <CpuBackend as RootCommitKernel<DenseView<'_, F, DD>, F, DD>>::commit_inner_group(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             prepared,
             dense_sources,
             plan,
@@ -216,8 +216,11 @@ fn custom_commit_source_runs_commit_with_params() {
     )
     .expect("contract commit");
 
-    let cpu_prepared = CpuBackend.prepare_setup(&setup).expect("cpu prepared");
-    let cpu_ctx = OperationCtx::new(&CpuBackend, &cpu_prepared, expanded).expect("cpu ctx");
+    let cpu_prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("cpu prepared");
+    let cpu_ctx =
+        OperationCtx::new(&CpuBackend::DEFAULT, &cpu_prepared, expanded).expect("cpu ctx");
     let (dense_commitment, dense_hint) = commit_with_params::<F, DensePoly<F>, CpuBackend>(
         std::slice::from_ref(&dense),
         expanded,
@@ -264,8 +267,11 @@ fn custom_commit_source_runs_batched_commit_with_params() {
         )
         .expect("contract batched commit");
 
-    let cpu_prepared = CpuBackend.prepare_setup(&setup).expect("cpu prepared");
-    let cpu_ctx = OperationCtx::new(&CpuBackend, &cpu_prepared, expanded).expect("cpu ctx");
+    let cpu_prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("cpu prepared");
+    let cpu_ctx =
+        OperationCtx::new(&CpuBackend::DEFAULT, &cpu_prepared, expanded).expect("cpu ctx");
     let (dense_commitment, dense_hint) = batched_commit_with_params::<F, DensePoly<F>, CpuBackend>(
         std::slice::from_ref(&dense),
         expanded,

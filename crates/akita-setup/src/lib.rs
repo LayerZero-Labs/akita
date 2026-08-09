@@ -1036,9 +1036,9 @@ mod tests {
                 let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs);
 
                 let commit_u = |setup: &AkitaProverSetup<TestF>| {
-                    let prepared = CpuBackend.prepare_setup(setup).unwrap();
+                    let prepared = CpuBackend::DEFAULT.prepare_setup(setup).unwrap();
                     let plan = CommitInnerPlan::from_level(&lp);
-                    let mut inner_group = CpuBackend
+                    let mut inner_group = CpuBackend::DEFAULT
                         .commit_inner_group(
                             &prepared,
                             vec![RootCommitSource::<TestF, TEST_D>::commit_view(&poly).unwrap()],
@@ -1057,7 +1057,7 @@ mod tests {
                             TEST_D,
                         >(&blocks, lp.num_digits_outer, lp.log_basis_outer)
                         .unwrap();
-                    CpuBackend
+                    CpuBackend::DEFAULT
                         .digit_rows::<TEST_D>(
                             &prepared,
                             lp.outer_commit_matrix.output_rank(),

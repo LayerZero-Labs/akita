@@ -45,10 +45,15 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
     let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 
     let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepare setup");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) =
         Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
@@ -191,9 +196,11 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
         let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 
         let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
+        let prepared = CpuBackend::DEFAULT
+            .prepare_setup(&setup)
+            .expect("prepare setup");
         let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             &prepared,
             setup.expanded.as_ref(),
         )

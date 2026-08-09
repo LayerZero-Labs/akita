@@ -215,11 +215,16 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             AkitaCommitmentScheme::<ProofCfg>::setup_prover(final_num_vars, total_polys).unwrap();
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-        materialize_schedule_setup_prefix_slots(&mut setup, &CpuBackend, &prepared, &schedule)
-            .expect("materialize schedule setup-prefix slots");
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+        materialize_schedule_setup_prefix_slots(
+            &mut setup,
+            &CpuBackend::DEFAULT,
+            &prepared,
+            &schedule,
+        )
+        .expect("materialize schedule setup-prefix slots");
         let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             &prepared,
             setup.expanded.as_ref(),
         )

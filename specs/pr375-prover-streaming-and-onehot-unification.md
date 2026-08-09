@@ -476,28 +476,28 @@ acceptance test.
 
 #### Downstream CPU policy extension
 
-- [ ] `CpuBackend` is a configured value rather than a unit struct. It owns a
+- [x] `CpuBackend` is a configured value rather than a unit struct. It owns a
       maximum cached ring switch extent and a one hot scratch budget per
       worker.
-- [ ] `CpuBackend::default()` preserves the existing `2^21` ring element
+- [x] `CpuBackend::default()` preserves the existing `2^21` ring element
       cutoff and 8 MiB scratch budget.
-- [ ] Checked constructors or builder methods reject a zero scratch budget.
+- [x] Checked constructors or builder methods reject a zero scratch budget.
       Tile sizing rejects a geometry whose minimum scratch exceeds the
       configured budget before allocation.
-- [ ] A zero ring switch cache limit streams every ring switch operation that
+- [x] A zero ring switch cache limit streams every ring switch operation that
       has a streamed implementation. `usize::MAX` retains every supported ring
       switch operation.
-- [ ] Runtime routing and `ntt_requirement_is_cached` call one method on the
+- [x] Runtime routing and `ntt_requirement_is_cached` call one method on the
       configured backend. The threshold is not copied into a kernel.
-- [ ] One hot tile sizing reads the configured backend budget. Sweep selection
+- [x] One hot tile sizing reads the configured backend budget. Sweep selection
       remains private and automatic.
-- [ ] Tracing records the effective ring switch limit and one hot scratch
+- [x] Tracing records the effective ring switch limit and one hot scratch
       budget so benchmark results identify the policy in use.
 - [ ] CPU release removes built shared matrix and compression NTT entries,
       preserves active `Arc` readers, and returns the complete freed byte count.
 - [ ] Actual metrics report total CPU NTT bytes and the existing shared and
       compression subtotals.
-- [ ] Default policy tests prove byte identical commitments and proofs. Limit
+- [x] Default policy tests prove byte identical commitments and proofs. Limit
       boundary tests prove cached and streamed ring switch parity. Scratch
       budget tests prove identical one hot commitments across valid tile sizes.
 - [ ] The Jolt integration guidance preserves its release after stage zero and
@@ -774,9 +774,9 @@ Worker count is an explicit selector input and is clamped to the number of
 blocks. Tests cover both sides of the block per worker boundary without
 changing the global Rayon pool.
 
-Tiling is a separate calculation with an 8 MiB scratch budget per worker. Let
-`E` be the conservative maximum number of sparse entries in one block. The
-driver uses:
+Tiling is a separate calculation with a configured scratch budget per worker.
+The default is 8 MiB. Let `S` be the configured budget and `E` be the
+conservative maximum number of sparse entries in one block. The driver uses:
 
 \[
 \begin{aligned}
@@ -784,7 +784,7 @@ M_{block} ={}& E(M_{sparse}+M_{packed}) + D M_{accum} + D M_F
                 + 2M_{usize},\\
 M_{fixed} ={}& \max(3A M_{usize}+M_{usize},\;32D M_{accum}),\\
 B_{tile} ={}& \min\left(B, 2^{16},
-  \left\lfloor\frac{8\text{ MiB}-M_{fixed}}{M_{block}}\right\rfloor\right).
+  \left\lfloor\frac{S-M_{fixed}}{M_{block}}\right\rfloor\right).
 \end{aligned}
 \]
 
@@ -821,9 +821,9 @@ phase.
 
 ### Configurable CPU Resource Limits
 
-`CpuBackend` is the existing owner of CPU execution policy. It will carry two
-private limits and expose checked construction methods. No separate policy
-object is needed.
+`CpuBackend` is the existing owner of CPU execution policy. It carries two
+private limits and exposes one checked constructor, an associated default, and
+read only accessors. No separate policy object is needed.
 
 ```rust
 pub struct CpuBackend {
@@ -831,6 +831,11 @@ pub struct CpuBackend {
     onehot_scratch_bytes_per_worker: usize,
 }
 ```
+
+`CpuBackend::DEFAULT` is the stable borrowed default for long lived stacks.
+The `Default` implementation returns the same value. Explicit deployments use
+`CpuBackend::with_resource_limits(max_cached_ring_switch_elements,
+onehot_scratch_bytes_per_worker)`. This constructor rejects zero scratch.
 
 The default values are the current measured values:
 

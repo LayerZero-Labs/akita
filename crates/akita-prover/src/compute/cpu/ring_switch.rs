@@ -27,7 +27,7 @@ where
             plan.n_a,
             source.z_segment.len(),
         )?;
-        if !ntt_operation_uses_cache(NttOperationCluster::RingSwitch, stream_extent) {
+        if !self.ntt_operation_uses_cache(NttOperationCluster::RingSwitch, stream_extent) {
             let view = prepared
                 .expanded
                 .shared_matrix()
@@ -137,7 +137,7 @@ where
     {
         let stream_extent =
             fused_quotient_matrix_extent(0, 0, 0, 0, plan.n_a, source.z_segment.len())?;
-        if !ntt_operation_uses_cache(NttOperationCluster::RingSwitch, stream_extent) {
+        if !self.ntt_operation_uses_cache(NttOperationCluster::RingSwitch, stream_extent) {
             let view = prepared
                 .expanded
                 .shared_matrix()

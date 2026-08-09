@@ -337,7 +337,7 @@ mod tests {
         let available_field_len = setup.expanded.shared_matrix().as_field_slice().len();
         assert!(available_field_len >= natural_len);
 
-        let backend = CpuBackend;
+        let backend = CpuBackend::DEFAULT;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let prefix_params =
             setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
@@ -367,7 +367,7 @@ mod tests {
             .expect("natural len")
             .min(n_prefix);
         let mut setup = test_setup::<D>(&level_params, n_prefix);
-        let backend = CpuBackend;
+        let backend = CpuBackend::DEFAULT;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let prefix_params =
             setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
@@ -413,7 +413,7 @@ mod tests {
         );
 
         let setup = test_setup::<64>(&level_params, n_prefix);
-        let backend = CpuBackend;
+        let backend = CpuBackend::DEFAULT;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let error = commit_setup_prefix::<F, 64, _>(
             &setup.expanded,

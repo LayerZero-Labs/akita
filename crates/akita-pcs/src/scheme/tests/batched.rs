@@ -11,10 +11,13 @@ fn batched_commit_matches_individual_commits() {
     let poly_a = DensePoly::<F>::from_field_evals(num_vars, D, &evals_a).unwrap();
     let poly_b = DensePoly::<F>::from_field_evals(num_vars, D, &evals_b).unwrap();
     let setup = Scheme::setup_prover(num_vars, 2).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let poly_groups = [std::slice::from_ref(&poly_a), std::slice::from_ref(&poly_b)];
 
     let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
@@ -44,10 +47,13 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let poly_a = DensePoly::<F>::from_field_evals(num_vars, D, &evals_a).unwrap();
     let poly_b = DensePoly::<F>::from_field_evals(num_vars, D, &evals_b).unwrap();
     let setup = Scheme::setup_prover(num_vars, 2).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let poly_group = [&poly_a, &poly_b];
     let (commitment, hint) =

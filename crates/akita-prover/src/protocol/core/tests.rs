@@ -38,7 +38,7 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         ring_dimension: 64,
     }];
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
-        &crate::compute::CpuBackend,
+        &crate::compute::CpuBackend::DEFAULT,
         None,
         &groups,
         &mut transcript,
@@ -85,7 +85,7 @@ fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
     let mut transcript = AkitaTranscript::<F>::new(b"test/grouped-extension-opening-reduction");
 
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
-        &crate::compute::CpuBackend,
+        &crate::compute::CpuBackend::DEFAULT,
         None,
         &groups,
         &mut transcript,

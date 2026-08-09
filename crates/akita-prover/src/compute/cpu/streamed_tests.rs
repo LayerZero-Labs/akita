@@ -2,6 +2,7 @@
 //! and the built-NTT-slot release/rebuild lifecycle.
 
 use super::*;
+use crate::backend::RingSwitchRelationView;
 use crate::compute::backend::ComputeBackendSetup;
 use crate::AkitaProverSetup;
 use akita_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
@@ -18,7 +19,7 @@ fn setup_capacity(num_ring_elements: usize) -> SetupMatrixCapacity {
 
 fn prepared() -> CpuPreparedSetup<F> {
     let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
-    CpuBackend.prepare_setup(&setup).unwrap()
+    CpuBackend::DEFAULT.prepare_setup(&setup).unwrap()
 }
 
 fn cyclic_key(extent: usize) -> NttCacheKey {
@@ -27,6 +28,81 @@ fn cyclic_key(extent: usize) -> NttCacheKey {
 
 fn negacyclic_key(extent: usize) -> NttCacheKey {
     NttCacheKey::from_matrix_shape(D, 1, extent, NttTransformDomain::Negacyclic).unwrap()
+}
+
+#[test]
+fn cpu_resource_limits_have_checked_defaults_and_boundaries() {
+    let default = CpuBackend::default();
+    assert_eq!(
+        default.max_cached_ring_switch_elements(),
+        CpuBackend::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS
+    );
+    assert_eq!(
+        default.onehot_scratch_bytes_per_worker(),
+        CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER
+    );
+
+    let stream_all =
+        CpuBackend::with_resource_limits(0, CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER)
+            .unwrap();
+    assert!(!stream_all.ntt_operation_uses_cache(NttOperationCluster::RingSwitch, 1));
+    assert!(stream_all.ntt_operation_uses_cache(NttOperationCluster::Commit, usize::MAX));
+
+    let retain_all = CpuBackend::with_resource_limits(
+        usize::MAX,
+        CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER,
+    )
+    .unwrap();
+    assert!(retain_all.ntt_operation_uses_cache(NttOperationCluster::RingSwitch, usize::MAX));
+    assert!(CpuBackend::with_resource_limits(1, 0).is_err());
+}
+
+#[test]
+fn configured_ring_switch_routes_preserve_relation_rows() {
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
+    let cached_backend = CpuBackend::with_resource_limits(
+        usize::MAX,
+        CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER,
+    )
+    .unwrap();
+    let streamed_backend =
+        CpuBackend::with_resource_limits(0, CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER)
+            .unwrap();
+    let cached_prepared = cached_backend.prepare_setup(&setup).unwrap();
+    let streamed_prepared = streamed_backend.prepare_setup(&setup).unwrap();
+    let e_hat = vec![[1i8; D], [-1i8; D], [1i8; D]];
+    let t_hat = vec![[-1i8; D], [3i8; D]];
+    let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D], [5i32; D]];
+    let source = RingSwitchRelationView {
+        e_hat: &e_hat,
+        t_hat: &t_hat,
+        z_segment: &z_segment,
+        z_folded_centered_inf_norm: 5,
+    };
+    let plan = RingSwitchRelationPlan {
+        n_d: 2,
+        n_b: 2,
+        n_a: 1,
+        log_basis_open: 2,
+        log_basis_outer: 3,
+    };
+
+    let cached = cached_backend
+        .relation_rows(&cached_prepared, source, plan)
+        .expect("cached relation rows");
+    let streamed = streamed_backend
+        .relation_rows(&streamed_prepared, source, plan)
+        .expect("streamed relation rows");
+
+    assert_eq!(streamed, cached);
+    assert!(!cached_prepared
+        .shared_ntt_cache_metrics()
+        .unwrap()
+        .is_empty());
+    assert!(streamed_prepared
+        .shared_ntt_cache_metrics()
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -84,7 +160,7 @@ fn streamed_relation_rows_match_cached_kernel() {
 fn streamed_relation_rows_match_cached_q32_kernel() {
     type F32 = Prime32Offset99;
     let setup = AkitaProverSetup::<F32>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let e_hat = vec![[1i8; D], [-1i8; D], [1i8; D]];
     let t_hat = vec![[-1i8; D], [3i8; D]];
     let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D], [5i32; D]];
@@ -238,7 +314,7 @@ fn streamed_chunked_t_rows_match_cached_kernel() {
         },
     )
     .unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let e_hat = vec![[1i8; D128], [-1i8; D128], [1i8; D128]];
     let t_hat = vec![[1i8; D128]; T_LEN];
     let z_segment = vec![[1i32; D128], [-2i32; D128], [3i32; D128], [1i32; D128]];
@@ -313,14 +389,14 @@ fn released_large_prefix_does_not_cover_smaller_rebuild() {
     let large = cyclic_key(32);
     let small = cyclic_key(3);
 
-    CpuBackend
+    CpuBackend::DEFAULT
         .ensure_ntt_slot(&prepared, large)
         .expect("warm large prefix");
     let large_bytes = prepared.shared_ntt_cache_bytes();
     assert_eq!(prepared.drop_built_ntt_slots().unwrap(), large_bytes);
     assert!(prepared.shared_ntt.lock().unwrap().is_empty());
 
-    CpuBackend
+    CpuBackend::DEFAULT
         .ensure_ntt_slot(&prepared, small)
         .expect("rebuild exact smaller prefix");
 

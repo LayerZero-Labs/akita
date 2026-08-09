@@ -83,7 +83,7 @@ fn multilinear_onehot_group_commit_matches_inner_kernel() {
         },
     )
     .unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let plan = CommitInnerPlan {
         n_a: 2,
         num_positions_per_block: 2,
@@ -98,7 +98,7 @@ fn multilinear_onehot_group_commit_matches_inner_kernel() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     let expected = RootCommitKernel::<OneHotView<'_, F, D>, F, D>::commit_inner_group(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         &prepared,
         inner_views,
         plan,
@@ -112,7 +112,7 @@ fn multilinear_onehot_group_commit_matches_inner_kernel() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     let got = RootCommitKernel::<MultilinearPolynomialView<'_, F, D>, F, D>::commit_inner_group(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         &prepared,
         wrapped_views,
         plan,
@@ -140,7 +140,7 @@ fn multilinear_kernel_homogeneous_dense_tensor_batch_matches_inner() {
     ];
     let wrapped_refs = [&wrapped[0], &wrapped[1]];
     let point = sample_point::<E>(num_vars);
-    let backend = CpuBackend;
+    let backend = CpuBackend::DEFAULT;
 
     let inner_refs: Vec<&DensePoly<F>> = wrapped
         .iter()
@@ -182,7 +182,7 @@ fn multilinear_kernel_homogeneous_onehot_tensor_batch_matches_inner() {
     ];
     let wrapped_refs = [&wrapped[0], &wrapped[1]];
     let point = sample_point::<E>(num_vars);
-    let backend = CpuBackend;
+    let backend = CpuBackend::DEFAULT;
 
     let inner_refs: Vec<&OneHotPoly<F>> = wrapped
         .iter()
@@ -230,7 +230,7 @@ fn multilinear_kernel_mixed_batch_column_partials_falls_back_per_poly() {
     ];
     let wrapped_refs = [&wrapped[0], &wrapped[1]];
     let point = sample_point::<E>(num_vars);
-    let backend = CpuBackend;
+    let backend = CpuBackend::DEFAULT;
 
     let expected = wrapped_refs
         .iter()
@@ -272,7 +272,7 @@ fn multilinear_kernel_mixed_batch_sparse_linear_combination_returns_none() {
     ];
     let wrapped_refs = [&wrapped[0], &wrapped[1]];
     let coeffs = vec![E::one(), E::one()];
-    let backend = CpuBackend;
+    let backend = CpuBackend::DEFAULT;
 
     let batch_view =
         <MultilinearPolynomial<F> as RootTensorSource<F, D>>::tensor_batch(&wrapped_refs).unwrap();
@@ -307,7 +307,7 @@ fn multilinear_mixed_sparse_batch_fold_returns_fallback_per_poly() {
             .unwrap();
     let outcome =
         OpeningBatchKernel::<MultilinearPolynomialBatchView<'_, F, D>, F, D>::decompose_fold_batch(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             None,
             batch_view,
             DecomposeFoldBatchPlan::Sparse {
