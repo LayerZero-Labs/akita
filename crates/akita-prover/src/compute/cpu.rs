@@ -1,14 +1,10 @@
-use crate::backend::onehot::column_sweep_ajtai_onehot_multi;
-use crate::backend::sparse_ring::column_sweep_sparse;
 use crate::compute::backend::{
-    CommitmentComputeBackend, CompressionComputeBackend, CompressionRowsProducts,
-    ComputeBackendSetup, CyclicRowsComputeBackend, DigitRowsComputeBackend,
-    RingSwitchComputeBackend,
+    CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
+    CyclicRowsComputeBackend, DigitRowsComputeBackend, RingSwitchComputeBackend,
 };
 use crate::compute::plans::{
-    DenseCommitInput, DenseCommitRowsPlan, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    SparseRingCommitRowsPlan,
+    DenseCommitInput, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
+    RingSwitchRelationRowsPlan,
 };
 use crate::compute::requirements::NttOperationCluster;
 use crate::kernels::linear::validate_compression_batch_shape;
@@ -21,8 +17,7 @@ use crate::kernels::linear::{
     StreamedASource,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
-use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{
     dispatch_for_field, prepare_ntt_cache, AkitaExpandedSetup, NttCacheKey, NttCacheMode,
     NttTransformDomain, PreparedNttCache,
@@ -506,16 +501,17 @@ where
     }
 }
 
-impl<F> CommitmentComputeBackend<F> for CpuBackend
-where
-    F: FieldCore + CanonicalField,
-{
-    fn dense_commit_rows<const D: usize>(
+impl CpuBackend {
+    pub(crate) fn dense_commit_rows<F, const D: usize>(
         &self,
-        prepared: &Self::PreparedSetup,
-        plan: DenseCommitRowsPlan<'_, F, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        match plan.input {
+        prepared: &CpuPreparedSetup<F>,
+        n_a: usize,
+        input: DenseCommitInput<'_, F, D>,
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+    {
+        match input {
             DenseCommitInput::CachedDigits {
                 digit_block_slices,
                 log_basis_inner,
@@ -524,14 +520,14 @@ where
                 prepared.with_shared_ntt::<D, _>(
                     NttCacheKey::from_matrix_shape(
                         D,
-                        plan.n_a,
+                        n_a,
                         row_width,
                         NttTransformDomain::Negacyclic,
                     )?,
                     |ntt| {
                         mat_vec_mul_ntt_dense_digits_i8(
                             ntt,
-                            plan.n_a,
+                            n_a,
                             row_width,
                             &digit_block_slices,
                             log_basis_inner,
@@ -549,7 +545,7 @@ where
                         AkitaError::InvalidSetup("dense coefficient row width overflow".to_string())
                     })
                 })?;
-                if plan.n_a == 1 {
+                if n_a == 1 {
                     prepared.with_shared_ntt::<D, _>(
                         NttCacheKey::from_matrix_shape(
                             D,
@@ -574,14 +570,14 @@ where
                     prepared.with_shared_ntt::<D, _>(
                         NttCacheKey::from_matrix_shape(
                             D,
-                            plan.n_a,
+                            n_a,
                             row_width,
                             NttTransformDomain::Negacyclic,
                         )?,
                         |ntt| {
                             mat_vec_mul_ntt_i8_dense(
                                 ntt,
-                                plan.n_a,
+                                n_a,
                                 row_width,
                                 &block_slices,
                                 num_digits_inner,
@@ -594,132 +590,40 @@ where
         }
     }
 
-    fn onehot_commit_rows<const D: usize>(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn recursive_witness_commit_rows<F, const D: usize>(
         &self,
-        prepared: &Self::PreparedSetup,
-        plan: OneHotCommitRowsPlan<'_>,
+        prepared: &CpuPreparedSetup<F>,
+        coeffs: &[[i8; D]],
+        n_rows: usize,
+        num_positions_per_block: usize,
+        num_live_blocks: usize,
+        num_digits_inner: usize,
+        log_basis_inner: u32,
+        known_balanced_log_basis: Option<u32>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasCommitAccum,
-        F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+        F: FieldCore + CanonicalField,
     {
-        let active_a_cols = plan
-            .num_positions_per_block
-            .checked_mul(plan.num_digits_inner)
-            .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-        let a_view = prepared
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(plan.n_a, active_a_cols)?;
-        Ok(column_sweep_ajtai_onehot_multi::<F, D>(
-            &a_view,
-            &[&plan.blocks],
-            plan.n_a,
-            active_a_cols,
-            plan.num_digits_inner,
-        )?
-        .pop()
-        .unwrap_or_default())
-    }
-
-    fn onehot_commit_rows_multi<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plans: Vec<OneHotCommitRowsPlan<'_>>,
-    ) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
-    where
-        F: HasCommitAccum,
-        F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
-    {
-        let Some(first) = plans.first() else {
-            return Ok(Vec::new());
-        };
-        let uniform_shape = plans.iter().all(|plan| {
-            plan.n_a == first.n_a
-                && plan.num_positions_per_block == first.num_positions_per_block
-                && plan.num_digits_inner == first.num_digits_inner
-        });
-        if !uniform_shape {
-            return plans
-                .into_iter()
-                .map(|plan| self.onehot_commit_rows::<D>(prepared, plan))
-                .collect();
-        }
-
-        let active_a_cols = first
-            .num_positions_per_block
-            .checked_mul(first.num_digits_inner)
-            .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-        let a_view = prepared
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(first.n_a, active_a_cols)?;
-        let n_a = first.n_a;
-        let num_digits_inner = first.num_digits_inner;
-
-        let sources = plans.iter().map(|plan| &plan.blocks).collect::<Vec<_>>();
-        column_sweep_ajtai_onehot_multi::<F, D>(
-            &a_view,
-            &sources,
-            n_a,
-            active_a_cols,
-            num_digits_inner,
-        )
-    }
-
-    fn sparse_ring_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: SparseRingCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
-    {
-        let active_a_cols = plan
-            .num_positions_per_block
-            .checked_mul(plan.num_digits_inner)
-            .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-        let a_view = prepared
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(plan.n_a, active_a_cols)?;
-        Ok(column_sweep_sparse(
-            &a_view,
-            &plan.blocks.block_slices()?,
-            plan.n_a,
-            plan.num_positions_per_block,
-            plan.num_digits_inner,
-        ))
-    }
-
-    fn recursive_witness_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RecursiveWitnessCommitRowsPlan<'_, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        let row_width = plan
-            .num_positions_per_block
-            .checked_mul(plan.num_digits_inner)
+        let row_width = num_positions_per_block
+            .checked_mul(num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("recursive A width overflow".to_string()))?;
-        let minimum_ring_elems = plan
-            .num_live_blocks
+        let minimum_ring_elems = num_live_blocks
             .saturating_sub(1)
-            .checked_mul(plan.num_positions_per_block)
+            .checked_mul(num_positions_per_block)
             .and_then(|prefix| prefix.checked_add(1))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive witness block extent overflow".to_string())
             })?;
-        if plan.num_live_blocks == 0 || plan.coeffs.len() < minimum_ring_elems {
+        if num_live_blocks == 0 || coeffs.len() < minimum_ring_elems {
             return Err(AkitaError::InvalidSetup(
                 "recursive witness does not cover its live blocks".to_string(),
             ));
         }
-        if plan.num_digits_inner == 1 {
-            let blocks = plan
-                .coeffs
-                .chunks(plan.num_positions_per_block)
-                .take(plan.num_live_blocks)
+        if num_digits_inner == 1 {
+            let blocks = coeffs
+                .chunks(num_positions_per_block)
+                .take(num_live_blocks)
                 .collect::<Vec<_>>();
             // The `num_digits_inner == 1` recursive witness is a raw signed-i8
             // coefficient stream. Degree-one fields yield balanced gadget digits
@@ -727,42 +631,33 @@ where
             // base-lift packing sums gadget digits and can push coefficients
             // past the balanced range; those must commit through the general
             // raw ring mat-vec instead of the balanced-digit LUT kernel.
-            let known_balanced = plan
-                .known_balanced_log_basis
-                .is_some_and(|source_log_basis| plan.log_basis_inner >= source_log_basis);
-            if known_balanced || digit_blocks_are_balanced(&blocks, row_width, plan.log_basis_inner)
-            {
+            let known_balanced = known_balanced_log_basis
+                .is_some_and(|source_log_basis| log_basis_inner >= source_log_basis);
+            if known_balanced || digit_blocks_are_balanced(&blocks, row_width, log_basis_inner) {
                 prepared.with_shared_ntt::<D, _>(
                     NttCacheKey::from_matrix_shape(
                         D,
-                        plan.n_rows,
+                        n_rows,
                         row_width,
                         NttTransformDomain::Negacyclic,
                     )?,
                     |ntt| {
-                        mat_vec_mul_ntt_digits_i8(
-                            ntt,
-                            plan.n_rows,
-                            row_width,
-                            &blocks,
-                            plan.log_basis_inner,
-                        )
+                        mat_vec_mul_ntt_digits_i8(ntt, n_rows, row_width, &blocks, log_basis_inner)
                     },
                 )
             } else {
                 prepared.with_shared_ntt::<D, _>(
                     NttCacheKey::from_matrix_shape(
                         D,
-                        plan.n_rows,
+                        n_rows,
                         row_width,
                         NttTransformDomain::Negacyclic,
                     )?,
-                    |ntt| mat_vec_mul_ntt_raw_digits_i8(ntt, plan.n_rows, row_width, &blocks),
+                    |ntt| mat_vec_mul_ntt_raw_digits_i8(ntt, n_rows, row_width, &blocks),
                 )
             }
         } else {
-            let ring_elems: Vec<CyclotomicRing<F, D>> = plan
-                .coeffs
+            let ring_elems: Vec<CyclotomicRing<F, D>> = coeffs
                 .iter()
                 .map(|digit| {
                     let coeffs = from_fn(|k| F::from_i8(digit[k]));
@@ -770,24 +665,24 @@ where
                 })
                 .collect();
             let blocks = ring_elems
-                .chunks(plan.num_positions_per_block)
-                .take(plan.num_live_blocks)
+                .chunks(num_positions_per_block)
+                .take(num_live_blocks)
                 .collect::<Vec<_>>();
             prepared.with_shared_ntt::<D, _>(
                 NttCacheKey::from_matrix_shape(
                     D,
-                    plan.n_rows,
+                    n_rows,
                     row_width,
                     NttTransformDomain::Negacyclic,
                 )?,
                 |ntt| {
                     mat_vec_mul_ntt_i8(
                         ntt,
-                        plan.n_rows,
+                        n_rows,
                         row_width,
                         &blocks,
-                        plan.num_digits_inner,
-                        plan.log_basis_inner,
+                        num_digits_inner,
+                        log_basis_inner,
                     )
                 },
             )
@@ -1330,18 +1225,7 @@ mod tests {
         let prepared = prepared();
         let coeffs = vec![[1i8; D]; 6];
         let rows = CpuBackend
-            .recursive_witness_commit_rows(
-                &prepared,
-                RecursiveWitnessCommitRowsPlan {
-                    coeffs: &coeffs,
-                    n_rows: 1,
-                    num_positions_per_block: 2,
-                    num_live_blocks: 2,
-                    num_digits_inner: 1,
-                    log_basis_inner: 3,
-                    known_balanced_log_basis: Some(3),
-                },
-            )
+            .recursive_witness_commit_rows(&prepared, &coeffs, 1, 2, 2, 1, 3, Some(3))
             .expect("recursive commit rows");
 
         assert_eq!(rows.len(), 2);

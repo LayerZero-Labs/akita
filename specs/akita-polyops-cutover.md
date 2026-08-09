@@ -669,13 +669,12 @@ separate no-setup and setup-bound kernel traits if that produces cleaner Rust
 bounds, but it must keep setup-dependent work explicitly tied to a backend and
 typed prepared context.
 
-The fixed built-in row methods in today's `CommitmentComputeBackend` and
-`RingSwitchComputeBackend` can survive only below this layer as standard helper
-kernels. For example, a dense commit view may reduce to a public
-`StandardDenseCommitRows` helper, and a custom downstream view may reduce to
-canonical digit rows. Protocol code should not be generic over those fixed
-standard helper traits; it should be generic over source-typed operation
-kernels.
+The commitment cutover is now complete. `RootCommitKernel` has one group
+method, and dense, one-hot, sparse-ring, projection, and recursive-witness
+sources all enter through it. Representation-specific row plans and the fixed
+commitment row trait were removed in PR 375. Private CPU arithmetic helpers may
+remain below this boundary. Protocol code and downstream extension points use
+source-typed kernels plus the shared digit-row capability.
 
 ### Standard Views
 
@@ -732,8 +731,8 @@ PO1 landed the tree as sibling modules under `compute/` (all re-exported from
 
 | Module | Role |
 | --- | --- |
-| `plans.rs` | Legacy row/commit plan structs and `FlatBlockTable` |
-| `backend.rs` | Fixed trait ladder (`ComputeBackendSetup` … `ProverComputeBackend`); removed at PO4 |
+| `plans.rs` | Internal CPU inputs and ring-switch row plans |
+| `backend.rs` | Prepared setup, digit-row, compression, and ring-switch capabilities |
 | `cpu.rs` | `CpuBackend` / `CpuPreparedSetup` and standard row-kernel impls |
 | `operation_plans.rs` | Scalar PO1 operation parameters (`CommitInnerPlan`, `OpeningFoldPlan`, …) |
 | `kernels.rs` | Source-typed operation kernel traits generic over view `S` |
@@ -892,28 +891,18 @@ Implementation requirements:
 
 This spec extends the design already present in `crates/akita-prover/src/compute/`.
 
-Similarities:
+Current implementation:
 
 - Backend setup is still explicit through `ComputeBackendSetup`.
 - Prepared setup is typed by backend and ring dimension.
 - Hot paths call named backend operations rather than reaching into raw CPU
   setup internals.
-- Standard CPU operations can still use existing plan structs such as
-  `DenseCommitRowsPlan`, `OneHotCommitRowsPlan`,
-  `SparseRingCommitRowsPlan`, and `RecursiveWitnessCommitRowsPlan`.
-
-Differences:
-
-- The current commit backend methods are representation-named methods on
-  `CommitmentComputeBackend`. They are good low-level standard plans, but they
-  are not enough as the public polynomial extension boundary.
-- The new source-type kernel traits add an open layer above those standard
-  plans. Built-in sources can reduce to the existing plan methods. Downstream
-  sources can either reduce to standard views or implement kernels for their
-  own local view types.
-- Opening/folding/decompose/tensor work currently still lives directly on
-  `AkitaPolyOps`. This spec moves those operations to the same backend-owned
-  shape as commitment.
+- `RootCommitKernel` is the only commitment operation boundary and accepts
+  source views in groups. There is no singleton fallback method.
+- Built-in sources call private CPU arithmetic directly. Downstream sources can
+  reuse standard views or implement kernels for their own local view types.
+- Opening, folding, decomposition, and tensor work use the same source-typed
+  backend shape as commitment.
 - Ring-switch work currently has a named backend trait, but it is still closed
   around `RingSwitchRelationRowsPlan` and `RingSwitchQuotientRowsPlan`. This
   spec turns those plans into standard views/helpers below a source-typed

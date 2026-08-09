@@ -13,8 +13,11 @@ scheduling remain follow-up work.
   buffers, command queues, or any backend-prepared state.
 - `ComputeBackendSetup<F>` owns backend preparation. Prepared setup slots are
   keyed by field family and ring role at kernel boundaries via `dispatch_for_field!`.
-- `DigitRowsComputeBackend<F>`, `CyclicRowsComputeBackend<F>`,
-  `CommitmentComputeBackend<F>`, and `RingSwitchComputeBackend<F>` own the migrated operation families.
+- `RootCommitKernel<S, F, D>` owns source-typed inner commitment. Its single
+  group method is the canonical boundary for singleton and batched sources.
+- `DigitRowsComputeBackend<F>` owns shared outer digit rows.
+  `CyclicRowsComputeBackend<F>` and `RingSwitchComputeBackend<F>` own the
+  remaining fixed ring-switch row operations.
 - `CpuBackend` prepares `CpuPreparedSetup<F>` from an `AkitaProverSetup<F>` or
   an `Arc<AkitaExpandedSetup<F>>`. Per-dimension NTT caches live inside the
   prepared stack. Matrix-consuming kernels lazily acquire exact prefixes keyed
@@ -78,9 +81,12 @@ rebuild released slots at the next exact request
   failure.
 - Migrated prover code must not accept legacy per-`D` NTT slot caches directly.
   CPU NTT slots stay inside `CpuPreparedSetup` / `ProverComputeStack`.
-- One-hot and sparse-ring plans expose flat entry and offset tables so future
-  out-of-crate backends can upload the compact representation without reaching
-  into CPU storage.
+- Root commit kernels consume borrowed source views. Dense, one-hot,
+  sparse-ring, projection, and recursive-witness sources do not cross a public
+  representation-specific row-plan boundary.
+- One-hot and sparse-ring compact block storage is private to their source or
+  operation. An accelerator integration should implement the source-typed
+  kernel for its backend instead of depending on CPU storage plans.
 - Dynamic ring-dimension code uses `dispatch_for_field!` and prepares the
   target backend context inside the matched `D` arm.
 
@@ -92,9 +98,9 @@ NTT caches live in `CpuPreparedSetup` only.
 
 Covered operation families:
 
-- dense coefficient and pre-decomposed digit commit rows;
-- one-hot and sparse-ring commit rows without dense materialization;
-- recursive witness commit rows;
+- dense, one-hot, sparse-ring, projection, and recursive-witness commitment
+  through `RootCommitKernel`;
+- dense cached digits remain an internal CPU optimization;
 - opening fold / decompose-fold / tensor projection (single + batch);
 - single-row cyclic and negacyclic digit rows;
 - ring-switch relation and quotient rows via `RingSwitchRelationKernel` /

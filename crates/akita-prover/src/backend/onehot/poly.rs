@@ -298,26 +298,27 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         ring_d: usize,
         num_positions_per_block: usize,
     ) -> Result<FlatBlocks<SparseRingBlockEntry>, AkitaError> {
-        let (ring_elems_at_d, num_live_blocks) =
-            self.view_layout(ring_d, num_positions_per_block)?;
+        let (_, num_live_blocks) = self.view_layout(ring_d, num_positions_per_block)?;
         let _span =
             tracing::debug_span!("OneHotPoly::build_blocks", ring_d, num_positions_per_block)
                 .entered();
-        self.materialize_block_range(
-            ring_d,
-            num_positions_per_block,
-            ring_elems_at_d,
-            0..num_live_blocks,
-        )
+        self.materialize_block_range(ring_d, num_positions_per_block, 0..num_live_blocks)
     }
 
     pub(super) fn materialize_block_range(
         &self,
         ring_d: usize,
         num_positions_per_block: usize,
-        ring_elems_at_d: usize,
         block_range: std::ops::Range<usize>,
     ) -> Result<FlatBlocks<SparseRingBlockEntry>, AkitaError> {
+        let (ring_elems_at_d, num_live_blocks) =
+            self.view_layout(ring_d, num_positions_per_block)?;
+        if block_range.start > block_range.end || block_range.end > num_live_blocks {
+            return Err(AkitaError::InvalidInput(format!(
+                "one hot block range {:?} exceeds {num_live_blocks} blocks",
+                block_range
+            )));
+        }
         let ring_start = block_range
             .start
             .checked_mul(num_positions_per_block)
@@ -341,7 +342,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     /// polynomial's layout and return `(ring_elems_at_d, num_live_blocks)`.
     /// Single home for the checks shared by [`Self::prepare_block_cache`],
     /// [`Self::num_live_blocks_for`] and
-    /// [`Self::commit_plan_blocks_lazy`].
+    /// block range materialization.
     pub(super) fn view_layout(
         &self,
         ring_d: usize,
@@ -391,35 +392,6 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         num_positions_per_block: usize,
     ) -> Result<usize, AkitaError> {
         Ok(self.view_layout(ring_d, num_positions_per_block)?.1)
-    }
-
-    /// Lazily buildable commit blocks over this polynomial's retained index
-    /// columns: the sweep materializes one block tile at a time instead of
-    /// holding the full entry cache. Performs the same layout validation as
-    /// cached block preparation but never builds or caches anything.
-    pub(super) fn commit_plan_blocks_lazy(
-        &self,
-        ring_d: usize,
-        num_positions_per_block: usize,
-    ) -> Result<OneHotBlockSource<'_>, AkitaError> {
-        let (_ring_elems_at_d, num_live_blocks) =
-            self.view_layout(ring_d, num_positions_per_block)?;
-        let onehot_k = self.onehot_k;
-        let indices = &self.indices;
-        Ok(OneHotBlockSource::Lazy(LazyOneHotBlocks::new(
-            num_live_blocks,
-            num_positions_per_block,
-            move |ring_range, first_block| {
-                FlatBlocks::<SparseRingBlockEntry>::from_onehot_ring_range(
-                    onehot_k,
-                    indices,
-                    num_positions_per_block,
-                    ring_d,
-                    ring_range,
-                    first_block,
-                )
-            },
-        )))
     }
 
     /// Sparse fast path for `tensor_extension_column_partials_batch`.

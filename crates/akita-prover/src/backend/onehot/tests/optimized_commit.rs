@@ -67,28 +67,6 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
     let bucketed = column_sweep_core::<F, D>(&a_view, &flat, n_a, active_a_cols, num_digits_inner);
     assert_eq!(merge, bucketed, "merge sweep must match the bucketed core");
 
-    // Wrapper equality: fused multi output must equal per-poly sweeps.
-    let sources: Vec<_> = polys_blocks
-        .iter()
-        .map(|blocks| OneHotBlockSource::Eager(blocks.table()))
-        .collect();
-    let source_refs: Vec<_> = sources.iter().collect();
-    let multi = column_sweep_ajtai_onehot_multi::<F, D>(
-        &a_view,
-        &source_refs,
-        n_a,
-        active_a_cols,
-        num_digits_inner,
-    )
-    .unwrap();
-    let per_poly: Vec<Vec<Vec<CyclotomicRing<F, D>>>> = polys_views
-        .iter()
-        .map(|views| {
-            column_sweep_ajtai_onehot::<F, D>(&a_view, views, n_a, active_a_cols, num_digits_inner)
-        })
-        .collect();
-    assert_eq!(multi, per_poly, "fused multi must match per-poly sweeps");
-
     // Tiny tiles force multi-tile merge paths and cursor resets.
     let merge_tiny_tiles = column_sweep_core_merge::<F, D>(
         &a_view,
@@ -106,9 +84,8 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
 }
 
 #[test]
-fn lazy_multi_sweep_matches_eager_multi_sweep() {
+fn view_multi_sweep_matches_per_poly_sweep() {
     use super::super::column_sweep::column_sweep_ajtai_onehot_multi;
-    use crate::compute::OneHotBlockSource;
     use rand::Rng;
 
     type F = Prime128Offset275;
@@ -137,38 +114,32 @@ fn lazy_multi_sweep_matches_eager_multi_sweep() {
     let a_flat = FlatMatrix::from_ring_slice(&a_rows);
     let a_view = a_flat.ring_view::<D>(n_a, active_a_cols).unwrap();
 
-    for poly in &polys {
-        poly.prepare_block_cache(D, num_positions_per_block)
-            .unwrap();
-    }
-    let eager_blocks: Vec<_> = polys
-        .iter()
-        .map(|poly| {
-            poly.blocks_for_operation(D, num_positions_per_block)
-                .unwrap()
-        })
-        .collect();
-    let eager_sources: Vec<_> = eager_blocks
-        .iter()
-        .map(|blocks| OneHotBlockSource::Eager(blocks.table()))
-        .collect();
-    let eager_refs: Vec<_> = eager_sources.iter().collect();
-    let eager =
-        column_sweep_ajtai_onehot_multi::<F, D>(&a_view, &eager_refs, n_a, active_a_cols, 1)
+    let sources: Vec<OneHotView<'_, F, D, u8>> =
+        polys.iter().map(|poly| OneHotView { poly }).collect();
+    let fused =
+        column_sweep_ajtai_onehot_multi::<F, D, u8>(&a_view, &sources, n_a, active_a_cols, 1)
             .unwrap();
 
-    let lazy_plans: Vec<_> = polys
+    let per_poly = polys
         .iter()
         .map(|poly| {
-            poly.commit_plan_blocks_lazy(D, num_positions_per_block)
-                .unwrap()
+            let blocks = poly
+                .materialize_block_range(
+                    D,
+                    num_positions_per_block,
+                    0..poly
+                        .num_live_blocks_for(D, num_positions_per_block)
+                        .unwrap(),
+                )
+                .unwrap();
+            let views = (0..blocks.num_live_blocks())
+                .map(|block| blocks.block(block))
+                .collect::<Vec<_>>();
+            column_sweep_ajtai_onehot::<F, D>(&a_view, &views, n_a, active_a_cols, 1)
         })
-        .collect();
-    let sources: Vec<_> = lazy_plans.iter().collect();
-    let lazy =
-        column_sweep_ajtai_onehot_multi::<F, D>(&a_view, &sources, n_a, active_a_cols, 1).unwrap();
+        .collect::<Vec<_>>();
 
-    assert_eq!(eager, lazy);
+    assert_eq!(fused, per_poly);
 }
 
 #[test]

@@ -1,4 +1,3 @@
-use crate::compute::FlatBlockTable;
 use akita_field::AkitaError;
 
 /// Owned flat storage for sparse entries grouped by logical block.
@@ -89,11 +88,6 @@ impl<E> FlatBlocks<E> {
         debug_assert_eq!(self.offsets.len(), num_live_blocks + 1);
         debug_assert_eq!(self.offsets[num_live_blocks] as usize, self.entries.len());
         Ok(self)
-    }
-
-    #[inline]
-    pub(crate) fn table(&self) -> FlatBlockTable<'_, E> {
-        FlatBlockTable::new(&self.entries, &self.offsets)
     }
 
     #[cfg(test)]

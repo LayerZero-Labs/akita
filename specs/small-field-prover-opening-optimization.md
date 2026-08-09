@@ -258,6 +258,12 @@ produce sorted or sorted-unique sparse entries, it may use a stronger
 constructor that validates and consumes that invariant directly. Generic callers
 still use constructors that sort or combine as needed.
 
+> **Superseded ownership target:** The active
+> `pr375-prover-streaming-and-onehot-unification` spec supersedes this cache
+> ownership decision. PR 375 keeps derived one-hot projection storage local to
+> the operation and removes mutable derived state from `OneHotPoly`. The text
+> below records the design implemented by this earlier PR.
+
 The one-hot root projection cache is attached to `OneHotPoly`, the owner of the
 immutable indices that determine the projection. `RootTensorProjectionPoly`
 stores sparse projected roots by shared ownership so commit/prove can reuse the

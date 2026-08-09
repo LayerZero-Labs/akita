@@ -93,10 +93,10 @@ fn multilinear_onehot_commits_do_not_populate_persistent_block_cache() {
 
     let single = MultilinearPolynomial::onehot(sample_onehot::<D>());
     let single_view = RootCommitSource::<F, D>::commit_view(&single).unwrap();
-    RootCommitKernel::<MultilinearPolynomialView<'_, F, D>, F, D>::commit_inner(
+    <CpuBackend as RootCommitKernel<MultilinearPolynomialView<'_, F, D>, F, D>>::commit_inner_group(
         &CpuBackend,
         &prepared,
-        single_view,
+        vec![single_view],
         plan,
     )
     .unwrap();
@@ -109,10 +109,10 @@ fn multilinear_onehot_commits_do_not_populate_persistent_block_cache() {
     prepared_inner.prepare_block_cache(D, 2).unwrap();
     let prepared_single = MultilinearPolynomial::onehot(prepared_inner);
     let prepared_view = RootCommitSource::<F, D>::commit_view(&prepared_single).unwrap();
-    RootCommitKernel::<MultilinearPolynomialView<'_, F, D>, F, D>::commit_inner(
+    <CpuBackend as RootCommitKernel<MultilinearPolynomialView<'_, F, D>, F, D>>::commit_inner_group(
         &CpuBackend,
         &prepared,
-        prepared_view,
+        vec![prepared_view],
         plan,
     )
     .unwrap();

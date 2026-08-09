@@ -165,30 +165,41 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    fn commit_inner(
+    fn commit_inner_group(
         &self,
         prepared: &Self::PreparedSetup,
-        source: RootTensorProjectionView<'_, F, D>,
+        sources: Vec<RootTensorProjectionView<'_, F, D>>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F>, AkitaError> {
-        match source.poly {
-            RootTensorProjectionPoly::Dense(poly) => {
-                RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner(
-                    self,
-                    prepared,
-                    poly.commit_view()?,
-                    plan,
-                )
-            }
-            RootTensorProjectionPoly::Sparse(poly) => {
-                RootCommitKernel::<SparseRingView<'_, F, D>, F, D>::commit_inner(
-                    self,
-                    prepared,
-                    poly.as_ref().commit_view()?,
-                    plan,
-                )
-            }
+    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
+        let mut witnesses = Vec::with_capacity(sources.len());
+        for source in sources {
+            let committed = match source.poly {
+                RootTensorProjectionPoly::Dense(poly) => {
+                    RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
+                        self,
+                        prepared,
+                        vec![poly.commit_view()?],
+                        plan,
+                    )?
+                }
+                RootTensorProjectionPoly::Sparse(poly) => {
+                    RootCommitKernel::<SparseRingView<'_, F, D>, F, D>::commit_inner_group(
+                        self,
+                        prepared,
+                        vec![poly.as_ref().commit_view()?],
+                        plan,
+                    )?
+                }
+            };
+            let [witness] = committed.try_into().map_err(|committed: Vec<_>| {
+                AkitaError::InvalidSetup(format!(
+                    "child kernel returned {} tensor projections, expected one",
+                    committed.len()
+                ))
+            })?;
+            witnesses.push(witness);
         }
+        Ok(witnesses)
     }
 }
 

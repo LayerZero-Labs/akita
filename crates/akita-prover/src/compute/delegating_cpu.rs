@@ -5,9 +5,8 @@
 //! hardware backends.
 
 use super::backend::{
-    CommitmentComputeBackend, CompressionComputeBackend, CompressionRowsProducts,
-    ComputeBackendSetup, CyclicRowsComputeBackend, DigitRowsComputeBackend,
-    RingSwitchComputeBackend,
+    CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
+    CyclicRowsComputeBackend, DigitRowsComputeBackend, RingSwitchComputeBackend,
 };
 use super::cpu::CpuBackend;
 use super::kernels::{
@@ -19,16 +18,13 @@ use super::operation_plans::{
     RingSwitchQuotientPlan, RingSwitchRelationPlan,
 };
 use super::plans::{
-    DenseCommitRowsPlan, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    SparseRingCommitRowsPlan,
 };
 use super::requirements::NttOperationCluster;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
-use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
 use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
 };
 use akita_types::{AkitaExpandedSetup, FpExtEncoding, NttCacheKey};
 use std::sync::Arc;
@@ -275,13 +271,13 @@ macro_rules! delegate_root_commit_kernel {
             F: FieldCore + CanonicalField,
             CpuBackend: RootCommitKernel<S, F, D>,
         {
-            fn commit_inner(
+            fn commit_inner_group(
                 &self,
                 prepared: &Self::PreparedSetup,
-                source: S,
+                sources: Vec<S>,
                 plan: CommitInnerPlan,
-            ) -> Result<CommitInnerWitness<F>, AkitaError> {
-                CpuBackend.commit_inner(prepared, source, plan)
+            ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
+                CpuBackend.commit_inner_group(prepared, sources, plan)
             }
         }
     };
@@ -336,63 +332,6 @@ delegate_compression!(CommitCluster);
 delegate_digit_rows!(CommitCluster);
 delegate_cyclic_rows!(CommitCluster);
 delegate_root_commit_kernel!(CommitCluster);
-
-impl<F> CommitmentComputeBackend<F> for CommitCluster
-where
-    F: FieldCore + CanonicalField,
-{
-    fn dense_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: DenseCommitRowsPlan<'_, F, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        CpuBackend.dense_commit_rows(prepared, plan)
-    }
-
-    fn onehot_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: OneHotCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        F: HasCommitAccum,
-        F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
-    {
-        CpuBackend.onehot_commit_rows(prepared, plan)
-    }
-
-    fn onehot_commit_rows_multi<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plans: Vec<OneHotCommitRowsPlan<'_>>,
-    ) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
-    where
-        F: HasCommitAccum,
-        F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
-    {
-        CpuBackend.onehot_commit_rows_multi(prepared, plans)
-    }
-
-    fn sparse_ring_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: SparseRingCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
-    {
-        CpuBackend.sparse_ring_commit_rows(prepared, plan)
-    }
-
-    fn recursive_witness_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RecursiveWitnessCommitRowsPlan<'_, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        CpuBackend.recursive_witness_commit_rows(prepared, plan)
-    }
-}
 
 /// Delegating opening-cluster marker backend.
 #[derive(Clone, Copy, Debug, Default)]

@@ -302,23 +302,23 @@ acceptance test.
 
 #### Commitment boundary
 
-- [ ] `RootCommitKernel` exposes one group commitment method. It does not have
+- [x] `RootCommitKernel` exposes one group commitment method. It does not have
       a second singleton commitment method.
-- [ ] The parameter based and profile based commitment paths both call the
+- [x] The parameter based and profile based commitment paths both call the
       group method.
-- [ ] Delegating backends must implement or forward the group operation. The
+- [x] Delegating backends must implement or forward the group operation. The
       default singleton loop cannot silently replace it.
-- [ ] The one hot `RootCommitKernel` implementation consumes `OneHotView`
+- [x] The one hot `RootCommitKernel` implementation consumes `OneHotView`
       directly and does not lower through `OneHotCommitRowsPlan`.
-- [ ] The one hot methods and plans are removed from
+- [x] The one hot methods and plans are removed from
       `CommitmentComputeBackend` and the crate root exports.
-- [ ] `CommitBackendFor` requires the source typed root kernel and the shared
+- [x] `CommitBackendFor` requires the source typed root kernel and the shared
       digit row capability it actually uses. It does not require unrelated
       representation methods.
-- [ ] `CommitmentComputeBackend` is removed. Dense, one hot, sparse ring, root
+- [x] `CommitmentComputeBackend` is removed. Dense, one hot, sparse ring, root
       projection, and recursive witness commitment use their source typed
       kernels directly.
-- [ ] `DenseCommitRowsPlan`, `SparseRingCommitRowsPlan`, and
+- [x] `DenseCommitRowsPlan`, `SparseRingCommitRowsPlan`, and
       `RecursiveWitnessCommitRowsPlan` are removed. A real input sum type such
       as `DenseCommitInput` may remain as an internal representation detail.
 
@@ -802,6 +802,13 @@ PR. Archiving preserves the deletion ledger without making removed public
 symbols part of live documentation.
 
 ## Execution
+
+Completed checkpoints:
+
+- Slice 1: NTT cache retention and release behavior aligned with runtime use.
+- Slice 2: one canonical flat sparse block representation and range builder.
+- Slice 3: one source-typed group commitment boundary; legacy commitment row
+  trait and public representation plans removed.
 
 ### Slice 0: Freeze evidence and add route observability
 

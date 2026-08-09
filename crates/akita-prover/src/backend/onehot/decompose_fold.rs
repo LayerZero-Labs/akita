@@ -94,7 +94,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             if challenge_start == challenges.len() {
                 break;
             }
-            let (ring_elems, num_blocks) = poly.view_layout(D, num_positions_per_block).ok()?;
+            let (_, num_blocks) = poly.view_layout(D, num_positions_per_block).ok()?;
             let active_blocks = num_blocks.min(challenges.len() - challenge_start);
             if active_blocks == 0 {
                 continue;
@@ -102,12 +102,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             for block_start in (0..active_blocks).step_by(BATCH_BLOCK_TILE) {
                 let block_end = (block_start + BATCH_BLOCK_TILE).min(active_blocks);
                 let blocks = poly
-                    .materialize_block_range(
-                        D,
-                        num_positions_per_block,
-                        ring_elems,
-                        block_start..block_end,
-                    )
+                    .materialize_block_range(D, num_positions_per_block, block_start..block_end)
                     .ok()?;
                 let tile_len = block_end - block_start;
                 let views = (0..tile_len)

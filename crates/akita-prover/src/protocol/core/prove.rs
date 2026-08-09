@@ -1,10 +1,10 @@
 use super::*;
-use crate::backend::RecursiveFoldSource;
+use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use crate::compute::{
-    prewarm_ntt_requirements, CommitmentComputeBackend, ComputeBackendSetup,
-    DigitRowsComputeBackend, LevelProveStacks, NttExecutionRequirements,
-    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
-    SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    prewarm_ntt_requirements, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    NttExecutionRequirements, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
 use akita_config::{
@@ -62,7 +62,9 @@ where
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O, TS>,
-    C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
+    C: ComputeBackendSetup<Cfg::Field>
+        + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
+        + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
@@ -164,7 +166,9 @@ where
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O, TS>,
-    C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
+    C: ComputeBackendSetup<Cfg::Field>
+        + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
+        + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>

@@ -1,14 +1,15 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
 use crate::compute::{
-    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, RuntimeCommitBackendFor,
     RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
     RuntimeRootCommitPoly, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
     SuffixTensorProveBackend, UniformProverStack,
 };
 use crate::ProverTranscriptGrind;
 use crate::{
-    PreparedGroupProveOps, RecursiveFoldSource, RootTensorProjectionPoly, SelectedProverOpeningData,
+    PreparedGroupProveOps, RecursiveFoldSource, RecursiveWitnessFlat, RootTensorProjectionPoly,
+    SelectedProverOpeningData,
 };
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
@@ -145,7 +146,7 @@ where
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
         P: PreparedGroupProveOps<F, Self::ExtField, B, B>,
         B: ComputeBackendSetup<F>
-            + CommitmentComputeBackend<F>
+            + RuntimeCommitBackendFor<F, RecursiveWitnessFlat>
             + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
             + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
             + SuffixOpeningProveBackend<F>

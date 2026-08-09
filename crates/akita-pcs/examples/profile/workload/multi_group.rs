@@ -18,8 +18,8 @@ use akita_field::{
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::ProverOpeningData;
 use akita_prover::{
-    commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend, ComputeBackendSetup,
-    CpuBackend,
+    commit_setup_prefix, AkitaProverSetup, ComputeBackendSetup, CpuBackend, DensePoly,
+    RuntimeCommitBackendFor,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
@@ -39,8 +39,8 @@ fn materialize_schedule_setup_prefix_slots<F, B>(
     schedule: &FoldSchedule,
 ) -> Result<(), akita_field::AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    B: CommitmentComputeBackend<F>,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField + 'static,
+    B: RuntimeCommitBackendFor<F, DensePoly<F>>,
 {
     for slot_id in schedule
         .recursive_folds

@@ -32,32 +32,6 @@ where
     F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
     I: OneHotIndex,
 {
-    fn commit_inner(
-        &self,
-        prepared: &Self::PreparedSetup,
-        source: MultilinearPolynomialView<'_, F, D, I>,
-        plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F>, AkitaError> {
-        source.dispatch(
-            |poly| {
-                RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner(
-                    self,
-                    prepared,
-                    poly.commit_view()?,
-                    plan,
-                )
-            },
-            |poly| {
-                RootCommitKernel::<OneHotView<'_, F, D, I>, F, D>::commit_inner(
-                    self,
-                    prepared,
-                    poly.commit_view()?,
-                    plan,
-                )
-            },
-        )
-    }
-
     fn commit_inner_group(
         &self,
         prepared: &Self::PreparedSetup,
@@ -94,10 +68,35 @@ where
                 self, prepared, views, plan,
             );
         }
-        sources
-            .into_iter()
-            .map(|source| self.commit_inner(prepared, source, plan))
-            .collect()
+        let mut witnesses = Vec::with_capacity(sources.len());
+        for source in sources {
+            let committed = match source.poly() {
+                MultilinearPolynomial::Dense(poly) => {
+                    RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
+                        self,
+                        prepared,
+                        vec![poly.commit_view()?],
+                        plan,
+                    )?
+                }
+                MultilinearPolynomial::OneHot(poly) => {
+                    RootCommitKernel::<OneHotView<'_, F, D, I>, F, D>::commit_inner_group(
+                        self,
+                        prepared,
+                        vec![poly.commit_view()?],
+                        plan,
+                    )?
+                }
+            };
+            let [witness] = committed.try_into().map_err(|committed: Vec<_>| {
+                AkitaError::InvalidSetup(format!(
+                    "child kernel returned {} mixed-group sources, expected one",
+                    committed.len()
+                ))
+            })?;
+            witnesses.push(witness);
+        }
+        Ok(witnesses)
     }
 }
 

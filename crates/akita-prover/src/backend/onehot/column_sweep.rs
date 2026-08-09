@@ -389,12 +389,10 @@ where
     result
 }
 
-/// Fused multi-polynomial column sweep over eager or lazy block sources.
-/// Entry geometry is already fixed by `E`; each source decides whether a tile
-/// is borrowed from existing storage or built for the duration of the sweep.
-pub(crate) fn column_sweep_ajtai_onehot_multi<F, const D: usize>(
+/// Fused multi-polynomial column sweep over one hot source views.
+pub(crate) fn column_sweep_ajtai_onehot_multi<F, const D: usize, I>(
     a_view: &RingMatrixView<'_, F, D>,
-    sources: &[&OneHotBlockSource<'_>],
+    sources: &[OneHotView<'_, F, D, I>],
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
@@ -402,8 +400,15 @@ pub(crate) fn column_sweep_ajtai_onehot_multi<F, const D: usize>(
 where
     F: FieldCore + CanonicalField + HasCommitAccum,
     F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+    I: OneHotIndex,
 {
-    let counts: Vec<usize> = sources.iter().map(|s| s.num_live_blocks()).collect();
+    let num_positions_per_block = active_a_cols
+        .checked_div(num_digits_inner)
+        .ok_or_else(|| AkitaError::InvalidSetup("one hot digit count must be nonzero".into()))?;
+    let counts = sources
+        .iter()
+        .map(|source| source.poly.num_live_blocks_for(D, num_positions_per_block))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut starts = Vec::with_capacity(counts.len() + 1);
     let mut total = 0usize;
     for count in &counts {
@@ -424,8 +429,16 @@ where
         return sources
             .iter()
             .map(|source| {
-                let materialized = source.materialize_range(0..source.num_live_blocks())?;
-                let blocks = materialized.block_slices()?;
+                let materialized = source.poly.materialize_block_range(
+                    D,
+                    num_positions_per_block,
+                    0..source
+                        .poly
+                        .num_live_blocks_for(D, num_positions_per_block)?,
+                )?;
+                let blocks = (0..materialized.num_live_blocks())
+                    .map(|block| materialized.block(block))
+                    .collect::<Vec<_>>();
                 Ok(column_sweep_ajtai_onehot::<F, D>(
                     a_view,
                     &blocks,
@@ -461,8 +474,8 @@ where
 
                 for tile_start in (block_start..block_end).step_by(block_tile) {
                     let tile_end = (tile_start + block_tile).min(block_end);
-                    // Borrow or build the overlapping range from each source.
-                    // Lazy owners and their entries are dropped at tile end.
+                    // Build the overlapping range from each source. Owners and
+                    // their entries are dropped at tile end.
                     let mut owners = Vec::new();
                     for (src_idx, source) in sources.iter().enumerate() {
                         let src_start = starts[src_idx];
@@ -472,12 +485,20 @@ where
                         if lo >= hi {
                             continue;
                         }
-                        owners.push(source.materialize_range(lo - src_start..hi - src_start)?);
+                        owners.push(source.poly.materialize_block_range(
+                            D,
+                            num_positions_per_block,
+                            lo - src_start..hi - src_start,
+                        )?);
                     }
                     let block_groups = owners
                         .iter()
-                        .map(|blocks| blocks.block_slices())
-                        .collect::<Result<Vec<_>, _>>()?;
+                        .map(|blocks| {
+                            (0..blocks.num_live_blocks())
+                                .map(|block| blocks.block(block))
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>();
                     let tile_blocks: Vec<&[SparseRingBlockEntry]> =
                         block_groups.iter().flatten().copied().collect();
                     let tile_rows = merge_sweep_tile::<F, D>(

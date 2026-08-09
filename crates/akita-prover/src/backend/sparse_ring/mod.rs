@@ -16,8 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::backend::flat_blocks::FlatBlocks;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::compute::{CommitInnerPlan, CommitmentComputeBackend, SparseRingCommitRowsPlan};
-use crate::{CommitInnerWitness, DecomposeFoldWitness};
+use crate::DecomposeFoldWitness;
 
 mod ops;
 
@@ -502,26 +501,6 @@ where
         build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
     }
 
-    #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner")]
-    pub(crate) fn commit_inner<B, const D: usize>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup,
-        plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        let t = self.commit_inner_rows::<B, D>(
-            backend,
-            prepared,
-            plan.n_a,
-            plan.num_positions_per_block,
-            plan.num_digits_inner,
-        )?;
-        Ok(CommitInnerWitness::from_rows(t))
-    }
-
     pub(crate) fn tensor_extension_column_partials<E>(
         &self,
         logical_point: &[E],
@@ -594,29 +573,6 @@ where
         Ok(crate::backend::dense::DensePoly::from_ring_coeffs::<D>(
             rings,
         ))
-    }
-
-    fn commit_inner_rows<B, const D: usize>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup,
-        n_a: usize,
-        num_positions_per_block: usize,
-        num_digits_inner: usize,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        let blocks = self.blocks_for(D, num_positions_per_block)?;
-        backend.sparse_ring_commit_rows(
-            prepared,
-            SparseRingCommitRowsPlan {
-                n_a,
-                num_positions_per_block,
-                num_digits_inner,
-                blocks: blocks.table(),
-            },
-        )
     }
 }
 

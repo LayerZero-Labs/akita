@@ -160,16 +160,20 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
 {
-    fn commit_inner(
+    fn commit_inner_group(
         &self,
         prepared: &Self::PreparedSetup,
-        source: ContractCommitView<'_>,
+        sources: Vec<ContractCommitView<'_>>,
         plan: CommitInnerPlan,
-    ) -> Result<akita_prover::CommitInnerWitness<F>, AkitaError> {
-        RootCommitKernel::<DenseView<'_, F, DD>, F, DD>::commit_inner(
+    ) -> Result<Vec<akita_prover::CommitInnerWitness<F>>, AkitaError> {
+        let dense_sources = sources
+            .into_iter()
+            .map(|source| RootCommitSource::<F, DD>::commit_view(&source.poly.dense))
+            .collect::<Result<Vec<_>, _>>()?;
+        <CpuBackend as RootCommitKernel<DenseView<'_, F, DD>, F, DD>>::commit_inner_group(
             &CpuBackend,
             prepared,
-            RootCommitSource::<F, DD>::commit_view(&source.poly.dense)?,
+            dense_sources,
             plan,
         )
     }

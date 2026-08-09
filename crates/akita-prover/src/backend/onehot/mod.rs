@@ -36,7 +36,6 @@ use std::sync::{Arc, Mutex};
 use super::flat_blocks::FlatBlocks;
 use super::sparse_ring::{SparseRingBlockEntry, SparseRingCoeff};
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::compute::{CommitmentComputeBackend, OneHotBlockSource, OneHotCommitRowsPlan};
 use crate::{CommitInnerWitness, DecomposeFoldWitness, SparseRingPoly};
 
 /// Wide accumulators use 16-bit chunks in `i32` limbs, so they can safely
@@ -58,7 +57,6 @@ pub(crate) mod test_helpers;
 #[cfg(test)]
 mod tests;
 
-pub use blocks::LazyOneHotBlocks;
 #[cfg(test)]
 pub(crate) use column_sweep::column_sweep_ajtai_onehot;
 pub(crate) use column_sweep::column_sweep_ajtai_onehot_multi;

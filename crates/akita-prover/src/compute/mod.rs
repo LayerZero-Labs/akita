@@ -9,13 +9,13 @@
 //!
 //! Split by stable capability cluster (see `akita-polyops-cutover` spec), not by
 //! call-site helper. Representation-specific views and kernel impls stay in
-//! `backend/*`; this directory owns traits, shared plans, and the CPU row
-//! helpers.
+//! `backend/*`; this directory owns traits, scalar operation plans, and shared
+//! CPU arithmetic.
 //!
 //! | Sibling module | Role |
 //! | --- | --- |
-//! | `plans` | Legacy row/commit plan structs and `FlatBlockTable` |
-//! | `backend` | Internal trait ladder (`ComputeBackendSetup` … `ProverComputeBackend`); not re-exported at crate root |
+//! | `plans` | Internal CPU inputs and ring-switch row plans |
+//! | `backend` | Prepared setup, digit-row, compression, and ring-switch capabilities |
 //! | `cpu` | `CpuBackend` / `CpuPreparedSetup` and standard row-kernel impls |
 //! | `operation_plans` | PO1 scalar operation parameters (`CommitInnerPlan`, `OpeningFoldPlan`, …) |
 //! | `kernels` | Source-typed operation kernel traits generic over view `S` |
@@ -34,11 +34,9 @@ mod poly;
 mod requirements;
 mod stack;
 
-pub use crate::backend::onehot::LazyOneHotBlocks;
 pub use backend::{
-    CommitmentComputeBackend, CompressionComputeBackend, CompressionRowsProducts,
-    ComputeBackendSetup, CyclicRowsComputeBackend, DigitRowsComputeBackend, NttCacheOwnerId,
-    ProverComputeBackend, RingSwitchComputeBackend,
+    CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
+    CyclicRowsComputeBackend, DigitRowsComputeBackend, NttCacheOwnerId, RingSwitchComputeBackend,
 };
 pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile, PreparedNttCacheMetric};
 pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
@@ -52,11 +50,8 @@ pub use operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
     RingSwitchQuotientPlan, RingSwitchRelationPlan,
 };
-pub use plans::{
-    DenseCommitInput, DenseCommitRowsPlan, FlatBlockTable, OneHotBlockSource, OneHotCommitRowsPlan,
-    RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
-    RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
-};
+pub(crate) use plans::DenseCommitInput;
+pub use plans::{RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan};
 pub use requirements::{NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement};
 
 pub use poly::{

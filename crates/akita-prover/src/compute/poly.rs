@@ -1,7 +1,4 @@
-use super::backend::{
-    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
-    RingSwitchComputeBackend,
-};
+use super::backend::{ComputeBackendSetup, DigitRowsComputeBackend, RingSwitchComputeBackend};
 use super::kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RingSwitchQuotientKernel, RingSwitchRelationKernel,
     RootCommitKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
@@ -202,17 +199,15 @@ where
 ///
 /// This is the uniform "source-typed capability" vocabulary: a bound of the form
 /// "backend `Self` can commit source `P`", rather than a hard-coded per-type
-/// kernel bundle. It folds together the row-commit surface
-/// ([`CommitmentComputeBackend`], which also supplies [`super::DigitRowsComputeBackend`])
-/// and the inner-commit kernel over `P`'s borrowed commit view.
+/// kernel bundle. It folds together the shared outer digit-row surface and the
+/// inner-commit kernel over `P`'s borrowed commit view.
 ///
 /// The same alias is applied to the generic input poly and to the internal
 /// [`RootTensorProjectionPoly`] (the extension-reduction projection), so both
 /// source types are expressed through one symmetric concept.
-pub trait CommitBackendFor<F, P, const D: usize>: CommitmentComputeBackend<F>
+pub trait CommitBackendFor<F, P, const D: usize>: DigitRowsComputeBackend<F>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: FieldCore + CanonicalField,
     P: RootCommitSource<F, D>,
     Self: for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
 {
@@ -220,10 +215,9 @@ where
 
 impl<F, P, const D: usize, B> CommitBackendFor<F, P, D> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: FieldCore + CanonicalField,
     P: RootCommitSource<F, D>,
-    B: CommitmentComputeBackend<F>
+    B: DigitRowsComputeBackend<F>
         + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
 {
 }
@@ -646,7 +640,7 @@ where
 /// Deliberately narrower than [`CommitBackendFor`]: the with-params commit
 /// entry points require only digit-row mat-vecs plus the inner-commit kernel
 /// over `P`'s borrowed view (the documented downstream contract), not the full
-/// [`CommitmentComputeBackend`] surface.
+/// legacy representation-specific row surface.
 pub trait RuntimeCommitBackendFor<F, P>:
     DigitRowsComputeBackend<F>
     + for<'a> RootCommitKernel<<P as RootCommitSource<F, 32>>::CommitView<'a>, F, 32>
@@ -655,8 +649,7 @@ pub trait RuntimeCommitBackendFor<F, P>:
     + for<'a> RootCommitKernel<<P as RootCommitSource<F, 256>>::CommitView<'a>, F, 256>
     + for<'a> RootCommitKernel<<P as RootCommitSource<F, 512>>::CommitView<'a>, F, 512>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: FieldCore + CanonicalField,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
         + RootCommitSource<F, 128>
@@ -667,8 +660,7 @@ where
 
 impl<F, P, B> RuntimeCommitBackendFor<F, P> for B
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: FieldCore + CanonicalField,
     P: RootCommitSource<F, 32>
         + RootCommitSource<F, 64>
         + RootCommitSource<F, 128>
@@ -791,7 +783,7 @@ pub const RECURSIVE_SUFFIX_RING_DIMENSIONS: &[usize] = &[32, 64, 128, 256, 512];
 /// Full prove-flow capability at a single root ring dimension `RING_D`:
 /// opening/tensor prove kernels plus commitment rows.
 pub trait ProveFlowBackendFor<F, P, E, const RING_D: usize>:
-    RootProveBackend<F, P, E, RING_D> + CommitmentComputeBackend<F>
+    RootProveBackend<F, P, E, RING_D> + DigitRowsComputeBackend<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -806,7 +798,7 @@ where
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
     P: RootProvePoly<F, RING_D>,
-    B: RootProveBackend<F, P, E, RING_D> + CommitmentComputeBackend<F>,
+    B: RootProveBackend<F, P, E, RING_D> + DigitRowsComputeBackend<F>,
 {
 }
 
@@ -936,7 +928,7 @@ where
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
     P: RuntimeRootProvePoly<F>,
-    C: ComputeBackendSetup<F> + CommitmentComputeBackend<F>,
+    C: ComputeBackendSetup<F> + DigitRowsComputeBackend<F>,
     O: ComputeBackendSetup<F>
         + RuntimeOpeningProveBackendFor<F, P>
         + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>

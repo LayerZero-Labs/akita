@@ -19,13 +19,28 @@ impl<F, const D: usize> RootCommitKernel<DenseView<'_, F, D>, F, D> for CpuBacke
 where
     F: FieldCore + CanonicalField,
 {
-    fn commit_inner(
+    fn commit_inner_group(
         &self,
         prepared: &Self::PreparedSetup,
-        source: DenseView<'_, F, D>,
+        sources: Vec<DenseView<'_, F, D>>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F>, AkitaError> {
-        source.poly.commit_inner::<_, D>(self, prepared, plan)
+    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
+        sources
+            .into_iter()
+            .map(|source| {
+                source
+                    .poly
+                    .commit_rows::<D>(
+                        self,
+                        prepared,
+                        plan.n_a,
+                        plan.num_positions_per_block,
+                        plan.num_digits_inner,
+                        plan.log_basis_inner,
+                    )
+                    .map(CommitInnerWitness::from_rows)
+            })
+            .collect()
     }
 }
 
