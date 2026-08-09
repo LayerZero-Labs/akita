@@ -17,50 +17,6 @@ const PARALLEL_FINE_LEAF_TERMS: usize = 1 << 13;
 // The fine tier starts above the largest measured coarse-leaf sweet spot.
 const PARALLEL_FINE_TOTAL_TERMS: usize = 1 << 17;
 
-#[cfg(feature = "parallel")]
-fn evals_at_pows_parallel<F, E>(
-    challenges: &[SparseChallenge],
-    evaluations: &mut [E],
-    alpha_pows: &[E],
-    leaf_challenges: usize,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + FromPrimitiveInt,
-    E: FieldCore + MulBase<F>,
-{
-    if evaluations.len() != challenges.len() {
-        return Err(AkitaError::InvalidInput(
-            "parallel challenge evaluation length mismatch".into(),
-        ));
-    }
-    if challenges.len() <= leaf_challenges || challenges.len() < 2 {
-        for (evaluation, challenge) in evaluations.iter_mut().zip(challenges) {
-            *evaluation = challenge.eval_at_pows::<F, E>(alpha_pows)?;
-        }
-        return Ok(());
-    }
-
-    let midpoint = challenges.len() / 2;
-    let (left_challenges, right_challenges) = challenges.split_at(midpoint);
-    let (left_evaluations, right_evaluations) = evaluations.split_at_mut(midpoint);
-    let (left_result, right_result) = cfg_join!(
-        || evals_at_pows_parallel::<F, E>(
-            left_challenges,
-            left_evaluations,
-            alpha_pows,
-            leaf_challenges,
-        ),
-        || evals_at_pows_parallel::<F, E>(
-            right_challenges,
-            right_evaluations,
-            alpha_pows,
-            leaf_challenges,
-        )
-    );
-    left_result?;
-    right_result
-}
-
 /// Stage-1 fold challenges in claim-major block order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Challenges {
@@ -200,12 +156,16 @@ impl Challenges {
                     AkitaError::InvalidInput("challenge evaluation allocation failed".into())
                 })?;
             evaluations.resize(self.challenges.len(), E::zero());
-            evals_at_pows_parallel::<F, E>(
-                &self.challenges,
-                &mut evaluations,
-                alpha_pows,
-                leaf_challenges,
-            )?;
+            evaluations
+                .par_chunks_mut(leaf_challenges)
+                .zip(self.challenges.par_chunks(leaf_challenges))
+                .try_for_each(|(evaluation_chunk, challenge_chunk)| {
+                    for (evaluation, challenge) in evaluation_chunk.iter_mut().zip(challenge_chunk)
+                    {
+                        *evaluation = challenge.eval_at_pows::<F, E>(alpha_pows)?;
+                    }
+                    Ok::<(), AkitaError>(())
+                })?;
             return Ok(evaluations);
         }
 
