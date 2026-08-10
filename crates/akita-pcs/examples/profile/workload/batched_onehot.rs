@@ -1,7 +1,7 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow, make_profile_onehot_poly,
     onehot_lagrange_opening, planned_payload_bytes, prover_claims, random_claim_point,
-    report_proof_size_against_planner, verifier_claims,
+    report_proof_size_against_planner, run_verifier_timings, verifier_claims,
 };
 use crate::ntt_prewarm::prewarm_uniform_profile_execution;
 use crate::parallel::ProfileThreadPools;
@@ -202,7 +202,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     );
 
     let t_verifier_setup = Instant::now();
-    let verifier_setup = pools.in_verify(|| {
+    let verifier_setup = pools.in_verify_multi(|| {
         AkitaCommitmentScheme::<Cfg>::setup_verifier_for_schedule(&setup, &schedule, &opening_batch)
             .expect("verifier setup")
     });
@@ -211,10 +211,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         "verifier_setup",
         t_verifier_setup.elapsed().as_secs_f64(),
     );
-    let t0 = Instant::now();
-    pools.in_verify(|| {
+    let verify = || {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-        match AkitaCommitmentScheme::<Cfg>::batched_verify(
+        AkitaCommitmentScheme::<Cfg>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -230,17 +229,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
                 &commitments[0],
             ),
             BasisMode::Lagrange,
-        ) {
-            Ok(()) => {}
-            Err(e) => {
-                let elapsed_s = t0.elapsed().as_secs_f64();
-                tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
-                eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
-                panic!("[{label}] batched profile verification failed: {e}");
-            }
-        }
-    });
-    report_timing(label, "verify OK", t0.elapsed().as_secs_f64());
+        )
+    };
+    run_verifier_timings(label, pools, "batched profile", verify);
     report_verifier_ntt_cache_size(
         label,
         verifier_setup

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Conservative smoke check: profile-ci binary must not link obvious non-profile tables.
+# Conservative smoke check: a CI profile binary must not link obvious tables
+# outside the profile-ci compatibility union.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,7 +27,8 @@ if ! symbols=$("${nm_cmd[@]}" "$binary" 2>&1); then
   exit 1
 fi
 
-# Families outside the profile-ci union; presence indicates accidental full-table linkage.
+# Families outside the profile-ci union. Their presence indicates accidental
+# full-table linkage.
 forbidden=(
   FP128_D128_DENSE_SCHEDULES
   FP128_D128_ONEHOT_SCHEDULES
@@ -39,7 +41,7 @@ forbidden=(
 failed=0
 for sym in "${forbidden[@]}"; do
   if grep -q "$sym" <<< "$symbols"; then
-    echo "forbidden schedule symbol linked in profile-ci binary: $sym" >&2
+    echo "forbidden schedule symbol linked in CI profile binary: $sym" >&2
     failed=1
   fi
 done
@@ -48,4 +50,4 @@ if (( failed != 0 )); then
   exit 1
 fi
 
-echo "profile-ci linkage smoke check passed."
+echo "CI profile linkage smoke check passed."

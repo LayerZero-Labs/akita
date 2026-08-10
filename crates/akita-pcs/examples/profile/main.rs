@@ -1,10 +1,26 @@
 #![allow(missing_docs)]
 
+#[cfg(all(
+    feature = "profile-bench-selected",
+    not(any(
+        feature = "profile-ci-fp128-dense",
+        feature = "profile-ci-flat-onehot",
+        feature = "profile-ci-multi-group-direct",
+        feature = "profile-ci-multi-group-recursive",
+        feature = "profile-ci-multi-group-recursive-w8r2",
+        feature = "profile-ci-distributed",
+    ))
+))]
+compile_error!("profile-bench-selected is internal; enable one profile-ci-* group instead");
+
 mod modes;
 mod ntt_prewarm;
 mod parallel;
 mod report;
-#[cfg_attr(feature = "profile-onehot-fp128", allow(dead_code))]
+#[cfg_attr(
+    any(feature = "profile-onehot-fp128", feature = "profile-bench-selected"),
+    allow(dead_code)
+)]
 mod workload;
 
 use akita_prover::CpuBackend;
