@@ -156,7 +156,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp32, FpExt4, FromPrimitiveInt};
+    use akita_field::{Fp32, FpExt4};
     use akita_serialization::AkitaSerialize;
     use akita_sumcheck::SumcheckInstanceProverExt;
     use akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND;
@@ -164,20 +164,19 @@ mod tests {
 
     type TestBase = Fp32<2147483647>;
     type TestExt = FpExt4<TestBase>;
-
-    fn value(index: usize) -> TestExt {
-        TestExt::from_u64(u64::try_from(index).expect("test index fits in u64") + 1)
-    }
-
-    fn proof_with_plan(
-        plan: SumcheckKernelPlan,
-    ) -> (
+    type PlanProofResult = (
         Vec<u8>,
         Vec<TestExt>,
         TestExt,
         Vec<(TestExt, TestExt, TestExt)>,
         TestExt,
-    ) {
+    );
+
+    fn value(index: usize) -> TestExt {
+        TestExt::from_u64(u64::try_from(index).expect("test index fits in u64") + 1)
+    }
+
+    fn proof_with_plan(plan: SumcheckKernelPlan) -> PlanProofResult {
         let len = 1usize << 13;
         let witness = (0..len).map(|row| value(row * 3 + 7)).collect();
         let factor = (0..len).map(|row| value(row * 5 + 11)).collect();
