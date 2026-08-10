@@ -781,7 +781,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         summary = normalize_case_summary(
             {
-                "mode": "onehot_fp128_recursive",
+                "mode": "onehot_fp128",
                 "num_vars": 36,
                 "num_polys": 1,
                 "setup_contribution_mode": "recursive",
@@ -1179,7 +1179,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             {
                 "case": [
                     "onehot_fp128:36:1:direct",
-                    "onehot_fp128_recursive:36:1:recursive",
+                    "onehot_fp128:36:1:recursive",
                 ],
                 "mode": "onehot_fp128",
                 "num_vars": 36,
@@ -1192,7 +1192,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertEqual([case.setup_mode for case in cases], ["direct", "recursive"])
         self.assertEqual(
             [case.mode for case in cases],
-            ["onehot_fp128", "onehot_fp128_recursive"],
+            ["onehot_fp128", "onehot_fp128"],
         )
         self.assertNotEqual(cases[0].case_id, cases[1].case_id)
         self.assertTrue(cases[1].case_id.endswith("-setup-recursive"))
@@ -1216,7 +1216,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             ),
             normalize_case_summary(
                 {
-                    "mode": "onehot_fp128_recursive",
+                    "mode": "onehot_fp128",
                     "num_vars": 36,
                     "num_polys": 1,
                     "setup_contribution_mode": "recursive",

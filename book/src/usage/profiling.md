@@ -97,7 +97,7 @@ Committed-fold A-role pricing (every cell folds securely):
 | `onehot_fp64` | 30 | 1 | `direct` |
 | `dense_fp128` | 28 | 1 | `direct` |
 | `onehot_fp128` | 36 | 1 | `direct` |
-| `onehot_fp128_recursive` | 36 | 1 | `recursive` |
+| `onehot_fp128` | 36 | 1 | `recursive` |
 | `onehot_fp128_multi_group` | 32 | 4 | `direct` |
 | `onehot_fp128_multi_group_recursive` | 32 | 4 | `recursive` |
 | `onehot_fp128_multi_group_recursive_multi_chunk_w8r2` | 32 | 4 | `recursive` |

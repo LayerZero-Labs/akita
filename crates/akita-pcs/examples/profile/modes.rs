@@ -197,11 +197,6 @@ const PROFILE_SELECTED_MODES: &[ProfileMode] = &[
         name: "onehot_fp128",
         run: run_profile_onehot_fp128,
     },
-    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp128-base"))]
-    ProfileMode {
-        name: "onehot_fp128_recursive",
-        run: run_profile_onehot_fp128_recursive,
-    },
     #[cfg(feature = "profile-ci-multi-group-direct")]
     ProfileMode {
         name: "onehot_fp128_multi_group",
@@ -268,10 +263,6 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128,
     },
     ProfileMode {
-        name: "onehot_fp128_recursive",
-        run: run_profile_onehot_fp128_recursive,
-    },
-    ProfileMode {
         name: "onehot_fp128_multi_group",
         run: run_profile_onehot_fp128_multi_group,
     },
@@ -328,7 +319,6 @@ fn profile_modes() -> &'static [ProfileMode] {
 /// Modes registered for explicit `AKITA_MODE=…` runs but omitted from `all`.
 #[cfg(not(feature = "profile-onehot-fp128"))]
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
-    "onehot_fp128_recursive",
     "onehot_fp128_multi_group",
     "onehot_fp128_multi_chunk_w2r2",
     "onehot_fp128_multi_chunk_w4r2",
@@ -384,24 +374,17 @@ fn run_profile_dense_fp128(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
-    type Cfg = fp128::OneHot;
-    assert_eq!(
-        profile_setup_contribution_mode(),
-        SetupContributionMode::Direct,
-        "onehot_fp128 supports direct setup contribution only"
-    );
-    run_profile_onehot_fp128_with_cfg::<{ Cfg::D }, Cfg>("onehot_fp128", nv, num_polys);
-}
-
-fn run_profile_onehot_fp128_recursive(nv: usize, num_polys: usize) {
-    type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
-    assert_eq!(nv, 36, "onehot_fp128_recursive profiles nv=36");
-    assert_eq!(
-        profile_setup_contribution_mode(),
-        SetupContributionMode::Recursive,
-        "onehot_fp128_recursive requires recursive setup contribution"
-    );
-    run_profile_onehot_fp128_with_cfg::<{ Cfg::D }, Cfg>("onehot_fp128_recursive", nv, num_polys);
+    match profile_setup_contribution_mode() {
+        SetupContributionMode::Direct => {
+            type Cfg = fp128::OneHot;
+            run_profile_onehot_fp128_with_cfg::<{ Cfg::D }, Cfg>("onehot_fp128", nv, num_polys);
+        }
+        SetupContributionMode::Recursive => {
+            type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
+            assert_eq!(nv, 36, "recursive onehot_fp128 profiles nv=36");
+            run_profile_onehot_fp128_with_cfg::<{ Cfg::D }, Cfg>("onehot_fp128", nv, num_polys);
+        }
+    }
 }
 
 fn run_profile_onehot_fp128_with_cfg<
