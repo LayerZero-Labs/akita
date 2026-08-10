@@ -91,11 +91,11 @@ impl OpeningClaimsLayout {
 
     /// Build a root-opening layout from precommitted groups plus the final/new group.
     pub fn from_root_groups(
-        precommitteds: &[PolynomialGroupLayout],
+        prior_group_profiles: &[PolynomialGroupLayout],
         final_group: PolynomialGroupLayout,
     ) -> Result<Self, AkitaError> {
-        let mut groups = Vec::with_capacity(precommitteds.len() + 1);
-        groups.extend_from_slice(precommitteds);
+        let mut groups = Vec::with_capacity(prior_group_profiles.len() + 1);
+        groups.extend_from_slice(prior_group_profiles);
         groups.push(final_group);
         Self::from_groups(groups)
     }
@@ -688,13 +688,13 @@ mod tests {
     }
 
     #[test]
-    fn from_root_groups_appends_final_group_after_precommitteds() {
-        let precommitteds = [
+    fn from_root_groups_appends_final_group_after_prior_groups() {
+        let prior_group_profiles = [
             PolynomialGroupLayout::new(2, 1),
             PolynomialGroupLayout::new(3, 2),
         ];
         let final_group = PolynomialGroupLayout::new(4, 3);
-        let layout = OpeningClaimsLayout::from_root_groups(&precommitteds, final_group)
+        let layout = OpeningClaimsLayout::from_root_groups(&prior_group_profiles, final_group)
             .expect("root layout");
 
         assert_eq!(

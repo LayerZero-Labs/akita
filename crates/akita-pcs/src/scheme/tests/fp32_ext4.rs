@@ -105,7 +105,9 @@ fn onehot_opening_at_point(poly: &OneHotPoly<SmallF, u8>, point: &[SmallE]) -> S
 fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
     let opening_batch =
         OpeningClaimsLayout::new(SMALL_NV, SMALL_BATCH).expect("fp32 opening layout");
-    let schedule = SmallCfg::get_params_for_prove(&opening_batch).expect("supported fp32 schedule");
+    let schedule = SmallCfg::select_schedule_for_opening(&opening_batch)
+        .expect("supported fp32 schedule")
+        .into_schedule();
     assert!(
         schedule.num_fold_levels() >= 2,
         "fixture must exercise the folded-only root/suffix topology"
@@ -131,8 +133,11 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
     )
     .expect("fp32 prover stack");
     let verifier_setup = SmallScheme::setup_verifier(&setup).expect("fp32 verifier setup");
-    let (commitment, hint) =
-        SmallScheme::commit(&setup, &polys, &stack).expect("fp32 batched commitment");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = SmallScheme::commit(&setup, &polys, &stack, akita_prover::GroupPosition::Sole)
+        .expect("fp32 batched commitment");
 
     let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.clone(),
@@ -144,8 +149,13 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
     let mut prover_transcript = AkitaTranscript::<SmallF>::new(TRANSCRIPT_LABEL);
     let proof = SmallScheme::batched_prove::<_, _, _>(
         &setup,
-        selected_prover_data::<SmallCfg, _>(prover_claims, vec![hint], vec![&poly_refs[..]])
-            .expect("selected fp32 prover data"),
+        selected_prover_data::<SmallCfg, _>(
+            PriorGroupProfiles::default(),
+            prover_claims,
+            vec![hint],
+            vec![&poly_refs[..]],
+        )
+        .expect("selected fp32 prover data"),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -226,12 +236,15 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     type ProtocolCfg = fp32::OneHot;
     type ProtocolScheme = AkitaCommitmentScheme<ProtocolCfg>;
     let pre_group = PolynomialGroupLayout::new(PRE_NV, 1);
-    let pre_params = ProtocolCfg::runtime_schedule(AkitaScheduleLookupKey::single(pre_group))
-        .expect("precommit schedule")
-        .root
-        .params
-        .final_group
-        .commitment;
+    let pre_params =
+        ProtocolCfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(pre_group))
+            .expect("precommit schedule")
+            .schedule()
+            .root
+            .params
+            .final_group
+            .commitment
+            .clone();
     let pre_poly = grouped_onehot_poly(&pre_params, 1);
     let pre_setup = ProtocolScheme::setup_prover(PRE_NV, 1).expect("precommit setup");
     let pre_prepared = CpuBackend::DEFAULT
@@ -243,20 +256,28 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         pre_setup.expanded.as_ref(),
     )
     .expect("precommit stack");
-    let (pre_commitment, pre_hint) =
-        ProtocolScheme::commit_group(&pre_setup, std::slice::from_ref(&pre_poly), &pre_stack)
-            .expect("precommit");
+    let akita_prover::CommitOutput {
+        committed_group: pre_commitment,
+        hint: pre_hint,
+    } = ProtocolScheme::commit(
+        &pre_setup,
+        std::slice::from_ref(&pre_poly),
+        &pre_stack,
+        akita_prover::GroupPosition::Prior,
+    )
+    .expect("precommit");
 
     let grouped_layout = OpeningClaimsLayout::from_groups(vec![
         akita_types::PolynomialGroupLayout::new(PRE_NV, 1),
         akita_types::PolynomialGroupLayout::new(FINAL_NV, 1),
     ])
     .expect("grouped layout");
-    let schedule = ProtocolCfg::runtime_schedule(AkitaScheduleLookupKey {
+    let schedule = ProtocolCfg::select_schedule_for_key(&AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(FINAL_NV, 1),
-        precommitteds: vec![pre_commitment.profile],
+        prior_group_profiles: vec![pre_commitment.profile],
     })
-    .expect("grouped schedule");
+    .expect("grouped schedule")
+    .into_schedule();
     let root_params = &schedule.root.params.final_group.commitment;
     assert_eq!(
         root_params
@@ -284,11 +305,18 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         setup.expanded.as_ref(),
     )
     .expect("protocol stack");
-    let (final_commitment, final_hint, _selection) = ProtocolScheme::commit_final_group(
+    let prior_group_profiles =
+        akita_types::PriorGroupProfiles::from_profiles(vec![pre_commitment.profile]);
+    let akita_prover::CommitOutput {
+        committed_group: final_commitment,
+        hint: final_hint,
+    } = ProtocolScheme::commit(
         &setup,
         std::slice::from_ref(&final_poly),
         &stack,
-        vec![pre_commitment.profile],
+        akita_prover::GroupPosition::Final {
+            prior_group_profiles: &prior_group_profiles,
+        },
     )
     .expect("final commitment");
 
@@ -300,6 +328,7 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     let pre_refs = [&pre_poly];
     let final_refs = [&final_poly];
     let prover_claims = selected_prover_data::<ProtocolCfg, _>(
+        prior_group_profiles,
         OpeningClaims::from_groups(vec![
             PolynomialGroupClaims::new(
                 pre_point.clone(),
@@ -319,7 +348,7 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         vec![&pre_refs, &final_refs],
     )
     .expect("grouped prover data");
-    let selection = prover_claims.0;
+    let selection = prover_claims.selection();
 
     let mut prover_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
     let proof = ProtocolScheme::batched_prove(

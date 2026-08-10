@@ -71,15 +71,6 @@ fn commit_level_params_reject_log_basis_above_i8_range() {
 
 #[test]
 fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
-    let expanded = AkitaProverSetup::<F>::generate_with_capacity(
-        5,
-        1,
-        SetupMatrixCapacity {
-            num_field_elements: D,
-        },
-    )
-    .unwrap()
-    .expanded;
     let mut params = CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
         D,
@@ -101,6 +92,16 @@ fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
         d_key.coeff_linf_bound,
         D,
     );
+    let commit_only_fields = commit_only_setup_field_elements((&params).into()).unwrap();
+    let expanded = AkitaProverSetup::<F>::generate_with_capacity(
+        5,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: commit_only_fields,
+        },
+    )
+    .unwrap()
+    .expanded;
 
     validate_commit_level_params::<F>(&params, &expanded)
         .expect("standalone commitment only materializes A and B");

@@ -6,9 +6,7 @@ use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_prover::{
-    DensePoly, OneHotPoly, PreparedProverGroup, ProverOpeningData, SelectedProverOpeningData,
-};
+use akita_prover::{DensePoly, OneHotPoly, PreparedProverGroup, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::CommittedGroupParams;
@@ -24,7 +22,7 @@ use akita_types::{
 };
 use akita_types::{
     AkitaCommitmentHint, CommittedGroup, CommittedGroupBatchProfile, GroupBatchStatement,
-    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PriorGroupProfiles,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -59,6 +57,7 @@ mod onehot;
 mod single;
 
 fn selected_prover_data<'a, C, P>(
+    prior_group_profiles: PriorGroupProfiles,
     claims: OpeningClaims<'a, C::ExtField, CommittedGroup<C::Field>>,
     hints: Vec<AkitaCommitmentHint<C::Field>>,
     polynomials: Vec<&'a [&'a P]>,
@@ -67,12 +66,12 @@ where
     C: CommitmentConfig,
     P: akita_prover::RootPolyMeta<C::Field>,
 {
-    let profiles = batch_profiles::<C>(&claims)?;
-    let selection = C::select_schedule_for_profiles(&profiles)?.selection();
-    Ok((
-        selection,
-        ProverOpeningData::new(claims, hints, polynomials)?,
-    ))
+    SelectedProverOpeningData::from_committed_claims::<C>(
+        prior_group_profiles,
+        claims,
+        hints,
+        polynomials,
+    )
 }
 
 fn selected_statement<'a, C>(
@@ -81,38 +80,19 @@ fn selected_statement<'a, C>(
 where
     C: CommitmentConfig,
 {
-    let (final_group, precommitteds) = claims
+    let (final_group, prior_group_profiles) = claims
         .groups()
         .split_last()
         .ok_or_else(|| AkitaError::InvalidInput("opening statement requires a group".into()))?;
     let profiles = CommittedGroupBatchProfile {
         final_group: *final_group.commitment().profile(),
-        precommitteds: precommitteds
+        prior_group_profiles: prior_group_profiles
             .iter()
             .map(|group| *group.commitment().profile())
             .collect(),
     };
     let selection = C::select_schedule_for_profiles(&profiles)?.selection();
     GroupBatchStatement::new(selection, claims)
-}
-
-fn batch_profiles<C>(
-    claims: &OpeningClaims<'_, C::ExtField, CommittedGroup<C::Field>>,
-) -> Result<CommittedGroupBatchProfile, AkitaError>
-where
-    C: CommitmentConfig,
-{
-    let (final_group, precommitteds) = claims
-        .groups()
-        .split_last()
-        .ok_or_else(|| AkitaError::InvalidInput("opening data requires a group".into()))?;
-    Ok(CommittedGroupBatchProfile {
-        final_group: *final_group.commitment().profile(),
-        precommitteds: precommitteds
-            .iter()
-            .map(|group| *group.commitment().profile())
-            .collect(),
-    })
 }
 
 fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
@@ -136,8 +116,9 @@ fn expected_same_point_batched_shape(
 ) -> AkitaBatchedProofShape {
     let opening_batch =
         akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
-    let schedule =
-        OneHotCfg::get_params_for_prove(&opening_batch).expect("batched root runtime plan");
+    let schedule = OneHotCfg::select_schedule_for_opening(&opening_batch)
+        .expect("batched root runtime plan")
+        .into_schedule();
     let root_step = &schedule.root;
     let root_params = &root_step.params.final_group.commitment;
     let num_fold_levels = schedule.num_fold_levels();
@@ -241,8 +222,13 @@ where
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    selected_prover_data::<Cfg, _>(opening_claims, vec![hint], vec![polynomials])
-        .expect("valid prover opening data")
+    selected_prover_data::<Cfg, _>(
+        PriorGroupProfiles::default(),
+        opening_claims,
+        vec![hint],
+        vec![polynomials],
+    )
+    .expect("valid prover opening data")
 }
 
 fn verifier_claims<'a>(
@@ -269,7 +255,14 @@ fn make_dense_poly(num_vars: usize) -> (DensePoly<F>, Vec<F>) {
 
 fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> CommittedGroupParams {
     let opening_batch = OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
-    C::get_params_for_batched_commitment(&opening_batch).expect("singleton commitment layout")
+    C::select_schedule_for_opening(&opening_batch)
+        .expect("singleton commitment layout")
+        .schedule()
+        .root
+        .params
+        .final_group
+        .commitment
+        .clone()
 }
 
 type VerifyFixture = (
@@ -296,8 +289,16 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     )
     .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
-    let (commitment, hint) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupPosition::Sole,
+    )
+    .unwrap();
 
     let opening_point: Vec<F> = (0..full_num_vars)
         .map(|i| F::from_u64((i + 2) as u64))

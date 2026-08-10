@@ -4,11 +4,11 @@
 //! never compile it.
 
 use akita_challenges::SparseChallengeConfig;
-use akita_config::{committed_group_profile, policy_of, CommitmentConfig};
+use akita_config::{policy_of, resolve_prior_group_profile, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::{
-    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, DecompositionParams,
-    FoldSchedule, OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout,
+    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
+    DecompositionParams, OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout,
     SetupMatrixCapacity, SisModulusProfileId,
 };
 use std::{
@@ -35,15 +35,13 @@ fn select_synthetic_schedule_row<C>(
 where
     C: CommitmentConfig + 'static,
 {
-    let schedule = C::runtime_schedule(key)?;
-    let row_digest = schedule_row_digest(profiles, &schedule)?;
-    let selection = OpeningScheduleSelection { row_digest };
-    let row = akita_config::ResolvedScheduleRow::try_new(
-        selection,
-        profiles.clone(),
-        schedule,
-        &akita_config::policy_of::<C>(),
-    )?;
+    let row = C::select_schedule_for_key(&key)?;
+    if row.profiles() != profiles {
+        return Err(AkitaError::InvalidSetup(
+            "synthetic selected row does not match exact committed profiles".into(),
+        ));
+    }
+    let selection = row.selection();
     let mut rows = synthetic_resolved_rows()
         .lock()
         .map_err(|_| AkitaError::InvalidSetup("synthetic row cache is poisoned".into()))?;
@@ -87,7 +85,7 @@ where
 fn synthetic_schedule_key(profiles: &CommittedGroupBatchProfile) -> AkitaScheduleLookupKey {
     AkitaScheduleLookupKey {
         final_group: profiles.final_group.group,
-        precommitteds: profiles.precommitteds.clone(),
+        prior_group_profiles: profiles.prior_group_profiles.clone(),
     }
 }
 
@@ -163,19 +161,20 @@ where
         for final_polys in 1..max_num_batched_polys {
             let pre_polys = max_num_batched_polys - final_polys;
             for pre_num_vars in [14usize, 15, 16].into_iter().filter(|&n| n <= max_num_vars) {
-                let Ok(precommitted) = committed_group_profile::<Self>(
+                let Ok(precommitted) = resolve_prior_group_profile::<Self>(
                     &PolynomialGroupLayout::new(pre_num_vars, pre_polys),
                 ) else {
                     continue;
                 };
-                let Ok(schedule) = Self::runtime_schedule(AkitaScheduleLookupKey {
+                let Ok(schedule) = Self::select_schedule_for_key(&AkitaScheduleLookupKey {
                     final_group: PolynomialGroupLayout::new(max_num_vars, final_polys),
-                    precommitteds: vec![precommitted],
+                    prior_group_profiles: vec![precommitted],
                 }) else {
                     continue;
                 };
                 num_field_elements = num_field_elements.max(
-                    akita_types::setup_matrix_capacity_for_schedule(&schedule)?.num_field_elements,
+                    akita_types::setup_matrix_capacity_for_schedule(schedule.schedule())?
+                        .num_field_elements,
                 );
             }
         }
@@ -198,8 +197,10 @@ where
         Envelope::schedule_catalog()
     }
 
-    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
-        let (policy, ring_challenge_config) = if key.precommitteds.is_empty() {
+    fn select_schedule_for_key(
+        key: &AkitaScheduleLookupKey,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        let (policy, ring_challenge_config) = if key.prior_group_profiles.is_empty() {
             (
                 policy_of::<Envelope>(),
                 Envelope::ring_challenge_config
@@ -213,15 +214,31 @@ where
             )
         };
         let precommitted_honest_fold_policies =
-            vec![Envelope::root_honest_fold_policy(); key.precommitteds.len()];
-        akita_planner::find_schedule(
-            &key,
+            vec![Envelope::root_honest_fold_policy(); key.prior_group_profiles.len()];
+        let schedule = akita_planner::find_schedule(
+            key,
             Envelope::root_honest_fold_policy(),
             &precommitted_honest_fold_policies,
             &policy,
             ring_challenge_config,
+        )?
+        .schedule;
+        let profiles = CommittedGroupBatchProfile {
+            final_group: CommittedGroupProfile::from_params(
+                key.final_group,
+                &schedule.root.params.final_group.commitment,
+            ),
+            prior_group_profiles: key.prior_group_profiles.clone(),
+        };
+        let selection = OpeningScheduleSelection {
+            row_digest: schedule_row_digest(&profiles, &schedule)?,
+        };
+        akita_config::ResolvedScheduleRow::try_new(
+            selection,
+            profiles,
+            schedule,
+            &policy_of::<Self>(),
         )
-        .map(|planned| planned.schedule)
     }
 
     fn select_schedule_for_profiles(
@@ -236,16 +253,16 @@ where
         resolve_synthetic_schedule_row::<Self>(selection)
     }
 
-    fn get_params_for_prove(
+    fn select_schedule_for_opening(
         opening_batch: &OpeningClaimsLayout,
-    ) -> Result<FoldSchedule, AkitaError> {
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
         opening_batch.check()?;
         if opening_batch.num_groups() != 1 {
             return Err(AkitaError::InvalidInput(
                 "grouped schedule selection requires exact committed-group descriptors".into(),
             ));
         }
-        Self::runtime_schedule(AkitaScheduleLookupKey::single(
+        Self::select_schedule_for_key(&AkitaScheduleLookupKey::single(
             opening_batch.root_final_group_layout()?,
         ))
     }

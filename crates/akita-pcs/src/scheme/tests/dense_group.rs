@@ -23,9 +23,16 @@ fn dense_group_commit_freezes_uniform_precommit_profile() {
         .collect::<Vec<_>>();
     let poly = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).expect("dense polynomial");
 
-    let (commitment, _hint) =
-        DenseGroupScheme::commit_group(&setup, std::slice::from_ref(&poly), &stack)
-            .expect("dense group commit");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint: _hint,
+    } = DenseGroupScheme::commit(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupPosition::Prior,
+    )
+    .expect("dense group commit");
 
     assert_eq!(
         commitment.profile.group,

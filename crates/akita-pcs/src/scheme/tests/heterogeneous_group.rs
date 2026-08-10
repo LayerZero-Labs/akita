@@ -55,25 +55,45 @@ fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
     ];
     let final_group = [MultilinearPolynomial::onehot(final_onehot.clone())];
 
-    let (onehot_pre_commitment, onehot_pre_hint) =
-        OneHotScheme::commit_group(&setup, std::slice::from_ref(&onehot_pre), &stack)
-            .expect("K=16 precommit");
-    let (dense_commitment, dense_hint) =
-        Scheme::commit_group(&setup, &dense_polys, &stack).expect("dense precommit");
-    let (final_commitment, final_hint, selection) = OneHotScheme::commit_final_group(
+    let akita_prover::CommitOutput {
+        committed_group: onehot_pre_commitment,
+        hint: onehot_pre_hint,
+    } = OneHotScheme::commit(
+        &setup,
+        std::slice::from_ref(&onehot_pre),
+        &stack,
+        akita_prover::GroupPosition::Prior,
+    )
+    .expect("K=16 precommit");
+    let akita_prover::CommitOutput {
+        committed_group: dense_commitment,
+        hint: dense_hint,
+    } = Scheme::commit(
+        &setup,
+        &dense_polys,
+        &stack,
+        akita_prover::GroupPosition::Prior,
+    )
+    .expect("dense precommit");
+    let prior_group_profiles = akita_types::PriorGroupProfiles::from_profiles(vec![
+        onehot_pre_commitment.profile,
+        dense_commitment.profile,
+    ]);
+    let akita_prover::CommitOutput {
+        committed_group: final_commitment,
+        hint: final_hint,
+    } = OneHotScheme::commit(
         &setup,
         &final_group,
         &stack,
-        vec![onehot_pre_commitment.profile, dense_commitment.profile],
+        akita_prover::GroupPosition::Final {
+            prior_group_profiles: &prior_group_profiles,
+        },
     )
     .expect("heterogeneous final commit");
 
-    let schedule = OneHotCfg::resolve_schedule_selection(selection)
-        .expect("curated heterogeneous schedule")
-        .schedule()
-        .clone();
     let onehot_pre_profile = onehot_pre_commitment.profile;
-    let final_params = &schedule.root.params.final_group.commitment;
+    let final_profile = final_commitment.profile;
 
     let onehot_pre_point = (0..ONEHOT_PRE_NV)
         .map(|index| OneHotF::from_u64((index + 2) as u64))
@@ -98,9 +118,9 @@ fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
     let final_opening = opening_from_poly(
         &final_onehot,
         &final_point,
-        final_params.d_a(),
-        final_params.num_positions_per_block,
-        final_params.num_live_blocks,
+        final_profile.inner_commit_matrix.ring_dimension(),
+        final_profile.num_positions_per_block,
+        final_profile.num_live_blocks,
     );
 
     let prover_claims = OpeningClaims::from_groups(vec![
@@ -127,15 +147,14 @@ fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
     let onehot_pre_refs = [&onehot_pre_group[0]];
     let dense_refs = [&dense_group[0], &dense_group[1]];
     let final_refs = [&final_group[0]];
-    let prover_data = (
-        selection,
-        ProverOpeningData::new(
-            prover_claims,
-            vec![onehot_pre_hint, dense_hint, final_hint],
-            vec![&onehot_pre_refs, &dense_refs, &final_refs],
-        )
-        .expect("heterogeneous prover opening data"),
-    );
+    let prover_data = SelectedProverOpeningData::from_committed_claims::<OneHotCfg>(
+        prior_group_profiles,
+        prover_claims,
+        vec![onehot_pre_hint, dense_hint, final_hint],
+        vec![&onehot_pre_refs, &dense_refs, &final_refs],
+    )
+    .expect("heterogeneous prover opening data");
+    let selection = prover_data.selection();
 
     const DOMAIN: &[u8] = b"test/heterogeneous-polynomial-groups";
     let mut prover_transcript = AkitaTranscript::new(DOMAIN);

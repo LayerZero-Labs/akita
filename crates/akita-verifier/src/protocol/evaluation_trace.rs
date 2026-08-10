@@ -758,8 +758,14 @@ mod tests {
 
         let opening_batch =
             OpeningClaimsLayout::new(NUM_VARIABLES, 2).expect("two-claim opening group");
-        let level_params =
-            Cfg::get_params_for_batched_commitment(&opening_batch).expect("level parameters");
+        let level_params = Cfg::select_schedule_for_opening(&opening_batch)
+            .expect("level parameters")
+            .schedule()
+            .root
+            .params
+            .final_group
+            .commitment
+            .clone();
         let witness_layout = WitnessLayout::new(
             &level_params,
             &opening_batch,

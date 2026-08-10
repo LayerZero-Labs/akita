@@ -52,7 +52,8 @@ use akita_config::policy_of;
 use akita_schedules::generated::{table_entry, table_entry_range};
 #[cfg(feature = "all-schedules")]
 use akita_schedules::{
-    catalog_entries_sorted_for_lookup, schedule_from_entry, validate_catalog_identity,
+    catalog_entries_sorted_for_lookup, precommitted_profiles_digest,
+    resolve_generated_precommitted_group_profile, schedule_from_entry, validate_catalog_identity,
     validate_generated_schedule_table,
 };
 
@@ -64,6 +65,37 @@ fn group_batch_requests_are_canonically_ordered() {
             akita_planner::runtime_schedule_key_cmp(&pair[0].0, &pair[1].0)
                 == std::cmp::Ordering::Less
         }));
+    }
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn every_grouped_prior_descriptor_has_a_generated_producer() {
+    let produced = ALL_GENERATED_FAMILIES
+        .iter()
+        .flat_map(|family| {
+            (family.precommitted_profiles)().unwrap_or_else(|error| {
+                panic!(
+                    "{} prior-profile generation failed: {error}",
+                    family.module_name
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for family in ALL_GENERATED_FAMILIES {
+        let catalog = (family.schedule_catalog)()
+            .unwrap_or_else(|| panic!("{} generated catalog is unavailable", family.module_name));
+        for entry in catalog.entries {
+            for group in entry.root.precommitted_groups {
+                assert!(
+                    produced.contains(&group.descriptor),
+                    "family {} embeds a grouped prior descriptor without an exact generated P producer: {:?}",
+                    family.module_name,
+                    group.descriptor.group
+                );
+            }
+        }
     }
 }
 
@@ -206,6 +238,59 @@ fn catalog_identity_rejects_planner_policy_changes() {
     let mut mutated = catalog;
     mutated.identity.min_offloaded_witness_contraction += 1;
     assert_rejected("offloaded witness contraction", mutated);
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn prior_registry_validation_is_separate_and_binds_the_live_array() {
+    let policy = policy_of::<fp128::Dense>();
+    let catalog = fp128::Dense::schedule_catalog().expect("generated catalog");
+    let mut swapped = catalog.precommitted_profiles.to_vec();
+    swapped.swap(0, 1);
+    let swapped = Box::leak(swapped.into_boxed_slice());
+    let rewired = akita_schedules::GeneratedScheduleTable {
+        entries: catalog.entries,
+        precommitted_profiles: swapped,
+        identity: catalog.identity,
+    };
+
+    validate_catalog_identity(&rewired, &policy, fp128::Dense::ring_challenge_config)
+        .expect("S/G identity validation must not traverse the live P registry");
+    let error = resolve_generated_precommitted_group_profile(
+        &swapped[0].group,
+        &policy,
+        fp128::Dense::ring_challenge_config,
+        Some(rewired),
+    )
+    .expect_err("P lookup must reject a differently ordered live registry");
+    assert!(error.to_string().contains("digest does not match identity"));
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn prior_registry_rejects_duplicate_layout_even_with_matching_identity_metadata() {
+    let policy = policy_of::<fp128::Dense>();
+    let catalog = fp128::Dense::schedule_catalog().expect("generated catalog");
+    let mut duplicated = catalog.precommitted_profiles.to_vec();
+    duplicated.push(duplicated[0]);
+    let duplicated = Box::leak(duplicated.into_boxed_slice());
+    let mut identity = catalog.identity;
+    identity.precommitted_profile_count = duplicated.len();
+    identity.precommitted_profile_digest = precommitted_profiles_digest(duplicated);
+    let rewired = akita_schedules::GeneratedScheduleTable {
+        entries: catalog.entries,
+        precommitted_profiles: duplicated,
+        identity,
+    };
+
+    let error = resolve_generated_precommitted_group_profile(
+        &duplicated[0].group,
+        &policy,
+        fp128::Dense::ring_challenge_config,
+        Some(rewired),
+    )
+    .expect_err("duplicate P layout must reject even when descriptor bytes match");
+    assert!(error.to_string().contains("duplicate layout"));
 }
 
 #[cfg(feature = "all-schedules")]
@@ -383,7 +468,7 @@ fn resolve_family_group_batch_schedule(
     family: &GeneratedFamily,
     request: &GroupBatchCandidate,
 ) -> Result<FoldSchedule, AkitaError> {
-    (family.runtime_schedule)(request.0.clone())
+    (family.select_schedule_for_key)(request.0.clone())
 }
 
 #[cfg(feature = "all-schedules")]
@@ -491,7 +576,7 @@ fn compare_scalar_key(family: &GeneratedFamily, key: PolynomialGroupLayout) -> O
     compare_schedule_results(
         family,
         key,
-        (family.runtime_schedule)(AkitaScheduleLookupKey::single(key)),
+        (family.select_schedule_for_key)(AkitaScheduleLookupKey::single(key)),
         (family.regen)(key),
     )
 }

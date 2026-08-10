@@ -5,8 +5,52 @@ verify, plus the setup and transcript objects those calls thread through.
 
 ## Commit, prove, verify
 
-The `batched_commit`, `batched_prove`, and `batched_verify` entry points operate
-on ordered commitment groups.
+The `commit`, `batched_prove`, and `batched_verify` entry points operate on
+ordered commitment groups. Every commit call creates exactly one homogeneous
+polynomial group and names its future batch position explicitly:
+
+```rust
+let output = AkitaCommitmentScheme::<Cfg>::commit(
+    &setup,
+    &polynomials,
+    &stack,
+    GroupPosition::Sole,
+)?;
+```
+
+`GroupPosition::Sole` selects the scalar S row for a one-group batch.
+`GroupPosition::Prior` selects a standalone P profile for a group that will
+precede another group. `GroupPosition::Final { prior_group_profiles: &prior }`
+selects the exact grouped G row. Polynomials inside one group must have the
+same `num_vars`; separate groups may have different arities.
+
+For a grouped lifecycle, construct one ordered `PriorGroupProfiles`, borrow it
+for the final commit, then move that same owner into atomic prover assembly:
+
+```rust
+let prior = PriorGroupProfiles::from_ordered_groups(prior_commitments.iter());
+let final_output = AkitaCommitmentScheme::<Cfg>::commit(
+    &setup,
+    &final_polynomials,
+    &stack,
+    GroupPosition::Final {
+        prior_group_profiles: &prior,
+    },
+)?;
+
+let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
+    prior,
+    opening_claims,
+    hints,
+    polynomial_groups,
+)?;
+let selection = prover_data.selection();
+```
+
+The constructor derives the exact batch profile and selects its schedule before
+stripping commitment profiles from prover-owned opening data. The same
+`selection` is placed in `GroupBatchStatement` for verification.
+
 Every `PolynomialGroupClaims` owns one complete opening point, its evaluations,
 and its commitment.
 Polynomials within one group share that point.
@@ -27,8 +71,8 @@ setup and schedule selection do not depend on point values.
 
 On the prover side, `ProverOpeningData` privately binds each commitment hint to
 one `PreparedProverGroup<P>` in the same protocol-visible order as the public
-claims. `SelectedProverOpeningData` pairs that material with the one exact
-`OpeningScheduleSelection` returned by the final commit. Akita treats the
+claims. `SelectedProverOpeningData` privately pairs that material with the one
+exact `OpeningScheduleSelection` derived during batch assembly. Akita treats the
 concrete polynomial representation as a caller contract: callers must supply
 groups with the arity and shape claimed by the public statement. Bad prover
 material is a completeness failure, not a verifier soundness input.
@@ -39,18 +83,13 @@ recursive heterogeneous wrappers. The verifier receives a
 `GroupBatchStatement` containing only the exact generated-row selection and
 self-describing public claims.
 
-`commit_group` takes a raw polynomial group. `commit_final_group` takes the
-exact ordered precommitted profiles and atomically returns the final
-`CommittedGroup`, its hint, and the `OpeningScheduleSelection` that must be used
-for proving and verification.
-
 There is no ambient shared point, global polynomial type for the batch, or
 coordinate-routing object.
 
 **Sources to fold in**
 
 - `crates/akita-pcs/src/scheme/mod.rs`.
-- `crates/akita-prover/src/api/scheme.rs` (`CommitmentProver`).
+- `crates/akita-prover/src/api/commitment.rs` (`GroupPosition`, `CommitOutput`).
 - `crates/akita-types/src/proof/scheme.rs` (`CommitmentVerifier`).
 - `crates/akita-types/src/opening_claims.rs` (`OpeningClaims`, `OpeningClaimsLayout`).
 - `crates/akita-prover/src/types/opening_data.rs` (`ProverOpeningData`,

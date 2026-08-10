@@ -3,11 +3,11 @@
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::layout::params::append_schedule_sparse_challenge_descriptor_bytes;
 use crate::{
-    CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PolynomialGroupLayout, RelationAddressGeometry, SetupContributionMode, SignedDigitKernel,
-    TerminalResponseShape,
+    CommittedGroup, CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout,
+    OuterCommitMatrixParams, PolynomialGroupLayout, RelationAddressGeometry, SetupContributionMode,
+    SignedDigitKernel, TerminalResponseShape,
 };
-use akita_field::{AkitaError, CanonicalField};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 /// Public inputs that deterministically select one level's active Akita params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -220,15 +220,49 @@ impl CommittedGroupProfile {
 
 /// Canonical runtime schedule lookup key.
 ///
-/// Single-group openings use an empty `precommitteds` vector and store the
+/// Single-group openings use an empty `prior_group_profiles` vector and store the
 /// sole group in `final_group`. Multi-group roots list earlier groups in
-/// `precommitteds` and the final group in `final_group`.
+/// `prior_group_profiles` and the final group in `final_group`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
     /// Final group shape for the multi-group root commitment.
     pub final_group: PolynomialGroupLayout,
     /// Previously committed groups in caller-supplied transcript order.
-    pub precommitteds: Vec<CommittedGroupProfile>,
+    pub prior_group_profiles: Vec<CommittedGroupProfile>,
+}
+
+/// Exact ordered profiles of groups committed before a batch's final group.
+///
+/// This transient owner lets final commitment borrow the prefix while batch
+/// assembly later moves the same allocation into [`CommittedGroupBatchProfile`].
+#[derive(Debug, Default)]
+pub struct PriorGroupProfiles {
+    profiles: Vec<CommittedGroupProfile>,
+}
+
+impl PriorGroupProfiles {
+    /// Take ownership of an already ordered profile vector without cloning it.
+    pub fn from_profiles(profiles: Vec<CommittedGroupProfile>) -> Self {
+        Self { profiles }
+    }
+
+    /// Extract profiles from committed groups in caller-supplied order.
+    pub fn from_ordered_groups<'a, F, I>(groups: I) -> Self
+    where
+        F: FieldCore + 'a,
+        I: IntoIterator<Item = &'a CommittedGroup<F>>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let groups = groups.into_iter();
+        let mut profiles = Vec::with_capacity(groups.len());
+        profiles.extend(groups.map(|group| *group.profile()));
+        Self { profiles }
+    }
+
+    /// Borrow the exact ordered profiles.
+    pub fn as_slice(&self) -> &[CommittedGroupProfile] {
+        &self.profiles
+    }
 }
 
 impl AkitaScheduleLookupKey {
@@ -236,7 +270,7 @@ impl AkitaScheduleLookupKey {
     pub fn single(final_group: PolynomialGroupLayout) -> Self {
         Self {
             final_group,
-            precommitteds: Vec::new(),
+            prior_group_profiles: Vec::new(),
         }
     }
 
@@ -245,8 +279,8 @@ impl AkitaScheduleLookupKey {
         let mut bytes = Vec::new();
         push_usize(&mut bytes, self.final_group.num_vars());
         push_usize(&mut bytes, self.final_group.num_polynomials());
-        push_usize(&mut bytes, self.precommitteds.len());
-        for descriptor in &self.precommitteds {
+        push_usize(&mut bytes, self.prior_group_profiles.len());
+        for descriptor in &self.prior_group_profiles {
             descriptor.append_descriptor_bytes(&mut bytes);
         }
         bytes
@@ -255,7 +289,7 @@ impl AkitaScheduleLookupKey {
     /// Build a multi-group opening layout from this schedule lookup key.
     pub fn opening_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
         let mut groups: Vec<PolynomialGroupLayout> = self
-            .precommitteds
+            .prior_group_profiles
             .iter()
             .map(|layout| layout.group)
             .collect();
@@ -265,7 +299,7 @@ impl AkitaScheduleLookupKey {
 
     /// Number of commitment groups in this schedule key.
     pub fn num_commitment_groups(&self) -> usize {
-        self.precommitteds.len() + 1
+        self.prior_group_profiles.len() + 1
     }
 
     /// Maximum opening arity across the final and precommitted groups.
@@ -274,7 +308,7 @@ impl AkitaScheduleLookupKey {
     /// distinct from `final_group.num_vars()`, which remains the source arity
     /// used to size the final commitment and root witness.
     pub fn max_num_vars(&self) -> usize {
-        self.precommitteds
+        self.prior_group_profiles
             .iter()
             .map(|descriptor| descriptor.group.num_vars())
             .fold(self.final_group.num_vars(), usize::max)
@@ -283,7 +317,7 @@ impl AkitaScheduleLookupKey {
     /// Total number of polynomials across the final and precommitted groups.
     pub fn num_polynomials(&self) -> Result<usize, AkitaError> {
         let mut total = self.final_group.num_polynomials();
-        for layout in &self.precommitteds {
+        for layout in &self.prior_group_profiles {
             total = total
                 .checked_add(layout.group.num_polynomials())
                 .ok_or_else(|| {
@@ -312,7 +346,7 @@ impl AkitaScheduleLookupKey {
                 "schedule lookup key dimensions must be at least 1".to_string(),
             ));
         }
-        for layout in &self.precommitteds {
+        for layout in &self.prior_group_profiles {
             layout.group.validate()?;
             layout.validate(field_bits)?;
         }
@@ -326,14 +360,67 @@ pub struct CommittedGroupBatchProfile {
     /// Final/new commitment group.
     pub final_group: CommittedGroupProfile,
     /// Earlier commitments in transcript order.
-    pub precommitteds: Vec<CommittedGroupProfile>,
+    pub prior_group_profiles: Vec<CommittedGroupProfile>,
 }
 
 impl CommittedGroupBatchProfile {
+    /// Assemble an exact batch profile from ordered committed groups.
+    ///
+    /// The supplied prefix must describe every group except the last. Its
+    /// allocation is moved directly into the resulting batch profile.
+    pub fn from_ordered_groups<'a, F, I>(
+        groups: I,
+        prior_group_profiles: PriorGroupProfiles,
+    ) -> Result<Self, AkitaError>
+    where
+        F: FieldCore + 'a,
+        I: IntoIterator<Item = &'a CommittedGroup<F>>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let mut groups = groups.into_iter();
+        let group_count = groups.len();
+        if group_count == 0 {
+            return Err(AkitaError::InvalidInput(
+                "committed group batch profile requires at least one group".to_string(),
+            ));
+        }
+        let expected_prior_count = group_count - 1;
+        if prior_group_profiles.profiles.len() != expected_prior_count {
+            return Err(AkitaError::InvalidInput(format!(
+                "committed group batch profile expected {expected_prior_count} prior profiles, got {}",
+                prior_group_profiles.profiles.len()
+            )));
+        }
+
+        let mut final_group = None;
+        for (index, group) in groups.by_ref().enumerate() {
+            let profile = *group.profile();
+            if index < expected_prior_count {
+                if prior_group_profiles.profiles.get(index) != Some(&profile) {
+                    return Err(AkitaError::InvalidInput(format!(
+                        "prior profile {index} does not match its committed group"
+                    )));
+                }
+            } else {
+                final_group = Some(profile);
+            }
+        }
+
+        let final_group = final_group.ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "committed group batch profile requires a final group".to_string(),
+            )
+        })?;
+        Ok(Self {
+            final_group,
+            prior_group_profiles: prior_group_profiles.profiles,
+        })
+    }
+
     /// Build the corresponding public opening layout.
     pub fn opening_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
         let mut groups = self
-            .precommitteds
+            .prior_group_profiles
             .iter()
             .map(|profile| profile.group)
             .collect::<Vec<_>>();
@@ -344,7 +431,7 @@ impl CommittedGroupBatchProfile {
     /// Validate all frozen profiles.
     pub fn validate(&self, field_bits: u32) -> Result<(), AkitaError> {
         self.final_group.validate_frozen_precommit(field_bits)?;
-        for profile in &self.precommitteds {
+        for profile in &self.prior_group_profiles {
             profile.validate_frozen_precommit(field_bits)?;
         }
         Ok(())

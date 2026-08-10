@@ -457,7 +457,7 @@ pub(crate) fn derive_selected_suffix_schedule(
             })?
         };
         let require_child_fold =
-            root_level_key.is_some_and(|root_key| !root_key.precommitteds.is_empty());
+            root_level_key.is_some_and(|root_key| !root_key.prior_group_profiles.is_empty());
         let mut candidates = Vec::new();
 
         for inner_lb in min_inner_basis..=max_inner_basis {

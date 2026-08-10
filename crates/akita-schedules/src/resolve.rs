@@ -1,6 +1,6 @@
 //! Strict runtime schedule resolution.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use akita_challenges::SparseChallengeConfig;
@@ -11,7 +11,9 @@ use akita_types::{
 };
 
 use crate::audit::audit_resolved_schedule;
-use crate::catalog_identity::{identity_digest, policy_digest, validate_catalog_identity};
+use crate::catalog_identity::{
+    identity_digest, policy_digest, validate_catalog_identity, PrecommittedProfilesDigest,
+};
 use crate::generated::walk::walk_generated_schedule_entry;
 use crate::generated::{table_entry_range, GeneratedFoldScheduleEntry, GeneratedScheduleTable};
 use crate::runtime::validate_policy;
@@ -22,6 +24,24 @@ const MAX_RESOLVED_CATALOG_ROWS: usize = 1 << 14;
 static MATERIALIZED_CATALOGS: LazyLock<
     Mutex<HashMap<MaterializedCatalogCacheKey, Arc<MaterializedCatalog>>>,
 > = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static VALIDATED_PRECOMMITTED_REGISTRIES: LazyLock<Mutex<HashSet<PrecommittedRegistryCacheKey>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct PrecommittedRegistryCacheKey {
+    profiles_ptr: usize,
+    profiles_len: usize,
+    identity_digest: [u8; 32],
+    policy_digest: [u8; 32],
+}
+
+fn lock_validated_precommitted_registries(
+) -> Result<std::sync::MutexGuard<'static, HashSet<PrecommittedRegistryCacheKey>>, AkitaError> {
+    VALIDATED_PRECOMMITTED_REGISTRIES.lock().map_err(|_| {
+        AkitaError::InvalidSetup("precommit registry validation cache poisoned".to_string())
+    })
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct MaterializedCatalogCacheKey {
@@ -108,7 +128,7 @@ fn profiles_for_entry(
             entry.root.final_group.layout,
             &schedule.root.params.final_group.commitment,
         ),
-        precommitteds: entry
+        prior_group_profiles: entry
             .root
             .precommitted_groups
             .iter()
@@ -364,8 +384,38 @@ pub fn resolve_generated_precommitted_group_profile(
     })?;
     validate_catalog_identity(&table, policy, &ring_challenge_config)?;
 
+    let registry_key = PrecommittedRegistryCacheKey {
+        profiles_ptr: table.precommitted_profiles.as_ptr() as usize,
+        profiles_len: table.precommitted_profiles.len(),
+        identity_digest: identity_digest(&table.identity),
+        policy_digest: policy_digest(policy),
+    };
+    let validate_registry = !lock_validated_precommitted_registries()?.contains(&registry_key);
+    if validate_registry
+        && table.precommitted_profiles.len() != table.identity.precommitted_profile_count
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "precommit profile catalog count does not match identity for family {}",
+            table.identity.family_name
+        )));
+    }
+
     let mut selected = None;
+    let mut digest = validate_registry
+        .then(|| PrecommittedProfilesDigest::new(table.precommitted_profiles.len()));
+    let mut layouts = validate_registry.then(HashSet::new);
     for &row in table.precommitted_profiles {
+        if let Some(digest) = &mut digest {
+            digest.update(&row);
+        }
+        if let Some(layouts) = &mut layouts {
+            if !layouts.insert(row.group) {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "precommit profile catalog contains duplicate layout {:?}",
+                    row.group
+                )));
+            }
+        }
         let profile = row.expand_to_committed_profile(policy)?;
         if profile.group != *key {
             continue;
@@ -377,6 +427,17 @@ pub fn resolve_generated_precommitted_group_profile(
             )));
         }
         selected = Some(profile);
+    }
+    if let Some(digest) = digest {
+        if digest.finish() != table.identity.precommitted_profile_digest {
+            return Err(AkitaError::InvalidSetup(format!(
+                "precommit profile catalog digest does not match identity for family {}",
+                table.identity.family_name
+            )));
+        }
+    }
+    if validate_registry {
+        lock_validated_precommitted_registries()?.insert(registry_key);
     }
     selected.ok_or_else(|| {
         AkitaError::UnsupportedSchedule(format!(

@@ -1,6 +1,6 @@
 //! Contract test for downstream-style custom root commit sources.
 //!
-//! Proves that `batched_commit_with_params` accepts a polynomial type that is
+//! Proves that `commit_with_params` accepts a polynomial type that is
 //! not one of Akita's built-in root representations, with only
 //! [`RootCommitSource`] on `P` and a downstream-owned backend implementing
 //! [`RootCommitKernel`] for a local commit view (orphan-rule-safe: the backend
@@ -19,10 +19,7 @@ use akita_prover::compute::{
     CommitInnerPlan, CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
     DigitRowsComputeBackend, OperationCtx, RootCommitKernel, RootCommitSource, RootPolyShape,
 };
-use akita_prover::{
-    batched_commit_with_params, commit_with_params, AkitaProverSetup, CpuBackend, CpuPreparedSetup,
-    DensePoly,
-};
+use akita_prover::{commit_with_params, AkitaProverSetup, CpuBackend, CpuPreparedSetup, DensePoly};
 use akita_types::{NttCacheKey, OpeningClaimsLayout};
 
 type Cfg = fp64::Dense;
@@ -196,7 +193,9 @@ fn custom_commit_source_runs_commit_with_params() {
     let dense =
         DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, D, &evals).expect("dense oracle");
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
-    let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+    let params = Cfg::select_schedule_for_opening(&opening_batch)
+        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .expect("layout");
 
     let setup_envelope = Cfg::setup_matrix_capacity(CONTRACT_NUM_VARS, 1).expect("envelope");
     let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
@@ -228,57 +227,6 @@ fn custom_commit_source_runs_commit_with_params() {
         &params,
     )
     .expect("dense oracle commit");
-
-    assert_eq!(
-        contract_commitment.rows().count(),
-        dense_commitment.rows().count()
-    );
-    assert_eq!(contract_hint, dense_hint);
-}
-
-#[test]
-fn custom_commit_source_runs_batched_commit_with_params() {
-    let len = 1usize << CONTRACT_NUM_VARS;
-    let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
-    let contract =
-        ContractRootPoly::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("contract poly");
-    assert_commit_source_only(&contract);
-    let dense =
-        DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, D, &evals).expect("dense oracle");
-    let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
-    let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
-
-    let setup_envelope = Cfg::setup_matrix_capacity(CONTRACT_NUM_VARS, 1).expect("envelope");
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
-        .expect("setup");
-    let prepared = ContractCommitBackend
-        .prepare_setup(&setup)
-        .expect("prepared");
-    let expanded = setup.expanded.as_ref();
-    let contract_ctx =
-        OperationCtx::new(&ContractCommitBackend, &prepared, expanded).expect("contract ctx");
-
-    let (contract_commitment, contract_hint) =
-        batched_commit_with_params::<F, ContractRootPoly, ContractCommitBackend>(
-            std::slice::from_ref(&contract),
-            expanded,
-            &contract_ctx,
-            &params,
-        )
-        .expect("contract batched commit");
-
-    let cpu_prepared = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("cpu prepared");
-    let cpu_ctx =
-        OperationCtx::new(&CpuBackend::DEFAULT, &cpu_prepared, expanded).expect("cpu ctx");
-    let (dense_commitment, dense_hint) = batched_commit_with_params::<F, DensePoly<F>, CpuBackend>(
-        std::slice::from_ref(&dense),
-        expanded,
-        &cpu_ctx,
-        &params,
-    )
-    .expect("dense batched commit");
 
     assert_eq!(
         contract_commitment.rows().count(),

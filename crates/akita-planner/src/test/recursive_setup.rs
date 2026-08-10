@@ -22,7 +22,7 @@ fn recursive_exact_cutover_proof_size_is_documented() {
     assert_eq!(descriptor.outer_commit_matrix.ring_dimension(), 64);
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
-        precommitteds: vec![descriptor, descriptor],
+        prior_group_profiles: vec![descriptor, descriptor],
     };
     let planned = crate::find_schedule(
         &key,
@@ -125,7 +125,7 @@ fn recursive_adaptive_search_selects_schedule_dimensions_and_setup_prefixes() {
     assert_eq!(descriptor.outer_commit_matrix.ring_dimension(), 64);
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
-        precommitteds: vec![descriptor, descriptor],
+        prior_group_profiles: vec![descriptor, descriptor],
     };
     type Recursive = RecursiveCommitmentConfig<OneHot>;
     let planned = crate::find_schedule(

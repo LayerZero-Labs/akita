@@ -10,7 +10,7 @@
 ## Summary
 
 Akita supports commitments that are created separately and later opened in one
-root proof. Each precommitted group carries the exact public A and B geometry
+root proof. Each prior group carries the exact public A and B geometry
 that was used to commit it. The final root schedule is selected from the final
 group layout and the ordered list of those exact profiles.
 
@@ -20,7 +20,7 @@ ordinary `batched_commit`. Those APIs have been removed.
 
 ## Canonical types
 
-`CommittedGroupProfile` is the single source of truth for a precommitted group.
+`CommittedGroupProfile` is the single source of truth for a prior group.
 It freezes:
 
 - the polynomial group layout;
@@ -29,11 +29,11 @@ It freezes:
 - the exact inner and outer SIS matrices, including ranks and bounds.
 
 `AkitaScheduleLookupKey` contains one final group layout and an ordered list of
-exact precommitted profiles. Profile order is part of the schedule and
+exact `prior_group_profiles`. Profile order is part of the schedule and
 transcript identity.
 
 The final root must use every frozen profile exactly. It may choose fresh root
-opening and D geometry, but it must not reconstruct or change a precommitted A
+opening and D geometry, but it must not reconstruct or change a prior group's A
 or B relation.
 
 ## Standalone profile selection
@@ -58,14 +58,18 @@ Generated profile lookup is strict. An unlisted layout returns
 
 The current staggered flow is:
 
-1. Resolve a generated `CommittedGroupProfile` for each early group.
-2. Commit each early group with `commit_group` and that exact profile.
-3. Pass the ordered profiles into `commit_final_group` with the final group.
-4. Build the exact `AkitaScheduleLookupKey` and resolve the generated root row.
-5. Commit and prove with the resolved root parameters.
+1. Commit each early group with the unified `commit` method and
+   `GroupPosition::Prior`; this resolves its exact generated P profile.
+2. Build one ordered `PriorGroupProfiles` owner from those committed groups.
+3. Commit the last group with `GroupPosition::Final`, borrowing that owner.
+4. Build the self-describing `OpeningClaims`, then pass the same owner to
+   `SelectedProverOpeningData::from_committed_claims`; batch assembly selects
+   the exact generated G row before profiles are stripped.
+5. Prove with that selected row and verify against its explicit row identity.
 
-`batched_commit` retains its scalar meaning. It commits one bundle under one
-scalar schedule. It is not the precommit API for this flow.
+`GroupPosition::Sole` commits the only group in an opening batch under its
+scalar S row. Multiple homogeneous polynomials may still belong to that one
+group.
 
 The commitment and opening claims must use the same ordered group profiles.
 Malformed, missing, reordered, or altered profiles return `AkitaError`.
@@ -96,8 +100,11 @@ from unchecked lengths, or invoke the planner.
 
 - Standalone generation emits exact profiles for every supported layout.
 - Profile descriptor changes alter lookup and effective schedule identity.
-- `commit_group` uses the supplied profile without reconstructing it.
-- `commit_final_group` uses the exact ordered profiles supplied by the caller.
+- `GroupPosition::Prior` uses the exact generated standalone P profile.
+- `GroupPosition::Final` selects from the exact ordered profiles supplied by
+  the caller and rejects an empty prefix.
+- Batch assembly consumes the same `PriorGroupProfiles` allocation borrowed by
+  final commitment and checks it against the ordered committed claims.
 - Reordered, altered, unknown, or undersized profiles reject.
 - Scalar keys normalize through `AkitaScheduleLookupKey::single`.
 - Grouped roots hand one compact witness to the recursive suffix.

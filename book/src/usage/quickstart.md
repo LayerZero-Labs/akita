@@ -2,7 +2,7 @@
 
 > **Status:** stub. Part of the initial Akita Book scaffold.
 
-The smallest path to a working `batched_commit` → `batched_prove` →
+The smallest path to a working `commit(GroupPosition::Sole)` → `batched_prove` →
 `batched_verify`, then how to pick the `CommitmentConfig` preset that matches
 your field and proof-size goals.
 

@@ -35,7 +35,7 @@ pub(crate) fn walk_generated_schedule_entry(
     key.validate(policy.decomposition.field_bits())?;
     validate_entry_key(entry, key)?;
     entry.validate()?;
-    let is_multi_group = !key.precommitteds.is_empty();
+    let is_multi_group = !key.prior_group_profiles.is_empty();
     let expected_root_w_len = 1usize
         .checked_shl(key.final_group.num_vars() as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
@@ -339,14 +339,14 @@ fn validate_expanded_precommitted_groups(
     key: &AkitaScheduleLookupKey,
     groups: &[PrecommittedLevelParams],
 ) -> Result<(), AkitaError> {
-    if groups.len() != key.precommitteds.len() {
+    if groups.len() != key.prior_group_profiles.len() {
         return Err(AkitaError::InvalidSetup(format!(
             "multi-group root precommitted group count mismatch: expected {}, got {}",
-            key.precommitteds.len(),
+            key.prior_group_profiles.len(),
             groups.len()
         )));
     }
-    for (expected, actual) in key.precommitteds.iter().zip(groups) {
+    for (expected, actual) in key.prior_group_profiles.iter().zip(groups) {
         if &actual.layout != expected {
             return Err(AkitaError::InvalidSetup(
                 "multi-group root expanded precommitted layout does not match frozen key"

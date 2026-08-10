@@ -244,9 +244,9 @@ fn run() -> Result<(), String> {
 
     let opening_layout = OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
     let layout: CommittedGroupParams =
-        <Cfg as CommitmentConfig>::get_params_for_batched_commitment(&opening_layout)
+        <Cfg as CommitmentConfig>::select_schedule_for_opening(&opening_layout).map(|row| row.schedule().root.params.final_group.commitment.clone())
             .expect("layout");
-    let schedule = Cfg::get_params_for_prove(&opening_layout).expect("proof schedule");
+    let schedule = Cfg::select_schedule_for_opening(&opening_layout).expect("proof schedule");
     let alpha_bits = D.trailing_zeros() as usize;
     let required_vars = layout.position_index_bits() + layout.block_index_bits() + alpha_bits;
     // Both `main` (`required_vars <= nv`, layout fits in nv) and
@@ -316,7 +316,7 @@ fn run() -> Result<(), String> {
     let openings = [opening];
     let schedule_selection = Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
         final_group: *commitment.profile(),
-        precommitteds: Vec::new(),
+        prior_group_profiles: Vec::new(),
     })
     .map_err(|err| format!("schedule selection failed: {err}"))?
     .selection();

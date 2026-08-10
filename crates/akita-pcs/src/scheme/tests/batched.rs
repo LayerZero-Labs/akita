@@ -22,18 +22,77 @@ fn batched_commit_matches_individual_commits() {
 
     let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
         .iter()
-        .map(|group| Scheme::commit::<_, _>(&setup, group, &stack))
+        .map(|group| {
+            Scheme::commit::<_, _>(&setup, group, &stack, akita_prover::GroupPosition::Sole)
+        })
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
         .into_iter()
+        .map(akita_prover::CommitOutput::into_parts)
         .unzip();
-    let (commitment_a, hint_a) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly_a), &stack).unwrap();
-    let (commitment_b, hint_b) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly_b), &stack).unwrap();
+    let akita_prover::CommitOutput {
+        committed_group: commitment_a,
+        hint: hint_a,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly_a),
+        &stack,
+        akita_prover::GroupPosition::Sole,
+    )
+    .unwrap();
+    let akita_prover::CommitOutput {
+        committed_group: commitment_b,
+        hint: hint_b,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly_b),
+        &stack,
+        akita_prover::GroupPosition::Sole,
+    )
+    .unwrap();
 
     assert_eq!(batched_commitments, vec![commitment_a, commitment_b]);
     assert_eq!(batched_hints, vec![hint_a, hint_b]);
+}
+
+#[test]
+fn commit_rejects_empty_final_prefix_and_mixed_group_arity() {
+    let layout = singleton_layout::<Cfg>(16);
+    let num_vars =
+        layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
+    let evals = vec![F::one(); 1usize << num_vars];
+    let smaller_evals = vec![F::one(); 1usize << (num_vars - 1)];
+    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &evals).unwrap();
+    let smaller = DensePoly::<F>::from_field_evals(num_vars - 1, D, &smaller_evals).unwrap();
+    let setup = Scheme::setup_prover(num_vars, 2).unwrap();
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
+
+    let empty = PriorGroupProfiles::default();
+    let error = Scheme::commit(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupPosition::Final {
+            prior_group_profiles: &empty,
+        },
+    )
+    .expect_err("an empty Final prefix must reject");
+    assert!(matches!(error, AkitaError::InvalidInput(_)));
+
+    let error = Scheme::commit(
+        &setup,
+        &[poly, smaller],
+        &stack,
+        akita_prover::GroupPosition::Sole,
+    )
+    .expect_err("one committed group must be homogeneous");
+    assert!(matches!(error, AkitaError::InvalidInput(_)));
 }
 
 #[test]
@@ -56,8 +115,16 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let poly_group = [&poly_a, &poly_b];
-    let (commitment, hint) =
-        Scheme::commit::<_, _>(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        &[poly_a.clone(), poly_b.clone()],
+        &stack,
+        akita_prover::GroupPosition::Sole,
+    )
+    .unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 

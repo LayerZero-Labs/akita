@@ -41,7 +41,9 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
 
     const NUM_VARS: usize = 16;
     let opening_batch = OpeningClaimsLayout::new(NUM_VARS, 1).expect("opening batch");
-    let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+    let layout = Cfg::select_schedule_for_opening(&opening_batch)
+        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .expect("layout");
     let alpha = D.trailing_zeros() as usize;
     let full_num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
 
@@ -79,10 +81,14 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     let commit_stack =
         UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
             .expect("commit stack");
-    let (commitment, hint) = akita_prover::commit::<Cfg, DensePoly<F>, CpuBackend>(
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = akita_prover::commit::<Cfg, DensePoly<F>, CpuBackend>(
         std::slice::from_ref(&poly),
         setup.expanded.as_ref(),
         &commit_stack,
+        akita_prover::GroupPosition::Sole,
     )
     .expect("commit");
 
@@ -100,6 +106,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/heterogeneous-batched-prove");
     let prover_claims = selected_prover_data::<Cfg, _>(
+        akita_types::PriorGroupProfiles::default(),
         OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             opening_point.clone(),
             vec![opening],
@@ -110,12 +117,11 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         vec![hint],
         vec![&poly_refs[..]],
     );
-    let (selection, prover_claims) = prover_claims;
+    let selection = prover_claims.selection();
     let proof = batched_prove::<Cfg, _, _, _, _, _, _>(
         &setup.expanded,
         &setup.prefix_slots,
         &stack,
-        selection,
         prover_claims,
         &mut prover_transcript,
         BasisMode::Lagrange,

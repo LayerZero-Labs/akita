@@ -34,11 +34,11 @@ const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
 fn w8r2_profiling_key() -> AkitaScheduleLookupKey {
     let pre_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted =
-        akita_config::committed_group_profile::<W8R2Cfg>(&pre_group).expect("precommit profile");
+    let precommitted = akita_config::resolve_prior_group_profile::<W8R2Cfg>(&pre_group)
+        .expect("precommit profile");
     AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
-        precommitteds: vec![precommitted, precommitted],
+        prior_group_profiles: vec![precommitted, precommitted],
     }
 }
 
@@ -46,7 +46,7 @@ fn w8r2_profiling_key() -> AkitaScheduleLookupKey {
 fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     let key = w8r2_profiling_key();
     let root_layout = key.opening_layout().expect("root layout");
-    let schedule = W8R2Cfg::runtime_schedule(key).expect("W8R2 schedule");
+    let schedule = W8R2Cfg::select_schedule_for_key(&key).expect("W8R2 schedule");
     assert_w8r2_profile_shape(&schedule);
     let prover = setup_matrix_capacity_for_schedule(&schedule).expect("prover capacity");
     let verifier = verifier_setup_matrix_capacity_for_schedule(&schedule, &root_layout)

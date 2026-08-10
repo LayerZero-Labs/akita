@@ -142,10 +142,10 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
     let mut saw_supported_shape = false;
     let mut envelope = SetupMatrixCapacity::minimum();
     for layout in &layouts {
-        let Ok(schedule) = Cfg::get_params_for_prove(layout) else {
+        let Ok(schedule) = Cfg::select_schedule_for_opening(layout) else {
             continue;
         };
-        let entry_envelope = setup_matrix_capacity_for_schedule(&schedule)?;
+        let entry_envelope = setup_matrix_capacity_for_schedule(schedule.schedule())?;
         saw_supported_shape = true;
         envelope.num_field_elements = envelope
             .num_field_elements
@@ -188,7 +188,7 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
             }
             let key = AkitaScheduleLookupKey {
                 final_group: entry.root.final_group.layout,
-                precommitteds: entry
+                prior_group_profiles: entry
                     .root
                     .precommitted_groups
                     .iter()
@@ -198,8 +198,8 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
             if !key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
                 continue;
             }
-            let schedule = Cfg::runtime_schedule(key)?;
-            let entry_envelope = setup_matrix_capacity_for_schedule(&schedule)?;
+            let schedule = Cfg::select_schedule_for_key(&key)?;
+            let entry_envelope = setup_matrix_capacity_for_schedule(schedule.schedule())?;
             saw_supported_shape = true;
             envelope.num_field_elements = envelope
                 .num_field_elements
@@ -215,8 +215,8 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
         max_num_vars,
         max_num_batched_polys,
     )? {
-        let schedule = Cfg::runtime_schedule(key)?;
-        let entry_envelope = setup_matrix_capacity_for_schedule(&schedule)?;
+        let schedule = Cfg::select_schedule_for_key(&key)?;
+        let entry_envelope = setup_matrix_capacity_for_schedule(schedule.schedule())?;
         saw_supported_shape = true;
         envelope.num_field_elements = envelope
             .num_field_elements
@@ -577,12 +577,12 @@ macro_rules! impl_proof_optimized_preset {
                 }
             }
 
-            fn get_params_for_prove(
+            fn select_schedule_for_opening(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
-                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key(
-                    layout,
-                )?)
+            ) -> Result<akita_schedules::ResolvedScheduleRow, akita_field::AkitaError> {
+                Self::select_schedule_for_key(
+                    &$crate::proof_optimized::proof_optimized_schedule_key(layout)?,
+                )
             }
 
             impl_proof_optimized_preset!(@schedule_catalog none);
@@ -660,12 +660,12 @@ macro_rules! impl_proof_optimized_preset {
                 }
             }
 
-            fn get_params_for_prove(
+            fn select_schedule_for_opening(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
-                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key(
-                    layout,
-                )?)
+            ) -> Result<akita_schedules::ResolvedScheduleRow, akita_field::AkitaError> {
+                Self::select_schedule_for_key(
+                    &$crate::proof_optimized::proof_optimized_schedule_key(layout)?,
+                )
             }
 
             impl_proof_optimized_preset!(@schedule_catalog ($feat, $family_name, $table));

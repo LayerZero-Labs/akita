@@ -18,8 +18,16 @@ fn verify_passes_for_consistent_opening() {
     .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
 
-    let (commitment, hint) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupPosition::Sole,
+    )
+    .unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
     let lw = lagrange_weights(&opening_point).unwrap();
@@ -72,8 +80,16 @@ fn verify_rejects_wrong_opening() {
     .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
 
-    let (commitment, hint) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupPosition::Sole,
+    )
+    .unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
     let lw = lagrange_weights(&opening_point).unwrap();
@@ -234,8 +250,16 @@ fn monomial_basis_prove_verify_round_trip() {
     .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
 
-    let (commitment, hint) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupPosition::Sole,
+    )
+    .unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
 

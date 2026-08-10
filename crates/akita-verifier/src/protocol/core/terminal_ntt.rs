@@ -335,8 +335,9 @@ mod tests {
     #[test]
     fn schedule_warm_builds_terminal_cache_once_before_arithmetic() {
         let group = PolynomialGroupLayout::new(15, 1);
-        let schedule = OneHot::runtime_schedule(AkitaScheduleLookupKey::single(group))
-            .expect("adaptive schedule");
+        let schedule = OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(group))
+            .expect("adaptive schedule")
+            .into_schedule();
         let params = &schedule.terminal.params.witness;
         let prefix_len = params
             .inner_commit_matrix

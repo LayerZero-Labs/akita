@@ -118,7 +118,7 @@ impl GeneratedFoldScheduleEntry {
     pub fn to_runtime_lookup_key(self) -> akita_types::AkitaScheduleLookupKey {
         akita_types::AkitaScheduleLookupKey {
             final_group: self.root.final_group.layout,
-            precommitteds: self
+            prior_group_profiles: self
                 .root
                 .precommitted_groups
                 .iter()
@@ -160,6 +160,10 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub ring_challenge_config_digest: u64,
     pub key_count: usize,
     pub key_digest: u64,
+    /// Ordered compact standalone-prior registry length.
+    pub precommitted_profile_count: usize,
+    /// Digest of every field in the ordered compact standalone-prior registry.
+    pub precommitted_profile_digest: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -269,7 +273,7 @@ pub fn generated_schedule_key_cmp_runtime(
                 .root
                 .precommitted_groups
                 .len()
-                .cmp(&runtime.precommitteds.len())
+                .cmp(&runtime.prior_group_profiles.len())
         })
         .then_with(|| {
             let generated = generated
@@ -278,7 +282,7 @@ pub fn generated_schedule_key_cmp_runtime(
                 .iter()
                 .map(|group| &group.descriptor);
             generated
-                .zip(&runtime.precommitteds)
+                .zip(&runtime.prior_group_profiles)
                 .map(|(left, right)| {
                     precommitted_group_sort_key(left).cmp(&precommitted_group_sort_key(right))
                 })
@@ -302,12 +306,21 @@ pub fn runtime_schedule_key_cmp(
     );
     left_main
         .cmp(&right_main)
-        .then_with(|| left.precommitteds.len().cmp(&right.precommitteds.len()))
         .then_with(|| {
-            left.precommitteds
+            left.prior_group_profiles
+                .len()
+                .cmp(&right.prior_group_profiles.len())
+        })
+        .then_with(|| {
+            left.prior_group_profiles
                 .iter()
                 .map(precommitted_group_sort_key)
-                .cmp(right.precommitteds.iter().map(precommitted_group_sort_key))
+                .cmp(
+                    right
+                        .prior_group_profiles
+                        .iter()
+                        .map(precommitted_group_sort_key),
+                )
         })
 }
 
@@ -320,12 +333,12 @@ fn schedule_key_eq(
     key: &akita_types::AkitaScheduleLookupKey,
 ) -> bool {
     generated.root.final_group.layout == key.final_group
-        && generated.root.precommitted_groups.len() == key.precommitteds.len()
+        && generated.root.precommitted_groups.len() == key.prior_group_profiles.len()
         && generated
             .root
             .precommitted_groups
             .iter()
-            .zip(&key.precommitteds)
+            .zip(&key.prior_group_profiles)
             .all(|(generated, layout)| precommitted_group_key_eq(&generated.descriptor, layout))
 }
 

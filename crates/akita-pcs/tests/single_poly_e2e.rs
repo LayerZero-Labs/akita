@@ -30,10 +30,16 @@ use common::*;
 fn run_single_onehot(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = OneHotCfg::get_params_for_batched_commitment(
+        let layout = OneHotCfg::select_schedule_for_opening(
             &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
-        .expect("layout");
+        .expect("layout")
+        .schedule()
+        .root
+        .params
+        .final_group
+        .commitment
+        .clone();
         let root_d = layout.d_a();
         let total_field = layout.num_live_blocks * layout.num_positions_per_block * root_d;
         assert_eq!(total_field, 1usize << nv);
@@ -64,9 +70,16 @@ fn run_single_onehot(nv: usize) {
         let verifier_setup =
             AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, commit_input, &stack)
-                .expect("commit");
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(
+            &setup,
+            commit_input,
+            &stack,
+            akita_prover::GroupPosition::Sole,
+        )
+        .expect("commit");
 
         let poly_refs: [&OneHotPoly<F, u8>; 1] = [&poly];
         let commitments = [commitment];
@@ -126,10 +139,16 @@ type DenseCfg = fp128::Dense;
 fn run_single_dense(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = DenseCfg::get_params_for_batched_commitment(
+        let layout = DenseCfg::select_schedule_for_opening(
             &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
-        .expect("layout");
+        .expect("layout")
+        .schedule()
+        .root
+        .params
+        .final_group
+        .commitment
+        .clone();
         let root_d = layout.d_a();
 
         let evals = dense_field_evals(nv, 0xface_feed_0000 + nv as u64);
@@ -149,9 +168,16 @@ fn run_single_dense(nv: usize) {
         let verifier_setup =
             AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, commit_input, &commit_stack)
-                .expect("commit");
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
+            &setup,
+            commit_input,
+            &commit_stack,
+            akita_prover::GroupPosition::Sole,
+        )
+        .expect("commit");
 
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let commitments = [commitment];
@@ -180,12 +206,12 @@ fn run_single_dense(nv: usize) {
             BasisMode::Lagrange,
         )
         .expect("prove");
-        let schedule = DenseCfg::get_params_for_prove(
+        let schedule = DenseCfg::select_schedule_for_opening(
             &akita_types::OpeningClaimsLayout::new(nv, 1).expect("opening layout"),
         )
         .expect("resolved schedule");
-        let requirements =
-            NttExecutionRequirements::from_prove_schedule(&schedule).expect("NTT requirements");
+        let requirements = NttExecutionRequirements::from_prove_schedule(schedule.schedule())
+            .expect("NTT requirements");
         let metrics = planned_ntt_cache_metrics::<F, _>(&prove_stack, &requirements)
             .expect("planned NTT metrics");
         assert_eq!(metrics.len(), 1, "uniform stack must have one cache owner");
@@ -288,10 +314,16 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
     assert!(setup_nv >= poly_nv);
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = OneHotCfg::get_params_for_batched_commitment(
+        let layout = OneHotCfg::select_schedule_for_opening(
             &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
         )
-        .expect("layout");
+        .expect("layout")
+        .schedule()
+        .root
+        .params
+        .final_group
+        .commitment
+        .clone();
         let root_d = layout.d_a();
         let total_field = layout.num_live_blocks * layout.num_positions_per_block * root_d;
         assert_eq!(total_field, 1usize << poly_nv);
@@ -322,9 +354,16 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let verifier_setup =
             AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, commit_input, &stack)
-                .expect("commit with oversized setup");
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(
+            &setup,
+            commit_input,
+            &stack,
+            akita_prover::GroupPosition::Sole,
+        )
+        .expect("commit with oversized setup");
 
         let poly_refs: [&OneHotPoly<F, u8>; 1] = [&poly];
         let commitments = [commitment];

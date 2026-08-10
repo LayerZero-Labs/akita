@@ -126,7 +126,7 @@ graph TD
   bootstrap. It depends only on `akita-types`, `akita-challenges`, and
   `akita-field`.
 - `akita-config` owns concrete runtime presets and the single `CommitmentConfig`
-  policy trait. It depends on `akita-schedules`: `CommitmentConfig::runtime_schedule`
+  policy trait. It depends on `akita-schedules`: `CommitmentConfig::select_schedule_for_key`
   delegates to strict generated-catalog resolution, which validates an opted-in
   catalog and expands a table hit. Missing catalogs or rows are unsupported.
 - `akita-verifier` stays prover-free (no polynomial backends, no setup

@@ -1,8 +1,8 @@
 //! End-to-end tests for **batched aggregated** commitments.
 //!
 //! All polynomials in a batch are placed into a single commitment bundle, so
-//! `batched_commit` produces exactly one commitment that aggregates every
-//! polynomial.  The test exercises `batched_commit` → `batched_prove` →
+//! `commit` produces exactly one commitment that aggregates every polynomial.
+//! The test exercises `commit` → `batched_prove` →
 //! serialize/deserialize → `batched_verify`.
 //!
 //! This file intentionally keeps a much smaller matrix than the grouped and
@@ -53,8 +53,9 @@ mod non_zk_aggregated_cases {
         init_rayon_pool();
         run_on_large_stack(move || {
             let opening_batch = OpeningClaimsLayout::new(nv, batch_size).expect("opening_batch");
-            let layout =
-                OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+            let layout = OneHotCfg::select_schedule_for_opening(&opening_batch)
+                .map(|row| row.schedule().root.params.final_group.commitment.clone())
+                .expect("layout");
 
             let polys: Vec<OneHotPoly<F, u8>> = (0..batch_size)
                 .map(|idx| make_onehot_poly(nv, 0xa66e_0000 + (nv as u64) * 100 + idx as u64))
@@ -77,9 +78,16 @@ mod non_zk_aggregated_cases {
             let verifier_setup =
                 AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
 
-            let (commitment, hint) =
-                AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, &polys, &stack)
-                    .expect("grouped commit");
+            let akita_prover::CommitOutput {
+                committed_group: commitment,
+                hint,
+            } = AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(
+                &setup,
+                &polys,
+                &stack,
+                akita_prover::GroupPosition::Sole,
+            )
+            .expect("grouped commit");
             let commitments = [commitment];
             let hints = vec![hint];
 
@@ -144,8 +152,9 @@ mod non_zk_aggregated_cases {
         init_rayon_pool();
         run_on_large_stack(move || {
             let opening_batch = OpeningClaimsLayout::new(nv, batch_size).expect("opening_batch");
-            let layout =
-                DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+            let layout = DenseCfg::select_schedule_for_opening(&opening_batch)
+                .map(|row| row.schedule().root.params.final_group.commitment.clone())
+                .expect("layout");
 
             let polys: Vec<DensePoly<F>> = (0..batch_size)
                 .map(|idx| make_dense_poly(nv, 0xd3e5_0000 + (nv as u64) * 100 + idx as u64))
@@ -168,10 +177,15 @@ mod non_zk_aggregated_cases {
             let verifier_setup =
                 AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
 
-            let (commitments, hints) =
-                AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, &polys, &stack)
-                    .map(|(commitment, hint)| (vec![commitment], vec![hint]))
-                    .expect("grouped commit");
+            let output = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
+                &setup,
+                &polys,
+                &stack,
+                akita_prover::GroupPosition::Sole,
+            )
+            .expect("grouped commit");
+            let commitments = vec![output.committed_group];
+            let hints = vec![output.hint];
 
             assert_eq!(
                 commitments.len(),
@@ -262,7 +276,9 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         const BATCH_SIZE: usize = 4;
 
         let opening_batch = OpeningClaimsLayout::new(NV, BATCH_SIZE).expect("opening_batch");
-        let layout = DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+        let layout = DenseCfg::select_schedule_for_opening(&opening_batch)
+            .map(|row| row.schedule().root.params.final_group.commitment.clone())
+            .expect("layout");
         let dense_a = make_dense_poly(NV, 0x4d10_0001);
         let dense_b = make_dense_poly(NV, 0x4d10_0002);
         let onehot_a = make_dense_cfg_onehot_poly(&layout, 0x4d10_1001);
@@ -291,9 +307,16 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let verifier_setup =
             AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
 
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, &polys, &stack)
-                .expect("mixed aggregated commit");
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
+            &setup,
+            &polys,
+            &stack,
+            akita_prover::GroupPosition::Sole,
+        )
+        .expect("mixed aggregated commit");
         let commitments = [commitment];
         let hints = vec![hint];
 

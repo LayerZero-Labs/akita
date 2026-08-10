@@ -24,7 +24,7 @@ The public search entry point is
 
 `key: AkitaScheduleLookupKey` describes the supported root opening shape.
 Single-group openings store one `PolynomialGroupLayout` in `final_group` and
-leave `precommitteds` empty:
+leave `prior_group_profiles` empty:
 
 - `num_vars`: the number of Boolean variables in that group's opened
   polynomial domain.
@@ -32,10 +32,10 @@ leave `precommitteds` empty:
   opened at that group's point (one claim per polynomial).
 
 Multi-group roots use the same lookup key with any earlier groups recorded as
-`CommittedGroupProfile` in `precommitteds`. For a single-group batch,
+`CommittedGroupProfile` in `prior_group_profiles`. For a single-group batch,
 the root `t` and `w` multiplicities are just `num_polynomials` and the `z`
 multiplicity is always `1`; multi-group roots derive those counts from
-`final_group` plus `precommitteds`.
+`final_group` plus `prior_group_profiles`.
 
 `policy: PlannerPolicy` is the `Cfg`-free projection of a preset:
 
@@ -279,7 +279,7 @@ akita-planner -> akita-schedules
 akita-planner --features catalog-gen -> akita-config
 ```
 
-`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::runtime_schedule` to `akita_schedules::resolve_schedule`. Runtime resolution is strict and never invokes planner search.
+`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::select_schedule_for_key` to strict generated-row resolution. Runtime resolution never invokes planner search.
 
 This boundary avoids a circular dependency while keeping a single source of truth for preset policy. The DP remains offline-only in `akita-planner`; verifier-reachable runtime code must return `AkitaError` rather than panic on malformed input.
 

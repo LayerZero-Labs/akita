@@ -10,7 +10,7 @@ pub(super) fn planned_payload_bytes<Cfg: CommitmentConfig>(
 ) -> usize {
     let key = akita_types::AkitaScheduleLookupKey {
         final_group,
-        precommitteds: schedule
+        prior_group_profiles: schedule
             .root
             .params
             .precommitted_groups
@@ -30,7 +30,7 @@ pub(super) fn planned_payload_bytes<Cfg: CommitmentConfig>(
         }
     }
     let precommitted_honest_fold_policies =
-        vec![Cfg::root_honest_fold_policy(); key.precommitteds.len()];
+        vec![Cfg::root_honest_fold_policy(); key.prior_group_profiles.len()];
     akita_planner::find_schedule(
         &key,
         Cfg::root_honest_fold_policy(),

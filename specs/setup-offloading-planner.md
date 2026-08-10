@@ -10,6 +10,13 @@
 | Superseded-by | Flat setup/capacity portions superseded by `flat-public-matrix-and-exact-ntt-cache.md`; recursive selection policy remains active |
 | Book-chapter  | book/src/roadmap/verifier-offloading.md    |
 
+> **Commit-API update (2026-08-10).** References below to `commit_group` or
+> other pre-consolidation commitment entry points describe the implementation
+> available when this planner design landed. The current public flow uses
+> `AkitaCommitmentScheme::commit` with `GroupPosition::Prior` and
+> `GroupPosition::Final`; the recursive planning and setup-offloading contracts
+> in this document are unchanged.
+
 ## Revision authority
 
 The public-matrix derivation, setup-capacity unit, and NTT-cache contracts in

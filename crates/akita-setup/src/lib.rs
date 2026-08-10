@@ -155,9 +155,9 @@ fn prefix_registry_cache_file_name<Cfg: CommitmentConfig>(
     // flat-v2 namespace; the digest prevents incompatible schedules from
     // aliasing within that namespace.
     let raw_schedule =
-        match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_lookup_key)) {
+        match Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(schedule_lookup_key)) {
             Ok(schedule) => {
-                let digest = digest_effective_schedule(&schedule);
+                let digest = digest_effective_schedule(schedule.schedule());
                 let mut hex = String::with_capacity(digest.len() * 2);
                 for byte in digest {
                     let _ = write!(hex, "{byte:02x}");
@@ -1026,11 +1026,17 @@ mod tests {
 
                 let disk_setup = load_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
 
-                let lp = Cfg::get_params_for_batched_commitment(
+                let lp = Cfg::select_schedule_for_opening(
                     &akita_types::OpeningClaimsLayout::new(MAX_VARS, 1)
                         .expect("singleton opening batch"),
                 )
-                .unwrap();
+                .unwrap()
+                .schedule()
+                .root
+                .params
+                .final_group
+                .commitment
+                .clone();
                 let num_coeffs = lp.num_live_blocks * lp.num_positions_per_block;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                 let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs);

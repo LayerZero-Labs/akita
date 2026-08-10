@@ -118,7 +118,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
     .profile;
     let recursive_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
-        precommitteds: vec![descriptor, descriptor],
+        prior_group_profiles: vec![descriptor, descriptor],
     };
     let precommitted_honest_fold_policies = vec![
         OneHot::root_honest_fold_policy(),

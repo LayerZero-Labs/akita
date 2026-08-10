@@ -93,14 +93,22 @@ fn run_prove<
 
     let (commitments, proof) = {
         let t0 = Instant::now();
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<Cfg>::commit(setup, std::slice::from_ref(poly), stack).unwrap();
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<Cfg>::commit(
+            setup,
+            std::slice::from_ref(poly),
+            stack,
+            akita_prover::GroupPosition::Sole,
+        )
+        .unwrap();
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
         let commitments = [commitment];
         let selection = Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
             final_group: *commitments[0].profile(),
-            precommitteds: Vec::new(),
+            prior_group_profiles: Vec::new(),
         })
         .expect("select generated schedule row")
         .selection();
@@ -108,7 +116,7 @@ fn run_prove<
         let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
         let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
             setup,
-            prover_claims(selection, pt, &poly_refs[..], &commitments[0], hint),
+            prover_claims::<Cfg, _>(selection, pt, &poly_refs[..], &commitments[0], hint),
             stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -152,7 +160,9 @@ fn run_prove<
     } else {
         let opening_batch =
             OpeningClaimsLayout::new(pt.len(), 1).expect("same-point opening batch");
-        let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
+        let schedule = Cfg::select_schedule_for_opening(&opening_batch)
+            .expect("runtime schedule")
+            .into_schedule();
         if validate_against_planner {
             report_proof_size_against_planner(
                 label,
@@ -201,7 +211,7 @@ fn run_prove<
         verifier_claims(
             Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
                 final_group: *commitments[0].profile(),
-                precommitteds: Vec::new(),
+                prior_group_profiles: Vec::new(),
             })
             .expect("select verifier schedule row")
             .selection(),

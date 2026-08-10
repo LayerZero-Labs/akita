@@ -139,7 +139,7 @@ pub struct GeneratedFamily {
     pub group_batch_keys:
         fn() -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError>,
     /// Strict table-backed runtime resolution. A missing row is unsupported.
-    pub runtime_schedule: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
+    pub select_schedule_for_key: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
     /// The generated catalog linked for this family, when its feature is active.
     pub schedule_catalog: fn() -> Option<GeneratedScheduleTable>,
     /// Strict table-backed standalone precommit resolution.
@@ -212,10 +212,10 @@ fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
     plan_regen::<Cfg>(&key, &precommitted_honest_fold_policies)
 }
 
-fn runtime_schedule<Cfg: CommitmentConfig>(
+fn select_schedule_for_key<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
 ) -> Result<FoldSchedule, AkitaError> {
-    Cfg::runtime_schedule(key)
+    Cfg::select_schedule_for_key(&key).map(akita_schedules::ResolvedScheduleRow::into_schedule)
 }
 
 fn schedule_catalog<Cfg: CommitmentConfig>() -> Option<GeneratedScheduleTable> {
@@ -225,7 +225,7 @@ fn schedule_catalog<Cfg: CommitmentConfig>() -> Option<GeneratedScheduleTable> {
 fn runtime_precommitted_profile<Cfg: CommitmentConfig>(
     group: &PolynomialGroupLayout,
 ) -> Result<CommittedGroupProfile, AkitaError> {
-    akita_config::committed_group_profile::<Cfg>(group)
+    akita_config::resolve_prior_group_profile::<Cfg>(group)
 }
 
 fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
@@ -348,7 +348,7 @@ fn fp128_onehot_multichunk_w2r2_group_batch_keys(
     Ok(vec![(
         AkitaScheduleLookupKey {
             final_group: group,
-            precommitteds: vec![precommitted],
+            prior_group_profiles: vec![precommitted],
         },
         vec![honest_fold_policy_of::<Cfg>()],
     )])
@@ -371,7 +371,7 @@ fn fp32_onehot_group_batch_keys(
     Ok(vec![(
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(20, 1),
-            precommitteds: vec![precommitted],
+            prior_group_profiles: vec![precommitted],
         },
         vec![honest_fold_policy_of::<Cfg>()],
     )])
@@ -391,7 +391,7 @@ fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
     Ok(vec![(
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
-            precommitteds: vec![precommitted, precommitted],
+            prior_group_profiles: vec![precommitted, precommitted],
         },
         vec![
             honest_fold_policy_of::<BaseCfg>(),
@@ -425,7 +425,7 @@ fn heterogeneous_onehot_catalog_key(
     Ok((
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(16, 1),
-            precommitteds: vec![onehot, dense],
+            prior_group_profiles: vec![onehot, dense],
         },
         vec![onehot_policy, dense_policy],
     ))
@@ -454,28 +454,28 @@ fn onehot_group_batch_test_keys<BaseCfg: CommitmentConfig + 'static>(
         (
             AkitaScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(20, 2),
-                precommitteds: vec![singleton_pre],
+                prior_group_profiles: vec![singleton_pre],
             },
             vec![policy],
         ),
         (
             AkitaScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(20, 4),
-                precommitteds: vec![singleton_pre, singleton_pre],
+                prior_group_profiles: vec![singleton_pre, singleton_pre],
             },
             vec![policy, policy],
         ),
         (
             AkitaScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(20, 4),
-                precommitteds: vec![singleton_pre, singleton_pre, singleton_pre],
+                prior_group_profiles: vec![singleton_pre, singleton_pre, singleton_pre],
             },
             vec![policy, policy, policy],
         ),
         (
             AkitaScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(20, 1),
-                precommitteds: vec![pair_pre],
+                prior_group_profiles: vec![pair_pre],
             },
             vec![policy],
         ),
@@ -492,7 +492,7 @@ macro_rules! family_row {
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
             group_batch_keys: $group_keys,
-            runtime_schedule: runtime_schedule::<$cfg>,
+            select_schedule_for_key: select_schedule_for_key::<$cfg>,
             schedule_catalog: schedule_catalog::<$cfg>,
             runtime_precommitted_profile: runtime_precommitted_profile::<$cfg>,
             policy: family_policy::<$cfg>,
@@ -512,7 +512,7 @@ macro_rules! family_row {
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
             group_batch_keys: $group_keys,
-            runtime_schedule: runtime_schedule::<$cfg>,
+            select_schedule_for_key: select_schedule_for_key::<$cfg>,
             schedule_catalog: schedule_catalog::<$cfg>,
             runtime_precommitted_profile: runtime_precommitted_profile::<$cfg>,
             policy: family_policy::<$cfg>,

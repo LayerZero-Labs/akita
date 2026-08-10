@@ -1,32 +1,43 @@
-use akita_field::FieldCore;
-use akita_prover::{ProverOpeningData, SelectedProverOpeningData};
+use akita_config::CommitmentConfig;
+use akita_field::{FieldCore, Zero};
+use akita_prover::SelectedProverOpeningData;
 use akita_types::{
     AkitaCommitmentHint, CommittedGroup, GroupBatchStatement, OpeningClaims,
     OpeningScheduleSelection, PolynomialGroupClaims,
 };
 
-pub(super) fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
+pub(super) fn prover_claims<'a, Cfg, P>(
     selection: OpeningScheduleSelection,
-    point: &'a [E],
+    point: &'a [Cfg::ExtField],
     polynomials: &'a [&'a P],
-    commitment: &'a CommittedGroup<CommitF>,
-    hint: AkitaCommitmentHint<CommitF>,
-) -> SelectedProverOpeningData<'a, E, akita_prover::PreparedProverGroup<'a, P>, CommitF>
+    commitment: &'a CommittedGroup<Cfg::Field>,
+    hint: AkitaCommitmentHint<Cfg::Field>,
+) -> SelectedProverOpeningData<
+    'a,
+    Cfg::ExtField,
+    akita_prover::PreparedProverGroup<'a, P>,
+    Cfg::Field,
+>
 where
-    P: akita_prover::RootPolyMeta<CommitF>,
+    Cfg: CommitmentConfig,
+    P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
     let group = PolynomialGroupClaims::new(
         point.to_vec(),
-        vec![E::zero(); polynomials.len()],
+        vec![Cfg::ExtField::zero(); polynomials.len()],
         commitment.clone(),
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    (
-        selection,
-        ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
-            .expect("valid prover opening data"),
+    let selected = SelectedProverOpeningData::from_committed_claims::<Cfg>(
+        akita_types::PriorGroupProfiles::default(),
+        opening_claims,
+        vec![hint],
+        vec![polynomials],
     )
+    .expect("valid prover opening data");
+    assert_eq!(selected.selection(), selection);
+    selected
 }
 
 pub(super) fn verifier_claims<'a, E: FieldCore, F: FieldCore>(

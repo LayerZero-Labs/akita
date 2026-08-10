@@ -2,12 +2,12 @@
 //!
 //! These cover the behaviors the planner refactor introduces:
 //!
-//! - **Table-miss rejection:** `Cfg::runtime_schedule` rejects a key that no
+//! - **Table-miss rejection:** `Cfg::select_schedule_for_key` rejects a key that no
 //!   generated table contains.
 //! - **Policy-bridge parity:** `policy_of::<Cfg>()` reproduces the values
 //!   embedded in generated catalog identities (single source of truth).
 //! - **No-panic boundary:** adversarial-but-bounded keys through
-//!   `runtime_schedule` return `Result`, never panic.
+//!   `select_schedule_for_key` return `Result`, never panic.
 
 #![allow(missing_docs)]
 
@@ -72,8 +72,8 @@ fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
         "expected a table miss for the 3-poly key; the table unexpectedly carries it"
     );
 
-    let err = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
-        .expect_err("runtime_schedule must reject uncataloged keys");
+    let err = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(key))
+        .expect_err("select_schedule_for_key must reject uncataloged keys");
     assert!(
         matches!(err, akita_field::AkitaError::UnsupportedSchedule(_)),
         "expected UnsupportedSchedule for catalog miss, got {err:?}"
@@ -296,14 +296,15 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
 )))]
 fn grouped_recursive_catalog_rejects_without_recursive_feature() {
     let precommitted_group = PolynomialGroupLayout::singleton(16);
-    let descriptor = akita_config::committed_group_profile::<fp128::OneHot>(&precommitted_group)
-        .expect("base OneHot precommit profile");
+    let descriptor =
+        akita_config::resolve_prior_group_profile::<fp128::OneHot>(&precommitted_group)
+            .expect("base OneHot precommit profile");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
-        precommitteds: vec![descriptor, descriptor],
+        prior_group_profiles: vec![descriptor, descriptor],
     };
     assert!(matches!(
-        akita_config::RecursiveCommitmentConfig::<fp128::OneHot>::runtime_schedule(key),
+        akita_config::RecursiveCommitmentConfig::<fp128::OneHot>::select_schedule_for_key(&key),
         Err(akita_field::AkitaError::UnsupportedSchedule(_))
     ));
 }
@@ -379,11 +380,11 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
     const FINAL_NV: usize = 20;
 
     let pre_group = PolynomialGroupLayout::singleton(PRE_NV);
-    let pre_profile =
-        akita_config::committed_group_profile::<Cfg>(&pre_group).expect("dense precommit profile");
+    let pre_profile = akita_config::resolve_prior_group_profile::<Cfg>(&pre_group)
+        .expect("dense precommit profile");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(FINAL_NV),
-        precommitteds: vec![pre_profile],
+        prior_group_profiles: vec![pre_profile],
     };
     let precommitted_honest_fold_policies = vec![Cfg::root_honest_fold_policy()];
     let planned = find_schedule(
@@ -414,7 +415,7 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
     );
     assert_eq!(
         planned.schedule.root.params.precommitted_groups[0].descriptor,
-        key.precommitteds[0]
+        key.prior_group_profiles[0]
     );
 }
 
@@ -441,13 +442,14 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
     ];
     for key in adversarial {
         // Must return without panicking; either branch (Ok/Err) is fine.
-        let _ = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key));
+        let _ = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(key));
     }
 }
 fn committed_descriptor<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> CommittedGroupProfile {
-    akita_config::committed_group_profile::<Cfg>(&group).expect("heterogeneous group must resolve")
+    akita_config::resolve_prior_group_profile::<Cfg>(&group)
+        .expect("heterogeneous group must resolve")
 }
 
 #[test]
@@ -457,7 +459,7 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
     let dense = committed_descriptor::<fp128::Dense>(PolynomialGroupLayout::new(15, 2));
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(16, 1),
-        precommitteds: vec![onehot_16, dense],
+        prior_group_profiles: vec![onehot_16, dense],
     };
 
     let precommitted_honest_fold_policies = vec![
@@ -483,11 +485,13 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
     )
     .expect("heterogeneous group batch must plan offline");
 
-    let runtime = Cfg::runtime_schedule(key.clone()).expect("curated mixed catalog row");
+    let runtime = Cfg::select_schedule_for_key(&key)
+        .expect("curated mixed catalog row")
+        .into_schedule();
     assert_schedule_eq("curated mixed row replay", &runtime, &planned.schedule);
 
     let reordered = AkitaScheduleLookupKey {
-        precommitteds: vec![dense, onehot_16],
+        prior_group_profiles: vec![dense, onehot_16],
         ..key
     };
     assert_ne!(
@@ -497,7 +501,7 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
     );
     assert!(
         matches!(
-            Cfg::runtime_schedule(reordered),
+            Cfg::select_schedule_for_key(&reordered),
             Err(akita_field::AkitaError::UnsupportedSchedule(_))
         ),
         "an unlisted mixed ordering must reject without runtime planner search"

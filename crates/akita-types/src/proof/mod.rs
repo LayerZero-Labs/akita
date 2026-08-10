@@ -43,10 +43,9 @@ pub use crate::opening_claims::{
 pub(crate) use batch::root_tensor_projection_enabled_for_width;
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
-    folded_root_supports_opening_shape, padded_scalar_batch_num_vars, prepare_opening_point,
+    folded_root_supports_opening_shape, prepare_opening_point,
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
-    validate_batched_inputs, validate_scalar_point_matches_poly_arity, PreparedOpeningPoint,
-    RingMultiplierOpeningPoint,
+    validate_batched_inputs, PreparedOpeningPoint, RingMultiplierOpeningPoint,
 };
 pub use commitment::{
     AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,

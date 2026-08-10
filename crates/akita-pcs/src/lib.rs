@@ -61,15 +61,17 @@ pub use akita_field::{
     PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 pub use akita_prover::{
-    ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend,
-    DecomposeFoldWitness, DigitRowsComputeBackend, LevelProveStacks, OpeningProveBackendFor,
-    OperationCtx, PreparedGroupProveOps, PreparedProverGroup, ProveBackendFor, ProverOpeningData,
-    RecursiveProveBackend, RingSwitchRelationRows, RootCommitBackend, RootCommitSource,
-    RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
-    SelectedProverOpeningData, SparseRingBlockEntry, TensorBackendFor, TieredProveStacks,
-    UniformProverStack,
+    CommitOutput, ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend,
+    DecomposeFoldWitness, DigitRowsComputeBackend, GroupPosition, LevelProveStacks,
+    OpeningProveBackendFor, OperationCtx, PreparedGroupProveOps, PreparedProverGroup,
+    ProveBackendFor, ProverOpeningData, RecursiveProveBackend, RingSwitchRelationRows,
+    RootCommitBackend, RootCommitSource, RootOpeningSource, RootPolyShape, RootProveBackend,
+    RootProvePoly, RootTensorSource, SelectedProverOpeningData, SparseRingBlockEntry,
+    TensorBackendFor, TieredProveStacks, UniformProverStack,
 };
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};
-pub use akita_types::{BasisMode, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims};
+pub use akita_types::{
+    BasisMode, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PriorGroupProfiles,
+};
 pub use scheme::AkitaCommitmentScheme;
