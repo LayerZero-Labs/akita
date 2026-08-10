@@ -1,5 +1,7 @@
 use super::*;
 #[cfg(feature = "catalog-gen")]
+use akita_config::CommitmentConfig;
+#[cfg(feature = "catalog-gen")]
 use akita_types::extension_opening_reduction_level_bytes;
 
 #[cfg(test)]
@@ -154,6 +156,101 @@ fn adaptive_dimension_candidates_enumerate_exact_role_cartesian_product() {
 }
 
 #[cfg(feature = "catalog-gen")]
+fn assert_adaptive_small_field_keys<Cfg: akita_config::CommitmentConfig>(
+    family: &str,
+    keys: &[PolynomialGroupLayout],
+) {
+    let policy = akita_config::policy_of::<Cfg>();
+    let mut failures = Vec::new();
+    for &key in keys {
+        let planned = crate::planner::find_schedule(
+            &akita_types::AkitaScheduleLookupKey::single(key),
+            Cfg::root_honest_fold_policy(),
+            &[],
+            &policy,
+            Cfg::ring_challenge_config,
+        );
+        if let Err(error) = planned {
+            failures.push(format!("{family} {key:?}: {error}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn adaptive_fp32_dense_plans_supported_profile_keys() {
+    use akita_config::proof_optimized::fp32;
+
+    assert_adaptive_small_field_keys::<fp32::Dense>(
+        "fp32 dense",
+        &[
+            PolynomialGroupLayout::singleton(20),
+            PolynomialGroupLayout::singleton(26),
+        ],
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn adaptive_fp32_onehot_plans_supported_profile_keys() {
+    use akita_config::proof_optimized::fp32;
+
+    assert_adaptive_small_field_keys::<fp32::OneHot>(
+        "fp32 onehot",
+        &[
+            PolynomialGroupLayout::singleton(14),
+            PolynomialGroupLayout::singleton(16),
+            PolynomialGroupLayout::new(16, 2),
+            PolynomialGroupLayout::singleton(20),
+            PolynomialGroupLayout::singleton(28),
+        ],
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn adaptive_fp64_dense_plans_supported_profile_keys() {
+    use akita_config::proof_optimized::fp64;
+
+    assert_adaptive_small_field_keys::<fp64::Dense>(
+        "fp64 dense",
+        &[
+            PolynomialGroupLayout::singleton(14),
+            PolynomialGroupLayout::singleton(20),
+        ],
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn adaptive_fp64_onehot_plans_supported_profile_keys() {
+    use akita_config::proof_optimized::fp64;
+
+    assert_adaptive_small_field_keys::<fp64::OneHot>(
+        "fp64 onehot",
+        &[PolynomialGroupLayout::singleton(28)],
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn adaptive_fp32_dense_rejects_the_insecure_nv14_shape() {
+    use akita_config::proof_optimized::fp32;
+
+    let policy = akita_config::policy_of::<fp32::Dense>();
+    let error = crate::planner::find_schedule(
+        &akita_types::AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(14)),
+        fp32::Dense::root_honest_fold_policy(),
+        &[],
+        &policy,
+        fp32::Dense::ring_challenge_config,
+    )
+    .expect_err("fp32 dense nv14 must remain outside the securable catalog");
+    assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
+}
+
+#[cfg(feature = "catalog-gen")]
 #[test]
 fn mixed_domain_search_beats_or_ties_uniform_d64() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
@@ -236,15 +333,20 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn terminal_candidates_compete_across_opening_bases() {
-    use akita_config::{policy_of, proof_optimized::fp32::D128OneHot, CommitmentConfig};
+    use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
 
-    let dimensions = RingDimensionSearchDomain::uniform(D128OneHot::D).unwrap();
+    let dimensions = RingDimensionSearchDomain::uniform(128).unwrap();
+    let mut policy = policy_of::<OneHot>();
+    policy.uniform_ring_dimension = 128;
+    policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
+        ring_dimension: 128,
+    };
     let selected = find_schedule(
         PolynomialGroupLayout::singleton(14),
-        &policy_of::<D128OneHot>(),
-        D128OneHot::root_honest_fold_policy(),
+        &policy,
+        OneHot::root_honest_fold_policy(),
         &dimensions,
-        D128OneHot::ring_challenge_config,
+        OneHot::ring_challenge_config,
     )
     .unwrap();
 

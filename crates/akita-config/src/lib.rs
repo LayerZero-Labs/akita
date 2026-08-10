@@ -686,7 +686,7 @@ mod fp128_policy_tests {
     fn small_field_sis_pricing_includes_psi_norm_bound() {
         use super::proof_optimized::{fp128, fp32};
 
-        type SmallCfg = fp32::D128OneHot;
+        type SmallCfg = fp32::OneHot;
         assert_eq!(
             <fp128::Dense as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
             1

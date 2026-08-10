@@ -85,7 +85,12 @@ const FP128_ONEHOT_MULTI_CHUNK_W4R2_KEYS: &[PolynomialGroupLayout] =
 const FP128_DENSE_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
     &[PolynomialGroupLayout::singleton(16)];
 
-const FP32_D128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
+const FP32_DENSE_KEYS: &[PolynomialGroupLayout] = &[
+    PolynomialGroupLayout::singleton(20),
+    PolynomialGroupLayout::singleton(26),
+];
+
+const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
     PolynomialGroupLayout::singleton(16),
     PolynomialGroupLayout::new(16, 2),
@@ -93,19 +98,13 @@ const FP32_D128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(28),
 ];
 
-const FP32_D256_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(14)];
-
-const FP64_D128_DENSE_KEYS: &[PolynomialGroupLayout] = &[
+const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(26),
 ];
 
-const FP64_D128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(28)];
-
-const FP64_D256_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(28)];
-
-const FP32_D128_DENSE_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(26)];
+const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(28)];
 
 /// One generated schedule-table family.
 ///
@@ -755,45 +754,31 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp128::DenseMultiChunk
     ),
     family_row!(
-        "fp64_d128_dense",
-        "FP64_D128_DENSE_SCHEDULES",
-        "fp64-d128-dense",
-        FP64_D128_DENSE_KEYS,
-        fp64::D128Dense
+        "fp64_dense",
+        "FP64_DENSE_SCHEDULES",
+        "fp64-dense",
+        FP64_DENSE_KEYS,
+        fp64::Dense
     ),
     family_row!(
-        "fp64_d128_onehot",
-        "FP64_D128_ONEHOT_SCHEDULES",
-        "fp64-d128-onehot",
-        FP64_D128_ONEHOT_KEYS,
-        fp64::D128OneHot
+        "fp64_onehot",
+        "FP64_ONEHOT_SCHEDULES",
+        "fp64-onehot",
+        FP64_ONEHOT_KEYS,
+        fp64::OneHot
     ),
     family_row!(
-        "fp64_d256_onehot",
-        "FP64_D256_ONEHOT_SCHEDULES",
-        "fp64-d256-onehot",
-        FP64_D256_ONEHOT_KEYS,
-        fp64::D256OneHot
+        "fp32_dense",
+        "FP32_DENSE_SCHEDULES",
+        "fp32-dense",
+        FP32_DENSE_KEYS,
+        fp32::Dense
     ),
     family_row!(
-        "fp32_d128_dense",
-        "FP32_D128_DENSE_SCHEDULES",
-        "fp32-d128-dense",
-        FP32_D128_DENSE_KEYS,
-        fp32::D128Dense
-    ),
-    family_row!(
-        "fp32_d128_onehot",
-        "FP32_D128_ONEHOT_SCHEDULES",
-        "fp32-d128-onehot",
-        FP32_D128_ONEHOT_KEYS,
-        fp32::D128OneHot
-    ),
-    family_row!(
-        "fp32_d256_onehot",
-        "FP32_D256_ONEHOT_SCHEDULES",
-        "fp32-d256-onehot",
-        FP32_D256_ONEHOT_KEYS,
-        fp32::D256OneHot
+        "fp32_onehot",
+        "FP32_ONEHOT_SCHEDULES",
+        "fp32-onehot",
+        FP32_ONEHOT_KEYS,
+        fp32::OneHot
     ),
 ];

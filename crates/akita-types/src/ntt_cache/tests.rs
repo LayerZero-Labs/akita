@@ -135,7 +135,10 @@ fn assert_quotient_tail_selectors_agree<F: CanonicalField, const D: usize>(
 #[test]
 fn quotient_tail_planning_and_runtime_selectors_agree_for_all_fields() {
     assert_quotient_tail_selectors_agree::<Prime32Offset99, 128>(SisModulusProfileId::Q32Offset99);
+    assert_quotient_tail_selectors_agree::<Prime32Offset99, 256>(SisModulusProfileId::Q32Offset99);
+    assert_quotient_tail_selectors_agree::<Prime64Offset59, 64>(SisModulusProfileId::Q64Offset59);
     assert_quotient_tail_selectors_agree::<Prime64Offset59, 128>(SisModulusProfileId::Q64Offset59);
+    assert_quotient_tail_selectors_agree::<Prime64Offset59, 256>(SisModulusProfileId::Q64Offset59);
     assert_quotient_tail_selectors_agree::<Prime128OffsetA7F7, 128>(
         SisModulusProfileId::Q128OffsetA7F7,
     );

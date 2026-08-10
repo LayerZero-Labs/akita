@@ -50,49 +50,49 @@ fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
 
 #[test]
 fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
-    let fp32 = snapshot::<fp32::D128Dense>();
+    let fp32 = snapshot::<fp32::Dense>();
     assert_ne!(fp32.inner_basis, fp32.opening_basis);
     assert_eq!(
         fp32,
         Snapshot {
             inner_basis: 8,
             opening_basis: 3,
-            positions: 2048,
+            positions: 1024,
             blocks: 256,
             inner_digits: 4,
-            n_a: 13,
-            n_b: 2,
-            n_d: 2,
+            n_a: 6,
+            n_b: 1,
+            n_d: 1,
             a_input_raw: 1_048_576,
-            a_output_raw: 1_664,
-            b_input_raw: 4_685_824,
+            a_output_raw: 1_536,
+            b_input_raw: 4_325_376,
             b_output_raw: 256,
-            d_input_raw: 360_448,
+            d_input_raw: 720_896,
             d_output_raw: 256,
-            next_witness: 11_385_728,
+            next_witness: 11_385_856,
         }
     );
 
-    let fp64 = snapshot::<fp64::D128Dense>();
+    let fp64 = snapshot::<fp64::Dense>();
     assert_ne!(fp64.inner_basis, fp64.opening_basis);
     assert_eq!(
         fp64,
         Snapshot {
-            inner_basis: 6,
+            inner_basis: 10,
             opening_basis: 3,
             positions: 1024,
-            blocks: 512,
-            inner_digits: 11,
-            n_a: 7,
+            blocks: 256,
+            inner_digits: 7,
+            n_a: 4,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 1_441_792,
-            a_output_raw: 896,
-            b_input_raw: 10_092_544,
-            b_output_raw: 128,
+            a_input_raw: 1_835_008,
+            a_output_raw: 1_024,
+            b_input_raw: 5_767_168,
+            b_output_raw: 256,
             d_input_raw: 1_441_792,
-            d_output_raw: 128,
-            next_witness: 18_794_112,
+            d_output_raw: 256,
+            next_witness: 18_297_600,
         }
     );
 
@@ -101,21 +101,21 @@ fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
     assert_eq!(
         fp128,
         Snapshot {
-            inner_basis: 11,
+            inner_basis: 9,
             opening_basis: 3,
-            positions: 2048,
-            blocks: 512,
-            inner_digits: 12,
-            n_a: 9,
+            positions: 1024,
+            blocks: 256,
+            inner_digits: 15,
+            n_a: 2,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 1_572_864,
-            a_output_raw: 576,
-            b_input_raw: 12_681_216,
+            a_input_raw: 3_932_160,
+            a_output_raw: 512,
+            b_input_raw: 5_636_096,
             b_output_raw: 64,
-            d_input_raw: 1_409_024,
+            d_input_raw: 2_818_048,
             d_output_raw: 64,
-            next_witness: 25_155_904,
+            next_witness: 32_108_224,
         }
     );
 }

@@ -19,10 +19,10 @@ modes_rs = repo / "crates/akita-pcs/examples/profile/modes.rs"
 linkage = repo / "scripts/check_profile_ci_linkage.sh"
 
 MODE_FEATURE = {
-    "onehot_fp32_d128": "schedules-fp32-d128-onehot",
-    "dense_fp32_d128": "schedules-fp32-d128-dense",
-    "onehot_fp64_d128": "schedules-fp64-d128-onehot",
-    "dense_fp64_d128": "schedules-fp64-d128-dense",
+    "dense_fp32": "schedules-fp32-dense",
+    "onehot_fp32": "schedules-fp32-onehot",
+    "dense_fp64": "schedules-fp64-dense",
+    "onehot_fp64": "schedules-fp64-onehot",
     "dense_fp128": "schedules-fp128-dense",
     "onehot_fp128": "schedules-fp128-onehot",
     "onehot_fp128_multi_group": "schedules-fp128-onehot",
@@ -34,10 +34,10 @@ MODE_FEATURE = {
 }
 MODE_NUM_POLYS = {mode: {1, 4} for mode in MODE_FEATURE}
 FEATURE_SYMBOL = {
-    "schedules-fp32-d128-onehot": "FP32_D128_ONEHOT_SCHEDULES",
-    "schedules-fp32-d128-dense": "FP32_D128_DENSE_SCHEDULES",
-    "schedules-fp64-d128-onehot": "FP64_D128_ONEHOT_SCHEDULES",
-    "schedules-fp64-d128-dense": "FP64_D128_DENSE_SCHEDULES",
+    "schedules-fp32-dense": "FP32_DENSE_SCHEDULES",
+    "schedules-fp32-onehot": "FP32_ONEHOT_SCHEDULES",
+    "schedules-fp64-dense": "FP64_DENSE_SCHEDULES",
+    "schedules-fp64-onehot": "FP64_ONEHOT_SCHEDULES",
     "schedules-fp128-dense": "FP128_DENSE_SCHEDULES",
     "schedules-fp128-onehot": "FP128_ONEHOT_SCHEDULES",
     "schedules-fp128-onehot-recursive": "FP128_ONEHOT_RECURSIVE_SCHEDULES",

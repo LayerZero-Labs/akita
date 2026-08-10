@@ -84,7 +84,7 @@ fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
 fn catalog_miss_rejects_non_shipped_keys() {
     check_table_miss_rejection::<fp128::OneHot>(27);
     check_table_miss_rejection::<fp128::Dense>(27);
-    check_table_miss_rejection::<fp32::D128OneHot>(16);
+    check_table_miss_rejection::<fp32::OneHot>(17);
 }
 
 #[test]
@@ -286,6 +286,10 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
 }
 
 #[test]
+#[cfg(not(any(
+    feature = "schedules-fp128-onehot-recursive",
+    feature = "schedules-fp128-onehot-recursive-multi-chunk-w8r2"
+)))]
 fn grouped_recursive_catalog_rejects_without_recursive_feature() {
     let precommitted_group = PolynomialGroupLayout::singleton(16);
     let descriptor = akita_config::committed_group_profile::<fp128::OneHot>(&precommitted_group)
@@ -361,7 +365,7 @@ fn runtime_rejects_malformed_extension_geometry_without_panicking() {
 fn policy_bridge_matches_cfg_hooks() {
     assert_policy_matches_cfg::<fp128::Dense>();
     assert_policy_matches_cfg::<fp128::OneHot>();
-    assert_policy_matches_cfg::<fp32::D64OneHot>();
+    assert_policy_matches_cfg::<fp32::OneHot>();
 }
 
 #[test]
@@ -412,7 +416,7 @@ fn root_basis_is_derived_from_existing_policy_inputs() {
     assert_eq!(fp128.opening_basis_range, (3, 6));
     assert_eq!(fp128.decomposition.log_basis, 3);
 
-    let fp32 = policy_of::<fp32::D64OneHot>();
+    let fp32 = policy_of::<fp32::OneHot>();
     assert_eq!(fp32.opening_basis_range, (3, 6));
     assert_eq!(fp32.decomposition.log_basis, 3);
 }

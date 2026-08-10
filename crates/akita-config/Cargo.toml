@@ -22,12 +22,10 @@ test-support = []
 schedules-default = [
   "schedules-fp128-onehot",
   "schedules-fp128-dense",
-  "schedules-fp32-d128-onehot",
-  "schedules-fp32-d128-dense",
-  "schedules-fp32-d256-onehot",
-  "schedules-fp64-d128-dense",
-  "schedules-fp64-d128-onehot",
-  "schedules-fp64-d256-onehot",
+  "schedules-fp32-dense",
+  "schedules-fp32-onehot",
+  "schedules-fp64-dense",
+  "schedules-fp64-onehot",
 ]
 all-schedules = [
   "schedules-default",
@@ -55,12 +53,10 @@ schedules-fp128-onehot-multi-chunk-w4r2 = [
 ]
 schedules-fp128-dense-multi-chunk = ["akita-schedules/fp128-dense-multi-chunk"]
 
-schedules-fp32-d128-onehot = ["akita-schedules/fp32-d128-onehot"]
-schedules-fp32-d128-dense = ["akita-schedules/fp32-d128-dense"]
-schedules-fp32-d256-onehot = ["akita-schedules/fp32-d256-onehot"]
-schedules-fp64-d128-dense = ["akita-schedules/fp64-d128-dense"]
-schedules-fp64-d128-onehot = ["akita-schedules/fp64-d128-onehot"]
-schedules-fp64-d256-onehot = ["akita-schedules/fp64-d256-onehot"]
+schedules-fp32-dense = ["akita-schedules/fp32-dense"]
+schedules-fp32-onehot = ["akita-schedules/fp32-onehot"]
+schedules-fp64-dense = ["akita-schedules/fp64-dense"]
+schedules-fp64-onehot = ["akita-schedules/fp64-onehot"]
 
 [dependencies]
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }

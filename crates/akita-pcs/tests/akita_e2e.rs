@@ -732,12 +732,12 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
 }
 
 #[test]
-fn small_field_d64_dense_degenerate_roots_fail_fast() {
+fn small_field_dense_uncataloged_roots_fail_fast() {
     for result in [
-        fp32::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+        fp32::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV),
         )),
-        fp64::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+        fp64::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV + 1),
         )),
     ] {

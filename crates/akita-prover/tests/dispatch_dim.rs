@@ -16,7 +16,7 @@ fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
     .expect("runtime schedule")
 }
 
-fn assert_schedule_geometry(schedule: &FoldSchedule, expected_d: usize) {
+fn assert_schedule_geometry(schedule: &FoldSchedule, allowed_dims: &[usize]) {
     let params = std::iter::once(&schedule.root.params.final_group.commitment).chain(
         schedule
             .recursive_folds
@@ -24,20 +24,23 @@ fn assert_schedule_geometry(schedule: &FoldSchedule, expected_d: usize) {
             .map(|step| &step.params.witness),
     );
     for params in params {
-        assert_eq!(params.d_a(), expected_d);
+        let dims = params.role_dims();
+        assert!(allowed_dims.contains(&dims.d_a()));
+        assert!(allowed_dims.contains(&dims.d_b()));
+        assert!(allowed_dims.contains(&dims.d_d()));
         assert_eq!(
             params.flat_field_len().expect("flat length"),
-            params.n_ring_elems().expect("ring elements") * expected_d
+            params.n_ring_elems().expect("ring elements") * params.d_a()
         );
     }
-    assert_eq!(schedule.terminal.params.witness.d_a(), expected_d);
+    assert!(allowed_dims.contains(&schedule.terminal.params.witness.d_a()));
 }
 
 #[test]
-fn accepts_real_fp64_d128_schedule() {
-    let schedule = schedule::<fp64::D128Dense>(20);
-    validate_schedule_ring_dims(&schedule).expect("D128 schedule");
-    assert_schedule_geometry(&schedule, 128);
+fn accepts_real_fp64_adaptive_schedule() {
+    let schedule = schedule::<fp64::Dense>(20);
+    validate_schedule_ring_dims(&schedule).expect("adaptive fp64 schedule");
+    assert_schedule_geometry(&schedule, &[64, 128, 256]);
 }
 
 #[test]

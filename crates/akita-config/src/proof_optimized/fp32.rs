@@ -7,92 +7,46 @@ pub type Field = Prime32Offset99;
 /// Akita's degree-4 extension for fp32 public claims and Fiat-Shamir challenges.
 pub type ExtensionField = FpExt4<Field>;
 
-/// Dense `D=64` preset for fp32 crossover profiling.
+/// Default adaptive dense preset for fp32.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D64Dense;
+pub struct Dense;
 
-/// Onehot `D=64` preset for fp32 crossover profiling.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D64OneHot;
+impl Dense {
+    pub const A_RING_DIMENSIONS: [usize; 2] = [128, 256];
+    pub const B_RING_DIMENSIONS: [usize; 2] = [128, 256];
+    pub const D_RING_DIMENSIONS: [usize; 2] = [128, 256];
+}
 
-/// Dense `D=128` preset for planner-backed fp32 experiments.
+/// Default adaptive one-hot preset for fp32.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D128Dense;
+pub struct OneHot;
 
-/// Onehot `D=128` preset for planner-backed fp32 experiments.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D128OneHot;
-
-/// Dense `D=256` preset for planner-backed fp32 experiments.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D256Dense;
-
-/// Onehot `D=256` preset for planner-backed fp32 experiments.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D256OneHot;
+impl OneHot {
+    pub const A_RING_DIMENSIONS: [usize; 2] = [128, 256];
+    pub const B_RING_DIMENSIONS: [usize; 2] = [128, 256];
+    pub const D_RING_DIMENSIONS: [usize; 2] = [128, 256];
+}
 
 impl_proof_optimized_preset!(
-    D64Dense,
+    Dense,
     Field,
     ExtensionField,
     akita_types::SisModulusProfileId::Q32Offset99,
-    64,
-    32,
-    32,
-    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64)
-);
-impl_proof_optimized_preset!(
-    D64OneHot,
-    Field,
-    ExtensionField,
-    akita_types::SisModulusProfileId::Q32Offset99,
-    64,
-    32,
-    1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1)
-);
-impl_proof_optimized_preset!(
-    D128Dense,
-    Field,
-    ExtensionField,
-    akita_types::SisModulusProfileId::Q32Offset99,
-    128,
+    256,
     32,
     32,
     fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 128),
-    schedules = (
-        "schedules-fp32-d128-dense",
-        "fp32_d128_dense",
-        fp32_d128_dense_table
-    )
+    schedules = ("schedules-fp32-dense", "fp32_dense", fp32_dense_table),
+    ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
+        uniform_suffix_dimension: 128,
+        potential_a_dimensions: &Dense::A_RING_DIMENSIONS,
+        potential_b_dimensions: &Dense::B_RING_DIMENSIONS,
+        potential_d_dimensions: &Dense::D_RING_DIMENSIONS,
+    }
 );
 impl_proof_optimized_preset!(
-    D128OneHot,
-    Field,
-    ExtensionField,
-    akita_types::SisModulusProfileId::Q32Offset99,
-    128,
-    32,
-    1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
-    schedules = (
-        "schedules-fp32-d128-onehot",
-        "fp32_d128_onehot",
-        fp32_d128_onehot_table
-    )
-);
-impl_proof_optimized_preset!(
-    D256Dense,
-    Field,
-    ExtensionField,
-    akita_types::SisModulusProfileId::Q32Offset99,
-    256,
-    32,
-    32,
-    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 256)
-);
-impl_proof_optimized_preset!(
-    D256OneHot,
+    OneHot,
     Field,
     ExtensionField,
     akita_types::SisModulusProfileId::Q32Offset99,
@@ -100,9 +54,12 @@ impl_proof_optimized_preset!(
     32,
     1,
     fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
-    schedules = (
-        "schedules-fp32-d256-onehot",
-        "fp32_d256_onehot",
-        fp32_d256_onehot_table
-    )
+    schedules = ("schedules-fp32-onehot", "fp32_onehot", fp32_onehot_table),
+    ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
+        uniform_suffix_dimension: 128,
+        potential_a_dimensions: &OneHot::A_RING_DIMENSIONS,
+        potential_b_dimensions: &OneHot::B_RING_DIMENSIONS,
+        potential_d_dimensions: &OneHot::D_RING_DIMENSIONS,
+    }
 );

@@ -111,13 +111,11 @@ CASE_METADATA: dict[str, CaseMetadata] = {
     "onehot_fp128_multi_chunk_w4r2": CaseMetadata(
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "multi-chunk W4R2"
     ),
-    # Small fields fold securely only at D128/D256 under honest pricing.
-    "dense_fp32_d128": CaseMetadata("fp32", "dense", "dense", "D128"),
-    "onehot_fp32_d128": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
-    "onehot_fp32_d256": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D256"),
-    "dense_fp64_d128": CaseMetadata("fp64", "dense", "dense", "D128"),
-    "onehot_fp64_d128": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
-    "onehot_fp64_d256": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D256"),
+    # Small-field modes replay their catalog-selected adaptive dimensions.
+    "dense_fp32": CaseMetadata("fp32", "dense", "dense", "adaptive"),
+    "onehot_fp32": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "adaptive"),
+    "dense_fp64": CaseMetadata("fp64", "dense", "dense", "adaptive"),
+    "onehot_fp64": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "adaptive"),
 }
 
 

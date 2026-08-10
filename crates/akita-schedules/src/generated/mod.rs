@@ -485,30 +485,22 @@ pub mod fp128_onehot_recursive_multi_chunk_w8r2;
 pub mod fp128_onehot_recursive_multi_chunk_w8r2_precommitted;
 #[cfg(feature = "fp128-onehot-recursive")]
 pub mod fp128_onehot_recursive_precommitted;
-#[cfg(feature = "fp32-d128-dense")]
-pub mod fp32_d128_dense;
-#[cfg(feature = "fp32-d128-dense")]
-pub mod fp32_d128_dense_precommitted;
-#[cfg(feature = "fp32-d128-onehot")]
-pub mod fp32_d128_onehot;
-#[cfg(feature = "fp32-d128-onehot")]
-pub mod fp32_d128_onehot_precommitted;
-#[cfg(feature = "fp32-d256-onehot")]
-pub mod fp32_d256_onehot;
-#[cfg(feature = "fp32-d256-onehot")]
-pub mod fp32_d256_onehot_precommitted;
-#[cfg(feature = "fp64-d128-dense")]
-pub mod fp64_d128_dense;
-#[cfg(feature = "fp64-d128-dense")]
-pub mod fp64_d128_dense_precommitted;
-#[cfg(feature = "fp64-d128-onehot")]
-pub mod fp64_d128_onehot;
-#[cfg(feature = "fp64-d128-onehot")]
-pub mod fp64_d128_onehot_precommitted;
-#[cfg(feature = "fp64-d256-onehot")]
-pub mod fp64_d256_onehot;
-#[cfg(feature = "fp64-d256-onehot")]
-pub mod fp64_d256_onehot_precommitted;
+#[cfg(feature = "fp32-dense")]
+pub mod fp32_dense;
+#[cfg(feature = "fp32-dense")]
+pub mod fp32_dense_precommitted;
+#[cfg(feature = "fp32-onehot")]
+pub mod fp32_onehot;
+#[cfg(feature = "fp32-onehot")]
+pub mod fp32_onehot_precommitted;
+#[cfg(feature = "fp64-dense")]
+pub mod fp64_dense;
+#[cfg(feature = "fp64-dense")]
+pub mod fp64_dense_precommitted;
+#[cfg(feature = "fp64-onehot")]
+pub mod fp64_onehot;
+#[cfg(feature = "fp64-onehot")]
+pub mod fp64_onehot_precommitted;
 
 #[cfg(feature = "fp128-dense")]
 pub fn fp128_dense_table() -> GeneratedScheduleTable {
@@ -584,63 +576,41 @@ pub fn fp128_onehot_recursive_multi_chunk_w8r2_table() -> GeneratedScheduleTable
     }
 }
 
-#[cfg(feature = "fp32-d128-dense")]
-pub fn fp32_d128_dense_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp32-dense")]
+pub fn fp32_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp32_d128_dense::FP32_D128_DENSE_SCHEDULES,
-        precommitted_profiles:
-            fp32_d128_dense_precommitted::FP32_D128_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp32_d128_dense::CATALOG_IDENTITY,
+        entries: fp32_dense::FP32_DENSE_SCHEDULES,
+        precommitted_profiles: fp32_dense_precommitted::FP32_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp32_dense::CATALOG_IDENTITY,
     }
 }
 
-#[cfg(feature = "fp32-d128-onehot")]
-pub fn fp32_d128_onehot_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp32-onehot")]
+pub fn fp32_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp32_d128_onehot::FP32_D128_ONEHOT_SCHEDULES,
+        entries: fp32_onehot::FP32_ONEHOT_SCHEDULES,
         precommitted_profiles:
-            fp32_d128_onehot_precommitted::FP32_D128_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp32_d128_onehot::CATALOG_IDENTITY,
+            fp32_onehot_precommitted::FP32_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp32_onehot::CATALOG_IDENTITY,
     }
 }
 
-#[cfg(feature = "fp32-d256-onehot")]
-pub fn fp32_d256_onehot_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp64-dense")]
+pub fn fp64_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp32_d256_onehot::FP32_D256_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp32_d256_onehot_precommitted::FP32_D256_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp32_d256_onehot::CATALOG_IDENTITY,
+        entries: fp64_dense::FP64_DENSE_SCHEDULES,
+        precommitted_profiles: fp64_dense_precommitted::FP64_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp64_dense::CATALOG_IDENTITY,
     }
 }
 
-#[cfg(feature = "fp64-d128-dense")]
-pub fn fp64_d128_dense_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp64-onehot")]
+pub fn fp64_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp64_d128_dense::FP64_D128_DENSE_SCHEDULES,
+        entries: fp64_onehot::FP64_ONEHOT_SCHEDULES,
         precommitted_profiles:
-            fp64_d128_dense_precommitted::FP64_D128_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp64_d128_dense::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp64-d128-onehot")]
-pub fn fp64_d128_onehot_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp64_d128_onehot::FP64_D128_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp64_d128_onehot_precommitted::FP64_D128_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp64_d128_onehot::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp64-d256-onehot")]
-pub fn fp64_d256_onehot_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp64_d256_onehot::FP64_D256_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp64_d256_onehot_precommitted::FP64_D256_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp64_d256_onehot::CATALOG_IDENTITY,
+            fp64_onehot_precommitted::FP64_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp64_onehot::CATALOG_IDENTITY,
     }
 }
 // @generated schedule module wiring end

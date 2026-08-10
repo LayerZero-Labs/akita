@@ -94,11 +94,11 @@ Committed-fold A-role pricing (every cell folds securely):
 
 | Case | nv | np | Setup mode |
 |------|----|----|------------|
-| `dense_fp32_d128` | 26 | 1 | `direct` |
-| `dense_fp64_d128` | 26 | 1 | `direct` |
+| `dense_fp32` | 26 | 1 | `direct` |
+| `dense_fp64` | 26 | 1 | `direct` |
 | `dense_fp128` | 26 | 1 | `direct` |
-| `onehot_fp32_d128` | 28 | 1 | `direct` |
-| `onehot_fp64_d128` | 28 | 1 | `direct` |
+| `onehot_fp32` | 28 | 1 | `direct` |
+| `onehot_fp64` | 28 | 1 | `direct` |
 | `onehot_fp128` | 32 | 1 | `direct` |
 | `onehot_fp128_multi_group` | 32 | 4 | `direct` |
 | `onehot_fp128_multi_group_recursive` | 32 | 4 | `recursive` |
@@ -124,8 +124,8 @@ python3 scripts/profile_bench_report.py run \
   --binary ./target/release/examples/profile \
   --output-dir /tmp/akita-dense-suite \
   --runs 3 --warmups 1 \
-  --case dense_fp32_d128:26:1 \
-  --case dense_fp64_d128:26:1 \
+  --case dense_fp32:26:1 \
+  --case dense_fp64:26:1 \
   --case dense_fp128:26:1
 python3 scripts/profile_bench_report.py render \
   /tmp/akita-dense-suite/summary.json --compact

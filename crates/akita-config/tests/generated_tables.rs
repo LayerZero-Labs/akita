@@ -87,12 +87,10 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
             fp128::OneHotMultiChunkW4R2::schedule_catalog().is_some()
         }
         "fp128_dense_multi_chunk" => fp128::DenseMultiChunk::schedule_catalog().is_some(),
-        "fp64_d128_dense" => fp64::D128Dense::schedule_catalog().is_some(),
-        "fp64_d128_onehot" => fp64::D128OneHot::schedule_catalog().is_some(),
-        "fp64_d256_onehot" => fp64::D256OneHot::schedule_catalog().is_some(),
-        "fp32_d128_dense" => fp32::D128Dense::schedule_catalog().is_some(),
-        "fp32_d128_onehot" => fp32::D128OneHot::schedule_catalog().is_some(),
-        "fp32_d256_onehot" => fp32::D256OneHot::schedule_catalog().is_some(),
+        "fp64_dense" => fp64::Dense::schedule_catalog().is_some(),
+        "fp64_onehot" => fp64::OneHot::schedule_catalog().is_some(),
+        "fp32_dense" => fp32::Dense::schedule_catalog().is_some(),
+        "fp32_onehot" => fp32::OneHot::schedule_catalog().is_some(),
         other => panic!("unknown generated family for catalog guard: {other}"),
     }
 }
@@ -331,12 +329,10 @@ fn family_catalog(
             prepare_family_catalog::<fp128::OneHotMultiChunkW4R2>(family, keys)
         }
         "fp128_dense_multi_chunk" => prepare_family_catalog::<fp128::DenseMultiChunk>(family, keys),
-        "fp64_d128_dense" => prepare_family_catalog::<fp64::D128Dense>(family, keys),
-        "fp64_d128_onehot" => prepare_family_catalog::<fp64::D128OneHot>(family, keys),
-        "fp64_d256_onehot" => prepare_family_catalog::<fp64::D256OneHot>(family, keys),
-        "fp32_d128_dense" => prepare_family_catalog::<fp32::D128Dense>(family, keys),
-        "fp32_d128_onehot" => prepare_family_catalog::<fp32::D128OneHot>(family, keys),
-        "fp32_d256_onehot" => prepare_family_catalog::<fp32::D256OneHot>(family, keys),
+        "fp64_dense" => prepare_family_catalog::<fp64::Dense>(family, keys),
+        "fp64_onehot" => prepare_family_catalog::<fp64::OneHot>(family, keys),
+        "fp32_dense" => prepare_family_catalog::<fp32::Dense>(family, keys),
+        "fp32_onehot" => prepare_family_catalog::<fp32::OneHot>(family, keys),
         other => panic!("unknown generated family for catalog guard: {other}"),
     }
 }
@@ -408,23 +404,13 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, requests: &[Gro
         "fp128_dense_multi_chunk" => {
             assert_group_batch_table_hits::<fp128::DenseMultiChunk>(family.module_name, requests)
         }
-        "fp64_d128_dense" => {
-            assert_group_batch_table_hits::<fp64::D128Dense>(family.module_name, requests)
+        "fp64_dense" => assert_group_batch_table_hits::<fp64::Dense>(family.module_name, requests),
+        "fp64_onehot" => {
+            assert_group_batch_table_hits::<fp64::OneHot>(family.module_name, requests)
         }
-        "fp64_d128_onehot" => {
-            assert_group_batch_table_hits::<fp64::D128OneHot>(family.module_name, requests)
-        }
-        "fp64_d256_onehot" => {
-            assert_group_batch_table_hits::<fp64::D256OneHot>(family.module_name, requests)
-        }
-        "fp32_d128_dense" => {
-            assert_group_batch_table_hits::<fp32::D128Dense>(family.module_name, requests)
-        }
-        "fp32_d128_onehot" => {
-            assert_group_batch_table_hits::<fp32::D128OneHot>(family.module_name, requests)
-        }
-        "fp32_d256_onehot" => {
-            assert_group_batch_table_hits::<fp32::D256OneHot>(family.module_name, requests)
+        "fp32_dense" => assert_group_batch_table_hits::<fp32::Dense>(family.module_name, requests),
+        "fp32_onehot" => {
+            assert_group_batch_table_hits::<fp32::OneHot>(family.module_name, requests)
         }
         other => panic!("unknown generated family for grouped catalog guard: {other}"),
     }
@@ -489,12 +475,10 @@ fn resolve_family_group_batch_schedule(
         "fp128_dense_multi_chunk" => {
             table_backed_group_batch_schedule::<fp128::DenseMultiChunk>(request)
         }
-        "fp64_d128_dense" => table_backed_group_batch_schedule::<fp64::D128Dense>(request),
-        "fp64_d128_onehot" => table_backed_group_batch_schedule::<fp64::D128OneHot>(request),
-        "fp64_d256_onehot" => table_backed_group_batch_schedule::<fp64::D256OneHot>(request),
-        "fp32_d128_dense" => table_backed_group_batch_schedule::<fp32::D128Dense>(request),
-        "fp32_d128_onehot" => table_backed_group_batch_schedule::<fp32::D128OneHot>(request),
-        "fp32_d256_onehot" => table_backed_group_batch_schedule::<fp32::D256OneHot>(request),
+        "fp64_dense" => table_backed_group_batch_schedule::<fp64::Dense>(request),
+        "fp64_onehot" => table_backed_group_batch_schedule::<fp64::OneHot>(request),
+        "fp32_dense" => table_backed_group_batch_schedule::<fp32::Dense>(request),
+        "fp32_onehot" => table_backed_group_batch_schedule::<fp32::OneHot>(request),
         other => panic!("unknown generated family for multi-group schedule guard: {other}"),
     }
 }
