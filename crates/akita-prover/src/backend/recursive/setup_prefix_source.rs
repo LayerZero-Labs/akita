@@ -145,14 +145,12 @@ fn setup_prefix_field_evals<F: FieldCore>(
 ) -> Result<Vec<F>, AkitaError> {
     let n_prefix = slot.id.n_prefix()?;
     let fields = expanded.shared_matrix().as_field_slice();
-    if slot.natural_len > fields.len() || slot.natural_len > n_prefix {
+    if slot.natural_len > n_prefix || n_prefix > fields.len() {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix slot exceeds shared setup matrix".to_string(),
         ));
     }
-    let mut evals = vec![F::zero(); n_prefix];
-    evals[..slot.natural_len].copy_from_slice(&fields[..slot.natural_len]);
-    Ok(evals)
+    Ok(fields[..n_prefix].to_vec())
 }
 
 fn setup_prefix_rings<F: FieldCore, const D: usize>(

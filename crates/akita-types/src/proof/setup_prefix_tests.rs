@@ -284,7 +284,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     registry.insert(slot).expect("insert slot");
 
     let selection = select_setup_prefix_slot(
-        Some(5 * source_ring_dimension),
+        Some(n_prefix),
         |candidate| {
             registry
                 .get(candidate)
@@ -318,7 +318,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     assert_eq!(external_selection.1, 8);
 
     let err = select_setup_prefix_slot(
-        Some(5 * source_ring_dimension),
+        Some(n_prefix),
         |candidate| {
             registry
                 .get(candidate)
@@ -335,7 +335,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
         .contains("setup prefix padded length must be divisible"));
 
     let err = select_setup_prefix_slot(
-        Some(5 * source_ring_dimension),
+        Some(n_prefix),
         |candidate| {
             registry
                 .get(candidate)
@@ -350,7 +350,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     assert!(err.to_string().contains("slot does not cover request"));
 
     let err = select_setup_prefix_slot(
-        Some(5 * source_ring_dimension),
+        Some(n_prefix),
         |candidate| {
             registry
                 .get(candidate)

@@ -1,9 +1,8 @@
 //! Setup-prefix commitment artifacts for setup-claim offloading (slice 02B).
 //!
-//! This module defines preprocessing metadata for exact flat coefficient
-//! prefixes of the shared setup vector `S`, zero-padded to power-of-two
-//! commitment domains. It does not run a setup product sumcheck or change proof
-//! semantics.
+//! This module defines preprocessing metadata for actual power-of-two flat
+//! coefficient prefixes of the shared setup vector `S`. It does not run a setup
+//! product sumcheck or change proof semantics.
 
 use crate::descriptor_bytes::sis_modulus_profile_tag;
 use crate::proof::{AkitaCommitmentHint, RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS};
@@ -22,6 +21,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 
 const MAX_SETUP_PREFIX_SLOTS: usize = 4096;
+const SETUP_PREFIX_CONTENT_TAG: &[u8; 4] = b"SPF1";
 
 #[path = "setup_prefix_helpers.rs"]
 mod helpers;
@@ -66,6 +66,7 @@ impl SetupPrefixSlotId {
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        bytes.extend_from_slice(SETUP_PREFIX_CONTENT_TAG);
         crate::descriptor_bytes::push_usize(bytes, self.natural_len);
         self.commitment_params.append_descriptor_bytes(bytes);
     }
@@ -537,6 +538,7 @@ impl AkitaSerialize for SetupPrefixSlotId {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         self.check()?;
+        writer.write_all(SETUP_PREFIX_CONTENT_TAG)?;
         self.natural_len
             .serialize_with_mode(&mut writer, compress)?;
         serialize_precommitted_level_params(&self.commitment_params, &mut writer, compress)?;
@@ -544,7 +546,8 @@ impl AkitaSerialize for SetupPrefixSlotId {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.natural_len.serialized_size(compress)
+        SETUP_PREFIX_CONTENT_TAG.len()
+            + self.natural_len.serialized_size(compress)
             + precommitted_level_params_serialized_size(&self.commitment_params, compress)
     }
 }
@@ -558,6 +561,13 @@ impl AkitaDeserialize for SetupPrefixSlotId {
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
+        let mut content_tag = [0u8; SETUP_PREFIX_CONTENT_TAG.len()];
+        reader.read_exact(&mut content_tag)?;
+        if &content_tag != SETUP_PREFIX_CONTENT_TAG {
+            return Err(SerializationError::InvalidData(
+                "unsupported setup-prefix content format".to_string(),
+            ));
+        }
         let natural_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let commitment_params =
             deserialize_precommitted_level_params(&mut reader, compress, validate)?;
@@ -1423,7 +1433,7 @@ where
     };
     let n_prefix = padded_setup_prefix_len(natural_field_len);
     if let Some(shared_matrix_field_elements) = shared_matrix_field_elements {
-        if natural_field_len > shared_matrix_field_elements {
+        if n_prefix > shared_matrix_field_elements {
             return Err(AkitaError::InvalidSetup(
                 "setup prefix request exceeds shared matrix capacity".to_string(),
             ));
