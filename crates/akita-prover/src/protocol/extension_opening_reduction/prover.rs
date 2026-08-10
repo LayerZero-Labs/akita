@@ -152,3 +152,60 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::{Fp32, FpExt4, FromPrimitiveInt};
+    use akita_serialization::AkitaSerialize;
+    use akita_sumcheck::SumcheckInstanceProverExt;
+    use akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND;
+    use akita_transcript::{sample_ext_challenge, AkitaTranscript};
+
+    type TestBase = Fp32<2147483647>;
+    type TestExt = FpExt4<TestBase>;
+
+    fn value(index: usize) -> TestExt {
+        TestExt::from_u64(u64::try_from(index).expect("test index fits in u64") + 1)
+    }
+
+    fn proof_with_plan(
+        plan: SumcheckKernelPlan,
+    ) -> (
+        Vec<u8>,
+        Vec<TestExt>,
+        TestExt,
+        Vec<(TestExt, TestExt, TestExt)>,
+        TestExt,
+    ) {
+        let len = 1usize << 13;
+        let witness = (0..len).map(|row| value(row * 3 + 7)).collect();
+        let factor = (0..len).map(|row| value(row * 5 + 11)).collect();
+        let mut prover = SumcheckKernelPlan::with_test_override(plan, || {
+            ExtensionOpeningReductionProver::<TestBase, TestExt>::from_dense_tables(witness, factor)
+                .expect("valid dense reduction")
+        });
+        let mut transcript = AkitaTranscript::<TestBase>::new(b"test/eor-kernel-plan-equivalence");
+        let (proof, point, final_claim) = prover
+            .prove::<TestBase, _, _>(&mut transcript, |transcript| {
+                sample_ext_challenge::<TestBase, TestExt, _>(transcript, CHALLENGE_SUMCHECK_ROUND)
+            })
+            .expect("valid sumcheck proof");
+        let final_terms = prover.final_terms().expect("fully folded terms");
+        let continuation =
+            sample_ext_challenge::<TestBase, TestExt, _>(&mut transcript, CHALLENGE_SUMCHECK_ROUND);
+        let mut proof_bytes = Vec::new();
+        proof
+            .serialize_uncompressed(&mut proof_bytes)
+            .expect("sumcheck proof serializes");
+        (proof_bytes, point, final_claim, final_terms, continuation)
+    }
+
+    #[test]
+    fn detected_plan_preserves_proof_bytes_and_transcript() {
+        let detected = SumcheckKernelPlan::detect();
+        let scalar = proof_with_plan(SumcheckKernelPlan::SCALAR);
+        let optimized = proof_with_plan(detected);
+        assert_eq!(optimized, scalar);
+    }
+}

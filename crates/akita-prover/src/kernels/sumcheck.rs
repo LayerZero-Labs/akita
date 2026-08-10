@@ -623,6 +623,11 @@ where
 impl SumcheckKernelPlan {
     /// Detect the fastest supported implementation for each operation.
     pub fn detect() -> Self {
+        #[cfg(test)]
+        if let Some(plan) = TEST_PLAN_OVERRIDE.with(std::cell::Cell::get) {
+            return plan;
+        }
+
         let fp32 = detect_fp32_kernel();
         let fp64 = detect_fp64_kernel();
         Self {
@@ -639,7 +644,7 @@ impl SumcheckKernelPlan {
     }
 
     #[cfg(test)]
-    const SCALAR: Self = Self {
+    pub(crate) const SCALAR: Self = Self {
         fp32_fold: Fp32Kernel::Scalar,
         fp32_product_round: Fp32Kernel::Scalar,
         fp32_fold_and_product_round: Fp32Kernel::Scalar,
@@ -650,6 +655,28 @@ impl SumcheckKernelPlan {
         fp64_fold_and_product_round: Fp64Kernel::Scalar,
         fp64_tensor_factor_round: Fp64Kernel::Scalar,
     };
+
+    /// Run one test with a forced plan without leaking the override to other
+    /// test threads or leaving it installed after a panic.
+    #[cfg(test)]
+    pub(crate) fn with_test_override<R>(plan: Self, test: impl FnOnce() -> R) -> R {
+        TEST_PLAN_OVERRIDE.with(|slot| {
+            struct ResetOverride<'a> {
+                slot: &'a std::cell::Cell<Option<SumcheckKernelPlan>>,
+                previous: Option<SumcheckKernelPlan>,
+            }
+
+            impl Drop for ResetOverride<'_> {
+                fn drop(&mut self) {
+                    self.slot.set(self.previous);
+                }
+            }
+
+            let previous = slot.replace(Some(plan));
+            let _reset = ResetOverride { slot, previous };
+            test()
+        })
+    }
 
     #[cfg(all(test, target_arch = "aarch64"))]
     const NEON: Self = Self {
@@ -688,6 +715,13 @@ impl SumcheckKernelPlan {
         fp64_product_round: Fp64Kernel::Avx512,
         fp64_fold_and_product_round: Fp64Kernel::Avx512,
         fp64_tensor_factor_round: Fp64Kernel::Avx512,
+    };
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_PLAN_OVERRIDE: std::cell::Cell<Option<SumcheckKernelPlan>> = const {
+        std::cell::Cell::new(None)
     };
 }
 

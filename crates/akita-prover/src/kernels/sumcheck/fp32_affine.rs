@@ -25,6 +25,8 @@ impl SumcheckKernelPlan {
             || folded_pair_rows.is_empty()
             || first_equality.is_empty()
             || second_equality.is_empty()
+            || !first_equality.len().is_power_of_two()
+            || !second_equality.len().is_power_of_two()
             || quartet_count > first_equality.len().checked_mul(second_equality.len())?
             || ordered_pair_indices
                 .iter()

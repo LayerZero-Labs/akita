@@ -1,4 +1,6 @@
 use super::suffix_sums::SparseSuffixSums;
+#[cfg(feature = "parallel")]
+use super::witness::SPARSE_PARALLEL_ENTRY_THRESHOLD;
 use super::witness::{MergeFreeValuePalette, MAX_MERGE_FREE_VALUE_PALETTE};
 use super::*;
 use core::ops::Range;
@@ -664,6 +666,24 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
             return self
                 .compute_sparse_suffix_summed_round()
                 .expect("sparse suffix sums were prepared for this round");
+        }
+        #[cfg(feature = "parallel")]
+        if witness.indices.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD
+            && rayon::current_num_threads() > 1
+        {
+            witness.fold_in_place(challenge);
+            return if witness.indices.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD {
+                witness
+                    .pair_aligned_ranges()
+                    .into_par_iter()
+                    .map(|rows| self.compute_grouped_round(witness, rows))
+                    .reduce(
+                        || (E::zero(), E::zero()),
+                        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1),
+                    )
+            } else {
+                self.compute_grouped_round(witness, 0..witness.indices.len())
+            };
         }
         if !merge_free {
             witness.materialize_merge_free_value_palette();

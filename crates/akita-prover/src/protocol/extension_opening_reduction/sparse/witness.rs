@@ -124,9 +124,51 @@ pub struct SparseExtensionOpeningWitness<F: FieldCore, E: ExtField<F>> {
 }
 
 #[cfg(feature = "parallel")]
-const SPARSE_PARALLEL_ENTRY_THRESHOLD: usize = 1 << 14;
+pub(super) const SPARSE_PARALLEL_ENTRY_THRESHOLD: usize = 1 << 14;
 #[cfg(feature = "parallel")]
 const SPARSE_PARALLEL_CHUNKS_PER_THREAD: usize = 4;
+
+fn fold_sparse_chunk<F, E>(
+    indices: &mut [usize],
+    coefficients: &mut [&mut [F]],
+    one_minus: E,
+    challenge: E,
+) -> usize
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let mut input_row = 0;
+    let mut output_row = 0;
+    while input_row < indices.len() {
+        let index = indices[input_row];
+        let pair = index >> 1;
+        let value = E::from_base_fn(|coefficient| coefficients[coefficient][input_row]);
+        input_row += 1;
+        let (zero, one) = if index & 1 == 0 {
+            if input_row < indices.len() && indices[input_row] >> 1 == pair {
+                let one = E::from_base_fn(|coefficient| coefficients[coefficient][input_row]);
+                input_row += 1;
+                (value, one)
+            } else {
+                (value, E::zero())
+            }
+        } else {
+            (E::zero(), value)
+        };
+
+        let folded = zero * one_minus + one * challenge;
+        if folded == E::zero() {
+            continue;
+        }
+        indices[output_row] = pair;
+        for (coefficient, destination) in coefficients.iter_mut().enumerate() {
+            destination[output_row] = folded.base_coefficient(coefficient);
+        }
+        output_row += 1;
+    }
+    output_row
+}
 
 impl<F: FieldCore, E: ExtField<F>> SparseExtensionOpeningWitness<F, E> {
     /// Construct a sparse witness table from `(index, value)` entries.
@@ -558,6 +600,49 @@ impl<F: FieldCore, E: ExtField<F>> SparseExtensionOpeningWitness<F, E> {
         }
         ranges
     }
+
+    #[cfg(feature = "parallel")]
+    fn fold_rows_in_parallel(&mut self, challenge: E) -> usize {
+        let ranges = self.pair_aligned_ranges();
+        let one_minus = E::one() - challenge;
+        let mut remaining_indices = self.indices.as_mut_slice();
+        let mut remaining_coefficients = self.values.all_coefficient_slices_mut();
+        let mut chunks = Vec::with_capacity(ranges.len());
+        for range in &ranges {
+            let len = range.end - range.start;
+            let (indices, rest) = core::mem::take(&mut remaining_indices).split_at_mut(len);
+            remaining_indices = rest;
+            let (coefficients, rest): (Vec<_>, Vec<_>) = remaining_coefficients
+                .into_iter()
+                .map(|coefficient| coefficient.split_at_mut(len))
+                .unzip();
+            remaining_coefficients = rest;
+            chunks.push((range.start, indices, coefficients));
+        }
+
+        let outputs = chunks
+            .into_par_iter()
+            .map(|(start, indices, mut coefficients)| {
+                let len =
+                    fold_sparse_chunk::<F, E>(indices, &mut coefficients, one_minus, challenge);
+                (start, len)
+            })
+            .collect::<Vec<_>>();
+
+        let mut output_start = 0;
+        let mut coefficients = self.values.all_coefficient_slices_mut();
+        for (input_start, len) in outputs {
+            if input_start != output_start {
+                self.indices
+                    .copy_within(input_start..input_start + len, output_start);
+                for coefficient in &mut coefficients {
+                    coefficient.copy_within(input_start..input_start + len, output_start);
+                }
+            }
+            output_start += len;
+        }
+        output_start
+    }
 }
 
 impl<F, E> SparseExtensionOpeningWitness<F, E>
@@ -862,6 +947,22 @@ where
         P: Fn(usize) -> (E, E) + Sync,
     {
         self.materialize_merge_free_value_palette();
+        #[cfg(feature = "parallel")]
+        if self.indices.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD && rayon::current_num_threads() > 1
+        {
+            self.fold_in_place_merge_free(r_round);
+            let mut constant = E::zero();
+            let mut quadratic = E::zero();
+            self.accumulate_round_with_factor(
+                E::one(),
+                &mut constant,
+                &mut quadratic,
+                next_factor_pair,
+            );
+            self.table_len /= 2;
+            self.merge_free_rounds_left -= 1;
+            return (constant, quadratic);
+        }
         let round = if E::DELAYED_PRODUCT_SUM_IS_EXACT {
             self.fused_fold_accumulate_merge_free_using::<DelayedProductRoundAccumulator<E>, P>(
                 r_round,
@@ -933,26 +1034,37 @@ impl<F: FieldCore, E: ExtField<F>> SparseExtensionOpeningWitness<F, E> {
             return;
         }
 
-        let one_minus = E::one() - r_round;
-        let mut input_row = 0;
-        let mut output_row = 0;
-        while input_row < self.indices.len() {
-            let (pair, zero, one, next_row) = self.pair_at_row(input_row, self.indices.len());
-            input_row = next_row;
-            let value = zero * one_minus + one * r_round;
-            if value != E::zero() {
-                self.indices[output_row] = pair;
-                self.values.set_evaluation(output_row, value);
-                output_row += 1;
-            }
-        }
+        #[cfg(feature = "parallel")]
+        let output_row = if self.indices.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD
+            && rayon::current_num_threads() > 1
+        {
+            self.fold_rows_in_parallel(r_round)
+        } else {
+            self.fold_rows_sequential(r_round)
+        };
+        #[cfg(not(feature = "parallel"))]
+        let output_row = self.fold_rows_sequential(r_round);
         self.table_len /= 2;
         self.indices.truncate(output_row);
         self.values.truncate(output_row);
     }
 
-    /// Allocation-free in-place fold for the merge-free regime.
+    fn fold_rows_sequential(&mut self, r_round: E) -> usize {
+        let one_minus = E::one() - r_round;
+        let mut coefficients = self.values.all_coefficient_slices_mut();
+        fold_sparse_chunk::<F, E>(&mut self.indices, &mut coefficients, one_minus, r_round)
+    }
+
+    /// In-place fold for the merge-free regime.
     pub(super) fn fold_in_place_merge_free(&mut self, r_round: E) {
+        #[cfg(feature = "parallel")]
+        if self.indices.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD && rayon::current_num_threads() > 1
+        {
+            let output_row = self.fold_rows_in_parallel(r_round);
+            self.indices.truncate(output_row);
+            self.values.truncate(output_row);
+            return;
+        }
         let one_minus = E::one() - r_round;
         for row in 0..self.indices.len() {
             let index = self.indices[row];

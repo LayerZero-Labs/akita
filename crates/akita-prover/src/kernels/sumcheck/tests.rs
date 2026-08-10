@@ -206,6 +206,53 @@ fn compare_compact_affine_product_plan<const LANES: usize>(plan: SumcheckKernelP
     }
 }
 
+fn assert_compact_affine_product_rejects_non_dyadic_equality(plan: SumcheckKernelPlan) {
+    let check = || {
+        let rows: Vec<[E; 4]> = (0..64)
+            .map(|row| std::array::from_fn(|lane| value(row * 4 + lane + 9_001)))
+            .collect();
+        let ordered_pair_indices = (0..96)
+            .map(|index| u16::try_from((index * 13 + 5) % rows.len()).unwrap())
+            .collect::<Vec<_>>();
+        let parent_weights = [value(10_001), value(10_002)];
+
+        let non_dyadic_first = (0..48).map(|row| value(row + 11_001)).collect::<Vec<_>>();
+        let dyadic_second = [value(12_001)];
+        assert!(plan
+            .try_compute_compact_affine_product_round_fp32(
+                &ordered_pair_indices,
+                &rows,
+                &non_dyadic_first,
+                &dyadic_second,
+                2,
+                &parent_weights,
+            )
+            .is_none());
+
+        let dyadic_first = (0..32).map(|row| value(row + 13_001)).collect::<Vec<_>>();
+        let non_dyadic_second = (0..3).map(|row| value(row + 14_001)).collect::<Vec<_>>();
+        assert!(plan
+            .try_compute_compact_affine_product_round_fp32(
+                &ordered_pair_indices,
+                &rows,
+                &dyadic_first,
+                &non_dyadic_second,
+                2,
+                &parent_weights,
+            )
+            .is_none());
+    };
+
+    #[cfg(feature = "parallel")]
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .expect("one-worker test pool")
+        .install(check);
+    #[cfg(not(feature = "parallel"))]
+    check();
+}
+
 fn direct_range_polynomial(degree: usize) -> Vec<E> {
     match degree {
         2 => vec![E::zero(), E::zero() - E::from_u64(2), E::from_u64(1)],
@@ -507,6 +554,7 @@ fn detected_fp32_fold_matches_scalar() {
 #[test]
 fn supported_x86_fp32_folds_match_scalar() {
     if std::is_x86_feature_detected!("avx2") {
+        assert_compact_affine_product_rejects_non_dyadic_equality(SumcheckKernelPlan::AVX2);
         compare_plan(SumcheckKernelPlan::AVX2);
         compare_product_round_plan(SumcheckKernelPlan::AVX2);
         compare_fused_product_round_plan(SumcheckKernelPlan::AVX2);
@@ -528,6 +576,7 @@ fn supported_x86_fp32_folds_match_scalar() {
         && std::is_x86_feature_detected!("avx512dq")
         && std::is_x86_feature_detected!("avx512ifma")
     {
+        assert_compact_affine_product_rejects_non_dyadic_equality(SumcheckKernelPlan::AVX512_IFMA);
         compare_plan(SumcheckKernelPlan::AVX512_IFMA);
         compare_product_round_plan(SumcheckKernelPlan::AVX512_IFMA);
         compare_fused_product_round_plan(SumcheckKernelPlan::AVX512_IFMA);
@@ -551,6 +600,7 @@ fn supported_x86_fp32_folds_match_scalar() {
 #[test]
 fn supported_neon_fp32_folds_match_scalar() {
     if std::arch::is_aarch64_feature_detected!("neon") {
+        assert_compact_affine_product_rejects_non_dyadic_equality(SumcheckKernelPlan::NEON);
         compare_plan(SumcheckKernelPlan::NEON);
         compare_product_round_plan(SumcheckKernelPlan::NEON);
         compare_fused_product_round_plan(SumcheckKernelPlan::NEON);
