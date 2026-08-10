@@ -13,6 +13,8 @@ static POOLS: OnceLock<ProfileThreadPools> = OnceLock::new();
 pub(crate) struct ProfileThreadPools {
     #[cfg(feature = "parallel")]
     verify_pool: Option<rayon::ThreadPool>,
+    #[cfg(feature = "parallel")]
+    single_verify_pool: rayon::ThreadPool,
 }
 
 impl ProfileThreadPools {
@@ -26,7 +28,7 @@ impl ProfileThreadPools {
     }
 
     /// Run verifier-side work on the verify pool when it differs from the prove pool.
-    pub(crate) fn in_verify<R: Send>(&self, f: impl FnOnce() -> R + Send) -> R {
+    pub(crate) fn in_verify_multi<R: Send>(&self, f: impl FnOnce() -> R + Send) -> R {
         #[cfg(feature = "parallel")]
         {
             if let Some(pool) = &self.verify_pool {
@@ -35,6 +37,19 @@ impl ProfileThreadPools {
         }
         let _ = self;
         f()
+    }
+
+    /// Run verifier-side work on a dedicated one-thread pool.
+    pub(crate) fn in_verify_single<R: Send>(&self, f: impl FnOnce() -> R + Send) -> R {
+        #[cfg(feature = "parallel")]
+        {
+            self.single_verify_pool.install(f)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            let _ = self;
+            f()
+        }
     }
 
     fn from_env() -> Self {
@@ -56,6 +71,7 @@ impl ProfileThreadPools {
             } else {
                 None
             };
+            let single_verify_pool = build_pool(1, "single-thread verify");
             let verify_resolved = verify_pool
                 .as_ref()
                 .map(rayon::ThreadPool::current_num_threads)
@@ -63,29 +79,37 @@ impl ProfileThreadPools {
 
             tracing::info!(
                 prove_threads = prove_resolved,
-                verify_threads = verify_resolved,
+                verify_multi_threads = verify_resolved,
+                verify_single_threads = 1,
                 prove_env = prove_threads,
                 verify_env = verify_threads,
                 separate_verify_pool = verify_pool.is_some(),
                 "profile thread pools"
             );
             eprintln!(
-                "[profile] prove_threads={prove_resolved} verify_threads={verify_resolved} \
+                "[profile] prove_threads={prove_resolved} verify_multi_threads={verify_resolved} \
+                 verify_single_threads=1 \
                  (env prove={prove_threads} verify={verify_threads}; 0 = Rayon default)"
             );
 
-            Self { verify_pool }
+            Self {
+                verify_pool,
+                single_verify_pool,
+            }
         }
         #[cfg(not(feature = "parallel"))]
         {
             tracing::info!(
-                prove_threads,
-                verify_threads,
+                prove_threads = 1,
+                verify_multi_threads = 1,
+                verify_single_threads = 1,
+                prove_env = prove_threads,
+                verify_env = verify_threads,
                 "profile thread pools (parallel disabled)"
             );
             eprintln!(
-                "[profile] prove_threads={prove_threads} verify_threads={verify_threads} \
-                 (parallel disabled)"
+                "[profile] prove_threads=1 verify_multi_threads=1 verify_single_threads=1 \
+                 (env prove={prove_threads} verify={verify_threads}; parallel disabled)"
             );
             Self {}
         }

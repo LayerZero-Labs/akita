@@ -1,10 +1,8 @@
 use super::prepared_tests::{prepared, D};
 use super::CpuBackend;
-use crate::compute::backend::{
-    CommitmentComputeBackend, CyclicRowsComputeBackend, DigitRowsComputeBackend,
-    RingSwitchComputeBackend,
-};
-use crate::compute::plans::{RecursiveWitnessCommitRowsPlan, RingSwitchRelationRowsPlan};
+use crate::backend::RingSwitchRelationView;
+use crate::compute::backend::{CyclicRowsComputeBackend, DigitRowsComputeBackend};
+use crate::compute::{RingSwitchRelationKernel, RingSwitchRelationPlan};
 use crate::kernels::linear::{
     fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_single_i8,
     mat_vec_mul_ntt_single_i8_cyclic,
@@ -16,7 +14,7 @@ fn cpu_digit_rows_match_direct_kernel() {
     let prepared = prepared();
     let digits = vec![[1i8; D], [-1i8; D], [2i8; D]];
     let log_basis = 3;
-    let via_backend = CpuBackend
+    let via_backend = CpuBackend::DEFAULT
         .digit_rows::<D>(&prepared, 2, &digits, log_basis)
         .expect("backend digit rows");
     let direct = prepared
@@ -34,7 +32,7 @@ fn cpu_digit_rows_accept_logical_input_longer_than_stride() {
     let prepared = prepared();
     let digits = vec![[1i8; D]; 12];
     let log_basis = 3;
-    let via_backend = CpuBackend
+    let via_backend = CpuBackend::DEFAULT
         .digit_rows::<D>(&prepared, 2, &digits, log_basis)
         .expect("backend digit rows");
     let direct = prepared
@@ -51,19 +49,8 @@ fn cpu_digit_rows_accept_logical_input_longer_than_stride() {
 fn recursive_commit_ignores_commitment_padding_blocks() {
     let prepared = prepared();
     let coeffs = vec![[1i8; D]; 6];
-    let rows = CpuBackend
-        .recursive_witness_commit_rows(
-            &prepared,
-            RecursiveWitnessCommitRowsPlan {
-                coeffs: &coeffs,
-                n_rows: 1,
-                num_positions_per_block: 2,
-                num_live_blocks: 2,
-                num_digits_inner: 1,
-                log_basis_inner: 3,
-                known_balanced_log_basis: Some(3),
-            },
-        )
+    let rows = CpuBackend::DEFAULT
+        .recursive_witness_commit_rows(&prepared, &coeffs, 1, 2, 2, 1, 3, Some(3))
         .expect("recursive commit rows");
 
     assert_eq!(rows.len(), 2);
@@ -74,7 +61,7 @@ fn cpu_cyclic_digit_rows_match_direct_kernel() {
     let prepared = prepared();
     let digits = vec![[1i8; D], [0i8; D], [-2i8; D], [3i8; D]];
     let log_basis = 3;
-    let via_backend = CpuBackend
+    let via_backend = CpuBackend::DEFAULT
         .cyclic_digit_rows::<D>(&prepared, 2, &digits, log_basis)
         .expect("backend cyclic digit rows");
     let direct = prepared
@@ -92,17 +79,19 @@ fn cpu_ring_switch_relation_rows_use_distinct_open_and_outer_bases() {
     let e_hat = vec![[1i8; D], [-1i8; D]];
     let t_hat = vec![[-1i8; D], [3i8; D]];
     let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D]];
-    let via_backend = CpuBackend
-        .ring_switch_relation_rows::<D>(
+    let via_backend = CpuBackend::DEFAULT
+        .relation_rows(
             &prepared,
-            RingSwitchRelationRowsPlan {
-                n_d: 1,
-                n_b: 1,
-                n_a: 1,
+            RingSwitchRelationView {
                 e_hat: &e_hat,
                 t_hat: &t_hat,
                 z_segment: &z_segment,
                 z_folded_centered_inf_norm: 3,
+            },
+            RingSwitchRelationPlan {
+                n_d: 1,
+                n_b: 1,
+                n_a: 1,
                 log_basis_open: 2,
                 log_basis_outer: 3,
             },

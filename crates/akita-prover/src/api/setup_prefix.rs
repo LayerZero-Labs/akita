@@ -1,9 +1,10 @@
 //! Preprocessing helpers for setup-prefix commitment artifacts (slice 02B).
 
 use crate::api::commitment::validate_commit_outer_input_nonempty;
+use crate::backend::{DensePoly, DenseView};
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{
-    CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan, OperationCtx,
+    CommitInnerPlan, DigitRowsComputeBackend, OperationCtx, RootCommitKernel, RootCommitSource,
 };
 use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_algebra::CyclotomicRing;
@@ -35,7 +36,7 @@ pub fn commit_setup_prefix<F, const D: usize, B>(
 ) -> Result<SetupPrefixSlot<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    B: CommitmentComputeBackend<F>,
+    B: DigitRowsComputeBackend<F> + for<'a> RootCommitKernel<DenseView<'a, F, D>, F, D>,
 {
     if natural_len == 0 || natural_len > n_prefix {
         return Err(AkitaError::InvalidSetup(
@@ -70,23 +71,27 @@ where
 
     let ring_elems =
         extract_setup_prefix_ring_elems::<F, D>(expanded, padded_ring_slots, natural_len)?;
-    let block_slices = setup_prefix_block_slices(
-        &ring_elems,
-        level_params.layout.num_live_blocks,
-        level_params.layout.num_positions_per_block,
-    )?;
-
-    let recomposed_inner_rows = backend.dense_commit_rows(
+    let dense = DensePoly::from_ring_coeffs::<D>(ring_elems);
+    let view = <DensePoly<F> as RootCommitSource<F, D>>::commit_view(&dense)?;
+    let witnesses = backend.commit_inner_group(
         prepared,
-        DenseCommitRowsPlan {
-            n_a: level_params.layout.inner_commit_matrix.output_rank(),
-            input: DenseCommitInput::CoeffBlocks {
-                block_slices,
-                num_digits_inner: level_params.layout.num_digits_inner,
-                log_basis_inner: level_params.layout.log_basis_inner,
-            },
-        },
+        vec![view],
+        CommitInnerPlan::from_profile(&level_params.layout),
     )?;
+    let [witness] = witnesses.try_into().map_err(|witnesses: Vec<_>| {
+        AkitaError::InvalidSetup(format!(
+            "dense setup-prefix commit returned {} witnesses, expected one",
+            witnesses.len()
+        ))
+    })?;
+    let n_a = level_params.layout.inner_commit_matrix.output_rank();
+    let recomposed_inner_rows = (0..level_params.layout.num_live_blocks)
+        .map(|block| {
+            witness
+                .block_rows::<D>(block, n_a)
+                .map(|rows| rows.to_vec())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     let n_b = level_params.layout.outer_commit_matrix.output_rank();
     let d_b = level_params.layout.outer_commit_matrix.ring_dimension();
@@ -197,32 +202,6 @@ where
         ring.coefficients_mut()[..coeffs.len()].copy_from_slice(coeffs);
     }
     Ok(ring_elems)
-}
-
-fn setup_prefix_block_slices<F, const D: usize>(
-    ring_elems: &[CyclotomicRing<F, D>],
-    num_live_blocks: usize,
-    num_positions_per_block: usize,
-) -> Result<Vec<&[CyclotomicRing<F, D>]>, AkitaError>
-where
-    F: FieldCore,
-{
-    if num_live_blocks
-        .checked_mul(num_positions_per_block)
-        .is_none_or(|witness| witness != ring_elems.len())
-    {
-        return Err(AkitaError::InvalidSetup(
-            "setup prefix ring elements do not match witness block layout".to_string(),
-        ));
-    }
-    Ok((0..num_live_blocks)
-        .map(|block_idx| {
-            let start = block_idx
-                .checked_mul(num_positions_per_block)
-                .expect("block index fits after witness length check");
-            &ring_elems[start..start + num_positions_per_block]
-        })
-        .collect())
 }
 
 #[cfg(test)]
@@ -358,7 +337,7 @@ mod tests {
         let available_field_len = setup.expanded.shared_matrix().as_field_slice().len();
         assert!(available_field_len >= natural_len);
 
-        let backend = CpuBackend;
+        let backend = CpuBackend::DEFAULT;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let prefix_params =
             setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
@@ -388,7 +367,7 @@ mod tests {
             .expect("natural len")
             .min(n_prefix);
         let mut setup = test_setup::<D>(&level_params, n_prefix);
-        let backend = CpuBackend;
+        let backend = CpuBackend::DEFAULT;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let prefix_params =
             setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
@@ -434,7 +413,7 @@ mod tests {
         );
 
         let setup = test_setup::<64>(&level_params, n_prefix);
-        let backend = CpuBackend;
+        let backend = CpuBackend::DEFAULT;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let error = commit_setup_prefix::<F, 64, _>(
             &setup.expanded,

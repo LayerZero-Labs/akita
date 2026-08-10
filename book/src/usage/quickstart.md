@@ -33,7 +33,7 @@ one-hot preset now chooses dimensions per fold from generated adaptive tables;
 | Field | Typical production choice | Notes |
 |-------|---------------------------|--------|
 | **fp128** | **One-hot** (`fp128::OneHot`) | **Default direct one-hot preset.** The generated schedule chooses dimensions for the first two fold levels and uses D64 afterward. Direct dense uses `fp128::Dense`; recursive/tensor/multi-chunk companions remain pinned to D64. |
-| **fp32 / fp64** | **D128 one-hot** | D32/D64 are **not securable** under the reprice and unsupported schedules fail fast. CI benches at **nv=28** (eq-table memory budget). Shipped: fp32 D128/D256 onehot; fp64 D128 dense/onehot and D256 onehot. |
+| **fp32 / fp64** | **D128 one-hot** | D32/D64 are **not securable** under the reprice and unsupported schedules fail fast. This stack ships CI rows through **nv=28**; the adaptive-dimension follow-up extends them. Shipped: fp32 D128/D256 onehot; fp64 D128 dense/onehot and D256 onehot. |
 
 Use `fp128::OneHot` for direct one-hot and `fp128::Dense` for direct dense.
 
@@ -47,5 +47,5 @@ recursive, tensor, and multi-chunk tests use their dedicated D64 companions.
 - `crates/akita-planner/src/resolve.rs` (`resolve_schedule`) and `crates/akita-schedules/src/generated/`.
 - Paper §3.5 `sec:akita-params`.
 - Paper §3.11 `sec:akita-planner` (tables + identical DP on miss).
-- `.github/workflows/profile-bench.yml` (`AKITA_BENCH_CASES`); `specs/profile-bench-coverage-matrix.md`.
+- `.github/workflows/profile-bench.yml` and [`profiling.md`](profiling.md).
 - `AGENTS.md` (Profiling).

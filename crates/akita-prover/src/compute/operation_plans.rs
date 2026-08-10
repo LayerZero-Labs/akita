@@ -4,13 +4,10 @@ use akita_field::{AkitaError, FieldCore};
 use akita_types::{CommittedGroupParams, CommittedGroupProfile};
 
 // ===========================================================================
-// Open, source-typed operation boundary (PO1)
+// Open, source-typed operation boundary
 //
-// Everything below this banner is the *new* prover compute boundary. It sits
-// ABOVE the fixed representation-named row helpers above (`dense_commit_rows`,
-// `onehot_commit_rows`, `ring_switch_relation_rows`, ...), which survive only
-// as lower-level standard kernels. The new layer is open by *source type* `S`
-// instead of closed over Akita's built-in plan shapes:
+// The prover compute boundary is open by source type `S` instead of closed
+// over Akita's built-in representation plan shapes:
 //
 // - operation kernels (`RootCommitKernel`, `OpeningFoldKernel`, ...) take the
 //   borrowed representation view as a generic type parameter `S`, so a
@@ -24,10 +21,9 @@ use akita_types::{CommittedGroupParams, CommittedGroupProfile};
 //   setup, so commitment / opening / tensor / ring-switch work can run on
 //   independent backends while the protocol still sees canonical Akita outputs.
 //
-// PO1 establishes this surface additively: the kernel traits are skeletons with
-// no Akita impls yet (the six representation nodes implement them in their own
-// backend files), and the monolithic `ProverComputeBackend` ladder
-// boundary is intentionally left in place for PO4 to remove.
+// Built-in representations implement these kernels in their backend modules.
+// Shared arithmetic may remain as private CPU helpers, but protocol and public
+// extension boundaries use the source-typed kernels directly.
 // ===========================================================================
 
 /// Scalar operation parameters for an inner Ajtai commit.

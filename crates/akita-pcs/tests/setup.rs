@@ -124,10 +124,13 @@ where
     let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout);
 
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup_source =
         AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv + 1, setup_polys + 1)
             .expect("larger verifier materialization");
@@ -239,10 +242,13 @@ where
     let expected_opening = onehot_lagrange_opening(&indices, k, &pt);
 
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup_source =
         AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv + 1, setup_polys + 1)
             .expect("larger verifier materialization");
@@ -377,10 +383,13 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         .collect();
 
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup =
         AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
@@ -464,10 +473,13 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         .collect();
 
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup =
         AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 

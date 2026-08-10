@@ -1,12 +1,11 @@
 use super::*;
 
-pub(super) fn fold_onehot_block<E, F, const D: usize>(
-    entries: &[E],
+pub(super) fn fold_onehot_block<F, const D: usize>(
+    entries: &[SparseRingBlockEntry],
     scalars: &[F],
     num_positions_per_block: usize,
 ) -> CyclotomicRing<F, D>
 where
-    E: OneHotEntry,
     F: FieldCore,
 {
     let mut coeffs_acc = [F::zero(); D];
@@ -15,22 +14,19 @@ where
         let pos = entry.pos_in_block();
         if pos < scalars.len() && pos < num_positions_per_block {
             let s = scalars[pos];
-            for &ci in entry.coeffs() {
-                coeffs_acc[ci as usize] += s;
-            }
+            coeffs_acc[entry.coeff_idx()] += s;
         }
     }
 
     CyclotomicRing::from_coefficients(coeffs_acc)
 }
 
-pub(super) fn fold_onehot_block_ring<E, F, const D: usize>(
-    entries: &[E],
+pub(super) fn fold_onehot_block_ring<F, const D: usize>(
+    entries: &[SparseRingBlockEntry],
     scalars: &[CyclotomicRing<F, D>],
     num_positions_per_block: usize,
 ) -> CyclotomicRing<F, D>
 where
-    E: OneHotEntry,
     F: FieldCore,
 {
     let mut acc = CyclotomicRing::<F, D>::zero();
@@ -38,9 +34,7 @@ where
     for entry in entries {
         let pos = entry.pos_in_block();
         if pos < scalars.len() && pos < num_positions_per_block {
-            for &ci in entry.coeffs() {
-                scalars[pos].shift_accumulate_into(&mut acc, ci as usize);
-            }
+            scalars[pos].shift_accumulate_into(&mut acc, entry.coeff_idx());
         }
     }
 

@@ -4,11 +4,18 @@
 |-------------|--------------------------------------------------------|
 | Author(s)   | Quang Dao                                             |
 | Created     | 2026-05-26                                            |
-| Status      | implemented, with long hosted-runner cells deferred   |
+| Status      | archived                                               |
 | PR          | https://github.com/LayerZero-Labs/akita/pull/107      |
+| Book-chapter | book/src/usage/profiling.md                           |
+
+> **Archived design record.** This file records PR 107 and its later edits.
+> It does not describe the current benchmark matrix or report format. See
+> [`book/src/usage/profiling.md`](../../../book/src/usage/profiling.md) and
+> [`.github/workflows/profile-bench.yml`](../../../.github/workflows/profile-bench.yml)
+> for the current contract and exact cases.
 
 > **Status note (2026-06-03, PR #146).** The committed-fold A-role reprice in
-> [`specs/weak-binding-norm-fix.md`](weak-binding-norm-fix.md) made the small-D
+> [`specs/weak-binding-norm-fix.md`](../../weak-binding-norm-fix.md) made the small-D
 > families non-securable (fp16 entirely; fp32/fp64 at D32/D64), so the **active**
 > benchmark matrix was re-pointed at securable D128 profiles for the small prime
 > fields. A later follow-up re-pointed the **fp128** cells to D64 after measuring

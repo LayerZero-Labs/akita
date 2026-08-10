@@ -54,9 +54,9 @@ fn run_single_onehot(nv: usize) {
         };
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             &prepared,
             setup.expanded.as_ref(),
         )
@@ -73,6 +73,7 @@ fn run_single_onehot(nv: usize) {
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
+        let releasing_stack = akita_prover::ReleaseRootNttAfterFold::new(&stack);
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot");
         let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
@@ -83,7 +84,7 @@ fn run_single_onehot(nv: usize) {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &stack,
+            &releasing_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -138,9 +139,9 @@ fn run_single_dense(nv: usize) {
         let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, 1).unwrap();
-        let commit_prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let commit_prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let commit_stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             &commit_prepared,
             setup.expanded.as_ref(),
         )
@@ -157,9 +158,9 @@ fn run_single_dense(nv: usize) {
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
-        let prove_prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prove_prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let prove_stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             &prove_prepared,
             setup.expanded.as_ref(),
         )
@@ -311,9 +312,9 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         };
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(setup_nv, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             &prepared,
             setup.expanded.as_ref(),
         )

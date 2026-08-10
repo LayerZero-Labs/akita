@@ -1,9 +1,6 @@
 use super::prepared_tests::{prepared, D, F};
 use super::CpuBackend;
-use crate::compute::backend::CommitmentComputeBackend;
-use crate::compute::plans::{
-    DenseCommitInput, DenseCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
-};
+use crate::compute::plans::DenseCommitInput;
 use akita_algebra::CyclotomicRing;
 use akita_types::{NttCacheKey, NttTransformDomain};
 
@@ -12,19 +9,8 @@ fn recursive_commit_selects_exact_i16_from_inner_basis() {
     let prepared = prepared();
     let coeffs = vec![[1i8; D], [-1i8; D]];
     let commit = |log_basis_inner| {
-        CpuBackend
-            .recursive_witness_commit_rows(
-                &prepared,
-                RecursiveWitnessCommitRowsPlan {
-                    coeffs: &coeffs,
-                    n_rows: 1,
-                    num_positions_per_block: 2,
-                    num_live_blocks: 1,
-                    num_digits_inner: 1,
-                    log_basis_inner,
-                    known_balanced_log_basis: Some(2),
-                },
-            )
+        CpuBackend::DEFAULT
+            .recursive_witness_commit_rows(&prepared, &coeffs, 1, 2, 1, 1, log_basis_inner, Some(2))
             .expect("recursive commit rows")
     };
 
@@ -51,16 +37,14 @@ fn dense_coeff_commit_selects_exact_i16_from_inner_basis() {
         CyclotomicRing::from_coefficients([F::from_i8(-1); D]),
     ];
     let commit = |log_basis_inner| {
-        CpuBackend
+        CpuBackend::DEFAULT
             .dense_commit_rows(
                 &prepared,
-                DenseCommitRowsPlan {
-                    n_a: 1,
-                    input: DenseCommitInput::CoeffBlocks {
-                        block_slices: vec![block.as_slice()],
-                        num_digits_inner: 1,
-                        log_basis_inner,
-                    },
+                1,
+                DenseCommitInput::CoeffBlocks {
+                    block_slices: vec![block.as_slice()],
+                    num_digits_inner: 1,
+                    log_basis_inner,
                 },
             )
             .expect("dense commit rows")

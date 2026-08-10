@@ -288,10 +288,13 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
     let (poly, evals) = make_dense_poly(full_num_vars);
     let setup = Scheme::setup_prover(full_num_vars, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) =
         Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
@@ -380,7 +383,7 @@ fn opening_from_poly_at<const D_OPEN: usize>(
     .expect("opening point shape should match layout");
 
     let opening = OpeningFoldKernel::<_, OneHotF, D_OPEN>::evaluate_and_fold(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         None,
         poly.opening_view().expect("opening view"),
         OpeningFoldPlan::Base {
