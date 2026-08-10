@@ -60,6 +60,9 @@ impl FlatBlocks<SparseRingBlockEntry> {
                 &mut current_block,
                 block_idx,
                 num_range_blocks,
+                // One-hot blocks are the `+1` subset of the shared signed
+                // sparse entry representation. This builder is their sole
+                // production construction boundary.
                 SparseRingBlockEntry::new(pos_in_block, coeff_idx, 1),
             )?;
         }

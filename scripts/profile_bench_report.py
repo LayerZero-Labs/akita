@@ -696,11 +696,7 @@ def benchmark_name(
     if setup_mode != "direct":
         setup_suffix = f" ({setup_mode} setup contribution)"
     if metadata.opening_topology == "multi_group":
-        return (
-            f"{metadata.field_family} multi-group opening: two separate 16 variable "
-            "polynomials at two independent points, plus two 32 variable polynomials at one "
-            f"shared point{setup_suffix}"
-        )
+        return f"{metadata.field_family} multi-group opening with {num_polys} polynomials{setup_suffix}"
     if metadata.workload == "onehot":
         if num_polys > 1:
             return (
@@ -903,6 +899,10 @@ def extract_summary(
                     "group_role": kvs["group_role"],
                     "consumer_level": int(kvs["consumer_level"]),
                     "witness_field_elements": int(kvs["witness_field_elements"]),
+                    "public_num_vars": int(kvs.get("public_num_vars", "0")),
+                    "public_num_polynomials": int(
+                        kvs.get("public_num_polynomials", "0")
+                    ),
                     "d_a": int(kvs["d_a"]),
                     "d_b": int(kvs["d_b"]),
                     "d_d": int(kvs["d_d"]),
@@ -1004,6 +1004,7 @@ def extract_summary(
                 "num_digits_outer": int(kvs.get("num_digits_outer") or kvs["delta_open"]),
                 "num_digits_open": int(kvs.get("num_digits_open") or kvs["delta_open"]),
                 "delta_fold": int(kvs["delta_fold"]),
+                "input_witness_len": input_witness_len,
                 "current_w_len": planned_current_w_len(kvs),
                 "next_w_len": output_witness_len,
                 "setup_prefix_natural_field_elements": int(
@@ -1082,6 +1083,10 @@ def extract_summary(
     for level, groups in planned_groups.items():
         if level in planned_levels:
             planned_levels[level]["groups"] = groups
+        else:
+            summary.setdefault("warnings", []).append(
+                f"planned fold groups for L{level} have no matching planned fold level"
+            )
     if planned_levels:
         summary["planned_levels"] = [planned_levels[level] for level in sorted(planned_levels)]
     if proof_levels:
@@ -1161,7 +1166,7 @@ def infer_failure_phase(summary: dict[str, object], first_missing: str | None = 
         "commit_s": "commit",
         "prove_total_s": "prove",
         "verify_total_s": "verify",
-        "verify_single_total_s": "single threaded verify",
+        "verify_single_total_s": "single-threaded verify",
         "proof_size_bytes": "proof summary",
         "accounted_bytes": "proof accounting",
         "consistent_proof_accounting": "proof accounting",
@@ -1666,8 +1671,15 @@ MEASURED_METRICS = [
     Metric("backend_prepare_s", "Backend preparation", "s", fmt_seconds),
     Metric("commit_s", "Commit", "s", fmt_seconds),
     Metric("prove_total_s", "Prove", "s", fmt_seconds),
-    Metric("verify_total_s", "Verify, multi threaded", "ms", fmt_milliseconds),
-    Metric("verify_single_total_s", "Verify, single threaded", "ms", fmt_milliseconds),
+    Metric("verify_total_s", "Verify, multi-threaded", "ms", fmt_milliseconds),
+    Metric("verify_single_total_s", "Verify, single-threaded", "ms", fmt_milliseconds),
+    Metric("verify_akita_s", "Verifier core, multi-threaded", "ms", fmt_milliseconds),
+    Metric(
+        "verify_single_akita_s",
+        "Verifier core, single-threaded",
+        "ms",
+        fmt_milliseconds,
+    ),
     Metric("max_rss_kib", "Peak process RSS", "MiB", fmt_mib),
     Metric(
         "num_setup_field_elements",
@@ -1728,6 +1740,9 @@ def render_execution_parameters(
 ) -> None:
     rows = [("Internal mode", code_text(current["mode"]))]
 
+    if current.get("crt_profile") is not None:
+        rows.append(("CRT profile", code_text(current["crt_profile"])))
+
     crt = parameter_value(
         current,
         baseline,
@@ -1767,8 +1782,8 @@ def render_execution_parameters(
         baseline,
         ("verify_multi_threads", "verify_single_threads"),
         lambda multi, single: (
-            f"{code_text(fmt_count(float(multi)))} for the multi threaded timing and "
-            f"{code_text(fmt_count(float(single)))} for the single threaded timing."
+            f"{code_text(fmt_count(float(multi)))} for the multi-threaded timing and "
+            f"{code_text(fmt_count(float(single)))} for the single-threaded timing."
         ),
     )
     if verifier_threads is not None:
@@ -1800,7 +1815,7 @@ def numeric_delta(
     if current_value is None or baseline_value is None:
         return "n/a"
     if float(baseline_value) == 0.0:
-        return "unchanged" if float(current_value) == 0.0 else "new; base is zero"
+        return "unchanged" if float(current_value) == 0.0 else "new; merge base is zero"
     delta = (float(current_value) / float(baseline_value) - 1.0) * 100.0
     sign = "+" if delta >= 0.0 else ""
     return f"{sign}{delta:.1f}%"
@@ -1812,7 +1827,7 @@ def value_with_baseline_delta(
     formatter: callable,
     unit: str = "",
     compare_to_baseline: bool = False,
-    comparison_label: str = " vs base",
+    comparison_label: str = " vs merge base",
 ) -> str:
     value = f"{formatter(float(current_value))}{unit}"
     if baseline_value is None:
@@ -1883,29 +1898,80 @@ def human_case_label(summary: dict[str, object]) -> str:
     num_polys = int(summary.get("num_polys", 1))
     if num_polys > 1:
         label += f", {num_polys} polynomials"
-    return label
+    return f"{label}, {setup_mode} setup check"
+
+
+def public_opening_groups(summary: dict[str, object]) -> list[dict[str, object]]:
+    levels = summary.get("planned_levels")
+    if not isinstance(levels, list):
+        return []
+    root = next(
+        (
+            level
+            for level in levels
+            if isinstance(level, dict) and int(level.get("level", -1)) == 0
+        ),
+        None,
+    )
+    if root is None or not isinstance(root.get("groups"), list):
+        return []
+    return [
+        group
+        for group in root["groups"]
+        if isinstance(group, dict)
+        and group.get("group_role") in ("precommitted", "final")
+        and int(group.get("public_num_polynomials", 0)) > 0
+    ]
+
+
+def join_phrases(phrases: list[str]) -> str:
+    if len(phrases) < 2:
+        return "".join(phrases)
+    return ", ".join(phrases[:-1]) + f", and {phrases[-1]}"
 
 
 def public_opening_statement(summary: dict[str, object]) -> str:
     """Describe the PCS statement independently of benchmark witness generation."""
     metadata = case_metadata(str(summary.get("mode", "")))
+    bits = field_family_bits(metadata.field_family)
+    field = f"Fp{bits}" if bits is not None else metadata.field_family
     if metadata.opening_topology == "multi_group":
+        groups = public_opening_groups(summary)
+        if groups:
+            descriptions = []
+            for group in groups:
+                num_vars = int(group["public_num_vars"])
+                num_polynomials = int(group["public_num_polynomials"])
+                if num_polynomials == 1:
+                    descriptions.append(
+                        f"one {num_vars} variable polynomial at its own point"
+                    )
+                else:
+                    descriptions.append(
+                        f"{num_polynomials} {num_vars} variable polynomials at one shared point"
+                    )
+            total_polynomials = sum(
+                int(group["public_num_polynomials"]) for group in groups
+            )
+            return (
+                f"Over {field}, {total_polynomials} polynomials in {len(groups)} groups: "
+                f"{join_phrases(descriptions)}."
+            )
         return (
-            "Four polynomials in three groups: one 16 variable polynomial at its own "
-            "point, a second 16 variable polynomial at another point, and two "
-            "32 variable polynomials at one shared point."
+            f"Over {field}, {int(summary.get('num_polys', 1))} polynomials are split "
+            "across independent opening groups."
         )
 
     num_vars = int(summary["num_vars"])
     num_polys = int(summary.get("num_polys", 1))
     if num_polys == 1:
         return (
-            f"One committed {num_vars} variable multilinear polynomial with 2^{num_vars} "
-            f"coefficients, opened at one {num_vars} coordinate point."
+            f"Over {field}, one committed {num_vars} variable multilinear polynomial "
+            f"with 2^{num_vars} coefficients is opened at one {num_vars} coordinate point."
         )
     return (
-        f"{num_polys} committed {num_vars} variable multilinear polynomials, all opened "
-        f"at one shared {num_vars} coordinate point."
+        f"Over {field}, {num_polys} committed {num_vars} variable multilinear "
+        f"polynomials are opened at one shared {num_vars} coordinate point."
     )
 
 
@@ -2002,13 +2068,13 @@ def render_matrix_summary(
                 Metric("prove_total_s", "Prove", " s", fmt_seconds),
                 Metric(
                     "verify_total_s",
-                    "Verify, multi threaded",
+                    "Verify, multi-threaded",
                     " ms",
                     fmt_milliseconds,
                 ),
                 Metric(
                     "verify_single_total_s",
-                    "Verify, single threaded",
+                    "Verify, single-threaded",
                     " ms",
                     fmt_milliseconds,
                 ),
@@ -2039,9 +2105,9 @@ def render_matrix_summary(
                 Metric("proof_size_bytes", "Total proof", " bytes", fmt_bytes),
                 Metric("akita_fold_bytes", "Fold payload", " bytes", fmt_bytes),
                 Metric("tail_bytes", "Terminal response", " bytes", fmt_bytes),
-                Metric("akita_levels", "Fold levels", "", fmt_count),
             ],
         ),
+        ("Protocol shape", [Metric("akita_levels", "Fold levels", "", fmt_count)]),
     ]
 
     for table_index, (title, metrics) in enumerate(tables):
@@ -2049,7 +2115,7 @@ def render_matrix_summary(
             print()
         print(f"### {title}")
         print()
-        headers = ["Profile", "Fold A/B/D schedule", *(metric.name for metric in metrics)]
+        headers = ["Profile", "Status · Fold A/B/D schedule", *(metric.name for metric in metrics)]
         print("| " + " | ".join(headers) + " |")
         print(
             "| "
@@ -2061,7 +2127,7 @@ def render_matrix_summary(
             baseline = main_baseline.get(str(current["case_id"])) if main_baseline else None
             row = [
                 md_text(human_case_label(current)),
-                fold_dimension_schedule(current),
+                f"{code_text(case_status(current))} · {fold_dimension_schedule(current)}",
             ]
             for metric in metrics:
                 row.append(
@@ -2072,7 +2138,7 @@ def render_matrix_summary(
                         metric.value_formatter,
                         metric.unit,
                         main_baseline is not None,
-                        "",
+                        " vs merge base",
                     )
                 )
             print("| " + " | ".join(row) + " |")
@@ -2091,6 +2157,18 @@ def render_matrix_summary(
                 f"{code_text(case.get('failure_phase', 'unknown'))}; "
                 f"{md_text(case.get('error', 'profile run failed'))}."
             )
+
+    warnings = [
+        (case, warning)
+        for case in current_cases
+        for warning in case.get("warnings", [])
+        if isinstance(warning, str)
+    ]
+    if warnings:
+        print()
+        print("Report warnings:")
+        for case, warning in warnings:
+            print(f"- {code_text(case['case_id'])}: {md_text(warning)}.")
 
 
 def sample_range(summary: dict[str, object], key: str) -> tuple[float, float] | None:
@@ -2136,32 +2214,6 @@ def detail_block(title: str, rows: list[str]) -> str:
     return f"<strong>{title}</strong><br>" + "<br>".join(rows)
 
 
-def tuple_choice(
-    level: dict[str, object],
-    baseline: dict[str, object] | None,
-    label: str,
-    keys: tuple[str, ...],
-) -> str:
-    current = " / ".join(fmt_count(float(level[key])) for key in keys)
-    baseline_value = None
-    if baseline is not None and all(baseline.get(key) is not None for key in keys):
-        baseline_value = " / ".join(fmt_count(float(baseline[key])) for key in keys)
-    return exact_choice(f"{label}: {current}", f"{label}: {baseline_value}" if baseline_value else None)
-
-
-def scalar_choice(
-    level: dict[str, object],
-    baseline: dict[str, object] | None,
-    label: str,
-    key: str,
-) -> str:
-    current = fmt_count(float(level[key]))
-    baseline_value = None
-    if baseline is not None and baseline.get(key) is not None:
-        baseline_value = fmt_count(float(baseline[key]))
-    return exact_choice(f"{label}: {current}", f"{label}: {baseline_value}" if baseline_value else None)
-
-
 def format_witness_groups_inline(groups: object) -> str:
     if not isinstance(groups, list) or not groups:
         return "n/a"
@@ -2177,79 +2229,6 @@ def format_witness_groups_inline(groups: object) -> str:
     return "; ".join(values) if values else "n/a"
 
 
-def witness_choice(
-    level: dict[str, object], baseline: dict[str, object] | None
-) -> str:
-    current = (
-        f"Input → output: {format_witness_groups_inline(level.get('current_w_len'))} → "
-        f"{fmt_count(float(level['next_w_len']))}"
-    )
-    baseline_value = None
-    if baseline is not None and baseline.get("next_w_len") is not None:
-        baseline_value = (
-            f"Input → output: {format_witness_groups_inline(baseline.get('current_w_len'))} → "
-            f"{fmt_count(float(baseline['next_w_len']))}"
-        )
-    return exact_choice(current, baseline_value)
-
-
-def relation_layout_choice(
-    level: dict[str, object], baseline: dict[str, object] | None
-) -> str:
-    keys = (
-        "num_live_ring_elements_per_claim",
-        "num_live_blocks",
-        "num_positions_per_block",
-        "block_index_domain_size",
-    )
-    comparable_baseline = (
-        baseline
-        if baseline is not None and all(baseline.get(key) is not None for key in keys)
-        else None
-    )
-    return "<br>".join(
-        [
-            exact_choice(
-                f"Live per claim: {fmt_count(float(level['num_live_ring_elements_per_claim']))}",
-                f"Live per claim: {fmt_count(float(comparable_baseline['num_live_ring_elements_per_claim']))}"
-                if comparable_baseline
-                else None,
-            ),
-            exact_choice(
-                f"Blocks × positions: {fmt_count(float(level['num_live_blocks']))} × "
-                f"{fmt_count(float(level['num_positions_per_block']))}",
-                f"Blocks × positions: {fmt_count(float(comparable_baseline['num_live_blocks']))} × "
-                f"{fmt_count(float(comparable_baseline['num_positions_per_block']))}"
-                if comparable_baseline
-                else None,
-            ),
-            exact_choice(
-                f"Domain slots: {fmt_count(float(level['block_index_domain_size']))}",
-                f"Domain slots: {fmt_count(float(comparable_baseline['block_index_domain_size']))}"
-                if comparable_baseline
-                else None,
-            ),
-        ]
-    )
-
-
-def setup_prefix_choice(
-    level: dict[str, object], baseline: dict[str, object] | None
-) -> str:
-    current = (
-        f"Natural → padded: {fmt_count(float(level['setup_prefix_natural_field_elements']))} → "
-        f"{fmt_count(float(level['setup_prefix_padded_field_elements']))}"
-    )
-    baseline_value = None
-    if baseline is not None and baseline.get("setup_prefix_natural_field_elements") is not None:
-        baseline_value = (
-            f"Natural → padded: "
-            f"{fmt_count(float(baseline['setup_prefix_natural_field_elements']))} → "
-            f"{fmt_count(float(baseline['setup_prefix_padded_field_elements']))}"
-        )
-    return exact_choice(current, baseline_value)
-
-
 def planned_group_label(group: dict[str, object]) -> str:
     role = str(group["group_role"])
     name = str(group["group"])
@@ -2263,6 +2242,42 @@ def planned_group_label(group: dict[str, object]) -> str:
     if role == "setup_offload":
         return f"Setup offload → L{int(group['consumer_level'])}"
     return name
+
+
+def planned_groups_for_render(level: dict[str, object]) -> list[dict[str, object]]:
+    groups = level.get("groups")
+    typed_groups = (
+        [group for group in groups if isinstance(group, dict)]
+        if isinstance(groups, list)
+        else []
+    )
+    if typed_groups:
+        return typed_groups
+
+    level_index = int(level["level"])
+    role = "final" if level_index == 0 else "folded"
+    witness_groups = level.get("current_w_len")
+    witness_field_elements = (
+        sum(
+            int(group.get("field_elements", 0))
+            for group in witness_groups
+            if isinstance(group, dict)
+        )
+        if isinstance(witness_groups, list)
+        else 0
+    )
+    return [
+        {
+            **level,
+            "group": role,
+            "group_role": role,
+            "consumer_level": level_index,
+            "witness_field_elements": witness_field_elements
+            or int(level.get("input_witness_len", 0)),
+            "num_digits_fold": int(level["delta_fold"]),
+            "legacy_level": True,
+        }
+    ]
 
 
 def planned_group_key(group: dict[str, object]) -> tuple[str, str, int]:
@@ -2308,7 +2323,12 @@ def planned_group_work_value(group: dict[str, object]) -> str:
         f"{fmt_count(float(group['num_positions_per_block']))}<br>"
         f"Domain slots: {fmt_count(float(group['block_index_domain_size']))}"
     )
-    if role == "setup_offload":
+    if group.get("legacy_level"):
+        source = (
+            f"Input → output: {format_witness_groups_inline(group.get('current_w_len'))} → "
+            f"{fmt_count(float(group['next_w_len']))}"
+        )
+    elif role == "setup_offload":
         source = (
             f"Natural → padded: "
             f"{fmt_count(float(group['setup_prefix_natural_field_elements']))} → "
@@ -2316,12 +2336,22 @@ def planned_group_work_value(group: dict[str, object]) -> str:
         )
     else:
         source = f"Field elements: {fmt_count(float(group['witness_field_elements']))}"
+    parts = [
+        f"<em>{'Setup prefix' if role == 'setup_offload' else 'Witness'}</em><br>{source}",
+        f"<br><em>Relation geometry</em><br>{relation}",
+    ]
+    if group.get("legacy_level") and (
+        int(group.get("setup_prefix_natural_field_elements", 0)) != 0
+        or int(group.get("setup_prefix_padded_field_elements", 0)) != 0
+    ):
+        parts.append(
+            "<br><em>Setup prefix</em><br>Natural → padded: "
+            f"{fmt_count(float(group['setup_prefix_natural_field_elements']))} → "
+            f"{fmt_count(float(group['setup_prefix_padded_field_elements']))}"
+        )
     return detail_block(
         label,
-        [
-            f"<em>{'Setup prefix' if role == 'setup_offload' else 'Witness'}</em><br>{source}",
-            f"<br><em>Relation geometry</em><br>{relation}",
-        ],
+        parts,
     )
 
 
@@ -2340,11 +2370,19 @@ def render_group_choices(
         label_source = current_group or baseline_group
         if label_source is None:
             continue
-        current_text = value(current_group) if current_group is not None else (
-            f"{planned_group_label(label_source)}: absent"
+        current_text = (
+            value(current_group)
+            if current_group is not None
+            else detail_block(planned_group_label(label_source), ["absent"])
         )
-        baseline_text = value(baseline_group) if baseline_group is not None else (
-            f"{planned_group_label(label_source)}: absent" if baseline_groups else None
+        baseline_text = (
+            value(baseline_group)
+            if baseline_group is not None
+            else (
+                detail_block(planned_group_label(label_source), ["absent"])
+                if baseline_groups
+                else None
+            )
         )
         rows.append(exact_choice(current_text, baseline_text))
     return "<br><br>".join(rows)
@@ -2451,12 +2489,6 @@ def render_fold_details(
         int(level["level"]): level for level in (baseline_proof_levels or [])
     }
     level_indices = sorted(set(planned) | set(proof))
-    show_setup_prefix = any(
-        int(level.get("setup_prefix_natural_field_elements", 0)) != 0
-        or int(level.get("setup_prefix_padded_field_elements", 0)) != 0
-        for level in [*planned_levels, *(baseline_planned_levels or [])]
-    )
-
     print("<details>")
     print("<summary>Fold schedule and proof cost</summary>")
     print()
@@ -2476,129 +2508,32 @@ def render_fold_details(
             schedule_choice = "—"
             work = "—"
         else:
-            groups = schedule.get("groups")
-            baseline_groups = baseline_schedule.get("groups") if baseline_schedule else None
-            current_group_rows = groups if isinstance(groups, list) else []
-            baseline_group_rows = baseline_groups if isinstance(baseline_groups, list) else []
-            main_group_count = sum(
-                group.get("group_role") != "setup_offload"
-                for group in current_group_rows
-                if isinstance(group, dict)
+            current_groups = planned_groups_for_render(schedule)
+            baseline_groups = (
+                planned_groups_for_render(baseline_schedule)
+                if baseline_schedule is not None
+                else []
             )
-            baseline_main_group_count = sum(
-                group.get("group_role") != "setup_offload"
-                for group in baseline_group_rows
-                if isinstance(group, dict)
+            schedule_choice = render_group_choices(
+                current_groups, baseline_groups, planned_group_planner_value
             )
-            group_aware = (
-                main_group_count > 1
-                or baseline_main_group_count > 1
-                or any(
-                    group.get("group_role") == "setup_offload"
-                    for group in [*current_group_rows, *baseline_group_rows]
-                    if isinstance(group, dict)
-                )
+            work = render_group_choices(
+                current_groups, baseline_groups, planned_group_work_value
             )
-            if group_aware:
-                typed_groups = [
-                    group for group in current_group_rows if isinstance(group, dict)
-                ]
-                typed_baseline_groups = [
-                    group for group in baseline_group_rows if isinstance(group, dict)
-                ]
-                schedule_choice = render_group_choices(
-                    typed_groups, typed_baseline_groups, planned_group_planner_value
+            next_w = f"Field elements: {fmt_count(float(schedule['next_w_len']))}"
+            baseline_next_w = None
+            if (
+                baseline_schedule is not None
+                and baseline_schedule.get("next_w_len") is not None
+            ):
+                baseline_next_w = (
+                    f"Field elements: "
+                    f"{fmt_count(float(baseline_schedule['next_w_len']))}"
                 )
-                work = render_group_choices(
-                    typed_groups, typed_baseline_groups, planned_group_work_value
-                )
-                next_w = f"Field elements: {fmt_count(float(schedule['next_w_len']))}"
-                baseline_next_w = None
-                if (
-                    baseline_schedule is not None
-                    and baseline_schedule.get("next_w_len") is not None
-                ):
-                    baseline_next_w = (
-                        f"Field elements: "
-                        f"{fmt_count(float(baseline_schedule['next_w_len']))}"
-                    )
-                work = (
-                    f"{work}<br><br>"
-                    f"{detail_block('Folded output', [exact_choice(next_w, baseline_next_w)])}"
-                )
-            else:
-                schedule_choice = "<br><br>".join(
-                    [
-                        detail_block(
-                            "Matrix geometry",
-                            [
-                                tuple_choice(
-                                    schedule,
-                                    baseline_schedule,
-                                    "Rings A/B/D",
-                                    ("d_a", "d_b", "d_d"),
-                                ),
-                                tuple_choice(
-                                    schedule,
-                                    baseline_schedule,
-                                    "Rows A/B/D",
-                                    ("n_a", "n_b", "n_d"),
-                                ),
-                            ],
-                        ),
-                        detail_block(
-                            "Decomposition",
-                            [
-                                tuple_choice(
-                                    schedule,
-                                    baseline_schedule,
-                                    "Basis bits A/B/D",
-                                    (
-                                        "log_basis_inner",
-                                        "log_basis_outer",
-                                        "log_basis_open",
-                                    ),
-                                ),
-                                tuple_choice(
-                                    schedule,
-                                    baseline_schedule,
-                                    "Digits A/B/D/W",
-                                    (
-                                        "num_digits_inner",
-                                        "num_digits_outer",
-                                        "num_digits_open",
-                                        "delta_fold",
-                                    ),
-                                ),
-                            ],
-                        ),
-                        detail_block(
-                            "Challenge",
-                            [
-                                scalar_choice(
-                                    schedule,
-                                    baseline_schedule,
-                                    "Fold challenge L1",
-                                    "challenge_l1_mass",
-                                ),
-                            ],
-                        ),
-                    ]
-                )
-                witness = witness_choice(schedule, baseline_schedule)
-                relation = relation_layout_choice(schedule, baseline_schedule)
-                work_parts = [
-                    detail_block("Witness flow", [witness]),
-                    detail_block("Relation geometry", [relation]),
-                ]
-                if show_setup_prefix:
-                    work_parts.append(
-                        detail_block(
-                            "Setup prefix",
-                            [setup_prefix_choice(schedule, baseline_schedule)],
-                        )
-                    )
-                work = "<br><br>".join(work_parts)
+            work = (
+                f"{work}<br><br>"
+                f"{detail_block('Folded output', [exact_choice(next_w, baseline_next_w)])}"
+            )
 
         proof_bytes = "n/a"
         if proof_level is not None:
@@ -2611,8 +2546,9 @@ def render_fold_details(
         "Role tuples use A / B / D order. The digit tuple adds folded witness W as "
         "its fourth value. Proof groups with zero bytes are omitted. Component details "
         "appear below the group total when a group contains multiple fields. "
-        "Unchanged choices omit merge base text. The terminal response is reported "
-        "separately and is not part of the terminal fold byte total."
+        "Unchanged choices omit merge base text. Exact proof component comparisons "
+        "show merge base bytes without a percentage. The terminal response is "
+        "reported separately and is not part of the terminal fold byte total."
     )
     grind_rows = [
         level
@@ -2637,9 +2573,12 @@ def render_fold_details(
                 fmt_count(float(baseline.get("grind_attempts", 0))) if baseline else None,
             )
             print(f"| L{level['level']} | {nonce} | {attempts} |")
-    else:
+    elif proof_levels:
         print()
         print("No fold needed a grinding retry.")
+    else:
+        print()
+        print("Grinding was not measured because no proof fold data was emitted.")
     print()
     print("</details>")
 
@@ -2787,16 +2726,17 @@ def render_report(args: argparse.Namespace) -> int:
     passed = sum(case_status(case) == "ok" for case in current_cases)
     print(f"{passed} of {len(current_cases)} profiles passed.")
     print()
-    runs = sorted({int(case.get("runs", 1)) for case in current_cases})
-    if passed > 0 and len(runs) == 1:
+    run_counts = sorted({int(case.get("runs", 1)) for case in current_cases})
+    if passed > 0 and len(run_counts) == 1:
+        warmup_label = "run" if warmups == 1 else "runs"
         print(
-            f"Times are medians of `{runs[0]}` measured runs after `{warmups}` discarded "
-            "warmup run. Peak RSS is the largest measured value."
+            f"Times are medians of `{run_counts[0]}` measured runs after `{warmups}` "
+            f"discarded warmup {warmup_label}. Peak RSS is the largest measured value."
         )
         print()
         if any(case.get("verify_single_total_s") is not None for case in current_cases):
             print(
-                "Each sample verifies the same proof first with the configured multi threaded "
+                "Each sample verifies the same proof first with the configured multi-threaded "
                 "pool and then with one thread. Both timings reuse the same verifier setup."
             )
             print()
@@ -2845,6 +2785,8 @@ def render_report(args: argparse.Namespace) -> int:
                 f"- Failure: phase `{current.get('failure_phase', 'unknown')}`; "
                 f"{md_text(current['error'])}."
             )
+        for warning in current.get("warnings", []):
+            print(f"- Report warning: {md_text(warning)}.")
         if current.get("workload") == "onehot":
             print(
                 f"- Benchmark witness: one `1` in every consecutive chunk of "
@@ -2866,13 +2808,16 @@ def render_report(args: argparse.Namespace) -> int:
             "`AKITA_PROFILE_TRACE=0` `AKITA_PROFILE_SPAN_CLOSES=0` "
             "`AKITA_PROFILE_LOG=info` `AKITA_PROFILE_ANSI=0`."
         )
-        runs = int(current.get("runs", 1))
-        if runs > 1 or warmups > 0:
+        case_runs = int(current.get("runs", 1))
+        if case_runs > 1 or warmups > 0:
             warmup_clause = (
-                f" after `{warmups}` discarded warmup run(s)" if warmups > 0 else ""
+                f" after `{warmups}` discarded warmup "
+                f"{'run' if warmups == 1 else 'runs'}"
+                if warmups > 0
+                else ""
             )
             print(
-                f"- Samples: metrics are the median of `{runs}` runs{warmup_clause}; "
+                f"- Samples: metrics are the median of `{case_runs}` runs{warmup_clause}; "
                 "Peak process RSS is the maximum sample."
             )
         print()
@@ -2901,14 +2846,14 @@ def render_report(args: argparse.Namespace) -> int:
             if row:
                 print(row)
 
-        if runs > 1:
+        if case_runs > 1:
             ranges = []
             for key, label in [
                 ("setup_s", "setup"),
                 ("commit_s", "commit"),
                 ("prove_total_s", "prove"),
-                ("verify_total_s", "multi threaded verify"),
-                ("verify_single_total_s", "single threaded verify"),
+                ("verify_total_s", "multi-threaded verify"),
+                ("verify_single_total_s", "single-threaded verify"),
             ]:
                 observed_range = sample_range(current, key)
                 if observed_range is not None:
@@ -2966,14 +2911,11 @@ def render_report(args: argparse.Namespace) -> int:
                 "field-element encoding"
             )
 
-        planned_levels = current.get("planned_levels")
-        proof_levels = current.get("proof_levels")
-        if (
-            isinstance(planned_levels, list)
-            and planned_levels
-            and isinstance(proof_levels, list)
-            and proof_levels
-        ):
+        planned_levels_value = current.get("planned_levels")
+        proof_levels_value = current.get("proof_levels")
+        planned_levels = planned_levels_value if isinstance(planned_levels_value, list) else []
+        proof_levels = proof_levels_value if isinstance(proof_levels_value, list) else []
+        if planned_levels or proof_levels:
             print()
             baseline_planned_levels = (
                 main_case.get("planned_levels") if main_case is not None else None

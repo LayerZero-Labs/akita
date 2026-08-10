@@ -2,15 +2,12 @@
 
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{
-    tensor_root_projection, CommitInnerPlan, OperationCtx, RootCommitKernel, RootCommitSource,
-    RootPolyMeta, RuntimeCommitBackendFor, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
-    UniformProverStack,
+    tensor_root_projection, CommitInnerPlan, OperationCtx, RootCommitSource, RootPolyMeta,
+    RuntimeCommitBackendFor, RuntimeRootCommitBackend, RuntimeRootCommitPoly, UniformProverStack,
 };
-use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
-use crate::{CommitInnerWitness, RootTensorProjectionPoly};
+use crate::RootTensorProjectionPoly;
 use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
-use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
@@ -19,9 +16,13 @@ use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
     Commitment, CommitmentRingDims, CommittedGroup, CommittedGroupParams, CommittedGroupProfile,
-    CompressionChainPlan, DigitBlocks, FpExtEncoding, InnerCommitMatrixParams, OpeningClaimsLayout,
+    CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams, OpeningClaimsLayout,
     OpeningScheduleSelection, OuterCommitMatrixParams, PolynomialGroupLayout, RingVec,
 };
+
+mod inner;
+use inner::prepare_inner_commit_group;
+pub(crate) use inner::validate_commit_inner_shape;
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
 ///
@@ -149,50 +150,6 @@ where
                 geometry.context
             )));
         }
-    }
-    Ok(())
-}
-
-#[tracing::instrument(skip_all, name = "validate_commit_inner_shape")]
-pub(crate) fn validate_commit_inner_shape<F, const D: usize>(
-    inner: &CommitInnerWitness<F>,
-    num_live_blocks: usize,
-    n_a: usize,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    inner.ensure_ring_dim::<D>()?;
-
-    let expected_rows = num_live_blocks
-        .checked_mul(n_a)
-        .ok_or_else(|| AkitaError::InvalidSetup("inner commitment row count overflow".into()))?;
-    let actual_rows = inner.inner_rows.count();
-    if actual_rows != expected_rows {
-        return Err(AkitaError::InvalidSetup(format!(
-            "backend returned {actual_rows} inner commitment rows, expected {expected_rows}"
-        )));
-    }
-    for block_idx in 0..num_live_blocks {
-        let block_rows = inner.block_rows::<D>(block_idx, n_a)?;
-        if block_rows.len() != n_a {
-            return Err(AkitaError::InvalidSetup(format!(
-                "backend returned {} A rows for inner commitment block {}, expected {}",
-                block_rows.len(),
-                block_idx,
-                n_a
-            )));
-        }
-    }
-
-    Ok(())
-}
-
-fn validate_commit_inner_group_len(expected: usize, actual: usize) -> Result<(), AkitaError> {
-    if actual != expected {
-        return Err(AkitaError::InvalidSetup(format!(
-            "backend returned {actual} inner commitments for {expected} sources"
-        )));
     }
     Ok(())
 }
@@ -370,7 +327,6 @@ where
     let dims = params.role_dims();
     let plan = CommitInnerPlan::from_level(params);
     let num_live_blocks = params.num_live_blocks;
-    let n_a = params.inner_commit_matrix.output_rank();
     let num_digits_open = params.num_digits_outer;
     let log_basis = params.log_basis_outer;
     let n_b = params.outer_commit_matrix.output_rank();
@@ -390,24 +346,15 @@ where
                         .iter()
                         .map(|poly| RootCommitSource::<F, D_A>::commit_view(poly))
                         .collect::<Result<Vec<_>, _>>()?;
-                    let inners = RootCommitKernel::<_, F, D_A>::commit_inner_group(
-                        backend, prepared, views, plan,
+                    let prepared_polynomials = prepare_inner_commit_group::<F, _, _, D_A, D_B>(
+                        backend,
+                        prepared,
+                        views,
+                        plan,
+                        num_live_blocks,
+                        num_digits_open,
+                        log_basis,
                     )?;
-                    validate_commit_inner_group_len(polys.len(), inners.len())?;
-                    let prepared_polynomials = cfg_into_iter!(inners)
-                        .map(|inner| -> Result<(RingVec<F>, DigitBlocks), AkitaError> {
-                            validate_commit_inner_shape::<F, D_A>(&inner, num_live_blocks, n_a)?;
-                            let blocks = (0..num_live_blocks)
-                                .map(|block| inner.block_rows::<D_A>(block, n_a))
-                                .collect::<Result<Vec<_>, _>>()?;
-                            let digits = decompose_commit_blocks_into::<F, D_A, D_B>(
-                                &blocks,
-                                num_digits_open,
-                                log_basis,
-                            )?;
-                            Ok((inner.into_inner_rows(), digits))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
                     let total_planes =
                         prepared_polynomials
                             .iter()
@@ -508,7 +455,6 @@ where
     };
     let plan = CommitInnerPlan::from_profile(profile);
     let num_live_blocks = profile.num_live_blocks;
-    let n_a = profile.inner_commit_matrix.output_rank();
     let num_digits_open = profile.num_digits_outer;
     let log_basis = profile.log_basis_outer;
     let n_b = profile.outer_commit_matrix.output_rank();
@@ -526,24 +472,15 @@ where
                         .iter()
                         .map(|poly| RootCommitSource::<F, D_A>::commit_view(poly))
                         .collect::<Result<Vec<_>, _>>()?;
-                    let inners = RootCommitKernel::<_, F, D_A>::commit_inner_group(
-                        backend, prepared, views, plan,
+                    let prepared_polynomials = prepare_inner_commit_group::<F, _, _, D_A, D_B>(
+                        backend,
+                        prepared,
+                        views,
+                        plan,
+                        num_live_blocks,
+                        num_digits_open,
+                        log_basis,
                     )?;
-                    validate_commit_inner_group_len(polys.len(), inners.len())?;
-                    let prepared_polynomials = cfg_into_iter!(inners)
-                        .map(|inner| -> Result<(RingVec<F>, DigitBlocks), AkitaError> {
-                            validate_commit_inner_shape::<F, D_A>(&inner, num_live_blocks, n_a)?;
-                            let blocks = (0..num_live_blocks)
-                                .map(|block| inner.block_rows::<D_A>(block, n_a))
-                                .collect::<Result<Vec<_>, _>>()?;
-                            let digits = decompose_commit_blocks_into::<F, D_A, D_B>(
-                                &blocks,
-                                num_digits_open,
-                                log_basis,
-                            )?;
-                            Ok((inner.into_inner_rows(), digits))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
                     let total_planes =
                         prepared_polynomials
                             .iter()
@@ -1072,130 +1009,4 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::AkitaProverSetup;
-    use akita_algebra::CyclotomicRing;
-    use akita_challenges::SparseChallengeConfig;
-    use akita_field::Fp64;
-    use akita_types::{OpenCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId};
-
-    type F = Fp64<4294967197>;
-    const D: usize = 64;
-
-    fn inner_witness(recomposed_blocks: usize, rows_per_block: usize) -> CommitInnerWitness<F> {
-        CommitInnerWitness::from_rows(vec![
-            vec![CyclotomicRing::<F, D>::zero(); rows_per_block];
-            recomposed_blocks
-        ])
-    }
-
-    #[test]
-    fn commit_inner_shape_accepts_expected_layout() {
-        let inner = inner_witness(2, 3);
-        validate_commit_inner_shape::<F, D>(&inner, 2, 3).expect("shape should match");
-    }
-
-    #[test]
-    fn commit_inner_shape_rejects_bad_block_count() {
-        let inner = inner_witness(1, 3);
-        assert!(validate_commit_inner_shape::<F, D>(&inner, 2, 3).is_err());
-    }
-
-    #[test]
-    fn commit_inner_shape_rejects_bad_row_count() {
-        let inner = inner_witness(2, 2);
-        assert!(validate_commit_inner_shape::<F, D>(&inner, 2, 3).is_err());
-    }
-
-    #[test]
-    fn commit_inner_shape_accepts_many_all_zero_blocks() {
-        let num_live_blocks = 1024;
-        let inner = inner_witness(num_live_blocks, 3);
-        validate_commit_inner_shape::<F, D>(&inner, num_live_blocks, 3).expect("all-zero blocks");
-    }
-
-    #[test]
-    fn commit_level_params_reject_log_basis_above_i8_range() {
-        let expanded = AkitaProverSetup::<F>::generate_with_capacity(
-            5,
-            1,
-            SetupMatrixCapacity {
-                num_field_elements: D,
-            },
-        )
-        .unwrap()
-        .expanded;
-        let params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q32Offset99,
-            D,
-            9,
-            1,
-            1,
-            1,
-            SparseChallengeConfig::pm1_only(1),
-        )
-        .with_decomp(2, 4, 2, 2, 2)
-        .unwrap();
-
-        assert!(matches!(
-            validate_commit_level_params::<F>(&params, &expanded),
-            Err(AkitaError::InvalidSetup(_))
-        ));
-    }
-
-    #[test]
-    fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
-        let expanded = AkitaProverSetup::<F>::generate_with_capacity(
-            5,
-            1,
-            SetupMatrixCapacity {
-                num_field_elements: D,
-            },
-        )
-        .unwrap()
-        .expanded;
-        let mut params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q32Offset99,
-            D,
-            2,
-            1,
-            1,
-            1,
-            SparseChallengeConfig::pm1_only(1),
-        )
-        .with_decomp(1, 1, 1, 1, 1)
-        .unwrap();
-        let d_key = params.open_commit_matrix.sis_table_key();
-        params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
-            d_key.policy,
-            d_key.table_digest,
-            d_key.modulus_profile,
-            8,
-            8,
-            d_key.coeff_linf_bound,
-            D,
-        );
-
-        validate_commit_level_params::<F>(&params, &expanded)
-            .expect("standalone commitment only materializes A and B");
-    }
-
-    #[test]
-    fn commit_b_input_len_rejects_overflow() {
-        assert_eq!(checked_commit_b_input_len(3, 5).expect("fits"), 15);
-        assert!(matches!(
-            checked_commit_b_input_len(usize::MAX, 2),
-            Err(AkitaError::InvalidInput(_))
-        ));
-    }
-
-    #[test]
-    fn commit_outer_input_validation_allows_logical_input_longer_than_setup_stride() {
-        validate_commit_outer_input_nonempty(9).expect("logical B input may exceed row stride");
-        assert!(matches!(
-            validate_commit_outer_input_nonempty(0),
-            Err(AkitaError::InvalidSetup(_))
-        ));
-    }
-}
+mod tests;

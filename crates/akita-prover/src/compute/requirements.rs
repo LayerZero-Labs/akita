@@ -31,8 +31,11 @@ pub struct RoutedNttRequirement {
     pub key: NttCacheKey,
     /// Full operation extent used by the backend's cached-versus-streamed route.
     ///
-    /// Every domain request made by one fused operation carries the same
-    /// extent, so prewarm follows the runtime operation-level decision.
+    /// The production relation flow invokes A, B, and opening/D work as
+    /// separate single-role operations. The A operation emits both transform
+    /// domains with one shared extent; each B or D operation emits its own
+    /// cyclic request. This keeps prewarm routing identical to runtime routing
+    /// without joining independent operations.
     pub routing_extent: usize,
 }
 
@@ -510,6 +513,42 @@ mod tests {
         assert_eq!(requirements.entries.len(), 2);
         assert_eq!(requirements.entries[0].routing_extent, 5);
         assert_eq!(requirements.entries[1].routing_extent, 11);
+    }
+
+    #[test]
+    fn relation_requirements_preserve_single_role_runtime_extents() {
+        let mut requirements = NttExecutionRequirements::default();
+        requirements
+            .add_relation_ab(
+                0,
+                64,
+                2,
+                3,
+                128,
+                5,
+                7,
+                1,
+                1,
+                SisModulusProfileId::Q128OffsetA7F7,
+            )
+            .unwrap();
+
+        assert_eq!(requirements.entries.len(), 3);
+        assert_eq!(requirements.entries[0].routing_extent, 6);
+        assert_eq!(requirements.entries[1].routing_extent, 6);
+        assert_eq!(requirements.entries[2].routing_extent, 35);
+        assert_eq!(
+            requirements.entries[0].key.domain,
+            NttTransformDomain::Negacyclic
+        );
+        assert_eq!(
+            requirements.entries[1].key.domain,
+            NttTransformDomain::Cyclic
+        );
+        assert_eq!(
+            requirements.entries[2].key.domain,
+            NttTransformDomain::Cyclic
+        );
     }
 
     #[test]

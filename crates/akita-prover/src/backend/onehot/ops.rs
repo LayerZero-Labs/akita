@@ -216,7 +216,7 @@ where
             plan.n_a,
             active_a_cols,
             plan.num_digits_inner,
-            self.onehot_scratch_bytes_per_worker(),
+            self.commit_scratch_bytes_per_worker(),
         )?;
         Ok(rows
             .into_iter()

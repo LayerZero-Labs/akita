@@ -61,9 +61,11 @@ pub(crate) fn inner_ajtai_reference<F: FieldCore + CanonicalField, const D: usiz
     let n_a = A.len();
     let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
     for entry in entries {
-        let col = entry.pos_in_block() * num_digits;
+        let pos_in_block = entry.pos_in_block();
+        let coeff_idx = entry.coeff_idx();
+        let col = pos_in_block * num_digits;
         for a in 0..n_a {
-            A[a][col].shift_accumulate_into(&mut t[a], entry.coeff_idx());
+            A[a][col].shift_accumulate_into(&mut t[a], coeff_idx);
         }
     }
     t

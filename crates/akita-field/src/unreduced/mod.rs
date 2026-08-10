@@ -831,11 +831,11 @@ pub trait HasCommitAccum: FieldCore {
     /// Accumulator representation used by commitment streams.
     type CommitAccum: AdditiveGroup + From<Self> + ReduceTo<Self>;
 
-    /// Maximum additions before the accumulator must be reduced.
+    /// Maximum unit-scale additions before any signed 32-bit limb can overflow.
     const MAX_COMMIT_ACCUMULATIONS: usize;
 }
 
-const MAX_WIDE_LANE_ACCUMULATIONS: usize = 1 << 15;
+const MAX_WIDE_LANE_ACCUMULATIONS: usize = (i32::MAX as usize) / (u16::MAX as usize);
 
 impl<const P: u32> HasCommitAccum for Fp32<P> {
     type CommitAccum = Fp32x2i32;

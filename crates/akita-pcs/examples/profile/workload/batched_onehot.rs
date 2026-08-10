@@ -215,27 +215,30 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         "verifier_setup",
         t_verifier_setup.elapsed().as_secs_f64(),
     );
-    let verify = || {
+    let prepare = || {
+        verifier_claims(
+            Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+                final_group: *commitments[0].profile(),
+                precommitteds: Vec::new(),
+            })
+            .expect("select verifier schedule row")
+            .selection(),
+            &pt[..],
+            &openings[..],
+            &commitments[0],
+        )
+    };
+    let verify = |claims| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
         AkitaCommitmentScheme::<Cfg>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verifier_claims(
-                Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
-                    final_group: *commitments[0].profile(),
-                    precommitteds: Vec::new(),
-                })
-                .expect("select verifier schedule row")
-                .selection(),
-                &pt[..],
-                &openings[..],
-                &commitments[0],
-            ),
+            claims,
             BasisMode::Lagrange,
         )
     };
-    run_verifier_timings(label, pools, "batched profile", verify);
+    run_verifier_timings(label, pools, "batched profile", prepare, verify);
     report_verifier_ntt_cache_size(
         label,
         verifier_setup

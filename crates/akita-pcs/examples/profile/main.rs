@@ -18,6 +18,7 @@ mod modes;
 mod ntt_prewarm;
 mod parallel;
 mod report;
+mod verifier;
 #[cfg_attr(
     any(feature = "profile-onehot-fp128", feature = "profile-bench-selected"),
     allow(dead_code)
@@ -118,13 +119,13 @@ fn main() {
     let cpu = CpuBackend::DEFAULT;
     tracing::info!(
         max_cached_ring_switch_elements = cpu.max_cached_ring_switch_elements(),
-        onehot_scratch_bytes_per_worker = cpu.onehot_scratch_bytes_per_worker(),
+        commit_scratch_bytes_per_worker = cpu.commit_scratch_bytes_per_worker(),
         "CPU resource policy"
     );
     eprintln!(
-        "[profile] cpu_policy: max_cached_ring_switch_elements={}, onehot_scratch_bytes_per_worker={}",
+        "[profile] cpu_policy: max_cached_ring_switch_elements={}, commit_scratch_bytes_per_worker={}",
         cpu.max_cached_ring_switch_elements(),
-        cpu.onehot_scratch_bytes_per_worker(),
+        cpu.commit_scratch_bytes_per_worker(),
     );
     modes::log_active_fp128_prime_probe();
 
