@@ -167,7 +167,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             plan,
             PolynomialGroupLayout::new(nv, num_polys),
             Cfg::decomposition().field_bits(),
-        );
+        )
+        .expect("runtime schedule report geometry");
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -188,7 +189,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             &schedule,
             PolynomialGroupLayout::new(nv, num_polys),
             Cfg::decomposition().field_bits(),
-        );
+        )
+        .expect("runtime schedule report geometry");
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,

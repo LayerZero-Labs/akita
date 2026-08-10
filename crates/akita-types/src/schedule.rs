@@ -737,6 +737,9 @@ impl FoldSchedule {
     }
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
+        let root_commitment = &self.root.params.final_group.commitment;
+        root_commitment
+            .validate_commitment_request(0, root_commitment.commitment_polynomial_count()?)?;
         if !self
             .root
             .params
@@ -751,6 +754,9 @@ impl FoldSchedule {
         }
         let mut payload_phase = crate::CommitmentPayloadPhase::CompressedPrefix;
         for (index, step) in self.recursive_folds.iter().enumerate() {
+            step.params
+                .witness
+                .validate_commitment_request(index + 1, 1)?;
             let consumes_setup_prefix = step.params.witness.setup_prefix.is_some();
             if payload_phase == crate::CommitmentPayloadPhase::RawSuffix && consumes_setup_prefix {
                 return Err(AkitaError::InvalidSetup(format!(

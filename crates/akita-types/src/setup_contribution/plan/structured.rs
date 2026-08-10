@@ -229,7 +229,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .checked_mul(active_unit_count)
             .ok_or(AkitaError::InvalidProof)?;
         if group.d_tensors.len() != family_count
-            || group.b_tensors.len() != usize::from(group.n_b != 0) * family_count
+            || group.physical_b.relation_tensors.len()
+                != usize::from(group.physical_b.logical_rows()? != 0) * family_count
             || group.a_tensors.len() != usize::from(group.n_a != 0) * group.num_physical_units
         {
             return Err(AkitaError::InvalidSetup(
@@ -252,12 +253,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 .d_tensors
                 .get(tensor_index)
                 .ok_or(AkitaError::InvalidProof)?;
-            let b_tensor = if group.n_b == 0 {
+            let b_tensor = if group.physical_b.logical_rows()? == 0 {
                 None
             } else {
                 Some(
                     group
-                        .b_tensors
+                        .physical_b
+                        .relation_tensors
                         .get(tensor_index)
                         .ok_or(AkitaError::InvalidProof)?,
                 )

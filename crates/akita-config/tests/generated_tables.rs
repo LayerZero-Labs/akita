@@ -181,6 +181,47 @@ fn catalog_identity_rejects_non_v1_protocol_epoch() {
 
 #[cfg(feature = "all-schedules")]
 #[test]
+fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
+    use akita_schedules::GeneratedWitnessPartition;
+    use std::collections::BTreeSet;
+
+    let chunks = |partition: GeneratedWitnessPartition| match partition {
+        GeneratedWitnessPartition::Single => 1,
+        GeneratedWitnessPartition::Distributed { num_chunks } => num_chunks,
+    };
+    let catalogs = [
+        fp128::OneHot::schedule_catalog().expect("W1 catalog"),
+        fp128::OneHotMultiChunkW2R2::schedule_catalog().expect("W2 catalog"),
+        fp128::OneHotMultiChunkW4R2::schedule_catalog().expect("W4 catalog"),
+        fp128::OneHotMultiChunk::schedule_catalog().expect("W8 one-hot catalog"),
+        fp128::DenseMultiChunk::schedule_catalog().expect("W8 dense catalog"),
+    ];
+    let mut observed = BTreeSet::new();
+    for catalog in catalogs {
+        for entry in catalog.entries {
+            observed.insert((
+                entry.root.final_group.commitment.outer_slice_count,
+                chunks(entry.root.witness_partition),
+            ));
+            for fold in entry.recursive_folds.iter().take(2) {
+                observed.insert((
+                    fold.witness.outer_slice_count,
+                    chunks(fold.witness_partition),
+                ));
+            }
+        }
+    }
+
+    for expected in [(1, 1), (2, 2), (4, 2), (4, 4), (2, 8), (4, 8), (8, 8)] {
+        assert!(
+            observed.contains(&expected),
+            "generated schedules must retain S/W={expected:?}; observed {observed:?}"
+        );
+    }
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
 fn catalog_identity_rejects_planner_policy_changes() {
     let policy = policy_of::<fp128::Dense>();
     let catalog = fp128::Dense::schedule_catalog().expect("generated catalog");

@@ -3,10 +3,8 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_w_ring_count, num_digits_open,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, HonestFoldPolicy,
-    HonestFoldPolicySpec, HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams,
+    decomposed_s_block_ring_count, decomposed_w_ring_count, num_digits_open, HonestFoldPolicy,
+    HonestFoldPolicySpec, HonestFoldSizingQuery, OpenCommitMatrixParams,
 };
 use akita_types::{
     AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile,
@@ -14,11 +12,12 @@ use akita_types::{
     PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
 };
 
-use akita_schedules::planner_support::{projected_collision_role_price, sis_key_at_dimension};
+use akita_schedules::planner_support::projected_collision_role_price;
 
 use crate::schedule_params::{
-    derive_selected_suffix_schedule, materialize_candidate_schedule, recursive_split_search_domain,
-    select_complete_candidate, RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
+    derive_ab_commitment_candidate, derive_selected_suffix_schedule,
+    materialize_candidate_schedule, recursive_split_search_domain, select_complete_candidate,
+    AbCommitmentCandidateRequest, RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -45,6 +44,7 @@ fn materialize_precommitted_group_for_open_basis(
         num_live_blocks: layout.num_live_blocks,
         num_chunks,
         num_fold_coeffs,
+        outer_slice_count: layout.outer_slice_count,
         witness_norms: honest_fold_policy
             .witness_norms_for_inner_basis(layout.log_basis_inner, ring_dimension),
         log_basis_response: log_basis_open,
@@ -305,7 +305,6 @@ fn root_final_group_level_params_candidate(
     let policy = ctx.policy;
     let dimensions = ctx.dimensions;
     let d_a = dimensions.d_a();
-    let family = policy.sis_modulus_profile;
     let decomp = ctx.policy.decomposition;
     let level_decomp = DecompositionParams {
         log_basis: log_basis_open,
@@ -332,81 +331,30 @@ fn root_final_group_level_params_candidate(
         return Ok(None);
     };
     let num_chunks = crate::policy::chunks_at_level(policy, 0);
-    let Some(num_fold_coeffs) = width_s
-        .checked_mul(d_a)
-        .and_then(|count| count.checked_mul(num_chunks))
-    else {
-        return Ok(None);
-    };
-    let Ok(num_digits_fold) = ctx
+    let witness_norms = ctx
         .final_honest_fold_policy
-        .num_digits_fold(HonestFoldSizingQuery {
-            ring_dimension: d_a,
-            num_claims: ctx.main_num_polys,
-            num_live_blocks,
-            num_chunks,
-            num_fold_coeffs,
-            witness_norms: ctx
-                .final_honest_fold_policy
-                .witness_norms_for_inner_basis(log_basis_inner, d_a),
-            log_basis_response: log_basis_open,
-            challenge_config: ctx.ring_challenge_cfg,
-        })
-    else {
-        return Ok(None);
-    };
-    let Some(norm_s) = rounded_up_role_a_inf_norm(
-        policy.sis_security_policy,
-        policy.sis_table_digest,
-        family,
-        d_a,
-        log_basis_open,
-        ctx.ring_challenge_cfg,
-        num_digits_fold,
-        policy.ring_subfield_norm_bound,
-    ) else {
-        return Ok(None);
-    };
-    let Ok(inner_commit_matrix) = InnerCommitMatrixParams::try_new_with_min_rank(
-        sis_key_at_dimension(policy, akita_types::SisMatrixRole::Inner, d_a, norm_s),
-        width_s,
-    ) else {
-        return Ok(None);
-    };
-    let n_a = inner_commit_matrix.output_rank();
-
-    let Ok(slice_geometry) = akita_types::CommitmentSliceGeometry::try_new(
-        outer_slice_count,
-        num_live_blocks,
-        ctx.main_num_polys,
-        n_a,
-        num_digits_outer,
-        d_a,
-        dimensions.d_b(),
-    ) else {
-        return Ok(None);
-    };
-    let Some(norm_t) = rounded_up_collision_inf_norm(
-        policy.sis_security_policy,
-        family,
-        akita_types::SisMatrixRole::Outer,
-        dimensions.d_b(),
-        log_basis_open,
-    ) else {
-        return Ok(None);
-    };
-    let outer_key = sis_key_at_dimension(
+        .witness_norms_for_inner_basis(log_basis_inner, d_a);
+    let Some(ab_candidate) = derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
         policy,
-        akita_types::SisMatrixRole::Outer,
-        dimensions.d_b(),
-        norm_t,
-    );
-    let width_t = slice_geometry.physical_input_width();
-    let Ok(outer_commit_matrix) =
-        OuterCommitMatrixParams::try_new_with_min_rank(outer_key, width_t)
+        fold_policy: &ctx.final_honest_fold_policy,
+        ring_challenge_cfg: ctx.ring_challenge_cfg,
+        dimensions,
+        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+        num_claims: ctx.main_num_polys,
+        num_live_blocks,
+        num_chunks,
+        outer_slice_count,
+        witness_norms,
+        log_basis_open,
+        width_s,
+        num_digits_outer,
+    })?
     else {
         return Ok(None);
     };
+    let num_digits_fold = ab_candidate.num_digits_fold;
+    let inner_commit_matrix = ab_candidate.inner_commit_matrix;
+    let outer_commit_matrix = ab_candidate.outer_commit_matrix;
 
     let Some(main_d_width) =
         decomposed_w_ring_count(num_digits_open, num_live_blocks, ctx.main_num_polys)

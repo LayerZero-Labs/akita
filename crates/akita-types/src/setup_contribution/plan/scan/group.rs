@@ -21,7 +21,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         let weights = self.direct_scan_weights.as_ref().ok_or_else(|| {
             AkitaError::InvalidSetup("direct setup scan weights are missing".into())
         })?;
-        let (e_eq_slice, t_eq_slice, z_eq_slice) =
+        let (e_eq_slice, physical_b_weights, z_eq_slice) =
             (&weights.e[..], &weights.b_setup[..], &weights.z[..]);
         if self.required > setup_flat.len() {
             return Err(AkitaError::InvalidSetup(
@@ -48,7 +48,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                         base_pows,
                         segment,
                         e_eq_slice,
-                        t_eq_slice,
+                        physical_b_weights,
                         z_eq_slice,
                         d_projection,
                         b_projection,

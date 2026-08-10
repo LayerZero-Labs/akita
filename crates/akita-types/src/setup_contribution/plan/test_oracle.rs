@@ -60,8 +60,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             }
 
             let b_view = setup.shared_matrix.ring_view_dyn(
-                group.physical_n_b,
-                group.physical_t_cols,
+                group.physical_b.physical_rows(),
+                group.physical_b.physical_input_width(),
                 d_b,
             )?;
             let b_setup_weights = &group
@@ -69,15 +69,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 .as_ref()
                 .ok_or(AkitaError::InvalidProof)?
                 .b_setup;
-            for row_idx in 0..group.physical_n_b {
+            for row_idx in 0..group.physical_b.physical_rows() {
                 let row = b_view.row_flat(row_idx)?;
                 acc += evaluate_weighted_setup_row::<F, E>(
                     row,
                     0,
                     checked_slice(
                         b_setup_weights,
-                        row_idx * group.physical_t_cols,
-                        group.physical_t_cols,
+                        row_idx * group.physical_b.physical_input_width(),
+                        group.physical_b.physical_input_width(),
                         "physical B setup weights",
                     )?,
                     E::one(),

@@ -97,8 +97,8 @@ impl CommitmentRingDims {
         self.inner
     }
 
-    /// Ring dimension for B-role data: next-witness digit commitments (`t_hat`),
-    /// COMMIT and B_inner relation rows.
+    /// Ring dimension for B-role data: next-witness digit commitments (`t_hat`)
+    /// and the slice-major B relation rows.
     #[must_use]
     pub const fn d_b(self) -> usize {
         self.outer

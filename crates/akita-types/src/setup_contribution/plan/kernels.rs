@@ -13,7 +13,6 @@ pub(crate) struct GroupSetupSegment<E> {
     pub(super) d_weight: E,
     pub(super) has_b: bool,
     pub(super) b_start_abs: usize,
-    pub(super) b_weight: E,
     pub(super) has_a: bool,
     pub(super) a_start_abs: usize,
     pub(super) a_row_weight: E,
@@ -209,7 +208,7 @@ where
                 weight += segment.d_weight * *d_eq.next().ok_or(AkitaError::InvalidProof)?;
             }
             if HAS_B {
-                weight += segment.b_weight * *b_eq.next().ok_or(AkitaError::InvalidProof)?;
+                weight += *b_eq.next().ok_or(AkitaError::InvalidProof)?;
             }
             if HAS_A {
                 weight += segment.a_row_weight * *a_eq.next().ok_or(AkitaError::InvalidProof)?;
@@ -281,13 +280,7 @@ where
         )?;
     }
     if HAS_B {
-        weight += projected_role_weight_at(
-            base_idx,
-            segment.b_start_abs,
-            segment.b_weight,
-            t_eq,
-            b_projection,
-        )?;
+        weight += projected_flat_role_weight_at(base_idx, segment.b_start_abs, t_eq, b_projection)?;
     }
     if HAS_A {
         weight += projected_role_weight_at(
@@ -299,6 +292,16 @@ where
         )?;
     }
     Ok(weight)
+}
+
+#[inline(always)]
+fn projected_flat_role_weight_at<E: FieldCore>(
+    base_idx: usize,
+    start_abs: usize,
+    weights: &[E],
+    projection: &RoleProjection<E>,
+) -> Result<E, AkitaError> {
+    projected_role_weight_at(base_idx, start_abs, E::one(), weights, projection)
 }
 
 #[inline(always)]

@@ -19,6 +19,7 @@
 //! one base-dimension scan.
 
 mod kernels;
+mod physical_b;
 mod prepare;
 mod scan;
 mod segments;
@@ -29,7 +30,9 @@ mod test_oracle;
 mod types;
 
 pub(crate) use types::validate_setup_inputs;
-pub(crate) use types::{DirectScanWeights, SetupContributionGroupPlan, SetupUnitRange};
+pub(crate) use types::{
+    DirectScanWeights, PhysicalBSetupPlan, SetupContributionGroupPlan, SetupUnitRange,
+};
 pub use types::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan};
 
 use super::geometry::SetupProjectionGroupGeometry;
@@ -40,6 +43,22 @@ use crate::proof::AkitaExpandedSetup;
 use crate::{OpeningClaimsLayout, RelationAddressGeometry, WitnessLayout};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
+
+fn checked_mul(lhs: usize, rhs: usize, context: &'static str) -> Result<usize, AkitaError> {
+    lhs.checked_mul(rhs)
+        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
+}
+
+fn divide_aligned(
+    value: usize,
+    divisor: usize,
+    context: &'static str,
+) -> Result<usize, AkitaError> {
+    value
+        .checked_div(divisor)
+        .filter(|_| divisor != 0 && value.is_multiple_of(divisor))
+        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
+}
 
 #[cfg(test)]
 use kernels::evaluate_weighted_setup_row;

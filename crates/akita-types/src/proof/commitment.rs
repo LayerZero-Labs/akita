@@ -619,6 +619,18 @@ mod committed_group_tests {
         )
         .is_err());
 
+        let mut invalid_slice_count = bytes.clone();
+        let slice_count_offset = 1 + 5 * 8;
+        invalid_slice_count[slice_count_offset..slice_count_offset + 8]
+            .copy_from_slice(&3u64.to_le_bytes());
+        assert!(CommittedGroup::<F>::deserialize_with_mode(
+            invalid_slice_count.as_slice(),
+            Compress::Yes,
+            Validate::Yes,
+            &(),
+        )
+        .is_err());
+
         let inner_matrix_role_offset = 1 + 2 * 8 + 3 * 8 + 4 + 8 + 2;
         let mut wrong_matrix_role = bytes;
         wrong_matrix_role[inner_matrix_role_offset] = SisMatrixRole::Outer.tag();
@@ -638,6 +650,39 @@ mod committed_group_tests {
         group.commitment =
             Commitment::new(RingVec::from_coeffs(coeffs[..coeffs.len() - 1].to_vec()));
         assert!(group.check().is_err());
+    }
+
+    #[test]
+    fn committed_group_rejects_slicing_geometry_mutations_without_panicking() {
+        let baseline = group();
+        let outer = baseline.profile.outer_commit_matrix;
+        let mut malformed = Vec::new();
+
+        let mut wrong_count = baseline.clone();
+        wrong_count.profile.outer_slice_count = CommitmentSliceCount::TWO;
+        malformed.push(wrong_count);
+
+        let mut wrong_polynomial_count = baseline.clone();
+        wrong_polynomial_count.profile.group = PolynomialGroupLayout::new(11, 2);
+        malformed.push(wrong_polynomial_count);
+
+        let mut wrong_physical_width = baseline.clone();
+        wrong_physical_width.profile.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+            outer.security_policy(),
+            outer.sis_table_key().table_digest,
+            outer.sis_modulus_profile(),
+            outer.output_rank(),
+            outer.input_width() + 1,
+            outer.coeff_linf_bound(),
+            outer.ring_dimension(),
+        );
+        malformed.push(wrong_physical_width);
+
+        for candidate in malformed {
+            let result = std::panic::catch_unwind(|| candidate.check());
+            assert!(result.is_ok(), "malformed descriptor must not panic");
+            assert!(result.unwrap().is_err(), "malformed descriptor must reject");
+        }
     }
 
     #[test]

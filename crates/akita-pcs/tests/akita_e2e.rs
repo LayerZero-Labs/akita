@@ -360,14 +360,15 @@ fn chunked_multi_chunk_prove_verify() {
             chunked_levels >= 1,
             "multi-chunk preset must produce at least one chunked fold level"
         );
-        assert!(
-            plan.root
-                .params
-                .final_group
-                .commitment
-                .outer_slice_count
-                .is_sliced(),
-            "multi-chunk regression profile must also exercise sliced B"
+        assert_eq!(
+            plan.root.params.final_group.commitment.outer_slice_count,
+            akita_types::CommitmentSliceCount::EIGHT,
+            "multi-chunk regression profile must pin the exact S=8 root geometry"
+        );
+        assert_eq!(
+            plan.recursive_folds[0].params.witness.outer_slice_count,
+            akita_types::CommitmentSliceCount::EIGHT,
+            "multi-chunk regression profile must pin the exact S=8 level-one geometry"
         );
 
         let layout = singleton_layout::<Cfg>(NV);

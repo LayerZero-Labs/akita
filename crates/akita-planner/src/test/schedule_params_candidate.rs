@@ -109,14 +109,16 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
     for log_prefix in 12..=20 {
         let groups = derive_setup_prefix_groups(
             &mut cache,
-            &policy,
-            &challenge,
-            3,
-            1usize << log_prefix,
-            1,
-            64,
-            64,
-            0,
+            SetupPrefixSearchRequest {
+                policy: &policy,
+                ring_challenge_cfg: &challenge,
+                log_basis_open: 3,
+                n_prefix: 1usize << log_prefix,
+                num_chunks: 1,
+                inner_ring_dimension: 64,
+                outer_ring_dimension: 64,
+                fold_level: 0,
+            },
         )
         .expect("setup-prefix frontier");
         for params in groups {
@@ -127,4 +129,230 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
             .expect("frontier candidate must support its compression source");
         }
     }
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn shared_ab_derivation_forwards_the_exact_slice_count() {
+    use std::cell::Cell;
+
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
+
+    struct RecordingPolicy<'a>(&'a Cell<Option<(usize, usize)>>);
+
+    impl HonestFoldPolicy for RecordingPolicy<'_> {
+        fn num_digits_fold(&self, query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
+            self.0
+                .set(Some((query.outer_slice_count.get(), query.num_fold_coeffs)));
+            Err(AkitaError::InvalidSetup("stop after query capture".into()))
+        }
+    }
+
+    let policy = policy_of::<OneHot>();
+    let challenge = SparseChallengeConfig::pm1_only(3);
+    for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+        let seen = Cell::new(None);
+        let fold_policy = RecordingPolicy(&seen);
+        assert!(
+            derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
+                policy: &policy,
+                fold_policy: &fold_policy,
+                ring_challenge_cfg: &challenge,
+                dimensions: CommitmentRingDims::uniform(64),
+                payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+                num_claims: 1,
+                num_live_blocks: 8,
+                num_chunks: 1,
+                outer_slice_count,
+                witness_norms: FoldWitnessNorms::bounded(3, 64),
+                log_basis_open: 3,
+                width_s: 8,
+                num_digits_outer: 2,
+            })
+            .unwrap()
+            .is_none()
+        );
+        assert_eq!(seen.get(), Some((outer_slice_count.get(), 512)));
+    }
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
+
+    struct FixedFoldPolicy;
+
+    impl HonestFoldPolicy for FixedFoldPolicy {
+        fn num_digits_fold(&self, _query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
+            Ok(2)
+        }
+    }
+
+    let policy = policy_of::<OneHot>();
+    let challenge = SparseChallengeConfig::pm1_only(3);
+    let candidate = |dimensions, outer_slice_count, width_s| {
+        derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
+            policy: &policy,
+            fold_policy: &FixedFoldPolicy,
+            ring_challenge_cfg: &challenge,
+            dimensions,
+            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+            num_claims: 1,
+            num_live_blocks: 8,
+            num_chunks: 1,
+            outer_slice_count,
+            witness_norms: FoldWitnessNorms::bounded(3, dimensions.d_a()),
+            log_basis_open: 3,
+            width_s,
+            num_digits_outer: 2,
+        })
+        .unwrap()
+    };
+
+    for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+        assert!(
+            candidate(CommitmentRingDims::uniform(64), outer_slice_count, 8).is_some(),
+            "shared A/B request should admit S={}",
+            outer_slice_count.get(),
+        );
+    }
+
+    assert!(candidate(
+        CommitmentRingDims::uniform(128),
+        akita_types::CommitmentSliceCount::FOUR,
+        8,
+    )
+    .is_some());
+    assert!(candidate(
+        CommitmentRingDims::uniform(128),
+        akita_types::CommitmentSliceCount::EIGHT,
+        8,
+    )
+    .is_none());
+
+    assert!(
+        derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
+            policy: &policy,
+            fold_policy: &FixedFoldPolicy,
+            ring_challenge_cfg: &challenge,
+            dimensions: CommitmentRingDims::uniform(64),
+            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+            num_claims: 1,
+            num_live_blocks: 8,
+            num_chunks: 1,
+            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
+            witness_norms: FoldWitnessNorms::bounded(3, 64),
+            log_basis_open: 3,
+            width_s: usize::MAX,
+            num_digits_outer: 2,
+        })
+        .is_err()
+    );
+
+    struct OversizedFoldPolicy;
+
+    impl HonestFoldPolicy for OversizedFoldPolicy {
+        fn num_digits_fold(&self, _query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
+            Ok(1 << 20)
+        }
+    }
+
+    assert!(
+        derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
+            policy: &policy,
+            fold_policy: &OversizedFoldPolicy,
+            ring_challenge_cfg: &challenge,
+            dimensions: CommitmentRingDims::uniform(64),
+            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+            num_claims: 1,
+            num_live_blocks: 8,
+            num_chunks: 1,
+            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
+            witness_norms: FoldWitnessNorms::bounded(3, 64),
+            log_basis_open: 3,
+            width_s: 8,
+            num_digits_outer: 2,
+        })
+        .unwrap()
+        .is_none()
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
+
+    struct FixedFoldPolicy;
+
+    impl HonestFoldPolicy for FixedFoldPolicy {
+        fn num_digits_fold(&self, _query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
+            Ok(2)
+        }
+    }
+
+    let policy = policy_of::<OneHot>();
+    let challenge = SparseChallengeConfig::pm1_only(3);
+    let dimensions = CommitmentRingDims::uniform(256);
+    let num_claims = 1;
+    let width_s = 8;
+    let mut raw_candidate = derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
+        policy: &policy,
+        fold_policy: &FixedFoldPolicy,
+        ring_challenge_cfg: &challenge,
+        dimensions,
+        payload_mode: akita_types::CommitmentPayloadMode::Raw,
+        num_claims,
+        num_live_blocks: 8,
+        num_chunks: 1,
+        outer_slice_count: akita_types::CommitmentSliceCount::ONE,
+        witness_norms: FoldWitnessNorms::bounded(3, dimensions.d_a()),
+        log_basis_open: 3,
+        width_s,
+        num_digits_outer: 2,
+    })
+    .unwrap()
+    .expect("raw candidate has certified minimum A/B ranks");
+    let outer = raw_candidate.outer_commit_matrix;
+    let field_bytes = outer.sis_modulus_profile().field_bits().div_ceil(8) as usize;
+    let over_cap_rank =
+        akita_types::MAX_COMPRESSION_INPUT_BYTES.div_ceil(dimensions.d_b() * field_bytes) + 1;
+    raw_candidate.outer_commit_matrix = OuterCommitMatrixParams::try_new(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        over_cap_rank.max(outer.output_rank()),
+        outer.input_width(),
+        outer.coeff_linf_bound(),
+        outer.ring_dimension(),
+    )
+    .expect("larger-than-minimum rank remains SIS certified");
+
+    let mut params = CommittedGroupParams::params_only(
+        policy.sis_modulus_profile,
+        dimensions.d_a(),
+        3,
+        raw_candidate.inner_commit_matrix.output_rank(),
+        raw_candidate.outer_commit_matrix.output_rank(),
+        1,
+        challenge,
+    )
+    .with_decomp(width_s, width_s * 8, 1, 2, 2)
+    .unwrap();
+    params.payload_mode = akita_types::CommitmentPayloadMode::Raw;
+    params.inner_commit_matrix = raw_candidate.inner_commit_matrix;
+    params.outer_commit_matrix = raw_candidate.outer_commit_matrix;
+    params.num_digits_fold = raw_candidate.num_digits_fold;
+    assert!(params.compression_sources_supported().unwrap());
+    params
+        .validate_commitment_request(2, num_claims)
+        .expect("raw S1 geometry does not execute compression");
+
+    let mut compressed = params;
+    compressed.payload_mode = akita_types::CommitmentPayloadMode::Compressed;
+    assert!(!compressed.compression_sources_supported().unwrap());
+    assert!(compressed
+        .validate_commitment_request(2, num_claims)
+        .is_err());
 }

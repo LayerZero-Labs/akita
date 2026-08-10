@@ -1,7 +1,7 @@
 use super::kernels::GroupSetupSegment;
 use crate::{
-    CommitmentRingDims, CommittedGroupParams, LevelParamsLike, OpeningClaimsLayout,
-    SetupProjectionGeometry, WitnessLayout,
+    CommitmentRingDims, CommitmentSliceGeometry, CommittedGroupParams, LevelParamsLike,
+    OpeningClaimsLayout, SetupProjectionGeometry, WitnessLayout,
 };
 use akita_algebra::offset_eq::{EqPairTensorFamily, OffsetEqWindow};
 use akita_field::{AkitaError, FieldCore};
@@ -356,6 +356,66 @@ pub(crate) struct DirectScanWeights<E> {
     pub(crate) z: Vec<E>,
 }
 
+/// One canonical owner for the physical B matrix and its logical sliced image.
+pub(crate) struct PhysicalBSetupPlan<E: FieldCore> {
+    pub(super) geometry: CommitmentSliceGeometry,
+    pub(super) physical_rows: usize,
+    pub(super) logical_row_weights: Arc<[E]>,
+    pub(super) relation_tensors: Vec<EqPairTensorFamily<E>>,
+    pub(super) setup_tensors: Vec<EqPairTensorFamily<E>>,
+}
+
+impl<E: FieldCore> PhysicalBSetupPlan<E> {
+    pub(crate) fn new(
+        geometry: CommitmentSliceGeometry,
+        physical_rows: usize,
+        logical_row_weights: Arc<[E]>,
+    ) -> Result<Self, AkitaError> {
+        let logical_rows = geometry.logical_output_rows(physical_rows)?;
+        if logical_row_weights.len() != logical_rows {
+            return Err(AkitaError::InvalidSetup(
+                "logical B row weights disagree with slice geometry".into(),
+            ));
+        }
+        Ok(Self {
+            geometry,
+            physical_rows,
+            logical_row_weights,
+            relation_tensors: Vec::new(),
+            setup_tensors: Vec::new(),
+        })
+    }
+
+    pub(crate) fn logical_rows(&self) -> Result<usize, AkitaError> {
+        self.geometry.logical_output_rows(self.physical_rows)
+    }
+
+    pub(crate) const fn geometry(&self) -> &CommitmentSliceGeometry {
+        &self.geometry
+    }
+
+    pub(crate) const fn physical_rows(&self) -> usize {
+        self.physical_rows
+    }
+
+    pub(crate) fn logical_row_weights(&self) -> &[E] {
+        &self.logical_row_weights
+    }
+
+    pub(crate) fn logical_input_width(&self) -> usize {
+        self.geometry.logical_input_width()
+    }
+
+    pub(crate) fn physical_input_width(&self) -> usize {
+        self.geometry.physical_input_width()
+    }
+
+    pub(crate) fn physical_footprint(&self) -> Result<usize, AkitaError> {
+        self.geometry
+            .physical_matrix_ring_elements(self.physical_rows)
+    }
+}
+
 #[cfg(test)]
 type ColumnEqSlices<'a, E> = (&'a [E], &'a [E], &'a [E]);
 
@@ -376,16 +436,12 @@ pub(crate) struct SetupContributionGroupPlan<E: FieldCore> {
     pub(crate) log_basis_outer: u32,
     pub(crate) log_basis_open: u32,
     pub(crate) d_col_range: Range<usize>,
-    pub(crate) t_cols: usize,
-    pub(crate) physical_t_cols: usize,
     pub(crate) z_cols: usize,
     pub(crate) n_a: usize,
-    pub(crate) n_b: usize,
-    pub(crate) physical_n_b: usize,
+    pub(crate) physical_b: PhysicalBSetupPlan<E>,
     pub(crate) required: usize,
     pub(crate) segments: Arc<[GroupSetupSegment<E>]>,
     pub(crate) a_row_weights: Arc<[E]>,
-    pub(crate) b_weights: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
     pub(crate) direct_scan_weights: Option<DirectScanWeights<E>>,
     /// Exact non-empty block ranges used by the partitioned E and T roles.
@@ -393,8 +449,6 @@ pub(crate) struct SetupContributionGroupPlan<E: FieldCore> {
     /// All physical units, including empty chunks that retain replicated Z.
     pub(crate) num_physical_units: usize,
     pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
-    pub(crate) b_tensors: Vec<EqPairTensorFamily<E>>,
-    pub(crate) b_setup_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,
 }
 

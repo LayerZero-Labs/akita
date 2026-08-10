@@ -10,6 +10,7 @@ struct Snapshot {
     opening_basis: u32,
     positions: usize,
     blocks: usize,
+    outer_slices: usize,
     inner_digits: usize,
     n_a: usize,
     n_b: usize,
@@ -34,6 +35,7 @@ fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
         opening_basis: root.log_basis_open,
         positions: root.num_positions_per_block,
         blocks: root.num_live_blocks,
+        outer_slices: root.outer_slice_count.get(),
         inner_digits: root.num_digits_inner,
         n_a: root.inner_commit_matrix.output_rank(),
         n_b: root.outer_commit_matrix.output_rank(),
@@ -51,71 +53,74 @@ fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
 #[test]
 fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
     let fp32 = snapshot::<fp32::Dense>();
+    let fp64 = snapshot::<fp64::Dense>();
+    let fp128 = snapshot::<fp128::Dense>();
     assert_ne!(fp32.inner_basis, fp32.opening_basis);
     assert_eq!(
         fp32,
         Snapshot {
-            inner_basis: 8,
+            inner_basis: 5,
             opening_basis: 3,
-            positions: 512,
-            blocks: 128,
-            inner_digits: 4,
-            n_a: 2,
+            positions: 256,
+            blocks: 512,
+            outer_slices: 4,
+            inner_digits: 7,
+            n_a: 3,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 2_097_152,
-            a_output_raw: 2_048,
-            b_input_raw: 2_883_584,
+            a_input_raw: 917_504,
+            a_output_raw: 1_536,
+            b_input_raw: 2_162_688,
             b_output_raw: 256,
-            d_input_raw: 1_441_792,
+            d_input_raw: 2_883_584,
             d_output_raw: 256,
-            next_witness: 16_970_496,
+            next_witness: 16_205_824,
         }
     );
 
-    let fp64 = snapshot::<fp64::Dense>();
     assert_ne!(fp64.inner_basis, fp64.opening_basis);
     assert_eq!(
         fp64,
         Snapshot {
-            inner_basis: 6,
+            inner_basis: 10,
             opening_basis: 3,
             positions: 512,
             blocks: 256,
-            inner_digits: 11,
+            outer_slices: 2,
+            inner_digits: 7,
             n_a: 2,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 2_883_584,
+            a_input_raw: 1_835_008,
             a_output_raw: 1_024,
-            b_input_raw: 5_767_168,
+            b_input_raw: 2_883_584,
             b_output_raw: 256,
             d_input_raw: 2_883_584,
             d_output_raw: 256,
-            next_witness: 23_152_896,
+            next_witness: 19_767_040,
         }
     );
 
-    let fp128 = snapshot::<fp128::Dense>();
     assert_ne!(fp128.inner_basis, fp128.opening_basis);
     assert_eq!(
         fp128,
         Snapshot {
-            inner_basis: 9,
+            inner_basis: 8,
             opening_basis: 3,
-            positions: 1024,
-            blocks: 256,
-            inner_digits: 15,
+            positions: 512,
+            blocks: 512,
+            outer_slices: 2,
+            inner_digits: 16,
             n_a: 2,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 3_932_160,
+            a_input_raw: 2_097_152,
             a_output_raw: 512,
             b_input_raw: 5_636_096,
             b_output_raw: 64,
-            d_input_raw: 2_818_048,
+            d_input_raw: 5_636_096,
             d_output_raw: 64,
-            next_witness: 32_108_224,
+            next_witness: 29_563_264,
         }
     );
 }

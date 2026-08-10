@@ -129,6 +129,35 @@ fn active_setup_field_len_prices_one_physical_sliced_b_matrix() {
 }
 
 #[test]
+fn setup_prefix_slot_identity_binds_outer_slice_count() {
+    let params = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q32Offset99,
+        64,
+        3,
+        3,
+        3,
+        2,
+        SparseChallengeConfig::pm1_only(3),
+    )
+    .with_decomp(2, 16, 2, 2, 2)
+    .expect("prefix commitment params");
+    let unsliced = setup_prefix_precommitted_params(&params, 1024).expect("unsliced prefix");
+
+    let mut sliced_params = params;
+    sliced_params.outer_slice_count = crate::CommitmentSliceCount::TWO;
+    let sliced = setup_prefix_precommitted_params(&sliced_params, 1024).expect("sliced prefix");
+
+    let unsliced_id = setup_prefix_slot_id(777, unsliced);
+    let sliced_id = setup_prefix_slot_id(777, sliced);
+    assert_ne!(unsliced_id, sliced_id);
+    let mut unsliced_bytes = Vec::new();
+    unsliced_id.append_descriptor_bytes(&mut unsliced_bytes);
+    let mut sliced_bytes = Vec::new();
+    sliced_id.append_descriptor_bytes(&mut sliced_bytes);
+    assert_ne!(unsliced_bytes, sliced_bytes);
+}
+
+#[test]
 fn active_setup_field_len_includes_mixed_role_subcolumns() {
     let mut lp = sample_level_params();
     let inner = &lp.inner_commit_matrix;

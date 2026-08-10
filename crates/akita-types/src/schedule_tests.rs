@@ -237,11 +237,76 @@ fn schedule_rejects_compression_after_raw_suffix_starts() {
 }
 
 #[test]
+fn schedule_applies_the_compression_cap_only_to_compressed_payloads() {
+    let mut raw_schedule = recursive_schedule(256, 256, false);
+    append_recursive_fold(&mut raw_schedule);
+    let raw_step = &mut raw_schedule.recursive_folds[1];
+    raw_step.params.witness.payload_mode = CommitmentPayloadMode::Raw;
+    let outer = raw_step.params.witness.outer_commit_matrix;
+    raw_step.params.witness.outer_commit_matrix = OuterCommitMatrixParams::try_new(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        3,
+        outer.input_width(),
+        7,
+        outer.ring_dimension(),
+    )
+    .expect("rank three is above the audited SIS minimum");
+    assert!(raw_step
+        .params
+        .witness
+        .compression_sources_supported()
+        .unwrap());
+    raw_step
+        .params
+        .witness
+        .validate_commitment_request(2, 1)
+        .expect("raw B image does not execute a compression chain");
+    raw_schedule
+        .validate_structure()
+        .expect("raw suffix schedule ignores the compression-only cap");
+
+    let mut compressed_schedule = raw_schedule;
+    compressed_schedule.recursive_folds[1]
+        .params
+        .witness
+        .payload_mode = CommitmentPayloadMode::Compressed;
+    assert!(compressed_schedule.validate_structure().is_err());
+}
+
+#[test]
 fn schedule_accepts_extended_compressed_prefix() {
     let mut schedule = recursive_schedule(64, 64, false);
     append_recursive_fold(&mut schedule);
 
     schedule.validate_structure().unwrap();
+}
+
+#[test]
+fn schedule_rejects_slicing_after_the_second_absolute_level() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    append_recursive_fold(&mut schedule);
+    let mut late = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q128OffsetA7F7,
+        64,
+        3,
+        2,
+        2,
+        2,
+        SparseChallengeConfig::pm1_only(3),
+    );
+    late.outer_slice_count = crate::CommitmentSliceCount::TWO;
+    schedule.recursive_folds[1].params.witness =
+        late.with_decomp(2, 4, 2, 2, 2).expect("late sliced params");
+
+    let error = schedule
+        .validate_structure()
+        .expect_err("late slicing must reject");
+    assert!(
+        matches!(&error, AkitaError::InvalidSetup(message) if message.contains("absolute level 2")),
+        "unexpected error: {error:?}"
+    );
 }
 
 #[test]
@@ -444,18 +509,8 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     );
 
     let n_prefix = crate::padded_setup_prefix_len(natural_len);
-    let mut consumer = committed_params_with_geometry(64, 16, 64);
     let prefix_ring_slots = n_prefix / 64;
-    let inner = &consumer.inner_commit_matrix;
-    consumer.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
-        inner.security_policy(),
-        inner.sis_table_key().table_digest,
-        inner.sis_modulus_profile(),
-        inner.output_rank(),
-        prefix_ring_slots * consumer.num_digits_inner,
-        inner.coeff_linf_bound(),
-        inner.ring_dimension(),
-    );
+    let consumer = committed_params_with_geometry(64, prefix_ring_slots, 64);
     let commitment_params = crate::setup_prefix_precommitted_params(&consumer, n_prefix)
         .expect("consumer-compatible prefix commitment");
     let prefix = crate::setup_prefix_slot_id(natural_len, commitment_params);

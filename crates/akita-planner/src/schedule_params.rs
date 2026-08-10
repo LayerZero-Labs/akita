@@ -43,8 +43,9 @@ pub(crate) use akita_schedules::planner_support::{
 };
 pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
-    derive_candidate_level_params, derive_candidate_level_params_split_frontier,
-    recursive_split_search_domain, SetupPrefixSearchCache,
+    derive_ab_commitment_candidate, derive_candidate_level_params,
+    derive_candidate_level_params_split_frontier, recursive_split_search_domain,
+    AbCommitmentCandidateRequest, SetupPrefixSearchCache,
 };
 pub(crate) use objective::select_complete_candidate;
 pub(crate) use setup_score::{

@@ -4,7 +4,7 @@
 |---|---|
 | Author(s) | Quang Dao |
 | Created | 2026-08-10 |
-| Status | active |
+| Status | implemented |
 | PR | [#383](https://github.com/LayerZero-Labs/akita/pull/383) |
 | Supersedes | The inactive commitment matrix slice fields in generated schedules |
 | Superseded-by | |
@@ -12,7 +12,7 @@
 
 ## Summary
 
-Akita will reuse one smaller physical B matrix across several consecutive parts
+Akita reuses one smaller physical B matrix across several consecutive parts
 of a commitment input. Each use produces its own B image. Akita stacks those
 images in slice order and compresses the complete stack with one F compression
 chain.
@@ -25,10 +25,8 @@ canonical dyadic block partition, so one partition always refines the other.
 The existing 8 KiB compression input limit remains unchanged. A planner
 candidate is valid only when the complete stacked B image fits that limit.
 
-The implementation starts from PR #377 commit
-`16c09f9c684e6ab3e4158c0a3c76fa22534f7e0a`. The first pull request commit adds
-this specification. Runtime and protocol acceptance boxes remain open until
-the later implementation commits land.
+The implementation started from PR #377 commit
+`16c09f9c684e6ab3e4158c0a3c76fa22534f7e0a` and is completed by PR #383.
 
 ## Intent
 
@@ -337,38 +335,45 @@ an unchecked count.
 
 ### Acceptance Criteria
 
-- [ ] One checked B slice count type accepts exactly `1`, `2`, `4`, and `8`.
-- [ ] Every B slice range comes from `dyadic_block_ranges`.
-- [ ] `S > B` rejects before allocation.
-- [ ] `S > 1` rejects after absolute commitment level one.
-- [ ] `S > 1` rejects for raw payload mode.
-- [ ] D has no runtime or generated slice count.
-- [ ] For `S = 1`, the B input planes, B image, relation values, compression
+- [x] One checked B slice count type accepts exactly `1`, `2`, `4`, and `8`.
+- [x] Every B slice range comes from `dyadic_block_ranges`.
+- [x] `S > B` rejects before allocation.
+- [x] `S > 1` rejects after absolute commitment level one.
+- [x] `S > 1` rejects for raw payload mode.
+- [x] D has no runtime or generated slice count.
+- [x] For `S = 1`, the B input planes, B image, relation values, compression
       witness, and terminal commitment match the unsliced reference before
       transcript binding.
-- [ ] One physical B matrix is reused for every slice.
-- [ ] Short slices use the specified zero padding and physical column order.
-- [ ] The complete stacked B image uses one F compression chain.
-- [ ] A source of exactly 8192 bytes is accepted and a larger source rejects.
-- [ ] The D cap remains independent from each group's B cap.
-- [ ] Relation rows identify group, slice, and physical B row without aliases.
-- [ ] Direct and recursive setup contribution evaluation match a naive
+- [x] One physical B matrix is reused for every slice.
+- [x] Short slices use the specified zero padding and physical column order.
+- [x] The complete stacked B image uses one F compression chain.
+- [x] A source of exactly 8192 bytes is accepted and a larger source rejects.
+- [x] The D cap remains independent from each group's B cap.
+- [x] Relation rows identify group, slice, and physical B row without aliases.
+- [x] Direct and recursive setup contribution evaluation match a naive
       materialized reference with repeated logical B blocks.
-- [ ] Multi chunk and B slice intersections always equal the finer dyadic
+- [x] Multi chunk and B slice intersections always equal the finer dyadic
       partition for supported counts.
-- [ ] Grouped roots preserve each precommitted group's frozen slice count.
-- [ ] Setup prefix producers and consumers agree on the frozen count.
-- [ ] Planner metrics price physical setup and logical proof geometry
+- [x] Grouped roots preserve each precommitted group's frozen slice count.
+- [x] Setup prefix producers and consumers agree on the frozen count.
+- [x] Planner metrics price physical setup and logical proof geometry
       separately.
-- [ ] Proof focused selection keeps all admitted slice counts until complete
+- [x] Proof focused selection keeps all admitted slice counts until complete
       schedule scoring.
-- [ ] Setup focused selection keeps the smallest slice count that reaches its
+- [x] Setup focused selection keeps the smallest slice count that reaches its
       exact local setup minimum before witness sizing and suffix search.
-- [ ] Schedule descriptors and generated catalog identities change when `S`
+- [x] Schedule descriptors and generated catalog identities change when `S`
       changes.
-- [ ] Malformed verifier inputs return typed errors without panic.
-- [ ] The protocol epoch remains `1`.
-- [ ] Generated tables, profile reports, proof size reports, and documentation
+- [x] Malformed slice counts, physical widths, logical row coordinates,
+      compression lengths, group profiles, and setup prefix descriptors reject
+      at checked boundaries without panic.
+- [x] Real compressed commitment execution covers every exact
+      `S = 1, 2, 4, 8`; the shipped proof round trip pins exact `S = W = 8`,
+      and the ordinary unsliced proof suite covers `S = W = 1`.
+- [x] Generated catalog tests pin the admitted `S/W` interactions for
+      `W = 1, 2, 4, 8`, including `S = 2, 4, 8` where shipped rows select them.
+- [x] The protocol epoch remains `1`.
+- [x] Generated tables, profile reports, proof size reports, and documentation
       guardrails pass.
 
 ### Testing Strategy
@@ -415,23 +420,29 @@ Regenerate every schedule family. Run catalog drift tests and the compression
 schedule census. Check that every emitted count is valid and every complete B
 source fits the cap.
 
-#### End to end tests
+#### Integrated tests
 
-Run prover and verifier round trips for `S = 1, 2, 4, 8`. Combine them with
-`W = 1, 2, 4, 8` where the group geometry permits it. Cover:
+The committed test matrix separates affordable full proof round trips from
+exact component coverage. The dense multi chunk proof round trip pins
+`S = W = 8` at the root and recursive level one. Existing scalar, grouped,
+standalone precommitment, setup prefix, cached and streamed backend, and raw
+suffix proof suites cover the surrounding integration paths. The ordinary
+unsliced proof suite covers `S = W = 1`.
 
-- scalar root commitments;
-- recursive level one commitments;
-- a deeper compressed commitment forced to `S = 1`;
-- multi group roots with different frozen counts;
-- standalone precommitment followed by grouped opening;
-- setup prefix production and later consumption;
-- cached and streamed B matrix backends;
-- compressed prefix followed by a raw suffix.
+A deterministic real commitment test runs every exact `S = 1, 2, 4, 8` through
+B input construction, B multiplication, the two-map compression chain,
+terminal payload construction, and hint validation. The `S = 1` case is also
+compared with an independent pre-slicing reference. Relation and setup tests
+cover every count on both prover and verifier shared algebra. Catalog tests pin
+the shipped dyadic interactions for `W = 1, 2, 4, 8`, including the `S = 2`
+and `S = 4` rows whose full `nv = 32` proof runs belong to profiling rather
+than the ordinary unit test pass.
 
-Negative tests mutate the count, logical row count, physical width, group
-order, compression source length, and setup prefix descriptor. Every mutation
-must reject without panic.
+Negative tests mutate the count, logical row coordinate, physical width,
+group profile and order, compression source length, and setup prefix
+descriptor. Each checked boundary rejects without panic. This spec does not
+claim a Cartesian sixteen-case full proof suite; exact component tests and
+catalog audits cover combinations that would require the large profiling rows.
 
 ### Performance
 
@@ -558,9 +569,9 @@ Change `RelationRowFamily::Outer` so its semantic identity includes
 `slice_index` and `physical_row`. A flattened row index may be derived only
 through the canonical geometry owner.
 
-`RelationGroupRows::commit_rows` becomes the logical count `S * n_B`.
-Physical setup code continues to read `n_B` from the B matrix. Names and helper
-methods must make this distinction explicit.
+`RelationGroupRows` stores `physical_b_rows = n_B` together with the checked
+slice count and derives the logical count `S * n_B`. Physical setup code reads
+the stored physical count. The logical count is never stored independently.
 
 The relation compression layout keeps one F plan per group. Its source size is
 the complete logical B image. It does not create one plan per slice. The number
@@ -661,18 +672,17 @@ Serializing boundaries would create a second source of truth.
 
 ## Documentation
 
-Update `book/src/how/commitment.md` with the durable B slicing construction,
-complete compression source rule, and physical versus logical setup geometry.
-Update `book/src/how/proving/opening-points-layout.md` with the refinement rule
-for B slices and witness chunks.
+The durable B slicing construction, complete compression source rule, and
+physical versus logical setup geometry now live in
+`book/src/how/commitment.md`. The refinement rule for B slices and witness
+chunks now lives in `book/src/how/proving/opening-points-layout.md`.
 
 Update the commitment API and profiling documentation if public reports expose
 the selected slice count. Do not change the descriptor development version
 policy.
 
-After implementation merges, set this spec to `implemented`, record the pull
-request number, and fold the durable rules into the two book pages. Archive the
-spec during the next normal pruning pass after the book is complete.
+This spec is implemented by PR #383. Archive it during the next normal pruning
+pass after the pull request merges.
 
 ## Execution
 

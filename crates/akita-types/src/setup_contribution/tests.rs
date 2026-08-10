@@ -1,4 +1,4 @@
-use super::plan::{DirectScanWeights, SetupContributionGroupPlan};
+use super::plan::{DirectScanWeights, PhysicalBSetupPlan, SetupContributionGroupPlan};
 use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec};
 use super::*;
 use crate::{
@@ -357,7 +357,7 @@ fn finalize_test_plan(
         .unwrap();
     let b_footprint = groups
         .iter()
-        .map(|group| group.n_b * group.t_cols)
+        .map(|group| group.physical_b.physical_footprint().unwrap())
         .max()
         .unwrap();
     let d_footprint = d_rows * d_physical_cols;
@@ -423,6 +423,21 @@ fn test_group_plan(
         .iter()
         .flat_map(|&row| t_eq_slice.iter().map(move |&col| row * col))
         .collect();
+    let physical_b = PhysicalBSetupPlan::new(
+        crate::CommitmentSliceGeometry::try_new(
+            crate::CommitmentSliceCount::ONE,
+            t_cols,
+            1,
+            1,
+            1,
+            64,
+            64,
+        )
+        .unwrap(),
+        n_b,
+        b_weights.into(),
+    )
+    .unwrap();
     SetupContributionGroupPlan {
         group_id: 0,
         role_dims: CommitmentRingDims::uniform(64),
@@ -440,16 +455,12 @@ fn test_group_plan(
         log_basis_outer: 1,
         log_basis_open: 1,
         d_col_range,
-        t_cols,
-        physical_t_cols: t_cols,
         z_cols,
         n_a,
-        n_b,
-        physical_n_b: n_b,
+        physical_b,
         required: 0,
         segments: Vec::new().into(),
         a_row_weights: a_row_weights.into(),
-        b_weights: b_weights.into(),
         fold_gadget: vec![F::one()].into(),
         direct_scan_weights: Some(DirectScanWeights {
             e: e_eq_slice,
@@ -460,8 +471,6 @@ fn test_group_plan(
         active_unit_ranges: Vec::new().into(),
         num_physical_units: 0,
         d_tensors: Vec::new(),
-        b_tensors: Vec::new(),
-        b_setup_tensors: Vec::new(),
         a_tensors: Vec::new(),
     }
 }
@@ -579,7 +588,7 @@ fn structured_weight_fixture_with_slices(
     let depth_fold = 2;
     let num_positions_per_block = 8;
     let n_a = 2;
-    let n_b = 2;
+    let n_b = if outer_slice_count.is_sliced() { 1 } else { 2 };
     let n_d = 2;
     let log_basis = 4;
     assert_eq!(ownership_widths.iter().sum::<usize>(), num_live_blocks);

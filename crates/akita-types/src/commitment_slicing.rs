@@ -178,8 +178,11 @@ impl From<CommitmentSliceCount> for usize {
 pub struct CommitmentSliceGeometry {
     slice_count: CommitmentSliceCount,
     block_ranges: Vec<Range<usize>>,
+    num_live_blocks: usize,
+    num_polynomials: usize,
     max_blocks_per_slice: usize,
     ring_elements_per_block_per_polynomial: usize,
+    logical_input_width: usize,
     physical_input_width: usize,
     outer_ring_dimension: usize,
 }
@@ -231,12 +234,19 @@ impl CommitmentSliceGeometry {
             .checked_mul(max_blocks_per_slice)
             .and_then(|count| count.checked_mul(num_polynomials))
             .ok_or_else(|| AkitaError::InvalidSetup("physical B width overflow".into()))?;
+        let logical_input_width = ring_elements_per_block_per_polynomial
+            .checked_mul(num_live_blocks)
+            .and_then(|count| count.checked_mul(num_polynomials))
+            .ok_or_else(|| AkitaError::InvalidSetup("logical B width overflow".into()))?;
 
         Ok(Self {
             slice_count,
             block_ranges,
+            num_live_blocks,
+            num_polynomials,
             max_blocks_per_slice,
             ring_elements_per_block_per_polynomial,
+            logical_input_width,
             physical_input_width,
             outer_ring_dimension,
         })
@@ -254,6 +264,18 @@ impl CommitmentSliceGeometry {
         &self.block_ranges
     }
 
+    /// Number of live blocks partitioned by this geometry.
+    #[must_use]
+    pub const fn num_live_blocks(&self) -> usize {
+        self.num_live_blocks
+    }
+
+    /// Number of polynomials sharing each sliced block partition.
+    #[must_use]
+    pub const fn num_polynomials(&self) -> usize {
+        self.num_polynomials
+    }
+
     /// Largest number of live blocks assigned to one slice.
     #[must_use]
     pub const fn max_blocks_per_slice(&self) -> usize {
@@ -266,10 +288,83 @@ impl CommitmentSliceGeometry {
         self.ring_elements_per_block_per_polynomial
     }
 
+    /// Unsliced logical B input width across every live block and polynomial.
+    #[must_use]
+    pub const fn logical_input_width(&self) -> usize {
+        self.logical_input_width
+    }
+
     /// Input width of the one physical B matrix.
     #[must_use]
     pub const fn physical_input_width(&self) -> usize {
         self.physical_input_width
+    }
+
+    /// Convert one global live-block index to `(slice_index, block_in_slice)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the block lies outside this
+    /// geometry's live prefix.
+    pub fn block_coordinates(&self, global_block: usize) -> Result<(usize, usize), AkitaError> {
+        self.block_ranges
+            .iter()
+            .enumerate()
+            .find_map(|(slice_index, range)| {
+                range
+                    .contains(&global_block)
+                    .then_some((slice_index, global_block - range.start))
+            })
+            .ok_or_else(|| AkitaError::InvalidSetup("B block lies outside slice geometry".into()))
+    }
+
+    /// Convert one logical stacked B row to `(slice_index, physical_row)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] for a zero physical rank or a row
+    /// outside the complete logical stack.
+    pub fn logical_row_coordinates(
+        &self,
+        logical_row: usize,
+        physical_output_rank: usize,
+    ) -> Result<(usize, usize), AkitaError> {
+        let logical_rows = self.logical_output_rows(physical_output_rank)?;
+        if logical_row >= logical_rows {
+            return Err(AkitaError::InvalidSetup(
+                "logical B row lies outside slice geometry".into(),
+            ));
+        }
+        Ok((
+            logical_row / physical_output_rank,
+            logical_row % physical_output_rank,
+        ))
+    }
+
+    /// Flatten `(slice_index, physical_row)` into the complete logical B row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when either coordinate is outside
+    /// this geometry or the flattened index overflows.
+    pub fn logical_row_index(
+        &self,
+        slice_index: usize,
+        physical_row: usize,
+        physical_output_rank: usize,
+    ) -> Result<usize, AkitaError> {
+        if slice_index >= self.slice_count.get()
+            || physical_output_rank == 0
+            || physical_row >= physical_output_rank
+        {
+            return Err(AkitaError::InvalidSetup(
+                "B slice row coordinates are outside the physical matrix".into(),
+            ));
+        }
+        slice_index
+            .checked_mul(physical_output_rank)
+            .and_then(|offset| offset.checked_add(physical_row))
+            .ok_or_else(|| AkitaError::InvalidSetup("logical B row index overflow".into()))
     }
 
     /// Logical B relation rows in the complete stacked image.
@@ -371,6 +466,7 @@ mod tests {
         assert_eq!(geometry.block_ranges(), &[0..3, 3..6, 6..9, 9..13]);
         assert_eq!(geometry.max_blocks_per_slice(), 4);
         assert_eq!(geometry.ring_elements_per_block_per_polynomial(), 30);
+        assert_eq!(geometry.logical_input_width(), 780);
         assert_eq!(geometry.physical_input_width(), 240);
         assert_eq!(geometry.logical_output_rows(7).expect("logical rows"), 28);
         assert_eq!(
@@ -385,6 +481,14 @@ mod tests {
                 .expect("physical matrix"),
             1_680
         );
+        assert_eq!(geometry.block_coordinates(11).expect("block"), (3, 2));
+        assert_eq!(
+            geometry.logical_row_coordinates(23, 7).expect("row"),
+            (3, 2)
+        );
+        assert_eq!(geometry.logical_row_index(3, 2, 7).expect("row"), 23);
+        assert!(geometry.block_coordinates(13).is_err());
+        assert!(geometry.logical_row_coordinates(28, 7).is_err());
     }
 
     #[test]

@@ -665,7 +665,8 @@ impl RingRelationProver {
         }
         drop(fold_grind_span);
 
-        // Relation rhs spans roles (consistency | [A | B | B_inner]* | D).
+        // Relation rhs spans roles (consistency | [A | B]* | D), with each
+        // B group expanded in slice-major then physical-row order.
         // Terminal levels drop the D-block from M entirely, so `n_d` is zero
         // and `v` stays empty.
         let instance_span = tracing::info_span!("ring_relation_build_instance").entered();

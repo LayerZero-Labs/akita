@@ -1,5 +1,4 @@
 use super::*;
-use akita_types::CompressionChainPlan;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -17,6 +16,117 @@ struct SetupPrefixSearchKey {
 #[derive(Default)]
 pub(crate) struct SetupPrefixSearchCache {
     entries: HashMap<SetupPrefixSearchKey, Arc<[PrecommittedLevelParams]>>,
+}
+
+pub(crate) struct SetupPrefixSearchRequest<'a> {
+    pub(crate) policy: &'a PlannerPolicy,
+    pub(crate) ring_challenge_cfg: &'a SparseChallengeConfig,
+    pub(crate) log_basis_open: u32,
+    pub(crate) n_prefix: usize,
+    pub(crate) num_chunks: usize,
+    pub(crate) inner_ring_dimension: usize,
+    pub(crate) outer_ring_dimension: usize,
+    pub(crate) fold_level: usize,
+}
+
+type SetupPrefixFrontierEntry = (
+    [usize; 2],
+    Vec<u8>,
+    LayoutCandidateScore,
+    PrecommittedLevelParams,
+);
+
+#[derive(Clone, Copy)]
+struct SetupPrefixSplit {
+    log_basis_inner: u32,
+    num_digits_inner: usize,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
+    width_s: usize,
+}
+
+struct SetupPrefixCandidateContext<'a> {
+    policy: &'a PlannerPolicy,
+    ring_challenge_cfg: &'a SparseChallengeConfig,
+    dimensions: CommitmentRingDims,
+    log_basis_open: u32,
+    n_prefix: usize,
+    prefix_num_vars: usize,
+    ring_slots: usize,
+    num_chunks: usize,
+    num_digits_outer: usize,
+    num_digits_open: usize,
+}
+
+impl SetupPrefixCandidateContext<'_> {
+    fn derive(
+        &self,
+        split: SetupPrefixSplit,
+        outer_slice_count: akita_types::CommitmentSliceCount,
+    ) -> Result<Option<SetupPrefixFrontierEntry>, AkitaError> {
+        let d_a = self.dimensions.d_a();
+        let fold_policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+            self.policy.decomposition.field_bits(),
+            FoldWitnessNorms::bounded(split.log_basis_inner, d_a),
+        );
+        let Some(ab_candidate) = derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
+            policy: self.policy,
+            fold_policy: &fold_policy,
+            ring_challenge_cfg: self.ring_challenge_cfg,
+            dimensions: self.dimensions,
+            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+            num_claims: 1,
+            num_live_blocks: split.num_live_blocks,
+            num_chunks: self.num_chunks,
+            outer_slice_count,
+            witness_norms: FoldWitnessNorms::bounded(split.log_basis_inner, d_a),
+            log_basis_open: self.log_basis_open,
+            width_s: split.width_s,
+            num_digits_outer: self.num_digits_outer,
+        })?
+        else {
+            return Ok(None);
+        };
+        let layout = CommittedGroupProfile {
+            version: CommittedGroupProfile::VERSION,
+            group: PolynomialGroupLayout::singleton(self.prefix_num_vars),
+            num_live_ring_elements_per_claim: self.ring_slots,
+            num_positions_per_block: split.num_positions_per_block,
+            num_live_blocks: split.num_live_blocks,
+            outer_slice_count,
+            log_basis_inner: split.log_basis_inner,
+            num_digits_inner: split.num_digits_inner,
+            inner_commit_matrix: ab_candidate.inner_commit_matrix,
+            log_basis_outer: self.log_basis_open,
+            num_digits_outer: self.num_digits_outer,
+            outer_commit_matrix: ab_candidate.outer_commit_matrix,
+        };
+        let params = PrecommittedLevelParams {
+            layout,
+            log_basis_open: self.log_basis_open,
+            fold_challenge_config: *self.ring_challenge_cfg,
+            num_digits_open: self.num_digits_open,
+            num_digits_fold: ab_candidate.num_digits_fold,
+        };
+        let physical_width = akita_schedules::planner_support::grouped_segment_rings(
+            1,
+            split.num_live_blocks,
+            self.num_chunks,
+            split.num_positions_per_block,
+            params.layout.inner_commit_matrix.output_rank(),
+            split.num_digits_inner,
+            self.num_digits_outer,
+            self.num_digits_open,
+            params.num_digits_fold,
+        )?;
+        let score = layout_candidate_score(physical_width, split.num_live_blocks, self.num_chunks)?;
+        let setup_fields = akita_types::setup_prefix_slot_field_elements(
+            &akita_types::setup_prefix_slot_id(self.n_prefix, params.clone()),
+        )?;
+        let coords = [physical_width, padded_setup_prefix_len(setup_fields)];
+        let descriptor = params.canonical_descriptor_bytes();
+        Ok(Some((coords, descriptor, score, params)))
+    }
 }
 
 fn setup_prefix_slice_counts(
@@ -48,18 +158,20 @@ fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<
     Ok(padded.trailing_zeros() as usize)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     cache: &mut SetupPrefixSearchCache,
-    policy: &PlannerPolicy,
-    ring_challenge_cfg: &SparseChallengeConfig,
-    log_basis_open: u32,
-    n_prefix: usize,
-    num_chunks: usize,
-    inner_ring_dimension: usize,
-    outer_ring_dimension: usize,
-    fold_level: usize,
+    request: SetupPrefixSearchRequest<'_>,
 ) -> Result<Vec<PrecommittedLevelParams>, AkitaError> {
+    let SetupPrefixSearchRequest {
+        policy,
+        ring_challenge_cfg,
+        log_basis_open,
+        n_prefix,
+        num_chunks,
+        inner_ring_dimension,
+        outer_ring_dimension,
+        fold_level,
+    } = request;
     let cache_key = SetupPrefixSearchKey {
         ring_challenge: *ring_challenge_cfg,
         log_basis_open,
@@ -94,20 +206,29 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     let ring_slots = n_prefix / inner_ring_dimension;
     let reduced_vars = checked_power_of_two_vars(ring_slots, "setup prefix ring slots")?;
     let prefix_num_vars = checked_power_of_two_vars(n_prefix, "setup prefix field length")?;
-    let family = policy.sis_modulus_profile;
-    let d = inner_ring_dimension;
     let open_decomp = DecompositionParams {
         log_basis: log_basis_open,
         ..policy.decomposition
     };
     let num_digits_outer = num_digits_open(open_decomp);
     let num_digits_open_val = num_digits_open(open_decomp);
-    let mut frontier: Vec<(
-        [usize; 2],
-        Vec<u8>,
-        LayoutCandidateScore,
-        PrecommittedLevelParams,
-    )> = Vec::new();
+    let mut frontier = Vec::<SetupPrefixFrontierEntry>::new();
+    let candidate_context = SetupPrefixCandidateContext {
+        policy,
+        ring_challenge_cfg,
+        dimensions: CommitmentRingDims {
+            inner: inner_ring_dimension,
+            outer: outer_ring_dimension,
+            opening: outer_ring_dimension,
+        },
+        log_basis_open,
+        n_prefix,
+        prefix_num_vars,
+        ring_slots,
+        num_chunks,
+        num_digits_outer,
+        num_digits_open: num_digits_open_val,
+    };
 
     let (inner_basis_min, inner_basis_max) = crate::InnerBasisSource::RawCoefficients {
         log_bound: policy.decomposition.field_bits(),
@@ -137,138 +258,20 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
             else {
                 continue;
             };
-            let Some(num_fold_coeffs) = width_s
-                .checked_mul(d)
-                .and_then(|count| count.checked_mul(num_chunks))
-            else {
-                continue;
-            };
-            let fold_policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
-                policy.decomposition.field_bits(),
-                FoldWitnessNorms::bounded(inner_decomp.log_basis, d),
-            );
-            let Ok(num_digits_fold) = fold_policy.num_digits_fold(HonestFoldSizingQuery {
-                ring_dimension: d,
-                num_claims: 1,
+            let split = SetupPrefixSplit {
+                log_basis_inner,
+                num_digits_inner,
                 num_live_blocks,
-                num_chunks,
-                num_fold_coeffs,
-                witness_norms: FoldWitnessNorms::bounded(log_basis_inner, d),
-                log_basis_response: log_basis_open,
-                challenge_config: ring_challenge_cfg,
-            }) else {
-                continue;
-            };
-            let Some(norm_s) = rounded_up_role_a_inf_norm(
-                policy.sis_security_policy,
-                policy.sis_table_digest,
-                family,
-                d,
-                log_basis_open,
-                ring_challenge_cfg,
-                num_digits_fold,
-                policy.ring_subfield_norm_bound,
-            ) else {
-                continue;
-            };
-            let Ok(inner_commit_matrix) = InnerCommitMatrixParams::try_new_with_min_rank(
-                sis_key_at_dimension(
-                    policy,
-                    akita_types::SisMatrixRole::Inner,
-                    inner_ring_dimension,
-                    norm_s,
-                ),
+                num_positions_per_block,
                 width_s,
-            ) else {
-                continue;
-            };
-            let Some(norm_t) = rounded_up_collision_inf_norm(
-                policy.sis_security_policy,
-                family,
-                akita_types::SisMatrixRole::Outer,
-                outer_ring_dimension,
-                log_basis_open,
-            ) else {
-                continue;
             };
             for outer_slice_count in setup_prefix_slice_counts(fold_level, num_live_blocks) {
-                let Ok(slice_geometry) = akita_types::CommitmentSliceGeometry::try_new(
-                    outer_slice_count,
-                    num_live_blocks,
-                    1,
-                    inner_commit_matrix.output_rank(),
-                    num_digits_outer,
-                    d,
-                    outer_ring_dimension,
-                ) else {
+                let Some(entry) = candidate_context.derive(split, outer_slice_count)? else {
                     continue;
                 };
-                let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
-                    sis_key_at_dimension(
-                        policy,
-                        akita_types::SisMatrixRole::Outer,
-                        outer_ring_dimension,
-                        norm_t,
-                    ),
-                    slice_geometry.physical_input_width(),
-                ) else {
-                    continue;
-                };
-                let layout = CommittedGroupProfile {
-                    version: CommittedGroupProfile::VERSION,
-                    group: PolynomialGroupLayout::singleton(prefix_num_vars),
-                    num_live_ring_elements_per_claim: ring_slots,
-                    num_positions_per_block,
-                    num_live_blocks,
-                    outer_slice_count,
-                    log_basis_inner,
-                    num_digits_inner,
-                    inner_commit_matrix,
-                    log_basis_outer: log_basis_open,
-                    num_digits_outer,
-                    outer_commit_matrix,
-                };
-                let params = PrecommittedLevelParams {
-                    layout,
-                    log_basis_open,
-                    fold_challenge_config: *ring_challenge_cfg,
-                    num_digits_open: num_digits_open_val,
-                    num_digits_fold,
-                };
-                let physical_width = akita_schedules::planner_support::grouped_segment_rings(
-                    1,
-                    num_live_blocks,
-                    num_chunks,
-                    num_positions_per_block,
-                    params.layout.inner_commit_matrix.output_rank(),
-                    num_digits_inner,
-                    num_digits_outer,
-                    num_digits_open_val,
-                    num_digits_fold,
-                )?;
-                let score = layout_candidate_score(physical_width, num_live_blocks, num_chunks)?;
-                let compression_source_coefficients = outer_slice_count
-                    .complete_source_coefficients(
-                        params.layout.outer_commit_matrix.output_rank(),
-                        params.layout.outer_commit_matrix.ring_dimension(),
-                    )?;
-                if CompressionChainPlan::try_for_complete_source(
-                    params.layout.outer_commit_matrix.sis_modulus_profile(),
-                    compression_source_coefficients,
-                )?
-                .is_none()
-                {
-                    continue;
-                }
-                let setup_fields = akita_types::setup_prefix_slot_field_elements(
-                    &akita_types::setup_prefix_slot_id(n_prefix, params.clone()),
-                )?;
-                let padded_setup_fields = padded_setup_prefix_len(setup_fields);
-                let coords = [physical_width, padded_setup_fields];
-                let descriptor = params.canonical_descriptor_bytes();
                 crate::schedule_params::pareto::insert(
                     &mut frontier,
-                    (coords, descriptor, score, params),
+                    entry,
                     |(best, best_descriptor, best_score, _),
                      (candidate, candidate_descriptor, candidate_score, _)| {
                         let best_tie = (*best_score, best_descriptor.as_slice());

@@ -37,6 +37,7 @@ pub struct NextWitnessStateOutput<F: FieldCore> {
 #[inline(never)]
 pub fn commit_w<Cfg, B>(
     commit_params: &CommittedGroupParams,
+    fold_level: usize,
     expanded: &std::sync::Arc<AkitaExpandedSetup<Cfg::Field>>,
     commit_ctx: &OperationCtx<'_, Cfg::Field, B>,
     logical_w: &RecursiveWitnessFlat,
@@ -50,7 +51,12 @@ where
     let backend = commit_ctx.backend();
     let prepared = commit_ctx.prepared();
     backend.validate_prepared_setup(prepared, expanded.as_ref())?;
-    validate_commit_level_params::<Cfg::Field>(commit_params, expanded.as_ref())?;
+    let slice_geometry = validate_commit_level_params::<Cfg::Field>(
+        commit_params,
+        expanded.as_ref(),
+        fold_level,
+        1,
+    )?;
 
     let (packed_witness, inner_rows, commitment, compression_witness) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -113,15 +119,6 @@ where
                         &blocks,
                         commit_params.num_digits_outer,
                         commit_params.log_basis_outer,
-                    )?;
-                    let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
-                        commit_params.outer_slice_count,
-                        commit_params.num_live_blocks,
-                        1,
-                        n_a,
-                        commit_params.num_digits_outer,
-                        D_A,
-                        D_B,
                     )?;
                     let u: Vec<CyclotomicRing<Cfg::Field, D_B>> = commit_outer_slices(
                         backend,

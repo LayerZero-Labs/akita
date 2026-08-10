@@ -579,9 +579,6 @@ fn write_generated_group(h: &mut Fnv64, value: GeneratedCommittedGroup) {
 fn write_generated_open_matrix(h: &mut Fnv64, value: GeneratedOpenCommitMatrix) {
     h.write_u64(u64::from(value.ring_dimension));
     h.write_u64(u64::from(value.log_basis));
-    // Preserve the epoch-1 identity slot formerly occupied by D's inert
-    // `slice_count: 1`. Commitment slicing is B-only.
-    h.write_u64(1);
 }
 
 fn write_generated_partition(h: &mut Fnv64, value: GeneratedWitnessPartition) {

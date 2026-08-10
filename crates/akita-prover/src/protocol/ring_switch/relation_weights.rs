@@ -1,22 +1,9 @@
 //! Semantic relation-weight events and their canonical consumers.
 
+#[path = "relation_weights/setup_columns.rs"]
+mod setup_columns;
+
 use std::ops::Range;
-
-/// One family of setup-matrix rows read as per-column ring slices borrowed
-/// from the materialized store.
-struct SetupRows<'a, F: akita_field::FieldCore> {
-    rows: Vec<&'a [F]>,
-    ring_d: usize,
-}
-
-impl<F: akita_field::FieldCore> SetupRows<'_, F> {
-    fn ring_slice(&self, row: usize, col: usize) -> Result<&[F], AkitaError> {
-        self.rows
-            .get(row)
-            .and_then(|row| row.get(col * self.ring_d..(col + 1) * self.ring_d))
-            .ok_or(AkitaError::InvalidProof)
-    }
-}
 
 use akita_algebra::eq_poly::SplitEqEvals;
 use akita_algebra::offset_eq::{eq_eval_at_index, OffsetEqWindow};
@@ -31,79 +18,7 @@ use akita_types::{
     CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, RelationAddressGeometry,
     RelationRowFamily, RingRelationInstance, SetupProjectionGeometry,
 };
-
-fn evaluate_setup_columns<F, E>(
-    family: &SetupRows<'_, F>,
-    columns: Range<usize>,
-    row_weights: &[(usize, Vec<E>)],
-    batch_count: usize,
-    alpha_powers: &[E],
-) -> Result<SetupColumnEvaluations<E>, AkitaError>
-where
-    F: FieldCore,
-    E: FieldCore + MulBaseUnreduced<F>,
-{
-    if batch_count == 0
-        || row_weights
-            .iter()
-            .any(|(_, weights)| weights.len() != batch_count)
-    {
-        return Err(AkitaError::InvalidSetup(
-            "setup column weight batches are malformed".into(),
-        ));
-    }
-    let column_count = columns.len();
-    let output_len = column_count
-        .checked_mul(batch_count)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup column batch size overflow".into()))?;
-    let mut values = vec![E::zero(); output_len];
-    cfg_chunks_mut!(&mut values, batch_count)
-        .enumerate()
-        .try_for_each(|(column_offset, output)| -> Result<(), AkitaError> {
-            let column = columns
-                .start
-                .checked_add(column_offset)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup column offset overflow".into()))?;
-            for (row, weights) in row_weights {
-                let evaluation =
-                    eval_flat_ring_at_pows_fast(family.ring_slice(*row, column)?, alpha_powers);
-                for (accumulator, &weight) in output.iter_mut().zip(weights) {
-                    if !weight.is_zero() {
-                        *accumulator += weight * evaluation;
-                    }
-                }
-            }
-            Ok(())
-        })?;
-    Ok(SetupColumnEvaluations {
-        batch_count,
-        column_count,
-        values,
-    })
-}
-
-struct SetupColumnEvaluations<E> {
-    batch_count: usize,
-    column_count: usize,
-    /// Column-major batches: `values[column * batch_count + batch]`.
-    values: Vec<E>,
-}
-
-impl<E: Copy> SetupColumnEvaluations<E> {
-    fn get(&self, batch: usize, column: usize) -> Result<E, AkitaError> {
-        if batch >= self.batch_count || column >= self.column_count {
-            return Err(AkitaError::InvalidProof);
-        }
-        let index = column
-            .checked_mul(self.batch_count)
-            .and_then(|offset| offset.checked_add(batch))
-            .ok_or(AkitaError::InvalidProof)?;
-        self.values
-            .get(index)
-            .copied()
-            .ok_or(AkitaError::InvalidProof)
-    }
-}
+use setup_columns::{evaluate_setup_columns, SetupRows};
 
 /// Whether one relation event belongs to the protocol constraint or setup matrix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -687,22 +602,6 @@ where
             group_d_a,
             group_d_b,
         )?;
-        let block_slice_locations = slice_geometry
-            .block_ranges()
-            .iter()
-            .enumerate()
-            .flat_map(|(slice_index, range)| {
-                range
-                    .clone()
-                    .enumerate()
-                    .map(move |(slice_block, _)| (slice_index, slice_block))
-            })
-            .collect::<Vec<_>>();
-        if block_slice_locations.len() != num_live_blocks_g {
-            return Err(AkitaError::InvalidSetup(
-                "B slices do not cover the live blocks".into(),
-            ));
-        }
         let b_width = slice_geometry.physical_input_width();
         let (setup_a_family, b_family) = if let Some(setup) = setup_matrix {
             let a_view = setup
@@ -784,15 +683,10 @@ where
                 .map(|row| {
                     let weights = (0..slice_count)
                         .map(|slice_index| {
-                            let slice_row_offset = slice_index
-                                .checked_mul(physical_n_b)
+                            let logical_row = slice_geometry
+                                .logical_row_index(slice_index, row, physical_n_b)?
+                                .checked_add(b_range.start)
                                 .ok_or(AkitaError::InvalidProof)?;
-                            let row_start = b_range
-                                .start
-                                .checked_add(slice_row_offset)
-                                .ok_or(AkitaError::InvalidProof)?;
-                            let logical_row =
-                                row_start.checked_add(row).ok_or(AkitaError::InvalidProof)?;
                             eq_tau1.eval_at(logical_row)
                         })
                         .collect::<Result<Vec<_>, AkitaError>>()?;
@@ -825,9 +719,7 @@ where
                     })?;
                 let challenge_alpha =
                     challenges.eval_at_pows::<F, E>(challenge_index, &group_alpha_pows_a)?;
-                let &(slice_index, slice_block) = block_slice_locations
-                    .get(global_block)
-                    .ok_or(AkitaError::InvalidProof)?;
+                let (slice_index, slice_block) = slice_geometry.block_coordinates(global_block)?;
                 for (digit, &opening_gadget) in g_open.iter().enumerate() {
                     for role_subcol in 0..d_ratio {
                         let physical_start = unit.e_coefficient_index(

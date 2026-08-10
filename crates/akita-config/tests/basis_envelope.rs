@@ -48,6 +48,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
                 num_live_blocks: root.num_live_blocks,
                 num_chunks: root.witness_chunk.num_chunks,
                 num_fold_coeffs,
+                outer_slice_count: root.outer_slice_count,
                 witness_norms: honest_policy
                     .witness_norms_for_inner_basis(root.log_basis_inner, root.d_a()),
                 log_basis_response: root.log_basis_open,

@@ -479,6 +479,97 @@ impl CommittedGroupParams {
         Ok(())
     }
 
+    /// Validate the exact A/B geometry executed by one commitment request.
+    ///
+    /// This binds the concrete polynomial arity and fold level to the same B
+    /// width, slice policy, and complete-source compression cap used for SIS
+    /// pricing and descriptor construction.
+    pub fn validate_commitment_request(
+        &self,
+        fold_level: usize,
+        num_polynomials: usize,
+    ) -> Result<crate::CommitmentSliceGeometry, AkitaError> {
+        if num_polynomials == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "commitment request requires at least one polynomial".into(),
+            ));
+        }
+        self.validate_block_geometry()?;
+        self.outer_slice_count.validate_for_commitment(
+            fold_level,
+            self.payload_mode,
+            self.num_live_blocks,
+        )?;
+        let expected_a_width = self
+            .num_positions_per_block
+            .checked_mul(self.num_digits_inner)
+            .ok_or_else(|| AkitaError::InvalidSetup("commitment A width overflow".into()))?;
+        if self.inner_commit_matrix.input_width() != expected_a_width {
+            return Err(AkitaError::InvalidSetup(
+                "commitment A matrix width disagrees with request geometry".into(),
+            ));
+        }
+        let geometry = crate::CommitmentSliceGeometry::try_new(
+            self.outer_slice_count,
+            self.num_live_blocks,
+            num_polynomials,
+            self.inner_commit_matrix.output_rank(),
+            self.num_digits_outer,
+            self.role_dims().d_a(),
+            self.role_dims().d_b(),
+        )?;
+        if self.outer_commit_matrix.input_width() != geometry.physical_input_width() {
+            return Err(AkitaError::InvalidSetup(
+                "commitment B matrix width disagrees with sliced request geometry".into(),
+            ));
+        }
+        if self.payload_mode.is_compressed() {
+            let source_coefficients = geometry
+                .logical_output_rows(self.outer_commit_matrix.output_rank())?
+                .checked_mul(self.role_dims().d_b())
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("commitment B source size overflow".into())
+                })?;
+            if crate::CompressionChainPlan::try_for_complete_source(
+                self.outer_commit_matrix.sis_modulus_profile(),
+                source_coefficients,
+            )?
+            .is_none()
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "commitment B source exceeds the compression cap".into(),
+                ));
+            }
+        }
+        Ok(geometry)
+    }
+
+    /// Polynomial arity encoded by the exact physical B width.
+    pub fn commitment_polynomial_count(&self) -> Result<usize, AkitaError> {
+        let one_polynomial_width = crate::CommitmentSliceGeometry::try_new(
+            self.outer_slice_count,
+            self.num_live_blocks,
+            1,
+            self.inner_commit_matrix.output_rank(),
+            self.num_digits_outer,
+            self.role_dims().d_a(),
+            self.role_dims().d_b(),
+        )?
+        .physical_input_width();
+        self.outer_commit_matrix
+            .input_width()
+            .checked_div(one_polynomial_width)
+            .filter(|count| {
+                *count != 0
+                    && self.outer_commit_matrix.input_width() == *count * one_polynomial_width
+            })
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "commitment B width does not encode an exact polynomial count".into(),
+                )
+            })
+    }
+
     /// Width of inner matrix A (column count of the A-key).
     #[inline]
     pub fn inner_width(&self) -> usize {
