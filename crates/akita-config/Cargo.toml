@@ -40,8 +40,12 @@ all-schedules = [
 ]
 schedules-fp128-onehot = ["akita-schedules/fp128-onehot"]
 schedules-fp128-dense = ["akita-schedules/fp128-dense"]
-schedules-fp128-onehot-recursive = ["akita-schedules/fp128-onehot-recursive"]
+schedules-fp128-onehot-recursive = [
+  "schedules-fp128-onehot",
+  "akita-schedules/fp128-onehot-recursive",
+]
 schedules-fp128-onehot-recursive-multi-chunk-w8r2 = [
+  "schedules-fp128-onehot-multi-chunk",
   "akita-schedules/fp128-onehot-recursive-multi-chunk-w8r2",
 ]
 schedules-fp128-onehot-multi-chunk = [
