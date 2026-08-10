@@ -2,21 +2,24 @@
 
 This page describes the ring-valued relations proved by one non-terminal
 Akita fold. The presentation starts with one polynomial group, one opening
-claim, and one common ring dimension:
+claim, and one common ring dimension for the four source relations:
 
 $$
 R=F[X]/(X^D+1).
 $$
 
 The current implementation also supports more elaborate physical layouts —
-commitment groups, witness chunks, and different ring dimensions — but those
-extensions do not change the four core relations developed below. This page
-establishes only the basic case; advanced layouts are outside its scope.
+commitment groups, witness chunks, and different ordinary $\mathbf A$,
+$\mathbf B$, and $\mathbf D$ ring dimensions — but those extensions do not
+change the four core relations developed below. This page establishes only the
+basic case; advanced layouts are outside its scope. The compression realization
+introduced later uses its own smaller ring dimensions.
 
-The Akita paper presents a more general matrix with additional compression
-relations. Its basic Greyhound relation motivates the four row families here;
-the current implementation is the source of truth for the rows and witness
-layout documented on this page.
+The four equations below are the semantic source relations. The current
+implementation realizes the $\mathbf B$ and $\mathbf D$ commitment relations
+either by transmitting their semantic commitments as raw payloads or by
+binding those commitments to smaller terminal payloads through compression
+relations.
 
 The goal of the fold is to replace the current polynomial blocks by a smaller
 digit witness while proving that the new witness is consistent with:
@@ -39,13 +42,18 @@ described on this page.
   - [Polynomial blocks and commitment hint](#polynomial-blocks-and-commitment-hint)
   - [Partial evaluations and opening digits](#partial-evaluations-and-opening-digits)
   - [The folded response and its digitization](#the-folded-response-and-its-digitization)
-- [The four physical relation families](#the-four-physical-relation-families)
+- [The four semantic relation families](#the-four-semantic-relation-families)
   - [Fold-evaluation consistency](#1-fold-evaluation-consistency)
   - [Inner-commitment consistency](#2-inner-commitment-consistency)
   - [Outer-commitment consistency](#3-outer-commitment-consistency)
   - [Opening-commitment consistency](#4-opening-commitment-consistency)
-- [Assemble the ring relation](#assemble-the-ring-relation)
-- [Lift the ring relation before sumcheck](#lift-the-ring-relation-before-sumcheck)
+- [Commitment compression realization](#commitment-compression-realization)
+  - [Why recommit?](#why-recommit)
+  - [One recommitment step](#one-recommitment-step)
+  - [The two-map commitment chains](#the-two-map-commitment-chains)
+  - [Compressed rows and witness](#compressed-rows-and-witness)
+- [Assemble the raw ring relation](#assemble-the-raw-ring-relation)
+- [Lift the raw ring relation before sumcheck](#lift-the-raw-ring-relation-before-sumcheck)
 - [The scalar opening claim is a virtual row](#the-scalar-opening-claim-is-a-virtual-row)
 - [Code reference](#code-reference)
 
@@ -57,14 +65,16 @@ $$
 \widetilde f(r)=v
 $$
 
-for a polynomial whose commitment $\mathbf u$ is already fixed. At a recursive
-level, $\mathbf u$ is the next-witness commitment produced by the preceding
-level; at the root, the original polynomial commitment plays the same role.
+for a polynomial whose commitment payload is already fixed. We call
+$\mathbf u=\mathbf B\hat{\mathbf t}$ the semantic commitment behind that
+payload. In raw mode, $\mathbf u$ itself is transmitted; in compressed mode,
+the payload is the smaller terminal commitment $p_F$, which is bound to
+$\mathbf u$ by the compression relations below.
 
 The prover and verifier have different views of these inputs. The prover holds
 the polynomial blocks, their inner-digit representation, the commitment hint
-generated when $\mathbf u$ was formed, and the public commitment itself. The
-verifier knows $\mathbf u$ and the opening claim, but receives neither the
+generated when the commitment was formed, and the public commitment payload.
+The verifier knows that payload and the opening claim, but receives neither the
 blocks nor the hint.
 
 From these inputs, the current fold derives two new representations of the
@@ -178,12 +188,12 @@ z_{p,a}(X)
 \end{aligned}
 $$
 
-The first two identities describe commitment-side data already fixed by
-$\mathbf u$: $\mathbf s_b$ is the incoming inner-digit representation, and
-$\hat{\mathbf t}$ is reconstructed from the incoming hint. The latter two
-digit families, $\hat{\mathbf e}$ and $\hat{\mathbf z}$, are newly derived from
-the opening point and fold challenges. We now place each identity in its
-protocol context.
+The first two identities describe commitment-side data already fixed by the
+incoming commitment payload: $\mathbf s_b$ is the incoming inner-digit
+representation, and $\hat{\mathbf t}$ is reconstructed from the incoming hint.
+The latter two digit families, $\hat{\mathbf e}$ and $\hat{\mathbf z}$, are
+newly derived from the opening point and fold challenges. We now place each
+identity in its protocol context.
 
 ### Polynomial blocks and commitment hint
 
@@ -221,7 +231,7 @@ $$
 
 where $\rho$ selects a row of $\mathbf A$. Stack these digits over all blocks
 to obtain $\hat{\mathbf t}$. The outer commitment matrix $\mathbf B$ then gives
-the public commitment
+the semantic commitment
 
 $$
 \mathbf u
@@ -234,11 +244,11 @@ The two matrices have distinct roles: $\mathbf A$ forms one inner image per
 block, whereas $\mathbf B$ commits the digit-decomposed inner images across all
 blocks. The prover's commitment hint stores the recomposed inner images
 $\mathbf t_b$; this fold decomposes them to recover $\hat{\mathbf t}$. At a
-recursive level, the polynomial blocks, hint, and $\mathbf u$ were produced by
-the preceding level. At the root, they come from the original commitment. The
-verifier receives only $\mathbf u$ from this commitment-side data. Equations
-(1)--(4) describe the hidden opening that the later relation rows bind to that
-public value.
+recursive level, the polynomial blocks, hint, and public payload were produced
+by the preceding level. At the root, they come from the original commitment.
+The verifier receives only the public payload from this commitment-side data:
+$\mathbf u$ in raw mode or $p_F$ in compressed mode. (to-revise: no need to mention the two different modes, only focus the semantic commitment in this section). Equations (1)--(4)
+describe the hidden opening that the later relation rows bind to that payload.
 
 ### Partial evaluations and opening digits
 
@@ -265,7 +275,7 @@ E_b(X)
 $$
 
 The fold witness contains the digit rings $\hat e$, not a second copy of the
-recomposed $E_b$. To bind those digits, Akita computes an opening commitment
+recomposed $E_b$. Their semantic opening commitment is
 
 $$
 \mathbf v_D
@@ -274,6 +284,10 @@ $$
 \tag{7}
 $$
 
+Here $\mathbf D$ commits to the digit-decomposed partial evaluations. In raw
+mode, $\mathbf v_D$ is the opening-commitment payload sent to the verifier; in
+compressed mode, the terminal commitment $p_H$ is sent instead. (to-revise: no need to mentin the compressed mode or terminal commitment, only mention the semantic opening commitment)
+
 The subscript in $\mathbf v_D$ distinguishes this ring-vector commitment from
 the scalar opening target $v$ and its trace-form counterpart
 $v_{\mathrm{tr}}$. Equation (7) binds the newly derived opening digits; it does
@@ -281,10 +295,11 @@ not by itself prove the scalar evaluation claim.
 
 ### The folded response and its digitization
 
-The opening commitment $\mathbf v_D$ binds the prover to
-$\hat{\mathbf e}$, but it does not by itself show that the corresponding
-partial evaluations were computed from the incoming polynomial blocks. For
-every block $b$, correctness requires
+The semantic opening commitment $\mathbf v_D$, exposed directly in raw mode or
+bound through $p_H$ in compressed mode (to-revise: no need to mention two modes, only consider the semantic relations), commits the prover to
+$\hat{\mathbf e}$. It does not by itself show that the corresponding partial
+evaluations were computed from the incoming polynomial blocks. For every block
+$b$, correctness requires
 
 $$
 \boxed{
@@ -298,7 +313,7 @@ E_b
 $$
 
 Equation (8) connects the partial evaluation derived in this fold to the
-incoming block witness $\mathbf s_b$. The public commitment $\mathbf u$
+incoming block witness $\mathbf s_b$. The semantic commitment $\mathbf u$
 creates a second consistency requirement. Equation (4),
 $\mathbf u=\mathbf B\hat{\mathbf t}$, binds the outer digits
 $\hat{\mathbf t}$, which recompose the inner images $\mathbf t_b$ through
@@ -308,10 +323,11 @@ link is the blockwise relation $\mathbf t_b=\mathbf A\mathbf s_b$ from
 Equation (2).
 
 Checking both relations separately for every live block would retain the block
-index in the next proof. Instead, after $\mathbf u$ and $\mathbf v_D$ have
-been fixed, the transcript samples one sparse ring-valued challenge $c_b(X)$
-for each live block. These challenges are separate from the query weights
-$B_b$. The prover folds the incoming block witnesses into one response:
+index in the next proof. Instead, after the public payloads binding
+$\mathbf u$ and $\mathbf v_D$ have been fixed, the transcript samples one
+sparse ring-valued challenge $c_b(X)$ for each live block. These challenges
+are separate from the query weights $B_b$. The prover folds the incoming block
+witnesses into one response:
 
 $$
 z_{p,a}(X)
@@ -418,15 +434,15 @@ They have different origins:
 | $\hat{\mathbf e}$ | the position-folded rings $E_b$ | carries the opening data into the fold |
 | $\hat{\mathbf t}$ | the inner images $\mathbf t_b$ | binds the folded response to the existing commitment |
 
-## The four physical relation families
+## The four semantic relation families
 
 Equation (11) specifies how the three digit segments are assembled, but it
 does not impose any algebraic relation among them. Substituting the balanced
 recompositions from Equations (3), (6), and (10) into the recomposed identities
 (9a) and (9b) gives two relations among the private witness segments.
-Equations (4) and (7) provide two additional relations that anchor those
-segments to the public commitments. Together, these give four families of
-linear equations over
+Equations (4) and (7) provide two additional relations that define the
+semantic $\mathbf B$ and $\mathbf D$ commitments. (to-revise: should be the semantic commitments u and v computed from matrix B and D, respectively).Together, these give four
+families of linear equations over
 
 $$
 R=F[X]/(X^D+1).
@@ -434,8 +450,12 @@ $$
 
 Every sum, product, and equality in this section is computed in $R$; vector
 equations are interpreted coordinatewise in $R$. The first two families
-connect the private witness segments to one another. The last two anchor those
-segments to the public commitments $\mathbf u$ and $\mathbf v_D$.
+connect the private witness segments to one another. The last two define the
+semantic commitments $\mathbf u$ and $\mathbf v_D$. The raw realization
+exposes those commitments directly; the compressed realization binds them to
+terminal payloads instead.
+
+(to-revise: I think we can add a separte sub-section at the end of this paragraph, discussing the semantic relations and its realization: raw realization and the compressed realization. Here the comrpessed realization are for the two semantic commitment u and semantic opening commitment v)
 
 ### 1. Fold-evaluation consistency
 
@@ -484,10 +504,9 @@ columns are indexed by $(p,a)$.
 
 ### 3. Outer-commitment consistency
 
-The first two families compare private witness segments but do not yet tie
-them to the commitment seen by the verifier. The outer-commitment relation
-provides that public anchor by requiring $\hat{\mathbf t}$ to open the
-commitment that entered this fold:
+The first two families compare private witness segments but do not yet define
+the commitment produced by the outer commitment matrix. The semantic
+outer-commitment relation is
 
 $$
 \boxed{
@@ -498,14 +517,15 @@ $$
 \tag{14}
 $$
 
-This is a direct commitment check and therefore does not use the fold
-challenges.
+Here $\mathbf u\in R^{n_B}$, where $n_B$ is the output rank of $\mathbf B$.
+This relation does not use the fold challenges. Its raw realization transmits
+$\mathbf u$ directly, whereas its compressed realization recommits
+$\mathbf u$ as described below.
 
 ### 4. Opening-commitment consistency
 
-Finally, the opening-commitment relation anchors $\hat{\mathbf e}$ to the
-public ring vector $\mathbf v_D$ that was absorbed before the fold challenges
-were sampled:
+Likewise, the semantic opening-commitment relation defines the commitment to
+the opening digits under $\mathbf D$:
 
 $$
 \boxed{
@@ -516,13 +536,285 @@ $$
 \tag{15}
 $$
 
-Because $\mathbf v_D$ is fixed before the fold challenges are sampled, this
-relation, together with the boundedness of $\hat{\mathbf e}$ and Module-SIS
-binding, prevents the prover from adapting the partial-evaluation digits after
-learning those challenges. Like the other three families, it is a relation
-over $R$; it is distinct from the field-valued scalar evaluation claim.
+Here $\mathbf v_D\in R^{n_D}$, where $n_D$ is the output rank of $\mathbf D$.
+In raw mode $\mathbf v_D$ is absorbed before the fold challenges are sampled;
+in compressed mode a terminal commitment binding $\mathbf v_D$ is absorbed
+instead. Together with the boundedness of $\hat{\mathbf e}$ and Module-SIS
+binding, this prevents the prover from adapting the partial-evaluation digits
+after learning those challenges. Like the other three families, this is a
+ring-valued relation distinct from the field-valued scalar evaluation claim.
 
-## Assemble the ring relation
+## Commitment compression realization
+
+Equations (14) and (15) have the same structure: a commitment matrix maps a
+short witness to a semantic commitment consisting of a vector of ring
+elements. The raw realization places that complete commitment in the proof.
+The compressed realization instead recommits it using rank-one matrices over
+progressively smaller rings, producing a commitment chain whose terminal
+payload is exactly 128 bytes.
+
+### Why recommit?
+
+The raw wire size of the semantic outer commitment is
+
+$$
+|\mathbf u|
+=
+n_Bd_Bb_F,
+$$
+
+where $d_B$ is the $\mathbf B$ ring dimension and $b_F$ is the canonical byte
+width of one field element. For the q128 field
+
+$$
+F=\mathbb F_q,
+\qquad
+q=2^{128}-2^{32}+22537,
+$$
+
+a common committed-group profile has $n_B=1$ and $d_B=64$, and one field
+element occupies 16 bytes. Its raw payload is therefore
+
+$$
+1\cdot64\cdot16=1024\ \text{bytes}.
+$$
+
+The goal of commitment compression is to recommit this value in a smaller ring
+and repeat the process until the public payload has the desired size. This
+reduces the bytes occupied by the public commitment payload, but it also
+introduces new witness coordinates and relation rows. The planner accounts for
+both effects when it chooses between compressed and raw recursive payloads.
+
+### One recommitment step
+
+For intuition, first suppose that the semantic commitment is a single ring
+element
+
+$$
+u(X)\in R_d=F[X]/(X^d+1).
+$$
+
+Commitment compression applies the base-$2$ case of Akita's balanced
+decomposition coefficientwise:
+
+$$
+u(X)
+=
+\sum_{k=0}^{\kappa-1}2^k\xi_k(X),
+\qquad
+[\xi_k]_\ell\in\{-1,0\},
+$$
+
+where $\kappa$ is the field-modulus bit width. Thus the negative-binary
+alphabet $\{-1,0\}$ is exactly the balanced digit interval for base $2$.
+
+Now choose a smaller dimension $d'$ dividing $d$. Split each digit polynomial
+into blocks of $d'$ coefficients:
+
+$$
+\xi_k(X)
+=
+\sum_{j=0}^{d/d'-1}
+X^{jd'}\xi'_{k,j}(X),
+\qquad
+\xi'_{k,j}(X)\in R_{d'}.
+$$
+
+The small-ring elements are coefficient blocks, not a ring embedding between
+the two quotient rings. Collect them into a vector $\boldsymbol\xi$. The fixed
+recomposition map simply restores the coefficient positions and powers of
+two:
+
+$$
+\operatorname{Rec}_{d\leftarrow d'}(\boldsymbol\xi)
+=
+\sum_{k=0}^{\kappa-1}2^k
+\sum_{j=0}^{d/d'-1}X^{jd'}\xi'_{k,j}(X)
+=u(X).
+$$
+
+A rank-one matrix over the smaller ring then recommits these blocks:
+
+$$
+\mathbf F\in R_{d'}^{1\times w},
+\qquad
+u'=\mathbf F\boldsymbol\xi\in R_{d'}.
+$$
+
+Conceptually, decomposition replaces one large-ring element by several short
+small-ring elements, and the rank-one map commits all of them to one
+small-ring element.
+
+### The two-map commitment chains
+
+For the actual semantic commitment $\mathbf u\in R_{d_B}^{n_B}$, the first
+digit vector contains the blocks of every component of $\mathbf u$. Akita
+applies exactly two rank-one maps:
+
+$$
+\underbrace{\mathbf u\in R_{d_B}^{n_B}}_{\text{semantic commitment}}
+\longrightarrow
+\underbrace{\boldsymbol\xi_{F,1}\in R_{d_1}^{w_1}}_{\text{small-ring digit blocks}}
+\overset{\mathbf F_1}{\longrightarrow}
+\underbrace{u^{(1)}\in R_{d_1}}_{\text{intermediate image}}
+\longrightarrow
+\underbrace{\boldsymbol\xi_{F,2}\in R_{d_2}^{w_2}}_{\text{second-layer digit blocks}}
+\overset{\mathbf F_2}{\longrightarrow}
+\underbrace{p_F\in R_{d_2}}_{\text{terminal payload}}.
+$$
+
+The decomposition arrows are represented by recomposition maps in the
+relations below. The two $\boldsymbol\xi_F$ vectors are witness material;
+$\mathbf u$ is the semantic commitment and $u^{(1)}$ is a derived intermediate
+image. Neither is transmitted in compressed mode, and $u^{(1)}$ is not stored
+as an independent witness segment. Only $p_F$ is public.
+
+The production compression dimensions are fixed by the modulus profile:
+
+| Profile | First ring $d_1$ | First image | Terminal ring $d_2$ | Terminal payload |
+|---|---:|---:|---:|---:|
+| q128 | $16$ | 256 bytes | $8$ | 128 bytes |
+| q64 | $32$ | 256 bytes | $16$ | 128 bytes |
+| q32 | $64$ | 256 bytes | $32$ | 128 bytes |
+
+For the q128 example above, the complete chain is
+
+$$
+\underbrace{u\in R_{64}}_{1024\ \text{bytes}}
+\longrightarrow
+\underbrace{\boldsymbol\xi_{F,1}\in R_{16}^{512}}_{\text{base-2 digit blocks}}
+\overset{\mathbf F_1}{\longrightarrow}
+\underbrace{u^{(1)}\in R_{16}}_{256\ \text{bytes}}
+\longrightarrow
+\underbrace{\boldsymbol\xi_{F,2}\in R_8^{256}}_{\text{base-2 digit blocks}}
+\overset{\mathbf F_2}{\longrightarrow}
+\underbrace{p_F\in R_8}_{128\ \text{bytes}}.
+$$
+
+Standalone commitments and the root and early recursive folds use compressed
+payloads. At later recursive levels, the planner may switch to raw payloads
+when the compression witness costs more than the public bytes it saves. The
+selected sequence is always a compressed prefix followed by a raw suffix;
+compression never resumes after the cutover.
+
+### Compressed rows and witness
+
+Suppressing the component indices inside the recomposition map, the outer
+$\mathbf B/\mathbf F$ chain gives three physical relation equations:
+
+$$
+\boxed{
+\mathbf B\hat{\mathbf t}
+-
+\operatorname{Rec}_{d_B\leftarrow d_1}(\boldsymbol\xi_{F,1})
+=
+\mathbf 0
+}
+\qquad\text{in }R_{d_B}^{n_B},
+\tag{14a}
+$$
+
+$$
+\boxed{
+\mathbf F_1\boldsymbol\xi_{F,1}
+-
+\operatorname{Rec}_{d_1\leftarrow d_2}(\boldsymbol\xi_{F,2})
+=0
+}
+\qquad\text{in }R_{d_1},
+\tag{14b}
+$$
+
+$$
+\boxed{
+\mathbf F_2\boldsymbol\xi_{F,2}=p_F
+}
+\qquad\text{in }R_{d_2}.
+\tag{14c}
+$$
+
+The first equation is the compressed realization of the existing
+$\mathbf B$ rows; the latter two add the rank-one $\mathbf F_1$ and
+$\mathbf F_2$ rows. The semantic opening commitment follows the same
+construction, with an $\mathbf H$ chain:
+
+$$
+\boxed{
+\mathbf D\hat{\mathbf e}
+-
+\operatorname{Rec}_{d_D\leftarrow d_1}(\boldsymbol\xi_{H,1})
+=
+\mathbf 0
+}
+\qquad\text{in }R_{d_D}^{n_D},
+\tag{15a}
+$$
+
+$$
+\boxed{
+\mathbf H_1\boldsymbol\xi_{H,1}
+-
+\operatorname{Rec}_{d_1\leftarrow d_2}(\boldsymbol\xi_{H,2})
+=0
+}
+\qquad\text{in }R_{d_1},
+\tag{15b}
+$$
+
+$$
+\boxed{
+\mathbf H_2\boldsymbol\xi_{H,2}=p_H
+}
+\qquad\text{in }R_{d_2}.
+\tag{15c}
+$$
+
+For the basic one-group case, compressed mode therefore has
+$1+n_A+n_B+n_D+4$ physical rows:
+
+| Physical rows | Count | Right-hand side |
+|---|---:|---|
+| `consistency` | $1$ | $0$ |
+| $\mathbf A$ | $n_A$ | $\mathbf 0$ |
+| $\mathbf B$ | $n_B$ | $\mathbf 0$ |
+| $\mathbf D$ | $n_D$ | $\mathbf 0$ |
+| $\mathbf F_1$ | $1$ | $0$ |
+| $\mathbf H_1$ | $1$ | $0$ |
+| $\mathbf F_2$ | $1$ | $p_F$ |
+| $\mathbf H_2$ | $1$ | $p_H$ |
+
+Ignoring quotient digits and alignment for now, the additional compression
+witness segments appear in layer order:
+
+$$
+\hat{\mathbf z}
+\;\Vert\;
+\hat{\mathbf e}
+\;\Vert\;
+\hat{\mathbf t}
+\;\Vert\;
+\boldsymbol\xi_{F,1}
+\;\Vert\;
+\boldsymbol\xi_{H,1}
+\;\Vert\;
+\boldsymbol\xi_{F,2}
+\;\Vert\;
+\boldsymbol\xi_{H,2}.
+$$
+
+The complete witness also contains a quotient-digit row for every physical
+ring row. Because the compressed equations live in different rings, each row
+uses its native quotient modulus: $X^{d_B}+1$ for the $\mathbf B$ rows,
+$X^{d_D}+1$ for the $\mathbf D$ rows, $X^{d_1}+1$ for the first compression
+layer, and $X^{d_2}+1$ for the terminal layer. Ring switching evaluates each
+extended row with the powers and denominator belonging to that same native
+dimension. The restricted $\{-1,0\}$ check on the compression digits is
+described with the Stage 2 sumcheck rather than as another physical ring row.
+
+## Assemble the raw ring relation
+
+The original four-family matrix is the raw realization of the semantic
+relations above.
 
 Define the pre-switch witness
 
@@ -579,7 +871,7 @@ from the fold challenges, opening weights, gadget weights, and the setup
 matrices $\mathbf A$, $\mathbf B$, and $\mathbf D$. The code generates these
 contributions directly from the canonical witness layout.
 
-## Lift the ring relation before sumcheck
+## Lift the raw ring relation before sumcheck
 
 Equation (17) is an equality modulo $X^D+1$. Sumcheck, however, needs a field
 identity. Choose the canonical representatives of degree less than $D$ for
