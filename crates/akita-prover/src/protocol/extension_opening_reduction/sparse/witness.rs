@@ -602,6 +602,15 @@ impl<F: FieldCore, E: ExtField<F>> SparseExtensionOpeningWitness<F, E> {
     }
 
     #[cfg(feature = "parallel")]
+    pub(super) fn should_parallelize_fold(&self) -> bool {
+        // Identity-field sparse folds are already memory-bound and their
+        // single-pass fused traversal is faster than two parallel passes.
+        E::EXT_DEGREE > 1
+            && self.indices.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD
+            && rayon::current_num_threads() > 1
+    }
+
+    #[cfg(feature = "parallel")]
     fn fold_rows_in_parallel(&mut self, challenge: E) -> usize {
         let ranges = self.pair_aligned_ranges();
         let one_minus = E::one() - challenge;
@@ -948,8 +957,7 @@ where
     {
         self.materialize_merge_free_value_palette();
         #[cfg(feature = "parallel")]
-        if self.indices.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD && rayon::current_num_threads() > 1
-        {
+        if self.should_parallelize_fold() {
             self.fold_in_place_merge_free(r_round);
             let mut constant = E::zero();
             let mut quadratic = E::zero();
@@ -1035,9 +1043,7 @@ impl<F: FieldCore, E: ExtField<F>> SparseExtensionOpeningWitness<F, E> {
         }
 
         #[cfg(feature = "parallel")]
-        let output_row = if self.indices.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD
-            && rayon::current_num_threads() > 1
-        {
+        let output_row = if self.should_parallelize_fold() {
             self.fold_rows_in_parallel(r_round)
         } else {
             self.fold_rows_sequential(r_round)
@@ -1058,8 +1064,7 @@ impl<F: FieldCore, E: ExtField<F>> SparseExtensionOpeningWitness<F, E> {
     /// In-place fold for the merge-free regime.
     pub(super) fn fold_in_place_merge_free(&mut self, r_round: E) {
         #[cfg(feature = "parallel")]
-        if self.indices.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD && rayon::current_num_threads() > 1
-        {
+        if self.should_parallelize_fold() {
             let output_row = self.fold_rows_in_parallel(r_round);
             self.indices.truncate(output_row);
             self.values.truncate(output_row);

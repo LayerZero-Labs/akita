@@ -668,9 +668,7 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
                 .expect("sparse suffix sums were prepared for this round");
         }
         #[cfg(feature = "parallel")]
-        if witness.indices.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD
-            && rayon::current_num_threads() > 1
-        {
+        if witness.should_parallelize_fold() {
             witness.fold_in_place(challenge);
             return if witness.indices.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD {
                 witness
