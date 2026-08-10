@@ -23,10 +23,13 @@ repo = Path(".")
 workflow = repo / ".github/workflows/profile-bench.yml"
 profile_main = repo / "crates/akita-pcs/examples/profile/main.rs"
 profile_modes = repo / "crates/akita-pcs/examples/profile/modes.rs"
+modes_rs = profile_modes
 
 MODE_FEATURE = {
     "onehot_fp32_d128": "schedules-fp32-d128-onehot",
+    "dense_fp32_d128": "schedules-fp32-d128-dense",
     "onehot_fp64_d128": "schedules-fp64-d128-onehot",
+    "dense_fp64_d128": "schedules-fp64-d128-dense",
     "dense_fp128": "schedules-fp128-dense",
     "onehot_fp128": "schedules-fp128-onehot",
     "onehot_fp128_multi_group": "schedules-fp128-onehot",
@@ -38,7 +41,9 @@ MODE_FEATURE = {
 }
 MODE_NUM_POLYS = {
     "onehot_fp32_d128": {1},
+    "dense_fp32_d128": {1},
     "onehot_fp64_d128": {1},
+    "dense_fp64_d128": {1},
     "dense_fp128": {1},
     "onehot_fp128": {1},
     "onehot_fp128_multi_group": {4},
@@ -50,8 +55,10 @@ MODE_NUM_POLYS = {
 }
 MODE_NUM_VARS = {
     "onehot_fp32_d128": {28},
+    "dense_fp32_d128": {26},
     "onehot_fp64_d128": {28},
-    "dense_fp128": {24},
+    "dense_fp64_d128": {26},
+    "dense_fp128": {26},
     "onehot_fp128": {32},
     "onehot_fp128_multi_group": {32},
     "onehot_fp128_multi_group_recursive": {32},
@@ -67,6 +74,17 @@ PROFILE_BENCH_MARKER = "profile-bench-selected"
 
 feature_graph = load_feature_graph(repo)
 profile_ci_schedules = schedule_features(feature_graph, "akita-pcs", "profile-ci")
+
+modes_text = modes_rs.read_text(encoding="utf-8")
+selected_match = re.search(
+    r"const PROFILE_SELECTED_MODES:.*?=\s*&\[(.*?)\n\];",
+    modes_text,
+    flags=re.DOTALL,
+)
+if not selected_match:
+    print("PROFILE_SELECTED_MODES not found in profile example", file=sys.stderr)
+    raise SystemExit(1)
+selected_modes = set(re.findall(r'name:\s*"([^"]+)"', selected_match.group(1)))
 
 wf = workflow.read_text(encoding="utf-8")
 case_line = re.compile(r"^([^:]+:\d+:\d+(?::[^:\s]+)?)\s*$")
@@ -130,6 +148,12 @@ for group_name, profile_feature, case_spec in bench_cases:
         failed = True
         continue
     required = MODE_FEATURE[mode]
+    if mode not in selected_modes:
+        print(
+            f"bench case mode '{mode}' is not registered in PROFILE_SELECTED_MODES",
+            file=sys.stderr,
+        )
+        failed = True
     if profile_feature not in matrix_features:
         matrix_features[profile_feature] = schedule_features(
             feature_graph, "akita-pcs", profile_feature

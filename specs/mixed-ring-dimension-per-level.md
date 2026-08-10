@@ -115,9 +115,9 @@ uniform-D64 suffix.
    fixed exact A/B/D tuple, including the shared opening D used by frozen
    precommits. Recursive candidates derive their fold challenge, extension
    opening reduction bytes, block splits, matrices, ranks, and setup footprint
-   at that tuple. During adaptive levels all feasible block splits are retained
-   for comparison; after the search window the ordinary local split selection
-   is sufficient.
+   at that tuple. During adaptive levels all policy-admitted block splits are
+   retained for comparison. After the search window the same catalog-bound
+   split domain governs the uniform suffix.
 4. **Make setup-prefix dimensions edge-local.** A prefix is produced for a
    successor but committed as an input of that successor. Prefix derivation
    therefore receives the consuming candidate's exact A and B dimensions.
@@ -125,11 +125,10 @@ uniform-D64 suffix.
    all agree with those dimensions. This removes the old assumption that every
    recursive prefix uses `Cfg::D`.
 5. **Preserve enough information in the suffix frontier.** Two successor
-   schedules with the same ordinary outer-commitment payload can have different
-   Stage-3 setup-product payloads when their D/prefix geometry differs. The
-   parent-visible frontier key now contains both byte counts. Pruning only on
-   outer payload would discard a candidate that can be better after an
-   offloaded parent edge.
+   schedules with the same payload byte counts can still have different
+   committed geometry. The parent-visible frontier key therefore uses the full
+   canonical first-fold `CommittedGroupParams` descriptor. A partial payload
+   key could discard a candidate that differs in a field priced by its parent.
 6. **Ship distinct catalog identities and runtime routes.** The generated
    families `fp128_onehot_recursive` and
    `fp128_onehot_recursive_multi_chunk_w8r2` bind the adaptive domains,
@@ -381,19 +380,19 @@ The shared suffix planner now does the following:
 3. Enter the memoized suffix search with the exact witness boundary and the
    selected tuple as the componentwise dimension ceiling.
 4. At each recursive state, enumerate non-decreasing bases and every exact
-   tuple below that ceiling. Adaptive searched levels retain every feasible
-   block split; uniform suffix levels use `layout_candidate_score` to select the
-   local split per basis.
+   tuple below that ceiling. Adaptive and uniform suffix levels both enumerate
+   the splits returned by the catalog-bound `recursive_split_search_domain`,
+   then use `layout_candidate_score` within that domain.
 5. Compare direct termination with another fold and, for recursive-setup
    policies, compare direct and setup-offloaded child edges.
 6. Materialize the selected typed `FoldSchedule`; recompute proof bytes and
    setup envelope and reject any disagreement with the cached estimates.
 
 The suffix memo distinguishes the dimension ceiling and retains both
-first-direct-setup and payload objectives. Its parent-visible frontier key
-contains the successor's ordinary outer payload and Stage-3 payload, so an
-adaptive D/prefix choice cannot be incorrectly pruned merely because its B
-payload ties another successor.
+first-direct-setup and payload objectives. Its parent-visible frontier key is
+the successor's full canonical `CommittedGroupParams` descriptor. This keeps
+distinct adaptive dimension, setup-prefix, and payload choices separate until
+the parent has priced every field it observes.
 
 ### Historical pre-cutover mixed-D gap
 
@@ -628,28 +627,32 @@ The descriptor may be represented by the existing full first
 `CommittedGroupParams` or its canonical descriptor bytes. It must not be a new
 partial geometry model that can drift from `level_proof_bytes`.
 
-The approved mixed search is deliberately bounded:
+The approved mixed search is deliberately bounded and its recursive split
+domain is part of catalog identity:
 
-1. L0 and L1 enumerate every feasible basis, admitted dimension tuple, and
-   block split.
+1. L0 and L1 enumerate every feasible basis and admitted dimension tuple.
+   `RecursiveSplitSearchPolicy::Exhaustive` enumerates every block split.
+   `BoundedBalancedExtremesV1` is exhaustive through twelve reduced variables
+   and otherwise keeps the two extremes plus a radius-two balance window.
 2. A child tuple is admitted only when each of `d_a`, `d_b`, and `d_d` is no
    larger than the corresponding parent dimension.
 3. From L2 onward, dimensions are fixed to `64/64/64` and candidate split
    derivation reuses the existing uniform-D64 planner path.
 4. A mixed domain must contain `64/64/64`, and every admitted component must
    be at least 64 so the transition back to D64 cannot increase a dimension.
-5. Enumerate direct-terminal and direct-child edges, price them with the
+5. Enumerate direct-terminal and direct-child edges over the selected split
+   domain, price them with the
    existing exact proof-size functions, combine physical setup cost by `max`,
-   and retain the required frontier per first-step descriptor. Exact-cost ties
+   and retain the required frontier per full canonical first-step descriptor. Exact-cost ties
    survive until the root descriptor comparator chooses a canonical winner.
 6. Do not terminate before L2: the terminal and every fold from L2 onward use
    D64.
 7. At the root, choose the global minimum by the requested score.
 
-`derive_candidate_level_params_all_splits` is required only at the two mixed
-levels. Once the schedule returns to D64, `derive_candidate_level_params`
-restores the existing uniform planner's exact split policy instead of carrying
-the mixed-D exhaustive-split expansion through the complete suffix.
+The split frontier at each mixed level follows the catalog-bound split policy.
+Once the schedule returns to D64, the same policy continues to govern the
+uniform suffix. Bounded catalogs are selected within their declared search
+domain and do not claim global split optimality.
 
 The L1 mixed-D memo state includes the complete parent A/B/D tuple. L2 and
 later states canonicalize that ceiling to `64/64/64`, allowing suffix memo
@@ -908,8 +911,8 @@ above:
 - root and recursive candidates derive role-local widths, SIS keys, and
   matrices directly after choosing A and deriving B and D by minimum secure
   rank;
-- L0 and L1 exhaustively enumerate block splits and admissible,
-  component-wise descending A choices;
+- L0 and L1 exhaustively enumerate admissible, component-wise descending A
+  choices. Block splits follow the catalog-bound recursive split policy;
 - dimensions are uniform D64 from L2 through the terminal;
 - a test-only unpruned traversal checks the production frontier and canonical
   selection over an A-varying domain with B and D fixed at D64. It deliberately
@@ -966,9 +969,9 @@ process and filesystem caches were warm after the first run. The material
 result is that `nv=24` and `nv=36` now complete normally. Before the bounded
 policy, `nv=24` exceeded one minute and `nv=36` was stopped after five minutes.
 
-The speedup comes from stopping mixed dimensions and exhaustive block-split
-enumeration after L1. Monotonicity removes upward transitions, and the complete
-D64 suffix reuses the existing fixed planner split derivation. The current
+The speedup comes from stopping mixed dimensions after L1 and using the named
+bounded split domain for large states. Monotonicity removes upward transitions,
+and the complete D64 suffix reuses the same catalog-bound split policy. The current
 local B/D rank choice also reduces the search space, but it is not equivalent
 to the target Cartesian objective. The P0 follow-up must remove it.
 

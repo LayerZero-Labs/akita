@@ -153,23 +153,15 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
-    use crate::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
-    use akita_types::{
-        AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
-    };
+    use crate::{CommitmentConfig, RecursiveCommitmentConfig};
+    use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
     type SetupCfg = RecursiveCommitmentConfig<fp128::OneHot>;
 
     fn profiling_recursive_key() -> AkitaScheduleLookupKey {
         let pre = PolynomialGroupLayout::new(16, 1);
-        let singleton =
-            OpeningClaimsLayout::new(pre.num_vars(), pre.num_polynomials()).expect("singleton");
-        let pre_params =
-            <PrecommittedCommitmentConfig<SetupCfg> as CommitmentConfig>::get_params_for_batched_commitment(
-                &singleton,
-            )
-            .expect("precommit params");
-        let precommitted = CommittedGroupProfile::from_params(pre, &pre_params);
+        let precommitted =
+            crate::committed_group_profile::<SetupCfg>(&pre).expect("precommit profile");
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![precommitted, precommitted],
@@ -273,7 +265,7 @@ mod tests {
             .iter()
             .map(SetupPrefixSlotId::d_setup)
             .collect::<BTreeSet<_>>();
-        assert_eq!(dimensions, BTreeSet::from([64, 256]));
+        assert_eq!(dimensions, BTreeSet::from([256]));
         let unique: BTreeSet<_> = ids.iter().cloned().collect();
         assert_eq!(unique.len(), ids.len());
     }

@@ -143,6 +143,26 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         canonical
     }
 
+    pub(crate) fn centered_cyclic_coefficients_with_params(
+        &self,
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> [[W; D]; K] {
+        let mut canonical = [[W::default(); D]; K];
+        for (k, ((coefficients, prime), twiddles)) in canonical
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+            .enumerate()
+        {
+            let mut limb = self.limbs[k];
+            inverse_ntt_cyclic(&mut limb, *prime, twiddles, params.kernel_plan);
+            for (dst, src) in coefficients.iter_mut().zip(limb.iter()) {
+                *dst = prime.center(prime.to_canonical(*src));
+            }
+        }
+        canonical
+    }
+
     /// Convert a coefficient-form ring element into CRT+NTT domain.
     pub fn from_ring<F: CrtNttConvertibleField>(
         ring: &CyclotomicRing<F, D>,

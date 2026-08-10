@@ -4,9 +4,16 @@
 use super::*;
 use crate::backend::RingSwitchRelationView;
 use crate::compute::backend::ComputeBackendSetup;
+use crate::compute::requirements::NttOperationCluster;
+use crate::compute::{RingSwitchRelationKernel, RingSwitchRelationPlan};
+use crate::kernels::linear::{
+    fused_quotient_matrix_extent, fused_split_eq_quotients_prover_bounds,
+    fused_split_eq_quotients_streamed_prover_bounds,
+};
 use crate::AkitaProverSetup;
 use akita_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
-use akita_types::SetupMatrixCapacity;
+use akita_types::{NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
+use std::sync::atomic::Ordering;
 
 type F = Prime64Offset59;
 const D: usize = 64;

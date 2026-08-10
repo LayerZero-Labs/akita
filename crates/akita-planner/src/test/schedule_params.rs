@@ -196,6 +196,35 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
+fn terminal_candidates_compete_across_opening_bases() {
+    use akita_config::{policy_of, proof_optimized::fp32::D128OneHot, CommitmentConfig};
+
+    let dimensions = RingDimensionSearchDomain::uniform(D128OneHot::D).unwrap();
+    let selected = find_schedule(
+        PolynomialGroupLayout::singleton(14),
+        &policy_of::<D128OneHot>(),
+        D128OneHot::root_honest_fold_policy(),
+        &dimensions,
+        D128OneHot::ring_challenge_config,
+    )
+    .unwrap();
+
+    assert!(selected.schedule.recursive_folds.is_empty());
+    assert_eq!(selected.schedule.terminal.params.witness.log_basis_inner, 3);
+    assert_eq!(
+        selected
+            .schedule
+            .terminal
+            .params
+            .witness
+            .inner_commit_matrix
+            .coeff_linf_bound(),
+        262_143,
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
 fn adaptive_dimension_search_is_canonical() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
@@ -746,7 +775,7 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        90_728
+        88_888
     );
 }
 
@@ -760,13 +789,15 @@ fn recursive_exact_cutover_proof_size_is_documented() {
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
     let precommit_layout = PolynomialGroupLayout::singleton(16);
-    let descriptor = derive_standalone_precommit_profile(
+    let descriptor = plan_standalone_precommit(
         precommit_layout,
         &policy_of::<OneHot>(),
         OneHot::root_honest_fold_policy(),
         OneHot::ring_challenge_config,
     )
-    .unwrap();
+    .unwrap()
+    .selected
+    .profile;
     assert_eq!(descriptor.inner_commit_matrix.ring_dimension(), 64);
     assert_eq!(descriptor.outer_commit_matrix.ring_dimension(), 64);
     let key = AkitaScheduleLookupKey {
@@ -787,7 +818,7 @@ fn recursive_exact_cutover_proof_size_is_documented() {
 
     assert_eq!(
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
-        96_876
+        91_832
     );
 }
 
@@ -800,13 +831,15 @@ fn recursive_adaptive_search_selects_schedule_dimensions_and_setup_prefixes() {
     use akita_types::AkitaScheduleLookupKey;
 
     let precommit_layout = PolynomialGroupLayout::singleton(16);
-    let descriptor = derive_standalone_precommit_profile(
+    let descriptor = plan_standalone_precommit(
         precommit_layout,
         &policy_of::<OneHot>(),
         OneHot::root_honest_fold_policy(),
         OneHot::ring_challenge_config,
     )
-    .unwrap();
+    .unwrap()
+    .selected
+    .profile;
     assert_eq!(descriptor.inner_commit_matrix.ring_dimension(), 64);
     assert_eq!(descriptor.outer_commit_matrix.ring_dimension(), 64);
     let key = AkitaScheduleLookupKey {

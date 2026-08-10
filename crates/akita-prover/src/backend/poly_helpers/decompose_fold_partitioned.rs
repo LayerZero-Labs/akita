@@ -4,11 +4,15 @@ use super::rotated_accum::{
     accumulate_rotated_digit_plane, decompose_ring_full_challenge_accumulate,
     should_use_rotated_challenge,
 };
-use super::{decompose_ring_interleaved, fill_rotated_challenge, sparse_mul_acc, DecomposeParams};
+use super::{
+    decompose_ring_interleaved, decompose_ring_interleaved_i16, fill_rotated_challenge,
+    sparse_mul_acc, sparse_mul_acc_i16, DecomposeParams,
+};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::CanonicalField;
+use akita_types::SignedDigitKernel;
 
 type RotatedTable<const D: usize> = Option<[[i16; D]; D]>;
 
@@ -46,6 +50,11 @@ enum ElementFoldSource<'a, F: CanonicalField, const D: usize> {
     },
 }
 
+enum DigitScratch<const D: usize> {
+    I8(Vec<[i8; D]>),
+    I16(Vec<[i16; D]>),
+}
+
 impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
     fn num_rings(&self) -> usize {
         match self {
@@ -54,8 +63,22 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
         }
     }
 
-    fn needs_digit_buf(&self, rotated_tables: &[RotatedTable<D>]) -> bool {
-        matches!(self, Self::LiveRings { .. }) && rotated_tables.iter().any(Option::is_none)
+    fn digit_scratch(
+        &self,
+        rotated_tables: &[RotatedTable<D>],
+        num_digits: usize,
+    ) -> Option<DigitScratch<D>> {
+        match self {
+            Self::LiveRings { params, .. } if rotated_tables.iter().any(Option::is_none) => Some(
+                match SignedDigitKernel::for_log_basis(params.log_basis)
+                    .expect("decompose-fold parameters must use a validated signed-digit basis")
+                {
+                    SignedDigitKernel::I8 => DigitScratch::I8(vec![[0i8; D]; num_digits]),
+                    SignedDigitKernel::I16 => DigitScratch::I16(vec![[0i16; D]; num_digits]),
+                },
+            ),
+            _ => None,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -66,7 +89,7 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
         acc: &mut [[i32; D]],
         challenge: &SparseChallenge,
         rotated: Option<&[[i16; D]; D]>,
-        digit_buf: Option<&mut [[i8; D]]>,
+        digit_scratch: Option<&mut DigitScratch<D>>,
         num_digits: usize,
     ) {
         let dst_base = local_elem_idx * num_digits;
@@ -101,16 +124,38 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
                 );
             }
             (Self::LiveRings { coeffs, params }, None) => {
-                let digit_buf = digit_buf.expect("live sparse path requires a digit buffer");
                 let base = dst_base;
-                decompose_ring_interleaved::<F, D>(
-                    &coeffs[ring_idx],
-                    digit_buf,
-                    num_digits,
-                    params,
-                );
-                for digit in 0..num_digits {
-                    sparse_mul_acc::<D>(&digit_buf[digit], challenge, &mut acc[base + digit]);
+                match digit_scratch.expect("live sparse path requires signed-digit scratch") {
+                    DigitScratch::I8(digit_buf) => {
+                        decompose_ring_interleaved::<F, D>(
+                            &coeffs[ring_idx],
+                            digit_buf,
+                            num_digits,
+                            params,
+                        );
+                        for digit in 0..num_digits {
+                            sparse_mul_acc::<D>(
+                                &digit_buf[digit],
+                                challenge,
+                                &mut acc[base + digit],
+                            );
+                        }
+                    }
+                    DigitScratch::I16(digit_buf) => {
+                        decompose_ring_interleaved_i16::<F, D>(
+                            &coeffs[ring_idx],
+                            digit_buf,
+                            num_digits,
+                            params,
+                        );
+                        for digit in 0..num_digits {
+                            sparse_mul_acc_i16::<D>(
+                                &digit_buf[digit],
+                                challenge,
+                                &mut acc[base + digit],
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -144,9 +189,7 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
             }
             let elems_in_chunk = acc.len() / num_digits;
             let elem_end = elem_start + elems_in_chunk;
-            let mut digit_buf = source
-                .needs_digit_buf(&rotated_tables)
-                .then(|| vec![[0i8; D]; num_digits]);
+            let mut digit_scratch = source.digit_scratch(&rotated_tables, num_digits);
 
             for (block_idx, challenge) in challenges.iter().enumerate() {
                 let block_start = block_idx * num_positions_per_block;
@@ -166,7 +209,7 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
                         acc,
                         challenge,
                         rotated_tables[block_idx].as_ref(),
-                        digit_buf.as_deref_mut(),
+                        digit_scratch.as_mut(),
                         num_digits,
                     );
                 }

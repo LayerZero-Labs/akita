@@ -28,6 +28,7 @@ pub mod proof_size;
 pub mod schedule;
 pub mod schedule_selection;
 pub mod setup_contribution;
+pub mod signed_digit;
 pub mod sis;
 pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
@@ -78,14 +79,17 @@ pub use layout::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, shared_d_digit_log_basis,
     sumcheck_rounds, terminal_response_bytes, try_extension_opening_reduction_level_bytes,
     validate_role_dims, validate_schedule_ring_dims, witness_commitment_domain_len, BasisMode,
-    CommitmentRingDims, CommittedGroupParams, FlatMatrix, LevelParamsLike, PrecommittedLevelParams,
-    RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
-    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
+    CommitmentRingDims, CommittedGroupParams, FlatMatrix, LevelParamsLike,
+    PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams, RingMatrixView, RingOpeningPoint,
+    RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
+    SUPPORTED_COMMITMENT_RING_DIMS,
 };
 pub use ntt_cache::{
+    centered_quotient_requires_i16_tail, centered_quotient_requires_i16_tail_for_field,
     ntt_cache_requires_i16_tail, prepare_compression_ntt_cache, prepare_ntt_cache,
     select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey, NttCacheMode,
-    NttPrefixRequirement, NttTransformDomain, PreparedNttCache, ProtocolCrtNttParams,
+    NttPrefixRequirement, NttTransformDomain, PreparedNttCache, PreparedNttTailPairView,
+    ProtocolCrtNttParams,
 };
 pub use proof::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
@@ -147,6 +151,10 @@ pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, Sche
 pub use setup_contribution::{
     ensure_setup_envelope, shared_setup_fold_gadget, PreparedRelationAddress,
     SetupContributionGroupInputs, SetupContributionPlan, SetupProjectionGeometry,
+};
+pub use signed_digit::{
+    balanced_signed_digit_abs_bound, SignedDigitKernel, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,
+    MIN_SIGNED_DIGIT_LOG_BASIS,
 };
 pub use sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, ScalarCutoff,

@@ -53,24 +53,25 @@ jobs:
         # deterministically, fixing case order in the comment. `cases` is a
         # newline-separated list of MODE:NUM_VARS:NUM_POLYS[:SETUP_MODE] specs.
         #
-        # The small-field (fp32/fp64) D128 one-hot cells run at nv=28, not nv=32.
-        # Their ext-degree-4 challenge schedule keeps a much larger un-folded witness
-        # than the fp128 cells (the fp32 nv=32 setup vector is ~2.6 GiB vs ~270 MiB
-        # for fp128), so at nv>=30 the prover's eq-evaluation table exceeds the
-        # 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling and the run aborts. nv=28
-        # is the largest validated size that both fits that budget and still folds
-        # through multiple recursive levels. The fp128 cells fold aggressively enough
-        # to stay at nv=32.
+        # Keep each base field in its own feature graph. This avoids compiling
+        # all three fields and their schedule catalogs into every base-profile
+        # runner. The small-field one-hot cells use the largest rows shipped by
+        # this stack; the adaptive-dimension follow-up raises them to nv=30.
         group:
-          - name: 1-fp128-dense
-            profile_feature: profile-ci-fp128-dense
+          - name: 1-fp32-base
+            profile_feature: profile-ci-fp32
             cases: |
-              dense_fp128:24:1
-          - name: 3-flat-onehot-suite
-            profile_feature: profile-ci-flat-onehot
-            cases: |
+              dense_fp32_d128:26:1
               onehot_fp32_d128:28:1
+          - name: 2-fp64-base
+            profile_feature: profile-ci-fp64
+            cases: |
+              dense_fp64_d128:26:1
               onehot_fp64_d128:28:1
+          - name: 3-fp128-base
+            profile_feature: profile-ci-fp128-base
+            cases: |
+              dense_fp128:26:1
               onehot_fp128:32:1
           - name: 4-multi-group-direct
             profile_feature: profile-ci-multi-group-direct

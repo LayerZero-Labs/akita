@@ -969,6 +969,7 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
+            recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 3,
             uniform_ring_dimension: 64,
@@ -987,7 +988,8 @@ mod tests {
             ring_subfield_norm_bound: 1,
             claim_ext_degree: 1,
             chal_ext_degree: 1,
-            basis_range: (3, 6),
+            inner_basis_range: (3, 16),
+            opening_basis_range: (3, 6),
             witness_chunk: ChunkedWitnessCfg::default(),
             recursive_setup_planning: true,
         }

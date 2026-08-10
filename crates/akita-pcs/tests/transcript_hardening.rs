@@ -55,7 +55,7 @@ fn event_stream_equality_small() {
             &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let poly = make_onehot_poly(&layout, 0x5151);
+        let poly = make_onehot_poly(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 
@@ -296,7 +296,7 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
             &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let poly = make_onehot_poly(&layout, 0x5151);
+        let poly = make_onehot_poly(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 
@@ -379,7 +379,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
             &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let poly = make_onehot_poly(&layout, 0x5151);
+        let poly = make_onehot_poly(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
 
         let setup = Scheme::setup_prover(num_vars, 1).unwrap();

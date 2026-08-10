@@ -12,9 +12,12 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32};
-use akita_config::{
-    policy_of, CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig,
-};
+#[cfg(all(
+    feature = "schedules-fp128-onehot",
+    not(feature = "schedules-fp128-onehot-recursive")
+))]
+use akita_config::RecursiveCommitmentConfig;
+use akita_config::{policy_of, CommitmentConfig};
 use akita_planner::find_schedule;
 use akita_schedules::resolve_schedule;
 use akita_schedules::{
@@ -22,8 +25,7 @@ use akita_schedules::{
     PlannerPolicy, ResolvedScheduleRow,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupProfile, OpeningClaimsLayout,
-    PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout,
 };
 
 /// A one-point 3-poly key that no generated table carries (generated tables only
@@ -288,17 +290,15 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
     }
 }
 
+#[cfg(all(
+    feature = "schedules-fp128-onehot",
+    not(feature = "schedules-fp128-onehot-recursive")
+))]
 #[test]
 fn grouped_recursive_catalog_rejects_without_recursive_feature() {
     let precommitted_group = PolynomialGroupLayout::singleton(16);
-    let precommitted_params =
-        fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(precommitted_group))
-            .expect("base OneHot precommit schedule")
-            .root
-            .params
-            .final_group
-            .commitment;
-    let descriptor = CommittedGroupProfile::from_params(precommitted_group, &precommitted_params);
+    let descriptor = akita_config::committed_group_profile::<fp128::OneHot>(&precommitted_group)
+        .expect("base OneHot precommit profile");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],
@@ -309,32 +309,13 @@ fn grouped_recursive_catalog_rejects_without_recursive_feature() {
     ));
 }
 
-#[test]
-fn adapters_forward_mixed_dimension_policy() {
-    type Base = fp128::OneHot;
-    assert_eq!(
-        <RecursiveCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
-        Base::RING_DIMENSION_SCHEDULE_MODE,
-    );
-    assert_eq!(
-        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
-        Base::RING_DIMENSION_SCHEDULE_MODE,
-    );
-    assert_eq!(
-        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::selection_policy(),
-        Base::selection_policy(),
-    );
-    akita_schedules::planner_support::validate_policy(&policy_of::<
-        PrecommittedCommitmentConfig<Base>,
-    >())
-    .expect("precommitted mixed-dimension policy must remain valid");
-}
-
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
         cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
         selection_policy: Cfg::selection_policy(),
+        recursive_split_search_policy:
+            akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
         setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
         uniform_ring_dimension: Cfg::D,
@@ -347,7 +328,8 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
-        basis_range: Cfg::basis_range(),
+        inner_basis_range: Cfg::inner_basis_range(),
+        opening_basis_range: Cfg::opening_basis_range(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning: Cfg::recursive_setup_planning(),
     };
@@ -398,15 +380,11 @@ fn adaptive_dense_plans_multi_group_roots_at_uniform_suffix_dimension() {
     const FINAL_NV: usize = 20;
 
     let pre_group = PolynomialGroupLayout::singleton(PRE_NV);
-    let pre_layout = OpeningClaimsLayout::new(PRE_NV, 1).expect("precommit opening layout");
-    let pre_params =
-        <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-            &pre_layout,
-        )
-        .expect("dense precommit params");
+    let pre_profile =
+        akita_config::committed_group_profile::<Cfg>(&pre_group).expect("dense precommit profile");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(FINAL_NV),
-        precommitteds: vec![CommittedGroupProfile::from_params(pre_group, &pre_params)],
+        precommitteds: vec![pre_profile],
     };
     let precommitted_honest_fold_policies = vec![Cfg::root_honest_fold_policy()];
     let planned = find_schedule(
@@ -440,16 +418,12 @@ fn adaptive_dense_plans_multi_group_roots_at_uniform_suffix_dimension() {
 #[test]
 fn root_basis_is_derived_from_existing_policy_inputs() {
     let fp128 = policy_of::<fp128::OneHot>();
-    assert_eq!(fp128.basis_range, (3, 6));
+    assert_eq!(fp128.opening_basis_range, (3, 6));
     assert_eq!(fp128.decomposition.log_basis, 3);
-    assert_eq!(fp128.log_basis_search_range_at_level(0), (3, 3));
-    assert_eq!(fp128.log_basis_search_range_at_level(1), (3, 6));
 
     let fp32 = policy_of::<fp32::D64OneHot>();
-    assert_eq!(fp32.basis_range, (3, 6));
+    assert_eq!(fp32.opening_basis_range, (3, 6));
     assert_eq!(fp32.decomposition.log_basis, 3);
-    assert_eq!(fp32.log_basis_search_range_at_level(0), (3, 3));
-    assert_eq!(fp32.log_basis_search_range_at_level(1), (3, 6));
 }
 
 #[test]
@@ -470,9 +444,7 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
 fn committed_descriptor<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> CommittedGroupProfile {
-    let params = akita_config::committed_group_params::<Cfg>(&group)
-        .expect("heterogeneous group must resolve");
-    CommittedGroupProfile::from_params(group, &params)
+    akita_config::committed_group_profile::<Cfg>(&group).expect("heterogeneous group must resolve")
 }
 
 #[test]

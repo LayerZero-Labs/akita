@@ -1,13 +1,9 @@
 use super::*;
 use crate::RecursiveWitnessFlat;
-use akita_config::{
-    proof_optimized::fp128::OneHot, CommitmentConfig, PrecommittedCommitmentConfig,
-};
+use akita_config::{proof_optimized::fp128::OneHot, CommitmentConfig};
 use akita_field::{Fp32, FpExt2, TwoNr};
 use akita_transcript::AkitaTranscript;
-use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
-};
+use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout};
 
 type F = Fp32<251>;
 type E = FpExt2<F, TwoNr>;
@@ -108,12 +104,9 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     ])
     .expect("multi-group shape");
     assert_eq!(batch.num_groups(), 3);
-    let pre_layout = OpeningClaimsLayout::new(16, 1).expect("precommit layout");
-    let pre_params =
-        PrecommittedCommitmentConfig::<OneHot>::get_params_for_batched_commitment(&pre_layout)
-            .expect("precommit params");
     let precommitted =
-        CommittedGroupProfile::from_params(PolynomialGroupLayout::new(16, 1), &pre_params);
+        akita_config::committed_group_profile::<OneHot>(&PolynomialGroupLayout::new(16, 1))
+            .expect("precommit profile");
     let schedule = OneHot::runtime_schedule(AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![precommitted, precommitted],

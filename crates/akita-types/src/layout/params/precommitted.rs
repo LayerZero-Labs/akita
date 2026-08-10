@@ -3,8 +3,12 @@ use akita_field::AkitaError;
 
 use crate::descriptor_bytes::push_usize;
 use crate::schedule::CommittedGroupProfile;
-use crate::sis::InnerCommitMatrixParams;
-use crate::CommitmentRingDims;
+use crate::sis::{
+    num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
+    InnerCommitMatrixParams, SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId,
+    SisTableDigest,
+};
+use crate::{CommitmentRingDims, DecompositionParams};
 
 use super::CommittedGroupParams;
 
@@ -26,6 +30,22 @@ pub struct PrecommittedLevelParams {
     pub num_digits_fold: usize,
 }
 
+/// Security and decomposition policy needed to admit a frozen precommit into
+/// a grouped opening. Planner and runtime replay both use this exact context.
+#[derive(Debug, Clone, Copy)]
+pub struct PrecommittedGroupAdmissionPolicy {
+    /// Field and signed-digit decomposition policy.
+    pub decomposition: DecompositionParams,
+    /// Bound policy used by the canonical SIS lookup.
+    pub sis_security_policy: SisSecurityPolicyId,
+    /// Digest binding the exact generated SIS table.
+    pub sis_table_digest: SisTableDigest,
+    /// Modulus family required for both frozen matrices.
+    pub sis_modulus_profile: SisModulusProfileId,
+    /// Subfield norm factor used in the A-role bound.
+    pub ring_subfield_norm_bound: u32,
+}
+
 impl PartialEq for PrecommittedLevelParams {
     fn eq(&self, other: &Self) -> bool {
         self.layout == other.layout
@@ -39,6 +59,106 @@ impl PartialEq for PrecommittedLevelParams {
 impl Eq for PrecommittedLevelParams {}
 
 impl PrecommittedLevelParams {
+    /// Canonical bytes for deterministic planner ordering and schedule identity.
+    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.append_descriptor_bytes(&mut bytes);
+        bytes
+    }
+
+    /// Validate and materialize one frozen group at the batch-shared opening
+    /// basis. This is the canonical admission path for planner generation and
+    /// generated-schedule replay.
+    pub fn admit(
+        layout: CommittedGroupProfile,
+        num_digits_fold: usize,
+        policy: PrecommittedGroupAdmissionPolicy,
+        fold_challenge_config: SparseChallengeConfig,
+        log_basis_open: u32,
+    ) -> Result<Self, AkitaError> {
+        layout.validate_frozen_precommit(policy.decomposition.field_bits())?;
+        if layout.inner_commit_matrix.sis_modulus_profile() != policy.sis_modulus_profile
+            || layout.outer_commit_matrix.sis_modulus_profile() != policy.sis_modulus_profile
+        {
+            return Err(AkitaError::InvalidSetup(
+                "precommitted group modulus profile does not match admission policy".into(),
+            ));
+        }
+
+        let outer_decomposition = DecompositionParams {
+            log_basis: layout.log_basis_outer,
+            ..policy.decomposition
+        };
+        if num_digits_open(outer_decomposition) != layout.num_digits_outer {
+            return Err(AkitaError::InvalidSetup(
+                "precommitted outer digit depth does not match its frozen basis".into(),
+            ));
+        }
+        let frozen_b_bound = rounded_up_collision_inf_norm(
+            policy.sis_security_policy,
+            policy.sis_modulus_profile,
+            SisMatrixRole::Outer,
+            layout.outer_commit_matrix.ring_dimension(),
+            layout.log_basis_outer,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("no precommitted B-role norm".into()))?;
+        if layout.outer_commit_matrix.coeff_linf_bound() < frozen_b_bound {
+            return Err(AkitaError::InvalidSetup(
+                "precommitted group B bound is below its frozen outer-basis requirement".into(),
+            ));
+        }
+        if log_basis_open < layout.log_basis_outer {
+            return Err(AkitaError::InvalidSetup(
+                "certified opening basis must dominate the precommitted outer basis".into(),
+            ));
+        }
+
+        let opening_decomposition = DecompositionParams {
+            log_basis: log_basis_open,
+            ..policy.decomposition
+        };
+        let num_digits_open = num_digits_open(opening_decomposition);
+        let required_a_bound = rounded_up_role_a_inf_norm(
+            policy.sis_security_policy,
+            policy.sis_table_digest,
+            policy.sis_modulus_profile,
+            layout.inner_commit_matrix.ring_dimension(),
+            log_basis_open,
+            &fold_challenge_config,
+            num_digits_fold,
+            policy.ring_subfield_norm_bound,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("no precommitted A-role norm".into()))?;
+        if required_a_bound > layout.inner_commit_matrix.coeff_linf_bound() {
+            return Err(AkitaError::InvalidSetup(
+                "precommitted A bound does not cover the certified opening basis".into(),
+            ));
+        }
+        let required_b_bound = rounded_up_collision_inf_norm(
+            policy.sis_security_policy,
+            policy.sis_modulus_profile,
+            SisMatrixRole::Outer,
+            layout.outer_commit_matrix.ring_dimension(),
+            log_basis_open,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("no precommitted B-role norm".into()))?;
+        if required_b_bound > layout.outer_commit_matrix.coeff_linf_bound() {
+            return Err(AkitaError::InvalidSetup(
+                "precommitted B bound does not cover the certified opening basis".into(),
+            ));
+        }
+
+        let params = Self {
+            layout,
+            log_basis_open,
+            fold_challenge_config,
+            num_digits_open,
+            num_digits_fold,
+        };
+        params.validate()?;
+        Ok(params)
+    }
+
     /// Worst-case L1 mass of this group's fold-round challenge.
     #[inline]
     #[must_use]
@@ -75,11 +195,9 @@ impl PrecommittedLevelParams {
                 "precommitted exact fold plan is missing or inconsistent".to_string(),
             ));
         }
-        if self.log_basis_open < self.layout.log_basis_inner
-            || self.log_basis_open < self.layout.log_basis_outer
-        {
+        if self.log_basis_open < self.layout.log_basis_outer {
             return Err(AkitaError::InvalidSetup(
-                "certified opening basis must dominate precommitted inner/outer bases".to_string(),
+                "certified opening basis must dominate the precommitted outer basis".to_string(),
             ));
         }
         let expected_a_width = self

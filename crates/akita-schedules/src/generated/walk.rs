@@ -215,7 +215,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 AkitaError::InvalidSetup("generated proof byte total overflow".to_string())
             })?;
         folds.push(CandidateFoldStep {
-            params: lp.clone(),
+            params: std::sync::Arc::new(lp.clone()),
             input_witness_len: *input_witness_len,
             output_witness_len: *output_witness_len,
             estimated_direct_payload_bytes: direct_level_bytes,

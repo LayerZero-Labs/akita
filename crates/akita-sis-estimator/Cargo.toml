@@ -21,6 +21,7 @@ libm = "0.2"
 num-bigint = "0.4.6"
 num-traits = "0.2"
 rayon = { version = "1.10", optional = true }
+sha3 = "0.10.8"
 thiserror = "2.0"
 
 [dev-dependencies]

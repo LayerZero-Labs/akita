@@ -40,7 +40,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
     )
     .expect("layout");
-    let poly = make_onehot_poly(&layout, seed);
+    let poly = make_onehot_poly(num_vars, seed);
     let point = random_point(num_vars, seed.wrapping_add(1));
     let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 
@@ -191,7 +191,7 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
             &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let poly = make_onehot_poly(&layout, 0x61_61);
+        let poly = make_onehot_poly(num_vars, 0x61_61);
         let point = random_point(num_vars, 0x71_71);
         let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 

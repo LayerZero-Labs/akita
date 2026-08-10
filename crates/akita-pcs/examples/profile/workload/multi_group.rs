@@ -9,7 +9,7 @@ use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
-use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::unreduced::{HasCommitAccum, HasOptimizedFold, HasUnreducedOps, HasWide};
 use akita_field::{
     CanonicalBytes, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
@@ -24,9 +24,9 @@ use akita_prover::{
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    dispatch_for_field, BasisMode, CommittedGroupBatchProfile, CommittedGroupProfile, FoldSchedule,
-    FpExtEncoding, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
-    PolynomialGroupLayout, SetupContributionMode,
+    dispatch_for_field, BasisMode, CommittedGroupBatchProfile, FoldSchedule, FpExtEncoding,
+    GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, PolynomialGroupLayout,
+    SetupContributionMode,
 };
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -179,13 +179,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
 
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
     let pre_key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
-    let pre_opening_batch =
-        OpeningClaimsLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP).expect("precommit batch");
-    let pre_params = PrecommittedCommitmentConfig::<ProofCfg>::get_params_for_batched_commitment(
-        &pre_opening_batch,
-    )
-    .expect("precommit layout");
-    let pre_descriptor = CommittedGroupProfile::from_params(pre_key, &pre_params);
+    let pre_descriptor =
+        akita_config::committed_group_profile::<ProofCfg>(&pre_key).expect("precommit profile");
     let final_group = PolynomialGroupLayout::new(final_num_vars, final_num_polys);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group,
@@ -259,7 +254,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         let t_commit = Instant::now();
         for (group_idx, pre_point) in pre_points.iter().enumerate() {
             let polys = vec![make_profile_onehot_poly::<FF>(
-                &pre_params,
+                pre_num_vars,
+                pre_descriptor.inner_commit_matrix.ring_dimension(),
                 0x0bee_fcaf_2100_0000 + group_idx as u64,
             )];
             let openings = polys
@@ -267,10 +263,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, pre_point))
                 .collect::<Vec<_>>();
             let (commitment, hint) =
-                AkitaCommitmentScheme::<PrecommittedCommitmentConfig<ProofCfg>>::batched_commit(
-                    &setup, &polys, &stack,
-                )
-                .expect("precommit");
+                AkitaCommitmentScheme::<ProofCfg>::commit_group(&setup, &polys, &stack)
+                    .expect("precommit");
             pre_keys.push(pre_key);
             pre_commitments.push(commitment);
             pre_hints.push(hint);
@@ -282,7 +276,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         let final_polys = (0..final_num_polys)
             .map(|poly_idx| {
                 make_profile_onehot_poly::<FF>(
-                    &main_params,
+                    final_num_vars,
+                    main_params.d_a(),
                     0x0bee_fcaf_2800_0000 + poly_idx as u64,
                 )
             })

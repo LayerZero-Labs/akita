@@ -22,8 +22,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::dispatch::compression_ring_dim_supported_for_tier;
 use crate::{
-    field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
-    protocol_dispatch_tier, AkitaExpandedSetup, ProtocolRingDispatchTierId, RingMatrixView,
+    balanced_signed_digit_abs_bound, field_modulus, ntt_max_ring_d, ntt_min_ring_d,
+    ntt_ring_degree_supported_for_field, protocol_dispatch_tier, AkitaExpandedSetup,
+    ProtocolRingDispatchTierId, RingMatrixView, SisModulusProfileId,
 };
 
 mod exact;
@@ -40,6 +41,17 @@ pub enum NttTransformDomain {
     Negacyclic,
     /// Base-profile cyclic transforms only.
     Cyclic,
+    /// Exactness-only 14-bit tail in both negacyclic and cyclic domains.
+    ///
+    /// Ring-switch quotient kernels combine this cache with the ordinary CRT
+    /// prefix when the field-selected representation cannot fit one centered
+    /// product term.
+    I16TailBothTransforms,
+    /// Exact negacyclic transforms for a signed-i16 matrix product.
+    ///
+    /// Both values participate in the cache identity because exact CRT sizing
+    /// depends on the active matrix row width and coefficient bound.
+    ExactNegacyclicI16 { width: usize, rhs_abs_bound: u64 },
 }
 
 /// Exact public-matrix prefix required at one ring dimension.
@@ -257,6 +269,56 @@ where
     )))
 }
 
+/// Whether a centered ring-switch product term needs the 14-bit exactness
+/// tail in addition to the protocol CRT prefix.
+pub fn centered_quotient_requires_i16_tail(
+    profile: SisModulusProfileId,
+    ring_dimension: usize,
+    rhs_abs_bound: u64,
+) -> Result<bool, AkitaError> {
+    let capacity = match profile {
+        SisModulusProfileId::Q32Offset99 => {
+            CrtCapacity::from_prime_moduli(Q32_PRIMES.map(|prime| prime.p as u128))
+        }
+        SisModulusProfileId::Q64Offset59 => {
+            CrtCapacity::from_prime_moduli(Q64_PRIMES.map(|prime| prime.p as u128))
+        }
+        SisModulusProfileId::Q128OffsetA7F7 => {
+            CrtCapacity::from_prime_moduli(q128_primes().map(|prime| prime.p as u128))
+        }
+    };
+    if capacity.supports_modulus(1, ring_dimension, profile.modulus(), rhs_abs_bound) {
+        return Ok(false);
+    }
+    if capacity
+        .with_prime_modulus(I16_TAIL_PRIME.p as u128)
+        .supports_modulus(1, ring_dimension, profile.modulus(), rhs_abs_bound)
+    {
+        return Ok(true);
+    }
+    Err(AkitaError::InvalidSetup(format!(
+        "centered quotient term exceeds base plus i16-tail capacity for D={ring_dimension}, rhs_abs_bound={rhs_abs_bound}"
+    )))
+}
+
+/// Field-typed form of [`centered_quotient_requires_i16_tail`] used by the
+/// runtime kernel dispatch.
+pub fn centered_quotient_requires_i16_tail_for_field<F: CanonicalField, const D: usize>(
+    rhs_abs_bound: u64,
+) -> Result<bool, AkitaError> {
+    match select_crt_ntt_params::<F, D>()? {
+        ProtocolCrtNttParams::Q32(params) => {
+            required_profile_for_params::<F, _, Q32_NUM_PRIMES, D>(&params, 1, rhs_abs_bound)
+        }
+        ProtocolCrtNttParams::Q64(params) => {
+            required_profile_for_params::<F, _, Q64_NUM_PRIMES, D>(&params, 1, rhs_abs_bound)
+        }
+        ProtocolCrtNttParams::Q128(params) => {
+            required_profile_for_params::<F, _, Q128_NUM_PRIMES, D>(&params, 1, rhs_abs_bound)
+        }
+    }
+}
+
 /// NTT representations requested by protocol and backend consumers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NttCacheMode {
@@ -266,6 +328,8 @@ pub enum NttCacheMode {
     Cyclic,
     /// Materialize the base-profile negacyclic and cyclic transforms.
     BothTransforms,
+    /// Materialize only the exactness tail in both transform domains.
+    I16TailBothTransforms,
     /// Materialize the minimum exact negacyclic representation for signed
     /// coefficients whose absolute value is at most `rhs_abs_bound`.
     ExactNegacyclic { width: usize, rhs_abs_bound: u64 },
@@ -281,6 +345,34 @@ pub enum NttCacheMode {
 pub struct PreparedI16Tail<const K: usize, const D: usize> {
     negacyclic: Vec<CyclotomicCrtNtt<i16, 1, D>>,
     params: I16TailParams<K, D>,
+}
+
+/// Read-only view of an exactness-only i16 tail pair.
+#[derive(Clone, Copy)]
+pub struct PreparedNttTailPairView<'a, const D: usize> {
+    negacyclic: &'a [CyclotomicCrtNtt<i16, 1, D>],
+    cyclic: &'a [CyclotomicCrtNtt<i16, 1, D>],
+    params: &'a CrtNttParamSet<i16, 1, D>,
+}
+
+impl<'a, const D: usize> PreparedNttTailPairView<'a, D> {
+    /// Borrow the negacyclic tail transforms.
+    #[must_use]
+    pub const fn negacyclic(self) -> &'a [CyclotomicCrtNtt<i16, 1, D>] {
+        self.negacyclic
+    }
+
+    /// Borrow the cyclic tail transforms.
+    #[must_use]
+    pub const fn cyclic(self) -> &'a [CyclotomicCrtNtt<i16, 1, D>] {
+        self.cyclic
+    }
+
+    /// Borrow the 14-bit tail parameters.
+    #[must_use]
+    pub const fn params(self) -> &'a CrtNttParamSet<i16, 1, D> {
+        self.params
+    }
 }
 
 #[doc(hidden)]
@@ -328,6 +420,11 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> PreparedNttBaseView<'a, 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 enum PreparedNttCacheRepr<const D: usize> {
+    I16TailPair {
+        neg: Vec<CyclotomicCrtNtt<i16, 1, D>>,
+        cyc: Vec<CyclotomicCrtNtt<i16, 1, D>>,
+        params: CrtNttParamSet<i16, 1, D>,
+    },
     #[non_exhaustive]
     Q32 {
         neg: Option<Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>>,
@@ -403,6 +500,13 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             }};
         }
         match self {
+            Self::I16TailPair { neg, cyc, params } => {
+                if neg.is_empty() || neg.len() != cyc.len() || params.primes != [I16_TAIL_PRIME] {
+                    return Err(AkitaError::InvalidSetup(
+                        "prepared i16-tail transform pair is inconsistent".into(),
+                    ));
+                }
+            }
             Self::Q32 {
                 neg,
                 cyc,
@@ -478,6 +582,9 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             }};
         }
         match self {
+            Self::I16TailPair { neg, cyc, .. } => {
+                (neg.len() + cyc.len()) * D * core::mem::size_of::<i16>()
+            }
             Self::Q32 { neg, cyc, tail, .. } => bytes!(neg, cyc, tail, Q32_NUM_PRIMES),
             Self::Q32Ifma52 { neg, tail, .. } => {
                 neg.cache_bytes()
@@ -501,6 +608,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
     #[must_use]
     const fn has_cyclic(&self) -> bool {
         match self {
+            Self::I16TailPair { .. } => true,
             Self::Q32 { cyc, .. } => cyc.is_some(),
             Self::Q32Ifma52 { .. } => false,
             Self::Q64 { cyc, .. } => cyc.is_some(),
@@ -514,6 +622,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
     #[must_use]
     const fn has_negacyclic(&self) -> bool {
         match self {
+            Self::I16TailPair { .. } => true,
             Self::Q32 { neg, .. } => neg.is_some(),
             Self::Q32Ifma52 { .. } => true,
             Self::Q64 { neg, .. } => neg.is_some(),
@@ -527,6 +636,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
     #[must_use]
     const fn has_i16_tail(&self) -> bool {
         match self {
+            Self::I16TailPair { .. } => true,
             Self::Q32 { tail, .. } => tail.is_some(),
             Self::Q32Ifma52 { tail, .. } => tail.is_some(),
             Self::Q64 { tail, .. } => tail.is_some(),
@@ -546,6 +656,11 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
     ) -> Result<Vec<akita_algebra::CyclotomicRing<F, D>>, AkitaError> {
         self.validate()?;
         let prepared_tier = match self {
+            Self::I16TailPair { .. } => {
+                return Err(AkitaError::InvalidSetup(
+                    "signed-i16 matvec requested from a tail-only cache".into(),
+                ));
+            }
             Self::Q32 { .. } | Self::Q32Ifma52 { .. } => ProtocolRingDispatchTierId::Fp32,
             Self::Q64 { .. } | Self::Q64Ifma52 { .. } => ProtocolRingDispatchTierId::Fp64,
             Self::Q128 { .. } | Self::Q128Ifma52 { .. } => ProtocolRingDispatchTierId::Fp128,
@@ -556,6 +671,9 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             ));
         }
         match self {
+            Self::I16TailPair { .. } => Err(AkitaError::InvalidSetup(
+                "signed-i16 matvec requested from a tail-only cache".into(),
+            )),
             Self::Q32 {
                 neg,
                 params,
@@ -721,6 +839,21 @@ impl<const D: usize> PreparedNttCache<D> {
         }
     }
 
+    /// Borrow an exactness-only paired tail cache.
+    #[must_use]
+    pub fn i16_tail_pair(&self) -> Option<PreparedNttTailPairView<'_, D>> {
+        match &self.0 {
+            PreparedNttCacheRepr::I16TailPair { neg, cyc, params } => {
+                Some(PreparedNttTailPairView {
+                    negacyclic: neg,
+                    cyclic: cyc,
+                    params,
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// Compute a shape-checked exact signed-i16 matrix product.
     #[inline]
     pub fn mat_vec_i16<F: FieldCore + CanonicalField>(
@@ -772,19 +905,22 @@ where
 }
 
 fn validate_i16_rhs<const D: usize>(log_basis: u32, rhs: &[[i16; D]]) -> Result<u64, AkitaError> {
-    if !(1..=16).contains(&log_basis) || rhs.is_empty() {
+    let Some(bound) = balanced_signed_digit_abs_bound(log_basis) else {
+        return Err(AkitaError::InvalidProof);
+    };
+    if rhs.is_empty() {
         return Err(AkitaError::InvalidProof);
     }
-    let bound = 1i32 << (log_basis - 1);
-    if log_basis == 16 {
-        return Ok(bound as u64);
+    // At basis 16 every i16 value is already inside the balanced digit range.
+    if bound == 1u64 << (i16::BITS - 1) {
+        return Ok(bound);
     }
     let digits_valid =
         akita_algebra::ntt::i16_values_in_balanced_range(rhs.as_flattened(), bound as i16);
     if !digits_valid {
         return Err(AkitaError::InvalidProof);
     }
-    Ok(bound as u64)
+    Ok(bound)
 }
 
 fn validate_cache_mode(mode: NttCacheMode) -> Result<(), AkitaError> {
@@ -898,6 +1034,11 @@ fn prepare_ntt_cache_with_tail_prefix<F: FieldCore + CanonicalField, const D: us
                         exact: false,
                     }
                 }
+                NttCacheMode::I16TailBothTransforms => {
+                    return Err(AkitaError::InvalidSetup(
+                        "i16-tail cache bypassed its dedicated representation".into(),
+                    ));
+                }
                 NttCacheMode::ExactNegacyclic { .. } => {
                     return Err(AkitaError::InvalidSetup(
                         "exact NTT cache bypassed its representation plan".into(),
@@ -905,6 +1046,13 @@ fn prepare_ntt_cache_with_tail_prefix<F: FieldCore + CanonicalField, const D: us
                 }
             }
         }};
+    }
+    if mode == NttCacheMode::I16TailBothTransforms {
+        let params = CrtNttParamSet::<i16, 1, D>::new([I16_TAIL_PRIME]);
+        let (neg, cyc) = convert_flat_pair(matrix, &params);
+        let prepared = PreparedNttCacheRepr::I16TailPair { neg, cyc, params };
+        prepared.validate()?;
+        return Ok(PreparedNttCache(prepared));
     }
     let prepared = match selected {
         ProtocolCrtNttParams::Q32(params) => prepare!(params, Q32),

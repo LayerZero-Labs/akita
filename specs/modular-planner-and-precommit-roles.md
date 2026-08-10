@@ -182,7 +182,7 @@ The selector receives:
 ```text
 root runtime family
 group layout
-root basis = 2
+root basis = 3
 security policy
 setup capability
 compatibility domain
