@@ -429,21 +429,16 @@ pub fn find_schedule(
     if matches!(
         policy.ring_dimension_schedule_mode,
         crate::RingDimensionScheduleMode::AdaptiveDimension { .. }
-    ) {
-        if !policy.recursive_setup_planning {
-            validate_direct_adaptive_dimension_schedule_request(policy)?;
-        } else if key.precommitteds.is_empty() {
-            return Err(AkitaError::InvalidSetup(
-                "scalar adaptive search does not support recursive setup planning; use a grouped request with precommitted inputs".into(),
-            ));
-        }
+    ) && !policy.recursive_setup_planning
+    {
+        validate_direct_adaptive_dimension_schedule_request(policy)?;
     }
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let scalar_policy;
-    let active_policy = if key.precommitteds.is_empty() {
-        // Empty-precommit keys still enter through the root-key planner, but
-        // recursive adapters must not leak their setup-first objective into
-        // scalar catalog rows.
+    let active_policy = if key.precommitteds.is_empty() && !policy.recursive_setup_planning {
+        // Ordinary scalar families use the direct objective. Recursive
+        // companion families retain their setup-aware objective so a scalar
+        // root may carry its setup opening into the first suffix fold.
         scalar_policy = crate::policy::direct_only_policy(*policy);
         &scalar_policy
     } else {

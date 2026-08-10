@@ -880,6 +880,24 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             "Fp128 multi-group, direct setup check",
         )
 
+    def test_recursive_singleton_case_label_matches_direct_workload(self) -> None:
+        from scripts.profile_bench_report import human_case_label, normalize_case_summary
+
+        summary = normalize_case_summary(
+            {
+                "mode": "onehot_fp128",
+                "num_vars": 36,
+                "num_polys": 1,
+                "setup_contribution_mode": "recursive",
+                "exit_code": 0,
+            }
+        )
+
+        self.assertEqual(
+            human_case_label(summary),
+            "Fp128 one-hot nv36, recursive setup check",
+        )
+
     def test_case_label_keeps_non_dimension_topology_variant(self) -> None:
         from scripts.profile_bench_report import human_case_label, normalize_case_summary
 
@@ -1265,11 +1283,11 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             (),
             {
                 "case": [
-                    "onehot_fp128:32:1",
-                    "onehot_fp128:32:1:recursive",
+                    "onehot_fp128:36:1:direct",
+                    "onehot_fp128:36:1:recursive",
                 ],
                 "mode": "onehot_fp128",
-                "num_vars": 32,
+                "num_vars": 36,
                 "num_polys": 1,
             },
         )()
@@ -1277,8 +1295,49 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         cases = configured_cases(args)
 
         self.assertEqual([case.setup_mode for case in cases], ["direct", "recursive"])
+        self.assertEqual(
+            [case.mode for case in cases],
+            ["onehot_fp128", "onehot_fp128"],
+        )
         self.assertNotEqual(cases[0].case_id, cases[1].case_id)
         self.assertTrue(cases[1].case_id.endswith("-setup-recursive"))
+
+    def test_nv36_direct_renders_immediately_before_recursive(self) -> None:
+        from scripts.profile_bench_report import (
+            human_case_label,
+            normalize_case_summary,
+            report_case_sort_key,
+        )
+
+        cases = [
+            normalize_case_summary(
+                {
+                    "mode": "onehot_fp128",
+                    "num_vars": 36,
+                    "num_polys": 1,
+                    "setup_contribution_mode": "direct",
+                    "benchmark_shard": "3-fp128-base",
+                }
+            ),
+            normalize_case_summary(
+                {
+                    "mode": "onehot_fp128",
+                    "num_vars": 36,
+                    "num_polys": 1,
+                    "setup_contribution_mode": "recursive",
+                    "benchmark_shard": "3-fp128-base",
+                }
+            ),
+        ]
+
+        ordered = sorted(cases, key=report_case_sort_key)
+        self.assertEqual(
+            [human_case_label(case) for case in ordered],
+            [
+                "Fp128 one-hot nv36, direct setup check",
+                "Fp128 one-hot nv36, recursive setup check",
+            ],
+        )
 
     def test_write_aggregate_summaries_propagates_sibling_failure(self) -> None:
         from scripts.profile_bench_report import (

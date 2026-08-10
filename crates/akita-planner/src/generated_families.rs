@@ -65,6 +65,7 @@ const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::new(30, 4),
     PolynomialGroupLayout::singleton(32),
     PolynomialGroupLayout::new(32, 4),
+    PolynomialGroupLayout::singleton(36),
     PolynomialGroupLayout::singleton(40),
     PolynomialGroupLayout::singleton(44),
     PolynomialGroupLayout::singleton(50),
@@ -72,6 +73,9 @@ const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
 
 const FP128_ONEHOT_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
     &[PolynomialGroupLayout::singleton(32)];
+
+const FP128_ONEHOT_RECURSIVE_KEYS: &[PolynomialGroupLayout] =
+    &[PolynomialGroupLayout::singleton(36)];
 
 const FP128_ONEHOT_MULTI_CHUNK_W2R2_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
@@ -174,17 +178,10 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<PolynomialGroupLayout
 
 /// Scalar keys physically emitted into `family`'s catalog.
 ///
-/// Recursive companion catalogs contain only genuine multi-group keys. Their
-/// adapter delegates scalar resolution to the base config and therefore must
-/// not carry a second, unreachable copy of the ordinary scalar table.
 pub fn emitted_scalar_keys(
     family: &GeneratedFamily,
 ) -> Result<Vec<PolynomialGroupLayout>, AkitaError> {
-    if (family.policy)().recursive_setup_planning {
-        Ok(Vec::new())
-    } else {
-        family_keys(family)
-    }
+    family_keys(family)
 }
 
 fn plan_regen<Cfg: CommitmentConfig>(
@@ -612,7 +609,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp128_onehot_recursive",
         "FP128_ONEHOT_RECURSIVE_SCHEDULES",
         "fp128-onehot-recursive",
-        &[],
+        FP128_ONEHOT_RECURSIVE_KEYS,
         RecursiveCommitmentConfig<fp128::OneHot>,
         fp128::OneHot,
         recursive_onehot_profile_keys::<fp128::OneHot>,
