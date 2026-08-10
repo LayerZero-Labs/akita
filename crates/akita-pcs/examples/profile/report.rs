@@ -282,6 +282,7 @@ pub(crate) fn report_setup_sizes(
         let domain = match metric.key.domain {
             NttTransformDomain::Negacyclic => "negacyclic",
             NttTransformDomain::Cyclic => "cyclic",
+            NttTransformDomain::I16TailBothTransforms => "i16_tail_both",
             NttTransformDomain::ExactNegacyclicI16 { .. } => "exact_negacyclic_i16",
         };
         tracing::info!(

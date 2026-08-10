@@ -2,8 +2,9 @@
 
 use akita_field::AkitaError;
 use akita_types::{
-    CommittedGroupParams, FoldSchedule, NttCacheKey, NttTransformDomain, PrecommittedLevelParams,
-    SetupPrefixSlotId, TerminalCommittedGroupParams,
+    centered_quotient_requires_i16_tail, CommittedGroupParams, FoldSchedule, NttCacheKey,
+    NttTransformDomain, PrecommittedLevelParams, SetupPrefixSlotId, SisModulusProfileId,
+    TerminalCommittedGroupParams,
 };
 
 /// Compute cluster that owns one public-matrix transform request.
@@ -226,6 +227,9 @@ impl NttExecutionRequirements {
             params.outer_commit_matrix.ring_dimension(),
             params.outer_commit_matrix.output_rank(),
             params.outer_commit_matrix.input_width(),
+            params.log_basis_open,
+            params.num_digits_fold,
+            params.inner_commit_matrix.sis_modulus_profile(),
         )?;
         for precommitted in &params.precommitted_groups {
             self.add_precommitted_relation(level, precommitted)?;
@@ -246,6 +250,9 @@ impl NttExecutionRequirements {
             params.layout.outer_commit_matrix.ring_dimension(),
             params.layout.outer_commit_matrix.output_rank(),
             params.layout.outer_commit_matrix.input_width(),
+            params.log_basis_open,
+            params.num_digits_fold,
+            params.layout.inner_commit_matrix.sis_modulus_profile(),
         )
     }
 
@@ -286,6 +293,9 @@ impl NttExecutionRequirements {
         d_b: usize,
         n_b: usize,
         width_b: usize,
+        log_basis_open: u32,
+        num_digits_fold: usize,
+        modulus_profile: SisModulusProfileId,
     ) -> Result<(), AkitaError> {
         for domain in [NttTransformDomain::Negacyclic, NttTransformDomain::Cyclic] {
             self.add_matrix(
@@ -304,7 +314,25 @@ impl NttExecutionRequirements {
             n_b,
             width_b,
             NttTransformDomain::Cyclic,
-        )
+        )?;
+        let (negative, positive) = akita_types::sis::fold_witness_representable_linf_bounds(
+            log_basis_open,
+            num_digits_fold,
+        );
+        let rhs_abs_bound = u64::try_from(negative.max(positive)).map_err(|_| {
+            AkitaError::InvalidSetup("folded-witness bound exceeds NTT capacity model".into())
+        })?;
+        if centered_quotient_requires_i16_tail(modulus_profile, d_a, rhs_abs_bound)? {
+            self.add_matrix(
+                level,
+                NttOperationCluster::RingSwitch,
+                d_a,
+                n_a,
+                width_a,
+                NttTransformDomain::I16TailBothTransforms,
+            )?;
+        }
+        Ok(())
     }
 
     fn add_terminal(
@@ -351,7 +379,8 @@ const fn domain_order(domain: NttTransformDomain) -> u8 {
     match domain {
         NttTransformDomain::Negacyclic => 0,
         NttTransformDomain::Cyclic => 1,
-        NttTransformDomain::ExactNegacyclicI16 { .. } => 2,
+        NttTransformDomain::I16TailBothTransforms => 2,
+        NttTransformDomain::ExactNegacyclicI16 { .. } => 3,
     }
 }
 
@@ -481,5 +510,29 @@ mod tests {
                 && entry.key.ring_d == root.inner_commit_matrix.ring_dimension()
         }));
         assert!(complete.entries().len() >= prove.entries().len());
+    }
+
+    #[test]
+    #[cfg(feature = "schedules-default")]
+    fn fp128_dense_prewarms_centered_quotient_tail() {
+        let schedule = fp128::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(26),
+        ))
+        .expect("generated dense schedule");
+        let requirements =
+            NttExecutionRequirements::from_prove_schedule(&schedule).expect("compile requirements");
+        assert!(requirements.entries().iter().any(|entry| {
+            entry.fold_level == 0
+                && entry.cluster == NttOperationCluster::RingSwitch
+                && entry.key.ring_d
+                    == schedule
+                        .root
+                        .params
+                        .final_group
+                        .commitment
+                        .role_dims()
+                        .d_a()
+                && entry.key.domain == NttTransformDomain::I16TailBothTransforms
+        }));
     }
 }

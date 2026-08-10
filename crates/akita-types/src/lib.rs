@@ -84,9 +84,11 @@ pub use layout::{
     SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
 };
 pub use ntt_cache::{
+    centered_quotient_requires_i16_tail, centered_quotient_requires_i16_tail_for_field,
     ntt_cache_requires_i16_tail, prepare_compression_ntt_cache, prepare_ntt_cache,
     select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey, NttCacheMode,
-    NttPrefixRequirement, NttTransformDomain, PreparedNttCache, ProtocolCrtNttParams,
+    NttPrefixRequirement, NttTransformDomain, PreparedNttCache, PreparedNttTailPairView,
+    ProtocolCrtNttParams,
 };
 pub use proof::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,

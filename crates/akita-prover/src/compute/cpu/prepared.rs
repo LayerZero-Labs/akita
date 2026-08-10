@@ -165,7 +165,8 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
             let domain = match metric.key.domain {
                 NttTransformDomain::Negacyclic => 0,
                 NttTransformDomain::Cyclic => 1,
-                NttTransformDomain::ExactNegacyclicI16 { .. } => 2,
+                NttTransformDomain::I16TailBothTransforms => 2,
+                NttTransformDomain::ExactNegacyclicI16 { .. } => 3,
             };
             (metric.key.ring_d, domain, metric.key.num_ring_elements)
         });
@@ -196,12 +197,24 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
                     dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, ring_d, |RING_D| {
                         selected_crt_i8_capacity_profile::<F, RING_D>()
                     })?;
-                let base_bytes = count
-                    .checked_mul(ring_d)
-                    .and_then(|bytes| bytes.checked_mul(profile.num_primes))
-                    .and_then(|bytes| bytes.checked_mul(core::mem::size_of::<i32>()))
-                    .ok_or_else(|| AkitaError::InvalidSetup("planned NTT bytes overflow".into()))?;
+                let base_bytes = if domain == NttTransformDomain::I16TailBothTransforms {
+                    0
+                } else {
+                    count
+                        .checked_mul(ring_d)
+                        .and_then(|bytes| bytes.checked_mul(profile.num_primes))
+                        .and_then(|bytes| bytes.checked_mul(core::mem::size_of::<i32>()))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("planned NTT bytes overflow".into())
+                        })?
+                };
                 let tail_bytes = match domain {
+                    NttTransformDomain::I16TailBothTransforms => count
+                        .checked_mul(ring_d)
+                        .and_then(|bytes| bytes.checked_mul(2 * core::mem::size_of::<i16>()))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("planned i16-tail bytes overflow".into())
+                        })?,
                     NttTransformDomain::ExactNegacyclicI16 {
                         width,
                         rhs_abs_bound,
@@ -257,6 +270,7 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
         let mode = match key.domain {
             NttTransformDomain::Negacyclic => NttCacheMode::Negacyclic,
             NttTransformDomain::Cyclic => NttCacheMode::Cyclic,
+            NttTransformDomain::I16TailBothTransforms => NttCacheMode::I16TailBothTransforms,
             NttTransformDomain::ExactNegacyclicI16 {
                 width,
                 rhs_abs_bound,

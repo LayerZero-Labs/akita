@@ -1,6 +1,8 @@
 use super::CpuPreparedSetup;
 use crate::compute::plans::RecursiveWitnessCommitRowsPlan;
 use akita_algebra::CyclotomicRing;
+#[allow(unused_imports)]
+use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{balanced_signed_digit_abs_bound, NttCacheKey, NttTransformDomain};
 use std::array::from_fn;
@@ -26,8 +28,7 @@ pub(super) fn dense_commit_rows<F: FieldCore + CanonicalField, const D: usize>(
             },
         )?,
         |ntt| {
-            block_slices
-                .iter()
+            cfg_iter!(block_slices)
                 .map(|block| {
                     let mut rhs = vec![[0i16; D]; row_width];
                     for (ring_idx, ring) in block.iter().enumerate() {
@@ -62,8 +63,7 @@ pub(super) fn recursive_witness_commit_rows<F: FieldCore + CanonicalField, const
             },
         )?,
         |ntt| {
-            plan.coeffs
-                .chunks(plan.num_positions_per_block)
+            cfg_chunks!(plan.coeffs, plan.num_positions_per_block)
                 .take(plan.num_live_blocks)
                 .map(|block| {
                     let mut rhs = vec![[0i16; D]; row_width];

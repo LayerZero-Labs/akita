@@ -49,7 +49,10 @@ mod ops;
 mod tests;
 
 pub use lut::{CenteredMontLut, DigitMontLut};
-pub use mixed::{mat_vec_i16_with_tail, I16TailParams};
+pub use mixed::{
+    cyclic_ntt_with_i16_tail_to_ring, mat_vec_i16_with_tail, ntt_with_i16_tail_to_ring,
+    I16TailParams,
+};
 
 fn reconstruct<F, W, const K: usize, const D: usize>(
     primes: &[NttPrime<W>; K],

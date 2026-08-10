@@ -30,6 +30,12 @@ fn prepare_materializes_exactly_the_requested_layout() {
     assert!(both.has_cyclic());
     assert!(!both.has_i16_tail());
 
+    let view = flat.ring_view::<D>(1, 10).expect("matrix view");
+    let tail_pair =
+        prepare_ntt_cache(view, NttCacheMode::I16TailBothTransforms).expect("tail transform pair");
+    assert!(tail_pair.i16_tail_pair().is_some());
+    assert_eq!(tail_pair.cache_bytes(), 10 * D * 2 * size_of::<i16>());
+
     let view = flat.ring_view::<D>(1, 7).expect("matrix view");
     let cyclic = prepare_ntt_cache(view, NttCacheMode::Cyclic).expect("cyclic transform");
     assert!(!cyclic.has_negacyclic());

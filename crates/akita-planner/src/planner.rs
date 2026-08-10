@@ -569,7 +569,7 @@ pub fn find_schedule(
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     akita_schedules::planner_support::validate_policy(policy)?;
     key.validate(policy.decomposition.field_bits())?;
-    if matches!(
+    let direct_grouped_policy = if matches!(
         policy.ring_dimension_schedule_mode,
         crate::RingDimensionScheduleMode::AdaptiveDimension { .. }
     ) {
@@ -594,16 +594,13 @@ pub fn find_schedule(
                 crate::RingDimensionScheduleMode::UniformDimension {
                     ring_dimension: uniform_suffix_dimension,
                 };
-            grouped_policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
-            return find_schedule(
-                key,
-                final_honest_fold_policy,
-                precommitted_honest_fold_policies,
-                &grouped_policy,
-                ring_challenge_config,
-            );
+            Some(grouped_policy)
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let scalar_policy;
     let active_policy = if key.precommitteds.is_empty() {
@@ -613,7 +610,7 @@ pub fn find_schedule(
         scalar_policy = crate::policy::direct_only_policy(*policy);
         &scalar_policy
     } else {
-        policy
+        direct_grouped_policy.as_ref().unwrap_or(policy)
     };
     let setup_field_budget = if active_policy.recursive_setup_planning {
         active_policy.setup_field_budget
