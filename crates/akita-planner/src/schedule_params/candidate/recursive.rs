@@ -8,7 +8,7 @@ use super::*;
 pub(crate) fn recursive_fold_level_params_candidate(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
-    dimensions: RingDimensionCandidate<'_>,
+    dimensions: CommitmentRingDims,
     num_ring_elems: usize,
     reduced_vars: usize,
     source: crate::InnerBasisSource,
@@ -41,7 +41,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
     let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, delta_commit) else {
         return Ok(None);
     };
-    let d_a = dimensions.inner();
+    let d_a = dimensions.d_a();
     let Some(num_fold_coeffs) = width_s
         .checked_mul(d_a)
         .and_then(|count| count.checked_mul(num_chunks))
@@ -106,9 +106,11 @@ pub(crate) fn recursive_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Some((outer_key, width_t)) = dimensions.collision_role_price(
+    let Some((outer_key, width_t)) = projected_collision_role_price(
         policy,
         akita_types::SisMatrixRole::Outer,
+        d_a,
+        dimensions.d_b(),
         native_width_t,
         log_basis_open,
     ) else {
@@ -122,9 +124,11 @@ pub(crate) fn recursive_fold_level_params_candidate(
     let Some(native_width_w) = decomposed_w_ring_count(delta_open, num_live_blocks, 1) else {
         return Ok(None);
     };
-    let Some((open_key, width_w)) = dimensions.collision_role_price(
+    let Some((open_key, width_w)) = projected_collision_role_price(
         policy,
         akita_types::SisMatrixRole::Open,
+        d_a,
+        dimensions.d_d(),
         native_width_w,
         log_basis_open,
     ) else {
@@ -307,15 +311,15 @@ fn prepare_recursive_level_search(
     setup_prefix_cache: Option<&mut SetupPrefixSearchCache>,
     policy: &PlannerPolicy,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
-    dimensions: RingDimensionCandidate<'_>,
+    dimensions: CommitmentRingDims,
     current_witness_len: usize,
     log_basis_open: u32,
     fold_level: usize,
     incoming_setup_prefix: Option<usize>,
 ) -> Result<Option<RecursiveLevelSearch>, AkitaError> {
     let num_chunks = crate::policy::chunks_at_level(policy, fold_level);
-    dimensions.validate()?;
-    let d_a = dimensions.inner();
+    dimensions.validate_role_projection()?;
+    let d_a = dimensions.d_a();
     if current_witness_len == 0 {
         return Ok(None);
     }
@@ -351,10 +355,7 @@ fn prepare_recursive_level_search(
                 n_prefix,
                 num_chunks,
                 d_a,
-                match dimensions {
-                    RingDimensionCandidate::Fixed(value) => value.d_b(),
-                    RingDimensionCandidate::Adaptive { .. } => d_a,
-                },
+                dimensions.d_b(),
             )?;
             if groups.is_empty() {
                 return Ok(None);
@@ -421,7 +422,7 @@ fn recursive_level_base_candidate_for_split(
     policy: &PlannerPolicy,
     payload_mode: akita_types::CommitmentPayloadMode,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
-    dimensions: RingDimensionCandidate<'_>,
+    dimensions: CommitmentRingDims,
     search: &RecursiveLevelSearch,
     source: crate::InnerBasisSource,
     log_basis_inner: u32,
@@ -455,7 +456,7 @@ pub(crate) fn derive_candidate_level_params(
     policy: &PlannerPolicy,
     payload_mode: akita_types::CommitmentPayloadMode,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
-    dimensions: RingDimensionCandidate<'_>,
+    dimensions: CommitmentRingDims,
     current_witness_len: usize,
     source: crate::InnerBasisSource,
     log_basis_inner: u32,
@@ -498,7 +499,7 @@ pub(crate) fn derive_candidate_level_params(
         if let Some((best_score, _, _, _)) = &best {
             if let Some(lower_bound) = recursive_split_lower_bound(RecursiveSplitLowerBoundInput {
                 num_ring_elems: search.num_ring_elems,
-                ring_dimension: dimensions.inner(),
+                ring_dimension: dimensions.d_a(),
                 reduced_vars: search.reduced_vars,
                 r,
                 delta_commit,
@@ -568,7 +569,7 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
     policy: &PlannerPolicy,
     payload_mode: akita_types::CommitmentPayloadMode,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
-    dimensions: RingDimensionCandidate<'_>,
+    dimensions: CommitmentRingDims,
     current_witness_len: usize,
     source: crate::InnerBasisSource,
     log_basis_inner: u32,
@@ -606,7 +607,7 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
     for block_index_bits in split_candidates {
         if recursive_witness_body_lower_bound(RecursiveSplitLowerBoundInput {
             num_ring_elems: search.num_ring_elems,
-            ring_dimension: dimensions.inner(),
+            ring_dimension: dimensions.d_a(),
             reduced_vars: search.reduced_vars,
             r: block_index_bits,
             delta_commit,

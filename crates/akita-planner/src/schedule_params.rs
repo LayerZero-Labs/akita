@@ -67,15 +67,11 @@ fn dimension_candidates(
     policy: &PlannerPolicy,
     level: usize,
     ceiling: CommitmentRingDims,
-) -> Result<Vec<akita_schedules::planner_support::RingDimensionCandidate<'_>>, AkitaError> {
-    use akita_schedules::planner_support::RingDimensionCandidate;
-
+) -> Result<Vec<CommitmentRingDims>, AkitaError> {
     ceiling.validate_role_projection()?;
     let candidates = match policy.ring_dimension_schedule_mode {
         crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-            vec![RingDimensionCandidate::Fixed(CommitmentRingDims::uniform(
-                ring_dimension,
-            ))]
+            vec![CommitmentRingDims::uniform(ring_dimension)]
         }
         crate::RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels,
@@ -85,23 +81,7 @@ fn dimension_candidates(
             potential_d_dimensions,
         } => {
             if level >= num_search_levels {
-                vec![RingDimensionCandidate::Fixed(CommitmentRingDims::uniform(
-                    uniform_suffix_dimension,
-                ))]
-            } else if policy.selection_policy
-                == crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-            {
-                potential_a_dimensions
-                    .iter()
-                    .copied()
-                    .filter(|&inner| inner <= ceiling.d_a())
-                    .map(|inner| RingDimensionCandidate::Adaptive {
-                        inner,
-                        outer_dimensions: potential_b_dimensions,
-                        opening_dimensions: potential_d_dimensions,
-                        ceiling,
-                    })
-                    .collect()
+                vec![CommitmentRingDims::uniform(uniform_suffix_dimension)]
             } else {
                 let mut candidates = Vec::new();
                 for &inner in potential_a_dimensions {
@@ -116,11 +96,11 @@ fn dimension_candidates(
                             if opening > ceiling.d_d() || !inner.is_multiple_of(opening) {
                                 continue;
                             }
-                            candidates.push(RingDimensionCandidate::Fixed(CommitmentRingDims {
+                            candidates.push(CommitmentRingDims {
                                 inner,
                                 outer,
                                 opening,
-                            }));
+                            });
                         }
                     }
                 }
@@ -427,9 +407,7 @@ pub fn plan_standalone_precommit(
         direct_policy.decomposition.log_commit_bound,
     );
     let (min_inner_basis, max_inner_basis) = inner_source.search_range(&direct_policy)?;
-    let dimensions = akita_schedules::planner_support::RingDimensionCandidate::Fixed(
-        CommitmentRingDims::uniform(precommit_dimension),
-    );
+    let dimensions = CommitmentRingDims::uniform(precommit_dimension);
     let ring_challenge_cfg = ring_challenge_config(precommit_dimension)?;
     let mut frontier: Vec<(StandalonePrecommitCandidate, Vec<u8>)> = Vec::new();
 

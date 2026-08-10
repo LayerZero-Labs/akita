@@ -74,9 +74,7 @@ fn enumerate_suffixes(
                         policy,
                         payload_mode,
                         &ring_challenge,
-                        akita_schedules::planner_support::RingDimensionCandidate::Fixed(
-                            *candidate_dimensions,
-                        ),
+                        *candidate_dimensions,
                         input_witness_len,
                         crate::InnerBasisSource::BalancedDigits {
                             log_basis: current_log_basis,
@@ -92,9 +90,7 @@ fn enumerate_suffixes(
                         policy,
                         payload_mode,
                         &ring_challenge,
-                        akita_schedules::planner_support::RingDimensionCandidate::Fixed(
-                            *candidate_dimensions,
-                        ),
+                        *candidate_dimensions,
                         input_witness_len,
                         crate::InnerBasisSource::BalancedDigits {
                             log_basis: current_log_basis,
@@ -264,9 +260,7 @@ pub(super) fn find_schedule(
                         honest_fold_policy,
                         &[],
                         policy,
-                        akita_schedules::planner_support::RingDimensionCandidate::Fixed(
-                            *root_dimensions,
-                        ),
+                        *root_dimensions,
                         &ring_challenge,
                         &ring_challenge_config,
                         input_witness_len,
