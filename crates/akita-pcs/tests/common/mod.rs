@@ -294,7 +294,7 @@ where
 pub(super) fn opening_from_poly_for_layout<'a, P>(
     poly: &'a P,
     point: &[F],
-    layout: &CommittedGroupParams,
+    layout: &(impl LevelParamsLike + ?Sized),
 ) -> F
 where
     P: RootOpeningSource<F, 64>
@@ -307,7 +307,7 @@ where
         + OpeningFoldKernel<<P as RootOpeningSource<F, 128>>::OpeningView<'a>, F, 128>
         + OpeningFoldKernel<<P as RootOpeningSource<F, 256>>::OpeningView<'a>, F, 256>,
 {
-    match layout.d_a() {
+    match layout.inner_commit_matrix_params().ring_dimension() {
         64 => opening_from_poly::<64, _>(poly, point, layout),
         128 => opening_from_poly::<128, _>(poly, point, layout),
         256 => opening_from_poly::<256, _>(poly, point, layout),
