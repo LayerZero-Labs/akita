@@ -136,7 +136,12 @@ fn run_prove<
                 plan,
             );
         }
-        emit_runtime_schedule_summary(label, plan, 1, Cfg::decomposition().field_bits());
+        emit_runtime_schedule_summary(
+            label,
+            plan,
+            PolynomialGroupLayout::singleton(pt.len()),
+            Cfg::decomposition().field_bits(),
+        );
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -157,7 +162,12 @@ fn run_prove<
                 &schedule,
             );
         }
-        emit_runtime_schedule_summary(label, &schedule, 1, Cfg::decomposition().field_bits());
+        emit_runtime_schedule_summary(
+            label,
+            &schedule,
+            PolynomialGroupLayout::singleton(pt.len()),
+            Cfg::decomposition().field_bits(),
+        );
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,

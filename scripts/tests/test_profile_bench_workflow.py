@@ -12,6 +12,7 @@ class ProfileBenchWorkflowTests(unittest.TestCase):
 
     def step(self, name: str) -> str:
         marker = f"      - name: {name}\n"
+        self.assertIn(marker, self.workflow, f"workflow step not found: {name}")
         start = self.workflow.index(marker)
         next_step = self.workflow.find("\n      - name: ", start + len(marker))
         return self.workflow[start : next_step if next_step >= 0 else None]
