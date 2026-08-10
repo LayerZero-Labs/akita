@@ -32,8 +32,8 @@ the same adaptive policy. Recursive and multi-chunk companion presets
 remain D64. Shipped direct tables are `fp128_onehot` and `fp128_dense`.
 **fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
 `D32OneHot` preset.
-**fp32/fp64** D32/D64 are not securable; smallest secure choice is **D128
-one-hot** (CI benches at `nv=28`).
+**fp32/fp64** D32/D64 are not securable; the smallest secure shipped choice is
+**D128 one-hot**. This stack's generated CI rows cover `nv=28`.
 
 The direct configs are `akita_config::proof_optimized::fp128::OneHot` and
 `akita_config::proof_optimized::fp128::Dense`.
@@ -81,9 +81,11 @@ Committed-fold A-role pricing (every cell folds securely):
 
 | Case | nv | np | Setup mode |
 |------|----|----|------------|
+| `dense_fp32_d128` | 26 | 1 | `direct` |
 | `onehot_fp32_d128` | 28 | 1 | `direct` |
+| `dense_fp64_d128` | 26 | 1 | `direct` |
 | `onehot_fp64_d128` | 28 | 1 | `direct` |
-| `dense_fp128` | 24 | 1 | `direct` |
+| `dense_fp128` | 26 | 1 | `direct` |
 | `onehot_fp128` | 32 | 1 | `direct` |
 | `onehot_fp128_multi_group` | 32 | 4 | `direct` |
 | `onehot_fp128_multi_group_recursive` | 32 | 4 | `recursive` |
@@ -92,8 +94,10 @@ Committed-fold A-role pricing (every cell folds securely):
 | `onehot_fp128_multi_chunk_w4r2` | 32 | 1 | `direct` |
 | `onehot_fp128_multi_chunk_w8r2` | 32 | 1 | `direct` |
 
-fp32/fp64 use `nv=28` because the ext-degree-4 challenge schedule exceeds the 1
-GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` budget at higher `num_vars`.
+The base profiles are separated by field into `profile-ci-fp32`,
+`profile-ci-fp64`, and `profile-ci-fp128-base`. Each job compiles only its
+dense and one-hot schedule catalogs. The adaptive-dimension follow-up expands
+the small-field one-hot rows beyond this stack's current `nv=28` coverage.
 The long multi-group recursive rows run in separate parallel CI groups so each
 task keeps one benchmark case. The distributed rows also run in their own group
 and are compared against the merge base like the other rows.
@@ -107,7 +111,7 @@ Every row measures a complete PCS opening proof.
 
 | Profile family | Public opening statement |
 |----------------|--------------------------|
-| Dense `nv24` | One committed 24 variable multilinear polynomial with `2^24` coefficients, opened at one 24 coordinate point. |
+| Dense `nv26` | One committed 26 variable multilinear polynomial with `2^26` coefficients, opened at one 26 coordinate point. |
 | One hot `nv28` | One committed 28 variable multilinear polynomial with `2^28` coefficients, opened at one 28 coordinate point. |
 | One hot `nv32` | One committed 32 variable multilinear polynomial with `2^32` coefficients, opened at one 32 coordinate point. |
 | Multi group | Four polynomials in three groups. Two precommitted groups each contain one 16 variable polynomial and use independent 16 coordinate points. The final group contains two 32 variable polynomials that share one 32 coordinate point. |
@@ -144,7 +148,8 @@ test suite owns those checks.
 compact pull request comment, and the full `report.md` artifact. The compact
 comment shows the public statements first. It then uses separate tables for
 phase time, memory and setup size, and proof size. This keeps each table narrow
-enough to read in a pull request.
+enough to read in a pull request. Every compact row also shows the resolved
+`A/B/D` dimension sequence, with consecutive repeated tuples collapsed.
 
 The full artifact keeps each fold in one side-by-side table. Each detailed cell
 uses named blocks for matrix geometry, decomposition, challenge parameters,
@@ -176,10 +181,10 @@ a setup matrix or prefix registry from an earlier sample.
 
 `Setup and preparation` includes exact NTT prewarming for the resolved profile
 execution on its uniform CPU stack. This is an execution prewarm, not part of
-public setup identity or `ComputeBackendSetup::prepare_setup`: it joins the root
-commitment requirements with `NttExecutionRequirements::from_prove_schedule`
-and materializes the resulting per-dimension, per-domain prefixes before the
-online timers begin. The CPU retention policy skips large ring switch
+public setup identity or `ComputeBackendSetup::prepare_setup`: the canonical
+`NttExecutionRequirements::from_commit_and_prove_schedule` constructor derives
+all root-commit and prove requirements before materializing the retained
+per-dimension, per-domain prefixes. The CPU retention policy skips large ring switch
 requirements that runtime streams. The harness rejects growth of retained
 cache entries during commit or prove. Consequently, `Commit` and `Prove`
 measure hot-cache work plus intentional streamed work, while `Prepared NTT

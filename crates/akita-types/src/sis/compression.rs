@@ -30,6 +30,20 @@ const COMPRESSION_SIS_CELLS: &[(SisModulusProfileId, u32, u64)] = &[
     (SisModulusProfileId::Q32Offset99, 64, 1_769),
 ];
 
+/// Enumerate the exact production compression coverage cells.
+pub fn compression_sis_cells() -> impl ExactSizeIterator<Item = CompressionSisCell> {
+    COMPRESSION_SIS_CELLS
+        .iter()
+        .copied()
+        .map(
+            |(modulus_profile, ring_dimension, sis_max_width)| CompressionSisCell {
+                modulus_profile,
+                ring_dimension,
+                sis_max_width,
+            },
+        )
+}
+
 /// Return the exact production compression cell, if it is in scope.
 #[must_use]
 pub fn compression_sis_cell(

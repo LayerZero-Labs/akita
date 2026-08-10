@@ -59,7 +59,12 @@ impl_proof_optimized_preset!(
     128,
     32,
     32,
-    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 128)
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 128),
+    schedules = (
+        "schedules-fp32-d128-dense",
+        "fp32_d128_dense",
+        fp32_d128_dense_table
+    )
 );
 impl_proof_optimized_preset!(
     D128OneHot,

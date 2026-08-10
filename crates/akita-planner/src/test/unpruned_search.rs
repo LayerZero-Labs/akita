@@ -39,7 +39,8 @@ fn enumerate_suffixes(
     }
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = policy.challenge_field_bits()?;
-    let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(level);
+    let (min_log_basis, max_log_basis) =
+        crate::policy::log_basis_search_range_at_level(policy, level);
     let mut schedules = Vec::new();
 
     for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
@@ -68,7 +69,8 @@ fn enumerate_suffixes(
             };
             for &payload_mode in payload_phase.candidate_modes(level, false) {
                 let candidates = if level < akita_schedules::ADAPTIVE_SEARCH_LEVELS {
-                    derive_candidate_level_params_all_splits(
+                    derive_candidate_level_params_split_frontier(
+                        None,
                         policy,
                         payload_mode,
                         &ring_challenge,
@@ -76,12 +78,17 @@ fn enumerate_suffixes(
                             *candidate_dimensions,
                         ),
                         input_witness_len,
+                        crate::InnerBasisSource::BalancedDigits {
+                            log_basis: current_log_basis,
+                        },
+                        current_log_basis,
                         log_basis,
                         level,
                         None,
                     )?
                 } else {
                     derive_candidate_level_params(
+                        None,
                         policy,
                         payload_mode,
                         &ring_challenge,
@@ -89,6 +96,10 @@ fn enumerate_suffixes(
                             *candidate_dimensions,
                         ),
                         input_witness_len,
+                        crate::InnerBasisSource::BalancedDigits {
+                            log_basis: current_log_basis,
+                        },
+                        current_log_basis,
                         log_basis,
                         level,
                         None,
@@ -122,7 +133,7 @@ fn enumerate_suffixes(
                             })?;
                         terminal.estimated_direct_payload_bytes = direct_bytes;
                         schedules.push(ScheduleCandidate {
-                            first_direct_setup_field_len: Some(
+                            first_direct_setup_field_len: std::num::NonZeroUsize::new(
                                 akita_types::active_setup_field_len(
                                     &params,
                                     &suffix_opening_layout(input_witness_len, None)?,
@@ -136,8 +147,8 @@ fn enumerate_suffixes(
                                 },
                             )?,
                             setup_field_elements: terminal_setup_field_elements(&terminal.params)?,
-                            folds: Vec::new(),
-                            terminal,
+                            folds: CandidateFoldChain::default(),
+                            terminal: Arc::new(terminal),
                         });
                     }
 
@@ -175,17 +186,15 @@ fn enumerate_suffixes(
                                 "unpruned traversal fold proof size overflow".into(),
                             )
                         })?;
-                        let mut folds = Vec::with_capacity(child.folds.len() + 1);
-                        folds.push(CandidateFoldStep {
-                            params: params.clone(),
+                        let folds = child.folds.prepend(CandidateFoldStep {
+                            params: Arc::new(params.clone()),
                             input_witness_len,
                             output_witness_len,
                             estimated_direct_payload_bytes: direct_bytes,
                             estimated_stage3_payload_bytes: 0,
                         });
-                        folds.extend(child.folds.iter().cloned());
                         schedules.push(ScheduleCandidate {
-                            first_direct_setup_field_len: Some(
+                            first_direct_setup_field_len: std::num::NonZeroUsize::new(
                                 akita_types::active_setup_field_len(
                                     &params,
                                     &suffix_opening_layout(input_witness_len, None)?,
@@ -225,7 +234,7 @@ pub(super) fn find_schedule(
     let input_witness_len = 1usize.checked_shl(key.num_vars() as u32).ok_or_else(|| {
         AkitaError::InvalidSetup("unpruned traversal root witness too large".into())
     })?;
-    let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(0);
+    let (min_log_basis, max_log_basis) = crate::policy::log_basis_search_range_at_level(policy, 0);
     let mut complete = Vec::new();
     let schedule_key = akita_types::AkitaScheduleLookupKey::single(key);
     let ctx = UnprunedCtx {
@@ -234,96 +243,100 @@ pub(super) fn find_schedule(
         ring_challenge_config: &ring_challenge_config,
         key,
     };
+    let inner_source =
+        root_inner_basis_source(honest_fold_policy, policy.decomposition.log_commit_bound);
+    let (min_inner_basis, max_inner_basis) = inner_source.search_range(policy)?;
 
     for log_basis in min_log_basis..=max_log_basis {
-        for root_dimensions in dimensions.candidates() {
-            let alpha = root_dimensions.d_a().trailing_zeros() as usize;
-            let reduced_vars = key.num_vars().saturating_sub(alpha);
-            if reduced_vars == 0 {
-                continue;
-            }
-            let Ok(ring_challenge) = ring_challenge_config(root_dimensions.d_a()) else {
-                continue;
-            };
-            for (root_params, output_witness_len) in
-                crate::planner::root_level_candidates_for_basis(
-                    &schedule_key,
-                    honest_fold_policy,
-                    &[],
-                    policy,
-                    akita_schedules::planner_support::RingDimensionCandidate::Fixed(
-                        *root_dimensions,
-                    ),
-                    &ring_challenge,
-                    &ring_challenge_config,
-                    input_witness_len,
-                    log_basis,
-                    true,
-                )?
-            {
-                let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
-                    policy.challenge_field_bits()?,
-                    policy.claim_ext_degree,
-                    0,
-                    key,
-                    input_witness_len,
-                    root_dimensions.d_a(),
-                )?
-                else {
+        for inner_basis in min_inner_basis..=max_inner_basis {
+            for root_dimensions in dimensions.candidates() {
+                let alpha = root_dimensions.d_a().trailing_zeros() as usize;
+                let reduced_vars = key.num_vars().saturating_sub(alpha);
+                if reduced_vars == 0 {
+                    continue;
+                }
+                let Ok(ring_challenge) = ring_challenge_config(root_dimensions.d_a()) else {
                     continue;
                 };
-                for suffix in enumerate_suffixes(
-                    &ctx,
-                    UnprunedState {
-                        level: 1,
-                        input_witness_len: output_witness_len,
-                        current_log_basis: log_basis,
-                        dimension_ceiling: *root_dimensions,
-                        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-                    },
-                )? {
-                    let child_is_terminal = suffix.folds.is_empty();
-                    let root_bytes = level_proof_bytes(
-                        field_bits,
-                        policy.challenge_field_bits()?,
-                        &root_params,
-                        suffix.first_fold_params(),
-                        output_witness_len,
-                        Some(if child_is_terminal {
-                            akita_types::NextWitnessBindingPolicy::TerminalInnerState
-                        } else {
-                            akita_types::NextWitnessBindingPolicy::OuterPayload
-                        }),
-                    )?
-                    .checked_add(eor_bytes)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "unpruned traversal root proof size overflow".into(),
-                        )
-                    })?;
-                    let mut folds = Vec::with_capacity(suffix.folds.len() + 1);
-                    folds.push(CandidateFoldStep {
-                        params: root_params.clone(),
+                for (root_params, output_witness_len) in
+                    crate::planner::root_level_candidates_for_basis(
+                        &schedule_key,
+                        honest_fold_policy,
+                        &[],
+                        policy,
+                        akita_schedules::planner_support::RingDimensionCandidate::Fixed(
+                            *root_dimensions,
+                        ),
+                        &ring_challenge,
+                        &ring_challenge_config,
                         input_witness_len,
-                        output_witness_len,
-                        estimated_direct_payload_bytes: root_bytes,
-                        estimated_stage3_payload_bytes: 0,
-                    });
-                    folds.extend(suffix.folds.iter().cloned());
-                    complete.push(ScheduleCandidate {
-                        first_direct_setup_field_len: None,
-                        total_bytes: root_bytes.checked_add(suffix.total_bytes).ok_or_else(
-                            || {
-                                AkitaError::InvalidSetup(
-                                    "unpruned traversal proof size overflow".into(),
-                                )
-                            },
-                        )?,
-                        setup_field_elements: level_setup_field_elements(&root_params)?
-                            .max(suffix.setup_field_elements),
-                        folds,
-                        terminal: suffix.terminal,
-                    });
+                        inner_basis,
+                        log_basis,
+                        true,
+                    )?
+                {
+                    let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
+                        policy.challenge_field_bits()?,
+                        policy.claim_ext_degree,
+                        0,
+                        key,
+                        input_witness_len,
+                        root_dimensions.d_a(),
+                    )?
+                    else {
+                        continue;
+                    };
+                    for suffix in enumerate_suffixes(
+                        &ctx,
+                        UnprunedState {
+                            level: 1,
+                            input_witness_len: output_witness_len,
+                            current_log_basis: log_basis,
+                            dimension_ceiling: *root_dimensions,
+                            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+                        },
+                    )? {
+                        let child_is_terminal = suffix.folds.is_empty();
+                        let root_bytes = level_proof_bytes(
+                            field_bits,
+                            policy.challenge_field_bits()?,
+                            &root_params,
+                            suffix.first_fold_params(),
+                            output_witness_len,
+                            Some(if child_is_terminal {
+                                akita_types::NextWitnessBindingPolicy::TerminalInnerState
+                            } else {
+                                akita_types::NextWitnessBindingPolicy::OuterPayload
+                            }),
+                        )?
+                        .checked_add(eor_bytes)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "unpruned traversal root proof size overflow".into(),
+                            )
+                        })?;
+                        let folds = suffix.folds.prepend(CandidateFoldStep {
+                            params: Arc::new(root_params.clone()),
+                            input_witness_len,
+                            output_witness_len,
+                            estimated_direct_payload_bytes: root_bytes,
+                            estimated_stage3_payload_bytes: 0,
+                        });
+                        complete.push(ScheduleCandidate {
+                            first_direct_setup_field_len: None,
+                            total_bytes: root_bytes.checked_add(suffix.total_bytes).ok_or_else(
+                                || {
+                                    AkitaError::InvalidSetup(
+                                        "unpruned traversal proof size overflow".into(),
+                                    )
+                                },
+                            )?,
+                            setup_field_elements: level_setup_field_elements(&root_params)?
+                                .max(suffix.setup_field_elements),
+                            folds,
+                            terminal: suffix.terminal,
+                        });
+                    }
                 }
             }
         }
@@ -341,7 +354,7 @@ pub(super) fn find_schedule(
         selected.total_bytes,
         selected.setup_field_elements,
         None,
-        selected.folds,
-        selected.terminal,
+        selected.folds.to_vec(),
+        selected.terminal.as_ref().clone(),
     )
 }

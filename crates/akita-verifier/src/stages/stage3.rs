@@ -311,13 +311,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::{committed_group_params, proof_optimized::fp128::Dense};
+    use akita_config::{proof_optimized::fp128::Dense, CommitmentConfig};
     use akita_field::Prime128OffsetA7F7;
     use akita_transcript::AkitaTranscript;
     use akita_types::{
         derive_public_matrix_prefix, padded_setup_prefix_len, setup_prefix_precommitted_params,
-        setup_prefix_slot_id, AkitaSetupDescriptor, CommittedGroupParams, PolynomialGroupLayout,
-        RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+        setup_prefix_slot_id, AkitaScheduleLookupKey, AkitaSetupDescriptor, CommittedGroupParams,
+        PolynomialGroupLayout, RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierRegistry,
+        SetupPrefixVerifierSlot,
     };
     use std::sync::Arc;
 
@@ -366,8 +367,14 @@ mod tests {
 
     #[test]
     fn offloaded_setup_ignores_shared_matrix_divisibility() {
-        let level_params = committed_group_params::<Dense>(&PolynomialGroupLayout::singleton(16))
-            .expect("level parameters");
+        let level_params = Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(16),
+        ))
+        .expect("scalar schedule")
+        .root
+        .params
+        .final_group
+        .commitment;
         let natural_field_len = level_params
             .inner_commit_matrix
             .ring_dimension()

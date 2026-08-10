@@ -15,6 +15,7 @@ to track current behavior; update the owning book chapter instead.
 | `2026-Q3/packed-sumcheck.md` | superseded | `book/src/how/optimizations.md` | 2026-Q3 |
 | `2026-Q3/pr375-prover-streaming-and-onehot-unification.md` | archived | `book/src/how/optimizations.md` | 2026-Q3 |
 | `2026-Q3/profile-bench-coverage-matrix.md` | archived | `book/src/usage/profiling.md` | 2026-Q3 |
+| `2026-Q3/multi-group-batching-legacy.md` | historical | _(superseded API record)_ | 2026-Q3 |
 | `2026-Q3/group-local-opening-points.md` | archived | `book/src/how/architecture.md` | 2026-Q3 |
 | `2026-Q3/digit-range-pipeline-refactor.md` | archived | `book/src/how/proving/sumcheck-stages.md` | 2026-Q3 |
 | `2026-Q2/w-to-e-notation.md` | archived | `book/src/foundations/glossary.md` | 2026-Q2 |

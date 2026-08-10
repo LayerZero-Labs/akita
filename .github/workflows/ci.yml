@@ -187,6 +187,9 @@ jobs:
           shared-key: ci-test-all-schedules-drift
           add-job-id-key: false
           cache-on-failure: true
+      - name: Committed catalog coverage guard
+        run: |
+          cargo test --release -p akita-config --features all-schedules generated_catalogs_cover_emitted_keys
       - name: Generate schedule tables
         run: scripts/generate-schedule-tables.sh
       - name: Committed schedule tables match the generator

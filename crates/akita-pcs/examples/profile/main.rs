@@ -3,8 +3,9 @@
 #[cfg(all(
     feature = "profile-bench-selected",
     not(any(
-        feature = "profile-ci-fp128-dense",
-        feature = "profile-ci-flat-onehot",
+        feature = "profile-ci-fp32",
+        feature = "profile-ci-fp64",
+        feature = "profile-ci-fp128-base",
         feature = "profile-ci-multi-group-direct",
         feature = "profile-ci-multi-group-recursive",
         feature = "profile-ci-multi-group-recursive-w8r2",

@@ -2064,6 +2064,26 @@ def render_profile_definitions(cases: list[dict[str, object]]) -> None:
         )
 
 
+def fold_dimension_schedule(summary: dict[str, object]) -> str:
+    """Render consecutive distinct A/B/D tuples from the resolved fold plan."""
+    levels = summary.get("planned_levels")
+    if not isinstance(levels, list):
+        return "—"
+    tuples: list[tuple[int, int, int]] = []
+    for level in levels:
+        if not isinstance(level, dict):
+            continue
+        try:
+            dims = (int(level["d_a"]), int(level["d_b"]), int(level["d_d"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not tuples or tuples[-1] != dims:
+            tuples.append(dims)
+    if not tuples:
+        return "—"
+    return " → ".join(f"{d_a}/{d_b}/{d_d}" for d_a, d_b, d_d in tuples)
+
+
 def render_matrix_summary(
     current_cases: list[dict[str, object]],
     main_baseline: dict[str, dict[str, object]] | None,
@@ -2088,6 +2108,7 @@ def render_matrix_summary(
                     fmt_milliseconds,
                 ),
             ],
+            False,
         ),
         (
             "Memory and setup size",
@@ -2107,6 +2128,7 @@ def render_matrix_summary(
                 ),
                 Metric("max_rss_kib", "Peak RSS", " MiB", fmt_mib),
             ],
+            False,
         ),
         (
             "Proof size and protocol shape",
@@ -2116,21 +2138,31 @@ def render_matrix_summary(
                 Metric("tail_bytes", "Terminal response", " bytes", fmt_bytes),
                 Metric("akita_levels", "Fold levels", "", fmt_count),
             ],
+            True,
         ),
     ]
 
-    for table_index, (title, metrics) in enumerate(tables):
+    for table_index, (title, metrics, include_fold_schedule) in enumerate(tables):
         if table_index:
             print()
         print(f"### {title}")
         print()
-        headers = ["Profile", *(metric.name for metric in metrics)]
+        shape_headers = ["Fold A/B/D schedule"] if include_fold_schedule else []
+        headers = ["Profile", *shape_headers, *(metric.name for metric in metrics)]
         print("| " + " | ".join(headers) + " |")
-        print("| " + " | ".join(["---", *("---:" for _ in metrics)]) + " |")
+        print(
+            "| "
+            + " | ".join(
+                ["---", *("---" for _ in shape_headers), *("---:" for _ in metrics)]
+            )
+            + " |"
+        )
 
         for current in current_cases:
             baseline = main_baseline.get(str(current["case_id"])) if main_baseline else None
             row = [md_text(human_case_label(current))]
+            if include_fold_schedule:
+                row.append(fold_dimension_schedule(current))
             for metric in metrics:
                 row.append(
                     optional_value_with_baseline_delta(

@@ -7,7 +7,6 @@
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
@@ -18,6 +17,8 @@ use akita_types::{
 };
 
 use crate::PlannerPolicy;
+mod publish;
+mod render;
 use akita_schedules::expected_catalog_identity;
 use akita_schedules::generated::{
     GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
@@ -26,6 +27,8 @@ use akita_schedules::generated::{
     GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput,
     GeneratedTerminalFold, GeneratedWitnessPartition,
 };
+pub use publish::publish_generated_outputs;
+pub use render::{render_generated_outputs, GeneratedOutput};
 
 /// One family the emitter writes to `akita-schedules/src/generated/`.
 #[derive(Clone)]
@@ -37,7 +40,6 @@ pub struct EmitSpec {
     pub policy: PlannerPolicy,
     pub keys: Vec<PolynomialGroupLayout>,
     pub group_batch_keys: Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>,
-    pub emit_group_batch: bool,
     pub output_dir: PathBuf,
     pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
     pub regen_group_batch:
@@ -49,6 +51,74 @@ pub struct EmitSpec {
 
 const MOD_WIRING_BEGIN: &str = "// @generated schedule module wiring begin";
 const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
+// Schedule search is memory bound. Keep the default below host-wide
+// parallelism while allowing explicit tuning for large generation machines.
+const DEFAULT_SCHEDULE_GENERATION_WORKERS: usize = 2;
+
+pub(crate) fn schedule_generation_worker_count(work_items: usize) -> usize {
+    let configured = std::env::var("AKITA_SCHEDULE_GEN_JOBS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or(DEFAULT_SCHEDULE_GENERATION_WORKERS);
+    std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(configured)
+        .min(work_items.max(1))
+}
+
+pub(crate) fn bounded_parallel_filter_map<T, R>(
+    items: &[T],
+    workers: usize,
+    map: impl Fn(&T) -> Result<Option<R>, String> + Sync,
+) -> Result<Vec<R>, String>
+where
+    T: Sync,
+    R: Send,
+{
+    // A private scoped pool gives this memory-heavy phase an explicit bound;
+    // the workspace Rayon pool follows host-wide parallelism instead.
+    if workers <= 1 || items.len() < 2 * workers {
+        return items
+            .iter()
+            .filter_map(|item| map(item).transpose())
+            .collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut mapped = std::thread::scope(|scope| -> Result<Vec<(usize, R)>, String> {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                let map = &map;
+                let next = &next;
+                scope.spawn(move || {
+                    let mut local = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(item) = items.get(index) else {
+                            break;
+                        };
+                        if let Some(value) = map(item)? {
+                            local.push((index, value));
+                        }
+                    }
+                    Ok::<_, String>(local)
+                })
+            })
+            .collect();
+        let mut output = Vec::new();
+        for handle in handles {
+            match handle.join() {
+                Ok(Ok(local)) => output.extend(local),
+                Ok(Err(error)) => return Err(error),
+                Err(_) => return Err("schedule generation worker panicked".into()),
+            }
+        }
+        Ok(output)
+    })?;
+    mapped.sort_by_key(|(index, _)| *index);
+    Ok(mapped.into_iter().map(|(_, value)| value).collect())
+}
 
 fn geometry(p: &CommittedGroupParams) -> GeneratedBlockGeometry {
     GeneratedBlockGeometry {
@@ -553,6 +623,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    protocol_epoch: {protocol_epoch},\n",
             "    cost_model: PlannerCostModelId::{cost_model},\n",
             "    selection_policy: SelectionPolicyId::{selection_policy},\n",
+            "    recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::{recursive_split_search_policy},\n",
             "    setup_field_budget: {setup_field_budget},\n",
             "    min_offloaded_witness_contraction: {min_offloaded_witness_contraction},\n",
             "    sis_modulus_profile: {sis_modulus_profile},\n",
@@ -564,7 +635,8 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    ring_subfield_norm_bound: {ring_subfield_norm_bound},\n",
             "    claim_ext_degree: {claim_ext_degree},\n",
             "    chal_ext_degree: {chal_ext_degree},\n",
-            "    basis_range: ({basis_min}, {basis_max}),\n",
+            "    inner_basis_range: ({inner_basis_min}, {inner_basis_max}),\n",
+            "    opening_basis_range: ({basis_min}, {basis_max}),\n",
             "    witness_chunk: {witness_chunk},\n",
             "    recursive_setup_planning: {recursive_setup_planning},\n",
             "    ring_dimension_schedule_mode: {ring_dimension_schedule_mode},\n",
@@ -581,6 +653,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         protocol_epoch = identity.protocol_epoch,
         cost_model = identity.cost_model.name(),
         selection_policy = identity.selection_policy.name(),
+        recursive_split_search_policy = identity.recursive_split_search_policy.name(),
         setup_field_budget = match identity.setup_field_budget {
             Some(value) => format!("Some({value})"),
             None => "None".to_string(),
@@ -595,8 +668,10 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         ring_subfield_norm_bound = identity.ring_subfield_norm_bound,
         claim_ext_degree = identity.claim_ext_degree,
         chal_ext_degree = identity.chal_ext_degree,
-        basis_min = identity.basis_range.0,
-        basis_max = identity.basis_range.1,
+        inner_basis_min = identity.inner_basis_range.0,
+        inner_basis_max = identity.inner_basis_range.1,
+        basis_min = identity.opening_basis_range.0,
+        basis_max = identity.opening_basis_range.1,
         witness_chunk = emit_witness_chunk(identity.witness_chunk),
         recursive_setup_planning = identity.recursive_setup_planning,
         ring_challenge_config_digest = identity.ring_challenge_config_digest,
@@ -605,93 +680,53 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
     )
 }
 
-fn output_module_name(spec: &EmitSpec) -> String {
-    spec.module_name.to_string()
-}
-
-fn output_const_name(spec: &EmitSpec) -> String {
-    spec.const_name.to_string()
+enum PlanningRequest {
+    Scalar(PolynomialGroupLayout),
+    Grouped {
+        key: AkitaScheduleLookupKey,
+        honest_fold_policies: Vec<HonestFoldPolicySpec>,
+    },
 }
 
 fn materialized_entries(
     spec: &EmitSpec,
 ) -> Result<Vec<(AkitaScheduleLookupKey, FoldSchedule)>, String> {
-    let mut keys = Vec::with_capacity(spec.keys.len() + spec.group_batch_keys.len());
-    keys.extend(
-        spec.keys
+    let mut requests = Vec::with_capacity(spec.keys.len() + spec.group_batch_keys.len());
+    requests.extend(spec.keys.iter().copied().map(PlanningRequest::Scalar));
+    requests.extend(
+        spec.group_batch_keys
             .iter()
-            .copied()
-            .map(AkitaScheduleLookupKey::single),
+            .cloned()
+            .map(|(key, honest_fold_policies)| PlanningRequest::Grouped {
+                key,
+                honest_fold_policies,
+            }),
     );
-    keys.extend(spec.group_batch_keys.iter().map(|(key, _)| key.clone()));
-
-    let workers = std::thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(1)
-        .min(keys.len().max(1));
-    let mut entries = Vec::new();
-    if workers > 1 && keys.len() >= 2 * workers {
-        let chunk_size = keys.len().div_ceil(workers);
-        std::thread::scope(|scope| -> Result<(), String> {
-            let handles: Vec<_> = keys
-                .chunks(chunk_size)
-                .map(|chunk| {
-                    scope.spawn(move || {
-                        let mut local = Vec::new();
-                        for key in chunk.iter().cloned() {
-                            if let Some(entry) = materialized_entry(spec, key)? {
-                                local.push(entry);
-                            }
-                        }
-                        Ok::<_, String>(local)
-                    })
-                })
-                .collect();
-            let mut first_error = None;
-            for handle in handles {
-                match handle.join() {
-                    Ok(Ok(local)) if first_error.is_none() => entries.extend(local),
-                    Ok(Ok(_)) => {}
-                    Ok(Err(error)) => {
-                        first_error.get_or_insert(error);
-                    }
-                    Err(_) => {
-                        first_error.get_or_insert_with(|| {
-                            format!("{}: regen worker panicked", spec.module_name)
-                        });
-                    }
-                }
-            }
-            if let Some(error) = first_error {
-                return Err(error);
-            }
-            Ok(())
-        })?;
-    } else {
-        for key in keys {
-            if let Some(entry) = materialized_entry(spec, key)? {
-                entries.push(entry);
-            }
-        }
-    }
-    entries.sort_by(|(left, _), (right, _)| akita_schedules::runtime_schedule_key_cmp(left, right));
-    Ok(entries)
+    let workers = schedule_generation_worker_count(requests.len());
+    let mut regenerated_entries = bounded_parallel_filter_map(&requests, workers, |request| {
+        materialized_entry(spec, request)
+    })?;
+    regenerated_entries
+        .sort_by(|(left, _), (right, _)| akita_schedules::runtime_schedule_key_cmp(left, right));
+    Ok(regenerated_entries)
 }
 
 fn materialized_entry(
     spec: &EmitSpec,
-    key: AkitaScheduleLookupKey,
+    request: &PlanningRequest,
 ) -> Result<Option<(AkitaScheduleLookupKey, FoldSchedule)>, String> {
-    let result = if key.precommitteds.is_empty() {
-        (spec.regen)(key.final_group)
-    } else {
-        let (key, norms) = spec
-            .group_batch_keys
-            .iter()
-            .find(|(candidate, _)| candidate == &key)
-            .cloned()
-            .ok_or_else(|| format!("{}: missing grouped planning request", spec.module_name))?;
-        (spec.regen_group_batch)(key, norms)
+    let (key, result) = match request {
+        PlanningRequest::Scalar(key) => {
+            let lookup = AkitaScheduleLookupKey::single(*key);
+            (lookup, (spec.regen)(*key))
+        }
+        PlanningRequest::Grouped {
+            key,
+            honest_fold_policies,
+        } => (
+            key.clone(),
+            (spec.regen_group_batch)(key.clone(), honest_fold_policies.clone()),
+        ),
     };
     match result {
         Ok(schedule) => Ok(Some((key, schedule))),
@@ -712,7 +747,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     let materialized = materialized_entries(spec)?;
 
     let mut out = String::new();
-    let const_name = output_const_name(spec);
+    let const_name = spec.const_name;
     writeln!(out, "// Generated by `{}`", spec.generator_command).map_err(|e| e.to_string())?;
     writeln!(out, "#[allow(unused_imports)]").map_err(|e| e.to_string())?;
     writeln!(
@@ -790,124 +825,4 @@ pub fn emit_precommitted_profiles_module(spec: &EmitSpec) -> Result<String, Stri
     }
     writeln!(out, "];").map_err(|e| e.to_string())?;
     Ok(out)
-}
-
-fn emit_module_declarations(specs: &[EmitSpec]) -> Result<String, String> {
-    let mut out = String::new();
-    let mut seen = std::collections::BTreeSet::new();
-    for spec in specs {
-        if !seen.insert(spec.module_name) {
-            continue;
-        }
-        let module_name = spec.module_name;
-        let precommitted_module_name = precommitted_profiles_module_name(spec);
-        let feat = spec.schedule_feature;
-        writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
-        writeln!(out, "pub mod {module_name};").map_err(|e| e.to_string())?;
-        writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
-        writeln!(out, "pub mod {precommitted_module_name};").map_err(|e| e.to_string())?;
-    }
-    writeln!(out).map_err(|e| e.to_string())?;
-    Ok(out)
-}
-
-fn table_fn_name(module_name: &str) -> String {
-    format!("{module_name}_table")
-}
-
-fn emit_table_accessor(spec: &EmitSpec) -> Result<String, String> {
-    let fn_name = table_fn_name(spec.module_name);
-    let feat = spec.schedule_feature;
-    let module_name = spec.module_name;
-    let precommitted_module_name = precommitted_profiles_module_name(spec);
-    let const_name = spec.const_name;
-    let precommitted_profiles_const = precommitted_profiles_const_name(spec);
-    Ok(format!(
-        "#[cfg(feature = \"{feat}\")]\n\
-         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        precommitted_profiles: {precommitted_module_name}::{precommitted_profiles_const},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
-    ))
-}
-
-fn emit_mod_wiring(specs: &[EmitSpec]) -> Result<String, String> {
-    let mut out = emit_module_declarations(specs)?;
-    let mut seen = std::collections::BTreeSet::new();
-    for spec in specs {
-        if !seen.insert(spec.module_name) {
-            continue;
-        }
-        out.push_str(&emit_table_accessor(spec)?);
-        out.push('\n');
-    }
-    Ok(out)
-}
-
-fn replace_between_markers(
-    content: &str,
-    begin: &str,
-    end: &str,
-    replacement: &str,
-) -> Result<String, String> {
-    let start = content
-        .find(begin)
-        .ok_or_else(|| format!("missing generated marker `{begin}`"))?
-        + begin.len();
-    let end_pos = content
-        .find(end)
-        .ok_or_else(|| format!("missing generated marker `{end}`"))?;
-    if end_pos < start {
-        return Err(format!(
-            "generated markers `{begin}` and `{end}` are out of order"
-        ));
-    }
-    let mut out = String::new();
-    out.push_str(&content[..start]);
-    out.push('\n');
-    out.push_str(replacement.trim_end());
-    out.push('\n');
-    out.push_str(&content[end_pos..]);
-    Ok(out)
-}
-
-/// Refresh the `@generated schedule module wiring` block in `mod.rs`.
-pub fn refresh_generated_wiring(specs: &[EmitSpec], mod_path: &Path) -> Result<(), String> {
-    let mod_src =
-        fs::read_to_string(mod_path).map_err(|e| format!("read {}: {e}", mod_path.display()))?;
-    let mod_wiring = emit_mod_wiring(specs)?;
-    let mod_src = replace_between_markers(&mod_src, MOD_WIRING_BEGIN, MOD_WIRING_END, &mod_wiring)?;
-    fs::write(mod_path, mod_src).map_err(|e| format!("write {}: {e}", mod_path.display()))?;
-    Ok(())
-}
-
-/// Run `cargo fmt` on planner, schedules, and config after regen.
-pub fn run_regen_fmt() -> Result<(), String> {
-    for package in ["akita-planner", "akita-schedules", "akita-config"] {
-        let status = Command::new("cargo")
-            .args(["fmt", "-p", package])
-            .status()
-            .map_err(|e| format!("spawn cargo fmt: {e}"))?;
-        if !status.success() {
-            return Err(format!("cargo fmt -p {package} failed with {status}"));
-        }
-    }
-    Ok(())
-}
-
-/// Write one family module to `spec.output_dir` and return its path.
-pub fn write_family_module(spec: &EmitSpec) -> Result<PathBuf, String> {
-    let body = emit_family_module(spec)?;
-    let dest = spec
-        .output_dir
-        .join(format!("{}.rs", output_module_name(spec)));
-    fs::write(&dest, &body).map_err(|e| format!("write {}: {e}", dest.display()))?;
-    Ok(dest)
-}
-
-/// Write one compact standalone precommit registry module to `spec.output_dir`.
-pub fn write_precommitted_profiles_module(spec: &EmitSpec) -> Result<PathBuf, String> {
-    let body = emit_precommitted_profiles_module(spec)?;
-    let dest = spec
-        .output_dir
-        .join(format!("{}.rs", precommitted_profiles_module_name(spec)));
-    fs::write(&dest, &body).map_err(|e| format!("write {}: {e}", dest.display()))?;
-    Ok(dest)
 }

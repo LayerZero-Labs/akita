@@ -24,8 +24,8 @@ pub use resolve::{
     ResolvedScheduleRow,
 };
 pub use runtime::{
-    default_sis_security_policy, PlannerCostModelId, PlannerPolicy, RingDimensionScheduleMode,
-    RuntimeSchedulePolicy, SelectionPolicyId, ADAPTIVE_SEARCH_LEVELS,
+    default_sis_security_policy, PlannerCostModelId, PlannerPolicy, RecursiveSplitSearchPolicy,
+    RingDimensionScheduleMode, RuntimeSchedulePolicy, SelectionPolicyId, ADAPTIVE_SEARCH_LEVELS,
 };
 
 /// Shared schedule-construction primitives used by offline search and generated-row replay.

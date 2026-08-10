@@ -12,24 +12,14 @@ use rand::{Rng, SeedableRng};
 const ONEHOT_K: usize = 256;
 
 pub(super) fn make_profile_onehot_poly<FF>(
-    layout: &CommittedGroupParams,
+    num_vars: usize,
+    ring_dimension: usize,
     seed: u64,
 ) -> OneHotPoly<FF, u8>
 where
     FF: CanonicalField + FromPrimitiveInt,
 {
-    let d = layout.d_a();
-    let total_field = layout
-        .num_live_blocks
-        .checked_mul(layout.num_positions_per_block)
-        .and_then(|n| n.checked_mul(d))
-        .expect("onehot total field size overflow");
-    let num_vars = layout
-        .position_index_bits()
-        .checked_add(layout.block_index_bits())
-        .and_then(|n| n.checked_add(d.trailing_zeros() as usize))
-        .expect("onehot variable count overflow");
-    assert_eq!(total_field, 1usize << num_vars);
+    let total_field = 1usize << num_vars;
     let onehot_k = onehot_k_for_num_vars(num_vars);
     let total_chunks = total_field / onehot_k;
     assert_eq!(total_chunks * onehot_k, total_field);
@@ -38,7 +28,7 @@ where
     let indices = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
-    OneHotPoly::<FF, u8>::new(onehot_k, d, indices).expect("profile onehot poly")
+    OneHotPoly::<FF, u8>::new(onehot_k, ring_dimension, indices).expect("profile onehot poly")
 }
 
 pub(crate) fn onehot_k_for_num_vars(nv: usize) -> usize {

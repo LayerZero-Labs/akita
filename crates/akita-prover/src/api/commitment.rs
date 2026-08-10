@@ -5,7 +5,7 @@ use crate::compute::{
     tensor_root_projection, CommitInnerPlan, OperationCtx, RootCommitSource, RootPolyMeta,
     RuntimeCommitBackendFor, RuntimeRootCommitBackend, RuntimeRootCommitPoly, UniformProverStack,
 };
-use crate::validation::validate_i8_setup_log_basis;
+use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
 use crate::RootTensorProjectionPoly;
 use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -16,8 +16,8 @@ use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
     Commitment, CommitmentRingDims, CommittedGroup, CommittedGroupParams, CommittedGroupProfile,
-    CompressionChainPlan, FpExtEncoding, OpeningClaimsLayout, OpeningScheduleSelection,
-    PolynomialGroupLayout, RingVec,
+    CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams, OpeningClaimsLayout,
+    OpeningScheduleSelection, OuterCommitMatrixParams, PolynomialGroupLayout, RingVec,
 };
 
 mod inner;
@@ -41,6 +41,119 @@ pub type FinalCommittedGroupWithHint<F> = (
     OpeningScheduleSelection,
 );
 
+#[derive(Clone, Copy)]
+struct CommitmentGeometry<'a> {
+    context: &'static str,
+    num_positions_per_block: usize,
+    log_basis_inner: u32,
+    num_digits_inner: usize,
+    inner_matrix: &'a InnerCommitMatrixParams,
+    log_basis_outer: u32,
+    outer_matrix: &'a OuterCommitMatrixParams,
+}
+
+impl<'a> From<&'a CommittedGroupParams> for CommitmentGeometry<'a> {
+    fn from(params: &'a CommittedGroupParams) -> Self {
+        Self {
+            context: "commit params",
+            num_positions_per_block: params.num_positions_per_block,
+            log_basis_inner: params.log_basis_inner,
+            num_digits_inner: params.num_digits_inner,
+            inner_matrix: &params.inner_commit_matrix,
+            log_basis_outer: params.log_basis_outer,
+            outer_matrix: &params.outer_commit_matrix,
+        }
+    }
+}
+
+impl<'a> From<&'a CommittedGroupProfile> for CommitmentGeometry<'a> {
+    fn from(profile: &'a CommittedGroupProfile) -> Self {
+        Self {
+            context: "precommit profile",
+            num_positions_per_block: profile.num_positions_per_block,
+            log_basis_inner: profile.log_basis_inner,
+            num_digits_inner: profile.num_digits_inner,
+            inner_matrix: &profile.inner_commit_matrix,
+            log_basis_outer: profile.log_basis_outer,
+            outer_matrix: &profile.outer_commit_matrix,
+        }
+    }
+}
+
+fn validate_commitment_geometry<F>(
+    geometry: CommitmentGeometry<'_>,
+    setup: &AkitaExpandedSetup<F>,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    signed_digit_kernel_for_setup(
+        geometry.log_basis_inner,
+        "for signed witness commitment decomposition",
+    )?;
+    validate_i8_setup_log_basis(
+        geometry.log_basis_outer,
+        "for i8 outer commitment decomposition",
+    )?;
+
+    // A/B geometry is independent of the D/opening matrix. Mirroring B into
+    // the opening slot lets the shared role validator enforce only the two
+    // dimensions represented by this borrowed view.
+    let dims = CommitmentRingDims {
+        inner: geometry.inner_matrix.ring_dimension(),
+        outer: geometry.outer_matrix.ring_dimension(),
+        opening: geometry.outer_matrix.ring_dimension(),
+    };
+    validate_role_dims(dims)?;
+    validate_role_dims_for_field::<F>(dims)?;
+
+    let expected_a_width = geometry
+        .num_positions_per_block
+        .checked_mul(geometry.num_digits_inner)
+        .ok_or_else(|| AkitaError::InvalidSetup("A commit width overflow".to_string()))?;
+    if geometry.inner_matrix.input_width() != expected_a_width {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{} A width {} does not match num_positions_per_block * num_digits_inner = {expected_a_width}",
+            geometry.context,
+            geometry.inner_matrix.input_width()
+        )));
+    }
+    if geometry.outer_matrix.input_width() == 0 {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{} requires nonzero B width, got B={}",
+            geometry.context,
+            geometry.outer_matrix.input_width()
+        )));
+    }
+
+    for (role, output_rank, input_width, ring_dimension) in [
+        (
+            "A",
+            geometry.inner_matrix.output_rank(),
+            geometry.inner_matrix.input_width(),
+            dims.d_a(),
+        ),
+        (
+            "B",
+            geometry.outer_matrix.output_rank(),
+            geometry.outer_matrix.input_width(),
+            dims.d_b(),
+        ),
+    ] {
+        let required = output_rank
+            .checked_mul(input_width)
+            .ok_or_else(|| AkitaError::InvalidSetup(format!("{role} setup footprint overflow")))?;
+        let available = setup.shared_matrix.num_field_elements() / ring_dimension;
+        if required > available {
+            return Err(AkitaError::InvalidSetup(format!(
+                "{role}-role {} requires {required} setup ring elements at d={ring_dimension}, but setup has {available}",
+                geometry.context
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_commit_level_params<F>(
     params: &CommittedGroupParams,
     setup: &AkitaExpandedSetup<F>,
@@ -53,67 +166,28 @@ where
             "commit params require nonzero num_live_blocks and num_positions_per_block".to_string(),
         ));
     }
-    if params.num_digits_inner == 0 || params.num_digits_outer == 0 || params.num_digits_open == 0 {
+    if params.num_digits_inner == 0 || params.num_digits_outer == 0 {
         return Err(AkitaError::InvalidSetup(
-            "commit params require nonzero digit depths".to_string(),
+            "commit params require nonzero A/B digit depths".to_string(),
         ));
     }
-    validate_i8_setup_log_basis(
-        params.log_basis_inner,
-        "for i8 witness commitment decomposition",
-    )?;
-    validate_i8_setup_log_basis(
-        params.log_basis_outer,
-        "for i8 outer commitment decomposition",
-    )?;
+    validate_commitment_geometry::<F>(params.into(), setup)?;
+
+    // D/opening geometry is level-only: standalone commitment profiles freeze
+    // only the A/B matrices used to materialize the commitment.
+    if params.num_digits_open == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "commit params require nonzero opening digit depth".to_string(),
+        ));
+    }
     validate_i8_setup_log_basis(params.log_basis_open, "for i8 opening decomposition")?;
     let dims = params.role_dims();
     validate_role_dims(dims)?;
     validate_role_dims_for_field::<F>(dims)?;
-    let expected_a_width = params
-        .num_positions_per_block
-        .checked_mul(params.num_digits_inner)
-        .ok_or_else(|| AkitaError::InvalidSetup("A commit width overflow".to_string()))?;
-    if params.inner_commit_matrix.input_width() != expected_a_width {
-        return Err(AkitaError::InvalidSetup(format!(
-            "commit params A width {} does not match num_positions_per_block * num_digits_inner = {expected_a_width}",
-            params.inner_commit_matrix.input_width()
-        )));
-    }
-    if params.outer_commit_matrix.input_width() == 0 {
-        return Err(AkitaError::InvalidSetup(format!(
-            "commit params require nonzero B width, got B={}",
-            params.outer_commit_matrix.input_width()
-        )));
-    }
     if params.open_commit_matrix.input_width() == 0 {
         return Err(AkitaError::InvalidSetup(format!(
             "commit params require nonzero D width, got D={}",
             params.open_commit_matrix.input_width()
-        )));
-    }
-    let a_required = params
-        .inner_commit_matrix
-        .output_rank()
-        .checked_mul(params.inner_commit_matrix.input_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
-    let a_available = setup.shared_matrix.num_field_elements() / dims.d_a();
-    if a_required > a_available {
-        return Err(AkitaError::InvalidSetup(format!(
-            "A-role commit params require {a_required} setup ring elements at d={}, but setup has {a_available}",
-            dims.d_a()
-        )));
-    }
-    let b_required = params
-        .outer_commit_matrix
-        .output_rank()
-        .checked_mul(params.outer_commit_matrix.input_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
-    let b_available = setup.shared_matrix.num_field_elements() / dims.d_b();
-    if b_required > b_available {
-        return Err(AkitaError::InvalidSetup(format!(
-            "B-role commit params require {b_required} setup ring elements at d={}, but setup has {b_available}",
-            dims.d_b()
         )));
     }
     // Commitment materialization uses only A and B. In particular, a
@@ -132,46 +206,7 @@ where
     F: FieldCore + CanonicalField,
 {
     profile.validate_frozen_precommit(F::modulus_bits())?;
-    validate_i8_setup_log_basis(
-        profile.log_basis_inner,
-        "for i8 witness commitment decomposition",
-    )?;
-    validate_i8_setup_log_basis(
-        profile.log_basis_outer,
-        "for i8 outer commitment decomposition",
-    )?;
-    let dims = CommitmentRingDims {
-        inner: profile.inner_commit_matrix.ring_dimension(),
-        outer: profile.outer_commit_matrix.ring_dimension(),
-        opening: profile.outer_commit_matrix.ring_dimension(),
-    };
-    validate_role_dims(dims)?;
-    validate_role_dims_for_field::<F>(dims)?;
-    let a_required = profile
-        .inner_commit_matrix
-        .output_rank()
-        .checked_mul(profile.inner_commit_matrix.input_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
-    let a_available = setup.shared_matrix.num_field_elements() / dims.d_a();
-    if a_required > a_available {
-        return Err(AkitaError::InvalidSetup(format!(
-            "A-role precommit profile requires {a_required} setup ring elements at d={}, but setup has {a_available}",
-            dims.d_a()
-        )));
-    }
-    let b_required = profile
-        .outer_commit_matrix
-        .output_rank()
-        .checked_mul(profile.outer_commit_matrix.input_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
-    let b_available = setup.shared_matrix.num_field_elements() / dims.d_b();
-    if b_required > b_available {
-        return Err(AkitaError::InvalidSetup(format!(
-            "B-role precommit profile requires {b_required} setup ring elements at d={}, but setup has {b_available}",
-            dims.d_b()
-        )));
-    }
-    Ok(())
+    validate_commitment_geometry::<F>(profile.into(), setup)
 }
 
 pub(crate) fn validate_commit_outer_input_nonempty(active_len: usize) -> Result<(), AkitaError> {

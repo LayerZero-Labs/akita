@@ -17,7 +17,8 @@ pub(crate) enum CompleteScheduleScore {
         descriptor: Vec<u8>,
     },
     RecursiveSetup {
-        first_direct_setup_field_len: usize,
+        /// Power-of-two allocation covering the first non-offloaded setup prefix.
+        first_direct_setup_capacity: usize,
         proof_bytes: usize,
         setup_field_elements: usize,
         descriptor: Vec<u8>,
@@ -29,30 +30,31 @@ pub(crate) fn complete_schedule_score(
     candidate: &ScheduleCandidate,
 ) -> Result<CompleteScheduleScore, AkitaError> {
     let descriptor = candidate_schedule_descriptor_bytes(candidate)?;
+    let metrics = candidate.metrics();
     match policy.selection_policy {
         SelectionPolicyId::MinEstimatedProofPayload => Ok(CompleteScheduleScore::Direct {
-            proof_bytes: candidate.total_bytes,
-            setup_field_elements: candidate.setup_field_elements,
+            proof_bytes: metrics.proof_bytes,
+            setup_field_elements: metrics.setup_field_elements,
             descriptor,
         }),
         SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
             Ok(CompleteScheduleScore::MixedDimension {
-                setup_field_elements: candidate.setup_field_elements,
-                proof_bytes: candidate.total_bytes,
+                setup_field_elements: metrics.setup_field_elements,
+                proof_bytes: metrics.proof_bytes,
                 descriptor,
             })
         }
         SelectionPolicyId::MinFirstDirectSetupThenPayload => {
-            let first_direct_setup_field_len =
+            let _first_direct_setup_field_len =
                 candidate.first_direct_setup_field_len.ok_or_else(|| {
                     AkitaError::InvalidSetup(
                         "recursive setup candidate is missing its first direct setup size".into(),
                     )
                 })?;
             Ok(CompleteScheduleScore::RecursiveSetup {
-                first_direct_setup_field_len,
-                proof_bytes: candidate.total_bytes,
-                setup_field_elements: candidate.setup_field_elements,
+                first_direct_setup_capacity: metrics.first_direct_setup_capacity.field_elements(),
+                proof_bytes: metrics.proof_bytes,
+                setup_field_elements: metrics.setup_field_elements,
                 descriptor,
             })
         }

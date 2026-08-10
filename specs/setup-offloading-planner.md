@@ -41,12 +41,13 @@ suffix planning also assumes one commitment group, while complete offloading
 requires the successor to prove two openings together: its newly committed
 folded witness and the setup-prefix commitment selected by the preceding fold.
 
-This design adds `RecursiveCommitmentConfig<Cfg>`, parallel to
-`ConservativeCommitmentConfig<Cfg>`. The ordinary `Cfg` always resolves a
-direct-only schedule. Selecting the recursion adapter activates setup
-offloading only for the planner's genuine multi-group path. Scalar/singular
-keys continue through the ordinary direct planner and ordinary generated
-catalog, even under the recursion adapter.
+This design adds `RecursiveCommitmentConfig<Cfg>`. Precommitted groups use the
+generated `CommittedGroupProfile` and `commit_group` flow specified in
+[`multi-group-batching.md`](multi-group-batching.md); the earlier conservative
+config adapter has been removed. The ordinary `Cfg` resolves a direct-only
+schedule. Selecting the recursion adapter activates setup offloading only for
+the planner's genuine multi-group path. Scalar keys continue through the
+ordinary direct planner and generated catalog.
 
 For each supported nonterminal edge on the genuine multi-group path, the
 planner considers two transitions:
@@ -59,11 +60,11 @@ Offloaded: successor receives [S_prefix, W]
 An offloaded transition is feasible only when the successor can commit the
 exact prefix, the complete successor witness contracts the entering balanced
 witness by at least threefold, and the resulting suffix strictly reduces the
-first remaining direct setup scan. The planner may select zero, one, or several
+power-of-two capacity of the first remaining direct setup scan. The planner may select zero, one, or several
 offloaded levels. No fold index, contiguity rule, or prefix-size threshold
 decides the count.
 
-The selected schedule minimizes the first remaining direct setup footprint and
+The selected schedule minimizes the padded capacity of the first remaining direct setup footprint and
 then exact estimated proof bytes, including Stage 3. Equal candidates then use
 the smaller total physical setup envelope and the canonical schedule descriptor.
 Recursive successors use the existing multi-group representation with the setup
@@ -268,6 +269,13 @@ recursive policy = MinFirstDirectSetupThenPayload
 optional setup field budget = policy.setup_field_budget
 minimum offload contraction = policy.min_offloaded_witness_contraction
 ```
+
+The selection objective is an explicit catalog-identity input. Recursive setup
+capability and the admitted ring-dimension domain do not infer or rewrite it.
+The recursion adapter selects `MinFirstDirectSetupThenPayload` for genuine
+multi-group planning. Its scalar boundary and standalone precommit planning
+explicitly select `MinEstimatedProofPayload` while disabling recursive setup
+search.
 
 The planner does not use artifact registry contents to decide mode. Registry
 contents are setup-instance state and could differ between prover and verifier.
@@ -1038,10 +1046,10 @@ the candidate score that decides whether and how long to offload.
       does not impose contiguity as a structural rule.
 - [x] Every selected offloaded edge contracts the entering balanced witness by
       at least threefold after counting both the recursive witness and padded
-      full-field prefix inputs, and strictly reduces the first remaining direct
-      setup scan.
-- [x] The selected schedule lexicographically minimizes first direct setup
-      footprint and exact estimated proof bytes within the supported setup
+      full-field prefix inputs, and strictly reduces the padded capacity of the
+      first remaining direct setup scan.
+- [x] The selected schedule lexicographically minimizes first direct padded setup
+      capacity and exact estimated proof bytes within the supported setup
       envelope.
 - [x] The materialized estimate reports the exact setup envelope and selected
       offload-edge count, and recomputation agrees with the cached DP value.
@@ -1146,13 +1154,17 @@ Track:
 - proof bytes per fold by mode;
 - Stage 3 bytes per offloaded edge;
 - balanced-witness contraction for every selected offloaded edge;
-- first remaining direct setup footprint;
+- first remaining direct padded setup capacity and natural length;
 - number of selected offloaded edges;
 - verifier cycles saved by eliminating the setup scan;
 - exact selected proof bytes against the direct-only schedule.
 
-The local-minimum suffix heuristic must remain within the existing recursion
-bound. The planner must not enumerate a full split frontier.
+The catalog identity binds `RecursiveSplitSearchPolicy`. Production catalogs
+use `BoundedBalancedExtremesV1`: states through twelve reduced variables are
+exhaustive, while larger states search both extremes and a radius-two window
+around the balance estimate. `Exhaustive` remains available for small-domain
+oracles and audited workloads. Results under the bounded policy are selected
+under that named domain and are not described as globally optimal.
 
 ## Execution
 
@@ -1228,9 +1240,10 @@ generated lookup, and DP fallback aligned.
 
 ### Exhaustive suffix candidate frontier
 
-Rejected. Keeping all feasible splits grows quickly with recursion depth. The
-existing locally minimized candidate heuristic remains the bounded planning
-model; setup compatibility is an additional local filter.
+Available as the `Exhaustive` catalog-bound policy for oracle coverage and
+explicit workloads. Production uses `BoundedBalancedExtremesV1` because the
+full frontier grows quickly with recursion depth. The policy tag prevents the
+two search domains from sharing a catalog identity.
 
 ### Generic carried-opening object
 

@@ -246,7 +246,7 @@ fn main() -> Result<(), String> {
             }
             schedules += 1;
         }
-        for (key, honest_fold_policies) in (family.group_batch_keys)(family)
+        for (key, honest_fold_policies) in (family.group_batch_keys)()
             .map_err(|error| format!("{} group keys: {error}", family.module_name))?
         {
             let label = format!("{}:group:{key:?}", family.module_name);

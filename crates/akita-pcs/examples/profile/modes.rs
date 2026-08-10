@@ -55,7 +55,6 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
     run_dense_for::<F, D, Cfg>(label, nv, &layout, Some(&plan), true);
 }
 
-#[cfg(not(feature = "profile-bench-selected"))]
 fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     label: &str,
     title: &str,
@@ -191,12 +190,12 @@ struct ProfileMode {
     feature = "profile-bench-selected"
 ))]
 const PROFILE_SELECTED_MODES: &[ProfileMode] = &[
-    #[cfg(feature = "profile-ci-fp128-dense")]
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp128-base"))]
     ProfileMode {
         name: "dense_fp128",
         run: run_profile_dense_fp128,
     },
-    #[cfg(feature = "profile-ci-flat-onehot")]
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp128-base"))]
     ProfileMode {
         name: "onehot_fp128",
         run: run_profile_onehot_fp128,
@@ -231,12 +230,22 @@ const PROFILE_SELECTED_MODES: &[ProfileMode] = &[
         name: "onehot_fp128_multi_chunk_w8r2",
         run: run_profile_onehot_fp128_multi_chunk_w8r2,
     },
-    #[cfg(feature = "profile-ci-flat-onehot")]
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp32"))]
+    ProfileMode {
+        name: "dense_fp32_d128",
+        run: run_profile_dense_fp32_d128,
+    },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp32"))]
     ProfileMode {
         name: "onehot_fp32_d128",
         run: run_profile_onehot_fp32_d128,
     },
-    #[cfg(feature = "profile-ci-flat-onehot")]
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp64"))]
+    ProfileMode {
+        name: "dense_fp64_d128",
+        run: run_profile_dense_fp64_d128,
+    },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp64"))]
     ProfileMode {
         name: "onehot_fp64_d128",
         run: run_profile_onehot_fp64_d128,
@@ -301,6 +310,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         run: run_profile_dense_fp64_d64,
     },
     ProfileMode {
+        name: "dense_fp64_d128",
+        run: run_profile_dense_fp64_d128,
+    },
+    ProfileMode {
         name: "onehot_fp64_d64",
         run: run_profile_onehot_fp64_d64,
     },
@@ -336,6 +349,7 @@ const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     // `AKITA_MODE=` and drive the profile-bench matrix).
     "dense_fp32_d128",
     "onehot_fp32_d128",
+    "dense_fp64_d128",
     "onehot_fp64_d128",
 ];
 
@@ -368,7 +382,6 @@ fn small_field_onehot_title(field_label: &str, d: usize, nv: usize, num_polys: u
     }
 }
 
-#[cfg(not(feature = "profile-bench-selected"))]
 fn small_field_dense_title(field_label: &str, d: usize) -> String {
     let schedule = small_field_schedule_source(d);
     format!("=== dense_{field_label}_d{d} ({field_label}, D={d}, {schedule}) ===")
@@ -546,7 +559,6 @@ fn run_profile_dense_fp32_d64(nv: usize, num_polys: usize) {
     run_dense_mode_for::<fp32::Field, { Cfg::D }, Cfg>("dense_fp32_d64", &title, nv);
 }
 
-#[cfg(not(feature = "profile-bench-selected"))]
 fn run_profile_dense_fp32_d128(nv: usize, num_polys: usize) {
     type Cfg = fp32::D128Dense;
     assert_singleton_mode("dense_fp32_d128", num_polys);
@@ -571,6 +583,13 @@ fn run_profile_onehot_fp64_d128(nv: usize, num_polys: usize) {
     type Cfg = fp64::D128OneHot;
     let title = small_field_onehot_title("fp64", Cfg::D, nv, num_polys);
     run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>("onehot_fp64_d128", &title, nv, num_polys);
+}
+
+fn run_profile_dense_fp64_d128(nv: usize, num_polys: usize) {
+    type Cfg = fp64::D128Dense;
+    assert_singleton_mode("dense_fp64_d128", num_polys);
+    let title = small_field_dense_title("fp64", Cfg::D);
+    run_dense_mode_for::<fp64::Field, { Cfg::D }, Cfg>("dense_fp64_d128", &title, nv);
 }
 
 #[cfg(not(feature = "profile-bench-selected"))]

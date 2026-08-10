@@ -106,11 +106,22 @@ impl CrtCapacity {
         width: usize,
         rhs_abs_bound: u64,
     ) -> bool {
-        let modulus = (-F::one()).to_canonical_u128() + 1;
+        self.supports_modulus(width, D, (-F::one()).to_canonical_u128() + 1, rhs_abs_bound)
+    }
+
+    /// Whether this CRT product can reconstruct an accumulation for an
+    /// explicitly identified field modulus and runtime ring dimension.
+    pub fn supports_modulus(
+        &self,
+        width: usize,
+        ring_dimension: usize,
+        modulus: u128,
+        rhs_abs_bound: u64,
+    ) -> bool {
         let mut required = SmallNat::one();
         required.mul_u128(2);
         required.mul_u128(width as u128);
-        required.mul_u128(D as u128);
+        required.mul_u128(ring_dimension as u128);
         required.mul_u128(modulus / 2);
         required.mul_u128(u128::from(rhs_abs_bound));
         required < self.product
@@ -121,19 +132,32 @@ impl CrtCapacity {
         &self,
         rhs_abs_bound: u64,
     ) -> Option<usize> {
+        self.max_safe_width_for_modulus(D, (-F::one()).to_canonical_u128() + 1, rhs_abs_bound)
+    }
+
+    /// Conservative maximum matrix width for an explicitly identified field
+    /// modulus and runtime ring dimension.
+    pub fn max_safe_width_for_modulus(
+        &self,
+        ring_dimension: usize,
+        modulus: u128,
+        rhs_abs_bound: u64,
+    ) -> Option<usize> {
         if rhs_abs_bound == 0 {
             return Some(usize::MAX);
         }
-        let modulus = (-F::one()).to_canonical_u128() + 1;
-        if modulus <= 1 || D == 0 || !self.supports::<F, D>(1, rhs_abs_bound) {
+        if modulus <= 1
+            || ring_dimension == 0
+            || !self.supports_modulus(1, ring_dimension, modulus, rhs_abs_bound)
+        {
             return None;
         }
         let mut low = 1usize;
         let mut high = 2usize;
-        while self.supports::<F, D>(high, rhs_abs_bound) {
+        while self.supports_modulus(high, ring_dimension, modulus, rhs_abs_bound) {
             low = high;
             let Some(next) = high.checked_mul(2) else {
-                if self.supports::<F, D>(usize::MAX, rhs_abs_bound) {
+                if self.supports_modulus(usize::MAX, ring_dimension, modulus, rhs_abs_bound) {
                     return Some(usize::MAX);
                 }
                 high = usize::MAX;
@@ -143,7 +167,7 @@ impl CrtCapacity {
         }
         while low + 1 < high {
             let mid = low + (high - low) / 2;
-            if self.supports::<F, D>(mid, rhs_abs_bound) {
+            if self.supports_modulus(mid, ring_dimension, modulus, rhs_abs_bound) {
                 low = mid;
             } else {
                 high = mid;

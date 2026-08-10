@@ -350,7 +350,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + SumcheckTableOperations<FF>
         + Valid,
 {
-    let onehot_poly = make_profile_onehot_poly::<FF>(layout, 0xbeef_cafe);
+    let onehot_poly = make_profile_onehot_poly::<FF>(nv, layout.d_a(), 0xbeef_cafe);
     let mut rng = StdRng::seed_from_u64(0xfeed_face);
     let pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
     let opening = onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(&onehot_poly, &pt);
