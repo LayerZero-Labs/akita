@@ -3,18 +3,18 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::{
-    compute_num_digits_field_width, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, num_digits_open, rounded_up_role_a_inf_norm, HonestFoldPolicy,
-    HonestFoldPolicySpec, HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
+    num_digits_open, rounded_up_role_a_inf_norm, HonestFoldPolicy, HonestFoldPolicySpec,
+    HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
     OuterCommitMatrixParams,
 };
 use akita_types::{
     AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile,
     DecompositionParams, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams, WitnessLayout,
+    PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
 };
 
-use akita_schedules::planner_support::{sis_key_at_dimension, RingDimensionCandidate};
+use akita_schedules::planner_support::{projected_collision_role_price, sis_key_at_dimension};
 
 use crate::schedule_params::{
     derive_selected_suffix_schedule, materialize_candidate_schedule, recursive_split_search_domain,
@@ -67,7 +67,7 @@ fn materialize_precommitted_group_for_open_basis(
 
 struct MultiGroupRootCandidateCtx<'a> {
     policy: &'a PlannerPolicy,
-    dimensions: RingDimensionCandidate<'a>,
+    dimensions: CommitmentRingDims,
     ring_challenge_cfg: &'a SparseChallengeConfig,
     final_honest_fold_policy: HonestFoldPolicySpec,
     main_num_polys: usize,
@@ -108,18 +108,12 @@ pub(crate) fn root_batch_next_w_len(
     params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<Option<usize>, AkitaError> {
-    params.witness_chunk.validate()?;
-    params.validate_opening_batch(opening_batch)?;
     if !params.compression_sources_supported()? {
         return Ok(None);
     }
-    let witness_layout = WitnessLayout::new(
-        params,
-        opening_batch,
-        params.witness_chunk.num_chunks,
-        compute_num_digits_field_width(field_bits, params.log_basis_open),
-    )?;
-    Ok(Some(witness_layout.live_coeff_len()))
+    params
+        .output_witness_len_for_field_bits(field_bits, opening_batch)
+        .map(Some)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -128,7 +122,7 @@ pub(crate) fn root_level_candidates_for_basis(
     final_honest_fold_policy: HonestFoldPolicySpec,
     precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
     policy: &PlannerPolicy,
-    dimensions: RingDimensionCandidate<'_>,
+    dimensions: CommitmentRingDims,
     ring_challenge_cfg: &SparseChallengeConfig,
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     root_input_witness_len: usize,
@@ -136,9 +130,9 @@ pub(crate) fn root_level_candidates_for_basis(
     candidate_log_basis_open: u32,
     require_witness_contraction: bool,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
-    dimensions.validate()?;
+    dimensions.validate_role_projection()?;
     let field_bits = policy.decomposition.field_bits();
-    let alpha = dimensions.inner().trailing_zeros() as usize;
+    let alpha = dimensions.d_a().trailing_zeros() as usize;
     let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
     if reduced_vars == 0 {
         return Err(AkitaError::UnsupportedSchedule(format!(
@@ -202,10 +196,7 @@ pub(crate) fn root_level_candidates_for_basis(
     split_domain.dedup();
 
     let mut candidates = Vec::new();
-    let shared_opening_ring_dimension = match dimensions {
-        RingDimensionCandidate::Fixed(value) => value.d_d(),
-        RingDimensionCandidate::Adaptive { .. } => dimensions.inner(),
-    };
+    let shared_opening_ring_dimension = dimensions.d_d();
     if precommitted_groups.iter().any(|group| {
         !group
             .0
@@ -270,7 +261,7 @@ fn root_final_group_level_params_candidate(
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
     let policy = ctx.policy;
     let dimensions = ctx.dimensions;
-    let d_a = dimensions.inner();
+    let d_a = dimensions.d_a();
     let family = policy.sis_modulus_profile;
     let decomp = ctx.policy.decomposition;
     let level_decomp = DecompositionParams {
@@ -346,9 +337,11 @@ fn root_final_group_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Some((outer_key, width_t)) = dimensions.collision_role_price(
+    let Some((outer_key, width_t)) = projected_collision_role_price(
         policy,
         akita_types::SisMatrixRole::Outer,
+        d_a,
+        dimensions.d_b(),
         width_t,
         log_basis_open,
     ) else {
@@ -365,9 +358,11 @@ fn root_final_group_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Some((open_key, main_d_width)) = dimensions.collision_role_price(
+    let Some((open_key, main_d_width)) = projected_collision_role_price(
         policy,
         akita_types::SisMatrixRole::Open,
+        d_a,
+        dimensions.d_d(),
         main_d_width,
         log_basis_open,
     ) else {
@@ -410,20 +405,9 @@ fn root_final_group_level_params_candidate(
     Ok(Some(params))
 }
 
-fn validate_adaptive_dimension_schedule_request(
-    key: &AkitaScheduleLookupKey,
+fn validate_direct_adaptive_dimension_schedule_request(
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
-    if !key.precommitteds.is_empty() {
-        return Err(AkitaError::UnsupportedSchedule(
-            "mixed-D search is supported only for single-group schedules".to_string(),
-        ));
-    }
-    if policy.recursive_setup_planning {
-        return Err(AkitaError::InvalidSetup(
-            "scalar mixed-D search does not support recursive setup planning; use a grouped request with precommitted inputs".into(),
-        ));
-    }
     if policy.selection_policy
         != crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
     {
@@ -444,38 +428,18 @@ pub fn find_schedule(
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     akita_schedules::planner_support::validate_policy(policy)?;
     key.validate(policy.decomposition.field_bits())?;
-    let direct_grouped_policy = if matches!(
+    if matches!(
         policy.ring_dimension_schedule_mode,
         crate::RingDimensionScheduleMode::AdaptiveDimension { .. }
     ) {
-        if key.precommitteds.is_empty() {
-            validate_adaptive_dimension_schedule_request(key, policy)?;
+        if !policy.recursive_setup_planning {
+            validate_direct_adaptive_dimension_schedule_request(policy)?;
+        } else if key.precommitteds.is_empty() {
+            return Err(AkitaError::InvalidSetup(
+                "scalar adaptive search does not support recursive setup planning; use a grouped request with precommitted inputs".into(),
+            ));
         }
-
-        if !key.precommitteds.is_empty() && !policy.recursive_setup_planning {
-            // Direct grouped roots preserve every frozen A/B profile and use
-            // the established uniform suffix domain. Recursive grouped roots
-            // continue below into the setup-aware adaptive suffix frontier.
-            let crate::RingDimensionScheduleMode::AdaptiveDimension {
-                uniform_suffix_dimension,
-                ..
-            } = policy.ring_dimension_schedule_mode
-            else {
-                unreachable!("adaptive grouped fallback is entered only for adaptive policies");
-            };
-            let mut grouped_policy = *policy;
-            grouped_policy.uniform_ring_dimension = uniform_suffix_dimension;
-            grouped_policy.ring_dimension_schedule_mode =
-                crate::RingDimensionScheduleMode::UniformDimension {
-                    ring_dimension: uniform_suffix_dimension,
-                };
-            Some(grouped_policy)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    }
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let scalar_policy;
     let active_policy = if key.precommitteds.is_empty() {
@@ -485,7 +449,7 @@ pub fn find_schedule(
         scalar_policy = crate::policy::direct_only_policy(*policy);
         &scalar_policy
     } else {
-        direct_grouped_policy.as_ref().unwrap_or(policy)
+        policy
     };
     let setup_field_budget = if active_policy.recursive_setup_planning {
         active_policy.setup_field_budget

@@ -12,11 +12,6 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32};
-#[cfg(all(
-    feature = "schedules-fp128-onehot",
-    not(feature = "schedules-fp128-onehot-recursive")
-))]
-use akita_config::RecursiveCommitmentConfig;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_planner::find_schedule;
 use akita_schedules::resolve_schedule;
@@ -89,7 +84,7 @@ fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
 fn catalog_miss_rejects_non_shipped_keys() {
     check_table_miss_rejection::<fp128::OneHot>(27);
     check_table_miss_rejection::<fp128::Dense>(27);
-    check_table_miss_rejection::<fp32::D128OneHot>(16);
+    check_table_miss_rejection::<fp32::OneHot>(17);
 }
 
 #[test]
@@ -295,6 +290,10 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
     not(feature = "schedules-fp128-onehot-recursive")
 ))]
 #[test]
+#[cfg(not(any(
+    feature = "schedules-fp128-onehot-recursive",
+    feature = "schedules-fp128-onehot-recursive-multi-chunk-w8r2"
+)))]
 fn grouped_recursive_catalog_rejects_without_recursive_feature() {
     let precommitted_group = PolynomialGroupLayout::singleton(16);
     let descriptor = akita_config::committed_group_profile::<fp128::OneHot>(&precommitted_group)
@@ -304,7 +303,7 @@ fn grouped_recursive_catalog_rejects_without_recursive_feature() {
         precommitteds: vec![descriptor, descriptor],
     };
     assert!(matches!(
-        RecursiveCommitmentConfig::<fp128::OneHot>::runtime_schedule(key),
+        akita_config::RecursiveCommitmentConfig::<fp128::OneHot>::runtime_schedule(key),
         Err(akita_field::AkitaError::UnsupportedSchedule(_))
     ));
 }
@@ -370,11 +369,11 @@ fn runtime_rejects_malformed_extension_geometry_without_panicking() {
 fn policy_bridge_matches_cfg_hooks() {
     assert_policy_matches_cfg::<fp128::Dense>();
     assert_policy_matches_cfg::<fp128::OneHot>();
-    assert_policy_matches_cfg::<fp32::D64OneHot>();
+    assert_policy_matches_cfg::<fp32::OneHot>();
 }
 
 #[test]
-fn adaptive_dense_plans_multi_group_roots_at_uniform_suffix_dimension() {
+fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
     type Cfg = fp128::Dense;
     const PRE_NV: usize = 16;
     const FINAL_NV: usize = 20;
@@ -407,7 +406,11 @@ fn adaptive_dense_plans_multi_group_roots_at_uniform_suffix_dimension() {
             .final_group
             .commitment
             .role_dims(),
-        CommitmentRingDims::uniform(64)
+        CommitmentRingDims {
+            inner: 256,
+            outer: 64,
+            opening: 64,
+        }
     );
     assert_eq!(
         planned.schedule.root.params.precommitted_groups[0].descriptor,
@@ -421,7 +424,7 @@ fn root_basis_is_derived_from_existing_policy_inputs() {
     assert_eq!(fp128.opening_basis_range, (3, 6));
     assert_eq!(fp128.decomposition.log_basis, 3);
 
-    let fp32 = policy_of::<fp32::D64OneHot>();
+    let fp32 = policy_of::<fp32::OneHot>();
     assert_eq!(fp32.opening_basis_range, (3, 6));
     assert_eq!(fp32.decomposition.log_basis, 3);
 }

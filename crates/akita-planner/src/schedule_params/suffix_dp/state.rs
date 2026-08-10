@@ -232,10 +232,14 @@ impl SuffixState {
         let memo_dimensions = match policy.ring_dimension_schedule_mode {
             crate::RingDimensionScheduleMode::AdaptiveDimension {
                 num_search_levels,
-                uniform_suffix_dimension,
+                suffix_dimensions,
                 ..
             } if self.level >= num_search_levels => {
-                CommitmentRingDims::uniform(uniform_suffix_dimension)
+                crate::schedule_params::suffix_dimension_ceiling(
+                    suffix_dimensions,
+                    self.dimension_ceiling,
+                )
+                .map_or(self.dimension_ceiling, CommitmentRingDims::uniform)
             }
             _ => self.dimension_ceiling,
         };

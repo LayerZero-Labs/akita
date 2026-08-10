@@ -7,7 +7,7 @@
 //! proof-byte totals.
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{AkitaError, Prime128OffsetA7F7};
+use akita_field::AkitaError;
 use akita_types::{
     extension_opening_reduction_level_bytes, level_proof_bytes, terminal_response_bytes,
     AkitaScheduleLookupKey, PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams,
@@ -95,7 +95,7 @@ pub(crate) fn walk_generated_schedule_entry(
     root_params.witness_chunk =
         partition_to_chunk(entry.root.witness_partition, distributed_levels)?;
     let root_output_len = if is_multi_group {
-        root_params.output_witness_len::<Prime128OffsetA7F7>(&key.opening_layout()?)?
+        root_params.output_witness_len_for_field_bits(field_bits, &key.opening_layout()?)?
     } else {
         planned_next_witness_len(
             field_bits,

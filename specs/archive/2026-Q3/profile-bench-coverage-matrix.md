@@ -38,6 +38,14 @@
 > D64. The historical record below still describes the earlier uniform D64
 > benchmark.
 
+> **Status update (2026-08-09, stacked adaptive search).** The active fp32
+> catalogs search A at D64 through D1024, B/D at D64 through D256, and a
+> monotone D64/D128 suffix domain. The fp64 catalogs search A at D64 through
+> D512, B/D at D64 through D256, and a D64 suffix domain. D64 is now certified
+> for later small-field folds. The earlier statement that all fp32/fp64 D64
+> cells were non-securable is historical and does not describe the generated
+> role-specific table.
+
 ## Summary
 
 This PR widens the profile benchmark workflow from a small fp128/fp32 sample
@@ -66,11 +74,11 @@ The checked-in workflow currently runs:
 
 | Mode | Field | Workload | Variables | Polys | Config | Setup mode | Notes |
 | --- | --- | --- | ---: | ---: | --- | --- | --- |
-| `dense_fp32_d128` | fp32 | dense | 26 | 1 | D128 | `direct` | Generated uniform-D128 dense schedule. |
-| `dense_fp64_d128` | fp64 | dense | 26 | 1 | D128 | `direct` | Generated uniform-D128 dense schedule. |
+| `dense_fp32` | fp32 | dense | 26 | 1 | adaptive A≤D1024, B/D≤D256 | `direct` | Catalog-selected adaptive fp32 dense schedule with a D64/D128 suffix domain. |
+| `dense_fp64` | fp64 | dense | 26 | 1 | adaptive A≤D512, B/D≤D256 | `direct` | Catalog-selected adaptive fp64 dense schedule with a D64 suffix domain. |
 | `dense_fp128` | fp128 | dense | 26 | 1 | adaptive | `direct` | Root A/B/D = 256/64/64; recursive folds and terminal use D64. |
-| `onehot_fp32_d128` | fp32 | 1-of-256 one-hot | 28 | 1 | D128 | `direct` | Smallest securable fp32 one-hot under honest pricing. Capped at nv=28: the ext-degree-4 challenge schedule keeps a large un-folded witness, so at nv>=30 the prover's eq-evaluation table exceeds the 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling. |
-| `onehot_fp64_d128` | fp64 | 1-of-256 one-hot | 28 | 1 | D128 | `direct` | Smallest securable fp64 one-hot under honest pricing. Capped at nv=28 for the same eq-table-budget reason as the fp32 cell. |
+| `onehot_fp32` | fp32 | 1-of-256 one-hot | 30 | 1 | adaptive A≤D1024, B/D≤D256 | `direct` | Adaptive fp32 one-hot with a D64/D128 suffix domain. The equality-table allocation guard remains active. |
+| `onehot_fp64` | fp64 | 1-of-256 one-hot | 30 | 1 | adaptive A≤D512, B/D≤D256 | `direct` | Adaptive fp64 one-hot with a D64 suffix domain. The equality-table allocation guard remains active. |
 | `onehot_fp128` | fp128 | 1-of-256 one-hot | 32 | 1 | adaptive | `direct` | Canonical adaptive fp128 one-hot catalog. |
 | `onehot_fp128_multi_group` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | adaptive | `direct` | Direct multi-group coverage using the canonical adaptive fp128 one-hot catalog. |
 | `onehot_fp128_multi_group_recursive` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | adaptive recursive multi-group | `recursive` | Recursive setup-product coverage using the adaptive recursive companion catalog. |
@@ -82,18 +90,17 @@ The checked-in workflow currently runs:
 Every active cell folds securely under honest committed-fold A-role pricing.
 The ring degree differs by field, for two distinct reasons:
 
-- **Small prime fields (fp32/fp64):** their D32/D64 schedules are no longer
-  securable under the reprice — they degrade to a cleartext root-direct proof
-  and stop exercising a real folding commitment — so the smallest secure ring
-  degree is D128. The active fp32 and fp64 dense and one-hot cells use D128.
+- **Small prime fields (fp32/fp64):** each production preset searches its
+  catalog-bound adaptive domain and replays the selected A/B/D tuple at runtime.
+  fp32 searches A through D1024 and B/D through D256, with a D64/D128 suffix
+  domain. fp64 searches A through D512 and B/D through D256, with a D64 suffix
+  domain. Larger B/D candidates are certified but excluded from production
+  search because the exhaustive comparison found no winner.
 - **fp128:** the canonical direct dense and one-hot presets use their adaptive
   generated catalogs. Each scheduled A/B/D dimension is selected offline from
   the audited domain, and runtime code resolves that single canonical row.
   Runtime code does not compare candidate families. It loads the one generated
   row for the requested profile.
-
-The profile example still includes dimension specific small-field modes for
-local comparisons. The active workflow uses only the rows in this table.
 
 The cost figures after this section belong to the historical PR #107 record.
 They do not describe the active workflow.

@@ -22,8 +22,8 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::{Duration, Instant};
 
-const DEFAULT_NUM_VARS: usize = 26;
-const DEFAULT_NUM_POLYS: usize = 4;
+const DEFAULT_NUM_VARS: usize = 28;
+const DEFAULT_NUM_POLYS: usize = 1;
 const MAX_ONEHOT_K: usize = 256;
 
 fn env_usize(name: &str, default: usize) -> usize {
@@ -236,8 +236,8 @@ where
 }
 
 fn bench_onehot_root_projection_commit(c: &mut Criterion) {
-    bench_case::<fp32::Field, fp32::D64OneHot, 64>(c, "fp32_d64");
-    bench_case::<fp64::Field, fp64::D64OneHot, 64>(c, "fp64_d64");
+    bench_case::<fp32::Field, fp32::OneHot, 256>(c, "fp32_adaptive");
+    bench_case::<fp64::Field, fp64::OneHot, 256>(c, "fp64_adaptive");
 }
 
 criterion_group! {

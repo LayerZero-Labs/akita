@@ -50,49 +50,49 @@ fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
 
 #[test]
 fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
-    let fp32 = snapshot::<fp32::D128Dense>();
+    let fp32 = snapshot::<fp32::Dense>();
     assert_ne!(fp32.inner_basis, fp32.opening_basis);
     assert_eq!(
         fp32,
         Snapshot {
-            inner_basis: 6,
+            inner_basis: 8,
             opening_basis: 3,
-            positions: 2048,
-            blocks: 256,
-            inner_digits: 6,
-            n_a: 11,
-            n_b: 2,
-            n_d: 2,
-            a_input_raw: 1_572_864,
-            a_output_raw: 1_408,
-            b_input_raw: 3_964_928,
+            positions: 512,
+            blocks: 128,
+            inner_digits: 4,
+            n_a: 2,
+            n_b: 1,
+            n_d: 1,
+            a_input_raw: 2_097_152,
+            a_output_raw: 2_048,
+            b_input_raw: 2_883_584,
             b_output_raw: 256,
-            d_input_raw: 360_448,
+            d_input_raw: 1_441_792,
             d_output_raw: 256,
-            next_witness: 12_234_880,
+            next_witness: 16_970_496,
         }
     );
 
-    let fp64 = snapshot::<fp64::D128Dense>();
+    let fp64 = snapshot::<fp64::Dense>();
     assert_ne!(fp64.inner_basis, fp64.opening_basis);
     assert_eq!(
         fp64,
         Snapshot {
             inner_basis: 6,
             opening_basis: 3,
-            positions: 1024,
-            blocks: 512,
+            positions: 512,
+            blocks: 256,
             inner_digits: 11,
-            n_a: 7,
+            n_a: 2,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 1_441_792,
-            a_output_raw: 896,
-            b_input_raw: 10_092_544,
-            b_output_raw: 128,
-            d_input_raw: 1_441_792,
-            d_output_raw: 128,
-            next_witness: 18_794_112,
+            a_input_raw: 2_883_584,
+            a_output_raw: 1_024,
+            b_input_raw: 5_767_168,
+            b_output_raw: 256,
+            d_input_raw: 2_883_584,
+            d_output_raw: 256,
+            next_witness: 23_152_896,
         }
     );
 

@@ -32,20 +32,21 @@ one-hot preset now chooses dimensions per fold from generated adaptive tables;
 
 | Field | Typical production choice | Notes |
 |-------|---------------------------|--------|
-| **fp128** | **One-hot** (`fp128::OneHot`) | **Default direct one-hot preset.** The generated schedule chooses dimensions for the first two fold levels and uses D64 afterward. Direct dense uses `fp128::Dense`; recursive/tensor/multi-chunk companions remain pinned to D64. |
-| **fp32 / fp64** | **D128 one-hot** | D32/D64 are **not securable** under the reprice and unsupported schedules fail fast. This stack ships CI rows through **nv=28**; the adaptive-dimension follow-up extends them. Shipped: fp32 D128/D256 onehot; fp64 D128 dense/onehot and D256 onehot. |
+| **fp128** | **One-hot** (`fp128::OneHot`) | **Default direct one-hot preset.** Generated schedules choose dimensions for the first two fold levels and use the D64 suffix domain. Direct dense uses `fp128::Dense`; recursive and multi-chunk companions inherit the adaptive policy and have their own generated catalog keys. |
+| **fp32** | **Adaptive one-hot** (`fp32::OneHot`) | Searches A at D64 through D1024, B/D at D64 through D256, and the monotone D64/D128 suffix domain. CI benches at **nv=30**. |
+| **fp64** | **Adaptive one-hot** (`fp64::OneHot`) | Searches A at D64 through D512, B/D at D64 through D256, and the D64 suffix domain. CI benches at **nv=30**. |
 
 Use `fp128::OneHot` for direct one-hot and `fp128::Dense` for direct dense.
 
-**Test harness vs profile defaults.** `crates/akita-pcs/tests/common/mod.rs` uses
-direct protocol tests should use `fp128::OneHot` and `fp128::Dense`; specialized
-recursive, tensor, and multi-chunk tests use their dedicated D64 companions.
+**Test harness vs profile defaults.** Direct protocol tests should use
+`fp128::OneHot` and `fp128::Dense`. Recursive and multi-chunk tests use their
+dedicated companion configs and generated catalogs.
 
 **Sources to fold in**
 
-- `crates/akita-config/src/proof_optimized/`, `crates/akita-config/src/generated_families.rs`.
-- `crates/akita-planner/src/resolve.rs` (`resolve_schedule`) and `crates/akita-schedules/src/generated/`.
+- `crates/akita-config/src/proof_optimized/` and `crates/akita-planner/src/generated_families.rs`.
+- `crates/akita-schedules/src/resolve.rs` and `crates/akita-schedules/src/generated/`.
 - Paper §3.5 `sec:akita-params`.
-- Paper §3.11 `sec:akita-planner` (tables + identical DP on miss).
+- Paper §3.11 `sec:akita-planner` (generated tables + offline DP parity guard).
 - `.github/workflows/profile-bench.yml` and [`profiling.md`](profiling.md).
 - `AGENTS.md` (Profiling).

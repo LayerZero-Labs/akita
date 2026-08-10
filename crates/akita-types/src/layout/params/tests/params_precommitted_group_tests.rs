@@ -356,6 +356,11 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
             .expect("output witness length"),
         witness_layout.live_coeff_len()
     );
+    assert_eq!(
+        lp.output_witness_len_for_field_bits(128, &batch)
+            .expect("policy-bound output witness length"),
+        witness_layout.live_coeff_len()
+    );
     assert!(witness_layout
         .units_for_group(0)
         .expect("precommitted units")

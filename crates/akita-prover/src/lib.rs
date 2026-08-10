@@ -38,11 +38,11 @@ pub use compute::{
     ReleaseRootNttAfterFold, RingSwitchCluster, RingSwitchProveBackend, RingSwitchRelationRows,
     RootCommitBackend, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
     RootProveBackend, RootProvePoly, RootTensorSource, RoutedNttRequirement,
-    RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor, RuntimeProveBackendFor,
-    RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
-    RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor,
+    RuntimeCommitBackendFor, RuntimeCommitSource, RuntimeOpeningProveBackendFor,
+    RuntimeProveBackendFor, RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend,
+    RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor,
     SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor, TensorCluster,
-    TieredProveStacks, UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    TieredProveStacks, UniformProverStack,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::sumcheck::{DigitRangeProver, RelationRangeImageProver};

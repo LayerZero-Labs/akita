@@ -8,6 +8,23 @@ import unittest
 
 
 class ProfileBenchReportTests(unittest.TestCase):
+    def test_profile_bench_does_not_persist_setup_cache(self) -> None:
+        repo = pathlib.Path(__file__).resolve().parents[2]
+        workflow = (repo / ".github/workflows/profile-bench.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("disk-persistence", workflow)
+        self.assertNotIn("LOCALAPPDATA", workflow)
+
+    def test_profile_bench_records_workflow_shard_identity(self) -> None:
+        repo = pathlib.Path(__file__).resolve().parents[2]
+        workflow = (repo / ".github/workflows/profile-bench.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('--benchmark-shard "${{ matrix.group.name }}"', workflow)
+
     def test_merge_base_policy_reads_narrow_profile_mode_registry(self) -> None:
         from scripts.profile_bench_merge_base_policy import profile_modes_from_modes_rs
 
@@ -831,6 +848,98 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         )
         self.assertNotIn("same-point", name)
 
+    def test_profile_definitions_separate_ci_shards_from_public_statements(self) -> None:
+        from scripts.profile_bench_report import normalize_case_summary, render_profile_definitions
+
+        cases = [
+            normalize_case_summary(
+                {
+                    "mode": "dense_fp32",
+                    "num_vars": 26,
+                    "num_polys": 1,
+                    "benchmark_shard": "1-fp32-base",
+                }
+            ),
+            normalize_case_summary(
+                {
+                    "mode": "onehot_fp32",
+                    "num_vars": 30,
+                    "num_polys": 1,
+                    "benchmark_shard": "1-fp32-base",
+                }
+            ),
+            normalize_case_summary(
+                {
+                    "mode": "dense_fp64",
+                    "num_vars": 26,
+                    "num_polys": 1,
+                    "benchmark_shard": "2-fp64-base",
+                }
+            ),
+        ]
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_profile_definitions(cases)
+        report = output.getvalue()
+
+        shard_section, statement_section = report.split("### Public opening statements")
+        self.assertIn("### Benchmark shards", shard_section)
+        self.assertIn(
+            "| <code>1-fp32-base</code> | Fp32 dense nv26, direct setup check<br>Fp32 one\\-hot nv30, direct setup check |",
+            shard_section,
+        )
+        self.assertIn(
+            "| <code>2-fp64-base</code> | Fp64 dense nv26, direct setup check |",
+            shard_section,
+        )
+        self.assertIn("Over Fp32", statement_section)
+        self.assertIn("Fp32 dense nv26, direct setup check", statement_section)
+        self.assertIn("Over Fp64", statement_section)
+        self.assertIn("Fp64 dense nv26, direct setup check", statement_section)
+
+    def test_partial_merge_base_coverage_is_explicit(self) -> None:
+        from scripts.profile_bench_report import render_report
+
+        case = {
+            "mode": "dense_fp32",
+            "num_vars": 26,
+            "num_polys": 1,
+            "benchmark_shard": "1-fp32-base",
+            "exit_code": 1,
+            "failure_phase": "prove",
+            "error": "fixture failure",
+            "setup_s": 1.0,
+            "runs": 1,
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            current_path = root / "current.json"
+            baseline_dir = root / "baseline"
+            baseline_dir.mkdir()
+            current_path.write_text(
+                json.dumps({"warmups": 0, "cases": [case]}), encoding="utf-8"
+            )
+            (baseline_dir / "summary.json").write_text(
+                json.dumps({"warmups": 0, "cases": []}), encoding="utf-8"
+            )
+            args = argparse.Namespace(
+                summary=str(current_path),
+                main_baseline_dir=str(baseline_dir),
+                previous_baseline_dir="",
+                compact=True,
+            )
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(render_report(args), 0)
+            report = output.getvalue()
+
+        self.assertIn("comparisons are available for `0` of `1` profiles", report)
+        self.assertIn("no matching merge-base case", report)
+        self.assertNotIn("Each delta below compares", report)
+
     def test_incomplete_public_opening_groups_fall_back(self) -> None:
         from scripts.profile_bench_report import (
             normalize_case_summary,
@@ -1150,6 +1259,44 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             self.assertEqual(case_status(pr_summary["cases"][0]), "fail")
             self.assertEqual(case_status(base_summary["cases"][0]), "fail")
             self.assertIn("paired binary failed", pr_summary["cases"][0]["error"])
+
+    def test_write_aggregate_summaries_preserves_benchmark_shard(self) -> None:
+        from scripts.profile_bench_report import (
+            BenchmarkCaseSpec,
+            ScheduledRun,
+            write_aggregate_summaries,
+        )
+
+        case = BenchmarkCaseSpec(mode="dense_fp32", num_vars=26, num_polys=1)
+        summary = {
+            "case_id": case.case_id,
+            "exit_code": 0,
+            "run_index": 1,
+            "setup_s": 1.0,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = pathlib.Path(tmp)
+            run = ScheduledRun(
+                "/bin/profile",
+                output_dir,
+                output_dir / case.case_id,
+                case,
+                "measured",
+                1,
+            )
+            write_aggregate_summaries(
+                [output_dir],
+                [case],
+                [(run, summary)],
+                warmups=0,
+                benchmark_shard="1-fp32-base",
+            )
+            payload = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+            csv_text = (output_dir / "summary.csv").read_text(encoding="utf-8")
+
+        self.assertEqual(payload["cases"][0]["benchmark_shard"], "1-fp32-base")
+        self.assertIn("benchmark_shard", csv_text.splitlines()[0])
+        self.assertIn("1-fp32-base", csv_text)
 
     def test_validate_case_consistency_tolerates_terminal_proof_level(self) -> None:
         from scripts.profile_bench_report import (

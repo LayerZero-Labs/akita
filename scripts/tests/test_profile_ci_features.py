@@ -41,7 +41,7 @@ class ProfileCiFeatureTests(unittest.TestCase):
             schedule_symbol(feature) for feature in all_schedule_features(self.graph)
         }
         self.assertIn("FP128_ONEHOT_RECURSIVE_SCHEDULES", symbols)
-        self.assertIn("FP64_D256_ONEHOT_SCHEDULES", symbols)
+        self.assertIn("FP64_ONEHOT_SCHEDULES", symbols)
 
 
 if __name__ == "__main__":

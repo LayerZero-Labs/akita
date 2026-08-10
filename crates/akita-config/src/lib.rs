@@ -646,7 +646,7 @@ mod fp128_policy_tests {
             <fp128::OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
             RingDimensionScheduleMode::AdaptiveDimension {
                 num_search_levels: 2,
-                uniform_suffix_dimension: 64,
+                suffix_dimensions: &[64],
                 ..
             }
         ));
@@ -660,7 +660,7 @@ mod fp128_policy_tests {
             <fp128::Dense as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
             RingDimensionScheduleMode::AdaptiveDimension {
                 num_search_levels: 2,
-                uniform_suffix_dimension: 64,
+                suffix_dimensions: &[64],
                 ..
             }
         ));
@@ -686,7 +686,7 @@ mod fp128_policy_tests {
     fn small_field_sis_pricing_includes_psi_norm_bound() {
         use super::proof_optimized::{fp128, fp32};
 
-        type SmallCfg = fp32::D128OneHot;
+        type SmallCfg = fp32::OneHot;
         assert_eq!(
             <fp128::Dense as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
             1

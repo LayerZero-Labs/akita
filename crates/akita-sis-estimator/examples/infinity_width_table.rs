@@ -6,7 +6,6 @@ use akita_sis_estimator::{
     },
     AkitaModulusProfileId,
 };
-use num_traits::ToPrimitive;
 use sha3::{Digest, Sha3_256};
 use std::{
     env, fs,
@@ -175,10 +174,9 @@ fn write_rust_split(
         policy_review_source(rows, config),
     ));
     let base_digest = table_digest(&generated_files)?;
-    let d512_digest = q128_inner_d512_digest(base_digest, &runtime_rows, config)?;
     fs::write(
         out_dir.join("mod.rs"),
-        rust_mod_source(config.policy, config.profile, base_digest, d512_digest),
+        rust_mod_source(config.policy, config.profile, base_digest),
     )?;
     for (filename, contents) in generated_files {
         fs::write(out_dir.join(filename), contents)?;
@@ -190,13 +188,11 @@ fn rust_mod_source(
     policy: akita_sis_estimator::SisSecurityPolicy,
     profile: InfinityWidthProfile,
     base_digest: [u8; 32],
-    d512_digest: [u8; 32],
 ) -> String {
     format!(
-        "{}mod q128;\nmod q32;\nmod q64;\n\nuse super::{{SisModulusProfileId, SisSecurityPolicyId}};\n\n/// SHA3-256 identity of the generated base table and provenance files.\npub(super) const SIS_TABLE_DIGEST: [u8; 32] = {};\n\n/// SHA3-256 identity of the base table plus q128 Inner/512 coverage.\npub(super) const Q128_INNER_D512_DIGEST: [u8; 32] = {};\n\n/// Generated SIS max-width table for the named security policy.\n///\n/// Runtime keys are `(d, coeff_linf_bound) -> widths[rank - 1]`, projected from\n/// scalar cutoffs as `width = cutoff_m(B, n = rank * d) / d`.\n#[rustfmt::skip]\npub(crate) fn sis_max_widths(\n    policy: SisSecurityPolicyId,\n    modulus_profile: SisModulusProfileId,\n    d: u32,\n    coeff_linf_bound: u128,\n) -> Option<&'static [u64]> {{\n    if policy != SisSecurityPolicyId::{} {{\n        return None;\n    }}\n    match modulus_profile {{\n        SisModulusProfileId::Q32Offset99 => q32::sis_max_widths(d, coeff_linf_bound),\n        SisModulusProfileId::Q64Offset59 => q64::sis_max_widths(d, coeff_linf_bound),\n        SisModulusProfileId::Q128OffsetA7F7 => q128::sis_max_widths(d, coeff_linf_bound),\n    }}\n}}\n",
+        "{}mod q128;\nmod q32;\nmod q64;\n\nuse super::{{SisModulusProfileId, SisSecurityPolicyId}};\n\n/// SHA3-256 identity of the generated table and provenance files.\npub(super) const SIS_TABLE_DIGEST: [u8; 32] = {};\n\n/// Generated SIS max-width table for the named security policy.\n///\n/// Runtime keys are `(d, coeff_linf_bound) -> widths[rank - 1]`, projected from\n/// scalar cutoffs as `width = cutoff_m(B, n = rank * d) / d`.\n#[rustfmt::skip]\npub(crate) fn sis_max_widths(\n    policy: SisSecurityPolicyId,\n    modulus_profile: SisModulusProfileId,\n    d: u32,\n    coeff_linf_bound: u128,\n) -> Option<&'static [u64]> {{\n    if policy != SisSecurityPolicyId::{} {{\n        return None;\n    }}\n    match modulus_profile {{\n        SisModulusProfileId::Q32Offset99 => q32::sis_max_widths(d, coeff_linf_bound),\n        SisModulusProfileId::Q64Offset59 => q64::sis_max_widths(d, coeff_linf_bound),\n        SisModulusProfileId::Q128OffsetA7F7 => q128::sis_max_widths(d, coeff_linf_bound),\n    }}\n}}\n",
         table_header(policy, profile),
         rust_byte_array(base_digest),
-        rust_byte_array(d512_digest),
         policy.label(),
     )
 }
@@ -334,57 +330,6 @@ fn table_digest(files: &[(String, String)]) -> io::Result<[u8; 32]> {
         hasher.update(required_name.as_bytes());
         hasher.update([0]);
         hasher.update(contents);
-    }
-    Ok(hasher.finalize().into())
-}
-
-fn q128_inner_d512_digest(
-    base_digest: [u8; 32],
-    runtime_rows: &[RuntimeWidthRow],
-    config: &InfinityWidthTableConfig,
-) -> io::Result<[u8; 32]> {
-    const DOMAIN: &[u8] = b"akita-sis-table-q128-inner-d512-direct-v1\0";
-    const D: u32 = 512;
-    let q128 = AkitaModulusProfileId::Q128OffsetA7F7
-        .modulus()
-        .to_u128()
-        .ok_or_else(|| io::Error::other("q128 modulus does not fit u128"))?;
-    let rows = runtime_rows
-        .iter()
-        .filter(|row| row.modulus_profile == AkitaModulusProfileId::Q128OffsetA7F7 && row.d == D)
-        .collect::<Vec<_>>();
-    if rows.len() != akita_sis_estimator::width_table::COEFF_LINF_BUCKETS.len() {
-        return Err(io::Error::other(
-            "q128 Inner/512 coverage does not contain every canonical coefficient bucket",
-        ));
-    }
-    let mut hasher = Sha3_256::new();
-    hasher.update(DOMAIN);
-    hasher.update(base_digest);
-    hasher.update(q128.to_le_bytes());
-    hasher.update(D.to_le_bytes());
-    hasher.update(
-        config
-            .search_cap
-            .unwrap_or(akita_sis_estimator::width_table::DEFAULT_SEARCH_CAP)
-            .to_le_bytes(),
-    );
-    hasher.update(config.max_rank.to_le_bytes());
-    hasher.update(
-        u64::try_from(rows.len())
-            .map_err(io::Error::other)?
-            .to_le_bytes(),
-    );
-    for row in &rows {
-        hasher.update(u128::from(row.coeff_linf_bound).to_le_bytes());
-    }
-    for row in rows {
-        if row.widths.len() != config.max_rank as usize {
-            return Err(io::Error::other("incomplete q128 Inner/512 rank row"));
-        }
-        for &width in &row.widths {
-            hasher.update(width.to_le_bytes());
-        }
     }
     Ok(hasher.finalize().into())
 }
