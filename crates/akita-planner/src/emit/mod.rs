@@ -114,7 +114,18 @@ fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInpu
     }
 }
 
-fn generated_entry(
+/// Build the compact in-memory catalog entry the emitter would write for
+/// `(key, schedule)`.
+///
+/// Exposed so drift tests can round-trip a DP schedule through the compact
+/// row representation and its runtime expansion without writing a module to
+/// disk.
+///
+/// # Errors
+///
+/// Returns an error if the schedule's terminal response shape is not the
+/// single-group form the compact rows encode.
+pub fn generated_entry(
     key: &AkitaScheduleLookupKey,
     schedule: &FoldSchedule,
 ) -> Result<GeneratedFoldScheduleEntry, String> {

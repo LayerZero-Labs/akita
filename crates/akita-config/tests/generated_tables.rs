@@ -851,6 +851,104 @@ fn regen_hint() -> &'static str {
     "scripts/generate-schedule-tables.sh"
 }
 
+/// Drift coverage for multi-group roots under non-128-bit policies.
+///
+/// The grouped keys enumerated for the shipped catalogs are all fp128, where
+/// the policy width and a hardcoded 128-bit field agree, so
+/// [`generated_schedule_tables_match_key_planner`] cannot observe a field-width
+/// divergence between the planner DP and catalog expansion (the root's
+/// residual decomposition depth, e.g. `ceil(64/3) = 22` planner digits vs
+/// `ceil(128/3) = 43` expansion digits for a 64-bit policy with `log_basis 3`).
+/// Round-trip a multi-group DP schedule for every non-128-bit family through
+/// the compact generated-row encoding and its runtime expansion, and require
+/// exact schedule equality.
+#[test]
+fn non_128_bit_multi_group_expansion_matches_dp() {
+    let candidate_final_groups = [
+        PolynomialGroupLayout::new(20, 2),
+        PolynomialGroupLayout::new(20, 1),
+        PolynomialGroupLayout::new(28, 1),
+        PolynomialGroupLayout::new(16, 1),
+    ];
+    let candidate_precommit_groups = [
+        PolynomialGroupLayout::new(14, 1),
+        PolynomialGroupLayout::new(16, 1),
+        PolynomialGroupLayout::new(14, 2),
+    ];
+
+    let mut families_checked = 0usize;
+    for family in ALL_GENERATED_FAMILIES {
+        if (family.policy)().decomposition.field_bits() == 128 {
+            continue;
+        }
+
+        let mut checked = false;
+        'candidates: for &final_group in &candidate_final_groups {
+            for &precommit_group in &candidate_precommit_groups {
+                let Ok((profile, honest_fold_policy)) =
+                    (family.explicit_precommitted_group)(precommit_group)
+                else {
+                    continue;
+                };
+                let key = AkitaScheduleLookupKey {
+                    final_group,
+                    precommitteds: vec![profile],
+                };
+                let regenerated =
+                    match (family.regen_group_batch)(key.clone(), vec![honest_fold_policy]) {
+                        Ok(schedule) => schedule,
+                        Err(AkitaError::UnsupportedSchedule(_)) => continue,
+                        Err(e) => panic!(
+                            "family {} multi-group DP failed for key {key:?}: {e}",
+                            family.module_name
+                        ),
+                    };
+                let entry = akita_planner::emit::generated_entry(&key, &regenerated)
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "family {} compact-row encoding failed for key {key:?}: {e}",
+                            family.module_name
+                        )
+                    });
+                let expanded = akita_schedules::schedule_from_entry(
+                    &entry,
+                    &key,
+                    &(family.policy)(),
+                    family.ring_challenge_config,
+                )
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "family {} catalog expansion rejected the DP row for key {key:?}: {e}",
+                        family.module_name
+                    )
+                });
+                assert!(
+                    schedules_equal(&expanded, &regenerated),
+                    "family {} key {key:?}: catalog expansion diverged from the DP\n  \
+                     expanded:    {}\n  regenerated: {}",
+                    family.module_name,
+                    render_schedule(&expanded),
+                    render_schedule(&regenerated),
+                );
+                checked = true;
+                break 'candidates;
+            }
+        }
+
+        assert!(
+            checked,
+            "family {}: no multi-group candidate planned successfully (vacuous coverage)",
+            family.module_name
+        );
+        families_checked += 1;
+    }
+
+    assert!(
+        families_checked > 0,
+        "no non-128-bit generated family found (vacuous coverage)"
+    );
+}
+
 /// The generated tables must expand to exactly what the key-shaped DP produces.
 /// Rolled into one test so the panic message can summarize per-family
 /// mismatch counts.
