@@ -12,11 +12,6 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32};
-#[cfg(all(
-    feature = "schedules-fp128-onehot",
-    not(feature = "schedules-fp128-onehot-recursive")
-))]
-use akita_config::RecursiveCommitmentConfig;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_planner::find_schedule;
 use akita_schedules::resolve_schedule;
