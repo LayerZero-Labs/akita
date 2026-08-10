@@ -57,6 +57,9 @@ removed_api_patterns=(
   'FoldWitnessLinfCapPolicy'
   'BoundedL1Norm'
   'akita-challenges/src/tensor\.rs'
+  'RingSwitchComputeBackend'
+  'RingSwitchRelationRowsPlan'
+  'RingSwitchQuotientRowsPlan'
 )
 
 api_pattern="$(IFS='|'; echo "${removed_api_patterns[*]}")"

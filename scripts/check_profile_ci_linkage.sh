@@ -28,55 +28,18 @@ if ! symbols=$("${nm_cmd[@]}" "$binary" 2>&1); then
   exit 1
 fi
 
-profile_symbols=(
-  FP128_DENSE_SCHEDULES
-  FP128_ONEHOT_SCHEDULES
-  FP128_ONEHOT_RECURSIVE_SCHEDULES
-  FP128_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES
-  FP128_ONEHOT_MULTI_CHUNK_SCHEDULES
-  FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES
-  FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES
-  FP32_D128_ONEHOT_SCHEDULES
-  FP64_D128_ONEHOT_SCHEDULES
-)
-outside_profile_symbols=(
-  FP128_D128_DENSE_SCHEDULES
-  FP128_D128_ONEHOT_SCHEDULES
-  FP128_D64_ONEHOT_TIERED_SCHEDULES
-  FP32_D256_ONEHOT_SCHEDULES
-  FP64_D128_DENSE_SCHEDULES
-  FP64_D256_ONEHOT_SCHEDULES
-)
-
-case "$profile_feature" in
-  profile-ci-fp128-dense)
-    allowed=(FP128_DENSE_SCHEDULES)
-    ;;
-  profile-ci-flat-onehot)
-    allowed=(FP128_ONEHOT_SCHEDULES FP32_D128_ONEHOT_SCHEDULES FP64_D128_ONEHOT_SCHEDULES)
-    ;;
-  profile-ci-multi-group-direct)
-    allowed=(FP128_ONEHOT_SCHEDULES)
-    ;;
-  profile-ci-multi-group-recursive)
-    # Recursive adapters delegate scalar keys to their direct base catalog.
-    allowed=(FP128_ONEHOT_SCHEDULES FP128_ONEHOT_RECURSIVE_SCHEDULES)
-    ;;
-  profile-ci-multi-group-recursive-w8r2)
-    # Recursive adapters delegate scalar keys to their direct base catalog.
-    allowed=(FP128_ONEHOT_MULTI_CHUNK_SCHEDULES FP128_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES)
-    ;;
-  profile-ci-distributed)
-    allowed=(FP128_ONEHOT_MULTI_CHUNK_SCHEDULES FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES)
-    ;;
-  profile-ci)
-    allowed=("${profile_symbols[@]}")
-    ;;
-  *)
-    echo "unknown profile feature for linkage check: $profile_feature" >&2
-    exit 1
-    ;;
-esac
+profile_symbols=()
+while IFS= read -r symbol; do
+  profile_symbols+=("$symbol")
+done < <(python3 scripts/profile_ci_features.py all-symbols)
+allowed=()
+while IFS= read -r symbol; do
+  allowed+=("$symbol")
+done < <(python3 scripts/profile_ci_features.py allowed-symbols "$profile_feature")
+if (( ${#allowed[@]} == 0 )); then
+  echo "profile feature resolves to no schedule symbols: $profile_feature" >&2
+  exit 1
+fi
 
 is_allowed() {
   local candidate="$1"
@@ -90,7 +53,7 @@ is_allowed() {
 }
 
 failed=0
-for sym in "${profile_symbols[@]}" "${outside_profile_symbols[@]}"; do
+for sym in "${profile_symbols[@]}"; do
   if is_allowed "$sym"; then
     continue
   fi

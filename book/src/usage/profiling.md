@@ -179,9 +179,19 @@ execution on its uniform CPU stack. This is an execution prewarm, not part of
 public setup identity or `ComputeBackendSetup::prepare_setup`: it joins the root
 commitment requirements with `NttExecutionRequirements::from_prove_schedule`
 and materializes the resulting per-dimension, per-domain prefixes before the
-online timers begin. The harness rejects any later cache growth during commit
-or prove. Consequently, `Commit` and `Prove` measure hot-cache protocol work,
-while `Prepared NTT cache size` remains the exact execution-resident footprint.
+online timers begin. The CPU retention policy skips large ring switch
+requirements that runtime streams. The harness rejects growth of retained
+cache entries during commit or prove. Consequently, `Commit` and `Prove`
+measure hot-cache work plus intentional streamed work, while `Prepared NTT
+cache size` reports the exact shared matrix footprint at the prewarm boundary.
+Compression cache entries are operation driven and are not included in that
+setup line. `CpuPreparedSetup::ntt_cache_bytes` reports the complete actual
+resident total when an application needs it.
+
+Each profile run prints the default CPU resource policy before it starts. The
+report includes the maximum cached ring switch extent and the sparse
+commitment scratch bytes for each worker. This makes runs comparable when
+those deployment limits change.
 
 ## NTT matvec microbenchmarks
 

@@ -23,9 +23,13 @@ quantum LGSA policy at a 128-bit target.
 Recent archived records include
 [`group-local-opening-points`](../../../specs/archive/2026-Q3/group-local-opening-points.md),
 whose durable claim ownership and protocol dataflow now live in the architecture,
-verification, commitment API, and extension-opening chapters, and
+verification, commitment API, and extension-opening chapters. The
+[`PR 375 prover optimization record`](../../../specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md)
+now lives in the same archive. Its durable source ownership, CPU resource, and
+NTT lifecycle rules live in the optimization and commitment API chapters. The
 [`profile-bench-coverage-matrix`](../../../specs/archive/2026-Q3/profile-bench-coverage-matrix.md),
-whose current benchmark contract now lives in the profiling chapter.
+whose current benchmark contract now lives in the profiling chapter, is also
+archived.
 
 ## Sources to fold in
 

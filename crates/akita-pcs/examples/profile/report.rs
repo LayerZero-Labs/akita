@@ -501,7 +501,7 @@ impl PlannedGroupReport {
 pub(crate) fn emit_runtime_schedule_summary(
     label: &str,
     schedule: &FoldSchedule,
-    root_num_claims: usize,
+    final_group: PolynomialGroupLayout,
     field_bits: u32,
 ) {
     let levels = schedule.num_fold_levels();
@@ -522,15 +522,8 @@ pub(crate) fn emit_runtime_schedule_summary(
         "runtime schedule"
     );
 
-    let root_current_w_groups = root_current_w_groups(schedule, root_num_claims);
+    let root_current_w_groups = root_current_w_groups(schedule, final_group);
     let root_open = &schedule.root.params.open_commit_matrix;
-    let precommitted_polys = schedule
-        .root
-        .params
-        .precommitted_groups
-        .iter()
-        .map(|group| group.descriptor.group.num_polynomials())
-        .sum::<usize>();
     for (index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
         let layout = group.descriptor.group;
         let witness_field_elements =
@@ -550,17 +543,8 @@ pub(crate) fn emit_runtime_schedule_summary(
         "final".to_string(),
         "final",
         0,
-        root_final_group_field_elements(
-            schedule.root.input_witness_len,
-            root_num_claims,
-            precommitted_polys,
-        ),
-        schedule.root.input_witness_len.is_power_of_two().then(|| {
-            PolynomialGroupLayout::new(
-                schedule.root.input_witness_len.ilog2() as usize,
-                root_num_claims.saturating_sub(precommitted_polys),
-            )
-        }),
+        group_field_elements(final_group.num_vars(), final_group.num_polynomials()),
+        Some(final_group),
         &schedule.root.params.final_group.commitment,
     )
     .emit(label, 0);
@@ -685,15 +669,7 @@ fn group_field_elements(num_vars: usize, num_polynomials: usize) -> usize {
         .unwrap_or(0)
 }
 
-fn root_final_group_field_elements(
-    one_polynomial_field_elements: usize,
-    root_num_claims: usize,
-    precommitted_polys: usize,
-) -> usize {
-    one_polynomial_field_elements.saturating_mul(root_num_claims.saturating_sub(precommitted_polys))
-}
-
-fn root_current_w_groups(schedule: &FoldSchedule, root_num_claims: usize) -> String {
+fn root_current_w_groups(schedule: &FoldSchedule, final_group: PolynomialGroupLayout) -> String {
     let mut groups = schedule
         .root
         .params
@@ -708,37 +684,11 @@ fn root_current_w_groups(schedule: &FoldSchedule, root_num_claims: usize) -> Str
             )
         })
         .collect::<Vec<_>>();
-    let precommitted_polys = schedule
-        .root
-        .params
-        .precommitted_groups
-        .iter()
-        .map(|group| group.descriptor.group.num_polynomials())
-        .sum::<usize>();
     groups.push(format!(
         "final={}",
-        root_final_group_field_elements(
-            schedule.root.input_witness_len,
-            root_num_claims,
-            precommitted_polys,
-        )
+        group_field_elements(final_group.num_vars(), final_group.num_polynomials())
     ));
     groups.join(";")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::root_final_group_field_elements;
-
-    #[test]
-    fn root_final_group_count_scales_the_per_polynomial_schedule_length() {
-        let one_final_polynomial = 1usize << 32;
-
-        assert_eq!(
-            root_final_group_field_elements(one_final_polynomial, 4, 2),
-            2 * one_final_polynomial
-        );
-    }
 }
 
 fn ring_elem_count(coeff_len: usize, d: usize) -> usize {

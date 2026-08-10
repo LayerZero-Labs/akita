@@ -9,10 +9,13 @@ fn verify_passes_for_consistent_opening() {
     let (poly, evals) = make_dense_poly(num_vars);
 
     let setup = Scheme::setup_prover(num_vars, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
 
     let (commitment, hint) =
@@ -60,10 +63,13 @@ fn verify_rejects_wrong_opening() {
     let (poly, evals) = make_dense_poly(num_vars);
 
     let setup = Scheme::setup_prover(num_vars, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
 
     let (commitment, hint) =
@@ -219,10 +225,13 @@ fn monomial_basis_prove_verify_round_trip() {
     let poly = DensePoly::<F>::from_field_evals(num_vars, D, &coeffs).unwrap();
 
     let setup = Scheme::setup_prover(num_vars, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
 
     let (commitment, hint) =

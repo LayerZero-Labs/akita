@@ -9,15 +9,12 @@ use super::*;
 /// single-polynomial callers (which collect once via `FlatBlocks::block`)
 /// and batched callers (which concatenate slices across polynomials) feed
 /// through the same signature.
-pub(super) fn onehot_accumulate<E, const D: usize>(
-    blocks: &[&[E]],
+pub(super) fn onehot_accumulate<const D: usize>(
+    blocks: &[&[SparseRingBlockEntry]],
     challenges: &[SparseChallenge],
     num_live_blocks: usize,
     num_positions_per_block: usize,
-) -> Vec<[i32; D]>
-where
-    E: OneHotEntry,
-{
+) -> Vec<[i32; D]> {
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -48,12 +45,12 @@ where
                 fill_rotated_challenge::<D>(&mut rotated, challenge);
 
                 for entry in &entries[lo..hi] {
-                    let dst = &mut acc[entry.pos_in_block() - pos_start];
-                    for &ci in entry.coeffs() {
-                        let rot = &rotated[ci as usize];
-                        for k in 0..D {
-                            dst[k] += rot[k] as i32;
-                        }
+                    let pos_in_block = entry.pos_in_block();
+                    let coeff_idx = entry.coeff_idx();
+                    let dst = &mut acc[pos_in_block - pos_start];
+                    let rot = &rotated[coeff_idx];
+                    for k in 0..D {
+                        dst[k] += rot[k] as i32;
                     }
                 }
             }
