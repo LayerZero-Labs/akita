@@ -17,6 +17,7 @@ mod modes;
 mod ntt_prewarm;
 mod parallel;
 mod report;
+mod verifier;
 #[cfg_attr(
     any(feature = "profile-onehot-fp128", feature = "profile-bench-selected"),
     allow(dead_code)

@@ -5,12 +5,13 @@ use crate::report::{
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
     report_verifier_ntt_cache_size,
 };
+use crate::verifier::run_timings as run_verifier_timings;
 use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalBytes, CanonicalField, ExtField, FieldCore,
-    FrobeniusExtField, FromPrimitiveInt, HalvingField, LiftBase, PseudoMersenneField,
-    RandomSampling, TranscriptChallenge,
+    AdditiveGroup, CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField,
+    FromPrimitiveInt, HalvingField, LiftBase, PseudoMersenneField, RandomSampling,
+    TranscriptChallenge,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
@@ -38,32 +39,6 @@ use rand::{Rng, SeedableRng};
 use std::time::Instant;
 
 pub(crate) const ONEHOT_K: usize = 256;
-
-fn run_verifier_timings<F>(
-    label: &str,
-    pools: &ProfileThreadPools,
-    failure_context: &str,
-    verify: F,
-) where
-    F: Fn() -> Result<(), AkitaError> + Copy + Send + Sync,
-{
-    for (verify_mode, single_threaded) in [("multi threaded", false), ("single threaded", true)] {
-        tracing::info!(label, verify_mode, "profile verification start");
-        let started = Instant::now();
-        let result = if single_threaded {
-            pools.in_verify_single(verify)
-        } else {
-            pools.in_verify_multi(verify)
-        };
-        let elapsed_s = started.elapsed().as_secs_f64();
-        if let Err(error) = result {
-            tracing::error!(label, verify_mode, elapsed_s, error = %error, "verify FAILED");
-            eprintln!("[{label}] verify {verify_mode} FAILED: {elapsed_s:.6}s ({error})");
-            panic!("[{label}] {failure_context} {verify_mode} verification failed: {error}");
-        }
-        report_timing(label, &format!("verify {verify_mode} OK"), elapsed_s);
-    }
-}
 
 fn planned_payload_bytes<Cfg: CommitmentConfig>(
     schedule: &FoldSchedule,
@@ -690,27 +665,30 @@ fn run_prove<
         "verifier_setup",
         t_verifier_setup.elapsed().as_secs_f64(),
     );
-    let verify = || {
+    let prepare = || {
+        verifier_claims(
+            Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+                final_group: *commitments[0].profile(),
+                precommitteds: Vec::new(),
+            })
+            .expect("select verifier schedule row")
+            .selection(),
+            pt,
+            &openings[..],
+            &commitments[0],
+        )
+    };
+    let verify = |claims| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
         AkitaCommitmentScheme::<Cfg>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verifier_claims(
-                Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
-                    final_group: *commitments[0].profile(),
-                    precommitteds: Vec::new(),
-                })
-                .expect("select verifier schedule row")
-                .selection(),
-                pt,
-                &openings[..],
-                &commitments[0],
-            ),
+            claims,
             BasisMode::Lagrange,
         )
     };
-    run_verifier_timings(label, pools, "profile", verify);
+    run_verifier_timings(label, pools, "profile", prepare, verify);
     report_verifier_ntt_cache_size(
         label,
         verifier_setup
@@ -1084,27 +1062,30 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         "verifier_setup",
         t_verifier_setup.elapsed().as_secs_f64(),
     );
-    let verify = || {
+    let prepare = || {
+        verifier_claims(
+            Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+                final_group: *commitments[0].profile(),
+                precommitteds: Vec::new(),
+            })
+            .expect("select verifier schedule row")
+            .selection(),
+            &pt[..],
+            &openings[..],
+            &commitments[0],
+        )
+    };
+    let verify = |claims| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
         AkitaCommitmentScheme::<Cfg>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verifier_claims(
-                Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
-                    final_group: *commitments[0].profile(),
-                    precommitteds: Vec::new(),
-                })
-                .expect("select verifier schedule row")
-                .selection(),
-                &pt[..],
-                &openings[..],
-                &commitments[0],
-            ),
+            claims,
             BasisMode::Lagrange,
         )
     };
-    run_verifier_timings(label, pools, "batched profile", verify);
+    run_verifier_timings(label, pools, "batched profile", prepare, verify);
     report_verifier_ntt_cache_size(
         label,
         verifier_setup
@@ -1457,7 +1438,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         "verifier_setup",
         t_verifier_setup.elapsed().as_secs_f64(),
     );
-    let verify = || {
+    let prepare = || {
         let mut verifier_groups = Vec::with_capacity(PRE_GROUPS + 1);
         for (group_idx, openings) in pre_openings.iter().enumerate() {
             verifier_groups.push(
@@ -1477,20 +1458,23 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             )
             .expect("final verifier group"),
         );
+        GroupBatchStatement::new(
+            selection,
+            OpeningClaims::from_groups(verifier_groups).expect("verifier claims"),
+        )
+        .expect("verifier statement")
+    };
+    let verify = |statement| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
         AkitaCommitmentScheme::<ProofCfg>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            GroupBatchStatement::new(
-                selection,
-                OpeningClaims::from_groups(verifier_groups).expect("verifier claims"),
-            )
-            .expect("verifier statement"),
+            statement,
             BasisMode::Lagrange,
         )
     };
-    run_verifier_timings(label, pools, "multi-group profile", verify);
+    run_verifier_timings(label, pools, "multi-group profile", prepare, verify);
     report_verifier_ntt_cache_size(
         label,
         verifier_setup

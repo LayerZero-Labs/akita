@@ -9,8 +9,8 @@ use akita_types::{
     layout::proof_size::field_bytes,
     sis::num_digits_for_bound,
     AkitaBatchedProof, CommittedGroupParams, FoldLevelProof, FoldSchedule, NttTransformDomain,
-    OpenCommitMatrixParams, PrecommittedLevelParams, SetupSumcheckProof, TerminalLevelProof,
-    ZFoldEncodingStats,
+    OpenCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, SetupSumcheckProof,
+    TerminalLevelProof, ZFoldEncodingStats,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -333,11 +333,18 @@ pub(crate) fn report_crt_profile(label: &str, profile: PreparedCrtNttProfile) {
     );
 }
 
+/// One planner group as consumed by a fold row.
+///
+/// `consumer_level` identifies the fold whose parameters consume the group.
+/// `emit` takes the producer row separately because a setup prefix is emitted
+/// on the preceding fold row.
 struct PlannedGroupReport {
     group: String,
     group_role: &'static str,
     consumer_level: usize,
     witness_field_elements: usize,
+    public_num_vars: usize,
+    public_num_polynomials: usize,
     d_a: usize,
     d_b: usize,
     d_d: usize,
@@ -366,14 +373,20 @@ impl PlannedGroupReport {
         group_role: &'static str,
         level: usize,
         witness_field_elements: usize,
+        public_group: Option<PolynomialGroupLayout>,
         params: &CommittedGroupParams,
     ) -> Self {
         let role_dims = params.role_dims();
+        let (public_num_vars, public_num_polynomials) = public_group
+            .map(|layout| (layout.num_vars(), layout.num_polynomials()))
+            .unwrap_or((0, 0));
         Self {
             group,
             group_role,
             consumer_level: level,
             witness_field_elements,
+            public_num_vars,
+            public_num_polynomials,
             d_a: role_dims.d_a(),
             d_b: role_dims.d_b(),
             d_d: role_dims.d_d(),
@@ -399,9 +412,9 @@ impl PlannedGroupReport {
 
     fn precommitted(
         group: String,
-        group_role: &'static str,
         consumer_level: usize,
         witness_field_elements: usize,
+        public_group: Option<PolynomialGroupLayout>,
         params: &PrecommittedLevelParams,
         shared_open: &OpenCommitMatrixParams,
         setup_prefix_lengths: Option<(usize, usize)>,
@@ -410,11 +423,20 @@ impl PlannedGroupReport {
         let role_dims = params.role_dims(shared_open.ring_dimension());
         let (setup_prefix_natural_field_elements, setup_prefix_padded_field_elements) =
             setup_prefix_lengths.unwrap_or((0, 0));
+        let (public_num_vars, public_num_polynomials) = public_group
+            .map(|layout| (layout.num_vars(), layout.num_polynomials()))
+            .unwrap_or((0, 0));
         Self {
             group,
-            group_role,
+            group_role: if setup_prefix_lengths.is_some() {
+                "setup_offload"
+            } else {
+                "precommitted"
+            },
             consumer_level,
             witness_field_elements,
+            public_num_vars,
+            public_num_polynomials,
             d_a: role_dims.d_a(),
             d_b: role_dims.d_b(),
             d_d: role_dims.d_d(),
@@ -449,6 +471,8 @@ impl PlannedGroupReport {
             group_role = self.group_role,
             consumer_level = self.consumer_level,
             witness_field_elements = self.witness_field_elements,
+            public_num_vars = self.public_num_vars,
+            public_num_polynomials = self.public_num_polynomials,
             d_a = self.d_a,
             d_b = self.d_b,
             d_d = self.d_d,
@@ -513,9 +537,9 @@ pub(crate) fn emit_runtime_schedule_summary(
             group_field_elements(layout.num_vars(), layout.num_polynomials());
         PlannedGroupReport::precommitted(
             format!("pre{index}"),
-            "precommitted",
             0,
             witness_field_elements,
+            Some(layout),
             &group.commitment,
             root_open,
             None,
@@ -531,6 +555,12 @@ pub(crate) fn emit_runtime_schedule_summary(
             root_num_claims,
             precommitted_polys,
         ),
+        schedule.root.input_witness_len.is_power_of_two().then(|| {
+            PolynomialGroupLayout::new(
+                schedule.root.input_witness_len.ilog2() as usize,
+                root_num_claims.saturating_sub(precommitted_polys),
+            )
+        }),
         &schedule.root.params.final_group.commitment,
     )
     .emit(label, 0);
@@ -540,17 +570,16 @@ pub(crate) fn emit_runtime_schedule_summary(
             "folded",
             index + 1,
             fold.input_witness_len,
+            None,
             &fold.params.witness,
         )
         .emit(label, index + 1);
-    }
-    for (index, fold) in schedule.recursive_folds.iter().enumerate() {
         if let Some(prefix) = &fold.params.incoming_setup_prefix {
             PlannedGroupReport::precommitted(
                 format!("setup_to_L{}", index + 1),
-                "setup_offload",
                 index + 1,
                 prefix.natural_len,
+                None,
                 &prefix.commitment_params,
                 &fold.params.open_commit_matrix,
                 Some((prefix.natural_len, prefix.n_prefix().unwrap_or(0))),
@@ -626,6 +655,8 @@ pub(crate) fn emit_runtime_schedule_summary(
         );
     }
 
+    // Older merge-base report parsers consume this compatibility event. The
+    // current parser uses the setup-offload group emitted above.
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
         if let Some(prefix) = &fold.params.incoming_setup_prefix {
             tracing::info!(
