@@ -43,7 +43,7 @@ use compression_cache::CompressionNttCache;
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct CpuBackend {
     max_cached_ring_switch_elements: usize,
-    onehot_scratch_bytes_per_worker: usize,
+    commit_scratch_bytes_per_worker: usize,
 }
 
 type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
@@ -52,33 +52,33 @@ impl CpuBackend {
     /// Default maximum cached extent for a ring-switch NTT operation.
     pub const DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS: usize = 1 << 21;
 
-    /// Default temporary one hot commitment memory per worker.
-    pub const DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER: usize = 8 << 20;
+    /// Default temporary sparse commitment memory per worker.
+    pub const DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER: usize = 8 << 20;
 
     /// CPU backend with the default resource limits.
     pub const DEFAULT: Self = Self {
         max_cached_ring_switch_elements: Self::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
-        onehot_scratch_bytes_per_worker: Self::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER,
+        commit_scratch_bytes_per_worker: Self::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     };
 
     /// Creates a CPU backend with explicit resource limits.
     ///
     /// A zero ring-switch limit streams every stream-capable ring-switch
     /// operation. A limit of [`usize::MAX`] retains every supported operation.
-    /// The one hot scratch budget must be nonzero. A commitment whose minimum
+    /// The commitment scratch budget must be nonzero. A commitment whose minimum
     /// tile does not fit returns [`AkitaError::InvalidSetup`].
     pub fn with_resource_limits(
         max_cached_ring_switch_elements: usize,
-        onehot_scratch_bytes_per_worker: usize,
+        commit_scratch_bytes_per_worker: usize,
     ) -> Result<Self, AkitaError> {
-        if onehot_scratch_bytes_per_worker == 0 {
+        if commit_scratch_bytes_per_worker == 0 {
             return Err(AkitaError::InvalidSetup(
-                "CPU one hot scratch bytes per worker must be nonzero".into(),
+                "CPU commitment scratch bytes per worker must be nonzero".into(),
             ));
         }
         Ok(Self {
             max_cached_ring_switch_elements,
-            onehot_scratch_bytes_per_worker,
+            commit_scratch_bytes_per_worker,
         })
     }
 
@@ -87,9 +87,9 @@ impl CpuBackend {
         self.max_cached_ring_switch_elements
     }
 
-    /// Returns the temporary one hot commitment memory allowed per worker.
-    pub const fn onehot_scratch_bytes_per_worker(&self) -> usize {
-        self.onehot_scratch_bytes_per_worker
+    /// Returns the temporary sparse commitment memory allowed per worker.
+    pub const fn commit_scratch_bytes_per_worker(&self) -> usize {
+        self.commit_scratch_bytes_per_worker
     }
 
     #[inline]

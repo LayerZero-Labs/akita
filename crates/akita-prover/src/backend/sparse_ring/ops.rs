@@ -156,7 +156,8 @@ where
                     plan.n_a,
                     plan.num_positions_per_block,
                     plan.num_digits_inner,
-                )))
+                    self.commit_scratch_bytes_per_worker(),
+                )?))
             })
             .collect()
     }

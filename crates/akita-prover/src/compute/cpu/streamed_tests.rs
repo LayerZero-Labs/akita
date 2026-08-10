@@ -38,19 +38,19 @@ fn cpu_resource_limits_have_checked_defaults_and_boundaries() {
         CpuBackend::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS
     );
     assert_eq!(
-        default.onehot_scratch_bytes_per_worker(),
-        CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER
+        default.commit_scratch_bytes_per_worker(),
+        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER
     );
 
     let stream_all =
-        CpuBackend::with_resource_limits(0, CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER)
+        CpuBackend::with_resource_limits(0, CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER)
             .unwrap();
     assert!(!stream_all.ntt_operation_uses_cache(NttOperationCluster::RingSwitch, 1));
     assert!(stream_all.ntt_operation_uses_cache(NttOperationCluster::Commit, usize::MAX));
 
     let retain_all = CpuBackend::with_resource_limits(
         usize::MAX,
-        CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER,
+        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .unwrap();
     assert!(retain_all.ntt_operation_uses_cache(NttOperationCluster::RingSwitch, usize::MAX));
@@ -62,11 +62,11 @@ fn configured_ring_switch_routes_preserve_relation_rows() {
     let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
     let cached_backend = CpuBackend::with_resource_limits(
         usize::MAX,
-        CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER,
+        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .unwrap();
     let streamed_backend =
-        CpuBackend::with_resource_limits(0, CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER)
+        CpuBackend::with_resource_limits(0, CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER)
             .unwrap();
     let cached_prepared = cached_backend.prepare_setup(&setup).unwrap();
     let streamed_prepared = streamed_backend.prepare_setup(&setup).unwrap();
@@ -106,7 +106,7 @@ fn configured_ring_switch_routes_preserve_relation_rows() {
 }
 
 #[test]
-fn streamed_relation_rejects_unsafe_crt_width_without_building_cache() {
+fn cached_and_streamed_routes_share_acceptance_across_crt_bounds() {
     type F32 = Prime32Offset99;
     let setup = AkitaProverSetup::<F32>::generate_with_capacity(
         8,
@@ -116,31 +116,48 @@ fn streamed_relation_rejects_unsafe_crt_width_without_building_cache() {
         },
     )
     .unwrap();
-    let backend =
-        CpuBackend::with_resource_limits(0, CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER)
+    let streamed_backend =
+        CpuBackend::with_resource_limits(0, CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER)
             .unwrap();
-    let prepared = backend.prepare_setup(&setup).unwrap();
+    let cached_backend = CpuBackend::with_resource_limits(
+        usize::MAX,
+        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+    )
+    .unwrap();
+    let streamed_prepared = streamed_backend.prepare_setup(&setup).unwrap();
+    let cached_prepared = cached_backend.prepare_setup(&setup).unwrap();
     let z_segment = vec![[1i32; D]; 64];
-    let error = backend
-        .relation_rows(
-            &prepared,
-            RingSwitchRelationView {
-                e_hat: &[],
-                t_hat: &[],
-                z_segment: &z_segment,
-                z_folded_centered_inf_norm: u32::MAX,
-            },
-            RingSwitchRelationPlan {
-                n_d: 0,
-                n_b: 0,
-                n_a: 1,
-                log_basis_open: 1,
-                log_basis_outer: 1,
-            },
-        )
-        .expect_err("unsafe streamed CRT width must fail closed");
-    assert!(error.to_string().contains("streamed centered term"));
-    assert!(prepared.shared_ntt_cache_metrics().unwrap().is_empty());
+    let plan = RingSwitchRelationPlan {
+        n_d: 0,
+        n_b: 0,
+        n_a: 1,
+        log_basis_open: 1,
+        log_basis_outer: 1,
+    };
+    for centered_bound in [1, 5, u16::MAX as u32, u32::MAX] {
+        let source = RingSwitchRelationView {
+            e_hat: &[],
+            t_hat: &[],
+            z_segment: &z_segment,
+            z_folded_centered_inf_norm: centered_bound,
+        };
+        let streamed = streamed_backend.relation_rows(&streamed_prepared, source, plan);
+        let cached = cached_backend.relation_rows(&cached_prepared, source, plan);
+        assert_eq!(
+            streamed.is_ok(),
+            cached.is_ok(),
+            "route acceptance differs at centered bound {centered_bound}"
+        );
+        assert_eq!(streamed.unwrap(), cached.unwrap());
+    }
+    assert!(streamed_prepared
+        .shared_ntt_cache_metrics()
+        .unwrap()
+        .is_empty());
+    assert!(!cached_prepared
+        .shared_ntt_cache_metrics()
+        .unwrap()
+        .is_empty());
 }
 
 #[test]

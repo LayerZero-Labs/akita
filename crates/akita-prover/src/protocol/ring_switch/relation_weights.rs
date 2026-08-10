@@ -766,9 +766,14 @@ where
                             .and_then(|local| e_setup_offset.checked_add(local))
                             .ok_or(AkitaError::InvalidProof)?;
                         let consistency_acc = consistency_weight * challenge_alpha * opening_gadget;
-                        let setup_acc = d_setup_accs
-                            .as_ref()
-                            .map_or(E::zero(), |weights| weights[d_phys_col - d_setup_start]);
+                        let setup_acc = if let Some(weights) = d_setup_accs.as_ref() {
+                            let local_col = d_phys_col
+                                .checked_sub(d_setup_start)
+                                .ok_or(AkitaError::InvalidProof)?;
+                            *weights.get(local_col).ok_or(AkitaError::InvalidProof)?
+                        } else {
+                            E::zero()
+                        };
                         relation_events.push(
                             physical_start,
                             group_d_d,
@@ -819,9 +824,11 @@ where
                                 0,
                             )?;
                             let a_acc = a_row_weight * challenge_alpha * opening_gadget;
-                            let b_acc = b_setup_accs
-                                .as_ref()
-                                .map_or(E::zero(), |weights| weights[local_col]);
+                            let b_acc = if let Some(weights) = b_setup_accs.as_ref() {
+                                *weights.get(local_col).ok_or(AkitaError::InvalidProof)?
+                            } else {
+                                E::zero()
+                            };
                             relation_events.push(
                                 physical_start,
                                 group_d_b,
@@ -843,6 +850,8 @@ where
                 }
             }
         }
+        // These setup-column accumulators can be large and are not used by
+        // the z-hat phase below. Release them at the named phase boundary.
         drop(d_setup_accs);
         drop(b_setup_accs);
 

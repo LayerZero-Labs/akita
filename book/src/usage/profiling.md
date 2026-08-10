@@ -189,9 +189,9 @@ setup line. `CpuPreparedSetup::ntt_cache_bytes` reports the complete actual
 resident total when an application needs it.
 
 Each profile run prints the default CPU resource policy before it starts. The
-report includes the maximum cached ring switch extent and the one hot scratch
-bytes for each worker. This makes runs comparable when those deployment limits
-change.
+report includes the maximum cached ring switch extent and the sparse
+commitment scratch bytes for each worker. This makes runs comparable when
+those deployment limits change.
 
 ## NTT matvec microbenchmarks
 

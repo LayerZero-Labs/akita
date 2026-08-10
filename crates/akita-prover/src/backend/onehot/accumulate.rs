@@ -45,8 +45,10 @@ pub(super) fn onehot_accumulate<const D: usize>(
                 fill_rotated_challenge::<D>(&mut rotated, challenge);
 
                 for entry in &entries[lo..hi] {
-                    let dst = &mut acc[entry.pos_in_block() - pos_start];
-                    let rot = &rotated[entry.coeff_idx()];
+                    let pos_in_block = entry.pos_in_block();
+                    let coeff_idx = entry.coeff_idx();
+                    let dst = &mut acc[pos_in_block - pos_start];
+                    let rot = &rotated[coeff_idx];
                     for k in 0..D {
                         dst[k] += rot[k] as i32;
                     }

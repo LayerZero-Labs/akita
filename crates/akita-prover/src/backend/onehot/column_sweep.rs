@@ -2,11 +2,6 @@
 use super::inner_ajtai::inner_ajtai_wide_onehot;
 use super::*;
 
-/// Maximum operation-local commitment scratch per worker.
-///
-/// The tile estimate includes canonical sparse entries, the largest retained
-/// sweep index, and wide accumulators. Reduced commitment output is retained
-/// by the caller and does not change with tile size.
 /// Bucketed and merge are arithmetic choices inside the same block range
 /// driver. This enum is private policy state, not a source or plan type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -42,7 +37,7 @@ fn unpack_col_entry(entry: PackedColEntry) -> (usize, usize) {
 }
 
 /// Bucket one materialized tile by A column, then sweep each A row once.
-fn bucketed_sweep_tile<F, const D: usize>(
+pub(super) fn bucketed_sweep_tile<F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
     blocks: &[&[SparseRingBlockEntry]],
     n_a: usize,
@@ -58,7 +53,8 @@ where
     let mut entry_count = 0usize;
     for block_entries in blocks {
         for entry in *block_entries {
-            let col = entry.pos_in_block() * num_digits_inner;
+            let pos_in_block = entry.pos_in_block();
+            let col = pos_in_block * num_digits_inner;
             debug_assert!(col < active_a_cols);
             col_counts[col] += 1;
             entry_count += 1;
@@ -74,9 +70,11 @@ where
     let mut packed_entries = vec![0; entry_count];
     for (local_block, block_entries) in blocks.iter().enumerate() {
         for entry in *block_entries {
-            let col = entry.pos_in_block() * num_digits_inner;
+            let pos_in_block = entry.pos_in_block();
+            let coeff_idx = entry.coeff_idx();
+            let col = pos_in_block * num_digits_inner;
             let dst = write_offsets[col];
-            packed_entries[dst] = pack_col_entry(local_block, entry.coeff_idx() as u16);
+            packed_entries[dst] = pack_col_entry(local_block, coeff_idx as u16);
             write_offsets[col] += 1;
         }
     }
@@ -84,8 +82,12 @@ where
     let mut result = vec![Vec::with_capacity(n_a); blocks.len()];
     let mut row_accums: Vec<WideCyclotomicRing<F::CommitAccum, D>> =
         vec![WideCyclotomicRing::zero(); blocks.len()];
+    let mut partials = vec![CyclotomicRing::zero(); blocks.len()];
+    let mut accum_counts = vec![0usize; blocks.len()];
     for a_row in a_view.rows().take(n_a) {
         row_accums.fill(WideCyclotomicRing::zero());
+        partials.fill(CyclotomicRing::zero());
+        accum_counts.fill(0);
         for col in 0..active_a_cols {
             let entries = &packed_entries[col_offsets[col]..col_offsets[col + 1]];
             if entries.is_empty() {
@@ -94,11 +96,17 @@ where
             let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
             for &entry in entries {
                 let (local_block, coefficient) = unpack_col_entry(entry);
+                if accum_counts[local_block] == F::MAX_COMMIT_ACCUMULATIONS {
+                    partials[local_block] += row_accums[local_block].reduce();
+                    row_accums[local_block] = WideCyclotomicRing::zero();
+                    accum_counts[local_block] = 0;
+                }
                 a_wide.shift_accumulate_into(&mut row_accums[local_block], coefficient);
+                accum_counts[local_block] += 1;
             }
         }
-        for (rows, accum) in result.iter_mut().zip(&row_accums) {
-            rows.push(accum.reduce());
+        for (local_block, (rows, accum)) in result.iter_mut().zip(&row_accums).enumerate() {
+            rows.push(partials[local_block] + accum.reduce());
         }
     }
     result
@@ -108,23 +116,6 @@ where
 /// the (tile, chunk) matrix is flat within ~5-30% and (64 blocks, 32 cols)
 /// is its minimum at trace-like sparse shapes.
 pub(super) const MERGE_COL_CHUNK: usize = 32;
-
-/// Split blocks whose shift-accumulation count exceeds `cap` into segments
-/// that each respect it, tracking each segment's parent block.
-fn split_oversized_blocks<'a>(
-    blocks: &[&'a [SparseRingBlockEntry]],
-    cap: usize,
-) -> (Vec<&'a [SparseRingBlockEntry]>, Vec<usize>) {
-    let mut sub_blocks: Vec<&[SparseRingBlockEntry]> = Vec::new();
-    let mut parents: Vec<usize> = Vec::new();
-    for (parent, entries) in blocks.iter().enumerate() {
-        for segment in entries.chunks(cap.max(1)) {
-            sub_blocks.push(segment);
-            parents.push(parent);
-        }
-    }
-    (sub_blocks, parents)
-}
 
 /// Walk sorted block cursors while each active A-column chunk is widened once.
 pub(super) fn merge_sweep_tile<F, const D: usize>(
@@ -183,7 +174,9 @@ where
                 for (local_b, entries) in tile_blocks.iter().enumerate() {
                     let cur = &mut cursors[local_b];
                     while let Some(entry) = entries.get(*cur) {
-                        let col = entry.pos_in_block() * num_digits_inner;
+                        let pos_in_block = entry.pos_in_block();
+                        let coeff_idx = entry.coeff_idx();
+                        let col = pos_in_block * num_digits_inner;
                         if col >= chunk_end {
                             break;
                         }
@@ -198,7 +191,7 @@ where
                             accum_counts[local_b] = 0;
                         }
                         accum_counts[local_b] += 1;
-                        a_wide.shift_accumulate_into(&mut row_accums[local_b], entry.coeff_idx());
+                        a_wide.shift_accumulate_into(&mut row_accums[local_b], coeff_idx);
                         *cur += 1;
                     }
                 }
@@ -342,42 +335,6 @@ where
         .collect()
 }
 
-pub(super) fn bucketed_sweep_tile_checked<F, const D: usize>(
-    a_view: &RingMatrixView<'_, F, D>,
-    blocks: &[&[SparseRingBlockEntry]],
-    n_a: usize,
-    active_a_cols: usize,
-    num_digits_inner: usize,
-) -> Vec<Vec<CyclotomicRing<F, D>>>
-where
-    F: FieldCore + CanonicalField + HasCommitAccum,
-    F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
-{
-    if blocks
-        .iter()
-        .all(|entries| entries.len() <= F::MAX_COMMIT_ACCUMULATIONS)
-    {
-        return bucketed_sweep_tile(a_view, blocks, n_a, active_a_cols, num_digits_inner);
-    }
-
-    let (sub_blocks, parents) = split_oversized_blocks(blocks, F::MAX_COMMIT_ACCUMULATIONS);
-    let mut rows = vec![vec![CyclotomicRing::zero(); n_a]; blocks.len()];
-    let max_packed_blocks = usize::from(u16::MAX) + 1;
-    for (block_chunk, parent_chunk) in sub_blocks
-        .chunks(max_packed_blocks)
-        .zip(parents.chunks(max_packed_blocks))
-    {
-        let sub_rows =
-            bucketed_sweep_tile(a_view, block_chunk, n_a, active_a_cols, num_digits_inner);
-        for (&parent, partial) in parent_chunk.iter().zip(sub_rows) {
-            for (row, value) in rows[parent].iter_mut().zip(partial) {
-                *row += value;
-            }
-        }
-    }
-    rows
-}
-
 fn run_sweep_tile<F, const D: usize>(
     sweep: OneHotSweep,
     a_view: &RingMatrixView<'_, F, D>,
@@ -390,9 +347,16 @@ where
     F: FieldCore + CanonicalField + HasCommitAccum,
     F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
 {
+    debug_assert!(
+        blocks
+            .iter()
+            .flat_map(|entries| entries.iter())
+            .all(|entry| entry.value() == 1),
+        "one-hot block builder must emit only unit entries"
+    );
     match sweep {
         OneHotSweep::Bucketed => {
-            bucketed_sweep_tile_checked(a_view, blocks, n_a, active_a_cols, num_digits_inner)
+            bucketed_sweep_tile(a_view, blocks, n_a, active_a_cols, num_digits_inner)
         }
         OneHotSweep::Merge => {
             let mut chunk_buf = vec![WideCyclotomicRing::zero(); MERGE_COL_CHUNK];
@@ -446,18 +410,22 @@ where
     }
 
     let workers = worker_count(total);
-    let hot_terms = sources.iter().try_fold(0usize, |total, source| {
-        total
-            .checked_add(
-                source
-                    .poly
-                    .indices()
-                    .iter()
-                    .filter(|entry| entry.is_some())
-                    .count(),
-            )
-            .ok_or_else(|| AkitaError::InvalidSetup("one hot term count overflow".into()))
-    })?;
+    let hot_terms = if tracing::enabled!(tracing::Level::INFO) {
+        Some(sources.iter().try_fold(0usize, |total, source| {
+            total
+                .checked_add(
+                    source
+                        .poly
+                        .indices()
+                        .iter()
+                        .filter(|entry| entry.is_some())
+                        .count(),
+                )
+                .ok_or_else(|| AkitaError::InvalidSetup("one hot term count overflow".into()))
+        })?)
+    } else {
+        None
+    };
     let max_entries = max_entries_per_block(sources, num_positions_per_block)?;
     let block_tile = block_tile_for_scratch::<F, D>(
         total,
@@ -470,7 +438,7 @@ where
     tracing::info!(
         sweep = sweep.label(),
         block_tile,
-        hot_terms,
+        hot_terms = hot_terms.unwrap_or_default(),
         source_count = sources.len(),
         total_blocks = total,
         workers,

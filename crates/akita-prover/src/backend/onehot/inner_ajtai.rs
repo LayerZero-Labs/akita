@@ -28,10 +28,12 @@ where
     let mut t_wide = vec![WideCyclotomicRing::<F::CommitAccum, D>::zero(); n_a];
 
     for entry in entries {
-        let col = entry.pos_in_block() * num_digits;
+        let pos_in_block = entry.pos_in_block();
+        let coeff_idx = entry.coeff_idx();
+        let col = pos_in_block * num_digits;
         for (a_row, t_w) in a_view.rows().zip(t_wide.iter_mut()) {
             let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
-            a_wide.shift_accumulate_into(t_w, entry.coeff_idx());
+            a_wide.shift_accumulate_into(t_w, coeff_idx);
         }
     }
 

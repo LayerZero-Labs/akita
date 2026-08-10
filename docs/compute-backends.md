@@ -41,11 +41,15 @@ let (commitment, hint) =
 
 Applications may replace the default with
 `CpuBackend::with_resource_limits(max_cached_ring_switch_elements,
-onehot_scratch_bytes_per_worker)`. A zero ring switch limit streams every
+commit_scratch_bytes_per_worker)`. A zero ring switch limit streams every
 operation that has a streamed path. `usize::MAX` retains every supported ring
-switch operation. The one hot scratch budget must be nonzero and must fit one
-minimum tile. These settings change memory use and CPU work. They do not change
-the schedule, transcript, setup bytes, proof bytes, or verifier.
+switch operation. The constructor rejects a zero commitment scratch budget.
+Each sparse commitment kernel rejects the operation later if its minimum tile
+does not fit. These settings change memory use and CPU work. Cached and streamed
+ring-switch routes use the same validated quotient arithmetic, including the
+same exact field fallback when one centered term is unsafe in CRT form. The
+settings do not change the schedule, transcript, setup bytes, proof bytes, or
+verifier.
 
 Ring dimension enters only at kernel boundaries through schedule-derived dispatch,
 not as a type parameter on the PCS API.
@@ -129,7 +133,8 @@ rebuild released shared matrix slots at the next exact request
 - Dynamic ring-dimension code uses `dispatch_for_field!` and prepares the
   target backend context inside the matched `D` arm.
 - Cached and streamed ring switch quotient kernels consume the same validated
-  private quotient plan. Width dispatch selects CRT arithmetic only.
+  private quotient plan and source abstraction. Width dispatch selects CRT
+  arithmetic only; route selection does not change input acceptance.
 
 ## Current Scope
 

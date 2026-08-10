@@ -33,7 +33,7 @@ it or to an explicit prepared setup owner.
 The first implementation reached that ownership model with fixed CPU resource
 limits. This reopened specification adds the remaining downstream integration
 work. The existing `CpuBackend` will own checked limits for ring switch NTT
-retention and one hot scratch memory. Its defaults will preserve the measured
+retention and sparse commitment scratch memory. Its defaults will preserve the measured
 behavior. Applications may set resource limits without selecting private
 arithmetic strategies or changing protocol schedules. CPU NTT release and
 accounting will distinguish the large releasable shared matrix state from the
@@ -189,13 +189,14 @@ must invoke the production scheduler.
 #### CPU deployment limits are fixed inside the implementation
 
 The CPU backend uses a `2^21` ring element cutoff for cached ring switch work
-and an 8 MiB one hot scratch budget per worker. These defaults match the
+and an 8 MiB sparse commitment scratch budget per worker. These defaults match the
 measured Akita and Jolt workloads. A downstream application cannot lower the
 limits for a memory constrained host or raise them for a host that benefits
 from more retained work.
 
 These are resource limits, not protocol parameters. They belong to the CPU
-backend value. The one hot sweep choice remains private because it describes
+backend value. One-hot and signed sparse-ring commitment kernels both consume
+the scratch budget. The one hot sweep choice remains private because it describes
 the current arithmetic implementation rather than an application contract.
 
 #### CPU NTT caches have different useful lifetimes
@@ -212,7 +213,9 @@ were actually removed.
 
 #### Protocol invariants
 
-- The verification equations do not change.
+- The verification equations do not change. Stage 3 now accepts a verifier
+  setup materialized to the exact required prefix; it previously required the
+  larger `setup_eval_len` even though it never scanned beyond the exact prefix.
 - Transcript labels and challenge order do not change.
 - Proof bytes and setup bytes do not change.
 - Schedule selection and security bounds do not change.
@@ -260,8 +263,9 @@ were actually removed.
   not materialize a full slot for an operation that runtime will stream.
 - Each NTT request retains its operation routing extent until the backend
   applies that decision. Cached and streamed operations sharing a route are
-  not max-joined before filtering, and domains in one fused operation share
-  one decision.
+  not max-joined before filtering. Production relation calls are single-role:
+  the A call's negacyclic and cyclic domains share one extent, while B and D
+  cyclic calls each retain their own extent.
 - Active challenge bounds are computed before one hot block materialization.
   Batch peak derived storage is bounded by the current tile.
 - Every `FlatBlocks` offset conversion is checked before the offset table is
@@ -277,11 +281,12 @@ were actually removed.
 - The profile workload split does not change scenario behavior or public
   profile entry points.
 - `CpuBackend::default()` preserves the current ring switch retention cutoff
-  and one hot scratch budget.
+  and sparse commitment scratch budget.
 - The CPU backend applies its configured ring switch limit during runtime,
   prewarming, and planned memory reporting through one decision function.
-- The configured one hot scratch budget changes only temporary tile size. It
-  does not let callers select a sweep or change commitment results.
+- The configured commitment scratch budget changes only temporary one-hot and
+  signed sparse-ring tile sizes. It does not let callers select a sweep or
+  change commitment results.
 - Generic CPU NTT release removes built shared matrix entries and reports the
   number of bytes removed. Compression NTT entries remain resident.
 - CPU cache metrics expose the complete resident NTT total while preserving
@@ -463,8 +468,9 @@ acceptance test.
 #### Compatibility and documentation
 
 - [x] Proof serialization, setup serialization, transcript schedules, and
-      verifier acceptance are byte identical to the merge base for fixed test
-      fixtures.
+      verification equations are byte identical to the merge base for fixed
+      test fixtures. Stage 3 additionally accepts the exact required verifier
+      setup prefix instead of requiring unused trailing setup rows.
 - [x] Removed public prover types are added to the documentation dead symbol
       guards.
 - [x] `specs/akita-polyops-cutover.md` is updated to reflect the completed
@@ -479,7 +485,7 @@ acceptance test.
 #### Downstream CPU policy extension
 
 - [x] `CpuBackend` is a configured value rather than a unit struct. It owns a
-      maximum cached ring switch extent and a one hot scratch budget per
+      maximum cached ring switch extent and a sparse commitment scratch budget per
       worker.
 - [x] `CpuBackend::default()` preserves the existing `2^21` ring element
       cutoff and 8 MiB scratch budget.
@@ -491,9 +497,9 @@ acceptance test.
       switch operation.
 - [x] Runtime routing and `ntt_requirement_is_cached` call one method on the
       configured backend. The threshold is not copied into a kernel.
-- [x] One hot tile sizing reads the configured backend budget. Sweep selection
-      remains private and automatic.
-- [x] Tracing records the effective ring switch limit and one hot scratch
+- [x] One-hot and signed sparse-ring tile sizing read the configured backend
+      budget. Sweep selection remains private and automatic.
+- [x] Tracing records the effective ring switch limit and commitment scratch
       budget so benchmark results identify the policy in use.
 - [x] CPU release removes built shared matrix entries, preserves active `Arc`
       readers, retains compression entries, and returns the shared matrix bytes
@@ -502,7 +508,8 @@ acceptance test.
       compression subtotals.
 - [x] Default policy tests prove byte identical commitments and proofs. Limit
       boundary tests prove cached and streamed ring switch parity. Scratch
-      budget tests prove identical one hot commitments across valid tile sizes.
+      budget tests prove identical one-hot and signed sparse-ring commitments
+      across valid tile sizes.
 - [x] The Jolt integration guidance preserves its release after stage zero and
       selects `ReleaseRootNttAfterFold` when it ports from the original
       optimized Akita head.
@@ -833,20 +840,20 @@ read only accessors. No separate policy object is needed.
 ```rust
 pub struct CpuBackend {
     max_cached_ring_switch_elements: usize,
-    onehot_scratch_bytes_per_worker: usize,
+    commit_scratch_bytes_per_worker: usize,
 }
 ```
 
 `CpuBackend::DEFAULT` is the stable borrowed default for long lived stacks.
 The `Default` implementation returns the same value. Explicit deployments use
 `CpuBackend::with_resource_limits(max_cached_ring_switch_elements,
-onehot_scratch_bytes_per_worker)`. This constructor rejects zero scratch.
+commit_scratch_bytes_per_worker)`. This constructor rejects zero scratch.
 
 The default values are the current measured values:
 
 ```text
 max cached ring switch elements = 2^21
-one hot scratch per worker       = 8 MiB
+sparse commit scratch per worker = 8 MiB
 ```
 
 The ring switch limit controls whether an operation with a streamed CPU path
@@ -855,10 +862,10 @@ keep their current cached path because they do not yet have streamed CPU
 implementations. The backend must use one decision method for runtime routing
 and the `ComputeBackendSetup` retention hook.
 
-The one hot limit controls the existing tile formula by replacing its fixed
-8 MiB numerator with the configured value. It does not change the private
-merge or bucketed selector. Applications can set a memory bound while the
-library remains free to improve its arithmetic kernels.
+The commitment limit controls both one-hot and signed sparse-ring tile formulas
+by replacing their fixed budgets with the configured value. It does not change
+the private merge or bucketed selector. Applications can set a memory bound
+while the library remains free to improve its arithmetic kernels.
 
 The existing backend should carry these fields directly. Add another policy
 type only if a later design needs to pass the same policy independently of a
@@ -1184,12 +1191,13 @@ history.
 ### Slice 8: Configure CPU resource limits
 
 - Change `CpuBackend` from a unit struct to the owner of the ring switch cache
-  limit and one hot scratch budget.
+  limit and sparse commitment scratch budget.
 - Preserve the current values through `Default`.
 - Add checked construction methods and public accessors for reporting.
 - Route runtime NTT selection and requirement retention through one backend
   method.
-- Pass the configured scratch budget into the existing one hot tile formula.
+- Pass the configured scratch budget into the one-hot and signed sparse-ring
+  tile formulas.
 - Keep sweep selection private.
 - Add default, limit boundary, scratch boundary, and arithmetic parity tests.
 
