@@ -541,8 +541,9 @@ where
     /// The stored rows are in binding order, so the next variable selects
     /// between two contiguous halves. One-worker construction calls the
     /// generator in ascending logical-row order for sequential source access.
-    /// Multi-worker construction partitions stored rows so every worker writes
-    /// contiguous coefficient ranges while evaluating its rows in parallel.
+    /// Multi-worker construction partitions logical rows so every worker reads
+    /// sequential source ranges, then permutes the initialized coefficient
+    /// slabs in place into binding order.
     ///
     /// # Errors
     ///
@@ -556,16 +557,21 @@ where
 
         #[cfg(feature = "parallel")]
         if akita_field::parallel::__rayon_current_num_threads() > 1 {
-            initialize_multilinear_table::<F, E, _>(
-                &mut coefficients,
-                len,
-                0,
-                &|_, logical_row| evaluation(logical_row),
-            );
+            initialize_evaluation_table::<F, E, _>(&mut coefficients, len, &evaluation);
 
             // SAFETY: every coefficient slot is written exactly once by the
-            // disjoint stored-row traversal.
-            let coefficients = unsafe { coefficients.assume_init() };
+            // disjoint logical-row traversal.
+            let mut coefficients = unsafe { coefficients.assume_init() };
+            for coefficient in 0..<E as ExtField<F>>::EXT_DEGREE {
+                let start = coefficient * len;
+                let values = &mut coefficients[start..start + len];
+                for logical_row in 0..len {
+                    let stored_row = Self::logical_row(logical_row, len);
+                    if logical_row < stored_row {
+                        values.swap(logical_row, stored_row);
+                    }
+                }
+            }
             return Ok(Self::from_initialized(coefficients, len));
         }
 
