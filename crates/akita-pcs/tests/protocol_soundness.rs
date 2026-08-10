@@ -1,4 +1,3 @@
-
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_config::proof_optimized::fp128;

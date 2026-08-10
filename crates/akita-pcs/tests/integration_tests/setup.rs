@@ -16,7 +16,10 @@
 //! Every preset listed in `presets.rs` for the production D64 merge gate gets its
 //! own module with the five tests.
 
-
+use crate::common::{
+    dense_field_evals, init_rayon_pool, opening_from_poly_for_layout, prove_input, random_point,
+    run_on_large_stack, verify_input, F,
+};
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
@@ -26,10 +29,6 @@ use akita_prover::OneHotPoly;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, BasisMode, SetupMatrixCapacity};
-use crate::common::{
-    dense_field_evals, init_rayon_pool, opening_from_poly_for_layout, prove_input, random_point,
-    run_on_large_stack, verify_input, F,
-};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::panic::{catch_unwind, AssertUnwindSafe};

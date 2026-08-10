@@ -1,4 +1,3 @@
-
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{
     CanonicalBytes, CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FromPrimitiveInt,

@@ -1,6 +1,6 @@
-
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
+use crate::common::*;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{
@@ -10,7 +10,6 @@ use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, NextWitnessBinding, RingVec, TerminalResponse,
     TerminalResponseShape,
 };
-use crate::common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 
